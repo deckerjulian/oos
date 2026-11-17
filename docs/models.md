@@ -170,8 +170,9 @@ fits over a record fail. Assumed, not measured: the path into the acquisition me
 An earlier table of this section showed 1.5 GHz with the right frequency and only more noise: those figures came from
 screen records at a slow time base.
 
-So overclocking is not usable at the full rate, and 1.25 GHz stays the default. System > Overclock stays an
-experiment.
+So overclocking is not usable at the full rate, and 1.25 GHz stays the default. System > Overclock is only in the menu
+with `adc.overclock = on` in /oos/system.conf (ADR 0010), or while limits.conf already sets another clock, so the way
+back to 1.25 GHz stays; every step above 1.25 GHz is marked "(test)".
 A start with `adc.clock_hz` that does not reach its end sets the file aside at the next start (`limits.conf.failed`, rcS).
 
 Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the

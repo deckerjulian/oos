@@ -23,6 +23,9 @@ Added:
 
 Changed:
 
+- System > Overclock is only in the menu with `adc.overclock = on` in `/oos/system.conf`, or while `limits.conf` already
+  sets another clock: above 1.25 GHz every step boots, but records at the full rate lose samples (unit). Every step
+  above 1.25 GHz is marked "(test)".
 - The waveform is drawn with the Batch path by default (Acquire > Draw path): from 100 ns to 500 us/div it draws 1.2 to
   3.4 times as many of the acquired frames, 5269 instead of 1563 a second with one channel at 100 ns/div (unit).
   `acq.pipeline = frames` in system.conf starts with Standard; the path at start-up comes from system.conf, not from

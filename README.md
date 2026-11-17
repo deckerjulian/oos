@@ -87,8 +87,9 @@ Installing OOS means that you accept in particular the following risks:
   authentication: telnet (on by default, a shell without password), SCPI, VXI-11, HiSLIP (on a computer), the web remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
   never directly to the internet.**
-- **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
-  also lift limits. Values outside the defaults are outside any rating and can make the scope unusable or damage it.
+- **Experimental settings.** System > Overclock (with `adc.overclock = on`) and `/oos/limits.conf` can change the sample
+  clock, `limits.conf` can also lift limits. Values outside the defaults are outside any rating and can make the scope
+  unusable or damage it.
   Overclocked records lose samples at the full rate, so they are wrong: see [docs/models.md](docs/models.md).
 
 OOS is an independent project. It is not affiliated with, endorsed by or supported by RIGOL TECHNOLOGIES CO., LTD.
@@ -220,7 +221,8 @@ networks, see [docs/wlan.md](docs/wlan.md)).
 **System**
 - Own cold boot of all hardware: the stock system never has to run first
 - Self-calibration into own files (`/oos/cal`); factory files are never changed
-- System > Overclock: the sample clock in steps from 1.25 to 2 GHz, experimental, from the next power-on
+- System > Overclock (with `adc.overclock = on`): the sample clock in steps from 1.25 to 2 GHz, for tests only, from
+  the next power-on
 - Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits
 - System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set
   by hand; once the clock is set, file names carry the local date and time
@@ -700,7 +702,8 @@ measurement, the peak list's button to sort it. The x closes the pane.
 right, or above the trace. In Measure > Add item a tap adds a measurement of the source channel and a second tap removes
 it. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
 
-**Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz every step boots, but
+**Overclocking.** System > Overclock, shown with `adc.overclock = on` in `/oos/system.conf`, sets the sample clock from
+the next power-on. Above 1.25 GHz every step boots, but
 records at the full rate lose samples and frequencies read too high: it is for tests only. See
 [docs/models.md](docs/models.md).
 
