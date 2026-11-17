@@ -5,13 +5,10 @@
 # the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
 # The package is signed with the community key of the repository (keys/), as every build without a key of its own.
 name: Image
+# By hand only (Actions > Image > Run workflow, from the default branch): no push, tag or change of this file starts
+# an image build in this fork.
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
-    # by hand only works from the default branch: on any branch it runs when this file changes (tags ignore paths)
-    branches: ['**']
-    paths: ['.github/workflows/image.yml']
 jobs:
   image:
     strategy:
