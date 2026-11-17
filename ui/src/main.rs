@@ -480,9 +480,11 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                     answer = scpi.poll_program(ui, &cv, &mut program);
                 }
                 use std::io::Write;
+                // the message, then its answer on lines of its own; an empty answer is an empty line
+                let answer = answer.unwrap_or_else(|| b"(no answer after 600 frames)".to_vec());
                 let mut out = format!("> {}\n", message).into_bytes();
-                out.extend_from_slice(&answer.unwrap_or_else(|| b"(no answer after 600 frames)".to_vec()));
-                if out.last() != Some(&b'\n') {
+                out.extend_from_slice(&answer);
+                if answer.last() != Some(&b'\n') {
                     out.push(b'\n');
                 }
                 let file = std::fs::OpenOptions::new().create(true).append(true).open(&path);

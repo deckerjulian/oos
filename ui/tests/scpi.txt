@@ -77,26 +77,17 @@ scpi $S/scpi-answers.txt :MEASure:INDicator?
 scpi $S/scpi-answers.txt :MATH1:DISPlay?
 scpi $S/scpi-answers.txt :MATH1:SOURce1?
 scpi $S/scpi-answers.txt :MATH1:SCALe?
+scpi $S/scpi-answers.txt :MATH1:FFT:SOURce?
+scpi $S/scpi-answers.txt :MATH1:FILTer:TYPE?
+scpi $S/scpi-answers.txt :BUS1:MODE?
+scpi $S/scpi-answers.txt :BUS1:EVENt?
+scpi $S/scpi-answers.txt :BUS1:THReshold?
+scpi $S/scpi-answers.txt :BUS1:RS232:TX?
+scpi $S/scpi-answers.txt :BUS1:RS232:BAUD?
+scpi $S/scpi-answers.txt :BUS1:IIC:SCLK:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:SCLK:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:DBITs?
 scpi $S/scpi-answers.txt :MATH1:EXPRession?
-scpi $S/scpi-answers.txt AN1
-scpi $S/scpi-answers.txt 13,"Undefined header" :WINDow?
-scpi $S/scpi-answers.txt AS
-scpi $S/scpi-answers.txt 13,"Undefined header" :W1?
-scpi $S/scpi-answers.txt 13,"Undefined header" :W2?
-scpi $S/scpi-answers.txt 232
-scpi $S/scpi-answers.txt 13,"Undefined header" :DISPlay:
-scpi $S/scpi-answers.txt 13,"Undefined header" :FORMat?
-scpi $S/scpi-answers.txt 650000E+00
-scpi $S/scpi-answers.txt AN3
-scpi $S/scpi-answers.txt 13,"Undefined header" :RX?
-scpi $S/scpi-answers.txt 5200
-scpi $S/scpi-answers.txt 13,"Undefined header" :PARity?
-scpi $S/scpi-answers.txt 13,"Undefined header" :DBITs?
-scpi $S/scpi-answers.txt AN4
-scpi $S/scpi-answers.txt 13,"Undefined header" :SDA:SOURce?
-scpi $S/scpi-answers.txt AN4
-scpi $S/scpi-answers.txt 13,"Undefined header" :MOSI:SOURce?
-scpi $S/scpi-answers.txt 13,"Undefined header" :SS:SOURce?
 # settings, and what they answer afterwards
 scpi $S/scpi-answers.txt :CHANnel1:SCALe 0.5;:CHANnel1:SCALe?;:CHANnel1:OFFSet 0.25;:CHANnel1:OFFSet?
 scpi $S/scpi-answers.txt :CHANnel2:DISPlay ON;:CHANnel2:DISPlay?;:CHANnel2:COUPling AC;:CHANnel2:COUPling?
