@@ -72,8 +72,29 @@ It runs every host check CI runs, layer by layer: the layout of the code, Clippy
 all four crates, the scope's build, the decoder builds, and the numbers that only go down (`tools/ratchet.txt`, ADR
 0037) ([ADR 0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)). A compiler
 warning fails it like an error. `tools/check.sh test` runs one layer, `tools/check.sh list` names them. Tests that
-need the calibration files of a real unit skip themselves without them. See the Development section of the
-[README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
+need the calibration files of a real unit skip themselves without them. Start reading with the
+[hardware overview](https://dekajoule.github.io/oos/hardware/overview.html) and
+[docs/architecture.md](docs/architecture.md); to run OOS on your computer without a scope, see
+[wiki/Building.md](wiki/Building.md#try-it-without-a-scope).
+
+Each crate builds on its own. The hardware code is Linux-only, so it is checked for the target as well:
+
+```sh
+(cd ui && cargo test)                                 # one crate
+(cd ui && cargo check --target aarch64-unknown-linux-musl)
+```
+
+- **Calibration files.** To run the tests that need them, copy `/rigol/data` of your scope to `local/cal-full` and
+  `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of them.
+- **Register sequences.** `tools/plan-matrix.sh` prints the register sequences of a fixed set of acquisitions without
+  touching the hardware. Run it with two builds and compare the output to prove that a change leaves the analog path
+  alone; `tools/compare-base.sh` does that for you.
+- **Menus and pictures.** The test `every_menu_fits` walks all menus and fails on text wider than its control or a
+  dialog off the screen. `OOS_GALLERY=<dir> cargo test gallery -- --ignored` in `ui/` writes every screen as a picture.
+- **Simulations.** `tools/gel-sim.sh` runs the USB install on a file laid out like a stock card. `tools/usb-sim.sh`
+  tests the handling of USB sticks in a virtual machine, with disks that get pulled. `tools/wlan-sim.sh` tests the
+  WLAN path on simulated radios in a virtual machine, without a stick; it needs Docker, `qemu-system-aarch64` and one
+  finished image build. All host tools: [tools/README.md](tools/README.md).
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
