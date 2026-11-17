@@ -76,6 +76,9 @@ The same way for everyone, the maintainer included
   maintainers on your pull request and the rebase is done for you.
 - Large changes that do not change behaviour (formatting, moves) are announced in an issue with their day, and wait
   for the open pull requests.
+- An automatic review (GitHub Copilot code review) may comment on a pull request. Its comments are advice: take the
+  ones that are right, and say so where one is wrong. It does not approve and it does not merge. What it is asked to
+  look for is in [.github/instructions/review.instructions.md](.github/instructions/review.instructions.md).
 
 ## Coordinating work
 
