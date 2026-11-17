@@ -333,3 +333,35 @@ fn the_badge_of_a_channel_pill_is_its_switch() {
     assert!(u.m.ch[1].on && !u.menu_open, "the small pill switches CH2 on");
     assert!(u.studio_bottom().ch[1].w >= 110);
 }
+
+/// Sliding the waveform with one finger is a pan, not a long press: no menu while the finger moves, however slowly,
+/// nor when it rests after it has moved.
+#[test]
+fn a_one_finger_slide_never_opens_the_hold_menu() {
+    for layout in [Layout::Studio, Layout::Minimal] {
+        for (name, step_px, pause_first, rest_after) in [("slow slide", 1, 0, 0), ("fast slide", 12, 0, 0), ("short pause, then slide", 4, 8, 0), ("slide, then rest", 6, 0, 30)] {
+            let mut u = Ui::new(Source::Demo { t: 0.0 });
+            u.m.layout = layout;
+            u.relayout();
+            for _ in 0..8 { u.step(0.04); }
+            let g = u.grid;
+            let (x0, y) = (g.x + g.w / 2, g.y + g.h / 2);
+            let menu = |u: &Ui| u.workspace_popup_open() || u.studio.ctx.is_some() || u.menu_open;
+            let delay = u.m.delay;
+            u.handle(Ev::Touch { id: 0, phase: Phase::Down, x: x0, y });
+            for _ in 0..pause_first { u.step(0.04); }
+            let mut x = x0;
+            for _ in 0..40 {
+                x += step_px;
+                u.handle(Ev::Touch { id: 0, phase: Phase::Move, x, y });
+                u.step(0.04);
+                assert!(!menu(&u), "{layout:?} {name}: a menu opened {} px into the slide", x - x0);
+            }
+            for _ in 0..rest_after { u.step(0.04); assert!(!menu(&u), "{layout:?} {name}: a menu opened while resting after the slide"); }
+            u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+            for _ in 0..3 { u.step(0.04); }
+            assert!(!menu(&u), "{layout:?} {name}: a menu after the lift");
+            if step_px >= 4 { assert!(u.m.delay != delay, "{layout:?} {name}: the slide moved the waveform"); }
+        }
+    }
+}
