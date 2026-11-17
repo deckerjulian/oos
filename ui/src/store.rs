@@ -344,6 +344,7 @@ pub fn setup_text(m: &Model) -> String {
     if !m.studio_dock.is_empty() { kv("studio_dock", m.studio_dock.clone()); }
     if m.studio_ov != 0 { kv("studio_ov", m.studio_ov.to_string()); }
     if !m.studio_detail { kv("studio_meas_view", "list".to_string()); }
+    if m.studio_overlay { kv("studio_traces", "overlay".to_string()); }
     if !m.studio_zoom_tab { kv("studio_zoom_controls", "titlebar".to_string()); }
     if m.studio_classic { kv("studio_badges", "classic".to_string()); }
     kv("hdmi", name(m.hdmi));
@@ -769,6 +770,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.math_hidden = h;
         }
         "gen_hidden" => m.gen_hidden = p_bool(v)?,
+        "studio_traces" => m.studio_overlay = match v { "overlay" => true, "stacked" => false, _ => return Err(format!("bad studio_traces {v}")) },
         "studio_meas_view" => m.studio_detail = match v { "detailed" => true, "list" => false, _ => return Err(format!("bad studio_meas_view {v}")) },
         "studio_badges" => m.studio_classic = match v { "classic" => true, "studio" => false, _ => return Err(format!("bad studio_badges {v}")) },
         "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,

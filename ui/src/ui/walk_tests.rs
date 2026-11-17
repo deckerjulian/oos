@@ -573,3 +573,185 @@ fn a_badge_tap_marks_its_measurement_on_the_waveform() {
     tap(&mut u, edges.1.x + edges.1.w / 2, edges.1.y + edges.1.h / 2);
     assert_eq!(u.studio.popup, Some(edges.0));
 }
+
+/// Overlay through the real path: a finger held on the plot opens its menu, a tap on "Overlay traces" puts every
+/// source on one graticule, and "Stacked traces" brings the lanes back. With channels, a reference and a math
+/// channel, the measurements docked above, and more than one view.
+#[test]
+fn overlay_from_the_plot_menu_by_touch() {
+    for (name, setup) in [("plain", 0), ("ref and math", 1), ("docked panel", 2), ("three views", 3)] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); }
+        if setup >= 1 {
+            u.activate(Item::RefSave);
+            u.m.math_select(0);
+            u.m.math = crate::math::MathOp::Sub;
+            u.relayout();
+        }
+        if setup >= 2 {
+            u.studio_set_view(super::studio::StudioView::Docked);
+            u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+            u.relayout();
+        }
+        if setup >= 3 { u.views_set(3); }
+        for _ in 0..12 { u.step(0.04); }
+        u.toast = None;
+        let lanes = u.wins.len();
+        assert!(lanes >= 2, "{name}: lanes to begin with");
+        let pick = |u: &mut Ui, row: super::studioctx::CtxRow| {
+            let g = u.wins[0];
+            let (x, y) = (g.x + g.w / 2, g.y + g.h / 2);
+            u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+            for _ in 0..20 { u.step(0.04); }
+            u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+            u.step(0.04);
+            let rows = u.studio_ctx_rows();
+            let r = rows.iter().find(|(k, _, _)| *k == row).unwrap_or_else(|| panic!("the menu has the row: {} rows", rows.len())).2;
+            tap(u, r.x + r.w / 2, r.y + r.h / 2);
+            for _ in 0..6 { u.step(0.04); }
+        };
+        pick(&mut u, super::studioctx::CtxRow::Overlay);
+        assert_eq!(u.wins.len(), 1, "{name}: Overlay is one graticule");
+        assert!(!u.trace_stacked(), "{name}");
+        pick(&mut u, super::studioctx::CtxRow::Stacked);
+        assert_eq!(u.wins.len(), lanes, "{name}: Stacked brings the lanes back");
+    }
+}
+
+#[test]
+#[ignore]
+fn walk_overlay_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+    let shot = |u: &mut Ui, name: &str| {
+        for _ in 0..30 { u.step(0.04); u.wait_sim_generation(); }
+        u.toast = None;
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); }
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    u.relayout();
+    u.trace_mode(false);
+    shot(&mut u, "O1-overlay-ch-ref-math");
+    // SIM playing two signals, overlaid
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); }
+    u.select_option(Item::SimPreset, "USB 2.0 HS");
+    u.sim_add_next();
+    u.wait_sim_generation();
+    u.select_option(Item::SimPreset, "PCIe 1.0");
+    u.sim_add_next();
+    u.wait_sim_generation();
+    shot(&mut u, "O2-live-two-refs-stacked");
+    u.trace_mode(false);
+    shot(&mut u, "O3-live-two-refs-overlay");
+    u.activate(Item::SimPlay);
+    shot(&mut u, "O4-sim-overlay");
+}
+
+#[test]
+fn overlay_stays_with_a_reference_and_a_math_channel() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); }
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    u.relayout();
+    u.trace_mode(false);
+    assert!(!u.trace_stacked());
+    for i in 0..40 {
+        u.step(0.04);
+        assert!(!u.trace_stacked(), "frame {i}: overlay flag {} workspace.stacked {}", u.studio.overlay, u.workspace_stacked_flag());
+        assert_eq!(u.wins.len(), 1, "frame {i}: one graticule");
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        assert_eq!(u.wins.len(), 1, "frame {i}: one graticule after the picture (overlay {} workspace.stacked {} win_layout {:?} view {:?})", u.studio.overlay, u.workspace_stacked_flag(), u.m.win_layout, u.m.view);
+        assert!(!u.trace_stacked(), "frame {i}: after the picture");
+    }
+    // and with a wait for the SIM worker in between, as the picture tests do
+    u.wait_sim_generation();
+    u.toast = None;
+    u.step(0.04);
+    assert_eq!(u.wins.len(), 1);
+}
+
+/// A finger held on the plot, then a tap on a row of its menu.
+fn pick_ctx(u: &mut Ui, row: super::studioctx::CtxRow) {
+    let g = u.wins[0];
+    let (x, y) = (g.x + g.w / 3, g.y + g.h / 2);
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    for _ in 0..20 { u.step(0.04); }
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+    u.step(0.04);
+    let rows = u.studio_ctx_rows();
+    let r = rows.iter().find(|(k, _, _)| *k == row).unwrap_or_else(|| panic!("the menu has the row: {} rows", rows.len())).2;
+    tap(u, r.x + r.w / 2, r.y + r.h / 2);
+    for _ in 0..6 { u.step(0.04); }
+}
+
+/// Fit all lanes from the plot menu: every shown source gets a scale that holds its signal and is centred in its
+/// lane; the time base and the trigger source stay. Pictures with `OOS_WALK_SHOTS`.
+#[test]
+fn fit_all_lanes_scales_every_source_to_its_lane() {
+    let shot = |u: &mut Ui, name: &str| {
+        let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+        for _ in 0..20 { u.step(0.04); }
+        u.toast = None;
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); u.render(&mut Canvas::new(1024, 600)); }
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    // badly set: CH1 far too coarse and off centre, CH2 clipped, the reference tiny
+    u.m.ch[0].vscale = VSCALES.len() - 2;
+    u.m.ch[0].offset = 20.0;
+    u.m.ch[1].vscale = 2;
+    u.refs[0].as_mut().unwrap().vpd = 10.0;
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); }
+    shot(&mut u, "F1-before-fit");
+    let (tscale, trig) = (u.m.tscale, u.m.trig_src);
+    pick_ctx(&mut u, super::studioctx::CtxRow::FitLanes);
+    for _ in 0..12 { u.step(0.04); }
+    shot(&mut u, "F2-after-fit");
+    assert_eq!((u.m.tscale, u.m.trig_src), (tscale, trig), "the time base and the trigger stay");
+    let rec = u.last[0].as_ref().unwrap().clone();
+    for c in 0..2 {
+        let (lo, hi) = rec.ch[c].iter().fold((f32::MAX, f32::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+        let ch = &u.m.ch[c];
+        let divs = (hi - lo) / ch.volts_per_div();
+        assert!((2.0..=6.01).contains(&divs), "CH{}: {divs} divisions of 8", c + 1);
+        assert!(((hi + lo) / 2.0 + ch.offset).abs() <= ch.volts_per_div() * 0.6, "CH{} is centred", c + 1);
+    }
+    let r = u.refs[0].as_ref().unwrap();
+    let (lo, hi) = r.v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+    assert!((2.0..=6.01).contains(&((hi - lo) / r.vpd)), "R1: {} divisions", (hi - lo) / r.vpd);
+    // Overlay is kept with the setup and comes back after a restart
+    pick_ctx(&mut u, super::studioctx::CtxRow::Overlay);
+    assert!(u.m.studio_overlay && u.wins.len() == 1);
+    shot(&mut u, "F3-overlay-after-fit");
+    let text = crate::store::setup_text(&u.m);
+    assert!(text.contains("studio_traces = overlay"), "the setup has the trace mode");
+}

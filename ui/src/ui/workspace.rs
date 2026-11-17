@@ -676,7 +676,7 @@ impl Ui {
     }
     pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.popup = None;
-        if self.m.layout == Layout::Studio { self.studio.overlay = !stacked; }
+        if self.m.layout == Layout::Studio { self.studio.overlay = !stacked; self.m.studio_overlay = !stacked; }
         // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
         if !stacked && self.m.win_layout != WinLayout::One { self.workspace.stacked = false; return; }
         self.workspace.stacked = stacked;
@@ -1055,8 +1055,59 @@ impl Ui {
     pub(super) fn workspace_drop_gesture(&mut self) { self.workspace.gesture = None; }
     #[cfg(test)]
     pub(super) fn workspace_popup_open(&self) -> bool { self.workspace.popup.is_some() }
+    /// Fit all lanes: the vertical scale and position of every source that is shown, so that each fills about
+    /// three quarters of its lane (or of the graticule, in Overlay). Channels step to the V/div that holds their
+    /// signal, references and math channels likewise. The time base, the trigger and what is on stay as they are.
+    pub(super) fn fit_all_lanes(&mut self) {
+        self.workspace.popup = None;
+        let range = |v: &[f32]| {
+            let (lo, hi) = v.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+            (hi >= lo).then_some((lo, hi))
+        };
+        let mut fitted = 0;
+        // channels: from the record on screen
+        let spans: Vec<Option<(f32, f32)>> = (0..n_ch()).map(|c| {
+            if !self.m.ch[c].on || self.record_mode() { return None; }
+            self.last[0].as_ref().and_then(|r| r.ch.get(c)).and_then(|v| range(v))
+        }).collect();
+        for (c, span) in spans.into_iter().enumerate() {
+            let Some((lo, hi)) = span else { continue };
+            let ch = &mut self.m.ch[c];
+            let want = ((hi - lo) / 6.0).max(1e-6);
+            ch.vfine = 1.0;
+            ch.vscale = (0..VSCALES.len()).find(|&i| VSCALES[i] * ch.probe >= want).unwrap_or(VSCALES.len() - 1);
+            // the position on half a division, so the lane's labels are round values
+            let half = ch.volts_per_div() / 2.0;
+            ch.offset = -(((hi + lo) / 2.0) / half).round() * half;
+            fitted += 1;
+        }
+        self.m.clamp_offsets();
+        // references that are shown
+        for i in 0..NREF {
+            let Some(r) = self.refs[i].as_mut().filter(|r| r.on) else { continue };
+            let Some((lo, hi)) = range(&r.v) else { continue };
+            let want = ((hi - lo) / 6.0).max(1e-6);
+            r.vpd = VSCALES.iter().copied().find(|&x| x >= want).unwrap_or(VSCALES[VSCALES.len() - 1]);
+            let half = r.vpd / 2.0;
+            r.offset = -(((hi + lo) / 2.0) / half).round() * half;
+            fitted += 1;
+        }
+        // math channels that are shown
+        for k in 0..NMATH {
+            if self.m.math_shown(k) { self.math_fit(k); fitted += 1; }
+        }
+        if fitted == 0 { return self.toast("Fit all lanes: nothing is shown"); }
+        self.settings_changed();
+        self.clear_measurement_statistics();
+        self.dirty_map = true;
+        self.relayout();
+        self.toast(&format!("Fitted {fitted} {}", if fitted == 1 { "source" } else { "sources" }));
+    }
+
     /// Turns a source on or off, as its row of the Sources menu does.
     pub(super) fn source_toggle(&mut self, id: WaveId) { self.workspace_action(Action::Source(id)); }
+    #[cfg(test)]
+    pub(super) fn workspace_stacked_flag(&self) -> bool { self.workspace.stacked }
     /// Stops the hold of the plot gesture. True when it had already opened its menu, which is closed with it.
     pub(super) fn workspace_cancel_hold(&mut self) -> bool {
         let opened = self.workspace.gesture.is_some_and(|gesture| gesture.held);

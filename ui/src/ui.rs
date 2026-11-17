@@ -3610,6 +3610,20 @@ impl Ui {
                     taken.push(Rect::new(a.x, y - 9, MARK_W + 2, 18));
                 }
             }
+            // what a lane has at its right edge: the corner buttons with their words, and the trigger tag with its value
+            let mut right_obstacles: Vec<Rect> = Vec::new();
+            if lanes {
+                if self.m.layout == Layout::Studio {
+                    for b in [self.full_btn().0, self.zoom_btn().0] { right_obstacles.push(Rect::new(b.x - 62, b.y - 2, b.w + 66, b.h + 4)); }
+                }
+                let ts = self.m.trig_src;
+                if self.m.trig_ref.is_none() && self.m.ch[ts].on && self.shows(ts) {
+                    let y = self.y_of_volts(ts, self.trig_level_shown()).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
+                    let x1 = self.trigger_tag_x(a.x + a.w - MARK_W, y);
+                    let left = x1 - 8 - f.sb.width(&si_short(self.trig_level_shown() as f64, self.m.unit(ts)));
+                    right_obstacles.push(Rect::new(left, y - 11, a.x + a.w - left, 22));
+                }
+            }
             // labels right at the left edge of the graticule, centred on their division line
             let x = a.x + 6;
             // a lane: the values of its top and bottom edge first (its full scale), then the centre, the quarters and
@@ -3623,8 +3637,20 @@ impl Ui {
                 let s = axis_label(v, vpd, offset, span, unit);
                 // an offset that is not on the steps of the scale (a fitted math channel) would spell every digit:
                 // three significant ones say as much
-                let s = if lanes && s.chars().count() > 9 { si_short(v as f64, unit) } else { s };
-                let r = Rect::new(x - 3, y + 4 - f.s.size, f.s.width(&s) + 6, f.s.size + 4);
+                let s = if s.chars().count() > 9 { si_short(v as f64, unit) } else { s };
+                let w = f.s.width(&s);
+                // a lane has its scale at the right edge; what already sits there (the corner buttons, the trigger tag)
+                // moves a label to its left instead of losing it
+                let mut x = if lanes { a.x + a.w - 6 - w } else { x };
+                let mut r = Rect::new(x - 3, y + 4 - f.s.size, w + 6, f.s.size + 4);
+                if lanes {
+                    for _ in 0..2 {
+                        if let Some(o) = right_obstacles.iter().find(|o| overlaps(**o, r)) {
+                            x = o.x - 6 - w;
+                            r = Rect::new(x - 3, y + 4 - f.s.size, w + 6, f.s.size + 4);
+                        }
+                    }
+                }
                 if taken.iter().any(|t| overlaps(*t, r)) {
                     continue;
                 }
@@ -4228,7 +4254,10 @@ impl Ui {
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
-                let r = Rect::new(self.area.x + self.area.w - 12 - f.s.width(label) - 16, self.area.y + 22 + 26 * row as i32, f.s.width(label) + 16, 20);
+                // (in lanes the right edge is the scale's: the label sits at the left, after the lane's badge)
+                let lanes = self.stacked() && self.wins.len() > 1;
+                let r = if lanes { Rect::new(self.area.x + 56, self.area.y + 4 + 22 * row as i32, f.s.width(label) + 16, 20) }
+                    else { Rect::new(self.area.x + self.area.w - 12 - f.s.width(label) - 16, self.area.y + 22 + 26 * row as i32, f.s.width(label) + 16, 20) };
                 cv.round(r, 4, rgb(0x1c, 0x16, 0x28), 230);
                 cv.text_in(&f.s, r, 1, label, MATH_COLORS[k % MATH_COLORS.len()]);
             }
