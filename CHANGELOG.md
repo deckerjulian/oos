@@ -69,6 +69,9 @@ Added:
     mean and sigma are those of the samples (they came from the brightness of picture rows and moved with the
     height of the lane: 1.09 V for 1.25 V in a third of the view);
   - the value of cursor X1 starts right of its tag (the tag covered the minus sign of a time before the trigger);
+  - the caption of a SIM or reference session ends before the word beside the corner button; the volts of the
+    Histogram view stand beside its axis, clear of the handle of the divider; "Generating ..." is an information
+    message, not a warning;
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it

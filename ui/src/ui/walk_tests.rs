@@ -1275,3 +1275,19 @@ fn a_note_is_added_from_the_hold_menu_and_stays_on_its_signal() {
         let _ = crate::store::write(&std::path::Path::new(&dir).join("callout.png"), &crate::store::png_of(&cv));
     }
 }
+
+/// Picture of the Studio SIM panel (`OOS_WALK=dir`).
+#[test]
+#[ignore]
+fn walk_sim_panel_picture() {
+    let Ok(dir) = std::env::var("OOS_WALK") else { return };
+    let mut u = fresh_live(Layout::Studio);
+    let b = u.studio_top();
+    tap(&mut u, b.simbtn.x + b.simbtn.w / 2, b.simbtn.y + b.simbtn.h / 2);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !u.sim_mode() && std::time::Instant::now() < end { u.step(0.04); u.wait_sim_generation(); }
+    for _ in 0..80 { u.step(0.04); u.wait_sim_generation(); }
+    let mut cv = Canvas::new(u.scr.w, u.scr.h);
+    u.render(&mut cv);
+    let _ = crate::store::write(&std::path::Path::new(&dir).join("sim-panel.png"), &crate::store::png_of(&cv));
+}

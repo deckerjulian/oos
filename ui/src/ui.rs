@@ -205,7 +205,7 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 /// Width of the marker strips at the left and right edge of the plot (the labels keep clear of them).
 const MARK_W: i32 = 26;
 /// Width of the volts axis of the histogram view.
-const HIST_AXIS_W: i32 = 46;
+const HIST_AXIS_W: i32 = 58;
 /// Height of the badge of a reference trace (name row, scale and rate row).
 const REF_BADGE_H: i32 = 40;
 /// Width of the measurement strip when it is docked on the left or the right.
@@ -4769,7 +4769,8 @@ impl Ui {
             let ty = (y + 4).clamp(a.y + 12, a.bottom() - 2);
             if ty < free + f.s.size { continue; }
             free = ty;
-            cv.text(&f.s, a.x + 2, ty, &s, AXIS_TEXT);
+            // beside the axis line, not at the edge of the view: the handle of the divider sits on that edge
+            cv.text(&f.s, (a.x + ax - 7 - f.s.width(&s)).max(a.x + 2), ty, &s, AXIS_TEXT);
         }
         // the count scale: nought at the axis, the largest bin at the end of the longest bar
         let top = a.y + (ly - 14).max(2);
@@ -5634,7 +5635,9 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_home().0.x - 16 - f.s.width(src), y, src, DIM);
+            // Studio writes "Full" or "Exit" left of the corner button: the caption ends before that word
+            let word = if self.m.layout == Layout::Studio { f.s.width("Full") + 10 } else { 0 };
+            backed_text(cv, &f.s, self.full_home().0.x - 16 - word - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         // a channel at the end of the ADC range: said in red, first on the line
@@ -6357,7 +6360,7 @@ impl Ui {
     /// A message that reports something done: it gets a tick, not the warning triangle.
     /// A message that only informs (nothing to clear, which view, a channel turned on): a neutral pill with an "i".
     pub(super) fn toast_is_info(s: &str) -> bool {
-        s == NOTHING_TO_CLEAR || s == "Views off" || s.ends_with(" turned on") || (s.starts_with("View ") && s.contains(" of "))
+        s == NOTHING_TO_CLEAR || s == "Views off" || s.ends_with(" turned on") || s.starts_with("Generating ") || (s.starts_with("View ") && s.contains(" of "))
     }
 
     pub(super) fn toast_is_success(s: &str) -> bool {
