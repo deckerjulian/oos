@@ -45,7 +45,9 @@ Debian or Ubuntu; other distributions need the same things. Run everything as yo
 
    You install no cross compiler yourself: the build container brings Ubuntu's `gcc-aarch64-linux-gnu`.
 
-4. **The source and the kernel archive.** The archive is too large for git; it is a file of each release, and `kernel/src/` is not in a clone:
+4. **The source and the kernel archive.** The archive is too large for git; it is a file of each release
+   ([kernel/README.md](https://github.com/dekajoule/oos/blob/main/kernel/README.md)), and `kernel/src/` is not in a
+   clone:
 
    ```sh
    git clone https://github.com/dekajoule/oos.git && cd oos
@@ -61,7 +63,11 @@ Debian or Ubuntu; other distributions need the same things. Run everything as yo
    boot/build-dev-image.sh       # the image, the update package and the USB file
    ```
 
-   The first build takes longest: the build containers are made, and on x86-64 wpa_supplicant and e2fsck are compiled under QEMU. They are built once.
+   The kernel builds in Docker in 5 to 30 minutes, depending on the machine, into `kernel/out/base`; you only build it
+   again when the kernel changes. The scripts say what is missing before they start: Docker not reachable, no rustup
+   or no target, no arm64 containers. The first build takes longest: the build containers are made, and on x86-64
+   wpa_supplicant and e2fsck are compiled under QEMU. They are built once. A finished build leaves the same files as on
+   macOS. To put the image on a second card from Linux, follow [[Installation]], with `/dev/sdX` for the card.
 
 ## On macOS
 
@@ -69,7 +75,22 @@ Docker Desktop, running, and Rust from rustup with `rustup target add aarch64-un
 
 ## Signing
 
-Update packages are signed. Without a key of your own the build uses the community key of the repository, which every OOS trusts; how to make your own: [README, step 4](https://github.com/dekajoule/oos#4-signing-key). **Only install packages from people you trust.**
+Update packages must be signed. To let everyone build updates for every OOS scope, the repository includes a **public
+community key**, `keys/community-signing.key`, and all builds trust it. You do not have to do anything: the build uses
+it automatically.
+
+The community key only protects against damaged packages. It says nothing about who built one, so **only install
+packages from people you trust.**
+
+If you want a scope to accept only your own builds, create your own key before you build:
+
+```sh
+cd fpgad && cargo run --release --bin oos-update -- keygen && cd ..
+```
+
+Replace all keys in `keys/update.pub` with the line it prints. The secret key is in
+`~/.config/oos/update-signing.key`. **Back it up and never publish it.** Details:
+[docs/update.md](https://github.com/dekajoule/oos/blob/main/docs/update.md).
 
 ## When it fails
 

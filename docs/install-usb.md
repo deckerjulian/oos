@@ -9,7 +9,7 @@ the dry run, the first install over the stock `recovery` (rescue set with the st
 read back, OOS selected, OOS started) and the run again on a card that already holds OOS ("already holds", OOS
 selected). The stock system of that unit is a modified one; an unmodified stock system has not run it yet.
 
-Compared with the card route (`README.md`, Installation):
+Compared with the card route ([wiki/Installation.md](../wiki/Installation.md#on-a-second-card)):
 
 | | USB stick | second card |
 |---|---|---|
@@ -26,7 +26,7 @@ This is why only models with the hardware of a model OOS has run on are accepted
 ## 1. Steps
 
 1. Download `DHO800_DHO900_OOS_Install.GEL` from the [release](https://github.com/dekajoule/oos/releases/latest) and check it
-   against `SHA256SUMS`, or build it (`README.md`, Installation, steps 3 to 5): it is in `boot/out/`.
+   against `SHA256SUMS`, or build it ([wiki/Building.md](../wiki/Building.md)): it is in `boot/out/`.
 2. A FAT32 USB stick with at least 200 MiB free. Copy the file to its top folder. The name has to end in `.GEL` and
    contain `DHO800_DHO900`, or the update ignores it. Keep the name.
 3. **Recommended, first a dry run:** an empty file `oos-dry-run.txt` on the stick runs all checks and saves the rescue set, without
@@ -45,7 +45,8 @@ the images), it is written: the stick updates OOS. An empty file `oos-reinstall.
 build in any case. A
 damaged OOS image in `recovery` (an update cut by a power loss) is replaced by the rollback image when that one is whole,
 else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
-start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
+start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist
+([wiki/Installation.md](../wiki/Installation.md#how-oos-starts)).
 
 ### Over ADB
 
@@ -157,7 +158,7 @@ Stock starts by itself after every OOS start in one-shot mode. In persist mode: 
 Putting the stock `recovery` back needs the card in a reader (`card-install.py restore`, with `OOS-rescue/recovery.bin`).
 There is no update file for this yet.
 
-If the scope shows only a black screen: `README.md`, If something goes wrong.
+If the scope shows only a black screen: [wiki/Troubleshooting.md](../wiki/Troubleshooting.md).
 
 ### The stock system does not see the stick
 
