@@ -41,6 +41,7 @@ the build on the unit, the kernel log, and where the generator reaches.
 | SCPI, web, VXI-11, MCP | remote |
 | storing, the logger | store |
 | `dsp/`, measurements, decoders | measure, decode |
+| the measurement code (`dsp/src/measure.rs`, the measurement paths of `ui/`) | measure, acquisition, roll, front end, generator, trigger |
 | other parts of `ui/`, `gpu/` | screen, remote |
 | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/`, the cold boot, `Cargo.toml`/`Cargo.lock`, the test tools themselves, a file no rule knows | everything |
 

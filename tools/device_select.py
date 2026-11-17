@@ -69,6 +69,10 @@ RULES = (
     (r"^fpgad/", ("registers",)),
     # the board runs every acquisition: what it sets up and what it reads back
     (r"^ui/src/board/", ("acq", "roll", "trigger", "frontend", "registers")),
+    # the measurement code: nearly every test of a1 reads its answer through a measurement (#118 was found by the
+    # time axis test, through FREQ)
+    (r"^dsp/src/measure\.rs$|^ui/src/(framestats|ui/analysis|ui/measure_own|ui/tools|ui/facts)\.rs$",
+     ("measure", "acq", "roll", "frontend", "generator", "trigger")),
     (r"^ui/src/(scpi|vxi|hislip|http|mcp|net|mdns|announce|ssh|web)", ("remote",)),
     (r"^ui/src/(store|compress|logger)", ("store",)),
     (r"^ui/src/(measures|meas)", ("measure",)),
