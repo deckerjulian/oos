@@ -46,6 +46,9 @@ does not see timing, calibrated values, or what the hardware does.
   - `unit`: it touches nothing that is only proven on a scope (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`,
     `fpgad/`, `boot/`, `kernel/`, `rootfs/`); or it carries the label `unit-tested`, which the maintainer sets after
     trying it on a unit.
+- **A fourth status, `review`** (added on 2026-11-17, after the first automatic reviews): GitHub Copilot has
+  reviewed the pull request and left no open issue, or every thread it opened is resolved. A draft has no review
+  yet. Shown, not required, until the first reviews have shown how often a comment is right.
 - **The label `hold`** stops any pull request: `owner` stays pending while it is set. The maintainer sets it, also
   on the maintainer's own pull requests, to look before something is merged by itself.
 - **These three, `test` and `compare` become required checks of main.** A pull request is merged when all five have
