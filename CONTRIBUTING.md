@@ -92,7 +92,13 @@ The same way for everyone, the maintainer included
 - **Before you start something larger, open an issue** (or comment on an existing one) and say what you take. One issue
   per piece of work avoids two people building the same thing.
 - **Issues are the to-do list.** Reports from the forum or elsewhere become issues, so they are found and closed in one
-  place; the label says what kind they are (bug, hardware report, feature, process).
+  place.
+- **Labels say what a thing is**, on issues and pull requests alike: its kind (`type/fix`, `type/feat`, `type/docs`,
+  `type/test`, `type/ci`, `type/build`, `type/refactor`, `type/process`), the part of OOS (`area/hal`, `area/ui`,
+  `area/dsp`, `area/fpgad`, `area/boot`, `area/gpu`, `area/tooling`, `area/ci`, `area/docs`), `agent` for what a bot
+  opened, and `risk/hardware` for what is only proven on a scope. A pull request gets its areas, `agent` and
+  `risk/hardware` by itself (`tools/pr-labels.sh`), and its type when its title starts with `CI:`, `Docs:`, `Tests:`,
+  `Process:` or `Build:`.
 - **Draft pull requests are welcome early.** A draft shows where you are going before it is done and lets others plan
   around it.
 - **Say which area you work on** in the pull request title (`Trigger:`, `SCPI:`, `Docs:`), as in the commit subjects;

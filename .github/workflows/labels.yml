@@ -1,0 +1,31 @@
+# Sets the labels a pull request gets by itself (tools/pr-labels.sh): its areas by the paths it changes, its type by
+# its title, `agent` for a bot's, `risk/hardware` for what is only proven on a scope. Labels are only added.
+#
+# This workflow runs the script as it is on main, never code of the pull request: `pull_request_target` checks out
+# the base. Its token reads the repository and writes labels, nothing else.
+name: Labels
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+concurrency:
+  group: labels-${{ github.event.pull_request.number }}
+jobs:
+  labels:
+    if: github.repository == 'dekajoule/oos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: Labels by path, title and author (tools/pr-labels.sh)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: tools/pr-labels.sh "$PR"
