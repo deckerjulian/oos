@@ -27,7 +27,7 @@
 <tr><td>VXI-11</td><td>111 (portmapper)</td><td>On the scope only, partial implementation. A read issued while a reply is still pending returns a timeout immediately; prefer the socket or HiSLIP.</td></tr>
 <tr><td>HTTP <code>POST /mcp</code></td><td>Web port (8080)</td><td>JSON-RPC tool <code>scpi</code> for AI agents (Model Context Protocol). Not a VISA interface. It cannot wait for <code>*OPC?</code>.</td></tr>
 </tbody></table>
-<p>The interfaces have no authentication. Operate the instrument on a trusted bench network only.</p>
+<p>The interfaces have no authentication. Operate the instrument on a trusted bench network only. The services can be switched off under System &gt; Remote services, or with the <code>:SYSTem:REMote:SERVice</code> commands.</p>
 <div class="note"><b>Windows desktop app.</b> By default the desktop application listens on this PC only (127.0.0.1). Start it with <code>--lan</code> to accept connections from other computers. The ports can be changed with <code>--scpi-port</code>, <code>--hislip-port</code> and <code>--web-port</code>.</div>
 
 <h2 id="ov-connect"><span class="num">2.2</span>Connecting</h2>
@@ -51,6 +51,7 @@ print(scope.query('*IDN?'))</pre>
 <ul>
 <li><b>Keywords</b> are case-insensitive. Use either the complete long form or the short form. Intermediate abbreviations (<code>:TRIGG</code>) are not accepted.</li>
 <li><b>Several commands</b> may be sent on one line separated by <code>;</code>. Each must have its complete header starting with <code>:</code>; relative headers after a semicolon are not supported. Send one query per line when its reply itself contains semicolons.</li>
+<li><b>Binary arguments:</b> a definite-length block (<code>#&lt;N&gt;&lt;length&gt;&lt;data&gt;</code>, section 2.7) that follows a space or comma is taken whole; semicolons and line feeds inside it do not split the message.</li>
 <li><b>Termination:</b> every program message ends with line feed. Carriage return also ends a message, so CR LF works as well.</li>
 <li><b>Setters do not reply.</b> Their errors are placed in the error queue (section 2.6). A query always replies, even when it fails, so that a client never waits forever on a wrong query.</li>
 </ul>
