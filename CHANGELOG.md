@@ -30,6 +30,10 @@ Changed:
 
 Fixed:
 
+- An update with another device tree starts by kexec again (unit). The update copied the loader's random
+  `/chosen/kaslr-seed` into the new tree, and kexec-tools refuses a seed that is not 0, so the update stopped at its
+  kexec start with nothing installed. The seed now goes in as 0, and kexec-tools puts in a new random one. A scope
+  whose running build still has the old updater runs the fixed `oos-update` from `/tmp` once to take such an update.
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.
