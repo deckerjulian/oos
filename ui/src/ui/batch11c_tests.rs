@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 11 (part three): the zoom gestures of Studio (overview strip against the zoomed waveform), the height of the
 //! overview strip, the cursor readout at a zero distance, and the extra sources in the "+ CH" popup.
 use super::studio::{PickAdd, StudioView};

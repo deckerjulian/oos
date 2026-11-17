@@ -7,6 +7,15 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- Minimal and Studio (host-tested, not yet verified on hardware):
+  - a tap on a measurement badge draws what it measures on its lane (Area and Cycle area shaded, levels as lines,
+    spans as arrows); the next tap opens its menu;
+  - plot menu > **Fit all lanes** sets V/div and position of every shown channel, reference and math channel;
+  - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
+    `:CHANnel<n>:CLIPping?` answers 1 or 0;
+  - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it
+    off; the SIM panel has **Add** beside Play, so several simulated signals play together;
+  - System > About and System info show the commit the binary was built from.
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:
@@ -17,6 +26,15 @@ Added:
 
 Changed:
 
+- Minimal opens the settings sheets of Studio for every menu; the stock layout keeps the stock dialogs. Every
+  remaining dialog of Studio is a sheet too (host-tested).
+- The top bars of Minimal and Studio no longer repeat front-panel keys: Measure, Cursor, Autoset, Clear and Force
+  are on their keys and in the Menu.
+- Studio lanes: a solid line between lanes, a bar in the source's colour at the left, and each lane's scale at its
+  right edge (top and bottom value always). Overlay traces works in Studio and is kept with the setup.
+- A measurement is pinned from the moment it is added. Measurement cards are three lines and as many columns as
+  fit; the measurement tables size their columns to what they hold.
+- Every top bar shows the rate and length of the record on screen (the demo's real record, not the nominal depth).
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.
@@ -34,6 +52,10 @@ Fixed:
   `/chosen/kaslr-seed` into the new tree, and kexec-tools refuses a seed that is not 0, so the update stopped at its
   kexec start with nothing installed. The seed now goes in as 0, and kexec-tools puts in a new random one. A scope
   whose running build still has the old updater runs the fixed `oos-update` from `/tmp` once to take such an update.
+- Two fingers never open the long-press menu: a pinch that rested for half a second opened it mid-gesture.
+- Stacked lanes: the logic analyser keeps its own strip instead of drawing over the first lane.
+- The measurement band has no row of its own for page controls, and its names no longer run into the source.
+- A vertical drag in the lane of a math channel moves it.
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.

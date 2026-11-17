@@ -16,6 +16,7 @@ const CTX_HEAD: i32 = 26;
 pub(super) enum CtxRow {
     Overlay,
     Stacked,
+    FitLanes,
     Fit,
     ZoomHere,
     ZoomBox,
@@ -65,7 +66,7 @@ impl Ui {
     /// The groups of rows, the group of a lane naming it.
     fn ctx_groups(&self, lane: Option<WaveId>) -> Vec<Vec<(CtxRow, String)>> {
         let name = |id: WaveId| self.wave_name(id);
-        let mut view = vec![(CtxRow::Overlay, "Overlay traces".to_string()), (CtxRow::Stacked, "Stacked traces".to_string()), (CtxRow::Fit, "Fit record".to_string()), (CtxRow::ZoomHere, "Zoom here".to_string()), (CtxRow::ZoomBox, "Zoom box".to_string())];
+        let mut view = vec![(CtxRow::Overlay, "Overlay traces".to_string()), (CtxRow::Stacked, "Stacked traces".to_string()), (CtxRow::FitLanes, "Fit all lanes".to_string()), (CtxRow::Fit, "Fit record".to_string()), (CtxRow::ZoomHere, "Zoom here".to_string()), (CtxRow::ZoomBox, "Zoom box".to_string())];
         if self.m.zoom {
             view.push((CtxRow::ZoomReset, "Reset zoom".to_string()));
             view.push((CtxRow::ZoomClose, "Close zoom".to_string()));
@@ -122,6 +123,7 @@ impl Ui {
             CtxRow::Overlay => { cv.line(cx - 7, cy + 3, cx, cy - 4, c); cv.line(cx, cy - 4, cx + 7, cy + 3, c); cv.line(cx - 7, cy - 1, cx, cy + 5, c); }
             CtxRow::Stacked => { cv.hline(cx - 7, cx + 7, cy - 4, c); cv.hline(cx - 7, cx + 7, cy, c); cv.hline(cx - 7, cx + 7, cy + 4, c); }
             CtxRow::Fit => icon_expand(cv, cx, cy, c),
+            CtxRow::FitLanes => { cv.vline(cx, cy - 7, cy + 7, c); for d in [-1, 1] { cv.line(cx, cy + 7 * d, cx - 4, cy + 3 * d, c); cv.line(cx, cy + 7 * d, cx + 4, cy + 3 * d, c); } }
             CtxRow::ZoomHere | CtxRow::ZoomReset => { cv.circle(cx - 2, cy - 2, 5, c); cv.circle(cx - 2, cy - 2, 3, BAR); cv.line(cx + 2, cy + 2, cx + 7, cy + 7, c); }
             CtxRow::ZoomBox => { cv.round_outline(Rect::new(cx - 7, cy - 5, 14, 10), 1, c); cv.fill(Rect::new(cx - 7, cy - 5, 4, 2), c); }
             CtxRow::ZoomClose => { cv.line(cx - 5, cy - 5, cx + 5, cy + 5, c); cv.line(cx - 5, cy + 5, cx + 5, cy - 5, c); }
@@ -185,6 +187,7 @@ impl Ui {
             CtxRow::Overlay => self.workspace_action(Action::Overlay),
             CtxRow::Stacked => self.workspace_action(Action::Stacked),
             CtxRow::Fit => self.workspace_action(Action::FitRecord),
+            CtxRow::FitLanes => self.fit_all_lanes(),
             CtxRow::ZoomHere => {
                 // the zoom window goes to the time under the finger
                 let a = self.area;

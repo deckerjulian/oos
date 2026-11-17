@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 18: the UX review of Studio. One test per item that can be tested. OOS_SHOTS=<dir> writes pictures (b18-*).
 use super::dock::VKind;
 #[allow(unused_imports)] use super::meascatalog::Cat;

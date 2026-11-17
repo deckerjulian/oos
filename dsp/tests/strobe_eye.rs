@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! DDR strobe eye: DQ folded on DQS that runs in bursts, each burst at its own phase, idling at mid-level between
 //! bursts (a differential strobe with both legs parked low), as an LPDDR write capture looks.
 

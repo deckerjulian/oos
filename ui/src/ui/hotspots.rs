@@ -1,4 +1,4 @@
-// SPDX-License-Identifie: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! What a finger can tap on the plot besides the traces: the trigger marker, the cursor tags, the channel markers and the
 //! traces and lanes themselves. One list for every layout, each with a hit area of at least 40 px (`Ui::hit40`).
 use super::*;

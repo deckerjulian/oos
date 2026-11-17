@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 23: Autoset, Clear and Force and the Display and Storage buttons in the Studio top bar, SIM split into "Add to
 //! ref" and the simulation mode, the detail line of the channel pills, and the swipe down that turns a pill off or
 //! removes a badge. OOS_SHOTS=<dir> writes pictures (b23-*).

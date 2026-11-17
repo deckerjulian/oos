@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 31: the findings of the function check that were left. Eye PLL bandwidth (an allocation that never ended), the
 //! last steppers without a limit, a limit that does not give the value back, fixed limits, defaults off the ladder,
 //! the direction of the amplitude cursors, a spectrum from Auto, labels that did not follow, a cursor source that moved
