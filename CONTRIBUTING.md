@@ -103,6 +103,9 @@ The same way for everyone, the maintainer included
   and three statuses: `waited` (the waiting time is over), `owner` (it is the maintainer's, or the maintainer approved
   its newest commit) and `unit` (it changes nothing that is only proven on a scope, or it was tried on one). A pull
   request from a fork needs the maintainer's approval and is merged by the maintainer.
+- No waiting time for a pull request that only corrects documents, or that says `Behaviour: unchanged` and whose
+  comparison with the base found nothing, outside the hardware paths, the pipeline, the tools and the rules. The
+  label `hold` stops any pull request.
 - The pull request opened first is merged first when two touch the same code; the later one is rebased. Allow edits by
   maintainers on your pull request and the rebase is done for you.
 - Large changes that do not change behaviour (formatting, moves) are announced in an issue with their day, and wait
