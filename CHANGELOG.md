@@ -9,6 +9,9 @@ Added:
 
 - `tools/plan-matrix.sh` also covers averaging, the logic analyser, roll and scan, the generator, LA thresholds, the
   cold-boot dry run and the PLL table of another clock.
+- `oos-fpgad made-up-cal DIR` writes a made-up calibration set: every calibration file the register sequences read,
+  with invented values that mean nothing for a scope. `tools/compare-base.sh` uses it when there are no files of a
+  unit, so CI now also compares the register values that calibration changes.
 - `tools/device-deploy.sh` deploys over SSH too (`OOS_SHELL=ssh`) and checks every uploaded file with SHA-256
   (unit, over telnet); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.

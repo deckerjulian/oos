@@ -831,7 +831,10 @@ scope to `local/cal-full` and `local/cal` (the folder `local/` stays out of git)
 them.
 
 `tools/plan-matrix.sh` prints the register sequences of a fixed set of acquisitions without touching the hardware. Run
-it with two builds and compare the output to prove that a change leaves the analog path alone.
+it with two builds and compare the output to prove that a change leaves the analog path alone. Without the files of a
+unit, `oos-fpgad made-up-cal DIR` writes a made-up calibration set for it (`OOS_CAL_DIR=DIR`): invented values that
+mean nothing for a scope, enough to see that a change moves a calibrated register value
+([self-cal.md 16](docs/protocols/self-cal.md)).
 
 The test `every_menu_fits` walks all menus and fails on text wider than its control or a dialog off the screen.
 `OOS_GALLERY=<dir> cargo test gallery -- --ignored` in `ui/` writes every screen as a picture.
