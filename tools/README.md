@@ -11,6 +11,9 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); needs the calibration files (`OOS_CAL_DIR=local/cal`) |
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |
 | `agent-paths.sh` | no | reads file names and prints those a standing agent must not change (ADR 0034); CI runs it for pull requests from `copilot/` branches |
+| `agent-target.py` | no | the next task of the cleaner, chosen by counting: the lint with the most findings in the crate closest to clean, else one part out of the largest file (ADR 0034) |
+| `agent-start.sh AGENT FILE` | no; GitHub only (an issue) | gives a standing agent one task: an issue assigned to Copilot's cloud agent with a profile of `.github/agents`; needs a token of the maintainer |
+| `scout.py [--print]` | no; reads the forum and GitHub | lists new replies of the forum thread and new work of the fork in one issue with the label `scout`; no model |
 | `scpi_validate.py --web-port 18080` | no; a desktop build on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `sim_validate.py --web-port 18080` | no; a desktop build on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `tests/` | no | the tests of the Python host tools, run by `check.sh test` |

@@ -59,12 +59,13 @@ there. These instructions are the same for every agent and every person; the rea
 
 ## Standing agents
 
-Three agents work without being asked, each from a profile in `.github/agents`: `code-steward` (one improvement of
-the code per run), `docs-steward` (README, `docs/`, wiki pages, changelog and diagrams against the code) and
-`forum-scout` (reports from the forum into `docs/forum-intake.md`). Everything above holds for them, and more: one
-topic and about 400 changed lines at most, no change to `.github/`, this file, `docs/adr/`, the check scripts,
-`boot/`, `kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull
-requests and never merge (ADR 0034).
+Two agents work without being asked, each from a profile in `.github/agents`, and neither chooses its own work: the
+task is in the issue that starts it. `cleaner` does one piece of mechanical clean-up that changes no behaviour (the
+findings of one lint, dead code, one part out of a file that is too large). `docs-follower` brings the texts in line
+with one merged change. Everything above holds for them, and more: one task and about 400 changed lines at most, no
+fix and no feature on the side, no change to `.github/`, this file, `docs/adr/`, the check scripts, `boot/`,
+`kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull requests and
+never merge (ADR 0034).
 
 ## Layout of the tree
 

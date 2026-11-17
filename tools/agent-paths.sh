@@ -11,7 +11,9 @@ while IFS= read -r f; do
 	case $f in
 	docs/adr/README.md) ;;
 	.github/* | AGENTS.md | CLAUDE.md | docs/adr/* | LICENSE | THIRD-PARTY-LICENSES.md | \
-		tools/check.sh | tools/agent-paths.sh | tools/compare-base.sh | tools/plan-matrix.sh | \
+		tools/check.sh | tools/agent-paths.sh | tools/agent-target.py | tools/agent-start.sh | tools/scout.py | \
+		tools/pr-gate.sh | tools/pr-labels.sh | tools/ratchet.sh | tools/privacy-allow.txt | \
+		tools/compare-base.sh | tools/plan-matrix.sh | \
 		ui/tools/layout-check.sh | boot/* | kernel/* | rootfs/* | hal/src/dho/*)
 		echo "$f"
 		bad=1
