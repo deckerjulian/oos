@@ -222,14 +222,11 @@ impl Ui {
         let Some(request) = request else { return };
         let mut worker = self.azr.ref_measure_worker.borrow_mut();
         let worker = worker.get_or_insert_with(RefMeasureWorker::open);
-        if worker.busy {
+        if worker.busy() {
             return;
         }
         let Some(job) = self.own_job(request.key) else { return };
-        if worker.input.try_send(job).is_ok() {
-            worker.busy = true;
-            worker.submitted += 1;
-        }
+        worker.submit(job);
     }
 
     pub(super) fn commit_own_measurement(&self, result: RefMeasureResult) -> bool {

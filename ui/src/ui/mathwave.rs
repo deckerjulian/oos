@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Timed, cached math over acquired, stored and earlier math waveforms.
+use super::worker::Worker;
 use super::*;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    sync::{mpsc, Arc},
+    sync::Arc,
 };
 
 const BACKGROUND: usize = 262_144;
@@ -30,18 +31,13 @@ struct Answer {
     key: u64,
     signal: Result<Arc<Signal>, &'static str>,
 }
-struct Worker {
-    tx: mpsc::SyncSender<Job>,
-    rx: mpsc::Receiver<Answer>,
-    busy: bool,
-}
 /// A math channel's last result and the key it was computed for.
 type Cached = Option<(u64, Result<Arc<Signal>, &'static str>)>;
 
 #[derive(Default)]
 pub(super) struct State {
     cache: [Cached; NMATH],
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, Answer>>,
     /// (operation, source A, source B, scale) of each channel at the last tick, and which channels wait to be refitted
     sig: [Option<(String, usize, usize, usize)>; NMATH],
     fit_pending: [bool; NMATH],
@@ -54,23 +50,13 @@ impl State {
     }
 }
 
-impl Worker {
-    fn new() -> Self {
-        let (tx, input) = mpsc::sync_channel::<Job>(1);
-        let (output, rx) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("waveform-math".into())
-            .spawn(move || {
-                while let Ok(job) = input.recv() {
-                    let answer = Answer { slot: job.slot, key: job.key, signal: compute_job(&job).map(Arc::new) };
-                    if output.send(answer).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start bounded math worker");
-        Self { tx, rx, busy: false }
-    }
+fn open_worker() -> Worker<Job, Answer> {
+    Worker::spawn("waveform-math", |job: Job| Answer {
+        slot: job.slot,
+        key: job.key,
+        signal: compute_job(&job).map(Arc::new),
+    })
+    .expect("start bounded math worker")
 }
 
 /// Sample only within the source's physical record. Never extrapolate a rail.
@@ -333,8 +319,7 @@ impl Ui {
         {
             let mut state = self.math_state.borrow_mut();
             if let Some(worker) = &mut state.worker {
-                if let Ok(answer) = worker.rx.try_recv() {
-                    worker.busy = false;
+                if let Ok(answer) = worker.poll() {
                     state.cache[answer.slot] = Some((answer.key, answer.signal));
                 }
             }
@@ -343,7 +328,7 @@ impl Ui {
                     return value.clone().map(Some);
                 }
             }
-            if state.worker.as_ref().is_some_and(|w| w.busy) {
+            if state.worker.as_ref().is_some_and(Worker::busy) {
                 return Ok(None);
             }
         }
@@ -361,10 +346,7 @@ impl Ui {
         let job = Job { slot: k, key, config: self.m.math_ch(k), expr: self.m.math_expr[k].clone(), inputs };
         if large {
             let mut state = self.math_state.borrow_mut();
-            let worker = state.worker.get_or_insert_with(Worker::new);
-            if worker.tx.try_send(job).is_ok() {
-                worker.busy = true;
-            }
+            let _ = state.worker.get_or_insert_with(open_worker).submit(job);
             return Ok(None);
         }
         let signal = compute_job(&job).map(Arc::new);

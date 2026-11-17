@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Full-record reference trigger hits shared by Search and replay acquisition.
+use super::worker::Worker;
 use super::*;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 const BACKGROUND_POINTS: usize = 262_144;
 
@@ -91,28 +92,8 @@ struct ResultSet {
     key: String,
     times: Arc<Vec<f64>>,
 }
-struct Worker {
-    input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<ResultSet>,
-    busy: bool,
-}
-
-impl Worker {
-    fn open() -> Self {
-        let (input, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("reference-search".into())
-            .spawn(move || {
-                while let Ok(job) = requests.recv() {
-                    if results.send(job.run()).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start bounded reference search worker");
-        Self { input, output, busy: false }
-    }
+fn open_worker() -> Worker<Job, ResultSet> {
+    Worker::spawn("reference-search", Job::run).expect("start bounded reference search worker")
 }
 
 #[derive(Default)]
@@ -120,7 +101,7 @@ pub(super) struct Cache {
     key: String,
     requested_key: String,
     times: Option<Arc<Vec<f64>>>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, ResultSet>>,
     scans: usize,
 }
 
@@ -240,8 +221,7 @@ impl Ui {
             return self.decode_busy();
         }
         let cache = self.azr.reference_search.borrow();
-        cache.worker.as_ref().is_some_and(|worker| worker.busy)
-            && (cache.key != cache.requested_key || cache.times.is_none())
+        cache.worker.as_ref().is_some_and(Worker::busy) && (cache.key != cache.requested_key || cache.times.is_none())
     }
 
     /// Times are absolute record times, never viewport-relative sample indices.
@@ -268,11 +248,7 @@ impl Ui {
         if cache.requested_key != key {
             cache.requested_key = key.clone();
         }
-        let completed = cache.worker.as_mut().and_then(|worker| {
-            worker.output.try_recv().ok().inspect(|_result| {
-                worker.busy = false;
-            })
-        });
+        let completed = cache.worker.as_mut().and_then(|worker| worker.poll().ok());
         if let Some(result) = completed {
             if result.key == key {
                 cache.key = result.key;
@@ -282,7 +258,7 @@ impl Ui {
         if cache.key == key {
             return cache.times.as_ref().map(Arc::clone);
         }
-        if cache.worker.as_ref().is_some_and(|worker| worker.busy) {
+        if cache.worker.as_ref().is_some_and(Worker::busy) {
             return None;
         }
         let auxiliary = if paired {
@@ -308,10 +284,7 @@ impl Ui {
         };
         cache.scans += 1;
         if r.v.len() > BACKGROUND_POINTS {
-            let worker = cache.worker.get_or_insert_with(Worker::open);
-            if worker.input.try_send(job).is_ok() {
-                worker.busy = true;
-            }
+            let _ = cache.worker.get_or_insert_with(open_worker).submit(job);
             None
         } else {
             let result = job.run();
