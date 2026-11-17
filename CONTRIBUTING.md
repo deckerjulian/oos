@@ -104,8 +104,10 @@ The same way for everyone, the maintainer included
   [ADR 0039](docs/adr/process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md)): `test` and
   `compare` from CI, and four statuses: `waited` (the waiting time is over), `owner` (it is the maintainer's or the
   development agent's, or the maintainer approved its newest commit), `unit` (it changes nothing that is only proven
-  on a scope, it was tried on one, or the programs for the scope are byte-identical to the base's) and `review` (GitHub Copilot reviewed it and its comments are answered). A pull
-  request from a fork needs the maintainer's approval and is merged by the maintainer.
+  on a scope, it was tried on one, the programs for the scope are byte-identical to the base's, or it is a
+  refactoring of register-sequence code the comparison found equal) and `review` (GitHub Copilot reviewed it and
+  its comments are answered). A pull request from a fork needs the maintainer's approval and is merged by the
+  maintainer.
 - No waiting time for a pull request that only corrects documents, or that says `Behaviour: unchanged` and whose
   comparison with the base found nothing, outside the hardware paths, the pipeline, the tools and the rules. The
   label `hold` stops any pull request.

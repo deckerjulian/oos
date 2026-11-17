@@ -178,7 +178,17 @@ jobs:
             { echo; python3 -I tools/code-size.py ui/target/compare-base/tree .; } >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "differs=$rc" >> "$GITHUB_OUTPUT"
+          # whether the register sequences were compared with calibration values (ADR 0042 counts on it)
+          if grep -Eq '^- Register sequences: .*\(with ' ui/target/compare-base/summary.md 2>/dev/null; then
+            echo "calibrated=1" >> "$GITHUB_OUTPUT"
+          fi
           [ "$rc" -le 1 ]
+      - name: Keep the sign that the calibrated register sequences were compared
+        if: steps.compare.outputs.calibrated == '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compare-calibrated
+          path: ui/target/compare-base/summary.md
       - name: Keep what differs
         if: steps.compare.outputs.differs == '1'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
