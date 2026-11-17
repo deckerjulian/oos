@@ -55,6 +55,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | proposed |
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | proposed |
 | [0036](process/0036-the-rules-of-the-repository-are-files-a-change-by-others-needs-the-maintainers-review.md) | process | The rules of the repository are files in the tree; a change by anyone else needs the maintainer's review | proposed |
+| [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | proposed |
 
 ## Reading order for agents
 

@@ -82,6 +82,10 @@ The same way for everyone, the maintainer included
   Fixes for a red main, security fixes and documentation corrections can go in as soon as CI is green.
 - A decision record comes in as `proposed` and stays open at least 72 hours for discussion before it is merged as
   `accepted` or `rejected`.
+- Every pull request shows three statuses ([ADR 0038](docs/adr/process/0038-auto-merge-for-the-maintainer-and-the-bots.md)):
+  `waited` (the waiting time is over), `owner` (it is the maintainer's, or the maintainer approved it) and `unit`
+  (it changes nothing that is only proven on a scope, or it was tried on one). A pull request from a fork needs the
+  maintainer's approval and is merged by the maintainer.
 - The pull request opened first is merged first when two touch the same code; the later one is rebased. Allow edits by
   maintainers on your pull request and the rebase is done for you.
 - Large changes that do not change behaviour (formatting, moves) are announced in an issue with their day, and wait
