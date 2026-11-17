@@ -79,7 +79,7 @@ jobs:
             ui/target/compare-base/pictures.txt
             ui/target/compare-base/registers.diff
             ui/target/compare-base/differing
-      - name: A pull request that says "Behaviour: unchanged" changes nothing
+      - name: A pull request that says it leaves behaviour unchanged changes nothing
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
