@@ -1,6 +1,7 @@
 **OOS**
 
 - [[Home]]
+- [[Features]]
 - [[Installation]]
 - [[First Steps]]
 - [[Measurements and Analysers]]
