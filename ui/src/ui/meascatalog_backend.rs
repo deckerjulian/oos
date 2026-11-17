@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Bounded catalog jobs over immutable sources; no waveform DSP on the render thread.
 use super::*;
+use crate::ui::worker::Worker;
 use std::{
     collections::VecDeque,
-    sync::{mpsc, Arc, Weak},
+    sync::{Arc, Weak},
 };
 
 type Row = (u16, WaveId, WaveId, WaveId, WaveId);
@@ -110,33 +111,13 @@ struct Finished {
     capture: u64,
     stats_epoch: u64,
 }
-struct Worker {
-    send: mpsc::SyncSender<Job>,
-    receive: mpsc::Receiver<Finished>,
-    busy: bool,
-    submitted: usize,
-}
-impl Worker {
-    fn new() -> Self {
-        let (send, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, receive) = mpsc::sync_channel(1);
-        std::thread::Builder::new()
-            .name("catalog-measurements".into())
-            .spawn(move || {
-                while let Ok(job) = requests.recv() {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job)))
-                        .unwrap_or(Err("Catalog analysis failed"));
-                    if results
-                        .send(Finished { key: job.key, result, capture: job.capture, stats_epoch: job.stats_epoch })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
-            .expect("start catalog worker");
-        Self { send, receive, busy: false, submitted: 0 }
-    }
+fn open_worker() -> Worker<Job, Finished> {
+    Worker::spawn("catalog-measurements", |job: Job| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job)))
+            .unwrap_or(Err("Catalog analysis failed"));
+        Finished { key: job.key, result, capture: job.capture, stats_epoch: job.stats_epoch }
+    })
+    .expect("start catalog worker")
 }
 #[derive(Default)]
 pub(in crate::ui) struct State {
@@ -144,7 +125,8 @@ pub(in crate::ui) struct State {
     next_version: u64,
     cache: VecDeque<Finished>,
     pending: VecDeque<(Key, Row)>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, Finished>>,
+    submitted: usize,
     stats_epoch: u64,
     stats: Vec<(Row, u64, Key, u64)>,
     small: Vec<Small>,
@@ -337,12 +319,12 @@ impl Ui {
             }
         }
         let stats_epoch = state.stats_epoch;
-        let worker = state.worker.get_or_insert_with(Worker::new);
-        if !worker.busy {
+        let state = &mut *state;
+        let worker = state.worker.get_or_insert_with(open_worker);
+        if !worker.busy() {
             let job = Job { key, row: tuple, inputs, model: self.m.clone(), capture: self.wfm_total, stats_epoch };
-            if worker.send.try_send(job).is_ok() {
-                worker.busy = true;
-                worker.submitted += 1;
+            if worker.submit(job).is_ok() {
+                state.submitted += 1;
             }
         }
         Reading { value: f64::NAN, computing: true, reason: None, quality }
@@ -371,11 +353,7 @@ impl Ui {
     pub(in crate::ui) fn poll_catalog_measurements(&mut self) {
         let finished = {
             let mut state = self.azr.catalog_measurements.borrow_mut();
-            state.worker.as_mut().and_then(|worker| {
-                worker.receive.try_recv().ok().inspect(|_answer| {
-                    worker.busy = false;
-                })
-            })
+            state.worker.as_mut().and_then(|worker| worker.poll().ok())
         };
         let mut changed = false;
         if let Some(answer) = finished {
@@ -597,17 +575,13 @@ mod tests {
                 row(tile(measures::jitter::TIE)).4,
             );
         }
-        assert_eq!(
-            ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted,
-            1,
-            "100 reads queue one job"
-        );
+        assert_eq!(ui.azr.catalog_measurements.borrow().submitted, 1, "100 reads queue one job");
         assert!(Arc::strong_count(&ui.refs[0].as_ref().unwrap().v) >= 2, "worker must hold the same immutable source");
         let height = wait(&mut ui, tile(measures::jitter::EYE_HEIGHT));
         assert!(height.value.is_finite());
         assert!(height.quality.contains("NRZ"));
         assert!(wait(&mut ui, tile(measures::jitter::TIE)).value.is_finite());
-        assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
+        assert_eq!(ui.azr.catalog_measurements.borrow().submitted, 1);
         assert_eq!((ui.wfm_total, ui.replay.captures, ui.m.run), (0, 0, RunState::Stop));
         assert!(ui.measurement_statistics_snapshot_for_test().iter().all(|(n, _)| *n == 0));
         ui.m.delay = 100.;
@@ -618,7 +592,7 @@ mod tests {
             )
             .computing
         );
-        assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
+        assert_eq!(ui.azr.catalog_measurements.borrow().submitted, 1);
     }
     #[test]
     fn replacing_unsampled_interior_data_discards_old_answer_and_has_unique_owner_version() {
@@ -764,7 +738,7 @@ mod tests {
         ui.m.eye_hp = false;
         assert_eq!(wait(&mut ui, tile(measures::jitter::DC_COMMON)).value, 3.25);
         assert_eq!(wait(&mut ui, tile(measures::jitter::AC_COMMON)).value, 4.5);
-        assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
+        assert_eq!(ui.azr.catalog_measurements.borrow().submitted, 1);
     }
 
     #[test]
@@ -777,21 +751,13 @@ mod tests {
         let _ = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
         ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
         // Hold a finished answer before UI delivery, then clear and reuse sequence1.
-        let answer = ui
-            .azr
-            .catalog_measurements
-            .borrow()
-            .worker
-            .as_ref()
-            .unwrap()
-            .receive
-            .recv_timeout(Duration::from_secs(20))
-            .unwrap();
+        let answer =
+            ui.azr.catalog_measurements.borrow_mut().worker.as_mut().unwrap().wait(Duration::from_secs(20)).unwrap();
         ui.clear_display();
         ui.wfm_total = 1;
         ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
-        let (send, receive) = mpsc::sync_channel(1);
-        ui.azr.catalog_measurements.borrow_mut().worker.as_mut().unwrap().receive = receive;
+        let (worker, _jobs, send) = Worker::manual();
+        ui.azr.catalog_measurements.borrow_mut().worker = Some(worker);
         assert!(send.send(answer).is_ok());
         ui.poll_catalog_measurements();
         assert_eq!(ui.catalog_reading(tile(measures::power::RIPPLE), ids).value, 2.0, "a valid value may still cache");

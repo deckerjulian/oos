@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Stored protocol inputs share their physical time coordinates with live inputs.
 //! One worker and a bounded result cache serve bands, tables, export and Search.
+use super::worker::Worker;
 use super::*;
 use oos_dsp::decode::Packet;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 const BACKGROUND_POINTS: usize = 262_144;
 const MAX_POINTS: usize = 32_000_000;
@@ -27,28 +28,9 @@ struct Finished {
     key: String,
     packets: Packets,
 }
-struct Worker {
-    input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<Finished>,
-    busy: bool,
-}
-impl Worker {
-    fn open() -> Self {
-        let (input, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::sync_channel(1);
-        std::thread::Builder::new()
-            .name("reference-decode".into())
-            .spawn(move || {
-                while let Ok(job) = requests.recv() {
-                    let finished = Finished { key: job.key.clone(), packets: job.run() };
-                    if results.send(finished).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start bounded reference decode worker");
-        Self { input, output, busy: false }
-    }
+fn open_worker() -> Worker<Job, Finished> {
+    Worker::spawn("reference-decode", |job: Job| Finished { key: job.key.clone(), packets: job.run() })
+        .expect("start bounded reference decode worker")
 }
 
 struct Entry {
@@ -59,7 +41,7 @@ struct Entry {
 #[derive(Default)]
 pub(super) struct Cache {
     entries: Vec<Entry>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, Finished>>,
     scans: usize,
 }
 impl Cache {
@@ -274,11 +256,7 @@ impl Ui {
         let key =
             if let Some(record) = candidate { self.decoder_candidate_key(m, record)? } else { self.decoder_key(m)? };
         let mut cache = self.azr.reference_decode.borrow_mut();
-        let finished = cache.worker.as_mut().and_then(|w| {
-            w.output.try_recv().ok().inspect(|_result| {
-                w.busy = false;
-            })
-        });
+        let finished = cache.worker.as_mut().and_then(|worker| worker.poll().ok());
         if let Some(result) = finished {
             // The worker survives imports. A completed old source/settings job
             // must never repopulate the current workspace's accepted results.
@@ -294,7 +272,7 @@ impl Ui {
         if let Some(entry) = cache.entries.iter().find(|entry| entry.key == key) {
             return entry.packets.clone();
         }
-        if cache.worker.as_ref().is_some_and(|worker| worker.busy) {
+        if cache.worker.as_ref().is_some_and(Worker::busy) {
             return Err(COMPUTING);
         }
         let ids = sources(m)?;
@@ -337,9 +315,7 @@ impl Ui {
         let job = Job { key: key.clone(), model: m.clone(), waves, hysteresis: 0.1 * vpd.max(1e-9) };
         cache.scans += 1;
         if large {
-            let worker = cache.worker.get_or_insert_with(Worker::open);
-            worker.input.try_send(job).map_err(|_| "Decode worker unavailable")?;
-            worker.busy = true;
+            cache.worker.get_or_insert_with(open_worker).submit(job).map_err(|_| "Decode worker unavailable")?;
             Err(COMPUTING)
         } else {
             let packets = job.run();
@@ -384,7 +360,7 @@ impl Ui {
                 let _ = self.reference_decode_packets(&model);
             }
         }
-        self.azr.reference_decode.borrow().worker.as_ref().is_some_and(|worker| worker.busy)
+        self.azr.reference_decode.borrow().worker.as_ref().is_some_and(Worker::busy)
     }
     pub fn decode_events_result(&self) -> Result<String, &'static str> {
         for k in 0..DECODERS {
@@ -656,7 +632,7 @@ mod tests {
         let cache = ui.azr.reference_decode.borrow();
         assert_eq!(cache.scans, 2);
         assert!(cache.worker.is_some());
-        assert!(!cache.worker.as_ref().unwrap().busy);
+        assert!(!cache.worker.as_ref().unwrap().busy());
         assert_eq!(cache.entries.len(), 1, "stale source result must not enter the accepted cache");
         drop(cache);
         assert!(Arc::ptr_eq(&packets, &wait(&ui)));

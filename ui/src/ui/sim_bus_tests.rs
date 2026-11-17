@@ -139,26 +139,15 @@ impl Accepted {
 }
 
 struct Held {
-    reply: Sender<(Request, Result<Generated, String>)>,
+    reply: mpsc::SyncSender<(Request, Result<Generated, String>)>,
     request: Option<Request>,
-    // Keep the input receiver alive; unexpected follow-up requests remain queued
-    // instead of starting a random generator or failing a channel send.
-    _requests: Receiver<Request>,
+    // Keep the input receiver alive so a submit reaches the test instead of a random generator.
+    _requests: mpsc::Receiver<Request>,
 }
 impl Held {
     fn channel(ui: &mut Ui) -> Self {
-        let (requests, input) = mpsc::channel();
-        let (reply, results) = mpsc::channel();
-        ui.sim_generation = Some(Generation {
-            requests,
-            results,
-            next: 0,
-            active: None,
-            run: false,
-            in_flight: false,
-            queued: None,
-            pending: None,
-        });
+        let (thread, input, reply) = Worker::manual();
+        ui.sim_generation = Some(Generation { thread, next: 0, active: None, run: false, queued: None, pending: None });
         Self { reply, request: None, _requests: input }
     }
     fn receive_request(&mut self) {

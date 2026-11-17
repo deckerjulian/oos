@@ -2,12 +2,10 @@
 //! Bounded pair readouts: metadata-only waiters, one job holding shared analyses.
 use super::analysis::RefMeasureKey;
 use super::tools::{PairKind, MEAS_MAX, PAIRS};
+use super::worker::Worker;
 use super::*;
 use oos_dsp::measure::{delay, hold_time_at, phase, setup_hold_violations_at, setup_time_at, skew, Analysis, Pair};
-use std::{
-    collections::VecDeque,
-    sync::{mpsc, Arc},
-};
+use std::{collections::VecDeque, sync::Arc};
 
 const DIRECT_EDGES: usize = 8_192;
 
@@ -28,17 +26,12 @@ struct Job {
     ta: f64,
     tb: f64,
 }
-struct Worker {
-    input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<(Key, f64)>,
-    busy: bool,
-    submitted: usize,
-}
 #[derive(Default)]
 pub(super) struct State {
     cache: VecDeque<(Key, f64)>,
     pending: VecDeque<Key>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, (Key, f64)>>,
+    submitted: usize,
 }
 
 // Only the two mid-edge vectors are needed by pair maths. Copies stay off the
@@ -66,24 +59,12 @@ fn compute(job: &Job) -> f64 {
         }
     }
 }
-impl Worker {
-    fn open() -> Self {
-        let (input, jobs) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::channel();
-        std::thread::Builder::new()
-            .name("measurement-pairs".into())
-            .spawn(move || {
-                while let Ok(job) = jobs.recv() {
-                    let value =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job))).unwrap_or(f64::NAN);
-                    if results.send((job.key, value)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start bounded pair worker");
-        Self { input, output, busy: false, submitted: 0 }
-    }
+fn open_worker() -> Worker<Job, (Key, f64)> {
+    Worker::spawn("measurement-pairs", |job: Job| {
+        let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(&job))).unwrap_or(f64::NAN);
+        (job.key, value)
+    })
+    .expect("start bounded pair worker")
 }
 impl State {
     fn put(&mut self, key: Key, value: f64) {
@@ -124,10 +105,8 @@ impl Ui {
                 state.pending.pop_front();
             }
         }
-        let worker = state.worker.get_or_insert_with(Worker::open);
-        if !worker.busy && worker.input.try_send(job).is_ok() {
-            worker.busy = true;
-            worker.submitted += 1;
+        if state.worker.get_or_insert_with(open_worker).submit(job).is_ok() {
+            state.submitted += 1;
         }
         f64::NAN
     }
@@ -143,8 +122,7 @@ impl Ui {
         {
             let mut state = self.azr.measure_pairs.borrow_mut();
             if let Some(worker) = state.worker.as_mut() {
-                while let Ok(result) = worker.output.try_recv() {
-                    worker.busy = false;
+                while let Ok(result) = worker.poll() {
                     completed.push(result);
                 }
             }
@@ -232,12 +210,12 @@ mod tests {
         assert!(start.elapsed() < Duration::from_millis(100));
         assert!(ui.measurement_busy());
         assert!(ui.meas_rows()[0].computing);
-        assert_eq!(ui.azr.measure_pairs.borrow().worker.as_ref().unwrap().submitted, 1);
+        assert_eq!(ui.azr.measure_pairs.borrow().submitted, 1);
         let value = wait(&mut ui, 0);
         assert!((value - 3e-9).abs() < 1e-15, "{value}");
         ui.m.delay = 123.0;
         assert_eq!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)), value);
-        assert_eq!(ui.azr.measure_pairs.borrow().worker.as_ref().unwrap().submitted, 1);
+        assert_eq!(ui.azr.measure_pairs.borrow().submitted, 1);
         assert_eq!(ui.measurement_statistics_snapshot_for_test(), before);
         assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
     }

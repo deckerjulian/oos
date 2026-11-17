@@ -72,6 +72,7 @@ mod update;
 mod viewmore;
 mod windows;
 mod wlan;
+mod worker;
 mod workflow;
 mod workspace;
 pub(crate) use scpi_operations::{OperationState, OperationToken, Operations};
