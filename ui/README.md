@@ -258,6 +258,17 @@ layout and maps stay as they are.
 `layout-check.sh` gives each script an empty storage directory and stops the clock (`OOS_FIXED_TIME`), so the same
 source gives the same pictures; the script command `textsize normal|large|larger` sets Display > Text size.
 
+**Soak test.** `cargo test soak` runs a script of typical use ten times over on one demo screen (frames in each
+sweep, channels, a trigger type, measurements with statistics, cursors, zoom, the knobs, persistence, math, a
+reference, the history, set-up / CSV / PNG stored, SCPI queries and the web server's MCP handler, default set-up) and
+counts the heap bytes in use at the end of each cycle (`src/soak.rs`, a counting allocator in the test build only).
+After a warm-up of four cycles the counts have to be equal to the byte: a buffer kept once per cycle fails it, and a
+second test keeps one on purpose to prove that. The cycles run in a process of their own, started by the test, and
+no other thread may use the heap meanwhile, so the result does not depend on the other tests or on the computer's
+speed. The workers for long records, the measurement catalog and SIM, the web server's threads and the hardware
+source are not in the cycle. `OOS_SOAK=plateau cargo test -- --ignored --exact --nocapture --test-threads=1
+soak::cycles` prints the counts.
+
 On the scope (OOS shell): `insmod .../edt-ft5x06.ko` once, then `/tmp/oos-ui &`. SIGTERM restores the previous
 display content and turns the LEDs off. In the OOS image `etc/rcS` loads the touch driver and starts `/bin/oos-ui`
 in a restart loop (`touch /tmp/oos-ui.off` before `killall oos-ui` keeps it stopped).

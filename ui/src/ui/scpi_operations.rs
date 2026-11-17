@@ -80,3 +80,18 @@ impl Ui {
         }
     }
 }
+
+#[cfg(test)]
+impl Ui {
+    /// The receipts at their bound, as after many finished operations: from here on the list takes no more room (the
+    /// soak test compares the memory in use from one cycle to the next, `soak.rs`).
+    pub(crate) fn scpi_receipts_fill(&mut self) {
+        for n in 0.. {
+            let before = self.scpi_completed.len();
+            self.scpi_finish_operation(OperationToken::Single(u64::MAX - n));
+            if self.scpi_completed.len() == before {
+                break;
+            }
+        }
+    }
+}
