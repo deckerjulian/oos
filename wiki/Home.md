@@ -8,7 +8,8 @@ OOS is an open operating system for the Rigol DHO800/DHO900: its own Linux kerne
 
 ## Guides
 
-- [[Installation]]: put OOS on a second SD card
+- [[Features]]: everything OOS does, by area
+- [[Installation]]: from a USB stick without opening the scope, on a second SD card, or over ADB
 - [[First Steps]]: first start, the screen, Auto, windows and full screen, text size, backlight, GPU and HDMI, the keyboard, date and time
 - [[Measurements and Analysers]]: measurements, the frequency counter, panes, spectrum, eye, Bode
 - [[Generator]]: the built-in generator of S models
@@ -21,7 +22,7 @@ OOS is an open operating system for the Rigol DHO800/DHO900: its own Linux kerne
 
 ## Reference
 
-- [README](https://github.com/dekajoule/oos#readme): features, status, known limits
+- [README](https://github.com/dekajoule/oos#readme): what OOS is, the disclaimer, supported models, status, known limits
 - [Technical documentation](https://github.com/dekajoule/oos/blob/main/docs/README.md)
 - [Hardware overview](https://dekajoule.github.io/oos/hardware/overview.html)
 - [Releases](https://github.com/dekajoule/oos/releases)
