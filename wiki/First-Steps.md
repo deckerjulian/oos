@@ -2,11 +2,15 @@
 
 ## The first start
 
-You see the Rigol logo from the stock loader, then the OOS start-up screen with a checklist, then the scope. Each failed step is named on the screen. The version and the build stand at the bottom of the start-up screen. A start takes about 8 seconds.
+You see the Rigol logo from the stock loader, then the OOS start-up screen with a checklist, then the scope. Each
+failed step is named on the screen. A missing calibration file is a warning: the scope then runs on defaults and is
+less accurate. The version and the build stand at the bottom of the start-up screen. A start takes about 8 seconds.
 
 The IP address comes from DHCP and is shown at the top right. Without DHCP the scope takes a link-local address, 169.254.x.y, as computers do (from 0.1.9; before, `192.168.177.64/24`): a computer connected straight to the scope reaches it without any set-up.
 
-**OOS starts in one-shot mode:** the next power-on starts the stock system. When OOS works for you, set **System > Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS.
+**OOS starts in one-shot mode:** the next power-on starts the stock system. When OOS works for you, set **System >
+Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS. More:
+[[Installation]], How OOS starts.
 
 ## The screen
 
@@ -17,7 +21,14 @@ The IP address comes from DHCP and is shown at the top right. Without DHCP the s
 - **Strip:** the measurements.
 - **Cards:** Menu, channels, logic analyser, generator, time base and trigger. Tap a card for its settings.
 
-Front-panel keys and knobs work as labelled. The Menu button reaches every function. **From 0.1.9** a channel key held for more than half a second, or a finger held on a channel's card, switches that channel between AC and DC coupling; channel keys act when they are let go.
+Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
+
+**Channel keys and cards.** A short press switches a channel that is off on and opens its menu. With several channels
+on, the first press on one that is not selected only selects it, so the knobs act on it (its card has the coloured
+border); the next press opens its menu, and a press with its menu open switches it off. A tap on a channel's card
+selects and opens the menu the same way; a tap with the menu open closes it. **From 0.1.9** a channel key held for
+more than half a second, or a finger held on a channel's card, switches that channel between AC and DC coupling;
+channel keys act when they are let go.
 
 ## Sample rate
 
@@ -55,13 +66,20 @@ On the same page each channel, each math channel that is on and the logic analys
 
 ![Full screen](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/full-screen.png)
 
-**Full screen:** the button with four corners at the top right of the plot hides the top bar and the cards. The same button, now with the corners pointing inwards, brings them back. Also on Display > Windows > Full screen. While the touch lock is on there is no full screen, because the Menu button is the way out of the lock.
+**Full screen:** the button with four corners at the top right of the plot hides the top bar and the cards. The same
+button, now with the corners pointing inwards, brings them back. Also on Display > Windows > Full screen. While the
+touch lock is on there is no full screen, because the Menu button is the way out of the lock.
+
+**Zoom box:** the box button under it arms one drag: the next drag on the plot draws a box, and that box is the zoom
+window. A tap does not zoom.
 
 ## Views
 
 **From 0.1.12.** Instead of one screen with everything on it, **Display > Views** (2, 3 or 4) gives screens to switch between. Each view keeps what is shown and where: the windows, the second pane, the measurements and their bar, DVM and counter, the cursors, the zoom, the histogram, the analyser page, XY and full screen. The channels, the time base, the trigger and the acquisition are the same in all of them. What you change while a view is shown stays with it; a view not used yet starts with the plot alone.
 
-To switch: the numbers left of the top bar's buttons, a swipe from the left or right edge of the plot inwards (a vertical drag there still moves a channel or the trigger level), the Quick key set to **Next view** (System > Quick key), or SCPI `:DISPlay:VIEW <n>`. The views are saved with a setup.
+To switch: the numbers left of the top bar's buttons, a swipe from the left or right edge of the plot inwards (a
+vertical drag there still moves a channel or the trigger level), the Quick key set to **Next view** (System > Quick
+key), or SCPI `:DISPlay:VIEW <n>` (`:DISPlay:VIEW:COUNt <1..4>` sets how many). The views are saved with a setup.
 
 ## Bandwidth and noisy signals
 
@@ -71,11 +89,17 @@ A channel's bandwidth is **Auto** unless you choose another: the limit follows t
 
 ## Text size
 
-**From 0.1.6.** **Display > Text size**: Normal, Large or Larger. Large and Larger make the text of the bars, cards, measurement rows, menus and dialogs 2 or 4 pixels bigger; the plot gets a little shorter. Kept across restarts.
+**From 0.1.6.** **Display > Text size**: Normal, Large or Larger. Normal is the original look; Large and Larger use
+fonts 2 or 4 pixels bigger in the top bar, the cards, the measurement and cursor rows, the menus, the keyboard and the
+dialogs. The rows under the plot grow with them, so the plot gets a little shorter. Where a long text would not fit (a
+narrow channel card with four channels on, a long button label in the start menu, a narrow table column) it stays at
+the next smaller size, and the dense figure tables of the eye / jitter view keep the normal size. The setting is kept
+with the other preferences and across restarts; Default set-up and Recall keep it.
 
 ## Display settings
 
-- **Display > Backlight** (from 0.1.9): the panel's brightness, 10 to 100 %, in steps that look even.
+- **Display > Backlight** (from 0.1.9): the panel's brightness, 10 to 100 %, in steps that look even. It is a
+  setting of the scope (`/oos/system.conf`).
 - **System > Graphics** (from 0.1.7; under Display until 0.1.11): GPU (the default) or CPU. With GPU the scope's
   graphics chip draws the picture, which takes about half the load off the processor; from 0.1.8 on the chip is
   switched on. Where it does not start, the CPU draws. From 0.1.12 the GPU keeps 30 frames a second with a monitor in
@@ -89,7 +113,15 @@ Names of channels and references, math formulas and WLAN passwords are typed on 
 
 ## Saving
 
-Setups stay on the scope. Screenshots and CSV files go to a USB stick in the front port, into the folder `OOS`.
+Setups are kept on OOS's own persistent area `/oos` and survive a power cycle; `/oos` holds 16 MiB for calibration and
+settings. Screenshots and CSV files go to a USB stick in the front port (FAT32, exFAT or ext4), into the folder `OOS`,
+and the stick can be pulled whenever nothing is being saved. Without a stick they go to `/tmp/oos`, which is in RAM and
+lost at power-off, unless you set another directory with `--store-dir`. The web remote saves them to your computer
+too.
+
+**Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin` (`wave-<date>-<time>.bin` once the
+clock is set), little endian: `OOSW`, u32 version (1), u32 channels, u64 samples per channel, f64 dt, f64 t0, then per
+channel its number (u32) and the samples (f32, volts). Both hold the record on the screen.
 
 ## Date and time
 
@@ -99,8 +131,11 @@ Setups stay on the scope. Screenshots and CSV files go to a USB stick in the fro
 - **Time zone**: common zones with their daylight saving time, or any POSIX `TZ` string.
 - **Set the clock**: date and time by hand, for a scope without a network.
 
-Once the clock is set, new files are named by date and time (`shot-20261111-143005.png`) instead of a number.
+Once the clock is set, new files are named by date and time (`shot-20261111-143005.png`) instead of a number. The
+settings are in `/oos/system.conf`, see [docs/network.md](https://github.com/dekajoule/oos/blob/main/docs/network.md).
 
 ## Self-calibration
 
-**System > Self-cal.** Warm the scope up for 30 minutes and disconnect all inputs. It takes about 5 minutes per channel and pass, with 4 passes. The factory files are never changed.
+**System > Self-cal.** Warm the scope up for 30 minutes and disconnect all inputs. It takes about 5 minutes per
+channel and pass, with 4 passes. Results go to `/oos/cal` and are preferred over the factory files, which are never
+changed.

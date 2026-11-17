@@ -1,25 +1,47 @@
 # Remote control
 
-> **OOS has no authentication.** Everything here is open to anyone who can reach the scope. Keep it on a trusted bench network and never connect it directly to the internet.
+> **Apart from SSH, OOS has no authentication.** Everything else here is open to anyone who can reach the scope.
+> Keep it on a trusted bench network and never connect it directly to the internet.
 
 | Interface | Port | Purpose |
 |---|---|---|
-| Web remote | 8080 | live screen, keys and touch in the browser, saves screenshots and CSV |
-| SCPI over TCP | 5555 | Rigol-style command subset |
-| VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
+| Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
+| SCPI over TCP | 5555 | [[SCPI and VXI-11]]: the DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
+| VXI-11 | 111, 9009 | on the scope, where port 111 is free: VISA `TCPIP::<ip>::INSTR` |
+| HiSLIP | 4880 | on a computer only: the same SCPI interpreter, `TCPIP::<ip>::hislip0::INSTR` |
 | LXI identification | 8080 | `/lxi/identification` |
-| MCP | 8080 | `POST /mcp`, tools `scpi` and `screenshot` |
-| Telnet | 23 | root shell, no password |
+| LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
+| MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
+| Telnet | 23 | root shell, no password, on by default |
+| SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](https://github.com/dekajoule/oos/blob/main/docs/network.md) 7) |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-123456.local:8080`, and its services for browsing ([below](#ethernet)) |
+
+None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
+the slow cores with spare time only. All of them run over Ethernet and over [WLAN](#wlan).
 
 ## Web remote
 
-Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It works on a phone too.
+Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the window, so
+it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer; records
+above 2 million points have to be saved on the scope or read over SCPI. The Update link leads to the update page
+([[Updates and Going Back]]).
+
+The live picture is a PNG (about 90 to 115 KB, depending on what the screen shows). **Live picture format** can switch
+it to the uncompressed 1.8 MB BMP, or to a JPEG (below). The choice is kept in the browser. The PNG is made off the
+scope's frame loop, only of a changed screen, up to 20 a second (about 13 reach a browser over Ethernet); the page gets
+each new picture as soon as it is made, and while the screen stands still it gets "not modified" instead. The scope's
+own screen does not slow down for it. Pause stops the pictures, and a tab in the background stops them too.
 
 **From 0.1.6** the web remote, SCPI and VXI-11 no longer slow the scope down: on a DHO924S its screen stays at 30 frames a second with two browsers open (0.1.5: 16 with one), and the browser gets about 13 new pictures a second over Ethernet instead of 4 to 5. A script that keeps an SCPI connection open costs no frames either.
 
-**From 0.1.7** **System > Network > Remote services** switches the web remote, SCPI, VXI-11 and telnet on or off, each on its own. **From 0.1.8** the live picture can be a JPEG made by the scope's video encoder (the button JPEG next to PNG): about 75 KB a picture against 115 KB, at a third of the processor time.
+**From 0.1.7** **System > Network > Remote services** switches the web remote, SCPI, VXI-11 and telnet on or off,
+each on its own. **From 0.1.8** the live picture can be a JPEG made by the scope's video encoder (the button JPEG next
+to PNG): about 75 KB a picture against 115 KB, at under a third of the processor time of a PNG; text is a little less
+sharp, and screenshots stay PNG.
 
 ## Ethernet
+
+Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web remote.
 
 **From 0.1.12 the scope has a name:** `http://dho924s-123456.local:8080` (model and serial number) reaches it on any computer that speaks mDNS (macOS, Linux with Avahi, Windows 10 and later), also when it only has a link-local address on a cable straight to the computer. Computers that browse find the web remote, SCPI and VXI-11 (DNS-SD). **System > Network > Remote services** switches mDNS off and changes the Name, which is also the host name the scope sends to DHCP, so a router lists it. When another device has the name already, the scope takes `<name>-2`.
 
@@ -27,7 +49,11 @@ The scope takes an address by DHCP. Without a DHCP answer it takes a link-local 
 
 ## WLAN
 
-Put an RTL8188EU stick into the front USB port, then **System > Network > Find WLAN networks**, tap a network and enter the password on the on-screen keyboard ([[First Steps]] has how to correct inside it). Everything open on Ethernet is then open on that network too. On the DHO924S of the author the scope has joined a home network with a password and worked over it for days.
+Put an RTL8188EU stick into the front USB port, then **System > Network > Find WLAN networks**, tap a network and enter
+the password on the on-screen keyboard ([[First Steps]] has how to correct inside it). It joins by itself from then on:
+open, WPA and WPA2 personal networks. Everything open on Ethernet is then open on that network too. Details:
+[docs/wlan.md](https://github.com/dekajoule/oos/blob/main/docs/wlan.md). On the DHO924S of the author the scope has
+joined a home network with a password and worked over it for days.
 
 ## SCPI
 
