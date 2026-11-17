@@ -28,6 +28,11 @@ no HDMI monitor, 1.25 GHz. Screen frames a second / acquired frames drawn a seco
 The same with the PCIe link at 2.5 GT/s. The drop to 18 frames a second at four channels and 10 us/div no longer
 occurs. For the same frames the picture of both paths is the same (host tests in `drawpipe.rs`).
 
+The absolute rates are far below those in ADR 0004's table for the same unit (1467 / 5189 frames drawn a second with
+one channel at 100 ns/div): the acquisition delivered about four frames per batch at about 30 batches a second with
+three quarters of the processor idle, under 0.1.13 as well. The cause is not known yet. Both paths were measured in
+the same set-up one after the other, so the comparison between them holds.
+
 ## Decision
 
 Batch is the default draw path. Standard stays selectable as the way back: Acquire > Draw path, `:SYSTem:PIPeline
