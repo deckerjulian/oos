@@ -217,7 +217,7 @@ impl Ui {
             "TRIGger:BUS:VALue" => {
                 if q { return Some(t(format!("0x{:X}", self.m.trig_bus_val))); }
                 match parse_int(arg).filter(|&v| v <= 0x1fff_ffff) {
-                    Some(v) => { self.m.trig_bus_val = v as u32; DONE }
+                    Some(v) => { self.m.trig_bus_val = v as u64; DONE }
                     None => Err(bad(arg)),
                 }
             }

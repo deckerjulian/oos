@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Wide-bandgap double pulse page. E on and E off are the existing switching-loss pair, not recomputed here.
@@ -313,5 +313,42 @@ fn draw_cols(cv: &mut Canvas, band: Rect, cols: &[(f32, f32)], col: Rgb) {
         let y0 = band.y + band.h - ((a - lo) / (hi - lo) * band.h as f32) as i32;
         let y1 = band.y + band.h - ((b - lo) / (hi - lo) * band.h as f32) as i32;
         cv.line(x, y0, x, y1, col);
+    }
+}
+
+/// The double-pulse page (switching and recovery of a power switch).
+pub(super) struct DoublePulsePage;
+
+impl super::analysers::Analyser for DoublePulsePage {
+    fn view(&self) -> AView {
+        AView::Dpt
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("dpt", "Double pulse")
+    }
+
+    fn name(&self) -> &'static str {
+        "Double pulse"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Dpt
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("DPT")
+    }
+
+    fn without_record(&self, _ui: &Ui) -> bool {
+        true
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.dpt_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_dpt(cv);
     }
 }

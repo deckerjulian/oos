@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Direct file, reference, simulation and acquisition controls shared by the screen and web remote.
@@ -87,6 +87,8 @@ pub(super) struct LiveSession {
     visible: [bool; NREF],
     /// the slots that held a ref then; a ref loaded since stays shown in Live
     had: [bool; NREF],
+    /// what the Bus trigger of `model` switched on by itself (`Ui::bus_auto`)
+    bus_auto: Option<([bool; NCH], bool)>,
 }
 
 #[cfg(test)]
@@ -410,7 +412,7 @@ mod tests {
         let mut samples = std::array::from_fn(|_| Vec::new());
         samples[0] = square(0);
         samples[1] = square(40);
-        u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None });
+        u.last[0] = Some(Record { t0: 0.0, dt: 1e-9, ch: samples, triggered: true, partial: false, raw: None, la: None, pairs: false });
         u.refs[3] = Some(RefWave { src: 0, color: 1, label: String::new(), t0: 0.0, dt: 1e-9, v: square(80).into(), vpd: 0.2, offset: 0.0, on: true });
         u.refs[4] = Some(RefWave { src: 0, color: 2, label: String::new(), t0: 0.0, dt: 1e-9, v: square(200).into(), vpd: 0.2, offset: 0.0, on: false });
         u.measure_last();
@@ -482,6 +484,7 @@ impl Replay {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn capture_statistics_context(&self) -> String {
         let refs: Vec<_> = self.refs.iter().map(|r| r.as_ref().map(|r|
@@ -537,13 +540,16 @@ stat.push(value, current);
 
     pub(super) fn remember_live(&mut self) {
         if self.workflow_hold.is_none() && !self.record_mode() {
-            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)), had: std::array::from_fn(|i| self.refs[i].is_some()) });
+            let visible = std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on));
+            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible, had: std::array::from_fn(|i| self.refs[i].is_some()), bus_auto: self.bus_auto });
         }
     }
 
     pub fn waveform_epoch(&self) -> u64 { self.workflow_epoch }
 
-    pub fn return_to_live(&mut self) {
+    /// Ends a reference, Take over or SIM session: the live set-up from before it (`remember_live`) comes back and
+    /// nothing of it stays held, so a later session remembers afresh. Whether a set-up was held.
+    pub(super) fn leave_session(&mut self) -> bool {
         let studio = self.m.layout == Layout::Studio;
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
@@ -552,19 +558,14 @@ stat.push(value, current);
         self.sim_play = false;
         self.sim_refs.clear();
         self.replay = Replay::default();
-        if let Some(saved) = self.workflow_hold.take() {
+        let held = self.workflow_hold.take();
+        let restored = held.is_some();
+        if let Some(saved) = held {
             self.m = saved.model;
+            self.bus_auto = saved.bus_auto;
             for (i, r) in self.refs.iter_mut().enumerate() {
                 if let Some(r) = r { r.on = saved.visible[i] || (studio && !saved.had[i]); }
             }
-        } else {
-            // Studio: a loaded ref stays shown, Live never hides what the user loaded
-            if !studio { for r in self.refs.iter_mut().flatten() { r.on = false; } }
-            self.m.ch[0].on = true;
-            self.m.run = RunState::Run;
-            self.m.zoom = false;
-            self.m.view = AView::Scope;
-            self.m.meas = Self::default_meas();
         }
         // the acquisition source in Live is a live channel: a ref that was the trigger in SIM is not playing now
         for secondary in [false, true].into_iter().filter(|_| studio) {
@@ -576,12 +577,27 @@ stat.push(value, current);
             }
         }
         self.m.floor_live_tdiv();
-        self.select_workspace_source(WaveId::Ch(self.m.active));
         self.last[0] = None;
         self.cleared = false;
         self.ph.clear();
         self.phz.clear();
         self.studio_left_record();
+        restored
+    }
+
+    pub fn return_to_live(&mut self) {
+        let studio = self.m.layout == Layout::Studio;
+        if !self.leave_session() {
+            // a session entered without `remember_live` (OOS started with --offline): `set_offline` gave back the
+            // channels and the time base it held; an input shows and acquires, the measurements and the page stay.
+            // Studio: a loaded ref stays shown, Live never hides what the user loaded
+            if !studio { for r in self.refs.iter_mut().flatten() { r.on = false; } }
+            if !(0..n_ch()).any(|c| self.m.ch[c].on) { self.m.ch[0].on = true; }
+            self.m.run = RunState::Run;
+            self.m.zoom = false;
+            self.m.floor_live_tdiv();
+        }
+        self.select_workspace_source(WaveId::Ch(self.m.active));
         self.close_menu();
         self.relayout();
         self.settings_changed();
@@ -600,6 +616,16 @@ stat.push(value, current);
         self.cancel_pointer();
     }
 
+    /// The file dialog of the desktop build for reference `slot`, without asking for the destination.
+    #[cfg(windows)]
+    pub(super) fn request_waveform_into(&mut self, slot: usize) {
+        self.request_waveform();
+        self.load_slot_ask = false;
+        self.load_destination = Some(slot);
+        self.open_wave_request = true;
+    }
+
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn waveform_destination(&self) -> Option<usize> { self.load_destination }
 
     pub(super) fn load_slot_box() -> Rect { Rect::new((W - 560) / 2, (H - 248) / 2, 560, 248) }
@@ -628,7 +654,7 @@ stat.push(value, current);
         if !self.load_slot_ask { return; }
         cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
         let r = Self::load_slot_box();
-        cv.round(r, 8, ACCENT, 255); cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
         cv.text_in(&self.fonts().lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
         cv.text_in(&self.fonts().m, Rect::new(r.x, r.y + 46, r.w, 22), 1, "Choose a destination before opening the file.", DIM);
         for slot in 0..NREF {
@@ -652,6 +678,7 @@ stat.push(value, current);
     }
 
     /// Native/tool Load adds a file without silently replacing the prior source.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn load_waveform_auto(&mut self, data: &[u8], name: &str) -> Result<(), String> {
         let traces = crate::store::parse_wave(data, name)?;
         self.commit_waveform_traces(traces, name, true)
@@ -993,10 +1020,6 @@ stat.push(value, current);
             ("captures", J::Num(self.replay.captures as f64)),
             ("status", J::s(status)),
             ("gate", J::s(if self.m.meas_full_record { "full-record" } else { "screen" })),
-            ("loadRect", self.top_buttons().iter().find(|button| button.0 == TopBtn::Load).map_or(J::Null, |button| {
-                let r = button.2;
-                J::Arr(vec![J::Num(r.x as f64), J::Num(r.y as f64), J::Num(r.w as f64), J::Num(r.h as f64)])
-            })),
         ]).to_string()
     }
 
@@ -1012,6 +1035,7 @@ stat.push(value, current);
         shown.into_iter().enumerate().map(|(n, i)| (i, Rect::new(75 + n as i32 * (width + 7), 530, width, 66))).collect()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn draw_record_cards(&self, cv: &mut Canvas) {
         for (slot, rect) in self.record_cards() {
             let r = self.refs[slot].as_ref().unwrap();
@@ -1032,6 +1056,7 @@ stat.push(value, current);
         (Rect::new(r.x + 6, r.y + 22, r.w / 2 - 9, 40), Rect::new(r.x + r.w / 2 + 3, r.y + 22, r.w / 2 - 9, 40))
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn draw_session_card(&self, cv: &mut Canvas, r: Rect) {
         btn(cv, r, BAR, CARD_BORDER);
         let title = if self.sim_mode() { "SIMULATION" } else { "STORED WAVEFORM" };

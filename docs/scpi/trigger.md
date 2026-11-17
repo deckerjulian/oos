@@ -100,8 +100,8 @@ Pulse-width conditions share the lower and upper time fields described above.
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:TRIGger:RUNT:UPPer` | Set / Query | Absolute high threshold; alias `ALEVel`. | `1.500000E+00` | Trigger > Level | Rigol-compatible |
-| `:TRIGger:RUNT:LOWer` | Set / Query | Absolute low threshold; alias `BLEVel`. | `5.000000E-01` | Trigger > Level 2 | Rigol-compatible |
+| `:TRIGger:RUNT:UPPer` | Set / Query | Absolute high threshold; alias `ALEVel`. A threshold below the low one is refused with `-224`. | `1.500000E+00` | Trigger > Level | Rigol-compatible |
+| `:TRIGger:RUNT:LOWer` | Set / Query | Absolute low threshold; alias `BLEVel`. A threshold above the high one is refused with `-224`. | `5.000000E-01` | Trigger > Level 2 | Rigol-compatible |
 | `:TRIGger:RUNT:POLarity` | Set / Query | `POSitive`, `NEGative` | `POS` | Trigger > Polarity | Rigol-compatible |
 | `:TRIGger:RUNT:WHEN` | Set / Query | `NONE`, `GREater`, `LESS`, `RANGe`, `OUTside` | `LESS` | Trigger > When | Rigol-compatible |
 | `:TRIGger:RUNT:WLOWer` | Set / Query | Seconds, 1 ns to 10 s. The lower time limit, the menu's Time. | `2.000000E-05` | Trigger > Time | Rigol-compatible |

@@ -28,11 +28,13 @@ pub(super) enum AddRow {
 }
 
 /// The rows in their groups; a `None` is a separator.
-pub(super) const ADD_MENU: [Option<AddRow>; 17] = [
+/// Only what adds something to the screen: the zoom bar style is on the Zoom tab of Horizontal, the measurement
+/// strip is View > Show pinned badges, and the measurement settings are Menu > Measure.
+pub(super) const ADD_MENU: [Option<AddRow>; 13] = [
     Some(AddRow::Measurement), Some(AddRow::ResultsTable), None,
     Some(AddRow::Plot), Some(AddRow::Cursors), Some(AddRow::Search), None,
     Some(AddRow::Math), Some(AddRow::Reference), Some(AddRow::Bus), None,
-    Some(AddRow::Zoom), Some(AddRow::ZoomBox), Some(AddRow::ZoomControls), Some(AddRow::Strip), Some(AddRow::MeasureSettings), None,
+    Some(AddRow::Zoom), Some(AddRow::ZoomBox),
 ];
 
 impl Ui {

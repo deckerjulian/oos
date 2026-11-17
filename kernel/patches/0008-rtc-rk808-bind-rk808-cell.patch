@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: rtc: rk808: list the rk808-rtc cell
 
 The RK808 MFD adds a cell named "rk808-rtc", and the probe handles

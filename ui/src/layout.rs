@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Screen layout: the size of the screen, the sizes of its frame that stay put, and cuts of rectangles.

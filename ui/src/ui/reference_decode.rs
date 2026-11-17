@@ -29,7 +29,7 @@ impl Worker {
     }
 }
 
-struct Entry { key: String, packets: Packets, hits: Option<(BusWhat, u32, Arc<Vec<f64>>)> }
+struct Entry { key: String, packets: Packets, hits: Option<(BusWhat, u64, Arc<Vec<f64>>)> }
 #[derive(Default)]
 pub(super) struct Cache { entries: Vec<Entry>, worker: Option<Worker>, scans: usize }
 impl Cache {
@@ -42,7 +42,7 @@ impl Cache {
 /// The required analogue roles, including the implicit Parallel data bank.
 pub(super) fn sources(m: &Model) -> Result<Vec<usize>, &'static str> {
     let mut ids = vec![m.dec_src];
-    if m.dec_proto == Proto::Parallel {
+    if m.dec_proto == Proto::PARALLEL {
         let (base, count) = if m.dec_src >= DEC_REF_BASE { (DEC_REF_BASE, NREF) } else { (0, NCH) };
         ids = (0..count).map(|i| base + (m.dec_src - base + i) % count)
             .filter(|id| Some(*id) != m.dec_cs)
@@ -98,7 +98,7 @@ pub(super) fn decode_borrowed(original: &Model, waves: &[BorrowedWave<'_>], hyst
         model.dec_src4 = model.dec_src4.and_then(slot);
         model.dec_diff = model.dec_diff.and_then(slot);
         // Parallel's selected bank is already ordered in the four DSP slots.
-        if model.dec_proto == Proto::Parallel { model.dec_src = 0; }
+        if model.dec_proto == Proto::PARALLEL { model.dec_src = 0; }
         let mut packets = crate::trig::decode_at(&model, ch, dt, model.dec_thr, hysteresis)?;
         if packets.len() > MAX_PACKETS { return Err("Decode exceeds 250000 packets; shorten the record"); }
         for packet in &mut packets {
@@ -227,7 +227,7 @@ impl Ui {
         if let Some((kind, value, hits)) = &entry.hits {
             if *kind == m.trig_bus && *value == m.trig_bus_val { return Some(Arc::clone(hits)); }
         }
-        let mut times: Vec<_> = packets.iter().filter(|packet| crate::trig::matches(m, packet)).map(|packet| packet.t1).collect();
+        let mut times: Vec<_> = crate::trig::points(m, &packets);
         times.sort_by(f64::total_cmp);
         let hits = Arc::new(times);
         entry.hits = Some((m.trig_bus, m.trig_bus_val, Arc::clone(&hits)));
@@ -264,16 +264,24 @@ impl Ui {
         sources[(at as i32 + delta).rem_euclid(sources.len() as i32) as usize]
     }
     pub(crate) fn configure_decoder_source(&mut self, role: usize, source: Option<usize>) -> bool {
-        if role > 4 || ((role < 2 || (role == 2 && self.m.dec_proto == Proto::Cphy)) && source.is_none())
+        if role > 4 || ((role < 2 || (role == 2 && self.m.dec_proto == Proto::CPHY)) && source.is_none())
             || source.is_some_and(|id| !self.decoder_sources().contains(&id)) { return false; }
-        self.m.dec_la_in = false;
-        match role {
-            0 => self.m.dec_src = source.unwrap(), 1 => self.m.dec_src2 = source.unwrap(),
-            2 => self.m.dec_cs = source, 3 => self.m.dec_src4 = source, _ => self.m.dec_diff = source,
-        }
+        let assign = |m: &mut Model| {
+            m.dec_la_in = false;
+            match role {
+                0 => m.dec_src = source.unwrap(), 1 => m.dec_src2 = source.unwrap(),
+                2 => m.dec_cs = source, 3 => m.dec_src4 = source, _ => m.dec_diff = source,
+            }
+        };
+        assign(&mut self.m);
         if self.m.trig_type == TrigType::Bus {
             if let Some(wave) = decode_wave(self.m.dec_src) {
-                if matches!(wave, WaveId::Ref(_)) != self.record_mode() { self.set_trigger_source(wave, false); }
+                if matches!(wave, WaveId::Ref(_)) != self.record_mode() {
+                    self.set_trigger_source(wave, false);
+                    // a channel ends the reference session and brings back the set-up from before it: the source
+                    // chosen here stays
+                    assign(&mut self.m);
+                }
                 else { self.m.set_trigger_wave(wave, false); }
             }
         }
@@ -301,7 +309,7 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let (v, dt) = uart(0xa5, count);
         ui.refs[0] = Some(reference(v, dt, -0.005, 0.5));
-        ui.m.dec_proto = Proto::Uart;
+        ui.m.dec_proto = Proto::UART;
         ui.m.dec_on = true;
         ui.m.dec_src = DEC_REF_BASE;
         ui.m.dec_baud = crate::decode::BAUDS.iter().position(|&v| v == 115_200.0).unwrap();
@@ -351,6 +359,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn loaded_sources_are_selectable_in_every_decoder_role_and_survive_setup() {
         let mut ui = uart_ui(1000);
         ui.refs[9] = Some(reference(vec![0.0; 1000], 1e-9, -1e-6, 0.2));
@@ -365,20 +374,21 @@ mod tests {
         assert_eq!((restored.dec_src, restored.dec_src2, restored.dec_cs, restored.dec_src4, restored.dec_diff),
             (DEC_REF_BASE + 9, DEC_REF_BASE + 9, Some(DEC_REF_BASE + 9), Some(DEC_REF_BASE + 9), Some(DEC_REF_BASE + 9)));
         assert!(crate::store::set(&mut restored, "dec_src", "4").is_err(), "reserved LA IDs must not become CH indices");
-        ui.set_dec_proto(Proto::Jtag);
+        ui.set_dec_proto(Proto::from_key("Jtag").unwrap());
         assert_eq!(ui.m.dec_src, DEC_REF_BASE + 9, "protocol changes must preserve stored roles");
         let mut canvas = Canvas::new(W, H);
         ui.render(&mut canvas);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn four_wire_and_mixed_inputs_align_at_native_physical_times() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let clk = |t: f64| if (0..8).any(|bit| (5.0 + 8.0 * bit as f64..9.0 + 8.0 * bit as f64).contains(&t)) { 3.3 } else { 0.0 };
         let data = |t: f64| { let bit = ((t - 3.0).max(0.0) / 8.0) as usize; if bit < 8 && 0xa5u8 >> (7 - bit) & 1 != 0 { 3.3 } else { 0.0 } };
         ui.refs[0] = Some(reference((0..100).map(|i| data(-3.0 + i as f64)).collect(), 1e-6, -3e-6, 0.5));
         ui.refs[1] = Some(reference((0..220).map(|i| clk(-5.0 + i as f64 * 0.5)).collect(), 0.5e-6, -5e-6, 0.5));
-        ui.m.dec_proto = Proto::Spi;
+        ui.m.dec_proto = Proto::SPI;
         ui.m.dec_src = DEC_REF_BASE;
         ui.m.dec_src2 = DEC_REF_BASE + 1;
         ui.m.dec_cs = None;
@@ -390,7 +400,7 @@ mod tests {
         // Use the very same physical clock as a captured CH input instead.
         let clock = ui.refs[1].as_ref().unwrap();
         let mut rec = Record { ch: std::array::from_fn(|_| Vec::new()), dt: clock.dt, t0: clock.t0,
-            triggered: true, partial: false, raw: None, la: None };
+            triggered: true, partial: false, raw: None, la: None, pairs: false };
         rec.ch[1] = clock.v.as_ref().clone(); rec.dt = clock.dt; rec.t0 = clock.t0;
         ui.last[0] = Some(rec);
         ui.m.dec_src2 = 1;
@@ -403,7 +413,7 @@ mod tests {
         assert_eq!(wait(&ui).as_ref(), packets.as_ref(), "a decimated screen must not replace retained CH samples during mixed decode");
         // All four JTAG roles are valid stored roles; non-overlap is explicit.
         for i in 2..4 { ui.refs[i] = Some(reference(vec![0.0; 100], 1e-6, 1.0, 0.5)); }
-        ui.m.dec_proto = Proto::Jtag;
+        ui.m.dec_proto = Proto::from_key("Jtag").unwrap();
         ui.m.dec_src2 = DEC_REF_BASE + 1;
         ui.m.dec_cs = Some(DEC_REF_BASE + 2);
         ui.m.dec_src4 = Some(DEC_REF_BASE + 3);
@@ -438,7 +448,7 @@ mod tests {
 
     #[test]
     fn all_twenty_seven_protocol_dispatchers_match_the_same_live_samples_as_refs() {
-        for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::Cphy) {
+        for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::CPHY) {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.set_dec_proto(protocol);
             ui.m.dec_on = true;
@@ -479,7 +489,7 @@ mod tests {
             ui.refs[wire] = Some(reference(values, dt, t0, 0.1));
         }
         ui.m.dec_src = DEC_REF_BASE;
-        ui.set_dec_proto(Proto::Cphy);
+        ui.set_dec_proto(Proto::CPHY);
         assert!(ui.configure_decoder_source(1, Some(DEC_REF_BASE + 1)));
         assert!(ui.configure_decoder_source(2, Some(DEC_REF_BASE + 2)));
         assert!(!ui.configure_decoder_source(2, None), "the third C-PHY wire is required");

@@ -179,8 +179,8 @@ impl Ui {
                 let k = idx.and_then(|n| n.checked_sub(1)).filter(|&k| k < DECODERS)?;
                 let it = match key {
                     "BUS<n>:SPI:MODE" => Item::DecMode, "BUS<n>:CAN:BAUD" => Item::DecCanRate, "BUS<n>:CAN:SIGNal" => Item::DecCanH,
-                    "BUS<n>:CAN:FD:BAUD" => Item::DecFdRate, "BUS<n>:CAN:FD:ABAUd" => Item::DecArate, "BUS<n>:SENT:TICK" => Item::DecTick,
-                    "BUS<n>:SENT:NIBBles" => Item::DecNibbles, "BUS<n>:USB:SPEed" => Item::DecUsbSpeed,
+                    "BUS<n>:CAN:FD:BAUD" => Item::DecOpt(1), "BUS<n>:CAN:FD:ABAUd" => Item::DecOpt(0), "BUS<n>:SENT:TICK" => Item::DecOpt(0),
+                    "BUS<n>:SENT:NIBBles" => Item::DecOpt(1), "BUS<n>:USB:SPEed" => Item::DecUsbSpeed,
                     "BUS<n>:OPTion1" => Item::DecOpt(0), "BUS<n>:OPTion2" => Item::DecOpt(1), "BUS<n>:OPTion3" => Item::DecOpt(2), _ => Item::DecOpt(3),
                 };
                 let prev = self.m.dec_sel;

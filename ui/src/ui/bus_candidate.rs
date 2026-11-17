@@ -43,8 +43,8 @@ mod tests {
         ui.m.ch[0].bw = BW_FULL; ui.m.ch[0].coupling = Coupling::Dc;
         let old = Arc::new(crate::board::Frame { seq: 1, stamp: 0, dt: 1e-9, pre: 2048,
             ch: [(0..4096).map(|i| if i % 16 < 8 { 0.0 } else { 3.3 }).collect(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
-        shared.lock().unwrap().queue.push_back(Arc::clone(&old));
-        shared.lock().unwrap().frame = old;
+        shared.lock().unwrap().queue.push_back((*old).clone());
+        shared.lock().unwrap().frame = (*old).clone();
         ui.step(0.05);
         assert_eq!(ui.records, 1);
         assert!(ui.azr.eye.as_ref().is_some_and(|eye| eye.records > 0), "seed a genuine accepted Eye record");
@@ -55,7 +55,7 @@ mod tests {
         }
         ui.refs[0] = Some(RefWave { src: 0, color: 0, label: "stored SCK".into(), v: (clock).into(),
             t0: -(points as f64 / 2.0) * 1e-9, dt: 1e-9, vpd: 0.5, offset: 0.0, on: true });
-        ui.m.dec_on = true; ui.m.dec_proto = Proto::Spi; ui.m.dec_src = 0; ui.m.dec_src2 = DEC_REF_BASE;
+        ui.m.dec_on = true; ui.m.dec_proto = Proto::SPI; ui.m.dec_src = 0; ui.m.dec_src2 = DEC_REF_BASE;
         ui.m.dec_cs = None; ui.m.dec_bits = 8; ui.m.dec_mode = 0; ui.m.dec_thr = 1.65;
         ui.m.trig_type = TrigType::Bus; ui.m.trig_mode = TrigMode::Normal;
         ui.m.trig_bus = BusWhat::Data; ui.m.trig_bus_val = 0xa5;
@@ -66,7 +66,7 @@ mod tests {
     fn push(ui: &Ui, shared: &crate::board::HwShared, points: usize, byte: u8, sequence: u64) {
         let frame = frame(points, byte, sequence, ui.m.hw_stamp);
         let mut state = shared.lock().unwrap();
-        state.frame = Arc::clone(&frame); state.queue.push_back(frame);
+        state.frame = (*frame).clone(); state.queue.push_back((*frame).clone());
     }
     fn until(ui: &mut Ui, condition: impl Fn(&Ui) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -191,19 +191,19 @@ mod tests {
         let mut socket = std::net::TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
         socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         socket.write_all(b":RUN;:TRIG:STAT?;:TIM:SCAL?;:CHAN1:DISP?\n").unwrap();
-        scpi.poll(&mut ui, &Canvas::new(W, H));
+        for _ in 0..20 { scpi.poll(&mut ui, &Canvas::new(W, H)); std::thread::sleep(Duration::from_millis(2)); }
         let mut response = String::new(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap();
         assert_eq!(response.trim().split(';').count(), 3);
         assert!(ui.bus_candidate_waiting()); assert_eq!(ui.bus_candidate.epoch, epoch);
         assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics); assert_eq!(ui.records, before);
-        socket.write_all(b":STOP;:TRIG:STAT?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
+        socket.write_all(b":STOP;:TRIG:STAT?\n").unwrap(); for _ in 0..20 { scpi.poll(&mut ui, &Canvas::new(W, H)); std::thread::sleep(Duration::from_millis(2)); }
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap();
         assert_eq!(ui.m.run, RunState::Stop); assert!(!ui.bus_candidate_waiting());
         ui.m.trig_bus_val = 0x5a;
-        socket.write_all(b":SINGLE;:TRIG:STAT?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
+        socket.write_all(b":SINGLE;:TRIG:STAT?\n").unwrap(); for _ in 0..20 { scpi.poll(&mut ui, &Canvas::new(W, H)); std::thread::sleep(Duration::from_millis(2)); }
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap(); ui.step(0.001);
         push(&ui, &shared, points, 0xa5, 3);
-        socket.write_all(b":TRIG:FORC;:TRIG:STAT?\n").unwrap(); scpi.poll(&mut ui, &Canvas::new(W, H));
+        socket.write_all(b":TRIG:FORC;:TRIG:STAT?\n").unwrap(); for _ in 0..20 { scpi.poll(&mut ui, &Canvas::new(W, H)); std::thread::sleep(Duration::from_millis(2)); }
         response.clear(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap(); ui.step(0.001);
         assert_eq!(ui.records, before + 1); assert_eq!(ui.m.run, RunState::Stop); assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(!ui.last[0].as_ref().unwrap().triggered);
@@ -314,8 +314,9 @@ impl Ui {
             let window = self.m.time_per_div() as f64 * HDIV as f64;
             // Preserve the hardware's original time zero. Refining an Edge on
             // CH alone here would shift it relative to the fixed R roles.
-            return Some(crate::board::resample_record(&frame, &self.m, 3600, window,
-                self.m.delay as f64 - window * 0.5, frame.pre as f64, false));
+            let pre = frame.pre as f64;
+            return Some(crate::board::resample_record(&std::sync::Arc::new(frame), &self.m, 3600, window,
+                self.m.delay as f64 - window * 0.5, pre, false));
         }
         let previous = (self.m.trig_type, self.m.trig_mode, self.m.trig_src, self.m.trig_ref, self.m.trig_level, self.m.slope);
         self.m.trig_type = TrigType::Edge; self.m.trig_mode = TrigMode::Auto;
@@ -353,8 +354,8 @@ impl Ui {
             Err(super::reference_decode::COMPUTING) => { self.m.status = TrigStatus::Wait; return None; }
             result => result,
         };
-        let hit = packets.as_ref().ok().and_then(|packets| packets.iter().filter(|packet| crate::trig::matches(&self.m, packet))
-            .map(|packet| packet.t1).min_by(|a, b| a.abs().total_cmp(&b.abs())));
+        let hit = packets.as_ref().ok().and_then(|packets| crate::trig::points(&self.m, packets).into_iter()
+            .min_by(|a, b| a.abs().total_cmp(&b.abs())));
         if hit.is_none() && self.m.trig_mode != TrigMode::Auto {
             self.bus_candidate.record = None;
             self.m.status = TrigStatus::Wait;

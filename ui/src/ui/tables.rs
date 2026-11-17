@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Tables over the plot and in the second pane: decoder events, search events, measurements. A tap on an event moves the
@@ -11,6 +11,8 @@ use super::*;
 pub(super) enum TableKind {
     Decode,
     Search,
+    /// hardware segments: trigger time since the first trigger, step from the previous one
+    Segments,
 }
 
 #[cfg(test)]
@@ -58,7 +60,7 @@ pub(super) const PANE_TREND: usize = 4;
 /// what a protocol module makes of its packets (`busview.rs`)
 pub(super) const PANE_BUS: usize = 5;
 
-const ROW_H: i32 = 26;
+pub(super) const ROW_H: i32 = 26;
 const HEAD_H: i32 = 40;
 /// Below this width a docked table puts its controls under the title.
 const TABLE_NARROW_W: i32 = 340;
@@ -120,6 +122,21 @@ impl Ui {
         }
     }
 
+    /// One row per hardware segment read back: time since the first trigger (NaN without a stamp), number, step.
+    fn segment_rows(&self) -> Vec<EventRow> {
+        let t = &self.seg_times;
+        (0..t.len())
+            .map(|k| {
+                let d = match (t[k], k.checked_sub(1).and_then(|j| t[j])) {
+                    (Some(a), Some(b)) => format!("\u{394}t {}", si(a - b, "s")),
+                    (Some(_), None) => String::new(),
+                    (None, _) => "no stamp".into(),
+                };
+                EventRow { t: t[k].unwrap_or(f64::NAN), who: format!("{}", k + 1), text: d, ok: t[k].is_some() }
+            })
+            .collect()
+    }
+
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
     pub fn events_text(&self) -> String {
         self.decode_events().iter().map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" })).collect::<Vec<_>>().join("\n")
@@ -129,6 +146,7 @@ impl Ui {
         match k {
             TableKind::Decode => self.decode_events(),
             TableKind::Search => self.search_rows(),
+            TableKind::Segments => self.segment_rows(),
         }
     }
 
@@ -150,20 +168,33 @@ impl Ui {
         self.close_menu();
     }
 
-    /// Buttons of the table head: up, down, close.
-    pub(super) fn table_buttons(&self, r: Rect) -> [Rect; 3] {
-        // a narrow view: the controls have a row of their own under the title
-        let b = |i: i32| if self.table_narrow(r) { Rect::new(r.x + r.w - 46 * i, r.y + HEAD_H, 44, 40) } else { Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, HEAD_H - 4) };
-        // docked, the title strip of the view closes it: one close button, and Up / Dn take its place
-        if self.dock_on() { return [b(2), b(1), Rect::new(r.x, r.y, 0, 0)]; }
-        [b(3), b(2), b(1)]
+    /// The close button of the table head. Docked, the title strip of the view closes it: no button of its own.
+    pub(super) fn table_close(&self, r: Rect) -> Rect {
+        if self.dock_on() { return Rect::new(r.x, r.y, 0, 0); }
+        Rect::new(r.x + r.w - 46, r.y + 2, 42, HEAD_H - 4)
+    }
+
+    /// The number of rows of the open table.
+    fn table_total(&self, k: TableKind) -> usize {
+        if k == TableKind::Search { self.search_events().len() } else { self.table_rows(k).len() }
+    }
+
+    /// The scroll bar of the open table and its rows.
+    pub(super) fn table_bar(&self) -> Option<(scroll::Bar, Rect)> {
+        let k = self.table?;
+        let total = self.table_total(k);
+        let (r, fit) = self.table_rect(total);
+        let rows = Rect::new(r.x, r.y + self.head_h(r), r.w, fit as i32 * ROW_H);
+        let track = Rect::new(r.x + r.w - scroll::BAR_W - 2, rows.y, scroll::BAR_W, rows.h);
+        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table_top as i32 }, rows))
     }
 
     /// A docked table too narrow for the title and the controls on one row.
     pub(super) fn table_narrow(&self, r: Rect) -> bool { self.dock_on() && r.w < TABLE_NARROW_W }
 
-    /// Height of the head of the table: the title, and in a narrow view the row of controls too.
-    pub(super) fn head_h(&self, r: Rect) -> i32 { if self.table_narrow(r) { HEAD_H + 40 } else { HEAD_H } }
+    /// Height of the head of the table: the title. The rows scroll by the scroll bar, so a narrow view needs no row of
+    /// Up / Dn controls under it.
+    pub(super) fn head_h(&self, _r: Rect) -> i32 { HEAD_H }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
         let Some(k) = self.table else { return };
@@ -181,12 +212,15 @@ impl Ui {
             TableKind::Decode => if self.decode_busy() { "Decoder events - Computing".into() } else { format!("Decoder events \u{b7} {}", total) },
             TableKind::Search => if self.m.trig_ref.is_some() && self.reference_search_busy() { "Search · computing…".into() }
                 else { format!("Search {} · {}", self.trigger_source_label(), total) },
+            TableKind::Segments => format!("Segments \u{b7} {}", rows.len()),
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
-        for (b, t) in self.table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]).filter(|(b, _)| b.w > 0) {
-            btn(cv, *b, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, *b, 1, t, TEXT);
+        let close = self.table_close(r);
+        if close.w > 0 {
+            btn(cv, close, BTN, BTN_BORDER);
+            cv.text_in(&f.mb, close, 1, "\u{d7}", TEXT);
         }
+        scroll::Bar { track: Rect::new(r.x + r.w - scroll::BAR_W - 2, r.y + self.head_h(r), scroll::BAR_W, fit as i32 * ROW_H), total: total as i32, shown: fit as i32, pos: top as i32 }.draw(cv);
         if rows.is_empty() {
             let empty = if k == TableKind::Search && self.m.trig_ref.is_some() && !self.reference_search_supported() {
                 "This condition needs physical hardware channels"
@@ -214,18 +248,18 @@ impl Ui {
         if !r.contains(x, y) {
             return false;
         }
-        let [up, down, close] = self.table_buttons(r);
         let last = total.saturating_sub(fit);
         self.table_top = self.table_top.min(last);
-        if close.contains(x, y) {
+        let on_bar = total > fit && x >= r.x + r.w - scroll::BAR_W - 2;
+        if self.table_close(r).contains(x, y) {
             self.table = None;
-        } else if up.contains(x, y) {
-            self.table_top = self.table_top.saturating_sub(fit);
-        } else if down.contains(x, y) {
-            self.table_top = (self.table_top + fit).min(last);
+        } else if on_bar {
+            // the scroll bar (moved by the finger, see ui/scroll.rs)
         } else if y >= r.y + self.head_h(r) {
             let i = self.table_top + ((y - r.y - self.head_h(r)) / ROW_H) as usize;
-            if let Some(t) = events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t)) {
+            if k == TableKind::Segments && i < rows.len() {
+                self.seg_show(i);
+            } else if let Some(t) = events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t)) {
                 self.go_to_time(t);
             }
         }

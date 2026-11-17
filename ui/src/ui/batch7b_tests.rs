@@ -502,9 +502,9 @@ fn the_studio_table_and_the_results_pane_follow_the_shown_columns() {
 
 // ------------------------------------------------------------------------------------------------ eye, jitter and power rows
 
-use super::meascatalog::Cat;
+use super::meascatalog::cat as Cat;
 
-fn cat_row(c: Cat) -> (u16, WaveId, WaveId, WaveId, WaveId) {
+fn cat_row(c: u16) -> (u16, WaveId, WaveId, WaveId, WaveId) {
     (c as u16, WaveId::Ref(0), WaveId::Ref(0), WaveId::Ref(0), WaveId::Ref(0))
 }
 

@@ -712,7 +712,7 @@ impl Ui {
 
     pub(super) fn addrail_cursor_items(&self) -> Vec<Item> {
         if self.m.cursor == CursorMode::Off { return vec![Item::CurType, Item::CurSrc]; }
-        let mut v = vec![Item::CurType, Item::CurSrc, Item::CurSrcB, Item::CurReadout, Item::CurLink, Item::CurA, Item::CurB];
+        let mut v = vec![Item::CurType, Item::CurSrc, Item::CurSecond, Item::CurReadout, Item::CurLink, Item::CurA, Item::CurB];
         if self.m.cursor == CursorMode::Xy { v.extend([Item::CurC, Item::CurD]); }
         v.push(Item::CurRemove);
         v
@@ -974,7 +974,7 @@ impl Ui {
 
     pub(super) fn addrail_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::CurType | Item::CurSrc | Item::CurSrcB | Item::CurReadout | Item::CurLink | Item::SrchSrc | Item::SrchSlope => Kind::Choice,
+            Item::CurType | Item::CurSrc | Item::CurSecond | Item::CurReadout | Item::CurLink | Item::SrchSrc | Item::SrchSlope => Kind::Choice,
             Item::SrchLevel | Item::SrchEvent => Kind::Value,
             Item::CurRemove | Item::Srch50 | Item::SrchFromTrig | Item::SrchToTrig | Item::SrchRemove => Kind::Action,
             _ => return None,
@@ -985,7 +985,7 @@ impl Ui {
         Some(match it {
             Item::CurType => "Type",
             Item::CurSrc => "Source",
-            Item::CurSrcB => "Second source",
+            Item::CurSecond => "Second source",
             Item::CurReadout => "Readout",
             Item::CurLink => "Move",
             Item::CurRemove => "Remove cursors",
@@ -1008,7 +1008,7 @@ impl Ui {
                 m => Self::cursor_type_names()[Self::CURSOR_MODES.iter().position(|&x| x == m).unwrap_or(0)].into(),
             },
             Item::CurSrc => self.wave_name(self.cursor_source()),
-            Item::CurSrcB => self.m.cur_b_source.map_or("Same".into(), |s| self.wave_name(s)),
+            Item::CurSecond => self.m.cur_b_source.map_or("Same".into(), |s| self.wave_name(s)),
             Item::CurReadout => if self.studio.cur_badge { "Badge" } else { "Graticule" }.into(),
             Item::CurLink => if self.studio.cur_linked { "Linked" } else { "Independent" }.into(),
             Item::SrchSrc => self.studio.search.map_or(String::new(), |s| self.wave_name(s.src)),
@@ -1027,7 +1027,7 @@ impl Ui {
         Some(match it {
             Item::CurType => Self::cursor_type_names().iter().map(|s| s.to_string()).collect(),
             Item::CurSrc | Item::SrchSrc => names(),
-            Item::CurSrcB => std::iter::once("Same".to_string()).chain(names()).collect(),
+            Item::CurSecond => std::iter::once("Same".to_string()).chain(names()).collect(),
             Item::CurReadout => vec!["Graticule".into(), "Badge".into()],
             Item::CurLink => vec!["Independent".into(), "Linked".into()],
             Item::SrchSlope => SLOPES.iter().map(|s| s.to_string()).collect(),
@@ -1057,7 +1057,7 @@ impl Ui {
                     self.studio_search_set_50();
                 }
             }
-            Item::CurSrcB => {
+            Item::CurSecond => {
                 let shown = self.sheet_shown_sources();
                 let mut opts: Vec<Option<WaveId>> = vec![None];
                 opts.extend(shown.into_iter().map(Some));

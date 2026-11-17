@@ -1,7 +1,7 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Automatic measurements (conventions of IEEE 181: top and base from the histogram, 10/50/90 % reference
+//! Automatic measurements (conventions of Rigol / IEEE 181: top and base from the histogram, 10/50/90 % reference
 //! levels, edges at the 50 % level with 10 % hysteresis, time values averaged over all complete cycles in the record).
 
 use crate::edges::level_edges;
@@ -102,19 +102,19 @@ pub const ALL: [Meas; 60] = [
 impl Meas {
     pub fn name(self) -> &'static str {
         match self {
-            Meas::Vmax => "Vmax",
-            Meas::Vmin => "Vmin",
-            Meas::Vpp => "Vpp",
-            Meas::Vtop => "Vtop",
-            Meas::Vbase => "Vbase",
-            Meas::Vamp => "Vamp",
-            Meas::Vupper => "Vupper",
-            Meas::Vmid => "Vmid",
-            Meas::Vlower => "Vlower",
-            Meas::Vavg => "Vavg",
-            Meas::Vrms => "Vrms",
-            Meas::VavgCyc => "Per. Vavg",
-            Meas::VrmsCyc => "Per. Vrms",
+            Meas::Vmax => "Max",
+            Meas::Vmin => "Min",
+            Meas::Vpp => "Pk-pk",
+            Meas::Vtop => "Top",
+            Meas::Vbase => "Base",
+            Meas::Vamp => "Amp",
+            Meas::Vupper => "Upper",
+            Meas::Vmid => "Middle",
+            Meas::Vlower => "Lower",
+            Meas::Vavg => "Mean",
+            Meas::Vrms => "RMS",
+            Meas::VavgCyc => "Cyc mean",
+            Meas::VrmsCyc => "Cyc RMS",
             Meas::VrmsAc => "AC RMS",
             Meas::StdDev => "Std dev",
             Meas::Overshoot => "Overshoot",
@@ -123,8 +123,8 @@ impl Meas {
             Meas::AreaCyc => "Cyc area",
             Meas::Period => "Period",
             Meas::Freq => "Freq",
-            Meas::Rise => "Rise time",
-            Meas::Fall => "Fall time",
+            Meas::Rise => "Rise",
+            Meas::Fall => "Fall",
             Meas::PWidth => "+Width",
             Meas::NWidth => "-Width",
             Meas::PDuty => "+Duty",
@@ -133,10 +133,10 @@ impl Meas {
             Meas::NPulses => "-Pulses",
             Meas::PEdges => "+Edges",
             Meas::NEdges => "-Edges",
-            Meas::TVmax => "tVmax",
-            Meas::TVmin => "tVmin",
-            Meas::PSlew => "+Rate",
-            Meas::NSlew => "-Rate",
+            Meas::TVmax => "t(Max)",
+            Meas::TVmin => "t(Min)",
+            Meas::PSlew => "+Slew",
+            Meas::NSlew => "-Slew",
             Meas::HighTime => "High time",
             Meas::LowTime => "Low time",
             Meas::Burst => "Burst",
@@ -552,7 +552,7 @@ pub fn analyze_levels(v: &[f32], dt: f64, min_amp: f64, lv: &Levels) -> Analysis
         lin_slope,
         lin_int,
         pam: crate::linecode::pam4_levels(&f, vmin, vmax),
-        bits: f.iter().filter(|&&x| x >= 0.5 * (vmin + vmax)).count() as f64,
+        bits: f64::NAN,
         pll_ui: f64::NAN,
         ui_wtd: f64::NAN,
         fold_rms: f64::NAN,
@@ -573,6 +573,7 @@ pub fn analyze_levels(v: &[f32], dt: f64, min_amp: f64, lv: &Levels) -> Analysis
     };
     a.est_ui = unit_interval_bits(&mids(&a));
     a.ui_wtd = crate::linecode::unit_interval_runs(&spacings).unwrap_or(f64::NAN);
+    a.bits = ones(&e, v.len(), dt, a.est_ui);
     if a.rises.len() + a.falls.len() <= 8000 {
         let mid_v = mid;
         if let Some(c) = crate::eye::recover_clock_pll(v, dt, mid_v, (amp * 0.1) as f32, None, 0.0, true) {
@@ -795,6 +796,28 @@ impl Analysis {
     fn hpct_or_default(&self) -> f64 {
         if self.hpct > 0.0 { self.hpct } else { 0.9 }
     }
+}
+
+/// Bits above the mid level, sliced once per unit interval `ui` (s) at the bit centres. The bit grid starts again at
+/// every mid crossing, so a small error in `ui` does not add up over a long record: a run between two crossings holds
+/// round(length / ui) bits, high after a rising crossing. NaN without a unit interval.
+fn ones(e: &[crate::edges::Edge], n: usize, dt: f64, ui: f64) -> f64 {
+    let (Some(first), Some(last)) = (e.first(), e.last()) else { return f64::NAN };
+    if !(ui > 0.0) || n == 0 {
+        return f64::NAN;
+    }
+    let bits = |a: f64, b: f64| ((b - a) * dt / ui).round().max(0.0);
+    // before the first crossing the level is the one that crossing leaves
+    let mut count = if first.rising { 0.0 } else { bits(0.0, first.t) };
+    for w in e.windows(2) {
+        if w[0].rising {
+            count += bits(w[0].t, w[1].t);
+        }
+    }
+    if last.rising {
+        count += bits(last.t, (n - 1) as f64);
+    }
+    count
 }
 
 /// Durations of complete pulses, with ascending edge times. Each opening goes to
@@ -1251,7 +1274,8 @@ fn cycles(clock: &Analysis, data: &Analysis, latch: Latch) -> Vec<(Option<f64>, 
     out
 }
 
-/// Clock edges whose setup is below `tsetup` or hold below `thold`.
+/// Clock edges whose setup is below `tsetup` or hold below `thold`. A clock edge without a data edge before or after
+/// it is judged on the time it has.
 pub fn setup_hold_violations(clock: &Analysis, data: &Analysis, tsetup: f64, thold: f64) -> f64 {
     setup_hold_violations_at(clock, data, tsetup, thold, true)
 }
@@ -1301,13 +1325,13 @@ mod tests {
         }
     }
 
+    // No wall-time limit (ADR 0020): a quadratic join of 400k edges is 1.6e11 steps and does not end in time, which
+    // shows a regression without a threshold that a loaded computer trips.
     #[test]
     fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
         let open:Vec<f64>=(0..400_000).map(|i|i as f64).collect();let close:Vec<f64>=open.iter().map(|t|t+0.5).collect();
-        let start=std::time::Instant::now();let widths=pair_widths(&open,&close);let elapsed=start.elapsed();
+        let widths=pair_widths(&open,&close);
         assert_eq!(widths.len(),400_000);assert!(widths.iter().all(|&width|width==0.5));
-        assert!(elapsed<std::time::Duration::from_millis(500),"sorted pulse join took {elapsed:?}");
-        eprintln!("sorted complete-pulse join400k: {elapsed:?}");
     }
 
     #[test]
@@ -1363,27 +1387,26 @@ mod tests {
         }
     }
 
-    /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels.
+    /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels. Searching the
+    /// record per edge held the main thread for half a minute there and takes minutes here. No wall-time limit
+    /// (ADR 0020).
     #[test]
     fn edges_that_miss_the_levels_are_quick() {
         let n = 400_000;
         let mut v = vec![0.0f32; n / 10];
         v.extend(vec![1.0f32; n / 10]);
         v.extend((0..n * 8 / 10).map(|i| if i % 2 == 0 { 0.4f32 } else { 0.6 }));
-        let t = std::time::Instant::now();
         let a = analyze_min(&v, 1e-9, 0.1);
         assert!(a.rises.len() > 1000, "{}", a.rises.len());
-        assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
     }
 
+    /// One pass over the sorted edges; a pass per edge would not finish. No wall-time limit (ADR 0020).
     #[test]
     fn width_of_a_deep_record_is_quick() {
         let rises: Vec<f64> = (0..400_000).map(|i| i as f64).collect();
         let falls: Vec<f64> = rises.iter().map(|t| t + 0.5).collect();
         let an = Analysis { rises, falls, ..Default::default() };
-        let t = std::time::Instant::now();
         assert!((an.width(true) - 0.5).abs() < 1e-9 && an.pulses(true) == 400_000.0);
-        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
     }
 
     #[test]
@@ -1558,5 +1581,19 @@ mod tests {
         // the next change is 7 ns after each edge, one before the last edge has none
         assert!((hold_time(&clock, &data) - 7e-9).abs() < 1e-15);
         assert_eq!(setup_hold_times(&clock, &data, Latch::Rise).0.len(), 49);
+    }
+
+    #[test]
+    fn setup_hold_violations_pair_by_clock_edge() {
+        let ns = 1e-9;
+        // the first clock edge has no data edge before it: no setup, but a hold of 3 ns
+        let clk = Analysis { valid: true, rises: vec![5.0 * ns, 10.0 * ns, 20.0 * ns], ..Analysis::default() };
+        let (rises, falls) = (vec![8.0 * ns, 19.0 * ns], vec![12.0 * ns, 22.0 * ns]);
+        let data = Analysis { valid: true, rises, falls, ..Analysis::default() };
+        // 10 ns: setup 2, hold 2 (< 2.5); 20 ns: setup 1 (< 1.5), hold 2 (< 2.5)
+        assert_eq!(setup_hold_violations(&clk, &data, 1.5 * ns, 2.5 * ns), 2.0);
+        // the last clock edge has no data edge after it: its setup still counts
+        let clk = Analysis { valid: true, rises: vec![10.0 * ns, 25.0 * ns], ..Analysis::default() };
+        assert_eq!(setup_hold_violations(&clk, &data, 4.0 * ns, 0.0), 2.0);
     }
 }

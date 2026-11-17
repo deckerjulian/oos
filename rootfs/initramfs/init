@@ -1,5 +1,5 @@
 #!/bin/busybox sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # OOS development initramfs (Phase 2). Runs from the `recovery` boot image of the stock loader.
 /bin/busybox --install -s /bin

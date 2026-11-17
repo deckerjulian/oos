@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: input: edt-ft5x06: add focaltech,ft5422, a part on FocalTech firmware
 
 The driver takes every part for an EDT design and guesses the model from

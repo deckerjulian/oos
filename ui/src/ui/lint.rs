@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Layout check of every menu: nothing outside the screen or the dialog, no text wider than its control, no row
@@ -180,7 +180,9 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
     // the longest name on the network, and the longest default (DHO924S with six digits)
     walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
-    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-204527".into()), "Remote default name", &mut out);
+    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-123456".into()), "Remote default name", &mut out);
+    // the longest address list, the network beside it, and a change waiting for the next start
+    walk(&|| open(Remote, &|u| { u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6))); u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()] }), "Remote long allow list", &mut out);
     walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);
@@ -191,7 +193,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         walk(&|| open(Decode, &|u| { u.m.la.on = true; u.m.dec_la_in = true; u.set_dec_proto(p) }), &format!("Decode {} LA", p.name()), &mut out);
     }
     for t in TRIG_TYPES {
-        for p in [Proto::Uart, Proto::Can, Proto::I2c] {
+        for p in [Proto::UART, Proto::CAN, Proto::I2C] {
             walk(&|| open(Trigger, &|u| { u.set_dec_proto(p); u.set_trig_type(t) }), &format!("Trigger {} {}", t.name(), p.name()), &mut out);
         }
     }
@@ -205,18 +207,19 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
     assert!(!u.menu_open);
-    // File loading and simulation are direct actions beside the usual tools.
+    // File loading and simulation are direct actions beside the usual tools; Load file is also a row of the Reference menu.
     assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Display", "Storage", "System"]);
+    assert!(u.items(MenuId::Ref).contains(&Item::RefLoad));
     let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
     u.tap(load.x + 5, load.y + 5);
     assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
     u.dismiss_context();
     assert!(!u.load_slot_ask && !u.open_wave_request);
     assert!(u.refs.iter().all(Option::is_none));
-    u.tap(load.x + 5, load.y + 5);
+    u.request_waveform();
     u.tap(8, 8);
     assert!(!u.load_slot_ask && !u.open_wave_request, "an outside tap cancels without loading");
-    u.tap(load.x + 5, load.y + 5);
+    u.request_waveform();
     let r3 = Ui::load_slot_button(2);
     u.tap(r3.x + 4, r3.y + 4);
     assert!(!u.load_slot_ask && u.open_wave_request);
@@ -228,6 +231,27 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.measure_btn().is_none());
     u.key(key::MEASURE);
     assert!(u.menu_open && u.menu == MenuId::MeasAdd);
+}
+
+/// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.
+#[cfg(not(windows))]
+#[test]
+fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
+    let dir = std::env::temp_dir().join(format!("oos-refload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    u.activate(Item::RefLoad);
+    assert!(u.refs.iter().all(Option::is_none), "nothing in storage, nothing loaded");
+    let rec = u.last[0].as_ref().unwrap().clone();
+    std::fs::write(dir.join("capture.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.ref_sel = 2;
+    u.activate(Item::RefLoad);
+    let r = u.refs[2].as_ref().expect("R3");
+    assert_eq!(*r.v, rec.ch[0]);
+    assert!(!u.load_slot_ask && !u.open_wave_request, "no file dialog on the scope");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -265,6 +289,12 @@ fn files_go_to_the_stick_while_it_is_there() {
     u.store_dir = "/oos/shots".into();
     assert_eq!(u.save_dir(), std::path::Path::new("/oos/shots"));
     assert_eq!(u.saved_where(), "");
+    // Local keeps the files in the storage directory while the stick is there, and the title says so
+    u.store_dir = crate::store::DEFAULT_DIR.into();
+    u.store_dest = crate::store::StoreDest::Local;
+    assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
+    assert_eq!(u.saved_where(), " locally, not on the stick");
+    assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
 }
 
 #[test]
@@ -406,6 +436,7 @@ fn screen_in_order_on(scr: Screen) {
 #[test]
 fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.bar_compact = true;
     u.tap(80, BOTTOM.y + 15);
     let (x, y) = fix_tests::row_xy(&u, "Logic analyser"); u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
@@ -490,6 +521,32 @@ fn dvm_and_counter_read_the_source() {
     u.m.dvm_src = 3;
     assert!(!u.dvm_value().is_finite());
     assert!(u.items(MenuId::Dvm).contains(&Item::SrcOn));
+}
+
+#[test]
+fn dvm_prefers_a_decoded_block_reading_of_its_source() {
+    let mut u = with_two_channels();
+    u.m.dvm_on = true;
+    for _ in 0..4 {
+        u.step(0.04);
+    }
+    let sw = u.dvm_value();
+    assert!(sw.is_finite());
+    assert!(u.dvm_debug_text().starts_with("off,sw="));
+    let r = crate::board::DvmRead { ch: 0, lane: 0, exp: 28, raw: [0x39, 1, 2, 3, 4], volts: Some([0.25, 0.5, 0.75]), n: 3 };
+    // (reading, mode, value): the mode picks the value; another channel's or a refused reading leaves the software DVM
+    let cases: [(crate::board::DvmRead, usize, f64); 4] =
+        [(r, 0, 0.25), (r, 2, 0.75), (crate::board::DvmRead { ch: 1, ..r }, 0, sw), (crate::board::DvmRead { volts: None, ..r }, 0, sw)];
+    for (hw, mode, want) in cases {
+        u.dvm_hw = Some(hw);
+        u.m.dvm_mode = mode;
+        assert_eq!(u.dvm_value(), want, "{:?} mode {}", hw, mode);
+    }
+    u.dvm_hw = Some(r);
+    u.m.dvm_mode = 0;
+    let t = u.dvm_debug_text();
+    assert!(t.starts_with("ch=1,lane=0,exp=28,n=3,cfg=0x00000039,sum_lo=0x00000001"), "{}", t);
+    assert!(t.contains("hw=2.500000e-1;5.000000e-1;7.500000e-1,mode=0,sw="), "{}", t);
 }
 
 #[test]
@@ -602,16 +659,16 @@ fn four_decoders_side_by_side() {
     u.m.ch[2].on = true;
     u.m.dec_on = true;
     u.m.dec_src = 2;
-    u.set_dec_proto(Proto::Uart);
+    u.set_dec_proto(Proto::UART);
     u.m.dec_select(1);
     assert_eq!(u.m.dec_sel, 1);
     assert!(!u.m.dec_on, "a new slot starts off");
     u.m.dec_on = true;
-    u.set_dec_proto(Proto::I2c);
+    u.set_dec_proto(Proto::I2C);
     u.m.dec_select(0);
-    assert_eq!(u.m.dec_proto, Proto::Uart);
+    assert_eq!(u.m.dec_proto, Proto::UART);
     assert!(u.m.dec_is_on(0) && u.m.dec_is_on(1) && !u.m.dec_is_on(2));
-    assert_eq!(u.m.dec_view(1).dec_proto, Proto::I2c);
+    assert_eq!(u.m.dec_view(1).dec_proto, Proto::I2C);
     for _ in 0..4 {
         u.step(0.04);
     }
@@ -623,9 +680,9 @@ fn four_decoders_side_by_side() {
     // setups keep all of them
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!(b.dec_sel, 0);
-    assert_eq!(b.dec_view(1).dec_proto, Proto::I2c);
+    assert_eq!(b.dec_view(1).dec_proto, Proto::I2C);
     assert!(b.dec_is_on(1));
-    assert_eq!(b.dec_proto, Proto::Uart);
+    assert_eq!(b.dec_proto, Proto::UART);
 }
 
 #[test]
@@ -822,6 +879,33 @@ fn xy_cursors_show_both_axes() {
     u.render(&mut cv);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.cursor, b.cur_d), (CursorMode::Xy, u.m.cur_d));
+}
+
+#[test]
+fn track_cursor_b_follows_its_own_source() {
+    let mut u = with_two_channels();
+    u.m.cursor = CursorMode::Track;
+    assert_eq!(u.items(MenuId::Cursor).len(), 4);
+    assert_eq!(u.value(Item::CurSrcB), "CH1", "follows cursor A's source until set");
+    u.adjust(Item::CurSrcB, 1);
+    assert_eq!((u.m.cur_b_source, u.value(Item::CurSrcB).as_str()), (Some(WaveId::Ch(1)), "CH2"));
+    let (ta, _) = u.cursor_times();
+    let mut r = u.last[0].clone().unwrap();
+    r.t0 = ta - 1.0;
+    r.dt = 1.0;
+    r.ch[0] = vec![0.0, 1.0, 2.0];
+    r.ch[1] = vec![0.0, 5.0, 6.0];
+    u.last[0] = Some(r);
+    assert_eq!((u.wave_at_source(WaveId::Ch(0), ta), u.wave_at_source(WaveId::Ch(1), ta)), (Some(1.0), Some(5.0)));
+    let v = u.cursor_values();
+    assert_ne!(v[1].1, v[3].1, "Y1 and Y2 read different sources");
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
+    u.render(&mut cv);
+    let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
+    assert_eq!(b.cur_b_source, Some(WaveId::Ch(1)));
+    // the other modes have no such row
+    u.m.cursor = CursorMode::Time;
+    assert!(!u.items(MenuId::Cursor).contains(&Item::CurSrcB));
 }
 
 #[test]
@@ -1352,16 +1436,16 @@ fn a_long_results_list_scrolls_by_touch() {
     u.render(&mut cv);
     let r = u.pane_rect();
     let (fit, _) = Ui::results_fit(r, 14);
-    let [up, down] = Ui::results_scroll_btns(r);
-    u.tap(down.x + 5, down.y + 5);
-    assert_eq!(u.pn.top, fit.min(14 - fit));
-    u.tap(down.x + 5, down.y + 5);
+    // the scroll bar: the thumb to the bottom is the end of the list, a tap at the top of the track the start
+    let (bar, _) = u.results_bar().expect("Results pane");
+    assert!(bar.needed());
+    let th = bar.thumb();
+    crate::cmd::run(&mut u, &format!("drag {} {} {} {}", th.x + th.w / 2, th.y + 5, th.x + th.w / 2, bar.track.y + bar.track.h + 40));
     assert_eq!(u.pn.top, 14 - fit);
     u.render(&mut cv);
-    u.tap(up.x + 5, up.y + 5);
-    assert!(u.pn.top < 14 - fit);
+    crate::cmd::run(&mut u, &format!("drag {0} {1} {0} {1}", bar.track.x + bar.track.w / 2, bar.track.y + 2));
+    assert_eq!(u.pn.top, 0, "a press on the track jumps there");
     // a finger up the table goes down the list
-    u.pn.top = 0;
     crate::cmd::run(&mut u, &format!("drag 300 {} 300 {}", r.y + r.h - 10, r.y + 50));
     assert!(u.pn.top > 0);
     // still there after the list got shorter
@@ -1696,7 +1780,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
         triggered: true,
         partial: false,
         raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7, conditioned: false }),
-        la: None,
+        la: None, pairs: false
     });
     let rec = u.last[0].as_ref().unwrap();
     let samp = u.wave_samples(rec, WaveId::Ref(0)).unwrap();
@@ -1806,7 +1890,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     fine[7] = 4.0;
     put_ref(&mut u, 0, 0.0, 2e-6, coarse);
     put_ref(&mut u, 1, 0.0, 1e-6, fine.clone());
-    let taken = u.take_waves(u.last[0].as_ref().unwrap_or(&Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None }), &[WaveId::Ref(0), WaveId::Ref(1)], &[]).unwrap();
+    let taken = u.take_waves(u.last[0].as_ref().unwrap_or(&Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None, pairs: false }), &[WaveId::Ref(0), WaveId::Ref(1)], &[]).unwrap();
     assert!((taken.dt - 1e-6).abs() < 1e-18);
     assert_eq!(taken.v[1], fine);
     assert_eq!(taken.v[0].len(), fine.len());
@@ -2094,7 +2178,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
         ("s-pane-res", |u| { u.m.ch[1].on = true; u.m.pane = 2; u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))]; u.m.dvm_on = true; u.m.cnt_on = true; }),
         ("s-decoders", |u| {
             u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2;
-            u.m.dec_select(1); u.m.dec_on = true; u.m.dec_src = 2; u.set_dec_proto(Proto::Spi); u.m.dec_select(0);
+            u.m.dec_select(1); u.m.dec_on = true; u.m.dec_src = 2; u.set_dec_proto(Proto::SPI); u.m.dec_select(0);
             u.table = Some(tables::TableKind::Decode);
         }),
         ("s-track", |u| { u.m.cursor = CursorMode::Track; }),
@@ -2389,11 +2473,13 @@ fn measurement_queries_read_a_channel_or_a_ref() {
     };
     put_ref(&mut u, 0, 0.0, 1e-9, edge(&[100, 200]));
     put_ref(&mut u, 1, 0.0, 1e-9, edge(&[90, 190]));
+    // A is the data, B the clock, as on the measurement page. The 10 ns setup and 30 ns hold are at and beyond the
+    // fork's default setup/hold range (SETUP_HOLD_WINDOW, 10 ns), so the violation count checks the order
     ask(&mut s, &mut u, ":MEAS:TSET 20e-9");
     ask(&mut s, &mut u, ":MEAS:THOL 5e-9");
-    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 2.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R2,R1").parse::<f64>().unwrap(), 2.0);
     ask(&mut s, &mut u, ":MEAS:TSET 5e-9");
-    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R1,R2").parse::<f64>().unwrap(), 0.0);
+    assert_eq!(ask(&mut s, &mut u, ":MEAS:ITEM? SETHOLD,R2,R1").parse::<f64>().unwrap(), 0.0);
 
     let pdt = 1e-4;
     let tone = |amp: f64, shift: f64| -> Vec<f32> {

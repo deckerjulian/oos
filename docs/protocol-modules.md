@@ -8,14 +8,16 @@ Everything around the decoder comes from that one type:
 | name, stable key | Decode > Protocol, event table, decoder label, saved setups, SCPI setups | `name`, `key` (required) |
 | source rows | Decode menu: one row per role, named after it ("SDA", "CC", "Data" ...) | `roles` (one "Source") |
 | differential input | the "B line (A-B)" row for an RS-485 style pair | `diff_ok` (off) |
+| shared rows | Decode menu rows several protocols use (Baud, Bits, Parity, SPI mode, CAN rate, USB speed ...), saved under their own setup keys | `shared` (none), `bit_time_sh`, `frame_span_sh` |
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
 | the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
 | field text | the labels on the trace and in the event table | `text` (the generic text of each kind) |
 | protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `trigger_match` (the generic rule) |
 | trigger start value | what Trigger > Bus looks for when it is switched on | `trigger_default` (Frame) |
 | trigger timing | sampling (a twentieth of a bit) and the search window | `bit_time` (required), `frame_span` (200 bits) |
-| hardware edge | the edge the hardware trigger arms on in front of the protocol trigger | `start_edge` (falling) |
-| first settings | channels and threshold when the protocol is chosen | `setup` (CH3 / CH4, 1.65 V) |
+| hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `start_edge` (falling), `start_role` (the main line) |
+| first settings | channels, LA lines, threshold, shared-row values and the demo's trigger when the protocol is chosen | `setup` (CH3 / CH4, 1.65 V) |
+| old setups | how a setup saved before the protocol was a module maps onto its options | `legacy` (none) |
 | demo traffic | the host build's simulated signals, on the channels of `setup` | `demo` (none) |
 | own view | Display > Second pane > Bus view: a status line and columns of rows, with a memory across records | `view` (none) |
 
@@ -30,8 +32,10 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.
-3. **Register it** in `ui/src/protocols/mod.rs`: `mod <name>;` and one entry in `MODULES`. The position in the list is
-   the position in the Decode menu, after the built-in protocols.
+3. **Register it** in `ui/src/protocols/mod.rs`: `mod <name>;` and one entry in `MODULES`, both under
+   `#[cfg(feature = "dec-<name>")]`, and the feature in `ui/Cargo.toml` (`dec-<name> = []`, and in the `decoders`
+   list so that it is on by default). The position in the list is
+   the position in the Decode menu, after the seven core protocols, which keep the first places.
 4. **Test**: `(cd ui && cargo test)`. Every module is checked automatically: key and name unique, option defaults in
    range, and, when it has demo traffic, that it decodes its own demo without errors (`protocols::tests`). The Decode
    menu of every protocol goes through the layout lints. Add the module's own tests next to it, and add it to the
@@ -39,6 +43,23 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
    that must appear.
 5. **Try it** on the host: `cargo run` in `ui/` (see the README), Decode > Protocol, decoder on. With demo traffic the
    signals come up on their channels by themselves.
+
+## Leaving decoders out of a build
+
+Every module file except `core.rs` is a Cargo feature, `dec-<file>`; all are on by default (`decoders`). A build with
+fewer decoders sets one of two variables for `ui/build.sh` or `boot/build-dev-image.sh`:
+
+```sh
+OOS_DECODERS="usb dcc" ui/build.sh               # only these, besides the core ones
+OOS_DECODERS="" boot/build-dev-image.sh          # the core ones only
+OOS_DECODERS_OFF="avionics vehicle" ui/build.sh  # all but these
+ui/tools/decoder-features.sh list                # the names
+```
+
+With cargo directly: `cargo build --no-default-features --features dec-usb,dec-dcc`. The seven core protocols are
+always in: the hardware trigger types and SCPI name them. A setup that names a decoder the build does not have loads
+with the decoder off and says which line it left out. With fewer decoders, the tests that need every one skip
+themselves; CI builds the core-only set and every optional decoder alone.
 
 ## The view and its memory
 
@@ -58,9 +79,10 @@ chosen.
   it has decoded a real signal, and from which device.
 - Text, comments and names in English; no code from other firmware (see CONTRIBUTING.md).
 
-## The built-in protocols
+## The core protocols
 
-UART, I2C, SPI, CAN and the other protocols that were there before this interface are still wired by hand through
-`model::Proto` (`trig.rs`, `ui.rs`, `wave.rs`). DMX512, S/PDIF and USB PD already moved into modules, DCC came as one; the others
-follow one at a time. Their saved setups keep working because a module's key is the old name (`Dmx512`, `Spdif`,
-`UsbPd`).
+Every decoder is a module, the core ones too: UART, I2C, SPI, CAN, LIN, Parallel and C-PHY are in
+`ui/src/protocols/core.rs` and take the first places in `MODULES` (their order is fixed, saved setups and SCPI refer
+to it). Their decoders are in `oos-dsp`; the values several of them share (baud rate, bits, parity ...) are shared
+rows, so a setup keeps one baud rate when you switch between UART and LIN. Setups saved before a protocol became a
+module keep working: its key is the old name, and `legacy` maps the old setup keys onto its options.

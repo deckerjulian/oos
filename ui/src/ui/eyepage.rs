@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The eye and jitter page. `eye_update` runs per record: the eye and the cheap sums there, everything else (fits,
@@ -612,6 +612,7 @@ impl Page {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Generated and imported references are immutable records. Eye analysis reads
     /// the whole record even when ordinary measurements follow the zoom window.
@@ -1169,6 +1170,7 @@ impl Ui {
 
     /// Left edge of the heat scale on plot `r`. On the usual split it is the top right of the plot; with the column
     /// away that corner belongs to the full-screen button, so the scale stops short of it.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn heat_x(&self, r: Rect) -> i32 {
         let src = match self.src.name() {
             "DEMO" => "Demo signals",
@@ -1197,6 +1199,7 @@ impl Ui {
         for k in -1..=1 { cv.circle(r.x + r.w / 2, r.y + r.h / 2 + 7 * k, 2, DIM); }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
         if l.head.w < 40 || l.head.h < 16 {
             return;
@@ -1529,6 +1532,48 @@ fn blit_hits(cv: &mut Canvas, r: Rect, img: &[u32], iw: usize) {
     cv.image(r, &px, true);
 }
 
+/// The eye page (eye diagram, jitter, the charts).
+pub(super) struct EyePage;
+
+impl super::analysers::Analyser for EyePage {
+    fn view(&self) -> AView {
+        AView::Eye
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("eye", "Eye")
+    }
+
+    fn name(&self) -> &'static str {
+        "Eye / jitter"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Eye
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("EYE")
+    }
+
+    fn more(&self, _ui: &Ui) -> Vec<Item> {
+        vec![Item::EyeClear]
+    }
+
+    fn without_record(&self, ui: &Ui) -> bool {
+        let is_ref = |id: WaveId| matches!(id, WaveId::Ref(_));
+        is_ref(ui.m.eye_src) || ui.m.eye_b.is_some_and(is_ref) || ui.m.eye_rail.is_some_and(is_ref)
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.eye_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_eye(cv);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1596,7 +1641,7 @@ mod tests {
         }
         let mut ch: [Vec<f32>; NCH] = Default::default();
         ch[0] = v;
-        Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None }
+        Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false }
     }
 
     fn page(s: Sig, records: usize) -> Ui {

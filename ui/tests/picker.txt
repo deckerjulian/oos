@@ -6,7 +6,8 @@ pick Type
 frames 2
 shot $S/d0-picker-trigtype.ppm
 # Runt
-tap 930 396
+menu Trigger
+set Type = Runt
 frames 20
 shot $S/d1-picker-runt-set.ppm
 menu Math
@@ -14,7 +15,9 @@ pick Operation
 frames 2
 shot $S/d2-picker-math.ppm
 # FFT
-tap 596 489
+menu Math
+set Category = Filter
+set Operation = FFT
 frames 10
 shot $S/d3-picker-fft-set.ppm
 # System > Quick key > Clear (the start menu entry "Quick" follows)
@@ -22,6 +25,7 @@ menu System
 pick Quick key
 frames 2
 shot $S/d4-picker-quick.ppm
-tap 931 160
+menu System
+set Quick key = Clear
 frames 2
 shot $S/d5-picker-quick-set.ppm

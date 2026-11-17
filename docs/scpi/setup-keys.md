@@ -84,6 +84,13 @@ Commands: [trigger.md](trigger.md).
 | `hold` | `Enter`/`Exit`/`Inside`; idle time; edge number; setup and hold times; bus match, bus value | `0.000001` | `:TRIGger:SHOLd:HTIMe` |
 | `trig_bus` | `Enter`/`Exit`/`Inside`; idle time; edge number; setup and hold times; bus match, bus value | `ID/Addr` | `:TRIGger:BUS:WHEN` |
 | `trig_bus_val` | `Enter`/`Exit`/`Inside`; idle time; edge number; setup and hold times; bus match, bus value | `291` | `:TRIGger:BUS:VALue` |
+| `auto_nrej` | the auto set-up sets noise reject from the noise on the flat levels of the trigger signal | `false` | - |
+| `ser.rel`, `ser.max` | protocol trigger: relation of the value (`Eq`/`Ne`/`Gt`/`Lt`/`In`/`Out`) and its upper limit | `Eq`, `255` | - |
+| `ser.mask` | protocol trigger: the bits of the value that count (SPI, I2C data) | `18446744073709551615` | - |
+| `ser.uart_inv`, `ser.uart_stop`, `ser.uart_err` | UART trigger: idle low, stop bits (`One`/`OneHalf`/`Two`), error kind (`Either`/`Parity`/`Framing`) | `false`, `One`, `Either` | - |
+| `ser.spi_cs_high`, `ser.spi_timeout` | SPI trigger: chip select active high; without chip select, the clock pause that starts a frame, s (0 = the decoder's) | `false`, `0` | - |
+| `ser.addr_rel`, `ser.addr_max`, `ser.dir`, `ser.ten_bit` | I2C trigger: address relation and upper limit, direction (`Either`/`Write`/`Read`), 10-bit addresses | `Eq`, `127`, `Either`, `false` | - |
+| `ser.bytes` | I2C trigger: 0 = any data byte of a frame, 1..5 = the first data bytes after the address | `0` | - |
 
 ## Acquisition
 
@@ -95,6 +102,10 @@ Commands: [acquire.md](acquire.md).
 | `avg_count` | averages | `16` | `:ACQuire:AVERages` |
 | `segments` | segments (0 = off) | `0` | `:ACQuire:ULTRa:MAXFrame` |
 | `mdepth` | memory depth index | `0` | `:ACQuire:MDEPth` |
+| `cores` | the offsets of the interleaved ADC cores taken off in software | `true` | `:ACQuire:CORes` |
+| `avg_hw` | Average mode in the FPGA where the board can (not verified on a unit) | `false` | `:ACQuire:AVERages:HARDware` |
+| `seg_hw`, `seg_interval` | segments recorded by the FPGA (not verified on a unit); wait after each segment, s | `false`, `0` | `:ACQuire:SEGMents:HARDware`, `:ACQuire:SEGMents:INTerval` |
+| `draw_path` | Acquire > Draw path: `standard` or `batch` | `standard` | `:SYSTem:PIPeline` |
 
 ## Calibration and deskew
 
@@ -113,6 +124,7 @@ Commands: [system.md](system.md).
 | --- | --- | --- | --- |
 | `touch_lock` | touch lock | `false` | `:SYSTem:LOCK` |
 | `quick` | quick key action | `Screenshot` | `:SYSTem:QUICk` |
+| `aux_out` | rear AUX OUT: `TrigOut`/`Off`/`PassFail` | `TrigOut` | `:SYSTem:AOUTput` |
 
 ## Display, windows, views
 
@@ -122,6 +134,8 @@ Commands: [display.md](display.md).
 | --- | --- | --- | --- |
 | `text_size` | text size | `Normal` | `:DISPlay:TEXTsize` |
 | `hdmi` | HDMI mode | `Waveform` | `:DISPlay:HDMI` |
+| `hdmi_view` | Display > Monitor view: the view an HDMI monitor shows (0: the panel's) | `0` | `:DISPlay:VIEW:MONitor` |
+| `bar` | Display > Bottom bar: `cards` or `compact` | `cards` | - |
 | `persist` | display settings | `0` | `:DISPlay:GRADing:TIME` |
 | `intensity` | display settings | `60` | `:DISPlay:WBRightness` |
 | `grid` | display settings | `Full` | - |

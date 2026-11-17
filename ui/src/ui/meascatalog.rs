@@ -1,232 +1,160 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Add-measurements catalog: tabs, collapsible groups, a one-line description and a drawn mark.
-//! Every button calls a measurement that already exists. A button with no function is not listed.
+//! The measurement page: categories, groups of which one is open, a one-line description and a drawn mark. It holds
+//! every measurement OOS has: the 60 standard ones, the 17 pair variants and the analysis rows. A tap on a tile adds
+//! the measurement on the current sources, a second tap removes it. A button with no function is not listed.
 
 use super::*;
 #[path = "meascatalog_backend.rs"]
 pub(super) mod backend;
 
-const TABS: [&str; 6] = ["Basic", "Jitter & eye", "Power", "Motor drive", "Power rails", "Double pulse"];
+use crate::measures::{self, Def, Kind, Mark, CATEGORIES};
+pub(super) use crate::measures::{meas_name as meas_long_name, pair_name as pair_long_name};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u16)]
-pub(super) enum Cat {
-    Amplitude = 1,
-    Maximum = 2,
-    Minimum = 3,
-    PeakToPeak = 4,
-    PosOvershoot = 5,
-    NegOvershoot = 6,
-    Mean = 7,
-    Rms = 8,
-    AcRms = 9,
-    Top = 10,
-    Base = 11,
-    Area = 12,
-    Period = 13,
-    Frequency = 14,
-    UnitInterval = 15,
-    DataRate = 16,
-    PosWidth = 17,
-    NegWidth = 18,
-    Skew = 19,
-    Delay = 20,
-    Rise = 21,
-    Fall = 22,
-    Phase = 23,
-    RiseSlew = 24,
-    FallSlew = 25,
-    Burst = 26,
-    PosDuty = 27,
-    NegDuty = 28,
-    Outside = 29,
-    Setup = 30,
-    Hold = 31,
-    NPeriods = 32,
-    HighTime = 33,
-    LowTime = 34,
-    JitterSummary = 40,
-    Tie = 41,
-    PhaseNoise = 42,
-    TjBer = 43,
-    RjDd = 44,
-    DjDd = 45,
-    SjFreq = 46,
-    Pj = 47,
-    Ddj = 48,
-    Dcd = 49,
-    Srj = 50,
-    J2 = 51,
-    EyeHeight = 60,
-    EyeWidth = 61,
-    EyeHigh = 62,
-    EyeHeightBer = 63,
-    EyeWidthBer = 64,
-    EyeLow = 65,
-    QFactor = 66,
-    BitHigh = 70,
-    BitLow = 71,
-    BitAmplitude = 72,
-    DcCommon = 73,
-    AcCommon = 74,
-    DiffCross = 75,
-    Tnt = 76,
-    BitRate = 80,
-    SscDev = 81,
-    SscRate = 82,
-    PowerQuality = 90,
-    Harmonics = 91,
-    Inrush = 92,
-    InputC = 93,
-    CycAmp = 94,
-    CycTop = 95,
-    CycBase = 96,
-    CycPp = 97,
-    CycMax = 98,
-    CycMin = 99,
-    TurnOn = 100,
-    TurnOff = 101,
-    EOn = 102,
-    EOff = 103,
-    ECond = 104,
-    DvdtRise = 105,
-    DvdtFall = 106,
-    DidtRise = 107,
-    DidtFall = 108,
-    RdsOn = 109,
-    Inductance = 110,
-    MagProp = 111,
-    MagLoss = 112,
-    Ripple = 113,
-    LineRipple = 114,
-    SwRipple = 115,
-    Psrr = 116,
-    Impedance = 117,
-    PowerFactor = 118,
-    Dq0 = 130,
-    Speed = 131,
-    Accel = 132,
-    Direction = 133,
-    Angle = 134,
-    Torque = 135,
-    MechPower = 136,
-    SysEff = 137,
-    RailOver = 150,
-    RailUnder = 151,
-    RailTurn = 152,
-    DcRail = 153,
-    Vpeak = 170,
-    Ipeak = 171,
-    TdOn = 172,
-    Tr = 173,
-    Ton = 174,
-    TdOff = 175,
-    Tf = 176,
-    Toff = 177,
-    DpdtV = 178,
-    DpdtI = 179,
-    Tdt = 180,
-    Trr = 181,
-    Qrr = 182,
-    Err = 183,
-    Irrm = 184,
-    DiodeDdt = 185,
-    Qoss = 186,
+/// A tile of the page: one measurement of a module (`crate::measures`).
+pub(super) type Cat = &'static Def;
+/// The tile numbers by the names the fork's code used for them before the measurement modules (`crate::measures`
+/// keeps every number: setups and SCPI refer to them). The Studio figures and info cards match on these.
+#[allow(non_upper_case_globals, dead_code)]
+pub(super) mod cat {
+    pub const Amplitude: u16 = 1;
+    pub const Maximum: u16 = 2;
+    pub const Minimum: u16 = 3;
+    pub const PeakToPeak: u16 = 4;
+    pub const PosOvershoot: u16 = 5;
+    pub const NegOvershoot: u16 = 6;
+    pub const Mean: u16 = 7;
+    pub const Rms: u16 = 8;
+    pub const AcRms: u16 = 9;
+    pub const Top: u16 = 10;
+    pub const Base: u16 = 11;
+    pub const Area: u16 = 12;
+    pub const Period: u16 = 13;
+    pub const Frequency: u16 = 14;
+    pub const UnitInterval: u16 = 15;
+    pub const DataRate: u16 = 16;
+    pub const PosWidth: u16 = 17;
+    pub const NegWidth: u16 = 18;
+    pub const Skew: u16 = 19;
+    pub const Delay: u16 = 20;
+    pub const Rise: u16 = 21;
+    pub const Fall: u16 = 22;
+    pub const Phase: u16 = 23;
+    pub const RiseSlew: u16 = 24;
+    pub const FallSlew: u16 = 25;
+    pub const Burst: u16 = 26;
+    pub const PosDuty: u16 = 27;
+    pub const NegDuty: u16 = 28;
+    pub const Outside: u16 = 29;
+    pub const Setup: u16 = 30;
+    pub const Hold: u16 = 31;
+    pub const NPeriods: u16 = 32;
+    pub const HighTime: u16 = 33;
+    pub const LowTime: u16 = 34;
+    pub const JitterSummary: u16 = 40;
+    pub const Tie: u16 = 41;
+    pub const PhaseNoise: u16 = 42;
+    pub const TjBer: u16 = 43;
+    pub const RjDd: u16 = 44;
+    pub const DjDd: u16 = 45;
+    pub const SjFreq: u16 = 46;
+    pub const Pj: u16 = 47;
+    pub const Ddj: u16 = 48;
+    pub const Dcd: u16 = 49;
+    pub const Srj: u16 = 50;
+    pub const J2: u16 = 51;
+    pub const EyeHeight: u16 = 60;
+    pub const EyeWidth: u16 = 61;
+    pub const EyeHigh: u16 = 62;
+    pub const EyeHeightBer: u16 = 63;
+    pub const EyeWidthBer: u16 = 64;
+    pub const EyeLow: u16 = 65;
+    pub const QFactor: u16 = 66;
+    pub const BitHigh: u16 = 70;
+    pub const BitLow: u16 = 71;
+    pub const BitAmplitude: u16 = 72;
+    pub const DcCommon: u16 = 73;
+    pub const AcCommon: u16 = 74;
+    pub const DiffCross: u16 = 75;
+    pub const Tnt: u16 = 76;
+    pub const BitRate: u16 = 80;
+    pub const SscDev: u16 = 81;
+    pub const SscRate: u16 = 82;
+    pub const PowerQuality: u16 = 90;
+    pub const Harmonics: u16 = 91;
+    pub const Inrush: u16 = 92;
+    pub const InputC: u16 = 93;
+    pub const CycAmp: u16 = 94;
+    pub const CycTop: u16 = 95;
+    pub const CycBase: u16 = 96;
+    pub const CycPp: u16 = 97;
+    pub const CycMax: u16 = 98;
+    pub const CycMin: u16 = 99;
+    pub const TurnOn: u16 = 100;
+    pub const TurnOff: u16 = 101;
+    pub const EOn: u16 = 102;
+    pub const EOff: u16 = 103;
+    pub const ECond: u16 = 104;
+    pub const DvdtRise: u16 = 105;
+    pub const DvdtFall: u16 = 106;
+    pub const DidtRise: u16 = 107;
+    pub const DidtFall: u16 = 108;
+    pub const RdsOn: u16 = 109;
+    pub const Inductance: u16 = 110;
+    pub const MagProp: u16 = 111;
+    pub const MagLoss: u16 = 112;
+    pub const Ripple: u16 = 113;
+    pub const LineRipple: u16 = 114;
+    pub const SwRipple: u16 = 115;
+    pub const Psrr: u16 = 116;
+    pub const Impedance: u16 = 117;
+    pub const PowerFactor: u16 = 118;
+    pub const Dq0: u16 = 130;
+    pub const Speed: u16 = 131;
+    pub const Accel: u16 = 132;
+    pub const Direction: u16 = 133;
+    pub const Angle: u16 = 134;
+    pub const Torque: u16 = 135;
+    pub const MechPower: u16 = 136;
+    pub const SysEff: u16 = 137;
+    pub const RailOver: u16 = 150;
+    pub const RailUnder: u16 = 151;
+    pub const RailTurn: u16 = 152;
+    pub const DcRail: u16 = 153;
+    pub const Vpeak: u16 = 170;
+    pub const Ipeak: u16 = 171;
+    pub const TdOn: u16 = 172;
+    pub const Tr: u16 = 173;
+    pub const Ton: u16 = 174;
+    pub const TdOff: u16 = 175;
+    pub const Tf: u16 = 176;
+    pub const Toff: u16 = 177;
+    pub const DpdtV: u16 = 178;
+    pub const DpdtI: u16 = 179;
+    pub const Tdt: u16 = 180;
+    pub const Trr: u16 = 181;
+    pub const Qrr: u16 = 182;
+    pub const Err: u16 = 183;
+    pub const Irrm: u16 = 184;
+    pub const DiodeDdt: u16 = 185;
+    pub const Qoss: u16 = 186;
 }
 
-#[derive(Clone, Copy)]
-enum CatKind {
-    Meas(Meas),
-    Pair(usize),
-    Wave,
-}
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Need {
-    One,
-    Two,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Mark {
-    Pulse,
-    Square,
-    Edge,
-    Eye,
-    Bars,
-    Loop,
-    Slope,
-}
-
-struct Meta {
-    name: &'static str,
-    blurb: &'static str,
-    mark: Mark,
-    unit: &'static str,
-    kind: CatKind,
-    need: Need,
-}
-
-const AMP: &[Cat] = &[
-    Cat::Amplitude, Cat::Maximum, Cat::Minimum, Cat::PeakToPeak, Cat::PosOvershoot, Cat::NegOvershoot, Cat::Mean, Cat::Rms, Cat::AcRms, Cat::Top, Cat::Base, Cat::Area,
-];
-const TIME: &[Cat] = &[
-    Cat::Period, Cat::Frequency, Cat::UnitInterval, Cat::DataRate, Cat::PosWidth, Cat::NegWidth, Cat::Skew, Cat::Delay, Cat::Rise, Cat::Fall, Cat::Phase, Cat::RiseSlew,
-    Cat::FallSlew, Cat::Burst, Cat::PosDuty, Cat::NegDuty, Cat::Outside, Cat::Setup, Cat::Hold, Cat::NPeriods, Cat::HighTime, Cat::LowTime,
-];
-const JIT: &[Cat] = &[
-    Cat::JitterSummary, Cat::Tie, Cat::PhaseNoise, Cat::TjBer, Cat::RjDd, Cat::DjDd, Cat::SjFreq, Cat::Pj, Cat::Ddj, Cat::Dcd, Cat::Srj, Cat::J2,
-];
-const EYE_G: &[Cat] = &[Cat::EyeHeight, Cat::EyeWidth, Cat::EyeHigh, Cat::EyeHeightBer, Cat::EyeWidthBer, Cat::EyeLow, Cat::QFactor];
-const JAMP: &[Cat] = &[Cat::BitHigh, Cat::BitLow, Cat::BitAmplitude, Cat::DcCommon, Cat::AcCommon, Cat::DiffCross, Cat::Tnt];
-const JTIME: &[Cat] = &[Cat::BitRate, Cat::SscDev, Cat::SscRate];
-const PIN: &[Cat] = &[Cat::PowerQuality, Cat::Harmonics, Cat::Inrush, Cat::InputC];
-const PAMP: &[Cat] = &[Cat::CycAmp, Cat::CycTop, Cat::CycBase, Cat::CycPp, Cat::CycMax, Cat::CycMin];
-const PTIM: &[Cat] = &[Cat::TurnOn, Cat::TurnOff];
-const PSW: &[Cat] = &[Cat::EOn, Cat::EOff, Cat::ECond, Cat::DvdtRise, Cat::DvdtFall, Cat::DidtRise, Cat::DidtFall, Cat::RdsOn];
-const PMAG: &[Cat] = &[Cat::Inductance, Cat::MagProp, Cat::MagLoss];
-const POUT: &[Cat] = &[Cat::Ripple, Cat::LineRipple, Cat::SwRipple];
-const PFR: &[Cat] = &[Cat::Psrr, Cat::Impedance];
-const PGR: &[Cat] = &[Cat::PowerFactor];
-const INV: &[Cat] = &[Cat::Dq0];
-const MECH: &[Cat] = &[Cat::Speed, Cat::Accel, Cat::Direction, Cat::Angle, Cat::Torque, Cat::MechPower, Cat::SysEff];
-const RAIL: &[Cat] = &[Cat::RailOver, Cat::RailUnder, Cat::RailTurn, Cat::DcRail, Cat::TurnOn, Cat::TurnOff];
-const DSW: &[Cat] = &[Cat::Vpeak, Cat::Ipeak, Cat::TdOn, Cat::TdOff, Cat::Tr, Cat::Tf, Cat::Ton, Cat::Toff, Cat::DpdtV, Cat::DpdtI, Cat::Tdt];
-const DREC: &[Cat] = &[Cat::Trr, Cat::Qrr, Cat::Err, Cat::Irrm, Cat::DiodeDdt, Cat::Qoss];
-
-fn tab_groups(tab: u8) -> &'static [(&'static str, &'static [Cat])] {
-    match tab {
-        0 => &[("AMPLITUDE", AMP), ("TIMING", TIME)],
-        1 => &[("JITTER", JIT), ("EYE", EYE_G), ("AMPLITUDE", JAMP), ("TIMING", JTIME)],
-        2 => &[
-            ("INPUT", PIN),
-            ("AMPLITUDE", PAMP),
-            ("TIMING", PTIM),
-            ("SWITCHING", PSW),
-            ("MAGNETICS", PMAG),
-            ("OUTPUT", POUT),
-            ("PSRR & IMPEDANCE", PFR),
-            ("POWER FACTOR", PGR),
-        ],
-        3 => &[("DQ0 TRANSFORM", INV), ("SHAFT & EFFICIENCY", MECH)],
-        4 => &[("RAIL SEQUENCING", RAIL)],
-        _ => &[("SWITCHING", DSW), ("DIODE RECOVERY", DREC)],
-    }
+pub(super) fn cat_from(n: u16) -> Option<Cat> {
+    measures::def(n)
 }
 
 /// The name of a measurement for people: the one the add list uses ("Amplitude"), not the scope's key ("Vamp").
 pub(super) fn meas_display_name(k: Meas) -> &'static str {
-    static NAMES: std::sync::OnceLock<Vec<(Meas, &'static str)>> = std::sync::OnceLock::new();
-    NAMES.get_or_init(|| (0..512u16).filter_map(cat_from).filter_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { Some((k, m.name)) } else { None } }).collect())
-        .iter().find(|(m, _)| *m == k).map_or_else(|| k.name(), |(_, n)| n)
+    meas_long_name(k)
 }
 
 /// The display name of the measurement whose key is `key` ("Vamp" is "Amplitude"); None for a name that is not a key.
 #[cfg(test)]
 pub(super) fn display_of_key(key: &str) -> Option<&'static str> {
-    (0..512u16).filter_map(cat_from).find_map(|c| { let m = meta(c); if let CatKind::Meas(k) = m.kind { (k.name() == key).then_some(m.name) } else { None } })
+    oos_dsp::measure::ALL.iter().find(|k| k.name() == key).map(|&k| meas_long_name(k))
 }
 
 /// A short name for the trace labels and the badges of the bottom row: Pk-pk, Ampl, Max, Min ... The long names are in
@@ -276,7 +204,7 @@ pub(super) struct CatInfo {
 }
 
 pub(super) fn cat_info(c: Cat) -> CatInfo {
-    let m = meta(c);
+    let m = c;
     let how = match m.mark {
         Mark::Pulse => "Takes the top and base levels from a histogram of the samples (the two most common levels), and works from them: amplitude is top minus base, overshoot is measured against them.",
         Mark::Square => "Finds the mid crossings (halfway between base and top, with a little hysteresis) and measures from one crossing to the next, one cycle at a time, then averages the cycles on the screen. Needs at least one whole cycle.",
@@ -287,30 +215,30 @@ pub(super) fn cat_info(c: Cat) -> CatInfo {
         Mark::Slope => "Takes the slope of the signal between two levels and reports it per second.",
     }.to_string();
     // a line of its own where the picture's is not exact enough
-    let how = match c {
-        Cat::Maximum => "The highest sample in the gate (the screen, or the whole record). It is one sample, so a spike counts.".to_string(),
-        Cat::Minimum => "The lowest sample in the gate (the screen, or the whole record). It is one sample, so a dip counts.".to_string(),
-        Cat::PeakToPeak => "The highest sample minus the lowest sample in the gate.".to_string(),
-        Cat::Amplitude => "The top level minus the base level. Both come from the histogram of the samples, so a spike or a little ringing does not move them.".to_string(),
-        Cat::Top => "The most common level in the upper half of the histogram of the samples: where the signal sits when it is high.".to_string(),
-        Cat::Base => "The most common level in the lower half of the histogram of the samples: where the signal sits when it is low.".to_string(),
-        Cat::Mean => "The average of all the samples in the gate, in volts, DC included.".to_string(),
-        Cat::Rms => "The square root of the average of the squared samples: the effective value, DC included.".to_string(),
-        Cat::Rise => "The time the edge takes to go from the 10% to the 90% level between base and top, averaged over the rising edges in the gate.".to_string(),
-        Cat::Fall => "The time the edge takes to go from the 90% to the 10% level between top and base, averaged over the falling edges in the gate.".to_string(),
-        Cat::Period => "The time between two successive rising edges at the middle level (halfway between base and top), averaged over the cycles in the gate.".to_string(),
-        Cat::Frequency => "One divided by the period, with the period measured between successive rising edges at the middle level.".to_string(),
-        Cat::PosWidth => "The time from a rising edge to the next falling edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
-        Cat::NegWidth => "The time from a falling edge to the next rising edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
-        Cat::PosDuty => "The positive width divided by the period, in percent.".to_string(),
-        Cat::NegDuty => "The negative width divided by the period, in percent.".to_string(),
-        Cat::PosOvershoot => "How far the highest peak after a rising edge rises above the top level, as a percent of the amplitude.".to_string(),
-        Cat::NegOvershoot => "How far the lowest point after a falling edge falls below the base level, as a percent of the amplitude.".to_string(),
-        Cat::Delay => "The time from an edge of source A to the nearest edge of the same kind on source B, at the middle level of each.".to_string(),
-        Cat::Phase => "The delay between source A and source B divided by the period of A, in degrees.".to_string(),
+    let how = match c.id {
+        cat::Maximum => "The highest sample in the gate (the screen, or the whole record). It is one sample, so a spike counts.".to_string(),
+        cat::Minimum => "The lowest sample in the gate (the screen, or the whole record). It is one sample, so a dip counts.".to_string(),
+        cat::PeakToPeak => "The highest sample minus the lowest sample in the gate.".to_string(),
+        cat::Amplitude => "The top level minus the base level. Both come from the histogram of the samples, so a spike or a little ringing does not move them.".to_string(),
+        cat::Top => "The most common level in the upper half of the histogram of the samples: where the signal sits when it is high.".to_string(),
+        cat::Base => "The most common level in the lower half of the histogram of the samples: where the signal sits when it is low.".to_string(),
+        cat::Mean => "The average of all the samples in the gate, in volts, DC included.".to_string(),
+        cat::Rms => "The square root of the average of the squared samples: the effective value, DC included.".to_string(),
+        cat::Rise => "The time the edge takes to go from the 10% to the 90% level between base and top, averaged over the rising edges in the gate.".to_string(),
+        cat::Fall => "The time the edge takes to go from the 90% to the 10% level between top and base, averaged over the falling edges in the gate.".to_string(),
+        cat::Period => "The time between two successive rising edges at the middle level (halfway between base and top), averaged over the cycles in the gate.".to_string(),
+        cat::Frequency => "One divided by the period, with the period measured between successive rising edges at the middle level.".to_string(),
+        cat::PosWidth => "The time from a rising edge to the next falling edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
+        cat::NegWidth => "The time from a falling edge to the next rising edge, both at the middle level, averaged over the pulses in the gate.".to_string(),
+        cat::PosDuty => "The positive width divided by the period, in percent.".to_string(),
+        cat::NegDuty => "The negative width divided by the period, in percent.".to_string(),
+        cat::PosOvershoot => "How far the highest peak after a rising edge rises above the top level, as a percent of the amplitude.".to_string(),
+        cat::NegOvershoot => "How far the lowest point after a falling edge falls below the base level, as a percent of the amplitude.".to_string(),
+        cat::Delay => "The time from an edge of source A to the nearest edge of the same kind on source B, at the middle level of each.".to_string(),
+        cat::Phase => "The delay between source A and source B divided by the period of A, in degrees.".to_string(),
         _ => how,
     };
-    let sources = match m.need { Need::One => "Reads one source".to_string(), Need::Two => "Reads two sources: A and B".to_string() };
+    let sources = match m.roles.len() { 1 => "Reads one source".to_string(), 2 => "Reads two sources: A and B".to_string(), n => format!("Reads {n} sources") };
     CatInfo { name: m.name, blurb: m.blurb, mark: m.mark, unit: m.unit, how,
         settings: "Gate (screen or whole record), levels and edge options are on the settings card of the measurement: its row menu, Settings.".into(), sources }
 }
@@ -318,179 +246,38 @@ pub(super) fn cat_info(c: Cat) -> CatInfo {
 /// The catalogue entry of a measurement of the list.
 pub(super) fn cat_of_key(key: super::studio::MeasKey) -> Option<Cat> {
     use super::studio::MeasKey;
-    (0..512u16).filter_map(cat_from).find(|&c| match (key, meta(c).kind) {
-        (MeasKey::One(k, _), CatKind::Meas(m)) => k == m,
-        (MeasKey::Pair(k, _, _), CatKind::Pair(m)) => k == m,
-        (MeasKey::Cat(id, ..), CatKind::Wave) => id == c as u16,
+    listed().into_iter().find(|&c| match (key, c.kind) {
+        (MeasKey::One(k, _), Kind::Standard(m)) => k == m,
+        (MeasKey::Pair(k, _, _), Kind::Pair(m)) => k == m,
+        (MeasKey::Cat(id, ..), Kind::Module) => id == c.id,
         _ => false,
     })
 }
 
-pub(super) fn cat_from(n: u16) -> Option<Cat> {
-    listed().into_iter().find(|c| *c as u16 == n)
-}
-
+/// Every measurement, in the order of the modules.
 fn listed() -> Vec<Cat> {
-    let mut v = Vec::new();
-    for tab in 0..TABS.len() as u8 {
-        for (_, items) in tab_groups(tab) {
-            for &c in *items {
-                if !v.contains(&c) {
-                    v.push(c);
-                }
-            }
-        }
-    }
-    v
+    measures::all().map(|x| x.1).collect()
 }
 
-fn meta(c: Cat) -> Meta {
-    use CatKind::{Pair, Wave};
-    use Mark::*;
-    use Need::*;
-    let m = |name, blurb, mark, unit, kind, need| Meta { name, blurb, mark, unit, kind, need };
-    let meas = |k| CatKind::Meas(k);
-    match c {
-        Cat::Amplitude => m("Amplitude", "Difference between the top level and the base level.", Pulse, "V", meas(Meas::Vamp), One),
-        Cat::Maximum => m("Maximum", "Highest sample in the record.", Pulse, "V", meas(Meas::Vmax), One),
-        Cat::Minimum => m("Minimum", "Lowest sample in the record.", Pulse, "V", meas(Meas::Vmin), One),
-        Cat::PeakToPeak => m("Peak-to-Peak", "Highest sample minus the lowest sample.", Pulse, "V", meas(Meas::Vpp), One),
-        Cat::PosOvershoot => m("Positive Overshoot", "How far the peak rises above the top, as a percent of the amplitude.", Pulse, "%", meas(Meas::Overshoot), One),
-        Cat::NegOvershoot => m("Negative Overshoot", "How far the trough falls below the base, as a percent of the amplitude.", Pulse, "%", meas(Meas::Preshoot), One),
-        Cat::Mean => m("Mean", "Average of the samples in the record.", Pulse, "V", meas(Meas::Vavg), One),
-        Cat::Rms => m("RMS", "Root-mean-square of the samples.", Pulse, "V", meas(Meas::Vrms), One),
-        Cat::AcRms => m("AC RMS", "Root-mean-square with the mean removed.", Pulse, "V", meas(Meas::VrmsAc), One),
-        Cat::Top => m("Top", "High level of the waveform, taken from the histogram.", Pulse, "V", meas(Meas::Vtop), One),
-        Cat::Base => m("Base", "Low level of the waveform, taken from the histogram.", Pulse, "V", meas(Meas::Vbase), One),
-        Cat::Area => m("Area", "Integral of the samples over the record.", Pulse, "Vs", meas(Meas::Area), One),
-        Cat::Period => m("Period", "Time from one mid crossing to the next in the same direction.", Square, "s", meas(Meas::Period), One),
-        Cat::Frequency => m("Frequency", "How often a full cycle repeats.", Square, "Hz", meas(Meas::Freq), One),
-        Cat::UnitInterval => m("Unit Interval", "Estimated NRZ UI from transition intervals divided by their fitted bit counts.", Square, "s", Wave, One),
-        Cat::DataRate => m("NRZ Data Rate", "Reciprocal of the estimated mean NRZ UI, not the PRBS cycle frequency. Assumes one bit per symbol; not PAM or C-PHY throughput.", Square, "b/s", Wave, One),
-        Cat::PosWidth => m("Positive Pulse Width", "Time a cycle stays above the mid level.", Square, "s", meas(Meas::PWidth), One),
-        Cat::NegWidth => m("Negative Pulse Width", "Time a cycle stays below the mid level.", Square, "s", meas(Meas::NWidth), One),
-        Cat::Skew => m("Skew", "Mean gap from each edge to the nearest edge on the other source.", Edge, "s", Pair(8), Two),
-        Cat::Delay => m("Delay", "Time from the first edge to the matching edge on the other source.", Edge, "s", Pair(0), Two),
-        Cat::Rise => m("Rise Time", "Time to rise from the low reference to the high reference.", Edge, "s", meas(Meas::Rise), One),
-        Cat::Fall => m("Fall Time", "Time to fall from the high reference to the low reference.", Edge, "s", meas(Meas::Fall), One),
-        Cat::Phase => m("Phase", "Delay as a fraction of the period, in degrees.", Edge, "\u{b0}", Pair(4), Two),
-        Cat::RiseSlew => m("Rising Slew Rate", "How fast the level changes across the rise.", Slope, "V/s", meas(Meas::PSlew), One),
-        Cat::FallSlew => m("Falling Slew Rate", "How fast the level changes across the fall.", Slope, "V/s", meas(Meas::NSlew), One),
-        Cat::Burst => m("Burst Width", "Mean length of a run of edges separated by the idle gap.", Square, "s", meas(Meas::Burst), One),
-        Cat::PosDuty => m("Positive Duty Cycle", "High portion of a cycle, as a percent of the period.", Square, "%", meas(Meas::PDuty), One),
-        Cat::NegDuty => m("Negative Duty Cycle", "Low portion of a cycle, as a percent of the period.", Square, "%", meas(Meas::NDuty), One),
-        Cat::Outside => m("Time Outside Level", "Mean time spent beyond the high reference or the low reference.", Square, "s", meas(Meas::Outside), One),
-        Cat::Setup => m("Setup Time", "How long the data edge leads the clock edge.", Edge, "s", Pair(12), Two),
-        Cat::Hold => m("Hold Time", "How long the data edge stays put after the clock edge.", Edge, "s", Pair(13), Two),
-        Cat::NPeriods => m("Duration N-Periods", "Mean time spanning N mid crossings.", Square, "s", meas(Meas::NPeriods), One),
-        Cat::HighTime => m("High Time", "Time a cycle stays above the high reference.", Square, "s", meas(Meas::HighTime), One),
-        Cat::LowTime => m("Low Time", "Time a cycle stays below the low reference.", Square, "s", meas(Meas::LowTime), One),
-        Cat::JitterSummary => m("Jitter Summary", "Total jitter at the selected bit-error rate.", Eye, "s", Wave, One),
-        Cat::Tie => m("TIE", "Peak-to-peak time-interval error against the recovered clock.", Eye, "s", Wave, One),
-        Cat::PhaseNoise => m("Phase Noise", "RMS jitter integrated between the two offset frequencies.", Bars, "s", Wave, One),
-        Cat::TjBer => m("TJ@BER", "Total jitter extrapolated to the selected bit-error rate.", Eye, "s", Wave, One),
-        Cat::RjDd => m("RJ-dd", "Random jitter from the dual-Dirac fit of the tails.", Eye, "s", Wave, One),
-        Cat::DjDd => m("DJ-dd", "Deterministic jitter from the dual-Dirac fit of the tails.", Eye, "s", Wave, One),
-        Cat::SjFreq => m("SJ@Freq", "Largest periodic tone in the time-interval error.", Bars, "s", Wave, One),
-        Cat::Pj => m("PJ", "Combined size of the periodic tones in the time-interval error.", Bars, "s", Wave, One),
-        Cat::Ddj => m("DDJ", "Spread of the mean edge error across the run lengths before an edge.", Eye, "s", Wave, One),
-        Cat::Dcd => m("DCD", "Difference between the mean rising-edge error and the falling-edge error.", Eye, "s", Wave, One),
-        Cat::Srj => m("SRJ", "Peak-to-peak of the half-rate, quarter-rate and eighth-rate tones added together.", Bars, "s", Wave, One),
-        Cat::J2 => m("J2", "Total jitter at a bit-error rate of 2.5e-3.", Eye, "s", Wave, One),
-        Cat::EyeHeight => m("Eye Height", "Vertical opening inside three standard deviations of the two levels.", Eye, "V", Wave, One),
-        Cat::EyeWidth => m("Eye Width", "Horizontal opening inside three standard deviations of the crossing.", Eye, "s", Wave, One),
-        Cat::EyeHigh => m("Eye High", "Upper edge of that three-sigma opening.", Eye, "V", Wave, One),
-        Cat::EyeHeightBer => m("Eye Height@BER", "Vertical opening extrapolated to the selected bit-error rate.", Eye, "V", Wave, One),
-        Cat::EyeWidthBer => m("Eye Width@BER", "Time left in the unit interval after total jitter at that rate.", Eye, "s", Wave, One),
-        Cat::EyeLow => m("Eye Low", "Lower edge of the three-sigma opening.", Eye, "V", Wave, One),
-        Cat::QFactor => m("Q-Factor", "Eye amplitude divided by the noise on the two levels.", Eye, "", Wave, One),
-        Cat::BitHigh => m("Bit High", "Mean level of a high bit in the middle of the eye.", Pulse, "V", Wave, One),
-        Cat::BitLow => m("Bit Low", "Mean level of a low bit in the middle of the eye.", Pulse, "V", Wave, One),
-        Cat::BitAmplitude => m("Bit Amplitude", "High bit level minus the low bit level.", Pulse, "V", Wave, One),
-        Cat::DcCommon => m("DC Common Mode", "Mean of the two sources added together and halved.", Pulse, "V", Wave, Two),
-        Cat::AcCommon => m("AC Common Mode (Pk-Pk)", "Peak-to-peak of the common mode after the high-pass.", Pulse, "V", Wave, Two),
-        Cat::DiffCross => m("Differential Crossover", "Mean voltage where the two sources cross.", Pulse, "V", Wave, Two),
-        Cat::Tnt => m("T/nT Ratio", "Mid-interval level of a steady bit against the last transition, in dB.", Pulse, "dB", Wave, One),
-        Cat::BitRate => m("NRZ Clock Rate", "Rate of the recovered NRZ clock. Assumes one bit per symbol; not PAM or C-PHY throughput.", Square, "b/s", Wave, One),
-        Cat::SscDev => m("SSC Freq Dev", "Peak-to-peak spread of the cycle frequency, in parts per million.", Slope, "ppm", Wave, One),
-        Cat::SscRate => m("SSC Modulation Rate", "How fast that frequency spread repeats.", Slope, "Hz", Wave, One),
-        Cat::PowerQuality => m("Power Quality", "Real power over the whole cycles of the voltage and the current.", Bars, "W", Wave, One),
-        Cat::Harmonics => m("Harmonics", "Current above the fundamental, as a percent of the fundamental.", Bars, "%", Wave, One),
-        Cat::Inrush => m("Inrush Current", "Largest absolute current in the record.", Slope, "A", Wave, One),
-        Cat::InputC => m("Input Capacitance", "Charge moved, divided by the voltage swing. The record is the turn-on.", Loop, "F", Wave, One),
-        Cat::CycAmp => m("Cycle Amplitude", "Mean of each cycle's top minus its base.", Pulse, "V", meas(Meas::CycAmp), One),
-        Cat::CycTop => m("Cycle Top", "Mean high level of each cycle.", Pulse, "V", meas(Meas::CycTop), One),
-        Cat::CycBase => m("Cycle Base", "Mean low level of each cycle.", Pulse, "V", meas(Meas::CycBase), One),
-        Cat::CycPp => m("Cycle Peak-to-Peak", "Mean of each cycle's highest sample minus its lowest.", Pulse, "V", meas(Meas::CycPp), One),
-        Cat::CycMax => m("Cycle Maximum", "Mean of each cycle's highest sample.", Pulse, "V", meas(Meas::CycMax), One),
-        Cat::CycMin => m("Cycle Minimum", "Mean of each cycle's lowest sample.", Pulse, "V", meas(Meas::CycMin), One),
-        Cat::TurnOn => m("Turn On Time", "From the second source rising through mid-level to the first source reaching its top.", Edge, "s", Wave, Two),
-        Cat::TurnOff => m("Turn Off Time", "From the second source falling through mid-level to the first source reaching its base.", Edge, "s", Wave, Two),
-        Cat::EOn => m("E on", "Mean energy of a turn-on transition.", Slope, "J", Wave, One),
-        Cat::EOff => m("E off", "Mean energy of a turn-off transition.", Slope, "J", Wave, One),
-        Cat::ECond => m("E cond", "Mean energy while the switch stays on.", Slope, "J", Wave, One),
-        Cat::DvdtRise => m("dv/dt rise", "Slope of the voltage on a rising edge.", Slope, "V/s", Wave, One),
-        Cat::DvdtFall => m("dv/dt fall", "Slope of the voltage on a falling edge.", Slope, "V/s", Wave, One),
-        Cat::DidtRise => m("di/dt rise", "Slope of the current on a rising edge.", Slope, "A/s", Wave, One),
-        Cat::DidtFall => m("di/dt fall", "Slope of the current on a falling edge.", Slope, "A/s", Wave, One),
-        Cat::RdsOn => m("RDS(on)", "On-state voltage divided by the on-state current.", Slope, "\u{3a9}", Wave, One),
-        Cat::Inductance => m("Inductance", "Slope of flux linkage against current on the rising branch.", Loop, "H", Wave, One),
-        Cat::MagProp => m("Magnetic Property", "Relative permeability when turns, area and path length are set.", Loop, "", Wave, One),
-        Cat::MagLoss => m("Magnetic Loss", "Power left after the copper loss is taken out.", Loop, "W", Wave, One),
-        Cat::Ripple => m("Ripple", "Peak-to-peak of the whole voltage record.", Pulse, "V", Wave, One),
-        Cat::LineRipple => m("Line Ripple", "Peak-to-peak of the voltage at the line frequency.", Pulse, "V", Wave, One),
-        Cat::SwRipple => m("Switching Ripple", "Peak-to-peak of the voltage at the switching frequency.", Pulse, "V", Wave, One),
-        Cat::Psrr => m("PSRR", "Rejection of the first source by the second, at the measured frequency.", Bars, "dB", Wave, Two),
-        Cat::Impedance => m("Impedance", "Linear ratio of the second source to the first at that frequency.", Bars, "", Wave, Two),
-        Cat::PowerFactor => m("Power Factor", "Real power divided by the apparent power.", Bars, "", Wave, One),
-        Cat::Dq0 => m("DQ0", "Direct-axis mean of the three phase sources.", Loop, "", Wave, One),
-        Cat::Speed => m("Speed", "Mean shaft speed taken from the phase vector.", Slope, "rpm", Wave, One),
-        Cat::Accel => m("Acceleration", "Slope of that speed across revolutions.", Slope, "rpm/s", Wave, One),
-        Cat::Direction => m("Direction", "Sign of the speed: forward is 1, stopped is 0, reverse is -1.", Slope, "", Wave, One),
-        Cat::Angle => m("Angle", "Shaft angle at the trigger.", Loop, "\u{b0}", Wave, One),
-        Cat::Torque => m("Torque", "Mean of the torque source, in the chosen scale.", Bars, "N\u{b7}m", Wave, One),
-        Cat::MechPower => m("Mechanical Power", "Torque times the shaft speed.", Bars, "W", Wave, One),
-        Cat::SysEff => m("System Efficiency", "Mechanical power divided by the electrical power of the configured pair.", Bars, "", Wave, One),
-        Cat::RailOver => m("Overshoot", "How far the rail rises above its reference.", Pulse, "V", Wave, One),
-        Cat::RailUnder => m("Undershoot", "How far the rail falls below its reference.", Pulse, "V", Wave, One),
-        Cat::RailTurn => m("Turn-on Overshoot", "Highest rail voltage after the input rises through mid-level.", Pulse, "V", Wave, Two),
-        Cat::DcRail => m("DC Rail", "Mean voltage of the rail.", Pulse, "V", Wave, One),
-        Cat::Vpeak => m("Vpeak", "Highest voltage on the turn-off edge.", Pulse, "V", Wave, One),
-        Cat::Ipeak => m("Ipeak", "Highest current on the turn-on edge.", Pulse, "A", Wave, One),
-        Cat::TdOn => m("Td(on)", "Delay from the gate rising through its threshold to the current starting to rise.", Edge, "s", Wave, One),
-        Cat::TdOff => m("Td(off)", "Delay from the gate falling through its threshold to the voltage starting to rise.", Edge, "s", Wave, One),
-        Cat::Tr => m("Tr", "Current rise time of the turn-on.", Edge, "s", Wave, One),
-        Cat::Tf => m("Tf", "Voltage rise time of the turn-off.", Edge, "s", Wave, One),
-        Cat::Ton => m("Ton", "Turn-on delay plus the current rise.", Edge, "s", Wave, One),
-        Cat::Toff => m("Toff", "Turn-off delay plus the voltage rise.", Edge, "s", Wave, One),
-        Cat::DpdtV => m("dv/dt", "Slope of the voltage on the pulse edge.", Slope, "V/s", Wave, One),
-        Cat::DpdtI => m("di/dt", "Slope of the current on the pulse edge.", Slope, "A/s", Wave, One),
-        Cat::Tdt => m("Tdt", "The smaller of the two dead times.", Edge, "s", Wave, One),
-        Cat::Trr => m("Trr", "Reverse-recovery time of the diode current.", Edge, "s", Wave, One),
-        Cat::Qrr => m("Qrr", "Reverse-recovery charge.", Pulse, "C", Wave, One),
-        Cat::Err => m("Err", "Energy of the reverse-recovery interval.", Pulse, "J", Wave, One),
-        Cat::Irrm => m("Irrm", "Peak reverse-recovery current.", Pulse, "A", Wave, One),
-        Cat::DiodeDdt => m("Diode d/dt", "Slope of the recovery current up to its peak.", Slope, "A/s", Wave, One),
-        Cat::Qoss => m("Qoss", "Charge moved while the voltage rises.", Pulse, "C", Wave, One),
-    }
+/// The groups of category `tab` with their tiles.
+fn tab_groups(tab: u8) -> &'static [(&'static str, Vec<Cat>)] {
+    measures::groups(tab)
+}
+
+/// The tile `id` (tests).
+#[cfg(test)]
+pub(super) fn tile(id: u16) -> Cat {
+    cat_from(id).unwrap_or_else(|| panic!("no tile {id}"))
+}
+
+/// The tile shown when nothing is picked yet.
+fn first_tile() -> Cat {
+    cat_from(measures::std_id(Meas::Vamp)).expect("Amplitude tile")
 }
 
 /// Source slots used by this result. Unused picker slots must not block analysis.
 pub(super) fn catalog_roles(c: Cat) -> &'static [usize] {
-    match c {
-        Cat::Harmonics | Cat::Inrush => &[1],
-        Cat::DcCommon | Cat::AcCommon | Cat::DiffCross | Cat::PowerQuality | Cat::InputC
-        | Cat::TurnOn | Cat::TurnOff | Cat::EOn | Cat::EOff | Cat::ECond
-        | Cat::DvdtRise | Cat::DvdtFall | Cat::DidtRise | Cat::DidtFall | Cat::RdsOn
-        | Cat::Inductance | Cat::MagProp | Cat::MagLoss | Cat::Psrr | Cat::Impedance
-        | Cat::PowerFactor | Cat::RailTurn => &[0,1],
-        Cat::Dq0 | Cat::Speed | Cat::Accel | Cat::Direction | Cat::Angle
-        | Cat::Vpeak | Cat::Ipeak | Cat::TdOn | Cat::TdOff | Cat::Tr | Cat::Tf | Cat::Ton
-        | Cat::Toff | Cat::DpdtV | Cat::DpdtI | Cat::Tdt | Cat::Trr | Cat::Qrr
-        | Cat::Err | Cat::Irrm | Cat::DiodeDdt | Cat::Qoss => &[0,1,2],
-        Cat::Torque | Cat::MechPower | Cat::SysEff => &[0,1,2,3],
-        _ => match meta(c).kind { CatKind::Pair(_) => &[0,1], _ => &[0] },
-    }
+    c.roles
 }
 
 pub(super) fn primary_source(row: (u16,WaveId,WaveId,WaveId,WaveId)) -> WaveId {
@@ -506,31 +293,31 @@ struct Hit {
 struct Lay {
     r: Rect,
     close: Rect,
+    back: Option<Rect>,
     settings: Rect,
-    all: Rect,
     selected: Rect,
     gate: Rect,
     tabs: Vec<Rect>,
     preview: Rect,
     mark: Rect,
     sources: Vec<Hit>,
-    add: Rect,
     view: Rect,
     groups: Vec<Hit>,
     items: Vec<Hit>,
-    scroll_up: Option<Rect>,
-    scroll_down: Option<Rect>,
+    /// the scroll bar's track beside the list
+    bar: Rect,
     content: i32,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn catalog_source_label(&self, id: u16, sources: [WaveId;4]) -> String {
         let Some(c) = cat_from(id) else { return String::new() };
         let roles = catalog_roles(c).iter().map(|&slot| self.wave_name(sources[slot])).collect::<Vec<_>>().join("-");
-        format!("{roles} {}", meta(c).name)
+        format!("{roles} {}", c.name)
     }
     fn cat_sel(&self) -> Cat {
-        cat_from(self.cat_sel).unwrap_or(Cat::Amplitude)
+        cat_from(self.cat_sel).unwrap_or_else(first_tile)
     }
 
     fn src_label(&self, id: WaveId) -> String {
@@ -540,63 +327,50 @@ impl Ui {
         }
     }
 
+    /// The source rows of the page: as many as the category always shows, more when the measurement picked reads
+    /// more; labelled as the category names them.
     fn source_slots(&self) -> Vec<(u8, &'static str, WaveId)> {
-        let tab = self.cat_tab;
-        let sel = self.cat_sel();
-        let a = self.meas_src;
-        let b = self.meas_src_b;
-        match tab {
-            2 => vec![(0, "Voltage source", a), (1, "Current source", b)],
-            3 => {
-                let mut v = vec![(0, "Phase A", a), (1, "Phase B", b), (2, "Phase C", self.cat_c)];
-                if matches!(sel, Cat::Torque | Cat::MechPower | Cat::SysEff) {
-                    v.push((3, "Torque", self.cat_d));
-                }
-                v
-            }
-            4 => vec![(0, "Rail", a), (1, "Input", b)],
-            5 => vec![(0, "Voltage", a), (1, "Current", b), (2, "Gate", self.cat_c)],
-            _ => {
-                if meta(sel).need == Need::Two {
-                    vec![(0, "Source", a), (1, "Source B", b)]
-                } else {
-                    vec![(0, "Source", a)]
-                }
-            }
-        }
+        let cat = &CATEGORIES[(self.cat_tab as usize).min(CATEGORIES.len() - 1)];
+        let need = self.cat_sel().roles.iter().max().map_or(1, |r| r + 1);
+        let n = cat.min.max(need).min(4);
+        let ids = [self.meas_src, self.meas_src_b, self.cat_c, self.cat_d];
+        (0..n).map(|k| (k as u8, if n == 1 { cat.one } else { cat.slots[k] }, ids[k])).collect()
     }
 
+    /// The measurement page. Header: the title, then what applies to every measurement (gate, settings). Left: the
+    /// categories, and under them the measurements that are on (Selected). Right of them: the sources, the groups of the
+    /// category (one open at a time), and at the bottom the one last tapped with its description.
     fn catalog_lay(&self) -> Lay {
-        let r = Rect::new(8, TOP.h + 4, W - 16, BOTTOM.y - TOP.h - 8);
+        let r = Rect::new(8, TOP.h + 4, W - 16, self.frame().bottom.y - TOP.h - 8);
         let close = Rect::new(r.x + r.w - 56, r.y + 6, 44, DLG_CTRL);
-        let settings = Rect::new(close.x - 108, r.y + 6, 100, 40);
-        let all = Rect::new(r.x + 250, r.y + 6, 164, 40);
-        let selected = Rect::new(all.x + all.w + 8, all.y, 164, all.h);
-        let gate = Rect::new(selected.x+selected.w+46,all.y,(settings.x-selected.x-selected.w-54).max(1),all.h);
+        let back = self.parent.map(|_| Rect::new(close.x - 86, close.y, 78, DLG_CTRL));
+        let settings = Rect::new(back.unwrap_or(close).x - 108, r.y + 6, 100, 40);
+        let gate = Rect::new(settings.x - 16 - 220, r.y + 6, 220, 40);
+        let side_w = 168;
+        let top = r.y + 54;
         let mut tabs = Vec::new();
-        let tw = (r.w - 24) / TABS.len() as i32;
-        for i in 0..TABS.len() {
-            tabs.push(Rect::new(r.x + 12 + i as i32 * tw, r.y + 52, tw - 6, 40));
+        for i in 0..CATEGORIES.len() {
+            tabs.push(Rect::new(r.x + 12, top + i as i32 * 44, side_w, 40));
         }
-        let preview = Rect::new(r.x + 12, r.y + 98, r.w - 24, 88);
-        let mark = Rect::new(preview.x + 8, preview.y + 8, 168, preview.h - 16);
+        let selected = Rect::new(r.x + 12, r.y + r.h - 48, side_w, 40);
+        let cx = r.x + 12 + side_w + 12;
+        let cw = r.x + r.w - 12 - cx;
+        let preview = Rect::new(cx, r.y + r.h - 72, cw, 64);
+        let mark = Rect::new(preview.x + 8, preview.y + 10, 72, preview.h - 20);
         let slots = self.source_slots();
         let rows = if slots.len() > 2 { 2 } else { 1 };
-        let src_y = preview.y + preview.h + 8;
         let src_h = 40;
-        let add = Rect::new(r.x + r.w - 132, src_y, 120, src_h);
-        let room = add.x - r.x - 20;
-        let per = room / (slots.len().min(2) as i32).max(1);
+        let per = cw / 2;
         let mut sources = Vec::new();
         for (i, (id, _, _)) in slots.iter().enumerate() {
             let col = (i % 2) as i32;
             let row = (i / 2) as i32;
-            let x = r.x + 12 + col * per;
-            let y = src_y + row * (src_h + 6);
+            let x = cx + col * per;
+            let y = top + row * (src_h + 6);
             sources.push(Hit { n: *id as u16, r: Rect::new(x + per / 3, y, per - per / 3 - 8, src_h) });
         }
-        let view_y = src_y + rows * (src_h + 6) + 4;
-        let view = Rect::new(r.x + 10, view_y, r.w - 64, r.y + r.h - 8 - view_y);
+        let view_y = top + rows * (src_h + 6) + 2;
+        let view = Rect::new(cx, view_y, cw - 46, preview.y - 8 - view_y);
         let mut y = 0;
         let mut groups = Vec::new();
         let mut items = Vec::new();
@@ -614,49 +388,68 @@ impl Ui {
             for (i, &c) in list.iter().enumerate() {
                 let col = (i % cols as usize) as i32;
                 let row = (i / cols as usize) as i32;
-                items.push(Hit { n: c as u16, r: Rect::new(col * (bw + gap), y + row * (bh + gap), bw, bh) });
+                items.push(Hit { n: c.id, r: Rect::new(col * (bw + gap), y + row * (bh + gap), bw, bh) });
             }
             let nrows = list.len().div_ceil(cols as usize) as i32;
             y += nrows * (bh + gap) + 4;
         }
-        let (scroll_up, scroll_down) = if y > view.h {
-            let x = view.x + view.w + 2;
-            (Some(Rect::new(x, view.y, 40, 42)), Some(Rect::new(x, view.y + view.h - 42, 40, 42)))
-        } else {
-            (None, None)
-        };
-        Lay { r, close, settings, all, selected, gate, tabs, preview, mark, sources, add, view, groups, items, scroll_up, scroll_down, content: y }
+        let bar = Rect::new(view.x + view.w + 6, view.y, scroll::BAR_W, view.h);
+        Lay { r, close, back, settings, selected, gate, tabs, preview, mark, sources, view, groups, items, bar, content: y }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_settings_rect(&self) -> Rect {
         self.catalog_lay().settings
     }
 
     /// Set control on an added standard measurement, in screen coordinates.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_set_rect(&self, k: Meas) -> Option<Rect> {
         let lay = self.catalog_lay();
         lay.items.iter().find_map(|it| {
             let c = cat_from(it.n)?;
-            let CatKind::Meas(mk) = meta(c).kind else { return None };
-            (mk == k).then(|| self.catalog_set_on(screen_rect(lay.view, it.r, self.cat_scroll), c)).flatten()
+            let Kind::Standard(mk) = c.kind else { return None };
+            (mk == k).then(|| self.catalog_set_on(screen_rect(lay.view, it.r, self.cat_top()), c)).flatten()
         })
     }
 
     /// Header of one group on the current tab, in screen coordinates.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_group_rect(&self, group: usize) -> Option<Rect> {
         let lay = self.catalog_lay();
-        lay.groups.iter().find(|g| g.n as usize == group).map(|g| screen_rect(lay.view, g.r, self.cat_scroll))
+        lay.groups.iter().find(|g| g.n as usize == group).map(|g| screen_rect(lay.view, g.r, self.cat_top()))
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn catalog_view(&self) -> Rect {
         self.catalog_lay().view
     }
 
-    pub(super) fn catalog_scroll_down(&self) -> Option<Rect> {
-        self.catalog_lay().scroll_down
+    /// The tile `id` on the screen (tests).
+    #[cfg(test)]
+    pub(super) fn catalog_tile_rect(&self, id: u16) -> Option<Rect> {
+        let lay = self.catalog_lay();
+        lay.items.iter().find(|it| it.n == id).map(|it| screen_rect(lay.view, it.r, self.cat_top()))
+    }
+
+    /// The scroll bar of the page and its list, while the page is open.
+    pub(super) fn catalog_bar(&self) -> Option<(scroll::Bar, Rect)> {
+        // the Studio add sheet stands in place of the catalogue page and scrolls its own tiles
+        if !(self.menu_open && self.menu == MenuId::MeasAdd) || self.sheet_active() {
+            return None;
+        }
+        let lay = self.catalog_lay();
+        Some((scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat_scroll }, lay.view))
+    }
+
+    /// Where the list stands, kept in range (a folded group may have made it shorter).
+    pub(super) fn cat_top(&self) -> i32 {
+        let lay = self.catalog_lay();
+        self.cat_scroll.clamp(0, (lay.content - lay.view.h).max(0))
     }
 
     fn catalog_set_on(&self, rect: Rect, c: Cat) -> Option<Rect> {
+        let Kind::Standard(_) = c.kind else { return None };
         self.cat_added(c).then(|| Rect::new(rect.x + rect.w - 52, rect.y + (rect.h - 40) / 2, 48, 40))
     }
 
@@ -666,7 +459,7 @@ impl Ui {
             label:Rect::new(0,0,0,0),ctrl:hit.r,ctl:Ctl::Pick}).collect::<Vec<_>>();
         rows.push(Row{it:Item::MeasGate,label:Rect::new(0,0,0,0),ctrl:lay.gate,
             ctl:Ctl::Seg(vec!["Screen".into(),"Full record".into()],Some(usize::from(self.m.meas_full_record)))});
-        Dlg { r: lay.r, close: lay.close, back: None, rows, heads: Vec::new() }
+        Dlg { r: lay.r, close: lay.close, back: lay.back, rows, heads: Vec::new() }
     }
 
     fn content_h(&self) -> i32 {
@@ -683,56 +476,64 @@ impl Ui {
     pub(super) fn draw_catalog(&self, cv: &mut Canvas) {
         let lay = self.catalog_lay();
         let f = &self.fonts();
-        cv.round(lay.r, 8, ACCENT, 255);
-        cv.round(lay.r.inset(2), 7, DLG_BG, 255);
-        cv.text(&f.mb, lay.r.x + 16, lay.r.y + 28, "ADD MEASUREMENTS", TEXT);
+        cv.framed(lay.r, 8, 2, ACCENT, 7, DLG_BG);
+        cv.text(&f.mb, lay.r.x + 16, lay.r.y + 31, "Measure", TEXT);
         btn(cv, lay.close, BTN, BTN_BORDER);
         cv.text_in(&f.mb, lay.close, 1, "\u{d7}", TEXT);
+        if let Some(back) = lay.back {
+            btn(cv, back, BTN, BTN_BORDER);
+            cv.text_in(&f.sb, back, 1, "Back", TEXT);
+        }
         btn(cv, lay.settings, BTN, BTN_BORDER);
         cv.text_in(&f.s, lay.settings, 1, "Settings", TEXT);
-        btn(cv, lay.all, BTN, BTN_BORDER);
-        cv.text_in(&f.s, lay.all, 1, "All 60 / Pairs", TEXT);
-        btn(cv, lay.selected, BTN, BTN_BORDER);
-        cv.text_in(&f.s, lay.selected, 1, &format!("Selected ({})",self.measurement_count()), TEXT);
-        cv.text_in(&f.s,Rect::new(lay.gate.x-40,lay.gate.y,36,lay.gate.h),1,"Gate",DIM);
+        cv.text_in(&f.s,Rect::new(lay.gate.x-44,lay.gate.y,38,lay.gate.h),2,"Gate",DIM);
         for (index,label) in ["Screen","Full record"].into_iter().enumerate() {
             let half=(lay.gate.w-4)/2;let rect=Rect::new(lay.gate.x+index as i32*(half+4),lay.gate.y,half,lay.gate.h);
             btn(cv,rect,if self.m.meas_full_record==(index==1){ACCENT}else{BTN},BTN_BORDER);
             cv.text_in(&f.s,rect,1,label,if self.m.meas_full_record==(index==1){DARK_TEXT}else{TEXT});
         }
+        // the categories; the one shown is filled
         for (i, rect) in lay.tabs.iter().enumerate() {
             let on = i as u8 == self.cat_tab;
-            if on {
-                cv.round(*rect, 4, rgb(0x2e, 0x2e, 0x32), 255);
-                cv.round_outline(*rect, 4, ACCENT);
-            }
-            cv.text_in(&f.s, *rect, 1, TABS[i], if on { TEXT } else { DIM });
+            btn(cv, *rect, if on { ACCENT } else { BTN }, BTN_BORDER);
+            let name = CATEGORIES[i].name;
+            let (font, tr, _) = self.btn_text(*rect, false, name);
+            cv.text_in(font, tr, 1, name, if on { DARK_TEXT } else { TEXT });
         }
-        cv.round(lay.preview, 6, rgb(0x24, 0x24, 0x28), 255);
+        // under them: the measurements that are on, to look through and remove
+        btn(cv, lay.selected, BTN, BTN_BORDER);
+        let sel_r = Rect::new(lay.selected.x, lay.selected.y, lay.selected.w - 18, lay.selected.h);
+        cv.text_in(&f.s, sel_r, 1, &format!("Selected ({})", self.measurement_count()), TEXT);
+        chevron(cv, lay.selected.x + lay.selected.w - 14, lay.selected.y + lay.selected.h / 2, 1, DIM);
+        // the measurement that is picked: sign, name, what it is, and Add / Remove
+        cv.round(lay.preview, 6, PREVIEW_BG, 255);
         let sel = self.cat_sel();
-        let info = meta(sel);
+        let info = sel;
         super::caticons::draw_cat_icon(cv, self.fonts(), lay.mark, sel, TEXT, AMBER);
-        let _ = info.mark;
-        let tx = lay.mark.x + lay.mark.w + 16;
-        let tw = lay.preview.x + lay.preview.w - tx - 12;
-        cv.text(&f.mb, tx, lay.preview.y + 28, info.name, TEXT);
-        let mut y = lay.preview.y + 48;
-        for line in wrap_lines(&f.s, info.blurb, tw) {
-            cv.text(&f.s, tx, y, &line, LABEL);
-            y += f.s.size + 2;
-            if y > lay.preview.y + lay.preview.h - 24 {
-                break;
-            }
-        }
-        if matches!(info.kind,CatKind::Wave) && self.cat_added(sel) {
+        let tx = lay.mark.x + lay.mark.w + 14;
+        let hint = if self.cat_added(sel) { "On \u{b7} tap again to remove" } else { "Tap to add" };
+        let hw = f.s.width(hint);
+        cv.text_in(&f.s, Rect::new(lay.preview.x + lay.preview.w - hw - 14, lay.preview.y + 6, hw, 24), 2, hint, DIM);
+        let tw = lay.preview.x + lay.preview.w - tx - 14 - hw - 12;
+        cv.set_clip(Rect::new(tx, lay.preview.y, tw, lay.preview.h));
+        cv.text(&f.mb, tx, lay.preview.y + 24, info.name, TEXT);
+        if info.kind == Kind::Module && self.cat_added(sel) {
             let reading=self.catalog_reading(sel,[self.meas_src,self.meas_src_b,self.cat_c,self.cat_d]);
             let status=if reading.computing { "Computing".into() }
                 else if let Some(reason)=reading.reason { format!("Unavailable: {reason}") }
                 else if reading.value.is_finite() { format!("{} · {}",si(reading.value,info.unit),reading.quality) }
                 else { format!("---- · {}",reading.quality) };
-            cv.set_clip(Rect::new(tx,lay.preview.y+lay.preview.h-23,tw,20));
-            cv.text(&f.s,tx,lay.preview.y+lay.preview.h-8,&status,DIM);cv.no_clip();
+            cv.text(&f.s,tx+f.mb.width(info.name)+14,lay.preview.y+24,&status,DIM);
         }
+        let mut y = lay.preview.y + 43;
+        for line in wrap_lines(&f.s, info.blurb, tw) {
+            if y > lay.preview.y + lay.preview.h - 4 {
+                break;
+            }
+            cv.text(&f.s, tx, y, &line, LABEL);
+            y += f.s.size + 2;
+        }
+        cv.no_clip();
         let slots = self.source_slots();
         for (hit, (_, label, id)) in lay.sources.iter().zip(&slots) {
             let lab = Rect::new(hit.r.x - hit.r.w / 2, hit.r.y, hit.r.w / 2, hit.r.h);
@@ -741,14 +542,12 @@ impl Ui {
             cv.text_in(&f.s, Rect::new(hit.r.x + 8, hit.r.y, hit.r.w - 22, hit.r.h), 0, &self.src_label(*id), TEXT);
             chevron_down(cv, hit.r.x + hit.r.w - 16, hit.r.y + hit.r.h / 2 - 3, DIM);
         }
-        btn(cv, lay.add, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, lay.add, 1, if self.cat_added(sel) { "Remove" } else { "Add" }, TEXT);
         cv.set_clip(lay.view);
-        let scroll = self.cat_scroll;
+        let scroll = self.cat_top();
         let open = self.cat_open[self.cat_tab as usize];
         for g in &lay.groups {
             let rect = screen_rect(lay.view, g.r, scroll);
-            cv.rect(rect, rgb(0x2a, 0x2a, 0x2e));
+            cv.rect(rect, GROUP_HEAD);
             let name = tab_groups(self.cat_tab).get(g.n as usize).map(|g| g.0).unwrap_or("");
             cv.text_in(&f.s, Rect::new(rect.x + 10, rect.y, rect.w - 36, rect.h), 0, name, LABEL);
             if open & (1 << g.n) != 0 {
@@ -760,42 +559,33 @@ impl Ui {
         for it in &lay.items {
             let Some(c) = cat_from(it.n) else { continue };
             let rect = screen_rect(lay.view, it.r, scroll);
-            let on = c == sel;
+            let on = c.id == sel.id;
             let added = self.cat_added(c);
             let set = self.catalog_set_on(rect, c);
-            btn(cv, rect, if added { rgb(0x32, 0x32, 0x36) } else { BTN }, if on { ACCENT } else { BTN_BORDER });
+            btn(cv, rect, if added { ACCENT } else { BTN }, if on { ACCENT } else { BTN_BORDER });
             if on {
-                cv.round_outline(rect, 5, ACCENT);
+                // the picked one: a frame, inside the fill where it is added
+                cv.round_outline(if added { rect.inset(3) } else { rect }, 5, if added { DARK_TEXT } else { ACCENT });
             }
+            let ink = if added { DARK_TEXT } else { TEXT };
             let icon = Rect::new(rect.x + 4, rect.y + 6, 32, rect.h - 12);
-            super::caticons::draw_cat_icon(cv, self.fonts(), icon, c, TEXT, BLUE);
-            let (a, b) = split_name(meta(c).name);
+            super::caticons::draw_cat_icon(cv, self.fonts(), icon, c, ink, if added { DARK_TEXT } else { BLUE });
+            let (a, b) = split_name(c.name);
             let text_w = rect.w - 46 - if set.is_some() { 52 } else { 0 };
             let text = Rect::new(rect.x + 40, rect.y, text_w, rect.h);
             if let Some(set) = set {
                 btn(cv, set, BTN, ACCENT);
                 cv.text_in(&f.s, set, 1, "Set", TEXT);
             }
-            let whole = meta(c).name;
-            if b.is_some() && f.s.width(whole) <= text.w {
-                // one line while the name fits beside the figure
-                cv.text_in(&f.s, text, 0, whole, TEXT);
-            } else if let Some(b) = b {
-                cv.text_in(&f.s, Rect::new(text.x, text.y, text.w, text.h / 2), 0, a, TEXT);
-                cv.text_in(&f.s, Rect::new(text.x, text.y + text.h / 2, text.w, text.h / 2), 0, b, TEXT);
+            if let Some(b) = b {
+                cv.text_in(&f.s, Rect::new(text.x, text.y, text.w, text.h / 2), 0, a, ink);
+                cv.text_in(&f.s, Rect::new(text.x, text.y + text.h / 2, text.w, text.h / 2), 0, b, ink);
             } else {
-                cv.text_in(&f.s, text, 0, a, TEXT);
+                cv.text_in(&f.s, text, 0, a, ink);
             }
         }
         cv.no_clip();
-        for (rect, up) in [(lay.scroll_up, true), (lay.scroll_down, false)].into_iter().filter_map(|(r, up)| r.map(|r| (r, up))) {
-            btn(cv, rect, BTN, BTN_BORDER);
-            if up {
-                cv.text_in(&f.s, rect, 1, "Up", DIM);
-            } else {
-                cv.text_in(&f.s, rect, 1, "Down", DIM);
-            }
-        }
+        scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat_scroll }.draw(cv);
     }
 
     fn draw_mark(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) {
@@ -847,17 +637,17 @@ impl Ui {
             self.close_menu();
             return true;
         }
+        if lay.back.is_some_and(|b| b.contains(x, y)) {
+            self.menu_back();
+            return true;
+        }
         if lay.settings.contains(x, y) {
             self.open_submenu(MenuId::Measure);
             return true;
         }
-        if lay.all.contains(x,y) {
-            self.open_submenu(MenuId::MeasLegacy);
-            return true;
-        }
         if lay.selected.contains(x,y) {
-            self.meas_category = 6; self.meas_catalog_page = 0;
-            self.open_submenu(MenuId::MeasLegacy);
+            self.meas_catalog_page = 0;
+            self.open_submenu(MenuId::MeasSelected);
             return true;
         }
         if lay.gate.contains(x,y) {
@@ -865,17 +655,13 @@ impl Ui {
             if self.m.meas_full_record!=full { self.set_measurement_full_record(full); }
             return true;
         }
-        if lay.add.contains(x, y) {
-            self.catalog_add(self.cat_sel());
-            return true;
-        }
         for (i, rect) in lay.tabs.iter().enumerate() {
             if rect.contains(x, y) {
                 self.cat_tab = i as u8;
                 self.cat_scroll = 0;
-                let first = tab_groups(self.cat_tab).first().and_then(|g| g.1.first()).copied().unwrap_or(Cat::Amplitude);
-                if tab_groups(self.cat_tab).iter().all(|g| !g.1.contains(&self.cat_sel())) {
-                    self.cat_sel = first as u16;
+                let first = tab_groups(self.cat_tab).first().and_then(|g| g.1.first()).copied().unwrap_or_else(first_tile);
+                if tab_groups(self.cat_tab).iter().all(|g| !g.1.iter().any(|d| d.id == self.cat_sel)) {
+                    self.cat_sel = first.id;
                 }
                 return true;
             }
@@ -891,46 +677,47 @@ impl Ui {
                 return true;
             }
         }
-        if lay.scroll_up.is_some_and(|r| r.contains(x, y)) {
-            self.cat_scroll = (self.cat_scroll - 80).max(0);
-            return true;
-        }
-        if lay.scroll_down.is_some_and(|r| r.contains(x, y)) {
-            self.cat_scroll += 80;
-            self.clamp_scroll();
+        if lay.bar.contains(x, y) {
             return true;
         }
         if lay.view.contains(x, y) {
-            let cy = y - lay.view.y + self.cat_scroll;
+            let top = self.cat_top();
+            let cy = y - lay.view.y + top;
             let cx = x - lay.view.x;
             for g in &lay.groups {
                 if g.r.contains(cx, cy) {
+                    // one group open at a time: a tap opens it and closes the others, a tap on the open one closes it
                     let bit = 1u16 << g.n;
-                    self.cat_open[self.cat_tab as usize] ^= bit;
+                    let open = &mut self.cat_open[self.cat_tab as usize];
+                    *open = if *open & bit != 0 { 0 } else { bit };
+                    // an opened group comes to the top of the list; a folded one leaves the list where it can stand
                     if self.cat_open[self.cat_tab as usize] & bit != 0 {
                         self.cat_scroll = g.r.y;
-                        self.clamp_scroll();
                     }
+                    self.clamp_scroll();
                     return true;
                 }
             }
             for it in &lay.items {
                 if it.r.contains(cx, cy) {
-                    let rect = screen_rect(lay.view, it.r, self.cat_scroll);
+                    let rect = screen_rect(lay.view, it.r, top);
                     if let Some(c) = cat_from(it.n) {
                         if let Some(set) = self.catalog_set_on(rect, c) {
                             if set.contains(x, y) {
-                                let found = match meta(c).kind {
-                                    CatKind::Meas(k) => self.m.meas.iter().position(|&(mk, id)| mk == k && id == self.meas_src),
-                                    CatKind::Pair(k) => self.m.meas2.iter().position(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b).map(|i| self.m.meas.len() + i),
-                                    CatKind::Wave => self.m.cat.iter().position(|e| e.0 == c as u16 && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat_c && e.4 == self.cat_d).map(|i| self.m.meas.len() + self.m.meas2.len() + i),
-                                };
-                                if let Some(i) = found { self.open_meas_cfg(i); }
+                                if let Kind::Standard(k) = c.kind {
+                                    if let Some(i) = self.m.meas.iter().position(|&(mk, id)| mk == k && id == self.meas_src) {
+                                        self.open_meas_cfg(i);
+                                    }
+                                }
                                 return true;
                             }
                         }
                     }
+                    // one tap: picked (the description shows) and added on the current sources, or removed
                     self.cat_sel = it.n;
+                    if let Some(c) = cat_from(it.n) {
+                        self.catalog_add(c);
+                    }
                     return true;
                 }
             }
@@ -938,26 +725,41 @@ impl Ui {
         true
     }
 
+    /// The tile named `name` (case does not matter): its category and group shown, then a tap on it.
+    pub(super) fn catalog_tap_name(&mut self, name: &str) -> Result<(), String> {
+        let c = listed().into_iter().find(|&c| c.name.eq_ignore_ascii_case(name.trim())).ok_or_else(|| format!("no measurement {:?}", name.trim()))?;
+        let (tab, g) = (0..CATEGORIES.len() as u8)
+            .find_map(|t| tab_groups(t).iter().position(|g| g.1.iter().any(|d| d.id == c.id)).map(|g| (t, g)))
+            .ok_or_else(|| format!("{:?} is in no group", name.trim()))?;
+        self.cat_tab = tab;
+        self.cat_open[tab as usize] = 1 << g;
+        self.cat_scroll = self.catalog_group_rect(g).map_or(0, |r| r.y - self.catalog_view().y + self.cat_top());
+        self.clamp_scroll();
+        self.cat_sel = c.id;
+        self.catalog_add(c);
+        Ok(())
+    }
+
     pub(super) fn cat_added(&self, c: Cat) -> bool {
-        match meta(c).kind {
-            CatKind::Meas(k) => self.m.meas.iter().any(|e| e.0 == k && e.1 == self.meas_src),
-            CatKind::Pair(k) => self.m.meas2.iter().any(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b),
-            CatKind::Wave => self.m.cat.iter().any(|e| e.0 == c as u16 && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat_c && e.4 == self.cat_d),
+        match c.kind {
+            Kind::Standard(k) => self.m.meas.iter().any(|e| e.0 == k && e.1 == self.meas_src),
+            Kind::Pair(k) => self.m.meas2.iter().any(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b),
+            Kind::Module => self.m.cat.iter().any(|e| e.0 == c.id && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat_c && e.4 == self.cat_d),
         }
     }
 
     pub(super) fn catalog_add(&mut self, c: Cat) {
-        match meta(c).kind {
-            CatKind::Meas(k) => self.activate(Item::MeasAdd(k)),
-            CatKind::Pair(k) => self.meas_pair_toggle(k),
-            CatKind::Wave => {
-                let row = (c as u16, self.meas_src, self.meas_src_b, self.cat_c, self.cat_d);
+        match c.kind {
+            Kind::Standard(k) => self.activate(Item::MeasAdd(k)),
+            Kind::Pair(k) => self.meas_pair_toggle(k),
+            Kind::Module => {
+                let row = (c.id, self.meas_src, self.meas_src_b, self.cat_c, self.cat_d);
                 if let Some(i) = self.m.cat.iter().position(|e| *e == row) {
                     self.m.cat.remove(i);
-                    self.toast(&format!("{} removed", meta(c).name));
+                    self.toast(&format!("{} removed", c.name));
                 } else if self.meas_make_room() {
                     self.m.cat.push(row);
-                    self.toast(&format!("{} added", meta(c).name));
+                    self.toast(&format!("{} added", c.name));
                 }
                 self.clear_measurement_statistics();
             }
@@ -1001,7 +803,7 @@ impl Ui {
     }
 
     pub(super) fn cat_row(&self,id:u16,a:WaveId,b:WaveId,c:WaveId,d:WaveId)->Option<tools::MeasRow>{
-        let cat=cat_from(id)?;let info=meta(cat);let reading=self.catalog_reading(cat,[a,b,c,d]);
+        let cat=cat_from(id)?;let info=cat;let reading=self.catalog_reading(cat,[a,b,c,d]);
         let roles=catalog_roles(cat).iter().map(|&r|[a,b,c,d][r]).collect::<Vec<_>>();
         let reason=if reading.computing||reading.value.is_finite(){String::new()}else{reading.reason.map_or(String::new(),|r|self.short_reason(r,&roles))};
         Some(tools::MeasRow{name:info.name.into(),src:[a,b,c,d][catalog_roles(cat)[0]],v:reading.value,unit:info.unit,computing:reading.computing,reason})
@@ -1054,11 +856,13 @@ pub(super) enum Preview {
 /// Every measurement of the catalogue once, in the order of its tabs, with its category.
 pub(super) fn add_entries() -> Vec<AddEntry> {
     let mut v: Vec<AddEntry> = Vec::new();
-    for tab in 0..TABS.len() as u8 {
+    for tab in 0..CATEGORIES.len() as u8 {
         for (_, items) in tab_groups(tab) {
-            for &cat in *items {
-                if !v.iter().any(|e| e.cat == cat) {
-                    v.push(AddEntry { cat, name: meta(cat).name, group: (tab as usize).min(3) });
+            for cat in items.iter() {
+                if !v.iter().any(|e| e.cat.id == cat.id) {
+                    // the Studio groups (ADD_GROUPS): Basic, Jitter, Power and the rest
+                    let group = match CATEGORIES[tab as usize].name { "Basic" => 0, "Jitter & eye" => 1, "Power" => 2, _ => 3 };
+                    v.push(AddEntry { cat, name: cat.name, group });
                 }
             }
         }
@@ -1079,10 +883,10 @@ impl Ui {
     pub(super) fn add_key(&self, c: Cat) -> super::studio::MeasKey {
         use super::studio::MeasKey;
         let [a, b, cc, d] = self.add_row();
-        match meta(c).kind {
-            CatKind::Meas(k) => MeasKey::One(k, a),
-            CatKind::Pair(k) => MeasKey::Pair(k, a, b),
-            CatKind::Wave => MeasKey::Cat(c as u16, a, b, cc, d),
+        match c.kind {
+            Kind::Standard(k) => MeasKey::One(k, a),
+            Kind::Pair(k) => MeasKey::Pair(k, a, b),
+            Kind::Module => MeasKey::Cat(c.id, a, b, cc, d),
         }
     }
 
@@ -1138,27 +942,48 @@ mod integration_tests {
     fn tap(ui: &mut Ui, r: Rect) { ui.tap(r.x+r.w/2,r.y+r.h/2); }
 
     #[test]
-    fn catalog_keeps_all_sixty_measurements_all_pairs_and_back_routes() {
-        let mut ui=Ui::new(Source::Demo{t:0.0}); ui.m.meas.clear(); ui.m.layout=Layout::Default;
-        ui.key(key::MEASURE); let all=ui.catalog_lay().all; tap(&mut ui,all);
-        assert_eq!((ui.menu,ui.parent),(MenuId::MeasLegacy,Some(MenuId::MeasAdd)));
-        let mut found=HashSet::new();
-        for group in 1..6 {
-            let rect=Rect::new(26,170+group*43,164,40); tap(&mut ui,rect);
-            for row in ui.dlg_layout().unwrap().rows {
-                if let Item::MeasAdd(kind)=row.it { found.insert(kind); }
-            }
+    fn the_page_holds_all_sixty_measurements_all_pairs_and_one_tap_adds() {
+        // every standard measurement and every pair variant has exactly one tile, with a name of its own
+        for &k in ALL_MEAS.iter() {
+            let n = listed().into_iter().filter(|&c| matches!(c.kind, Kind::Standard(x) if x == k)).count();
+            assert_eq!(n, 1, "{k:?}");
+            assert_ne!(meas_long_name(k), k.name().to_string() + "?");
         }
-        assert_eq!(found.len(),ALL_MEAS.len());
-        assert!(ALL_MEAS.iter().all(|kind|found.contains(kind)));
-        let pairs=ui.dlg_layout().unwrap().rows.into_iter().find(|r|r.it==Item::Open(MenuId::MeasPair)).unwrap().ctrl;
-        tap(&mut ui,pairs);
-        let items=ui.items(MenuId::MeasPair);assert_eq!(items.iter().filter(|it|matches!(it,Item::MeasPair(_))).count(),tools::PAIRS.len());
-        let back=ui.dlg_layout().unwrap().back.unwrap();tap(&mut ui,back);assert_eq!(ui.menu,MenuId::MeasLegacy);
+        for p in 0..tools::PAIRS.len() {
+            let n = listed().into_iter().filter(|&c| matches!(c.kind, Kind::Pair(x) if x == p)).count();
+            assert_eq!(n, 1, "pair {p}");
+        }
+        let names: HashSet<_> = listed().into_iter().map(|c| c.name).collect();
+        assert_eq!(meas_long_name(Meas::Vpp), "Peak-to-Peak");
+        assert!(names.len() >= listed().len() - 3, "names tell the tiles apart");
+        // one tap on a tile adds it on the source, a second tap removes it
+        let mut ui=Ui::new(Source::Demo{t:0.0}); ui.m.meas.clear();
+        ui.key(key::MEASURE);
+        let rect_of=|ui:&Ui,c:Cat| { let lay=ui.catalog_lay(); lay.items.iter().find(|it|it.n==c.id).map(|it|screen_rect(lay.view,it.r,ui.cat_top())).unwrap() };
+        let r=rect_of(&ui,tile(measures::std_id(Meas::Vpp))); tap(&mut ui,Rect::new(r.x,r.y,r.w/2,r.h));
+        assert_eq!(ui.m.meas,vec![(Meas::Vpp,WaveId::Ch(0))]);
+        assert_eq!(ui.cat_sel,measures::std_id(Meas::Vpp),"the description follows the tap");
+        let r=rect_of(&ui,tile(measures::std_id(Meas::Vpp))); tap(&mut ui,Rect::new(r.x,r.y,r.w/2,r.h));
+        assert!(ui.m.meas.is_empty());
+        // a pair on the Two sources page, between source A and B
+        let t=ui.catalog_lay().tabs[1]; tap(&mut ui,t);
+        assert_eq!(ui.catalog_lay().sources.len(),2,"source A and B");
+        let r=rect_of(&ui,tile(measures::pair_id(0))); tap(&mut ui,r);
+        assert_eq!(ui.m.meas2,vec![(0,WaveId::Ch(0),WaveId::Ch(1))]);
+        // one group open at a time
+        let g=ui.catalog_group_rect(2).unwrap(); tap(&mut ui,g);
+        assert_eq!(ui.cat_open[1],1<<2);
+        let g=ui.catalog_group_rect(2).unwrap(); tap(&mut ui,g);
+        assert_eq!(ui.cat_open[1],0);
+        // Selected opens the list of what is on, Back returns
+        let sel=ui.catalog_lay().selected; tap(&mut ui,sel);
+        assert_eq!((ui.menu,ui.parent),(MenuId::MeasSelected,Some(MenuId::MeasAdd)));
+        assert!(ui.dlg_layout().unwrap().rows.iter().any(|r|r.it==Item::MeasRemove(0)));
         let back=ui.dlg_layout().unwrap().back.unwrap();tap(&mut ui,back);assert_eq!(ui.menu,MenuId::MeasAdd);
-        let ids:HashSet<_>=listed().into_iter().filter(|c|matches!(meta(*c).kind,CatKind::Wave)).map(|c|c as u16).collect();
-        assert_eq!(ids.len(),83);
-        for id in 0..=200 { assert_eq!(catalog_id_valid(id),ids.contains(&id),"persisted ID{id}"); }
+        // the 83 analysis measurements of the scope build (the test build adds the example module's)
+        let ids:HashSet<_>=listed().into_iter().filter(|c|c.kind==Kind::Module).map(|c|c.id).collect();
+        assert_eq!(ids.iter().filter(|&&id|id<1000).count(),83);
+        for id in 0..=255 { assert_eq!(catalog_id_valid(id),ids.contains(&id),"persisted ID{id}"); }
     }
 
     #[test]
@@ -1171,9 +996,9 @@ mod integration_tests {
             (113,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(2),WaveId::Ch(3))];
         assert_eq!(ui.measurement_count(),76);
         ui.key(key::MEASURE);let selected=ui.catalog_lay().selected;tap(&mut ui,selected);
-        assert_eq!((ui.menu,ui.meas_category),(MenuId::MeasLegacy,6));
+        assert_eq!(ui.menu,MenuId::MeasSelected);
         let mut found=HashSet::new();
-        for page in 0..76usize.div_ceil(12) {
+        for page in 0..76usize.div_ceil(16) {
             ui.meas_catalog_page=page;
             let dialog=ui.dlg_layout().unwrap();
             for row in dialog.rows {
@@ -1184,7 +1009,7 @@ mod integration_tests {
         }
         assert_eq!(found,(0..76).collect());
         assert!(ui.selected_measurement_label(73).contains("R1-R2 Power Quality"));
-        ui.meas_catalog_page=6;
+        ui.meas_catalog_page=73/16;
         let remove=ui.dlg_layout().unwrap().rows.into_iter().find(|row|row.it==Item::MeasRemove(73)).unwrap().ctrl;
         tap(&mut ui,remove);assert_eq!(ui.m.cat.len(),2);assert_eq!(ui.m.meas.len(),60);assert_eq!(ui.m.meas2.len(),13);
         ui.activate(Item::MeasClear);assert_eq!(ui.measurement_count(),0);assert!(ui.mstat.is_empty());
@@ -1198,16 +1023,16 @@ mod integration_tests {
         let mut canvas=Canvas::new(W,H);canvas.clear(BG);ui.draw_menu(&mut canvas);
         assert!(canvas.px.iter().all(|&p|p==BG),"a closed catalog must not cover the waveform");
         ui.key(key::MEASURE);
-        let dpt=ui.catalog_lay().tabs[5];tap(&mut ui,dpt);
+        let dpt=ui.catalog_lay().tabs[measures::DPT as usize];tap(&mut ui,dpt);
         let c=ui.catalog_lay().sources.into_iter().find(|hit|hit.n==2).unwrap().r;tap(&mut ui,c);
         assert_eq!(ui.pick.unwrap().it,Item::CatSourceC);ui.close_picker();
-        ui.cat_tab=3;ui.cat_sel=Cat::Torque as u16;
+        ui.cat_tab=measures::MOTOR;ui.cat_sel=measures::motor::TORQUE;
         let d=ui.catalog_lay().sources.into_iter().find(|hit|hit.n==3).unwrap().r;tap(&mut ui,d);
         assert_eq!(ui.pick.unwrap().it,Item::CatSourceD);ui.close_picker();
-        for tab in 0..TABS.len() {
+        for tab in 0..CATEGORIES.len() {
             ui.cat_tab=tab as u8;let lay=ui.catalog_lay();
-            for button in [lay.scroll_up,lay.scroll_down].into_iter().flatten() {assert!(button.w>=40 && button.h>=40);}
-            assert!(!overlaps(lay.selected,lay.settings) && !overlaps(lay.all,lay.selected));
+            assert!(lay.bar.w>=40 && lay.bar.h>=80,"a scroll bar that a finger can hold");
+            assert!(!overlaps(lay.gate,lay.settings) && lay.tabs.iter().all(|t|!overlaps(*t,lay.selected)));
         }
     }
 }
@@ -1237,7 +1062,7 @@ mod tests {
 
     #[test]
     fn every_button_has_a_name_and_the_unwired_ones_are_absent() {
-        let names: Vec<&str> = listed().into_iter().map(|c| meta(c).name).collect();
+        let names: Vec<&str> = listed().into_iter().map(|c| c.name).collect();
         for want in ["Amplitude", "Low Time", "Jitter Summary", "Eye Height@BER", "T/nT Ratio", "Power Quality", "Inductance", "DQ0", "Vpeak", "Qoss", "Td(on)", "RDS(on)"] {
             assert!(names.contains(&want), "missing {want}");
         }
@@ -1245,7 +1070,7 @@ mod tests {
             assert!(!names.iter().any(|n| n.eq_ignore_ascii_case(absent)), "{absent} shipped");
         }
         assert!(names.contains(&"RJ-dd") && names.contains(&"DJ-dd"), "dual-Dirac names");
-        assert_eq!(TABS.len(), 6);
+        assert_eq!(CATEGORIES.len(), 8);
     }
 
     #[test]
@@ -1255,13 +1080,13 @@ mod tests {
         let (r1,r2,ch1)=(WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(0));
         ui.m.meas=vec![(Meas::Vpp,r1),(Meas::Freq,r1),(Meas::Vpp,ch1),(Meas::Freq,r2)];
         ui.m.meas2=vec![(0,r1,ch1)];
-        ui.m.cat=vec![(Cat::DataRate as u16,r1,r1,r1,r1)];
+        ui.m.cat=vec![(measures::serial::DATA_RATE,r1,r1,r1,r1)];
         ui.meas_src=r1;
         assert!(ui.options(Item::MeasCopyTo).iter().all(|n|n!="R1"));
         ui.select_option(Item::MeasCopyTo,"R2");
         assert_eq!(ui.m.meas,vec![(Meas::Vpp,r1),(Meas::Freq,r1),(Meas::Vpp,ch1),(Meas::Freq,r2),(Meas::Vpp,r2)]);
         assert_eq!(ui.m.meas2,vec![(0,r1,ch1),(0,r2,ch1)]);
-        assert_eq!(ui.m.cat.last().copied(),Some((Cat::DataRate as u16,r2,r2,r2,r2)));
+        assert_eq!(ui.m.cat.last().copied(),Some((measures::serial::DATA_RATE,r2,r2,r2,r2)));
         assert_eq!(ui.copy_measurements(r1,r2),0,"a second copy adds nothing");
     }
 
@@ -1272,13 +1097,13 @@ mod tests {
         put(&mut ui, 1, square(1.0, 2000, 40), 1e-6);
         ui.meas_src = WaveId::Ref(1);
         ui.m.meas.clear();
-        ui.catalog_add(Cat::Amplitude);
-        ui.catalog_add(Cat::LowTime);
+        ui.catalog_add(tile(measures::std_id(Meas::Vamp)));
+        ui.catalog_add(tile(measures::std_id(Meas::LowTime)));
         let rows = ready_rows(&mut ui);
-        let amp = rows.iter().find(|r| r.name == "Amplitude").expect("amplitude");
+        let amp = rows.iter().find(|r| r.name == meas_display_name(Meas::Vamp)).expect("amplitude");
         assert!((amp.v - 2.0).abs() < 0.15, "amplitude {}", amp.v);
-        assert!(rows.iter().any(|r| r.name == "Low Time" && r.v.is_finite()), "low time");
-        ui.catalog_add(Cat::DataRate);
+        assert!(rows.iter().any(|r| r.name == meas_display_name(Meas::LowTime) && r.v.is_finite()), "low time");
+        ui.catalog_add(tile(measures::serial::DATA_RATE));
         let rate = ready_rows(&mut ui).into_iter().find(|r| r.name == "NRZ Data Rate").unwrap();
         assert!(rate.v.is_finite() && rate.v > 0.0, "{}", rate.v);
     }
@@ -1295,13 +1120,13 @@ mod tests {
         ui.meas_src = WaveId::Ref(0);
         ui.meas_src_b = WaveId::Ref(1);
         ui.m.cat.clear();
-        ui.catalog_add(Cat::PowerQuality);
+        ui.catalog_add(tile(measures::power::POWER_QUALITY));
         let p = ready_rows(&mut ui).into_iter().find(|r| r.name == "Power Quality").unwrap();
         assert!(p.v.is_finite() && p.v > 0.0, "power {}", p.v);
         put(&mut ui, 2, square(0.5, 4000, 20), 1e-9);
         ui.meas_src = WaveId::Ref(2);
-        ui.catalog_add(Cat::EyeHeight);
-        ui.catalog_add(Cat::Tie);
+        ui.catalog_add(tile(measures::jitter::EYE_HEIGHT));
+        ui.catalog_add(tile(measures::jitter::TIE));
         let rows = ready_rows(&mut ui);
         assert!(rows.iter().any(|r| r.name == "Eye Height" && r.v.is_finite()), "eye");
         assert!(rows.iter().any(|r| r.name == "TIE" && r.v.is_finite()), "tie");
@@ -1328,7 +1153,7 @@ mod tests {
         ui.meas_src = WaveId::Ref(3);
         ui.meas_src_b = WaveId::Ref(4);
         ui.cat_c = WaveId::Ref(5);
-        ui.catalog_add(Cat::Vpeak);
+        ui.catalog_add(tile(measures::double_pulse::VPEAK));
         let peak = ready_rows(&mut ui).into_iter().find(|r| r.name == "Vpeak").unwrap();
         assert!((peak.v - 480.0).abs() < 1.0, "vpeak {}", peak.v);
     }
@@ -1343,35 +1168,35 @@ mod tests {
         ui.open_menu(MenuId::MeasAdd);
         ui.meas_src = WaveId::Ref(1);
         ui.cat_tab = 0;
-        ui.cat_sel = Cat::Amplitude as u16;
+        ui.cat_sel = measures::std_id(Meas::Vamp);
         ui.cat_open[0] = 1;
         ui.cat_scroll = 0;
         let mut cv = Canvas::new(W, H);
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-standard.png"), crate::store::png_of(&cv)).unwrap();
-        ui.cat_tab = 1;
-        ui.cat_sel = Cat::JitterSummary as u16;
-        ui.cat_open[1] = 1;
+        ui.cat_tab = 3;
+        ui.cat_sel = measures::jitter::JITTER_SUMMARY;
+        ui.cat_open[3] = 1;
         ui.cat_scroll = 0;
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-jitter.png"), crate::store::png_of(&cv)).unwrap();
-        ui.cat_tab = 2;
-        ui.cat_sel = Cat::PowerQuality as u16;
-        ui.cat_open[2] = 1;
+        ui.cat_tab = measures::POWER;
+        ui.cat_sel = measures::power::POWER_QUALITY;
+        ui.cat_open[measures::POWER as usize] = 1;
         ui.cat_scroll = 0;
         ui.meas_src = WaveId::Ch(0);
         ui.meas_src_b = WaveId::Ch(1);
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-power.png"), crate::store::png_of(&cv)).unwrap();
-        for tab in 0..TABS.len() {
-            ui.cat_tab=tab as u8;ui.cat_scroll=0;ui.cat_open[tab]=u16::MAX;
-            ui.cat_sel=tab_groups(tab as u8)[0].1[0] as u16;
+        for tab in 0..CATEGORIES.len() {
+            ui.cat_tab=tab as u8;ui.cat_scroll=0;ui.cat_open[tab]=1;
+            ui.cat_sel=tab_groups(tab as u8)[0].1[0].id;
             ui.render(&mut cv);
             std::fs::write(format!("{dir}/catalog-tab-{tab}.png"),crate::store::png_of(&cv)).unwrap();
         }
         ui.m.meas=ALL_MEAS.iter().map(|&kind|(kind,WaveId::Ref(0))).collect();
         ui.m.meas2=(0..17).map(|kind|(kind,WaveId::Ref(0),WaveId::Ref(1))).collect();
-        ui.meas_category=6;ui.meas_catalog_page=0;ui.open_submenu(MenuId::MeasLegacy);ui.render(&mut cv);
+        ui.meas_catalog_page=0;ui.open_submenu(MenuId::MeasSelected);ui.render(&mut cv);
         std::fs::write(format!("{dir}/catalog-selected.png"),crate::store::png_of(&cv)).unwrap();
     }
 }

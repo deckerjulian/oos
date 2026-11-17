@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usb-sim.sh - tests /bin/oos-usb without a stick: a virtual machine with three simulated disks: FAT32 with a partition
 # table, exFAT without one, and an empty one. The mounted one is pulled while it runs, twice. The USB

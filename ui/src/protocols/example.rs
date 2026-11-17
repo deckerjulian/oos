@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! A complete protocol module that uses every hook of [`Protocol`], as a template for new ones. It is compiled in the

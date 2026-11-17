@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Network services belong to the same UI session as the desktop window.
@@ -17,10 +17,11 @@ pub struct Services {
 }
 
 impl Services {
-    /// This PC only by default (no firewall question); `--lan` opens the services to the network.
-    pub fn open(args: &[String]) -> Self {
+    /// This PC only by default (no firewall question); `--lan` opens the services to the network. `acl`: the address
+    /// list of the window's session (`Ui::acl`), which Remote services > Allowed changes.
+    pub fn open(args: &[String], acl: &crate::netacl::Shared) -> Self {
         crate::set_loopback_only(!args.iter().any(|a| a == "--lan"));
-        let (web, scpi, vxi, hislip, announce) = crate::lan(false, args);
+        let (web, scpi, vxi, hislip, announce) = crate::lan(false, args, acl);
         Self { web, scpi, vxi, hislip, announce, next_status: Instant::now() }
     }
 
@@ -80,7 +81,7 @@ mod tests {
     #[test]
     fn desktop_network_services_share_the_window_session() {
         let args: Vec<String> = ["--web-port", "0", "--scpi-port", "0", "--hislip-port", "0"].into_iter().map(str::to_string).collect();
-        let mut services = Services::open(&args);
+        let mut services = Services::open(&args, &crate::netacl::Shared::default());
         let raw_port = services.scpi.port().unwrap();
         let hislip_port = services.hislip.port().unwrap();
         let web_port = services.web.port().unwrap();

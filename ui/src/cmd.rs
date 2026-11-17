@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Text commands (host test scripts and the device control FIFO /tmp/oos-ui.ctl):
@@ -116,6 +116,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
         "frames" if w.len() > 1 => return Out::Frames(num(w[1]).max(0) as u32),
         "shot" if w.len() > 1 => return Out::Shot(w[1].to_string()),
         "quit" => ui.quit = true,
+        "close" => ui.script_close(),
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),
         "storedir" if w.len() > 1 => ui.store_dir = w[1].into(),
         "textsize" if w.len() > 1 => match TEXT_SIZES.iter().find(|t| t.name().eq_ignore_ascii_case(w[1])) {
@@ -136,11 +137,22 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = ui.t_gpu.map_or(String::new(), |t| format!(" gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1} read {:.1}) ms", t[0], t[1], t[2], t[3], t[4], t[5]));
     let p = ui.t_parts;
     let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
+    let (acq, used, dropped) = crate::drawpipe::counters().read();
+    let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+    let gpu = format!("{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}", gpu, crate::drawpipe::mode(), crate::sparse::interp(), acq, used, dropped, measured, crate::compress::last_k());
     // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
     let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
     // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
     let screens = ui.t_gpu_screens.map_or(String::new(), |(p, m)| format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m))));
     let gpu = format!("{}{} graphics {}{}", gpu, screens, if ui.sys.gpu { "gpu" } else { "cpu" }, hdmi);
+    // the hardware's frames: decoded, and dropped unseen when the screen fell behind
+    let gpu = match ui.src.hw_frames() {
+        Some((d, x)) => format!(
+            "{} hw frames {} dropped {} fast {:.1} ms (place {:.1} draw {:.1} of it fold {:.1}, {:.0} frames a call) take {} map {}x{}",
+            gpu, d, x, ui.t_fast, ui.t_fast_ab.0, ui.t_fast_ab.1, ui.t_fast_fold, ui.fast_n, ui.fast_take as usize, ui.ph.w, ui.ph.h
+        ),
+        None => gpu,
+    };
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
         ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu

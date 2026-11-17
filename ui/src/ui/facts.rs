@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Numbers a controller can ask for: one measurement, and the figures on the power, spectrum, magnetic, inverter,
@@ -35,9 +35,9 @@ impl Ui {
         self.meas_number(id, k)
     }
 
-    /// Rising-clock edges that miss the configured setup or hold limit.
-    pub(crate) fn fact_setup_hold(&self, clk: WaveId, data: WaveId) -> f64 {
-        self.pair_at(14, clk, data)
+    /// Rising-clock edges that miss the configured setup or hold limit; the data is source A, the clock source B.
+    pub(crate) fn fact_setup_hold(&self, data: WaveId, clk: WaveId) -> f64 {
+        self.pair_at(14, data, clk)
     }
 
     fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<(f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>)> {
@@ -311,7 +311,7 @@ impl Ui {
             let m = &self.m;
             let bit = |line: u8| la.words.iter().map(|w| w >> line & 1 == 1).collect::<Vec<_>>();
             let shaft = if m.inv_ang == InvAngle::Hall {
-                motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0)
+                motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
             } else {
                 let ix = m.inv_qi.map(|q| bit(q));
                 motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)

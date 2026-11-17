@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! OOS cold boot: everything from a freshly booted FPGA image to the state where `seq::State::configure` takes over.
@@ -203,7 +203,7 @@ pub fn adc_clk_window() -> (u32, u32) {
     ((c - 6.0).floor() as u32, (c + 6.0).ceil() as u32)
 }
 
-/// LMX2582 words for the ADC clock in effect: the stock table at 1.25 GHz, else `lmx2582::table_for` (experimental,
+/// LMX2582 words for the ADC clock in effect: Rigol's table at 1.25 GHz, else `lmx2582::table_for` (experimental,
 /// limits.conf `adc.clock_hz`; docs/protocols/pll.md "Other output frequencies").
 pub fn pll_table() -> Result<[[u8; 3]; 46], String> {
     if !crate::dho::clock::overclocked() {
@@ -291,7 +291,7 @@ pub struct Early {
 /// Steps 2 and 3 ahead of the others, for the wait after the BOOT command.
 pub fn early_start(pll: &mut dyn PllPins, afe_bus: &mut dyn AfeBus, clock: &mut dyn Clock, progress: &mut dyn FnMut(u32)) -> Result<Early, String> {
     progress(2);
-    // the 50 ms of the stock driver between words are not needed by the chip; the last word (R0) starts its calibration
+    // the 50 ms of the stock system between words are not needed by the chip; the last word (R0) starts its calibration
     for w in pll_table()? {
         for (pin, v) in pll_edges(w) {
             pll.set(pin, v);
@@ -740,13 +740,13 @@ impl<B: Bus> Ctx<'_, B> {
         // tpu::edge rewrites the registers from them) [A]; ADC mode unknown so that the first configure writes the input
         // mode + ADC parameters of the mode (cold-boot.md 2, "first ADC configuration") [A].
         let state = seq::State {
-            sh: scu::Shadows { s4004: self.sh.s4004, s4008: self.sh.s4008, s400c: 0, s1000: self.sh.s1000, s1010: self.sh.s1010, s4080: 0, s1004: 0, s4020: 0, s1080: 0, s1084: 0 },
+            sh: scu::Shadows { s4004: self.sh.s4004, s4008: self.sh.s4008, s400c: 0, s1000: self.sh.s1000, s1010: self.sh.s1010, s4080: 0, s1004: 0, s4020: 0, s1080: 0, s1084: 0, s40b8: 0 },
             ts: tpu::Shadows::APP,
             afe: afes,
             adc: a,
             mode: usize::MAX,
             gain: [1.0; 4],
-            la_was_on: false, holdoff_set: false,
+            la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0, zone_tabs: [None, None], zone_run: None,
         };
         Ok(Outcome {
             state,

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Progress of the start-up for the start-up screen: rcS, `oos-fpgad fpga-boot` and `oos-fpgad cold-boot` append lines

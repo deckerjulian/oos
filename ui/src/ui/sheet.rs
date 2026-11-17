@@ -162,11 +162,11 @@ impl Ui {
                 _ => Slot::Tab(0),
             }),
             M::Horizontal => (&["Time base", "Zoom"], |it| match it {
-                Zoom | ZScale | ZDelay => Slot::Tab(1),
+                Zoom | ZScale | ZDelay | ZoomBar => Slot::Tab(1),
                 AutoDeskew | ClearDeskew => Slot::Foot(0),
                 _ => Slot::Tab(0),
             }),
-            M::Cursor => (&["Cursors", "Position"], |it| match it { CurMode | CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
+            M::Cursor => (&["Cursors", "Position"], |it| match it { CurMode | CurType | CurSrc | CurSrcB | CurSecond | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
             M::Search => (&["Edge search"], |it| match it { SrchRemove => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Ref => (&["Reference", "Scale and files"], |it| match it {
                 RefSel | RefSrc | RefLabel | RefColor | RefSaveNext | RefImport => Slot::Tab(0),
@@ -189,7 +189,7 @@ impl Ui {
             }),
             M::Utility => (&["Connectivity", "Device", "Service", "Advanced"], |it| match it {
                 Open(M::Network) | Open(M::Time) => Slot::Tab(0),
-                Offline | QuickAct | TouchLock | Graphics | Shot => Slot::Tab(1),
+                Offline | QuickAct | Graphics | Shot => Slot::Tab(1),
                 Open(M::SelfCal) | SysInfo | About | Update => Slot::Tab(2),
                 UpdateRollback => Slot::Foot(2),
                 Stock => Slot::Foot(3),

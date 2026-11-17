@@ -1,9 +1,11 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-dev-image.sh - the first OOS development boot image for `recovery` (Phase 2).
 #
 #   boot/build-dev-image.sh            -> boot/out/oos-dev.img (+ .sha256)
+#   OOS_DECODERS="usb dcc" / OOS_DECODERS_OFF="avionics" boot/build-dev-image.sh   fewer decoders in oos-ui
+#   (ui/tools/decoder-features.sh; the seven core decoders are always in)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -46,7 +48,8 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else s
 owner="$(id -u):$(id -g)"
 ui="$root/ui/target/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
-(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
+feat=$("$root/ui/tools/decoder-features.sh") || exit 1
+(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl $feat) || exit 1
 fpgad="$root/fpgad/target/aarch64-unknown-linux-musl/release"
 (cd "$root/fpgad" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
 # oos-hw with the kernel's compiler (kernel/build-base.sh image), for arm64 whatever the host is; ELF e_machine 0xb7 is
@@ -70,9 +73,8 @@ EOF
 [ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
-# SSH replaces the development telnet shell. Only public keys can be seeded;
-# private host identities are generated once on each scope, on persistent /oos.
-[ -x "$root/rootfs/out/dropbear" ] && [ -x "$root/rootfs/out/dropbearkey" ] || sh "$root/rootfs/build-ssh-tools.sh"
+# SSH (Dropbear, built by boot/unit-hook.sh): trusted public keys can be built into the image
+# (OOS_SSH_AUTHORIZED_KEYS); host keys and the password are made once on each scope, on /oos.
 ssh_seed="$root/rootfs/out/ssh-seed"
 mkdir -p "$ssh_seed"
 rm -f "$ssh_seed/authorized_keys"
@@ -85,6 +87,8 @@ fi
 # (again when the helper's source is newer than the built one: Mesa itself is kept in rootfs/out/mesa)
 { [ -x "$root/rootfs/out/gpu/bin/oos-gpu" ] && [ ! "$root/gpu/oos-gpu.c" -nt "$root/rootfs/out/gpu/bin/oos-gpu" ]; } || "$root/gpu/build.sh"
 
+# the fork's unit defaults, firewall and build choices (docs/fork/sync-checklist.md)
+. "$here/unit-hook.sh"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$root/tools/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
@@ -99,16 +103,14 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
-	cp /wlan/dropbear /wlan/dropbearkey $r/bin/
-	chmod 755 $r/bin/oos-ssh $r/bin/dropbear $r/bin/dropbearkey
 	if [ -s /wlan/ssh-seed/authorized_keys ]; then
 		mkdir -p $r/etc/oos-ssh; cp /wlan/ssh-seed/authorized_keys $r/etc/oos-ssh/authorized_keys
 		chmod 700 $r/etc/oos-ssh; chmod 600 $r/etc/oos-ssh/authorized_keys
 	fi
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
-	cp /wlan/dropbear.COPYING /wlan/dropbear-libtomcrypt.COPYING /wlan/dropbear-libtommath.COPYING $r/etc/licenses/
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /wlan/gpu/. $r/
+	. /wlan/unit-hook/image.sh
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out
@@ -123,13 +125,19 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	cp $M/modules.dep $M/modules.alias $M/modules.order $M/modules.builtin* $r/lib/modules/$rel/ 2>/dev/null || true
 	# the console node the kernel opens before /init mounts devtmpfs
 	mknod -m 600 $r/dev/console c 5 1
+	# copies a file sync made in the build outputs (iCloud: "libc.so.6 2", "oos-gpu 2") stay out of the image: 27 MB
+	# of them in rootfs/out/gpu made the initramfs of the first 0.1.13 build 10 MB larger (2026-11-15)
+	dup=$(cd $r && find . \( -name "* [0-9]" -o -name "* [0-9].*" \) | head -5)
+	[ -z "$dup" ] || { echo "build-dev-image.sh: copies of a file sync in the image, remove them from the source: $dup" >&2; exit 1; }
 	(cd $r && find . | sort | cpio -o -H newc -R 0:0 --quiet) > /tmp/root.cpio
 	gzip -9n < /tmp/root.cpio > /out/initramfs.cpio.gz
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
-	# the busybox package in the image: its source goes with a release
-	dpkg-query -W -f "\${Package} \${Version}\n" busybox-static > /out/busybox.version
+	. /wlan/unit-hook/dtb.sh
+	# the busybox package in the image, and the glibc it was built with and holds: their sources go with a release
+	# (tools/release-sources.sh names that glibc; it follows when this line changes)
+	dpkg-query -W -f "\${Package} \${Version}\nBuilt-Using: \${Built-Using}\n" busybox-static > /out/busybox.version
 	chown -R "$OUT_OWNER" /out
 	ls -la /out
 '

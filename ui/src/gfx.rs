@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Software renderer: XRGB8888 canvas with rectangles, anti-aliased lines, alpha blending and text.
@@ -396,6 +396,38 @@ impl Canvas {
         }
     }
 
+    /// A filled rounded rectangle with a border of `d` px: `round(r, rad, border)` and over it
+    /// `round(r.inset(d), rad_in, fill)`, both opaque, pixel for pixel; but the border is only drawn where the fill
+    /// does not cover it (four bands), so each pixel is covered about once (GPU fill rate).
+    pub fn framed(&mut self, r: Rect, rad: i32, d: i32, border: Rgb, rad_in: i32, fill: Rgb) {
+        let inner = r.inset(d);
+        // the inner rounded rectangle covers its middle band (rows y+d+ri .. y+h-d-ri, all its columns) opaque
+        let ri = rad_in.min(inner.h / 2).min(inner.w / 2).max(0);
+        let top = (d + ri).clamp(0, r.h);
+        let bot = (r.h - d - ri).max(top);
+        if inner.w <= 0 || inner.h <= 0 || bot == top {
+            self.round(r, rad, border, 255);
+            return self.round(inner, rad_in, fill, 255);
+        }
+        let keep = self.clip;
+        let bands = [
+            Rect::new(r.x, r.y, r.w, top),
+            Rect::new(r.x, r.y + bot, r.w, r.h - bot),
+            Rect::new(r.x, r.y + top, d, bot - top),
+            Rect::new(r.x + r.w - d, r.y + top, d, bot - top),
+        ];
+        for b in bands {
+            let (x0, y0) = (b.x.max(keep.0), b.y.max(keep.1));
+            let (x1, y1) = ((b.x + b.w).min(keep.2), (b.y + b.h).min(keep.3));
+            if x1 > x0 && y1 > y0 {
+                self.clip = (x0, y0, x1, y1);
+                self.round(r, rad, border, 255);
+            }
+        }
+        self.clip = keep;
+        self.round(inner, rad_in, fill, 255);
+    }
+
     pub fn round_outline(&mut self, r: Rect, rad: i32, c: Rgb) {
         let rad = rad.min(r.h / 2).min(r.w / 2);
         self.hline(r.x + rad, r.x + r.w - 1 - rad, r.y, c);
@@ -729,6 +761,43 @@ mod tests {
         let m = [(1680, 1050, 60, true, false), (1920, 1080, 60, false, false)];
         assert_eq!(pick_mode(&m, (1920, 1080)), Some(0));
         assert_eq!(pick_mode(&[(4096, 2160, 30, true, false)], (1920, 1080)), None);
+    }
+
+    /// `framed` gives the pixels of a border and a fill drawn over each other, on a picture and on a layer, clipped
+    /// or not, for sizes down to where the fill's corners meet; recorded, it covers less.
+    #[test]
+    fn framed_is_a_border_under_a_fill() {
+        let area = |c: &Canvas| c.rec.as_ref().unwrap().cmds.iter().map(|m| (m.x1 - m.x0) as i64 * (m.y1 - m.y0) as i64).sum::<i64>();
+        for layer in [false, true] {
+            for (w, h) in [(120, 40), (40, 120), (300, 200), (20, 14), (14, 20), (9, 9), (4, 4), (3, 30)] {
+                for (rad, d, ri) in [(5, 2, 4), (8, 2, 7), (5, 1, 4), (6, 1, 5), (3, 3, 0)] {
+                    for clip in [None, Some(Rect::new(7, 9, 50, 23))] {
+                        let mk = || if layer { Canvas::new_layer(320, 220) } else { Canvas::new(320, 220) };
+                        let r = Rect::new(5, 6, w, h);
+                        let (mut a, mut b) = (mk(), mk());
+                        for c in [&mut a, &mut b] {
+                            c.clear(0x0010_2030);
+                            if let Some(k) = clip {
+                                c.set_clip(k);
+                            }
+                        }
+                        a.round(r, rad, 0x00ff_8040, 255);
+                        a.round(r.inset(d), ri, 0x0020_4060, 255);
+                        b.framed(r, rad, d, 0x00ff_8040, ri, 0x0020_4060);
+                        assert!(a.px == b.px, "layer {layer} {w}x{h} rad {rad} d {d} ri {ri} clip {clip:?}");
+                        assert_eq!(a.clip, b.clip);
+                    }
+                }
+            }
+        }
+        let (mut a, mut b) = (Canvas::new_layer(320, 220), Canvas::new_layer(320, 220));
+        a.record(true);
+        b.record(true);
+        let r = Rect::new(10, 10, 300, 200);
+        a.round(r, 8, 0xff_ffff, 255);
+        a.round(r.inset(2), 7, 0x10_1010, 255);
+        b.framed(r, 8, 2, 0xff_ffff, 7, 0x10_1010);
+        assert!(area(&b) * 10 < area(&a) * 6, "{} against {}", area(&b), area(&a));
     }
 
     #[test]

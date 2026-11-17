@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Wide-bandgap double pulse. One turn-off (end of the first gate pulse) and one turn-on (the second rise).
@@ -168,7 +168,11 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
     if out.pulses > 2 {
         out.note = "further pulses ignored";
     }
-    let (mut ioff, mut il) = (median_before(id_raw, tr0), median_span(id_raw, tr0, tf0));
+    let g10 = gmin + pct * (gmax - gmin);
+    let g90 = gmin + (1.0 - pct) * (gmax - gmin);
+    // I_L is the current the first turn-off switches: up to where the gate leaves its on level
+    let il_end = crossing(g, bound(tr0), bound(tf0) + 1, g90, false).unwrap_or(tf0);
+    let (mut ioff, mut il) = (median_before(id_raw, tr0), current_at(id_raw, tr0, il_end));
     let mut id = id_raw.to_vec();
     if il.is_finite() && ioff.is_finite() && il < ioff {
         for x in &mut id {
@@ -178,7 +182,7 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
         }
         out.inverted = true;
         ioff = median_before(&id, tr0);
-        il = median_span(&id, tr0, tf0);
+        il = current_at(&id, tr0, il_end);
     }
     let von = median_span(vds, tr0, tf0);
     let vbus = median_before(vds, tr0);
@@ -189,8 +193,6 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
     }
     let i10 = ioff + pct_of(0.1, ioff, il);
     let i90 = ioff + pct_of(0.9, ioff, il);
-    let g10 = gmin + pct * (gmax - gmin);
-    let g90 = gmin + (1.0 - pct) * (gmax - gmin);
     let end = n as f64;
     // turn-off: the falling edge of the first pulse, searched until the next rise
     let off_b = rises.get(1).copied().unwrap_or(end);
@@ -309,6 +311,28 @@ fn median_span(x: &[f32], t0: f64, t1: f64) -> f64 {
         return f64::NAN;
     }
     median(&x[i0..i1])
+}
+
+/// Value at `t1` of a straight line through the last 5 % (at least 8 samples) of the interval `t0..t1`. On a flat
+/// plateau that is its mean; while an inductive load charges, it is the current at the end, not the mean of the
+/// interval, which would be about half of it.
+fn current_at(x: &[f32], t0: f64, t1: f64) -> f64 {
+    let e = bound(t1).min(x.len());
+    let w = ((0.05 * (t1 - t0)).ceil() as usize).max(8);
+    let s = e.saturating_sub(w).max(bound(t0)).min(e);
+    let pts: Vec<(f64, f64)> = (s..e).filter(|&k| x[k].is_finite()).map(|k| (k as f64, x[k] as f64)).collect();
+    if pts.len() < 2 {
+        return median(&x[s..e]);
+    }
+    let m = pts.len() as f64;
+    let (mt, my) = (pts.iter().map(|p| p.0).sum::<f64>() / m, pts.iter().map(|p| p.1).sum::<f64>() / m);
+    let (mut num, mut den) = (0.0, 0.0);
+    for &(t, y) in &pts {
+        num += (t - mt) * (y - my);
+        den += (t - mt) * (t - mt);
+    }
+    let slope = if den > 0.0 { num / den } else { 0.0 };
+    my + slope * (t1 - mt)
 }
 
 fn median(x: &[f32]) -> f64 {

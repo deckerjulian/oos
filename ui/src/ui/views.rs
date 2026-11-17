@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Display > Views: up to four independent workspaces of the one scope to switch between. There is one scope, one
@@ -62,6 +62,16 @@ pub(super) fn studio_box_w(views: usize) -> i32 {
 
 /// The keys of a view that are not a key of the model: they come from the Ui.
 const UI_KEYS: [&str; 7] = ["xy", "full", "studio_view", "studio_dock", "studio_state", "lanes", "math_def"];
+
+/// Whether `k` is a key of a view's model part (not `xy` and `full`).
+pub(super) fn is_view_key(k: &str) -> bool {
+    KEYS.contains(&k)
+}
+
+/// A view not set up yet: the plot alone.
+pub(super) fn plot_alone() -> String {
+    snapshot_of(&Model::default(), false, false, &[])
+}
 
 fn known(k: &str) -> bool {
     KEYS.contains(&k) || UI_KEYS.contains(&k)
@@ -143,8 +153,9 @@ impl Ui {
         let s = &self.studio;
         let mut p: Vec<String> = Vec::new();
         if let Some(pin) = &s.pinned { p.push(format!("pin={}", keys_text(pin))); }
+        if !s.unpinned.is_empty() { p.push(format!("unpin={}", keys_text(&s.unpinned))); }
         if !s.floated.is_empty() { p.push(format!("float={}", keys_text(&s.floated))); }
-        for (on, k) in [(s.hide_badges, "hide"), (s.compact, "compact"), (s.cur_badge, "curbadge"), (s.cur_linked, "curlink"), (s.eye_full, "eyefull")] {
+        for (on, k) in [(s.hide_badges, "hide"), (s.compact, "compact"), (s.cur_badge, "curbadge"), (s.cur_linked, "curlink"), (s.eye_full, "eyefull"), (s.overlay, "overlay")] {
             if on { p.push(format!("{}=1", k)); }
         }
         let pa = &s.panel;
@@ -175,11 +186,13 @@ impl Ui {
     pub(super) fn view_ui_apply(&mut self, text: &str) {
         let num = |v: &str| -> Vec<i32> { v.split('/').filter_map(|x| x.parse().ok()).collect() };
         self.studio.pinned = None;
+        self.studio.unpinned.clear();
         self.studio.floated.clear();
         self.studio.hide_badges = false;
         self.studio.compact = false;
         self.studio.cur_badge = false;
         self.studio.cur_linked = false;
+        self.studio.overlay = false;
         self.studio.eye_full = false;
         self.studio.panel = Default::default();
         self.studio.zoom_open = None;
@@ -203,11 +216,13 @@ impl Ui {
             let Some((k, v)) = w.split_once('=') else { continue };
             match k {
                 "pin" => self.studio.pinned = Some(keys_parse(v)),
+                "unpin" => self.studio.unpinned = keys_parse(v),
                 "float" => self.studio.floated = keys_parse(v),
                 "hide" => self.studio.hide_badges = v == "1",
                 "compact" => self.studio.compact = v == "1",
                 "curbadge" => self.studio.cur_badge = v == "1",
                 "curlink" => self.studio.cur_linked = v == "1",
+                "overlay" => self.studio.overlay = v == "1",
                 "eyefull" => self.studio.eye_full = v == "1",
                 "panel" => {
                     let n = num(v);
@@ -527,8 +542,7 @@ impl Ui {
         let Some(r) = self.view_box() else { return };
         let f = self.fonts();
         let nw = self.num_w();
-        cv.round(r, 5, BTN_BORDER, 255);
-        cv.round(r.inset(1), 4, BTN, 255);
+        cv.framed(r, 5, 1, BTN_BORDER, 4, BTN);
         for i in 0..self.m.views {
             let c = Rect::new(r.x + 1 + nw * i as i32, r.y + 1, nw, r.h - 2);
             let on = i == self.m.view_cur;

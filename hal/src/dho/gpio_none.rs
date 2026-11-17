@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Stand-in for `gpio.rs` on hosts without the Linux GPIO character device (Windows): no line can be opened, so

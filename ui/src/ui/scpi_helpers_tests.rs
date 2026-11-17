@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Integration of SCPI helper access with the native record and visible workspace.
 use super::*;
 use std::{sync::Arc, time::{Duration, Instant}};

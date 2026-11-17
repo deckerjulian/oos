@@ -52,7 +52,6 @@ pub(super) const BODE_AMP: (f64, f64) = (0.01, 20.0);
 pub(super) const MAG_TURNS: (i32, i32) = (1, 10_000);
 pub(super) const CNT_DIGITS: (i32, i32) = (3, 7);
 pub(super) const NTH_N: (i32, i32) = (1, 65535);
-pub(super) const DEC_NIBBLES: (i32, i32) = (1, 6);
 pub(super) const MATH_LIN: (f32, f32) = (-1e6, 1e6);
 pub(super) const SPEC_MARGIN: (f32, f32) = (0.0, 60.0);
 pub(super) const SIM_LEVEL: (f64, f64) = (-2.0, 2.0);
@@ -136,7 +135,6 @@ impl Ui {
             Item::BodeAmp => Some(Range { lo: BODE_AMP.0, hi: BODE_AMP.1, step: Step::Ladder, unit: "Vpp" }),
             Item::CntDigits => int(CNT_DIGITS, ""),
             Item::NthN => int(NTH_N, ""),
-            Item::DecNibbles => int(DEC_NIBBLES, ""),
             Item::DecBits => int(dec_bits(m.dec_proto), ""),
             Item::VidLine => int(vid_line(m.video_std), ""),
             Item::TrigBusVal => Some(Range { lo: TRIG_BUS_VAL.0 as f64, hi: TRIG_BUS_VAL.1 as f64, step: Step::Index, unit: "" }),
@@ -171,7 +169,7 @@ impl Ui {
             Item::TrigLevel, Item::TrigLevel2, Item::PatLevel, Item::HDelay, Item::MathOffset, Item::DecThr, Item::BusClkThr, Item::BusDataThr,
             Item::SpecRef, Item::RefOffset, Item::MathLinA, Item::MathLinB, Item::SpecMargin, Item::SimHigh, Item::SimLow, Item::SimDeemph,
             Item::BusPos, Item::Intensity, Item::GridBright,
-            Item::StoreSlot, Item::MagN, Item::CntDigits, Item::NthN, Item::DecNibbles, Item::DecBits, Item::VidLine, Item::TrigBusVal, Item::SimSlot,
+            Item::StoreSlot, Item::MagN, Item::CntDigits, Item::NthN, Item::DecBits, Item::VidLine, Item::TrigBusVal, Item::SimSlot,
             Item::RefSel, Item::SimRate, Item::SimRise, Item::SimBw, Item::SimNoise, Item::SimSscHz, Item::SimDcd, Item::SimCorrRj,
             Item::SimCorrHz, Item::SimRj, Item::SimPj, Item::SimPjHz, Item::SpecCenter, Item::SpecSpan, Item::SpecRbw, Item::EyePll, Item::EyeRate, Item::BodeAmp,
         ];
@@ -208,8 +206,9 @@ impl Ui {
 
         let m = &mut self.m;
         match it {
-            Item::TrigLevel => m.trig_level = x,
-            Item::TrigLevel2 => m.trig_level2 = x,
+            // the upper level of a two-level type stops at the lower one, and the lower at the upper
+            Item::TrigLevel => m.trig_level = if m.trig_type.two_level() { x.max(m.trig_level2) } else { x },
+            Item::TrigLevel2 => m.trig_level2 = if m.trig_type.two_level() { x.min(m.trig_level) } else { x },
             Item::PatLevel => m.pat_levels[m.trig_src.min(NCH - 1)] = x,
             Item::ChOffset(c) => m.ch[c].offset = x,
             Item::ChBias(c) => m.ch[c].bias = x,
@@ -285,7 +284,7 @@ fn ladder_top(t: (f64, f64, bool)) -> f64 {
 
 /// Data bits of a serial decoder: UART 5 to 9, the others 4 to 32.
 pub(super) fn dec_bits(p: Proto) -> (i32, i32) {
-    if p == Proto::Uart { (5, 9) } else { (4, 32) }
+    if p == Proto::UART { (5, 9) } else { (4, 32) }
 }
 
 /// The lines a video trigger can pick (the first half of the lines of a standard, less its blanking).

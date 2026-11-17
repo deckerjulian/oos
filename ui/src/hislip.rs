@@ -1,9 +1,10 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! HiSLIP (IVI-6.1) on TCP 4880, for a computer. The scope keeps VXI-11, where port 111 is free.
 //!
-//! A connection is accepted and the data payload is handed to the same SCPI interpreter as the raw socket.
+//! A connection is accepted (from the addresses of `net.allow`, `netacl`) and the data payload is handed to the same
+//! SCPI interpreter as the raw socket.
 //! The session itself is not part of this: no lock is kept, overlap mode is not run, and remote/local is only
 //! acknowledged. What is here is the header, the initial exchange that lets a client send that payload, and the
 //! reply that carries the SCPI response back.
@@ -16,6 +17,9 @@ pub const PORT: u16 = 4880;
 const HEADER: usize = 16;
 /// Same ceiling as one SCPI line (`:SOURce:ARB:DATA`).
 const MAX_PAYLOAD: usize = 4 << 20;
+/// Smallest reply payload of one message, whatever AsyncMaximumMessageSize asks: a smaller one only multiplies the
+/// messages (one byte each made a message per byte of the reply).
+const MIN_PAYLOAD: usize = 4 << 10;
 const MAX_CONNS: usize = 8;
 /// Protocol 1.0. 2.0 (secure connection) is not spoken, so the negotiated version stays 1.0.
 const VERSION: u16 = 0x0100;
@@ -111,15 +115,45 @@ struct Live {
 
 struct Out {
     msgs: Vec<Vec<u8>>,
+    /// The SCPI response, sent after `msgs` as DATA messages and a DATA_END (`Reply::messages`).
+    reply: Option<Reply>,
     close: bool,
 }
 
+/// A response and how it is split: each message is made as it is sent, so a long reply is not held twice.
+struct Reply {
+    msgid: u32,
+    payload: Vec<u8>,
+    max_payload: usize,
+}
+
+impl Reply {
+    fn messages(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+        let n = self.max_payload.max(MIN_PAYLOAD);
+        let count = self.payload.len().div_ceil(n).max(1);
+        (0..count).map(move |k| {
+            let part = &self.payload[k * n..((k + 1) * n).min(self.payload.len())];
+            encode(if k + 1 == count { DATA_END } else { DATA }, 0, self.msgid, part)
+        })
+    }
+}
+
+/// One message back.
+fn answer(m: Vec<u8>) -> Out {
+    Out { msgs: vec![m], reply: None, close: false }
+}
+
+/// Nothing back.
+fn quiet() -> Out {
+    Out { msgs: Vec::new(), reply: None, close: false }
+}
+
 fn fatal(code: u8) -> Out {
-    Out { msgs: vec![encode(FATAL_ERROR, code, 0, b"")], close: true }
+    Out { msgs: vec![encode(FATAL_ERROR, code, 0, b"")], reply: None, close: true }
 }
 
 fn error(code: u8) -> Out {
-    Out { msgs: vec![encode(ERROR, code, 0, b"")], close: false }
+    answer(encode(ERROR, code, 0, b""))
 }
 
 fn subaddress_ok(data: &[u8]) -> bool {
@@ -137,21 +171,6 @@ fn alloc_id(live: &[Live], next: &mut u16) -> u16 {
     }
 }
 
-fn data_out(msgid: u32, payload: &[u8], max_payload: usize) -> Vec<Vec<u8>> {
-    let n = max_payload.max(1);
-    if payload.len() <= n {
-        return vec![encode(DATA_END, 0, msgid, payload)];
-    }
-    let mut o = Vec::new();
-    let mut p = 0;
-    while p + n < payload.len() {
-        o.push(encode(DATA, 0, msgid, &payload[p..p + n]));
-        p += n;
-    }
-    o.push(encode(DATA_END, 0, msgid, &payload[p..]));
-    o
-}
-
 fn on_program_message(peer: &mut Peer, live: &mut Vec<Live>, next: &mut u16, msg: &Message, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) -> Out {
     match msg.typ {
         INITIALIZE if peer.role == Role::New => {
@@ -164,7 +183,7 @@ fn on_program_message(peer: &mut Peer, live: &mut Vec<Live>, next: &mut u16, msg
             live.push(Live { id, max_payload: MAX_PAYLOAD });
             peer.role = Role::Sync;
             peer.session = id;
-            Out { msgs: vec![encode(INITIALIZE_RESPONSE, 0, (VERSION as u32) << 16 | id as u32, b"")], close: false }
+            answer(encode(INITIALIZE_RESPONSE, 0, (VERSION as u32) << 16 | id as u32, b""))
         }
         ASYNC_INITIALIZE if peer.role == Role::New => {
             let id = msg.param as u16;
@@ -173,7 +192,7 @@ fn on_program_message(peer: &mut Peer, live: &mut Vec<Live>, next: &mut u16, msg
             }
             peer.role = Role::Async;
             peer.session = id;
-            Out { msgs: vec![encode(ASYNC_INITIALIZE_RESPONSE, 0, 0, b"")], close: false }
+            answer(encode(ASYNC_INITIALIZE_RESPONSE, 0, 0, b""))
         }
         DATA | DATA_END if peer.role == Role::Sync => {
             if peer.pending.len() + msg.data.len() > MAX_PAYLOAD {
@@ -183,47 +202,52 @@ fn on_program_message(peer: &mut Peer, live: &mut Vec<Live>, next: &mut u16, msg
             peer.pending.extend_from_slice(&msg.data);
             peer.msgid = msg.param;
             if msg.typ == DATA {
-                return Out { msgs: Vec::new(), close: false };
+                return quiet();
             }
             let payload = std::mem::take(&mut peer.pending);
             let mut program = crate::scpi::Program::new(&String::from_utf8_lossy(&payload));
             let Some(mut resp) = exec(&mut program) else {
                 peer.program = Some(program);
-                return Out { msgs: Vec::new(), close: false };
+                return quiet();
             };
             if !program.has_reply {
-                return Out { msgs: Vec::new(), close: false };
+                return quiet();
             }
             resp.push(b'\n');
             let max = live.iter().find(|l| l.id == peer.session).map(|l| l.max_payload).unwrap_or(MAX_PAYLOAD);
-            Out { msgs: data_out(peer.msgid, &resp, max), close: false }
+            let reply = Reply { msgid: peer.msgid, payload: resp, max_payload: max };
+            Out { msgs: Vec::new(), reply: Some(reply), close: false }
         }
         ASYNC_MAXIMUM_MESSAGE_SIZE if peer.role != Role::New => {
             let n = msg.data.get(..8).map(|b| u64::from_be_bytes(b.try_into().unwrap())).unwrap_or(0);
-            // the size covers the header; a tiny or empty value keeps the default
-            let payload = if n > HEADER as u64 { (n as usize - HEADER).clamp(1, MAX_PAYLOAD) } else { MAX_PAYLOAD };
+            // the size covers the header; an empty value keeps the default, a small one gives MIN_PAYLOAD
+            let payload = match n.checked_sub(HEADER as u64) {
+                Some(p) if p > 0 => (p.min(MAX_PAYLOAD as u64) as usize).max(MIN_PAYLOAD),
+                _ => MAX_PAYLOAD,
+            };
             if let Some(l) = live.iter_mut().find(|l| l.id == peer.session) {
                 l.max_payload = payload;
             }
-            Out { msgs: vec![encode(ASYNC_MAXIMUM_MESSAGE_SIZE_RESPONSE, 0, 0, &(MAX_PAYLOAD as u64 + HEADER as u64).to_be_bytes())], close: false }
+            let ours = MAX_PAYLOAD as u64 + HEADER as u64;
+            answer(encode(ASYNC_MAXIMUM_MESSAGE_SIZE_RESPONSE, 0, 0, &ours.to_be_bytes()))
         }
         ASYNC_LOCK if peer.role != Role::New => {
             // acknowledged so the payload can follow; nothing is stored
-            Out { msgs: vec![encode(ASYNC_LOCK_RESPONSE, 1, 0, b"")], close: false }
+            answer(encode(ASYNC_LOCK_RESPONSE, 1, 0, b""))
         }
-        ASYNC_LOCK_INFO if peer.role != Role::New => Out { msgs: vec![encode(ASYNC_LOCK_INFO_RESPONSE, 0, 0, b"")], close: false },
-        ASYNC_STATUS_QUERY if peer.role != Role::New => Out { msgs: vec![encode(ASYNC_STATUS_RESPONSE, 0, 0, b"")], close: false },
-        ASYNC_REMOTE_LOCAL_CONTROL if peer.role != Role::New => Out { msgs: vec![encode(ASYNC_REMOTE_LOCAL_RESPONSE, 0, 0, b"")], close: false },
+        ASYNC_LOCK_INFO if peer.role != Role::New => answer(encode(ASYNC_LOCK_INFO_RESPONSE, 0, 0, b"")),
+        ASYNC_STATUS_QUERY if peer.role != Role::New => answer(encode(ASYNC_STATUS_RESPONSE, 0, 0, b"")),
+        ASYNC_REMOTE_LOCAL_CONTROL if peer.role != Role::New => answer(encode(ASYNC_REMOTE_LOCAL_RESPONSE, 0, 0, b"")),
         DEVICE_CLEAR_COMPLETE if peer.role == Role::Sync => {
             peer.pending.clear(); peer.program = None;
-            Out { msgs: vec![encode(DEVICE_CLEAR_ACKNOWLEDGE, 0, 0, b"")], close: false }
+            answer(encode(DEVICE_CLEAR_ACKNOWLEDGE, 0, 0, b""))
         }
         ASYNC_DEVICE_CLEAR if peer.role == Role::Async => {
             peer.pending.clear(); peer.program = None;
-            Out { msgs: vec![encode(ASYNC_DEVICE_CLEAR_ACKNOWLEDGE, 0, 0, b"")], close: false }
+            answer(encode(ASYNC_DEVICE_CLEAR_ACKNOWLEDGE, 0, 0, b""))
         }
         // a trigger carries no SCPI payload
-        12 if peer.role == Role::Sync => Out { msgs: Vec::new(), close: false },
+        12 if peer.role == Role::Sync => quiet(),
         _ if peer.role == Role::New => fatal(FATAL_BAD_INIT),
         _ => error(ERR_TYPE),
     }
@@ -246,6 +270,10 @@ pub struct Server {
     conns: Vec<Conn>,
     live: Vec<Live>,
     next: u16,
+    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
+    pub acl: crate::netacl::Shared,
+    /// the changes of `acl` looked at (`netacl::Shared::changed`)
+    acl_seen: u64,
 }
 
 impl Server {
@@ -257,11 +285,12 @@ impl Server {
         } else {
             eprintln!("oos-ui: HiSLIP port {} not available", port);
         }
-        Server { l, conns: Vec::new(), live: Vec::new(), next: 1 }
+        Server { l, conns: Vec::new(), live: Vec::new(), next: 1, acl: crate::netacl::Shared::default(), acl_seen: 0 }
     }
 
     pub fn closed() -> Server {
-        Server { l: None, conns: Vec::new(), live: Vec::new(), next: 1 }
+        let acl = crate::netacl::Shared::default();
+        Server { l: None, conns: Vec::new(), live: Vec::new(), next: 1, acl, acl_seen: 0 }
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -275,7 +304,10 @@ impl Server {
 
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
         if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
+            while let Ok((s, peer)) = l.accept() {
+                if !self.acl.permits_peer(Ok(peer)) {
+                    continue; // dropped: closes the connection
+                }
                 let _ = s.set_nonblocking(false);
                 let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                 let _ = s.set_nodelay(true);
@@ -284,12 +316,14 @@ impl Server {
                 }
             }
         }
+        // net.allow changed on the screen: a connection the list now leaves out is closed with its session
+        let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
             let mut tmp = [0u8; 8192];
-            let mut closed = false;
+            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             let mut read_bytes = 0;
-            loop {
+            while !closed {
                 match self.conns[i].s.read(&mut tmp) {
                     Ok(0) => {
                         closed = true;
@@ -314,7 +348,8 @@ impl Server {
                         response.push(b'\n');
                         let peer = &self.conns[i].peer;
                         let max = self.live.iter().find(|live| live.id == peer.session).map(|live| live.max_payload).unwrap_or(MAX_PAYLOAD);
-                        for message in data_out(peer.msgid, &response, max) {
+                        let reply = Reply { msgid: peer.msgid, payload: response, max_payload: max };
+                        for message in reply.messages() {
                             if !crate::scpi::send(&mut self.conns[i].s, &message) { closed = true; break; }
                         }
                     }
@@ -343,8 +378,9 @@ impl Server {
                         }
                     }
                 }
-                for m in &out.msgs {
-                    if !crate::scpi::send(&mut self.conns[i].s, m) {
+                let replies = out.reply.iter().flat_map(Reply::messages);
+                for m in out.msgs.into_iter().chain(replies) {
+                    if !crate::scpi::send(&mut self.conns[i].s, &m) {
                         closed = true;
                         break;
                     }
@@ -369,6 +405,41 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// What the server sends for `out`, in order.
+    fn sent(out: &Out) -> Vec<Vec<u8>> {
+        out.msgs.iter().cloned().chain(out.reply.iter().flat_map(Reply::messages)).collect()
+    }
+
+    /// AsyncMaximumMessageSize of 17 bytes (a payload of one byte) made a message per byte of the reply: a 1 MiB reply
+    /// became a list of a million messages. The payload of a message is now at least MIN_PAYLOAD, and the messages
+    /// are made as they are sent.
+    #[test]
+    fn a_tiny_maximum_message_size_still_gives_messages_of_min_payload() {
+        let mut peer = Peer { role: Role::New, session: 0, pending: Vec::new(), msgid: 0, program: None };
+        let (mut live, mut next) = (Vec::new(), 1u16);
+        let mut exec = |_: &str| vec![b'a'; 1 << 20];
+        let init = Message { typ: INITIALIZE, control: 0, param: 0x0100_0000, data: b"hislip0".to_vec() };
+        on_message(&mut peer, &mut live, &mut next, &init, &mut exec);
+        let size = Message { typ: ASYNC_MAXIMUM_MESSAGE_SIZE, control: 0, param: 0, data: 17u64.to_be_bytes().into() };
+        on_message(&mut peer, &mut live, &mut next, &size, &mut exec);
+        let query = Message { typ: DATA_END, control: 0, param: 5, data: b"X?\n".to_vec() };
+        let out = sent(&on_message(&mut peer, &mut live, &mut next, &query, &mut exec));
+        assert_eq!(out.len(), ((1 << 20) + 1usize).div_ceil(MIN_PAYLOAD));
+        let mut back = Vec::new();
+        for (k, m) in out.iter().enumerate() {
+            let m = take_message(&mut m.clone()).unwrap().unwrap();
+            assert_eq!((m.typ, m.param), (if k + 1 == out.len() { DATA_END } else { DATA }, 5));
+            assert!(m.data.len() <= MIN_PAYLOAD);
+            back.extend_from_slice(&m.data);
+        }
+        assert_eq!((back.len(), back[0], back[back.len() - 1]), ((1 << 20) + 1, b'a', b'\n'));
+        // a reply of exactly one message's payload is one DATA_END
+        let reply = Reply { msgid: 1, payload: vec![0; MIN_PAYLOAD], max_payload: MIN_PAYLOAD };
+        assert_eq!(reply.messages().count(), 1);
+        let empty = Reply { msgid: 1, payload: Vec::new(), max_payload: MIN_PAYLOAD };
+        assert_eq!(take_message(&mut empty.messages().next().unwrap()).unwrap().unwrap().typ, DATA_END);
+    }
+
     fn exec_idn(c: &str) -> Vec<u8> {
         if c == "*IDN?" {
             b"OOS,unit".to_vec()
@@ -388,19 +459,20 @@ mod tests {
         let message = |id, command: &str| Message { typ: DATA_END, control: 0, param: id, data: command.as_bytes().to_vec() };
         let empty = on_program_message(&mut peer, &mut live, &mut next, &message(7, ":MEAS:CLEAR;:MEAS:STRIP?"),
             &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert_eq!(empty.msgs.len(), 1);
-        let reply = take_message(&mut empty.msgs[0].clone()).unwrap().unwrap();
+        assert_eq!(sent(&empty).len(), 1);
+        let reply = take_message(&mut sent(&empty)[0]).unwrap().unwrap();
         assert_eq!((reply.typ, reply.param, reply.data), (DATA_END, 7, vec![b'\n']));
         let write = on_program_message(&mut peer, &mut live, &mut next, &message(8, ":MEAS:CLEAR"),
             &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert!(write.msgs.is_empty());
+        assert!(sent(&write).is_empty());
         let compound = on_program_message(&mut peer, &mut live, &mut next, &message(9, ":MEAS:STRIP?;*OPC?"),
             &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert_eq!(take_message(&mut compound.msgs[0].clone()).unwrap().unwrap().data, b";1\n");
+        assert_eq!(take_message(&mut sent(&compound)[0]).unwrap().unwrap().data, b";1\n");
         let pending = on_program_message(&mut peer, &mut live, &mut next,
             &message(10, ":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"),
             &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert!(pending.msgs.is_empty(), "an earlier empty query must not emit a premature response at a pending fence");
+        assert!(sent(&pending).is_empty(),
+            "an earlier empty query must not emit a premature response at a pending fence");
         let mut program = peer.program.take().unwrap();
         assert!(program.has_reply);
         scpi.exec_line(&mut ui, &cv, ":STOP");
@@ -431,7 +503,7 @@ mod tests {
         // the payload may arrive in pieces; only the SCPI text is interpreted
         on_message(&mut peer, &mut live, &mut next, &Message { typ: DATA, control: 0, param: 1, data: b"*ID".to_vec() }, &mut exec);
         let end = on_message(&mut peer, &mut live, &mut next, &Message { typ: DATA_END, control: 1, param: 3, data: b"N?\n".to_vec() }, &mut exec);
-        let data = take_message(&mut end.msgs[0].clone()).unwrap().unwrap();
+        let data = take_message(&mut sent(&end)[0]).unwrap().unwrap();
         assert_eq!(data.typ, DATA_END);
         assert_eq!(data.param, 3);
         assert_eq!(data.data, b"OOS,unit\n");
@@ -441,9 +513,10 @@ mod tests {
     fn a_socket_round_trip_answers_idn() {
         let mut h = Server::open(0);
         let port = h.port().expect("port");
+        // the deadlines only guard against a hang: a slow or busy computer must not fail the test
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             c.write_all(&encode(INITIALIZE, 0, 0x0200_4F53, b"hislip0")).unwrap();
             let mut buf = Vec::new();
             let resp = read_one(&mut c, &mut buf);
@@ -451,7 +524,7 @@ mod tests {
             assert_eq!(resp.param >> 16, VERSION as u32, "a newer client is answered at 1.0");
             let id = resp.param as u16;
             let mut a = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            a.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            a.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             a.write_all(&encode(ASYNC_INITIALIZE, 0, id as u32, b"")).unwrap();
             let mut abuf = Vec::new();
             assert_eq!(read_one(&mut a, &mut abuf).typ, ASYNC_INITIALIZE_RESPONSE);
@@ -460,7 +533,8 @@ mod tests {
             assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
         });
         let start = std::time::Instant::now();
-        while !t.is_finished() && start.elapsed() < Duration::from_secs(4) {
+        while !t.is_finished() {
+            assert!(start.elapsed() < Duration::from_secs(120), "no answer");
             h.poll(&mut exec_idn);
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -478,7 +552,7 @@ mod tests {
                 Ok(0) => panic!("closed"),
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                    if start.elapsed() > Duration::from_secs(3) {
+                    if start.elapsed() > Duration::from_secs(60) {
                         panic!("timeout");
                     }
                 }

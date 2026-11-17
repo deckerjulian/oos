@@ -13,10 +13,13 @@ enum Panel { Plot, Eye, Measurements }
 #[derive(Clone, Copy)]
 struct Gesture { panel: Panel, origin: Rect, x: i32, y: i32, at: f64, moved: bool, held: bool }
 #[derive(Clone)]
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub(super) enum Action {
     Overlay, Stacked, Sources, Source(WaveId), Trigger(WaveId), Menu(MenuId),
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     ZoomReset, ZoomClose, FitRecord, Live, Single, Run, Panel,
     EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose, RestoreLayout,
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     MeasureFloat, MeasureDock(StripDock), Close,
     /// the quick actions of a channel (its hold popup)
     ChCoupling(usize), ChInvert(usize), ChZero(usize), Autoset,
@@ -265,7 +268,10 @@ mod tests {
                     }
                     _ => unreachable!(),
                 };
-                assert!(header.contains(x, y), "the test must overlap the actual background header");
+                // a floating measurement card keeps clear of the full-screen and zoom buttons (PR #8), and the
+                // settings' Close sits beside them: there the card cannot lie under it any more
+                let unreachable = panel == Panel::Measurements && !back;
+                assert!(unreachable || header.contains(x, y), "the test must overlap the actual background header");
                 let position = (ui.workspace.measure_float, ui.workspace.eye_float);
                 pointer_tap(&mut ui, target);
                 assert!(!ui.results_min, "Back/Close must not fold the statistics panel behind the menu");
@@ -568,6 +574,7 @@ pub(super) struct Workspace {
     pub(super) cursor_sel: Option<usize>,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Display/knob focus is independent of acquisition and measurement A/B.
     pub(super) fn selected_workspace_source(&self) -> Option<WaveId> {
@@ -641,7 +648,11 @@ impl Ui {
         cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);
     }
     pub(super) fn stacked(&self) -> bool {
-        (self.workspace.stacked || self.m.layout == Layout::Studio) && !self.xy_over() && matches!(self.m.view, AView::Scope | AView::Eye)
+        self.trace_stacked() && !self.xy_over() && matches!(self.m.view, AView::Scope | AView::Eye)
+    }
+    /// The trace mode that is chosen: Stacked, which Studio has until Overlay is picked from its plot menu.
+    pub(super) fn trace_stacked(&self) -> bool {
+        self.workspace.stacked || (self.m.layout == Layout::Studio && !self.studio.overlay)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
@@ -672,6 +683,7 @@ impl Ui {
     }
     pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.popup = None;
+        if self.m.layout == Layout::Studio { self.studio.overlay = !stacked; }
         // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
         if !stacked && self.m.win_layout != WinLayout::One { self.workspace.stacked = false; return; }
         self.workspace.stacked = stacked;
@@ -961,7 +973,14 @@ impl Ui {
             Action::Source(WaveId::Ch(c)) => {
                 if self.m.ch[c].on && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
                 if self.m.ch[c].on { self.m.ch[c].on = false; self.settings_changed(); }
-                else { self.activate_live_channel(c); }
+                else if self.record_mode() { self.activate_live_channel(c); }
+                else {
+                    // in Live as the channel key: the channel goes on, the trigger and Run/Stop stay
+                    self.m.ch[c].on = true;
+                    self.select_workspace_source(WaveId::Ch(c));
+                    if self.m.run == RunState::Run { self.m.floor_live_tdiv(); }
+                    self.settings_changed();
+                }
                 self.relayout();
             }
             Action::Source(WaveId::Ref(i)) => {
@@ -1021,7 +1040,7 @@ impl Ui {
             for (index, (label, action)) in popup.rows.iter().enumerate() {
                 let r = popup.row_rect(index);
                 cv.set_clip(r); cv.text_in(&self.fonts().s, Rect::new(r.x + 7, r.y, r.w - 34, r.h), 0, label, TEXT); cv.no_clip();
-                let current = match action { Action::Overlay => !self.workspace.stacked, Action::Stacked => self.workspace.stacked, _ => false };
+                let current = match action { Action::Overlay => !self.trace_stacked(), Action::Stacked => self.trace_stacked(), _ => false };
                 if current {
                     // a check at the right end marks the mode in force
                     let (cx, cy) = (r.x + r.w - 40, r.y + r.h / 2);
@@ -1144,6 +1163,7 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask { self.cancel_load_slot(); return; }
         let was_drawing = self.zoom_arm;

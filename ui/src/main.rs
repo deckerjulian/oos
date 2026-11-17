@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! oos-ui: the OOS oscilloscope screen.
@@ -20,21 +20,34 @@ mod clock;
 mod cmd;
 mod decode;
 mod ethlink;
+mod compress;
+mod deepmeas;
 mod fastdraw;
 mod font;
 mod gfx;
+mod hostname;
 mod http;
 mod board;
 mod math;
+mod measures;
 mod mdns;
 mod model;
 mod net;
+mod net6;
+mod netacl;
 mod protocols;
 mod scpi;
 mod sntp;
 mod store;
 mod sysconf;
 mod trig;
+mod trignear;
+mod placement;
+#[cfg(test)]
+mod perfguard;
+mod sparse;
+mod drawpipe;
+mod framestats;
 mod ui;
 mod usbtmc;
 mod vxi11;
@@ -45,6 +58,7 @@ mod gpu;
 mod vpu;
 mod layout;
 mod remote;
+mod ssh;
 mod wave;
 mod zone;
 #[cfg(target_os = "linux")]
@@ -126,6 +140,9 @@ fn main() {
         arg(&args, "--model").as_deref(),
     );
     eprintln!("oos-ui: {} ({})", p.ident(), p.caps_line());
+    for u in &p.unit {
+        eprintln!("oos-ui: unit default {} ({})", u, oos_hal::model::UNIT_CONF);
+    }
     for o in &p.overrides {
         eprintln!("oos-ui: EXPERIMENTAL limit {}", o);
     }
@@ -144,6 +161,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
         http::pin_to_big_cores();
+        placement::place(placement::Role::Ui);
     }
     let mut ui = Ui::new(source(&args));
     if args.iter().any(|a| a == "--offline") {
@@ -219,7 +237,7 @@ fn main() {
 /// HiSLIP. VXI-11 stays on the scope, where port 111 is free. `OOS_DEMO_LOOP=<mask>` puts the generator on those
 /// channels, as a cable from the output would.
 fn serve(mut ui: Ui, args: &[String]) {
-    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args);
+    let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args, &ui.acl());
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
@@ -241,9 +259,14 @@ fn on_scope() -> bool {
     std::path::Path::new("/dev/xdma0_bypass").exists() || matches!(oos_hal::model::platform().source, oos_hal::model::Source::Vendor)
 }
 
-/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement.
-fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
-    let (web, scpi, vxi, hislip) = lan_servers(scope, args);
+/// SCPI, the web server, and whichever of VXI-11 and HiSLIP this machine accepts, plus the announcement. `acl`: the
+/// address list they check, the one the screen sets (`Ui::acl`).
+fn lan(
+    scope: bool,
+    args: &[String],
+    acl: &netacl::Shared,
+) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
+    let (web, scpi, vxi, hislip) = lan_servers(scope, args, acl);
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
     // mDNS would bind 5353 on every interface; on loopback there is nobody to announce to
     let ann = if loopback_only() { announce::Announcer::closed() } else { announce::Announcer::open(&services) };
@@ -251,11 +274,17 @@ fn lan(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, 
 }
 
 /// The listeners of `lan` without the announcement: the scope announces itself by name (mdns.rs, System > Network).
-fn lan_servers(scope: bool, args: &[String]) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
+fn lan_servers(
+    scope: bool,
+    args: &[String],
+    acl: &netacl::Shared,
+) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
     let mut web = http::Http::open(lan_port(args, "--web-port", 8080));
-    let scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
-    let vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
-    let hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(lan_port(args, "--hislip-port", hislip::PORT)) };
+    let mut scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
+    let mut vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
+    let hislip_port = lan_port(args, "--hislip-port", hislip::PORT);
+    let mut hislip = if scope { hislip::Server::closed() } else { hislip::Server::open(hislip_port) };
+    (web.acl, scpi.acl, vxi.acl, hislip.acl) = (acl.clone(), acl.clone(), acl.clone(), acl.clone());
     web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
     (web, scpi, vxi, hislip)
 }
@@ -382,6 +411,7 @@ const HDMI_BG: u32 = 0x0d1117;
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
     http::pin_to_big_cores();
+    placement::place(placement::Role::Ui);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;
@@ -548,18 +578,23 @@ fn device_main(mut ui: Ui, args: &[String]) {
     // settings survive a restart of oos-ui within one boot (rcS restarts it on the hardware after the cold boot)
     let setup_path = std::path::Path::new(SETUP_FILE);
     if let Ok(t) = std::fs::read_to_string(setup_path) {
-        match store::parse_setup(&t) {
-            Ok(m) => {
-                ui.m = m;
-                ui.sync_full();
-                ui.restore_view_state();
-                eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
-            }
-            Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
+        // what this build cannot take is left out, the rest stands (store::parse_setup_lenient)
+        let (m, bad) = store::parse_setup_lenient(&t);
+        for e in &bad {
+            eprintln!("oos-ui: {}: left out: {}", SETUP_FILE, e);
         }
+        ui.m = m;
+        ui.sync_full();
+        ui.restore_view_state();
+        eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
     }
     // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
     ui.load_system(sysconf::default_path());
+    // `acq.pipeline = batch` in system.conf: the draw path starts as Batch (Acquire > Draw path)
+    if drawpipe::configured() {
+        ui.m.draw_batch = true;
+    }
+    ui.set_ssh_dir(ssh::dir());
     let mut setup_last = store::setup_text(&ui.m);
     let mut setup_t = Instant::now();
     ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| format!("Linux {}", s.trim())).unwrap_or_default();
@@ -577,9 +612,17 @@ fn device_main(mut ui: Ui, args: &[String]) {
     // the scope accepts VXI-11, a computer HiSLIP instead; the scope announces itself by name (mdns.rs below)
     let scope = on_scope();
     let (web_port, scpi_port) = (lan_port(args, "--web-port", 8080), lan_port(args, "--scpi-port", 5555));
-    let (mut web, mut scpi, mut vxi, mut hislip) = lan_servers(scope, args);
-    // System > Network > Remote services, as applied: web, SCPI, VXI-11, telnet (None: not yet, at the start)
-    let mut remote_now: Option<[bool; 4]> = None;
+    // who may update or control the scope over the network: net.allow (docs/network.md 6), read here at the start; the
+    // servers share the list with Remote services > Allowed, which sets it after a change and runs the firewall again
+    let acl = ui.acl();
+    acl.set(netacl::Acl::load(&sysconf::default_path()));
+    if std::path::Path::new(remote::FIREWALL).exists() {
+        ui.set_allow_runner(remote::script_runner());
+    }
+    let (mut web, mut scpi, mut vxi, mut hislip) = lan_servers(scope, args, &acl);
+    // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login, telnet (None:
+    // not yet, at the start)
+    let mut remote_now: Option<[bool; 6]> = None;
     // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
     let mut mdns = mdns::Mdns::new(None);
     let mut mdns_now: Option<mdns::Config> = None;
@@ -629,10 +672,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 },
             }
         }
-        // the services follow their switches: the ports were opened above, telnet is started by rcS
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_telnet];
+        // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
+        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password, ui.sys.remote_telnet];
         if remote_now != Some(want) {
-            let was = remote_now.unwrap_or([true, true, true, !want[3]]);
+            let was = remote_now.unwrap_or([true, true, true, want[3], want[4], !want[5]]);
             if want[0] != was[0] {
                 web.set_open(want[0].then_some(web_port));
             }
@@ -643,8 +686,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
             if want[2] != was[2] && scope {
                 vxi.set_open(want[2]);
             }
-            if want[3] != was[3] {
-                remote::telnet(want[3]);
+            if want[3] != was[3] || want[4] != was[4] {
+                ssh::apply(want[3]);
+            }
+            if want[5] != was[5] {
+                remote::telnet(want[5]);
             }
             web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
             remote_now = Some(want);
@@ -654,7 +700,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             let c = mdns_services(ui.mdns_config(web_port, scpi_port), web.port(), vxi.service_port(), hislip.port());
             if mdns_now.as_ref() != Some(&c) {
                 if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
-                    remote::hostname(&c.name);
+                    hostname::set(&c.name);
                 }
                 mdns.set(c.clone());
                 mdns_now = Some(c);
@@ -878,7 +924,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         }
         if setup_t.elapsed().as_secs() >= 2 {
             setup_t = Instant::now();
-            let t = store::setup_text(&ui.m);
+            let t = store::setup_text(ui.setup_model());
             if t != setup_last {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
@@ -966,18 +1012,14 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     fit.scale(&ui.hdmi_snap, &mut hc.px[top..], stride);
 }
 
-/// First IPv4 address of a non-loopback interface that is up ("" when none).
-#[cfg(target_os = "linux")]
 /// The address to show in the top bar, and all of them, as (interface, address).
+#[cfg(target_os = "linux")]
 fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
-    // an interface with a link first: eth0 keeps its fallback address without a cable
-    let mut out = (String::new(), String::new());
-    let mut all = Vec::new();
-    let mut linked = false;
+    let mut found = Vec::new();
     unsafe {
         let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
         if libc::getifaddrs(&mut ifa) != 0 {
-            return (out, all);
+            return ((String::new(), String::new()), Vec::new());
         }
         let mut p = ifa;
         while !p.is_null() {
@@ -987,23 +1029,51 @@ fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
                 let link = a.ifa_flags & (libc::IFF_RUNNING as u32) != 0;
                 let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
                 let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-                let addr = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).to_string();
-                if out.1.is_empty() || (link && !linked) {
-                    out = (name.clone(), addr.clone());
-                    linked = link;
-                }
-                all.push((name, addr));
+                found.push((name, std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
             }
             p = a.ifa_next;
         }
         libc::freeifaddrs(ifa);
     }
-    (out, all)
+    pick_addresses(found)
+}
+
+/// Orders the IPv4 addresses (interface, address, link) for the screen: an interface's link-local address
+/// (169.254/16, what eth0 keeps when no DHCP server answers) after its others, so a page that shows one address per
+/// interface shows the one set by DHCP or by hand. The top bar takes an interface with a link first (eth0 keeps its
+/// fallback address without a cable), then an address that is not link-local, then the first.
+fn pick_addresses(mut v: Vec<(String, std::net::Ipv4Addr, bool)>) -> ((String, String), Vec<(String, String)>) {
+    v.sort_by_key(|a| a.1.is_link_local());
+    let best = v.iter().enumerate().max_by_key(|(i, a)| (a.2, !a.1.is_link_local(), std::cmp::Reverse(*i)));
+    let first = best.map(|(_, a)| (a.0.clone(), a.1.to_string())).unwrap_or_default();
+    (first, v.into_iter().map(|a| (a.0, a.1.to_string())).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// eth0 with the fallback address it took before the hand-set one (seen on a DHO924S, 2026-11-16): both the top
+    /// bar and the Network page show the hand-set one.
+    #[test]
+    fn a_link_local_address_comes_after_the_others() {
+        let a = |n: &str, ip: &str, link: bool| (n.to_string(), ip.parse::<std::net::Ipv4Addr>().unwrap(), link);
+        let s = |n: &str, ip: &str| (n.to_string(), ip.to_string());
+        let (first, all) = pick_addresses(vec![a("eth0", "169.254.1.1", true), a("eth0", "192.0.2.51", true)]);
+        assert_eq!(first, s("eth0", "192.0.2.51"));
+        assert_eq!(all, vec![s("eth0", "192.0.2.51"), s("eth0", "169.254.1.1")]);
+        // only a link-local address: it is still shown
+        assert_eq!(pick_addresses(vec![a("eth0", "169.254.1.2", true)]).0, s("eth0", "169.254.1.2"));
+        // eth0 without a cable keeps its address, the WLAN with a link wins
+        let v = vec![a("eth0", "192.168.1.20", false), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("wlan0", "192.168.177.64"));
+        // with a link on both: the address that is not link-local, else the first
+        let v = vec![a("eth0", "169.254.9.9", true), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("wlan0", "192.168.177.64"));
+        let v = vec![a("eth0", "10.0.0.2", true), a("wlan0", "192.168.177.64", true)];
+        assert_eq!(pick_addresses(v).0, s("eth0", "10.0.0.2"));
+        assert_eq!(pick_addresses(Vec::new()).0, (String::new(), String::new()));
+    }
 
     /// The HDMI workspace on a 1920 x 1080 monitor: settings line on top, the waveform area below without menus.
     #[test]

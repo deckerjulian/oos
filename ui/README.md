@@ -12,7 +12,7 @@ Dark theme, the colour-blind safe channel colours yellow / sky blue / pink / tea
 
 | area | content |
 |---|---|
-| top bar (40 px) | state pill (TRIG'D / AUTO / WAIT / STOP, tap = run/stop), acquisition "rate · depth · mode" (e.g. 12.5 MSa/s · 100 kpts · Normal; the hardware's numbers while `--hw` runs), tap on it = Acquire page, buttons for what is used most and the menus without a front-panel key: Measure, Cursor, Display, Storage, System (with About and the Quick key setting), network box ("Ethernet · DHCP" + IPv4 address, or "not connected"). Buttons are drawn 30 px high and tapped over the full 40 px |
+| top bar (40 px) | state pill (TRIG'D / AUTO / WAIT / STOP, tap = run/stop), acquisition "rate · depth · mode" (e.g. 12.5 MSa/s · 100 kpts · Normal; the hardware's numbers while `--hw` runs), tap on it = Acquire page, buttons for what is used most and the menus without a front-panel key: Measure, Cursor, Display, Storage (System and SIM are in the start menu, Load file is a row of the Reference menu), network box ("Ethernet · DHCP" + IPv4 address, or "not connected"). Buttons are drawn 30 px high and tapped over the full 40 px |
 | plot 970 x 448 (10 x 8 div; 970 x 464 without strip rows) | from y = 52 to the cards, 24 px gutters: channel markers left of it, trigger level marker right of it (its value inside the plot), trigger position above it. Drawn inside the plot: volt labels of the active channel along the left edge (a label that would overlap another label, the status line, the time labels, the mask pill or the decode band is left out; 5 px gap to the channel markers), time labels along the bottom edge (0 s in orange), a status line at the top (left: Touch locked, History n/m, Search count; right: source · wfm/s · fps), messages as an amber pill at the top centre (beside or under an open dialog, never over its controls), the mask pill, the math label, cursors (X1/X2, Y1/Y2 tags), the decode band above the time labels |
 | strip | one row per channel with measurements (label grey, value in the channel colour), one row for the cursor read-outs. Measure > Dock puts it under the plot (the default; each row makes the plot 18 px shorter), above the trace, or in a column on the left or the right |
 | results overlay | with Measure > Statistics on: a translucent card at the top right of the plot (left of the strip where a drag moves the trigger level) with value, mean, ±σ per item and the number of acquisitions; tap its header to fold it to one line. It takes no room from the plot |
@@ -35,9 +35,9 @@ groups, each entry 140 x 40 px:
 |---|---|
 | Acquisition | Run/Stop (orange while running), Single, Autoset, Clear, Default, Acquire > |
 | Trigger | Trigger >, Slope (steps like the key, the menu stays open), Force |
-| Analysis | Measure >, Cursor > (turns the cursors on like the key), Math >, Reference >, Decode >, Mask > |
+| Analysis | Measure > (the measurement page, as the Measure button and key open it), Cursor > (turns the cursors on like the key), Math >, Reference > (with Load file), SIM >, Decode >, Mask > |
 | Display | Display >, Horizontal >, History (Navigate key; "Live" while a stored record is shown, then Older / Newer appear) |
-| System | Storage >, Screenshot, Quick · <action> (runs the Quick key action), Touch lock, System >, Power (the power dialog) |
+| System | System > (with About and the Quick key setting), Storage >, Screenshot, Quick · <action> (runs the Quick key action), Touch lock, Power (the power dialog) |
 
 One-shot entries close the menu; the menus opened from it have Back to the start menu. LA and the generator have no
 OOS function yet and are left out. While touch is locked the Menu button shows "Locked" in amber and is the only
@@ -113,7 +113,7 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   coloured by its density relative to the densest pixel on a temperature scale blue -> cyan -> green -> yellow -> red
   (rare -> frequent; intensity shifts the scale). Merged rather than per channel, so overlapping traces count together;
   with infinite persistence it shows jitter and rare events. Cost per frame: one 1024-entry LUT from a
-  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on a host with
+  256-colour palette, then per pixel one add per channel and a table look-up (about 0.6 ms per frame on the Mac with
   4 channels, so a few ms on the A72).
 - **Storage** (toolbar Storage, or Menu > Storage): save setup to `setup<slot>.txt` (slot 1-9), recall setup from it,
   save the waveform of the record shown as CSV (`wave-NNN.csv`: `Time (s)` relative to the trigger + one `CHn (V)`
@@ -216,7 +216,7 @@ stays as it is.
 
 `http://<scope>:8080/` shows the live screen (about 5 frames/s as BMP), a click on it is a touch tap, buttons below
 act as front-panel keys and knobs. `GET /cmd?c=<text command>` runs one key, knob or touch command, `GET /screen.bmp` returns the screen, `GET /screen.jpg` the live picture as JPEG from the VPU (`src/vpu.rs`, PNG where there is no VPU), `GET /screen.png`, `/wave.csv` and `/la.csv` are the downloads of the page. Answers above 256 KiB go out in a thread of their own (at most two), so a slow link does not stall the frame loop. `cargo test web_demo -- --ignored --nocapture` runs this page with the demo signals on a host.
-Like SCPI it is unauthenticated: bench network only. The root shell separately requires a provisioned SSH key ([SSH setup](../docs/ssh.md)).
+Like SCPI it is unauthenticated: bench network only. The root shell over SSH takes the scope's password or a trusted key ([SSH setup](../docs/ssh.md)).
 
 ## Build and test
 
@@ -270,8 +270,8 @@ render 4 ms, present 1 ms; so the drawing itself has room for 60 fps and more wi
 Loaded references can now feed Math and protocol Decode, including single-trio
 six-wirestate C-PHY. See [loaded-waveform workflows](../docs/reference-analysis.md)
 for physical-time alignment, automatic Eye/Jitter, TekScope-style zoom and native
-memory navigation. [SSH provisioning](../docs/ssh.md) covers the scope image's
-key-only shell access.
+memory navigation. [SSH provisioning](../docs/ssh.md) covers getting keys onto the
+scope; its SSH logs in with the password or a key.
 
 `src/gfx.rs` renderer, `src/font.rs` + `assets/font.bin`, `font-large.bin`, `font-larger.bin` (generated by
 `tools/mkfont.py OUT normal|large|larger` from Roboto Regular/Medium in `tools/fonts/`, Apache License 2.0; the same

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # compare.py CPU_DIR GPU_DIR: the pictures of two runs of the same scripts, pixel by pixel. The GPU blends in floating
 # point and the CPU in integers, so a few steps of difference are rounding; more is named with where it is.

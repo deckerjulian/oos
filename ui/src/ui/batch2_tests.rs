@@ -58,7 +58,7 @@ fn trigger_second_source_stays_on_an_enabled_channel() {
 fn choosing_a_decode_protocol_leaves_the_trigger_alone() {
     let mut u = fresh(Layout::Minimal);
     let before = (u.m.trig_type, u.m.trig_src, u.m.trig_level, u.m.slope);
-    u.set_dec_proto(Proto::Spi);
+    u.set_dec_proto(Proto::SPI);
     assert_eq!((u.m.trig_type, u.m.trig_src, u.m.trig_level, u.m.slope), before);
 }
 

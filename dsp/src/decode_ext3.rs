@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Extended decoders, part 3: ARINC 429, SENT (SAE J2716), USB 1.x / 2.0 low / full speed and NMRA DCC.

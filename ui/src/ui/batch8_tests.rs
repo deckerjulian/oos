@@ -327,9 +327,9 @@ fn cursor_settings_type_source_readout_linked_and_positions() {
     // source: a channel; second source: split
     u.select_option(Item::CurSrc, "CH2");
     assert_eq!(u.cursor_source(), WaveId::Ch(1));
-    u.select_option(Item::CurSrcB, "CH1");
+    u.select_option(Item::CurSecond, "CH1");
     assert_eq!(u.cursor_b_source(), WaveId::Ch(0));
-    u.select_option(Item::CurSrcB, "Same");
+    u.select_option(Item::CurSecond, "Same");
     assert_eq!(u.m.cur_b_source, None);
     // readout place, linked
     u.select_option(Item::CurReadout, "Badge");

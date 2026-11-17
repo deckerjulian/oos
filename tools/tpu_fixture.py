@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Reference fixture for hal/src/dho/tpu.rs from tools/tpumodel.py (read by `tpu::tests::matches_tpumodel`).
 

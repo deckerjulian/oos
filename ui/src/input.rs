@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Linux inputs: touch screen (evdev, multi-touch protocol B), front-panel MCU (UART0, frames FA cmd data crc7 AF),
@@ -68,7 +68,7 @@ fn open_nb(path: &str, flags: i32) -> i32 {
     unsafe { libc::open(c.as_ptr(), flags | libc::O_NONBLOCK | libc::O_CLOEXEC) }
 }
 
-/// Finds the touch screen's event device in /proc/bus/input/devices (edt-ft5x06).
+/// Finds the touch screen's event device in /proc/bus/input/devices (FocalTech / edt-ft5x06).
 fn find_touch() -> Option<String> {
     let s = std::fs::read_to_string("/proc/bus/input/devices").ok()?;
     for block in s.split("\n\n") {

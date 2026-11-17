@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Waveform sources (demo generator, replay of a captured frame), phosphor (hit-count) maps, measurements.
@@ -44,6 +44,8 @@ pub struct Record {
     pub raw: Option<Raw>,
     /// logic analyser lines D0..D15 of the same acquisition (LA on)
     pub la: Option<crate::ui::la::LaRec>,
+    /// the points are min/max pairs (`to_record` peak detect: point 2j the minimum, 2j+1 the maximum of one span)
+    pub pairs: bool,
 }
 
 #[derive(Clone)]
@@ -56,6 +58,17 @@ pub struct Raw {
     /// Native values already include the acquisition's coupling/filter/invert.
     /// A reconstructed display must not condition those samples a second time.
     pub conditioned: bool,
+}
+
+/// State of a hardware segmented recording as the UI sees it (`Source::seg_sync`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SegView {
+    pub phase: crate::board::SegPhase,
+    pub total: u32,
+    pub recorded: u32,
+    pub read: u32,
+    /// frames of the read-back still in the queue
+    pub queued: bool,
 }
 
 pub enum Source {
@@ -131,7 +144,7 @@ impl DemoCfg {
         DemoCfg {
             runts: matches!(m.trig_type, TrigType::Runt | TrigType::Timeout),
             video: if m.trig_type == TrigType::Video { Some(m.video_std) } else { None },
-            bus: if m.dec_on && m.dec_proto != Proto::Uart { Some(m.dec_proto) } else { None },
+            bus: if m.dec_on && m.dec_proto != Proto::UART { Some(m.dec_proto) } else { None },
             gen: DemoGen::of(m),
         }
     }
@@ -157,126 +170,9 @@ fn demo_bus() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::s
     })
 }
 
-/// Demo traffic of the extended decoders: (main line, second line / clock), repeat period. 3.3 V logic unless noted.
-struct ExtDemo {
-    a: oos_dsp::sim::Logic,
-    b: Option<oos_dsp::sim::Logic>,
-    period: f64,
-}
 
-fn ext_demo(p: Proto) -> Option<&'static ExtDemo> {
-    use oos_dsp::decode::Parity;
-    use oos_dsp::decode_ext::gen as g1;
-    use oos_dsp::decode_ext2::gen as g2;
-    use oos_dsp::decode_ext3::gen as g3;
-    static L: std::sync::OnceLock<Vec<(Proto, ExtDemo)>> = std::sync::OnceLock::new();
-    let all = L.get_or_init(|| {
-        let end = |l: &oos_dsp::sim::Logic| l.seg.last().map_or(1e-3, |s| s.0);
-        let mk = |a: oos_dsp::sim::Logic, b: Option<oos_dsp::sim::Logic>, idle: f64| {
-            let period = end(&a).max(b.as_ref().map_or(0.0, end)) + idle;
-            ExtDemo { a, b, period }
-        };
-        let uart = |bytes: &[u32], bits: u32, parity: Parity, baud: f64| {
-            let mut w = g1::Wave::new(0.0, 3.3, 20e-9);
-            w.level(true, 5.0 / baud);
-            for &b in bytes {
-                w.uart(b, bits, parity, 1, baud);
-            }
-            w.level(true, 5.0 / baud);
-            w.done()
-        };
-        let mut v = Vec::new();
-        let fd = g1::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
-        v.push((Proto::CanFd, mk(g1::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), None, 40e-6)));
-        let f: Vec<u32> = g1::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
-        v.push((Proto::ModbusRtu, mk(uart(&f, 8, Parity::Even, 19200.0), None, 2e-3)));
-        v.push((Proto::Uart9, mk(uart(&[0x1A5, 0x0C3, 0x07E], 9, Parity::None, 9600.0), None, 1e-3)));
-        let ow = [g1::Ow::Reset { presence: true }, g1::Ow::Write(0x33), g1::Ow::Read(0x28), g1::Ow::Read(0xFF), g1::Ow::Read(0x4C), g1::Ow::Read(0x3D)];
-        v.push((Proto::OneWire, mk(g1::onewire_logic(&ow, 0.0, 3.3), None, 200e-6)));
-        let ops = [g2::SwdOp::LineReset, g2::SwdOp::JtagToSwd, g2::SwdOp::LineReset, g2::SwdOp::Idle(2), g2::SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false }, g2::SwdOp::Idle(4)];
-        let (clk, dio) = g2::swd(&ops, 1e6, 0.0, 3.3);
-        v.push((Proto::Swd, mk(dio, Some(clk), 20e-6)));
-        // FlexRay 10 Mbit/s on RxD: a static frame with 8 payload bytes
-        let fr = g1::FrFrame { ppi: false, nf: true, sync: false, startup: false, id: 0x2a, cycle: 5, payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88], channel_b: false };
-        v.push((Proto::FlexRay, mk(oos_dsp::sim::bits_logic(&g1::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), None, 10e-6)));
-        // SENT 3 us tick, 5 V: two fast-channel frames of 6 data nibbles with a pause pulse
-        let sf = |status: u8, data: [u8; 6]| g3::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
-        v.push((Proto::Sent, mk(g3::sent(&[sf(0x0, [0x7, 0xf, 0x3, 0x8, 0x0, 0xc]), sf(0x4, [0x7, 0xf, 0x4, 0x8, 0x0, 0xb])], 3e-6, 0.0, 5.0), None, 0.0)));
-        // USB full speed, D+ on CH3, D- on CH4: SOF; SETUP GET_DESCRIPTOR(device) to address 5, ACK; IN, the first 8
-        // bytes of the device descriptor in DATA1, ACK
-        let fs = oos_dsp::decode_ext3::USB_FULL;
-        let up = |b: Vec<u8>| g3::UsbItem::packet(&b, fs);
-        let ip = || g3::UsbItem::Idle(4.0 / fs); // inter-packet delay
-        let items = [
-            g3::UsbItem::Idle(2e-6),
-            up(g3::usb_sof(0x2a5)),
-            g3::UsbItem::Idle(3e-6),
-            up(g3::usb_token(0x2D, 5, 0)),
-            ip(),
-            up(g3::usb_data(0xC3, &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00])),
-            ip(),
-            up(vec![0xD2]),
-            g3::UsbItem::Idle(3e-6),
-            up(g3::usb_token(0x69, 5, 0)),
-            ip(),
-            up(g3::usb_data(0x4B, &[0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40])),
-            ip(),
-            up(vec![0xD2]),
-        ];
-        let (dp, dm) = g3::usb(&items, false, 0.0, 0.0, 3.3);
-        v.push((Proto::Usb, mk(dp, Some(dm), 5e-6)));
-        v
-    });
-    all.iter().find(|(q, _)| *q == p).map(|(_, d)| d)
-}
 
-/// Demo CAN traffic (500 kbit/s, RX logic level): a standard and an extended data frame.
-fn demo_can() -> &'static oos_dsp::sim::Logic {
-    use oos_dsp::sim::{can_logic, CanFrame};
-    static L: std::sync::OnceLock<oos_dsp::sim::Logic> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        can_logic(
-            &[CanFrame { id: 0x123, ext: false, rtr: false, data: vec![0x11, 0x22, 0x33, 0x44] }, CanFrame { id: 0x18da_f110, ext: true, rtr: false, data: vec![0x02, 0x10, 0x03] }],
-            500e3,
-            0.0,
-            3.3,
-        )
-    })
-}
 
-/// Demo I2S stream: 4 stereo frames of 16 bits at 48 kHz (WS, SD, SCK on CH1..CH3).
-const I2S_PERIOD: f64 = 4.0 / 48e3;
-/// Start of the generated stream (`i2s_logic` begins after four idle clocks of 1 / (48 kHz x 32)).
-const I2S_T0: f64 = 4.0 / (48e3 * 32.0);
-fn demo_i2s() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, oos_dsp::sim::Logic) {
-    static L: std::sync::OnceLock<(oos_dsp::sim::Logic, oos_dsp::sim::Logic, oos_dsp::sim::Logic)> = std::sync::OnceLock::new();
-    L.get_or_init(|| oos_dsp::sim::i2s_logic(&[(0x1234, -0x1234), (0x4000, -0x4000), (0x7fff, 0x0001), (0, -1)], 16, 48e3, 0.0, 3.3))
-}
-
-/// Demo MIL-STD-1553 traffic: a command word and three data words, +-7 V bus.
-fn demo_1553() -> &'static oos_dsp::sim::Levels {
-    static L: std::sync::OnceLock<oos_dsp::sim::Levels> = std::sync::OnceLock::new();
-    L.get_or_init(|| oos_dsp::sim::mil1553_wave(&[(true, 0x0c23), (false, 0xbeef), (false, 0x1234), (false, 0x00ff)], 7.0, 4.0))
-}
-
-/// Demo ARINC 429 traffic (high speed, one line against ground: +-5 V): three words, 8 bit times apart; and the
-/// repeat period.
-fn demo_arinc() -> &'static (oos_dsp::sim::Levels, f64) {
-    use oos_dsp::decode_ext3::gen;
-    static L: std::sync::OnceLock<(oos_dsp::sim::Levels, f64)> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        let w = [gen::arinc429_word(0o203, 0, 0x0_2710, 3, false), gen::arinc429_word(0o310, 1, 0x2_5a5a, 3, false), gen::arinc429_word(0o206, 0, 0x0_1388, 0, false)];
-        let l = gen::arinc429(&w, 100e3, 5.0, 8);
-        let end = l.seg.last().map_or(1e-3, |s| s.0);
-        (l, end)
-    })
-}
-
-/// Demo LIN traffic (19200 baud, 12 V bus scaled to 3.3 V): one frame with enhanced checksum.
-fn demo_lin() -> &'static oos_dsp::sim::Logic {
-    static L: std::sync::OnceLock<oos_dsp::sim::Logic> = std::sync::OnceLock::new();
-    L.get_or_init(|| oos_dsp::sim::lin_logic(&[(0x21, vec![0x10, 0x20, 0x30, 0x40], true)], 19200.0, 0.0, 3.3))
-}
 
 fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
     use std::f64::consts::PI;
@@ -285,34 +181,12 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
         return if g.mask & 1 << ch != 0 { g.v(t) * g.probe[ch] as f64 } else { 0.0 };
     }
     match (cfg.bus, ch) {
-        (Some(Proto::Can), 2) => return demo_can().v(t.rem_euclid(500e-6)),
-        (Some(Proto::I2s), 0) => return demo_i2s().1.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::I2s), 1) => return demo_i2s().2.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::I2s), 2) => return demo_i2s().0.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::Mil1553), 2) => return demo_1553().v(t.rem_euclid(120e-6)),
-        (Some(Proto::Lin), 2) => return demo_lin().v(t.rem_euclid(12e-3)),
-        (Some(Proto::Arinc429), 2) => return demo_arinc().0.v(t.rem_euclid(demo_arinc().1)),
-        (Some(Proto::I2c), 2) => return demo_bus().0.v(t.rem_euclid(200e-6)),
-        (Some(Proto::I2c), 3) => return demo_bus().1.v(t.rem_euclid(200e-6)),
-        (Some(Proto::Spi), 1) => return demo_bus().2[0].v(t.rem_euclid(50e-6)),
-        (Some(Proto::Spi), 2) => return demo_bus().2[2].v(t.rem_euclid(50e-6)),
-        (Some(Proto::Spi), 3) => return demo_bus().2[1].v(t.rem_euclid(50e-6)),
         // a protocol module: its demo lines on the channels of its setup
         (Some(Proto::Module(i)), _) => {
             if let Some(d) = crate::protocols::demo(i) {
                 let s = crate::protocols::get(i).setup();
                 if let Some(f) = (0..4).find(|&r| s.src[r] == Some(ch)).and_then(|r| d.lines[r].as_ref()) {
                     return f(t.rem_euclid(d.period));
-                }
-            }
-        }
-        (Some(p), 2 | 3) => {
-            if let Some(d) = ext_demo(p) {
-                let tt = t.rem_euclid(d.period);
-                match (ch, &d.b) {
-                    (2, _) => return d.a.v(tt),
-                    (3, Some(b)) => return b.v(tt),
-                    _ => {}
                 }
             }
         }
@@ -429,10 +303,21 @@ fn demo_la(t: f64) -> u16 {
     w
 }
 
+/// The record `Source::acquire` makes of a hardware frame: 3600 points across the screen.
+pub fn hw_record(m: &Model, f: crate::board::Frame) -> Record {
+    let window = m.time_per_div() as f64 * HDIV as f64;
+    crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)
+}
+
 impl Source {
     /// The hardware applies inversion, coupling and bandwidth itself; the other sources get them from `condition`.
     pub fn is_hw(&self) -> bool {
         matches!(self, Source::Hw { .. })
+    }
+
+    /// The made-up signals of the demo: the starting values of the trigger types are made for them.
+    pub fn is_demo(&self) -> bool {
+        matches!(self, Source::Demo { .. })
     }
 
     /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
@@ -446,6 +331,29 @@ impl Source {
     }
 
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
+    /// Readers of the records that only the UI knows of (protocol watch, XY) for the hardware thread
+    /// (`Shared::needs_raw`: no live compression).
+    pub fn hw_needs_raw(&self, on: bool) {
+        if let Source::Hw { shared, .. } = self {
+            shared.lock().unwrap().needs_raw = on;
+        }
+    }
+
+    /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
+    /// that request is done and every frame before it was taken (always for other sources). The release (RUN, SINGLE)
+    /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
+    pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.hold && !hold {
+                g.queue.clear();
+            }
+            (g.hold, g.final_req) = (hold, req);
+            return g.final_ack >= req && g.queue.is_empty();
+        }
+        true
+    }
+
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
@@ -502,6 +410,89 @@ impl Source {
         None
     }
 
+    /// Hardware source: why the mask/zone unit is off for the current settings (`Shared::unit_blocked`).
+    pub fn hw_unit_blocked(&self) -> Option<String> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().unit_blocked.clone();
+        }
+        None
+    }
+
+    /// Hardware source: the mask table last loaded (`Shared::mask_table`).
+    pub fn hw_mask_table(&self) -> Option<std::sync::Arc<Vec<[u8; 4]>>> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().mask_table.clone();
+        }
+        None
+    }
+
+    /// Hardware source: hands the zone trigger the UI wants to the acquisition thread (None: off) and returns the latest
+    /// reading; None off the hardware.
+    pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.zone_want != want {
+                g.zone_want = want;
+            }
+            return Some(g.zone);
+        }
+        None
+    }
+
+    /// Hardware source: hands the mask test the UI wants to the acquisition thread (None: off) and returns the latest
+    /// counter reading; None off the hardware.
+    pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            if g.mask_want != want {
+                g.mask_want = want;
+            }
+            return Some(g.mask);
+        }
+        None
+    }
+
+    /// Hardware source: hands the DVM set-up the UI wants to the acquisition thread (None: off) and returns the latest
+    /// reading; None off the hardware.
+    pub fn hw_dvm(&self, want: Option<crate::board::DvmWant>) -> Option<Option<crate::board::DvmRead>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.dvm_want = want;
+            return Some(g.dvm);
+        }
+        None
+    }
+
+    /// Hardware source: asks for measure-unit levels (`Shared::levels_want`) and returns the latest answer; None for
+    /// other sources.
+    pub fn hw_levels(&self, want: Option<(u64, u64, u32)>) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.levels_want = want;
+            return Some(g.levels);
+        }
+        None
+    }
+
+    /// Hardware source: asks for one raw measure-unit run (`Shared::slots_want`) and returns the latest answer; None
+    /// for other sources.
+    pub fn hw_slots(&self, want: u64) -> Option<Option<crate::board::SlotDump>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.slots_want = Some(want);
+            return Some(g.slots);
+        }
+        None
+    }
+
+    /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
+    pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
+        if let Source::Hw { shared, .. } = self {
+            return shared.lock().unwrap().trig_fired;
+        }
+        None
+    }
+
     /// Hardware source: FPGA version (0 = not reached) and the latest XADC reading (die degC, VCCINT V).
     pub fn hw_board(&self) -> Option<(u32, Option<(f32, f32)>)> {
         if let Source::Hw { shared, .. } = self {
@@ -527,13 +518,85 @@ impl Source {
         None
     }
 
-    /// Hardware source: takes every queued frame but the newest (the fast display path draws them; the newest stays
-    /// for `acquire`, which makes the full record for measurements, decoding and history).
-    pub fn drain_but_last(&mut self) -> Vec<std::sync::Arc<crate::board::Frame>> {
+    /// Sample rate and depth as the top bar shows them: of the hardware when it runs, else the model's choice.
+    pub fn rate_depth(&self, m: &Model) -> (f64, u64) {
+        self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| m.srate_depth())
+    }
+
+    /// Hardware segments: tells the thread the recording number and whether the acquisition runs; returns phase,
+    /// segments asked for, recorded and read back, and whether frames are still queued. None without the hardware
+    /// source.
+    pub fn seg_sync(&self, run: u64, running: bool) -> Option<SegView> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let mut g = shared.lock().unwrap();
+        (g.seg.run, g.seg.running) = (run, running);
+        let current = g.seg.done_run == run;
+        Some(SegView { phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle }, total: g.seg.total, recorded: g.seg.recorded, read: g.seg.read, queued: !g.queue.is_empty() })
+    }
+
+    /// Hardware segments: the trigger times read back so far (seconds since the first trigger).
+    pub fn seg_times(&self) -> Vec<Option<f64>> {
+        match self {
+            Source::Hw { shared, .. } => shared.lock().unwrap().seg.times.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Hardware segments: asks the thread to play segment `k`; `seg_shown` delivers it.
+    pub fn seg_request(&self, k: u32) {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
+            (g.seg.want, g.seg.shown) = (Some(k), None);
+        }
+    }
+
+    /// Hardware segments: the segment asked for with `seg_request`, as a record for the screen.
+    pub fn seg_shown(&self, m: &Model) -> Option<(u32, Record)> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let (k, f) = shared.lock().unwrap().seg.shown.take()?;
+        let window = m.time_per_div() as f64 * HDIV as f64;
+        Some((k, crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
+    }
+
+    /// Hardware source in STOP: the view shown (time per div, delay; None: none to read for), and the frame the
+    /// thread has read again from the stored record for it, if a new one came (`board::Shared::stop_view`).
+    pub fn hw_stop(&mut self, view: Option<(f64, f64)>) -> Option<crate::board::Frame> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            g.stop_view = view;
+            return g.replay.take().filter(|_| view.is_some());
+        }
+        None
+    }
+
+    /// Hardware source: every frame of a batch decoded again (the record path, which takes them one by one).
+    pub fn hw_take_all(&mut self) {
+        if let Source::Hw { shared, .. } = self {
+            shared.lock().unwrap().take = 0;
+        }
+    }
+
+    /// Hardware source: frames decoded and frames dropped unseen so far (`board::Shared`).
+    pub fn hw_frames(&self) -> Option<(u64, u64)> {
+        match self {
+            Source::Hw { shared, .. } => shared.lock().ok().map(|g| (g.decoded, g.dropped)),
+            _ => None,
+        }
+    }
+
+    /// Hardware source: takes the newest `max` queued frames but the newest one (the fast display path draws them;
+    /// the newest stays for `acquire`, which makes the full record for measurements, decoding and history). Older
+    /// ones are dropped and counted.
+    pub fn drain_newest(&mut self, max: usize) -> Vec<crate::board::Frame> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = shared.lock().unwrap();
+            // the thread decodes no more than this of a batch (the record takes one more)
+            g.take = max + 1;
             let n = g.queue.len().saturating_sub(1);
-            return g.queue.drain(..n).collect();
+            let skip = n.saturating_sub(max);
+            g.queue.drain(..skip);
+            g.dropped += skip as u64;
+            return g.queue.drain(..n - skip).collect();
         }
         Vec::new()
     }
@@ -560,8 +623,13 @@ impl Source {
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
             g.want = Some(board().want(m));
+            g.deep_raw = crate::deepmeas::want(m);
             g.slow = board().slow_mode(m);
+            // running: no STOP view any more, the thread acquires again
+            (g.stop_view, g.replay) = (None, None);
             g.stamp = m.hw_stamp;
+            g.cores = m.cores;
+            g.avg_clear = m.hw_avg_clear;
             // SINGLE takes nothing from before the key press
             let fresh = loop {
                 match g.queue.pop_front() {
@@ -579,7 +647,7 @@ impl Source {
             };
             *seen = f.seq;
             drop(g);
-            return Some(crate::board::to_record(&f, m, n, window, t_first));
+            return Some(hw_record(m, f));
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();
@@ -653,7 +721,7 @@ impl Source {
                     // protocol trigger on LA lines: the decoder over the demo lines
                     _ if m.bus_on_la() => {
                         let lines: Vec<u16> = (0..ns).map(|k| demo_la(start + k as f64 * dts)).collect();
-                        crate::trig::decode_la(m, &lines, dts).unwrap_or_default().iter().find(|p| crate::trig::matches(m, p)).map(|p| p.t1)
+                        crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default()).first().copied()
                     }
                     // LA line: 0 / 1 samples of the demo line, the same trigger on them at level 0.5
                     Some(n) => {
@@ -699,7 +767,7 @@ impl Source {
                     let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
                     crate::ui::la::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
                 });
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la })
+                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
             }
             Source::Replay { words, xinc, yinc, yorg, yref } => {
                 let mut volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - *yorg - *yref) * *yinc) as f32).collect();
@@ -737,9 +805,9 @@ impl Source {
                 let frame = std::sync::Arc::new(crate::board::Frame { seq: 1, dt: *xinc,
                     pre: ti.round().clamp(0.0, native_len.saturating_sub(1) as f64) as usize,
                     ch: native, roll: false, envelope: false, scan: false, partial: false,
-                    acq: (1.0 / *xinc, native_len), stamp: 0, basic, la: None });
+                    acq: (1.0 / *xinc, native_len), stamp: 0, basic, la: None, fixed_ti: None, hw_avg: false });
                 let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * *xinc, conditioned: true });
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None })
+                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false })
             }
             Source::Live { .. } | Source::Hw { .. } => None, // handled above
         }
@@ -843,82 +911,149 @@ impl Phosphor {
     /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
     /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
     /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
+    /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
+    /// between its extremes; two dots would drop the edges of a slow time base.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_ex(&mut self, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>) {
-        let (wd, ht) = (self.w as f32, self.h as f32);
-        let tdiv = view.0 as f64;
-        let vdelay = view.1 as f64;
-        let ppd_x = wd as f64 / HDIV as f64;
-        let ch = &m.ch[c];
-        let vpd = ch.volts_per_div();
-        let ppd_y = ht / VDIV;
-        let cy = ht / 2.0;
-        let x_of = |k: usize| -> f32 { (((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32 };
-        let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
-        let fat = self.fat;
-        let map = &mut self.map[c];
-        let (wi, hi) = (self.w as i32, self.h as i32);
-        let mut prev: Option<(f32, f32)> = None;
-        let w0 = w;
-        for (k, &val) in v.iter().enumerate() {
-            if !val.is_finite() {
-                prev = None;
+    pub fn draw_ex(&mut self, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool) {
+        let (pw, ph) = (self.w, self.h);
+        draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs);
+        // fat: where the zoom has too few samples, each real sample is marked with a 3 x 3 dot (the line goes on through them)
+        if self.fat && !pairs {
+            fat_dots(&mut self.map[c], pw, ph, c, m, view, rec_t0, dt, v, w, z);
+        }
+    }
+}
+
+/// The 3 x 3 dot on every sample of a sparse zoom (`Phosphor::fat`), on top of the trace.
+#[allow(clippy::too_many_arguments)]
+fn fat_dots(map: &mut [u16], pw: usize, ph: usize, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>) {
+    let (wd, ht) = (pw as f32, ph as f32);
+    let (tdiv, vdelay) = (view.0 as f64, view.1 as f64);
+    let ppd_x = wd as f64 / HDIV as f64;
+    let ch = &m.ch[c];
+    let vpd = ch.volts_per_div();
+    let (ppd_y, cy) = (ht / VDIV, ht / 2.0);
+    let (wi, hi) = (pw as i32, ph as i32);
+    for (k, &val) in v.iter().enumerate() {
+        if !val.is_finite() {
+            continue;
+        }
+        let w = match z {
+            Some(z) => (w as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
+            None => w,
+        };
+        let x = ((((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32).floor() as i32;
+        let y = (cy - (val + ch.offset) / vpd * ppd_y).round() as i32;
+        for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+            let (px, py) = (x + dx, y + dy);
+            if (0..wi).contains(&px) && (0..hi).contains(&py) {
+                let idx = (py * wi + px) as usize;
+                map[idx] = map[idx].saturating_add(w);
+            }
+        }
+    }
+}
+
+/// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
+/// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_trace(band: &mut [u16], pw: usize, ph: usize, r_lo: usize, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool) {
+    let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
+    let wi = pw as i32;
+    trace_columns(pw, ph, c, m, view, rec_t0, dt, v, w, z, pairs, (0, wi), |cx, r0, r1, w| {
+        for r in r0.max(b0)..=r1.min(b1 - 1) {
+            let idx = ((r - b0) * wi + cx) as usize;
+            band[idx] = band[idx].saturating_add(w);
+        }
+    });
+}
+
+/// The pixels of a trace on a `pw` x `ph` map, column by column: `put(column, first row, last row, weight)` for every
+/// vertical span (rows within the map, first <= last), only for the columns `cols.0 .. cols.1`. Line segments from
+/// point to point, or one pixel a point with `Model::dots`; `z` scales the weight per point (Z input). With `pairs`
+/// (`v` holds min/max pairs) and dots, each pair is one span from its minimum to its maximum over the columns it
+/// covers: two dots would lose the edges of a square at slow time bases.
+#[allow(clippy::too_many_arguments)]
+pub fn trace_columns(pw: usize, ph: usize, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool, cols: (i32, i32), mut put: impl FnMut(i32, i32, i32, u16)) {
+    let (wd, ht) = (pw as f32, ph as f32);
+    let tdiv = view.0 as f64;
+    let vdelay = view.1 as f64;
+    let ppd_x = wd as f64 / HDIV as f64;
+    let ch = &m.ch[c];
+    let vpd = ch.volts_per_div();
+    let ppd_y = ht / VDIV;
+    let cy = ht / 2.0;
+    let x_of = |k: usize| -> f32 { (((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32 };
+    let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
+    let hi = ph as i32;
+    let (c_lo, c_hi) = (cols.0.max(0), cols.1.min(pw as i32));
+    let w0 = w;
+    let wt = |k: usize| match z {
+        Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
+        None => w0,
+    };
+    if m.dots && pairs {
+        for (j, p) in v.chunks(2).enumerate() {
+            let (lo, hi_) = p.iter().copied().filter(|y| y.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), y| (a.min(y), b.max(y)));
+            if lo > hi_ {
                 continue;
             }
-            let w = match z {
-                Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
-                None => w0,
-            };
-            let p = (x_of(k), y_of(val));
-            // fat: where the zoom has too few samples, each real sample is marked with a 3 x 3 dot (the line goes on through them)
-            if m.dots || fat {
-                let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
-                if fat {
-                    for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-                        let (px, py) = (x + dx, y + dy);
-                        if (0..wi).contains(&px) && (0..hi).contains(&py) {
-                            let idx = (py * wi + px) as usize;
-                            map[idx] = map[idx].saturating_add(w);
-                        }
-                    }
-                } else if (0..wi).contains(&x) && (0..hi).contains(&y) {
-                    let idx = (y * wi + x) as usize;
-                    map[idx] = map[idx].saturating_add(w);
-                }
-                if m.dots { continue; }
-            }
-            if let Some(q) = prev {
-                // rasterize segment q -> p as vertical spans per column
-                let (x0, y0, x1, y1) = if q.0 <= p.0 { (q.0, q.1, p.0, p.1) } else { (p.0, p.1, q.0, q.1) };
-                let cx0 = x0.floor() as i32;
-                let cx1 = x1.floor() as i32;
-                if cx1 >= 0 && cx0 < wi {
-                    for cx in cx0.max(0)..=cx1.min(wi - 1) {
-                        let (ya, yb) = if cx0 == cx1 {
-                            (y0, y1)
-                        } else {
-                            let ta = ((cx as f32 - x0) / (x1 - x0)).clamp(0.0, 1.0);
-                            let tb = ((cx as f32 + 1.0 - x0) / (x1 - x0)).clamp(0.0, 1.0);
-                            (y0 + (y1 - y0) * ta, y0 + (y1 - y0) * tb)
-                        };
-                        let (lo, hi_) = if ya < yb { (ya, yb) } else { (yb, ya) };
-                        let r0 = (lo.round() as i32).max(0);
-                        let r1 = (hi_.round() as i32).min(hi - 1);
-                        let mut r = r0;
-                        while r <= r1 {
-                            let idx = (r * wi + cx) as usize;
-                            map[idx] = map[idx].saturating_add(w);
-                            r += 1;
-                        }
-                        // clipped beyond the screen edge: mark the edge pixel
-                        if r0 > r1 && ((lo < 0.0 && hi_ < 0.0) || (lo >= ht && hi_ >= ht)) {
-                            // fully outside: nothing
-                        }
-                    }
+            // the pair covers points 2j and 2j+1: every column it touches, from the minimum to the maximum
+            let k = 2 * j;
+            let (x0, x1) = (x_of(k).floor() as i32, x_of(k + p.len() - 1).floor() as i32);
+            let (ya, yb) = (y_of(lo), y_of(hi_));
+            let r0 = (ya.min(yb).round() as i32).max(0);
+            let r1 = (ya.max(yb).round() as i32).min(hi - 1);
+            if r0 <= r1 {
+                for x in x0.max(c_lo)..=x1.min(c_hi - 1) {
+                    put(x, r0, r1, wt(k));
                 }
             }
-            prev = Some(p);
         }
+        return;
+    }
+    let mut prev: Option<(f32, f32)> = None;
+    for (k, &val) in v.iter().enumerate() {
+        if !val.is_finite() {
+            prev = None;
+            continue;
+        }
+        let w = match z {
+            Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
+            None => w0,
+        };
+        let p = (x_of(k), y_of(val));
+        if m.dots {
+            let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
+            if (c_lo..c_hi).contains(&x) && (0..hi).contains(&y) {
+                put(x, y, y, w);
+            }
+            continue;
+        }
+        if let Some(q) = prev {
+            // rasterize segment q -> p as vertical spans per column
+            let (x0, y0, x1, y1) = if q.0 <= p.0 { (q.0, q.1, p.0, p.1) } else { (p.0, p.1, q.0, q.1) };
+            let cx0 = x0.floor() as i32;
+            let cx1 = x1.floor() as i32;
+            if cx1 >= c_lo && cx0 < c_hi {
+                for cx in cx0.max(c_lo)..=cx1.min(c_hi - 1) {
+                    let (ya, yb) = if cx0 == cx1 {
+                        (y0, y1)
+                    } else {
+                        let ta = ((cx as f32 - x0) / (x1 - x0)).clamp(0.0, 1.0);
+                        let tb = ((cx as f32 + 1.0 - x0) / (x1 - x0)).clamp(0.0, 1.0);
+                        (y0 + (y1 - y0) * ta, y0 + (y1 - y0) * tb)
+                    };
+                    let (lo, hi_) = if ya < yb { (ya, yb) } else { (yb, ya) };
+                    let r0 = (lo.round() as i32).max(0);
+                    let r1 = (hi_.round() as i32).min(hi - 1);
+                    if r0 <= r1 {
+                        put(cx, r0, r1, w);
+                    }
+                }
+            }
+        }
+        prev = Some(p);
     }
 }
 
@@ -1088,6 +1223,7 @@ pub fn autoset(m: &mut Model, src: &Source) {
 /// fills 80 % of its band, the midpoint sits on the band centre). The time base shows about three periods of the
 /// slowest record. Analog channels, the trigger and the run state stay as they are.
 /// `None` where the record is flatter than the live set-up's floor (50 mV).
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32, f32)>> {
     let measured: Vec<Stats> = waves.iter().map(|(v, dt)| autoset_summary(v, *dt)).collect();
     let hot: Vec<bool> = measured.iter().map(|s| s.vmax - s.vmin >= 0.05).collect();
@@ -1189,6 +1325,45 @@ pub fn periodic(v: &[f32], dt: f64) -> Option<f64> {
     Some((rises[rises.len() - 1] - rises[0]) as f64 / gaps.len() as f64 * 2.0 * dt)
 }
 
+/// The trigger level halfway through a signal: between top and base where it has flat levels (a spike or overshoot
+/// moves the extremes, not these), else between the extremes. Used by level 50 % and the auto set-up.
+pub fn mid_level(s: &Stats) -> f32 {
+    if s.top > s.base {
+        (s.top + s.base) / 2.0
+    } else {
+        (s.vmax + s.vmin) / 2.0
+    }
+}
+
+/// Noise of a two-level signal (square, logic) as a standard deviation: from the median absolute deviation of each
+/// half about its median (split halfway between the extremes), so the samples on the edges do not count. None when the
+/// halves are not clearly apart (6 sigma), as for a sine or a triangle, whose halves spread by the signal itself.
+/// `stats`' histogram top and base are no help here: noise of a fifth of the swing flattens their modes.
+pub fn flat_noise(v: &[f32]) -> Option<f32> {
+    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    let (lo, hi) = f.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    if f.len() < 32 || hi <= lo {
+        return None;
+    }
+    let mid = (lo + hi) / 2.0;
+    let median = |v: &mut Vec<f32>| {
+        v.sort_by(|a, b| a.total_cmp(b));
+        v[v.len() / 2]
+    };
+    let half = |up: bool| -> Option<(f32, f32)> {
+        let mut h: Vec<f32> = f.iter().copied().filter(|&x| (x >= mid) == up).collect();
+        if h.len() < 8 {
+            return None;
+        }
+        let m = median(&mut h);
+        let mut dev: Vec<f32> = h.iter().map(|x| (x - m).abs()).collect();
+        Some((m, 1.4826 * median(&mut dev)))
+    };
+    let ((m1, s1), (m0, s0)) = (half(true)?, half(false)?);
+    let sigma = s1.max(s0);
+    (m1 - m0 > 6.0 * sigma).then_some(sigma)
+}
+
 /// The end of an auto set-up: `found` = channel, levels, period; the rest of the set-up stays.
 pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
     // one horizontal band per channel (8 div / n), signal fills 80 % of its band; in a split plot per window: n and the
@@ -1214,7 +1389,7 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
     }
     if let Some((c, s, _)) = found.first() {
         m.trig_src = *c;
-        m.trig_level = (s.vmax + s.vmin) / 2.0;
+        m.trig_level = mid_level(s);
         m.slope = Slope::Rise;
         m.trig_mode = TrigMode::Auto;
         m.active = *c;
@@ -1244,6 +1419,38 @@ mod tests {
         assert!(summary.vmax-summary.vmin>1.9);
     }
     use super::*;
+
+    // Break it catches: level 50 % on the extremes, which a spike or overshoot pulls off the middle of the swing
+    #[test]
+    fn mid_level_ignores_spikes_on_a_square_and_takes_the_extremes_of_a_sine() {
+        let mut sq: Vec<f32> = (0..4000).map(|k| if (k / 500) % 2 == 0 { 0.0 } else { 5.0 }).collect();
+        for k in [499, 1499, 2499] {
+            sq[k + 1] = 9.0;
+        }
+        sq[1000] = -2.0;
+        let s = stats(&sq, 1e-6);
+        assert_eq!((s.vmax + s.vmin) / 2.0, 3.5);
+        assert!((mid_level(&s) - 2.5).abs() < 0.1, "{}", mid_level(&s));
+        let sine: Vec<f32> = (0..4000).map(|k| 1.0 + (k as f32 / 400.0 * std::f32::consts::TAU).sin()).collect();
+        assert!((mid_level(&stats(&sine, 1e-6)) - 1.0).abs() < 0.01);
+    }
+
+    // Break it catches: noise reject chosen for a clean sine (its halves spread by the signal) or missed on a noisy square
+    #[test]
+    fn flat_noise_of_two_levels_only() {
+        let mut x = 5u32;
+        let mut r = || {
+            x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+            (x >> 8) as f32 / (1 << 24) as f32 - 0.5
+        };
+        let sq: Vec<f32> = (0..4000).map(|k| if (k / 500) % 2 == 0 { 0.0 } else { 5.0 } + 1.2 * r()).collect();
+        let s = flat_noise(&sq).unwrap();
+        // uniform noise of sigma 0.35; the MAD estimate is exact for normal noise and reads 0.44 here
+        assert!((0.3..0.5).contains(&s), "{}", s);
+        let sine: Vec<f32> = (0..4000).map(|k| (k as f32 / 400.0 * std::f32::consts::TAU).sin()).collect();
+        assert_eq!(flat_noise(&sine), None);
+        assert_eq!(flat_noise(&[1.0; 100]), None);
+    }
 
     #[test]
     fn shown_record_uses_its_own_interval_and_leaves_the_channels() {

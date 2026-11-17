@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Logic analyser page and lanes (DHO900 with the PLA2216 probe, docs/protocols/la.md): LA on/off, the lines shown
@@ -751,8 +751,9 @@ mod decode_tests {
 
     /// The switch of the decoder names no protocol: that is the row below it.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn decoder_switch_is_not_named_after_a_protocol() {
-        assert_eq!(ui_on(Proto::I2s).item_label(Item::DecOn), "Decoder");
+        assert_eq!(ui_on(Proto::from_key("I2s").unwrap()).item_label(Item::DecOn), "Decoder");
     }
 
     /// The decoder of LA lines sits under the lanes; the analog plot stays free. On analog channels it stays in the plot.
@@ -760,7 +761,7 @@ mod decode_tests {
     fn decoder_row_is_beside_the_lanes() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
         let _ = std::fs::create_dir_all(&dir);
-        let mut ui = ui_on(Proto::I2c);
+        let mut ui = ui_on(Proto::I2C);
         ui.m.tscale = tscales().iter().position(|x| (*x - 50e-6).abs() < 1e-7).unwrap();
         for _ in 0..6 {
             ui.step(0.05);
@@ -795,6 +796,9 @@ mod decode_tests {
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
+        // through the compact bar's Sources (Display > Bottom bar = Compact)
+        ui.m.bar_compact = true;
+        ui.relayout();
         ui.tap(80, BOTTOM.y + 15);
         let (x, y) = fix_tests::row_xy(&ui, "Logic analyser"); ui.tap(x, y); // Sources > Logic analyser.
         assert!(!ui.m.la.on && !ui.menu_open);
@@ -821,7 +825,7 @@ mod decode_tests {
 
     #[test]
     fn i2c_on_la_lines() {
-        let ui = ui_on(Proto::I2c);
+        let ui = ui_on(Proto::I2C);
         assert!(ui.m.dec_on_la());
         let p = ui.decode_packets().unwrap();
         // the demo write to 0x50 repeats in the record
@@ -831,7 +835,7 @@ mod decode_tests {
 
     #[test]
     fn the_cache_follows_the_settings() {
-        let mut ui = ui_on(Proto::I2c);
+        let mut ui = ui_on(Proto::I2C);
         let a = ui.decode_packets().unwrap();
         assert_eq!(ui.decode_packets().unwrap(), a);
         // SDA on an idle line: nothing of the I2C traffic left
@@ -841,7 +845,7 @@ mod decode_tests {
 
     #[test]
     fn la_off_falls_back_to_the_channels() {
-        let mut ui = ui_on(Proto::Uart);
+        let mut ui = ui_on(Proto::UART);
         ui.m.la.on = false;
         assert!(!ui.m.dec_on_la());
         assert!(!ui.decode_items().contains(&Item::DecIn));
@@ -850,7 +854,7 @@ mod decode_tests {
 
     #[test]
     fn menu_on_la_lines() {
-        let mut ui = ui_on(Proto::Spi);
+        let mut ui = ui_on(Proto::SPI);
         let items = ui.decode_items();
         assert!(items.contains(&Item::DecIn) && !items.contains(&Item::DecThr));
         assert_eq!(ui.value(Item::DecSrc), "D11");
@@ -1055,7 +1059,7 @@ mod bus_tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui.m.dec_on = true;
-        ui.set_dec_proto(Proto::I2c);
+        ui.set_dec_proto(Proto::I2C);
         ui.m.dec_la_in = true;
         (ui.m.trig_type, ui.m.trig_bus, ui.m.trig_bus_val) = (TrigType::Bus, BusWhat::Data, 0x42);
         ui.m.tscale = tscales().iter().position(|&t| t >= 20e-6).unwrap();
@@ -1078,9 +1082,9 @@ mod bus_tests {
         m.la.on = true;
         m.dec_la_in = true;
         m.trig_type = TrigType::Bus;
-        (m.dec_proto, m.dec_la) = (Proto::Spi, [Some(11), Some(10), Some(9), None]);
+        (m.dec_proto, m.dec_la) = (Proto::SPI, [Some(11), Some(10), Some(9), None]);
         assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 9);
-        (m.dec_proto, m.dec_la) = (Proto::Uart, [Some(8), None, None, None]);
+        (m.dec_proto, m.dec_la) = (Proto::UART, [Some(8), None, None, None]);
         assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 8);
         m.dec_la_in = false;
         assert!(crate::board::dho::hw::settings(&m, false).trig_src <= 4);

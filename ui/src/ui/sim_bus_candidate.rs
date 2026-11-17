@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Fresh SIM bus records are decoded before they become an accepted reference.
 use super::*;
 use super::super::reference_decode::{BorrowedWave,decode_borrowed,sources};
@@ -14,7 +16,7 @@ impl Plan{
             BorrowedWave{source:role.source,v,t0:role.t0,dt:step}
         }).collect::<Vec<_>>();
         let packets=decode_borrowed(&self.model,&waves,self.hysteresis)?;
-        let mut hits=packets.iter().filter(|packet|crate::trig::matches(&self.model,packet)).map(|packet|packet.t1).collect::<Vec<_>>();
+        let mut hits=crate::trig::points(&self.model,&packets);
         hits.sort_by(f64::total_cmp);Ok(Decoded{primary_slot:self.primary_slot,packets,hits:Arc::new(hits),channels:std::array::from_fn(|c|self.roles.iter().any(|role|role.source==c))})
     }
 }

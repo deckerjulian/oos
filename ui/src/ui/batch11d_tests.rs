@@ -96,14 +96,12 @@ fn a_narrow_search_table_has_its_controls_on_a_row_of_their_own() {
     let r2 = u.dock_content(VKind::Table).unwrap_or(r);
     let narrow = Rect::new(r2.x, r2.y, 200, r2.h);
     assert!(u.table_narrow(narrow));
-    assert!(u.head_h(narrow) > u.head_h(wide));
-    // docked, the title strip of the view has the close button: Up and Dn only
-    let b: Vec<Rect> = u.table_buttons(narrow).into_iter().filter(|x| x.w > 0).collect();
-    assert_eq!(b.len(), 2);
-    assert!(b.iter().all(|x| x.h >= 40 && x.w >= 40), "40 px targets: {b:?}");
-    assert!(b.iter().all(|x| x.y >= narrow.y + 40), "under the title row");
-    assert!(b[0].right() <= b[1].x, "not jammed: {b:?}");
-    assert!(b[1].right() <= narrow.right());
+    // docked, the title strip of the view has the close button, and the rows scroll by the scroll bar
+    assert_eq!(u.table_close(narrow).w, 0);
+    assert_eq!(u.head_h(narrow), u.head_h(wide));
+    if let Some((bar, rows)) = u.table_bar() {
+        assert!(bar.track.right() <= rows.right() + 2);
+    }
     shot(&mut u, "narrow-search");
 }
 

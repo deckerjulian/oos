@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: PCI: rockchip-host: do not scan or access a link that is down
 
 Nothing looked at the link between training and the bus scan. The gen2

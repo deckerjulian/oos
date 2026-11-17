@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! DMX512 (with RDM): 250 kbit/s on an RS-485 pair, break, mark after break, start code, up to 512 slots.
