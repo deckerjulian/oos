@@ -72,6 +72,11 @@ jobs:
   image:
     # not for a pull request: the workflow Image runs by itself when its file changes
     if: github.event_name != 'pull_request'
+    # GitHub checks the permissions of every job of a called workflow when the run starts, the skipped ones too:
+    # image.yml's draft-release asks for contents: write, so the call must allow it, or the run does not start. The
+    # jobs of image.yml keep its own contents: read; draft-release runs only for a tag, never here.
+    permissions:
+      contents: write
     uses: ./.github/workflows/image.yml
     with:
       sims: true
