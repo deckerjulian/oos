@@ -155,6 +155,7 @@ See [waveform](waveform.md) for the preamble and the formats.
 | [Built-in generator](generator.md) | 18 | Built-in generator, modulation, arbitrary wave |
 | [Signal simulator (SIM)](sim.md) | 26 | Signal simulator |
 | [Display, views and Studio zoom](display.md) | 23 | Display, views, Studio zoom, screenshot |
+| [Screen layout and controls](layout.md) | 25 | Docking, sizing and floating the Studio views; the right-click menu; screen controls by name and place |
 | [Save and load](storage.md) | 8 | Save and load setups, waveforms, images, fast frames |
 | [Data logger](logger.md) | 4 | Data logger |
 | [Calibration and deskew](calibration.md) | 6 | Self-calibration and analysis deskew |

@@ -36,7 +36,7 @@ pub(super) const ADD_MENU: [Option<AddRow>; 17] = [
 ];
 
 impl Ui {
-    fn add_row_label(&self, r: AddRow) -> &'static str {
+    pub(super) fn add_row_label(&self, r: AddRow) -> &'static str {
         match r {
             AddRow::Measurement => "Measurement",
             AddRow::ResultsTable => "Results table",

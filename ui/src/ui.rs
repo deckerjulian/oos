@@ -54,6 +54,7 @@ mod addmenu;
 mod zoomtab;
 mod studioctx;
 mod scpiext;
+mod scpi_layout;
 mod scpiext_a;
 mod scpiext_b;
 mod scpiext_c;

@@ -610,7 +610,7 @@ impl Ui {
     }
 
     /// Where the floating views may be: the body, not the row of badges under the lanes.
-    fn dock_float_region(&self) -> Rect {
+    pub(super) fn dock_float_region(&self) -> Rect {
         let r = self.dock_region();
         Rect::new(r.x, r.y, r.w, (r.h - self.studio_row_h()).max(FLOAT_MIN_H))
     }
@@ -623,7 +623,7 @@ impl Ui {
         Some(self.dock_fit_float(k, r, reg))
     }
 
-    fn dock_default_float(&self, k: VKind) -> Rect {
+    pub(super) fn dock_default_float(&self, k: VKind) -> Rect {
         let reg = self.dock_float_region();
         let (w, h) = match k { VKind::Measure => (self.studio_panel_w() + 40, 300), VKind::Eye => (400, 300), VKind::Wave => (reg.w * 6 / 10, reg.h * 7 / 10), _ => (420, 240) };
         // the old position of the floating measurements keeps meaning
@@ -1171,7 +1171,7 @@ impl Ui {
     }
 
     /// Floats or docks a view; the measurements follow the View menu setting.
-    fn dock_set_float(&mut self, k: VKind, on: bool) {
+    pub(super) fn dock_set_float(&mut self, k: VKind, on: bool) {
         if k == VKind::Measure {
             if on && self.studio.view == StudioView::Docked { self.studio.view = StudioView::Floating; }
             if !on && self.studio.view == StudioView::Floating { self.studio.view = StudioView::Docked; }

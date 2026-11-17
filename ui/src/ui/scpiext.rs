@@ -152,6 +152,8 @@ pub(super) const T1: &[&str] = &[
 impl Ui {
     /// The entry of `scpi.rs`: None = not a header of the extensions.
     pub(crate) fn scpi_ext_command(&mut self, nodes: &[&str], query: bool, arg: &str) -> Option<Reply> {
+        // the layout of the screen and its controls (scpi_layout.rs)
+        if let Some(r) = self.scpi_layout(nodes, query, arg) { return Some(r); }
         let (key, idx) = resolve(nodes)?;
         let r = self.ext_trigger(key, query, arg)
             .or_else(|| self.ext_history_search(key, query, arg))
