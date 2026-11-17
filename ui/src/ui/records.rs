@@ -511,3 +511,17 @@ impl Ui {
         }
     }
 }
+
+/// A 1-based inclusive page. `stop == 0` means the last sample. A start past the end is an empty page.
+fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f64, f64) {
+    let n = v.len() as u64;
+    if n == 0 || start > n {
+        return (Vec::new(), dt, t0);
+    }
+    let a = start.max(1);
+    let b = if stop == 0 { n } else { stop.clamp(a, n) };
+    let lo = (a - 1) as usize;
+    let hi = b as usize;
+    let page = v[lo..hi].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect();
+    (page, dt, t0 + lo as f64 * dt)
+}

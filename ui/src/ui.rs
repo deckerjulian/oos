@@ -1082,20 +1082,6 @@ struct StripLine {
     align: bool,
 }
 
-/// A 1-based inclusive page. `stop == 0` means the last sample. A start past the end is an empty page.
-fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f64, f64) {
-    let n = v.len() as u64;
-    if n == 0 || start > n {
-        return (Vec::new(), dt, t0);
-    }
-    let a = start.max(1);
-    let b = if stop == 0 { n } else { stop.clamp(a, n) };
-    let lo = (a - 1) as usize;
-    let hi = b as usize;
-    let page = v[lo..hi].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect();
-    (page, dt, t0 + lo as f64 * dt)
-}
-
 impl Ui {
     /// The fonts of the text size.
     pub fn fonts(&self) -> &'static Fonts {
@@ -1260,23 +1246,6 @@ fn overlaps(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
-/// Text on a dark backing, for labels drawn over the waveforms; returns the x after the text.
-/// `fine_time`: next fine time base from `now`, by `d` hundredths on three digits, as (step, factor). The step is the
-/// one at or above the value; from the roll time base on the screen is the record, so there only the steps remain.
-fn fine_time(now: f32, d: i32) -> (usize, f32) {
-    let ts = tscales();
-    let raw = now as f64 * (1.0 + 0.01 * d as f64);
-    let q = 10f64.powf(raw.max(1e-12).log10().floor() - 2.0);
-    let want = (((raw / q).round() * q) as f32).clamp(ts[0], ts[ts.len() - 1]);
-    let i = ts.iter().position(|&t| t >= want * 0.99999).unwrap_or(ts.len() - 1);
-    if ts[i] as f64 >= board().roll_tdiv() * 0.999 {
-        let at = ts.iter().position(|&t| t >= now * 0.99999).unwrap_or(ts.len() - 1) as i32;
-        return ((at + d.signum()).clamp(0, ts.len() as i32 - 1) as usize, 1.0);
-    }
-    let f = want / ts[i];
-    (i, if (f - 1.0).abs() < 1e-5 { 1.0 } else { f })
-}
-
 /// The first of `fonts` in which `s` is at most `room` wide, else the last.
 impl Ui {
     /// Font of a menu row that is only text (a long status line): the menu font, else smaller ones down to the small
@@ -1289,22 +1258,6 @@ impl Ui {
 
 fn fit_font(fonts: &[&'static Font], room: i32, s: &str) -> &'static Font {
     fonts.iter().copied().find(|f| f.width(s) <= room).unwrap_or(fonts[fonts.len() - 1])
-}
-
-/// `s` centred in `r` in the first of `fonts` that fits; a text too long for the last one goes on two lines of it.
-fn fitted_text(cv: &mut Canvas, fonts: &[&'static Font], r: Rect, s: &str, c: Rgb) {
-    let room = r.w - 12;
-    let f = fit_font(fonts, room, s);
-    if f.width(s) <= room {
-        return cv.text_in(f, r, 1, s, c);
-    }
-    let words: Vec<&str> = s.split(' ').collect();
-    let first = (1..words.len()).rev().find(|&k| f.width(&words[..k].join(" ")) <= room).unwrap_or(1);
-    let (a, b) = (words[..first].join(" "), words[first..].join(" "));
-    cv.set_clip(r);
-    cv.text_in(f, Rect::new(r.x, r.y, r.w, r.h / 2 + 1), 1, &a, c);
-    cv.text_in(f, Rect::new(r.x, r.y + r.h / 2 - 1, r.w, r.h / 2 + 1), 1, &b, c);
-    cv.no_clip();
 }
 
 fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> i32 {
@@ -1425,19 +1378,6 @@ fn packet_tag(m: &Model, p: &oos_dsp::decode::Packet) -> Option<&'static str> {
     })
 }
 
-/// Next holdoff on the 1-2-5 ladder from 100 ns to 10 s; 0 is off.
-fn holdoff_step(h: f32, d: i32) -> f32 {
-    let mut steps = vec![0.0f32];
-    let mut x = 1e-7f32;
-    while x < 11.0 {
-        steps.extend([x, 2.0 * x, 5.0 * x]);
-        x *= 10.0;
-    }
-    steps.retain(|&s| s <= 10.0);
-    let i = steps.iter().position(|&s| s >= h * 0.999).unwrap_or(steps.len() - 1) as i32;
-    steps[(i + d).clamp(0, steps.len() as i32 - 1) as usize]
-}
-
 /// Axis label with the SI prefix of the axis `span` and as many decimals as `step` and `base` (offset / delay)
 /// need: "-1.0 µs", "500 mV", "3.25 V".
 fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
@@ -1475,61 +1415,12 @@ fn chevron(cv: &mut Canvas, x: i32, y: i32, dir: i32, col: Rgb) {
     }
 }
 
-fn draw_slope(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
-    draw_slope1(cv, x, y, s, col);
-    draw_slope1(cv, x + 1, y, s, col);
-}
-
-fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
-    // 14 x 16 icon: rising / falling edge
-    let (x0, x1, x2, x3) = (x, x + 5, x + 9, x + 14);
-    let (ylo, yhi) = (y + 14, y + 2);
-    match s {
-        Slope::Rise => {
-            cv.hline(x0, x1, ylo, col);
-            cv.line(x1, ylo, x2, yhi, col);
-            cv.hline(x2, x3, yhi, col);
-        }
-        Slope::Fall => {
-            cv.hline(x0, x1, yhi, col);
-            cv.line(x1, yhi, x2, ylo, col);
-            cv.hline(x2, x3, ylo, col);
-        }
-        Slope::Either => {
-            cv.line(x0, ylo, x0 + 6, yhi, col);
-            cv.line(x0 + 7, yhi, x3, ylo, col);
-        }
-    }
-}
-
-/// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
-/// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
-/// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
-/// its counts rise and fall with that number. Graded against the per-frame maximum (`per_frame`, followed the same
-/// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
-/// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
-fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
-    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
-    if frames == 0 {
-        return follow(prev, mx);
-    }
-    *per_frame = follow(*per_frame, mx.div_ceil(frames));
-    per_frame.saturating_mul(frames).max(1)
-}
-
 #[cfg(test)]
 mod acquisition_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
 mod tests;
-
-/// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn time_ladder_step(x: f32, d: i32) -> f32 {
-    let l = time_ladder();
-    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[step_index(i, l.len(), d)]
-}
 
 /// Menu text of a hardware segment interval.
 fn seg_ivl_name(x: f32) -> String {

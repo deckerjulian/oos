@@ -1285,3 +1285,40 @@ impl Ui {
         }
     }
 }
+
+/// One step on the 1-2-5 time ladder from the nearest ladder value.
+fn time_ladder_step(x: f32, d: i32) -> f32 {
+    let l = time_ladder();
+    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
+    l[step_index(i, l.len(), d)]
+}
+
+/// Next holdoff on the 1-2-5 ladder from 100 ns to 10 s; 0 is off.
+fn holdoff_step(h: f32, d: i32) -> f32 {
+    let mut steps = vec![0.0f32];
+    let mut x = 1e-7f32;
+    while x < 11.0 {
+        steps.extend([x, 2.0 * x, 5.0 * x]);
+        x *= 10.0;
+    }
+    steps.retain(|&s| s <= 10.0);
+    let i = steps.iter().position(|&s| s >= h * 0.999).unwrap_or(steps.len() - 1) as i32;
+    steps[(i + d).clamp(0, steps.len() as i32 - 1) as usize]
+}
+
+/// Text on a dark backing, for labels drawn over the waveforms; returns the x after the text.
+/// `fine_time`: next fine time base from `now`, by `d` hundredths on three digits, as (step, factor). The step is the
+/// one at or above the value; from the roll time base on the screen is the record, so there only the steps remain.
+fn fine_time(now: f32, d: i32) -> (usize, f32) {
+    let ts = tscales();
+    let raw = now as f64 * (1.0 + 0.01 * d as f64);
+    let q = 10f64.powf(raw.max(1e-12).log10().floor() - 2.0);
+    let want = (((raw / q).round() * q) as f32).clamp(ts[0], ts[ts.len() - 1]);
+    let i = ts.iter().position(|&t| t >= want * 0.99999).unwrap_or(ts.len() - 1);
+    if ts[i] as f64 >= board().roll_tdiv() * 0.999 {
+        let at = ts.iter().position(|&t| t >= now * 0.99999).unwrap_or(ts.len() - 1) as i32;
+        return ((at + d.signum()).clamp(0, ts.len() as i32 - 1) as usize, 1.0);
+    }
+    let f = want / ts[i];
+    (i, if (f - 1.0).abs() < 1e-5 { 1.0 } else { f })
+}

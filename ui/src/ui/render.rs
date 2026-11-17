@@ -571,3 +571,18 @@ impl Ui {
         }
     }
 }
+
+/// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
+/// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
+/// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
+/// its counts rise and fall with that number. Graded against the per-frame maximum (`per_frame`, followed the same
+/// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
+/// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
+fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
+    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
+    if frames == 0 {
+        return follow(prev, mx);
+    }
+    *per_frame = follow(*per_frame, mx.div_ceil(frames));
+    per_frame.saturating_mul(frames).max(1)
+}
