@@ -5,6 +5,8 @@
 #
 #   tools/check.sh                 every enforced layer, in order; stops at the first that fails
 #   tools/check.sh test target     only these layers
+#   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools,
+#                                  decoders:core decoders:each. CI runs the parts next to each other.
 #   tools/check.sh list            the layers, and which are enforced
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
@@ -161,14 +163,18 @@ layer_syntax() {
     echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts, $yaml"
 }
 
+# the tests of every crate and of the host tools; with a part (hal dsp ui fpgad tools) only that one
 layer_test() {
     for c in $crates; do
+        [ -z "$1" ] || [ "$1" = "$c" ] || continue
         say "test $c"
         (cd "$c" && strict cargo test --locked) || fail "test: $c"
     done
     # the host tools' own tests: offline, no scope, no listener
-    say "test tools"
-    python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
+    if [ -z "$1" ] || [ "$1" = tools ]; then
+        say "test tools"
+        python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
+    fi
 }
 
 layer_target() {
@@ -185,14 +191,19 @@ layer_target() {
 }
 
 # the core decoders only, and every optional decoder alone (tests that need every decoder skip themselves)
+# with a part: core (the build without optional decoders) or each (every optional decoder alone)
 layer_decoders() {
-    (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
-    (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
-        fail "decoders: core only, target"
-    for d in $(ui/tools/decoder-features.sh list); do
-        (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
-            fail "decoders: dec-$d alone"
-    done
+    if [ -z "$1" ] || [ "$1" = core ]; then
+        (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
+        (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
+            fail "decoders: core only, target"
+    fi
+    if [ -z "$1" ] || [ "$1" = each ]; then
+        for d in $(ui/tools/decoder-features.sh list); do
+            (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
+                fail "decoders: dec-$d alone"
+        done
+    fi
 }
 
 # The simulations: the scripts of the image in arm64 containers and virtual machines, without a scope. Each needs what
@@ -214,12 +225,25 @@ if [ "$1" = list ]; then
 fi
 
 run=${*:-$enforced}
+# a layer, or layer:part
+parts_test="$crates tools"
+parts_decoders="core each"
 for l in $run; do
-    case " $layers " in *" $l "*) ;; *) fail "unknown layer '$l' (layers: $layers)" ;; esac
+    name=${l%%:*}
+    case " $layers " in *" $name "*) ;; *) fail "unknown layer '$name' (layers: $layers)" ;; esac
+    case $l in
+    *:*)
+        case $name in test) parts=$parts_test ;; decoders) parts=$parts_decoders ;; *) parts= ;; esac
+        case " $parts " in
+        *" ${l#*:} "*) ;;
+        *) fail "no part '${l#*:}' in layer '$name' (parts: ${parts:-none})" ;;
+        esac
+        ;;
+    esac
 done
 for l in $run; do
     say "$l"
-    "layer_$l"
+    case $l in *:*) "layer_${l%%:*}" "${l#*:}" ;; *) "layer_$l" "" ;; esac
 done
 say "passed: $run"
 if [ $# = 0 ]; then
