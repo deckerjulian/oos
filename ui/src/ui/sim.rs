@@ -566,6 +566,7 @@ impl Ui {
         let dt = serial::dt_of(lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let replaced = self.refs[slot].as_ref().filter(|r| r.label != lane.name).map(|r| r.label.clone());
+        let len = v.len();
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: slot,
@@ -581,7 +582,17 @@ impl Ui {
         self.measure_refs();
         match replaced {
             Some(old) => self.toast(&format!("{} added to R{}, replacing {}", lane.name, slot + 1, old)),
-            None => self.toast(&format!("{} added to R{}", lane.name, slot + 1)),
+            None => {
+                // beside live channels the reference keeps its own time: one that is far shorter than the screen is a
+                // sliver at the trigger point, so the message says how long it is
+                let long = len as f64 * dt;
+                let screen = self.m.time_per_div() as f64 * HDIV as f64;
+                if !self.record_mode() && long < screen / 20.0 {
+                    self.toast(&format!("{} added to R{} \u{b7} {} long, shorten the time base to see it", lane.name, slot + 1, si_short(long, "s")));
+                } else {
+                    self.toast(&format!("{} added to R{}", lane.name, slot + 1));
+                }
+            }
         }
     }
 

@@ -1042,3 +1042,66 @@ fn the_measurements_read_a_known_pulse_train() {
     assert_eq!(seen, want.len(), "a name of the table is not in the catalog");
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+/// Every SIM preset generated into a reference while the scope runs live: the acquisition goes on, the reference is
+/// drawn beside the live channel, both can be measured, and the eye diagram takes the reference as its source.
+#[test]
+fn every_sim_preset_sits_in_a_ref_beside_the_live_channels() {
+    let presets = Ui::new(Source::Demo { t: 0.0 }).options(Item::SimPreset);
+    assert!(presets.len() >= 3, "{presets:?}");
+    for (n, name) in presets.iter().enumerate() {
+        let mut u = fresh_live(Layout::Studio);
+        u.select_option(Item::SimPreset, name);
+        u.sim_add_next();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while u.refs[0].is_none() && std::time::Instant::now() < end { u.step(0.04); u.wait_sim_generation(); }
+        let r = u.refs[0].as_ref().unwrap_or_else(|| panic!("{name}: R1 is filled: {:?}", u.toast));
+        let (len, dt) = (r.v.len(), r.dt);
+        assert!(r.on && len > 100 && r.v.iter().all(|x| x.is_finite()), "{name}: shown, {len} points");
+        let (lo, hi) = r.v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+        assert!(hi - lo > 1e-3, "{name}: the waveform has a swing, {lo}..{hi}");
+        for _ in 0..6 { u.step(0.04); u.wait_sim_generation(); }
+        assert!(!u.sim_mode() && !u.record_mode(), "{name}: still live");
+        assert!(u.m.run == RunState::Run && u.m.ch[0].on && u.m.trig_ref.is_none(), "{name}: the live trigger and channel stay");
+        // the live channel and the reference are both measured
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ref(0))];
+        u.m.meas2.clear();
+        u.m.cat.clear();
+        // a long reference is measured in the background: wait for the value, not for a number of frames
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut rows = u.meas_rows();
+        while rows.iter().any(|r| r.computing || !r.v.is_finite()) && std::time::Instant::now() < end {
+            u.step(0.04);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            rows = u.meas_rows();
+        }
+        assert!((rows[0].v - 1e3).abs() < 20.0, "{name}: CH1 is still measured live, {}", rows[0].text());
+        assert!((rows[1].v - (hi - lo) as f64).abs() < 0.05 * (hi - lo) as f64 + 1e-3, "{name}: R1 peak-to-peak {} of {}", rows[1].text(), hi - lo);
+        let drawn = u.trace_sources();
+        assert!(drawn.iter().any(|t| matches!(t, super::workspace::Trace::Channel(0))) && drawn.iter().any(|t| matches!(t, super::workspace::Trace::Reference(0))), "{name}: both are drawn");
+        // the eye diagram of the reference
+        u.m.eye_src = WaveId::Ref(0);
+        u.m.view = AView::Eye;
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(40);
+        while u.eye_readings().iter().all(|(_, v)| !v.is_finite()) && std::time::Instant::now() < end {
+            u.step(0.04);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let eye = u.eye_readings();
+        let found = eye.iter().filter(|(_, v)| v.is_finite()).count();
+        println!("SIMREF|{n}|{name}|{len} pts dt {dt:e}|pp {}|eye figures {found}/{}|status {:?}", rows[1].text(), eye.len(), u.azr.page.status);
+        if std::env::var("OOS_WALK").is_ok() && n < 4 {
+            let mut cv = Canvas::new(u.scr.w, u.scr.h);
+            u.render(&mut cv);
+            let _ = crate::store::write(&std::path::Path::new(&std::env::var("OOS_WALK").unwrap()).join(format!("sim-eye-{n}.png")), &crate::store::png_of(&cv));
+        }
+    }
+}
+
+fn fresh_live(layout: Layout) -> Ui {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = layout;
+    u.relayout();
+    for _ in 0..8 { u.step(0.04); u.wait_sim_generation(); }
+    u
+}
