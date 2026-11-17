@@ -824,6 +824,14 @@ impl Ui {
         }
         for c in 0..n_ch() {
             if !b.ch[c].contains(x, y) { continue; }
+            // the coloured badge of a pill is the channel's switch, like its key; the rest of the pill opens its sheet
+            // (a pill too narrow to have both keeps the sheet: its Display row and a hold turn the channel off)
+            if self.m.ch[c].on && b.ch[c].w >= 110 && x < b.ch[c].x + 54 {
+                if self.menu_open { self.close_menu(); }
+                self.source_toggle(WaveId::Ch(c));
+                if !self.m.ch[c].on { self.toast(&format!("CH{} off", c + 1)); }
+                return;
+            }
             if !self.m.ch[c].on {
                 self.m.ch[c].on = true;
                 self.settings_changed();

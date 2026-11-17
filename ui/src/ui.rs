@@ -9433,7 +9433,22 @@ impl Ui {
     }
 
     /// Two fingers in the grid: horizontal spread = time/div, vertical spread = V/div of the active channel.
+    /// A second finger makes the touch a pinch or a two-finger swipe: it is never a long press. Every hold that is
+    /// counting stops, and a context menu the first finger's hold had already opened goes away again.
+    fn second_finger_down(&mut self) {
+        if self.workspace_cancel_hold() {
+            self.studio.ctx = None;
+            if self.menu_open && self.menu == MenuId::MeasHold { self.close_menu(); }
+        }
+        self.studio.md.hold = None;
+        self.studio.sz.press = None;
+        self.studio.dock.press = None;
+        // the lift of the first finger is not a tap either
+        if self.touch.down { self.touch.held = true; }
+    }
+
     fn multi_touch(&mut self, id: i32, ph: Phase, x: i32, y: i32) {
+        if id == 1 && ph == Phase::Down { self.second_finger_down(); }
         if self.load_slot_ask {
             if id == 0 && ph == Phase::Up { self.load_slot_tap(x, y); }
             return;

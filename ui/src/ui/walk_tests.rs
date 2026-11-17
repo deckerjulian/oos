@@ -146,3 +146,185 @@ fn walk_list_classic() {
         u.close_menu();
     }
 }
+
+/// SIM mode behaves like a live acquisition: Run / Stop, Single, the trigger slope and level act on the simulated
+/// record, and its measurements have values. Prints what it sees; asserts the parts that must hold.
+#[test]
+fn sim_mode_runs_stops_and_triggers_like_live() {
+    for layout in [Layout::Studio, Layout::Minimal] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = layout;
+        u.relayout();
+        for _ in 0..8 { u.step(0.04); u.wait_sim_generation(); }
+        u.select_option(Item::SimPreset, "USB 2.0 HS");
+        u.activate(Item::SimPlay);
+        u.wait_sim_generation();
+        for _ in 0..30 { u.step(0.04); u.wait_sim_generation(); }
+        assert!(u.sim_mode() && u.record_mode(), "{layout:?}: SIM plays");
+        assert_eq!(u.m.run, RunState::Run, "{layout:?}: running after Play");
+        assert_eq!(u.m.status, TrigStatus::Triggered, "{layout:?}: triggered on the simulated signal");
+        let slot = u.m.sim_slot;
+        assert_eq!(u.m.trig_ref, Some(slot), "{layout:?}: the trigger source is the simulated ref");
+        // Run / Stop
+        u.key(key::RUNSTOP);
+        for _ in 0..4 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.m.run, RunState::Stop, "{layout:?}: Stop");
+        assert!(u.sim_mode(), "{layout:?}: Stop keeps the SIM session");
+        u.key(key::RUNSTOP);
+        for _ in 0..10 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.m.run, RunState::Run, "{layout:?}: Run again");
+        assert_eq!(u.m.status, TrigStatus::Triggered, "{layout:?}: triggered again");
+        // a level outside the signal in Normal mode waits; back inside it triggers
+        let level = u.m.trig_level;
+        u.m.trig_mode = TrigMode::Normal;
+        u.m.trig_level = 50.0;
+        for _ in 0..20 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.m.status, TrigStatus::Wait, "{layout:?}: no trigger at 50 V");
+        u.m.trig_level = level;
+        for _ in 0..20 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.m.status, TrigStatus::Triggered, "{layout:?}: triggers at the level again");
+        // the slope is a setting of the simulated trigger too
+        u.open_menu(MenuId::Trigger);
+        u.select_option(Item::TrigSlope, "Falling");
+        u.close_menu();
+        for _ in 0..20 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.value(Item::TrigSlope), "Falling");
+        assert_eq!(u.m.status, TrigStatus::Triggered, "{layout:?}: triggers on the falling edge");
+        // Single takes one record and stops
+        u.key(key::SINGLE);
+        for _ in 0..30 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.m.run, RunState::Stop, "{layout:?}: Single stops after its record");
+        assert!(u.sim_mode(), "{layout:?}: still the SIM session");
+        // measurements of the simulated ref have values
+        let rows = u.meas_rows();
+        assert!(rows.iter().any(|r| r.src == WaveId::Ref(slot)), "{layout:?}: measurements on the SIM source: {}", rows.len());
+        // Live returns, and adding a signal while live keeps the live acquisition
+        u.return_to_live();
+        for _ in 0..10 { u.step(0.04); u.wait_sim_generation(); }
+        assert!(!u.sim_mode() && !u.record_mode() && u.m.ch[0].on, "{layout:?}: Live");
+        let before = u.refs.iter().filter(|r| r.is_some()).count();
+        u.sim_add_next();
+        u.wait_sim_generation();
+        for _ in 0..6 { u.step(0.04); u.wait_sim_generation(); }
+        assert_eq!(u.refs.iter().filter(|r| r.is_some()).count(), before + 1, "{layout:?}: a SIM signal as one more ref while live");
+        assert!(!u.sim_mode() && u.m.ch[0].on && u.m.run == RunState::Run, "{layout:?}: the live acquisition goes on");
+    }
+}
+
+/// While live, the Reference sheet loads a file from storage into the chosen slot, through its list, and the live
+/// acquisition goes on. Minimal and Studio share the flow.
+#[test]
+fn a_file_loads_into_a_ref_while_live() {
+    for layout in [Layout::Studio, Layout::Minimal] {
+        let dir = std::env::temp_dir().join(format!("oos-walk-{}-{layout:?}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut csv = String::from("Time (s),Volts\n");
+        for i in 0..400 { csv.push_str(&format!("{:.12e},{}\n", i as f64 * 1e-9, if (i / 50) % 2 == 0 { 0.0 } else { 1.0 })); }
+        std::fs::write(dir.join("capture.csv"), csv).unwrap();
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = layout;
+        u.store_dir = dir.clone();
+        u.relayout();
+        for _ in 0..8 { u.step(0.04); }
+        u.open_menu(MenuId::Ref);
+        u.ref_sel = 2;
+        u.activate(Item::RefImport);
+        assert_eq!(u.menu, MenuId::Pick, "{layout:?}: the files of storage as a list");
+        assert_eq!(u.options(Item::RefImport), ["capture.csv"], "{layout:?}");
+        u.activate(Item::PickOpt(0));
+        for _ in 0..6 { u.step(0.04); }
+        let r = u.refs[2].as_ref().unwrap_or_else(|| panic!("{layout:?}: R3 is loaded: {:?}", u.toast));
+        assert!(r.on && r.v.len() == 400, "{layout:?}: shown, {} points", r.v.len());
+        assert!(!u.record_mode() && u.m.ch[0].on && u.m.run == RunState::Run, "{layout:?}: the live acquisition goes on");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Two fingers are a pinch, never a long press: resting them for longer than the hold time opens no menu, and the
+/// pinch that follows changes the time scale. One finger held still opens the context menu.
+#[test]
+fn two_fingers_never_open_the_hold_menu_and_one_finger_does() {
+    for layout in [Layout::Studio, Layout::Minimal] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = layout;
+        u.relayout();
+        for _ in 0..8 { u.step(0.04); }
+        let g = u.grid;
+        let (cx, cy) = (g.x + g.w / 2, g.y + g.h / 2);
+        let menu = |u: &Ui| u.workspace_popup_open() || u.studio.ctx.is_some() || u.menu_open;
+        // both fingers land and rest
+        u.handle(Ev::Touch { id: 0, phase: Phase::Down, x: cx - 60, y: cy });
+        for _ in 0..3 { u.step(0.04); }
+        u.handle(Ev::Touch { id: 1, phase: Phase::Down, x: cx + 60, y: cy });
+        for _ in 0..25 { u.step(0.04); }
+        assert!(!menu(&u), "{layout:?}: no menu while two fingers rest");
+        // then they spread: a pinch
+        let before = u.m.tscale;
+        for s in 1..=8 {
+            u.handle(Ev::Touch { id: 0, phase: Phase::Move, x: cx - 60 - 20 * s, y: cy });
+            u.handle(Ev::Touch { id: 1, phase: Phase::Move, x: cx + 60 + 20 * s, y: cy });
+            u.step(0.04);
+        }
+        u.handle(Ev::Touch { id: 1, phase: Phase::Up, x: cx + 220, y: cy });
+        u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: cx - 220, y: cy });
+        for _ in 0..3 { u.step(0.04); }
+        assert!(!menu(&u), "{layout:?}: no menu after the pinch");
+        assert!(u.m.tscale != before || u.m.zoom, "{layout:?}: the pinch zoomed the time axis ({} -> {})", before, u.m.tscale);
+        // the second finger arrives late, after the menu of the first finger's hold: the menu goes away
+        u.handle(Ev::Touch { id: 0, phase: Phase::Down, x: cx - 60, y: cy });
+        for _ in 0..20 { u.step(0.04); }
+        assert!(menu(&u), "{layout:?}: one finger held opens the context menu");
+        u.handle(Ev::Touch { id: 1, phase: Phase::Down, x: cx + 60, y: cy });
+        u.step(0.04);
+        assert!(!menu(&u), "{layout:?}: a second finger takes the menu away");
+        u.handle(Ev::Touch { id: 1, phase: Phase::Up, x: cx + 60, y: cy });
+        u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: cx - 60, y: cy });
+        for _ in 0..3 { u.step(0.04); }
+        assert!(!menu(&u), "{layout:?}: and the lift is not a tap");
+    }
+}
+
+#[test]
+#[ignore]
+fn walk_channel_taps() {
+    if std::env::var("OOS_WALK").is_err() { return; }
+    for layout in [Layout::Studio, Layout::Minimal] {
+        let mut u = fresh(layout);
+        u.m.run = RunState::Run;
+        let on = |u: &Ui| (0..4).map(|c| if u.m.ch[c].on { '1' } else { '0' }).collect::<String>();
+        let y = u.frame().bottom.y + u.frame().bottom.h / 2;
+        println!("== {layout:?} start on={} bottom y={y}", on(&u));
+        for x in (10..520).step_by(30) {
+            let mut v = fresh(layout);
+            v.m.ch[1].on = true; v.relayout(); v.step(0.04);
+            let b = on(&v);
+            tap(&mut v, x, y);
+            let menu = if v.menu_open { format!("menu {}", v.menu_title(v.menu)) } else { String::new() };
+            println!("   CH1+CH2 on, tap x={x}: on {b} -> {} {menu} popup={}", on(&v), v.workspace_popup_open());
+        }
+    }
+}
+
+/// Studio: the coloured badge of a channel pill switches the channel off, the rest of the pill opens its sheet, and
+/// the "+ CH" list switches it on again.
+#[test]
+fn the_badge_of_a_channel_pill_is_its_switch() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..8 { u.step(0.04); }
+    let b = u.studio_bottom();
+    let pill = b.ch[1];
+    assert!(pill.w >= 110, "{pill:?}");
+    // the body: the sheet, and the channel stays on
+    tap(&mut u, pill.right() - 30, pill.y + pill.h / 2);
+    assert!(u.menu_open && u.menu == MenuId::Channel(1) && u.m.ch[1].on);
+    u.close_menu();
+    // the badge: off, without a menu
+    tap(&mut u, pill.x + 24, pill.y + pill.h / 2);
+    assert!(!u.m.ch[1].on && !u.menu_open, "the badge switches CH2 off");
+    assert!(u.m.ch[0].on, "CH1 is not touched");
+    assert_eq!(u.studio_bottom().ch[1].w, 0, "its pill leaves the bar");
+}

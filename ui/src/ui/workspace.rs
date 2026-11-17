@@ -1044,6 +1044,17 @@ impl Ui {
     }
     /// Another hold took the finger: the plot gesture under it must not open its own menu too.
     pub(super) fn workspace_drop_gesture(&mut self) { self.workspace.gesture = None; }
+    #[cfg(test)]
+    pub(super) fn workspace_popup_open(&self) -> bool { self.workspace.popup.is_some() }
+    /// Turns a source on or off, as its row of the Sources menu does.
+    pub(super) fn source_toggle(&mut self, id: WaveId) { self.workspace_action(Action::Source(id)); }
+    /// Stops the hold of the plot gesture. True when it had already opened its menu, which is closed with it.
+    pub(super) fn workspace_cancel_hold(&mut self) -> bool {
+        let opened = self.workspace.gesture.is_some_and(|gesture| gesture.held);
+        if opened { self.workspace.popup = None; }
+        self.workspace.gesture = None;
+        opened
+    }
     pub(super) fn workspace_hold_tick(&mut self) {
         let Some(mut gesture) = self.workspace.gesture else { return };
         if gesture.moved || gesture.held || self.now - gesture.at < HOLD { return; }
