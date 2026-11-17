@@ -13,7 +13,9 @@
 #   owner    pending for every pull request with the label `hold`, which the maintainer sets to stop one. Else: it
 #            is the maintainer's own or the development agent's, or Dependabot's and changes nothing but the
 #            commits of actions, or the maintainer has approved its newest commit.
-#   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
+#   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested` (after a run on a
+#            unit), or the programs for the scope built from it are byte-identical to its base's: CI's job `scope`
+#            passed and kept no artifact `scope-binaries-differ`; not when it touches the image (ADR 0041)
 #   review   GitHub Copilot has reviewed it, once per pull request (ADR 0039), and left no open issue, or every
 #            thread it opened is resolved; pending until then, and for a draft. When the review was of an earlier
 #            commit, the status says so: what came after it was not read by Copilot.
@@ -37,6 +39,25 @@ hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|root
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
 dry=0
 
+# the run of CI for the commit $sha, asked for once: the conclusion of one of its jobs, and how many artifacts of a name
+# it kept (1 when that cannot be read)
+run=
+ci_run() {
+	[ -n "$run" ] || run=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request&per_page=20" \
+		--jq '[.workflow_runs[] | select(.name == "CI")] | first | .id // empty' 2>/dev/null || true)
+	[ -n "$run" ]
+}
+ci_job() {
+	ci_run || return 0
+	gh api "repos/$repo/actions/runs/$run/jobs?per_page=100" \
+		--jq "[.jobs[] | select(.name == \"$1\")] | first | .conclusion // empty" 2>/dev/null || true
+}
+ci_kept() {
+	ci_run || { echo 1; return 0; }
+	gh api "repos/$repo/actions/runs/$run/artifacts" \
+		--jq "[.artifacts[] | select(.name == \"$1\")] | length" 2>/dev/null || echo 1
+}
+
 status() { # status SHA CONTEXT STATE TEXT
 	if [ $dry = 1 ]; then
 		printf '%-7s %-8s %s\n' "$2" "$3" "$4"
@@ -47,6 +68,7 @@ status() { # status SHA CONTEXT STATE TEXT
 
 one() {
 	n=$1
+	run=
 	pr=$(gh api "repos/$repo/pulls/$n")
 	sha=$(printf '%s' "$pr" | jq -r .head.sha)
 	author=$(printf '%s' "$pr" | jq -r .user.login)
@@ -78,14 +100,8 @@ one() {
 			quick="documents only"
 		elif printf '%s' "$pr" | jq -r '.body // ""' | tr -d '\r' | grep -Eiq '^\**Behaviou?r:\** *unchanged'; then
 			# the run of CI for this commit: its job compare passed, and kept nothing because nothing differed
-			run=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request&per_page=20" \
-				--jq '[.workflow_runs[] | select(.name == "CI")] | first | .id // empty' 2>/dev/null || true)
-			if [ -n "$run" ]; then
-				passed=$(gh api "repos/$repo/actions/runs/$run/jobs?per_page=100" \
-					--jq '[.jobs[] | select(.name == "compare")] | first | .conclusion // empty' 2>/dev/null || true)
-				kept=$(gh api "repos/$repo/actions/runs/$run/artifacts" \
-					--jq '[.artifacts[] | select(.name == "compare-base")] | length' 2>/dev/null || echo 1)
-				[ "$passed" != success ] || [ "$kept" != 0 ] || quick="behaviour unchanged, the comparison found nothing"
+			if [ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ]; then
+				quick="behaviour unchanged, the comparison found nothing"
 			fi
 		fi
 	fi
@@ -156,7 +172,14 @@ one() {
 	if printf '%s\n' "$files" | grep -Eq "$hardware"; then
 		case " $labels " in
 		*" unit-tested "*) status "$sha" unit success "tried on a unit (label unit-tested)" ;;
-		*) status "$sha" unit pending "changes what is only proven on a scope: needs the label unit-tested" ;;
+		*)
+			if ! printf '%s\n' "$files" | grep -Eq '^(boot|kernel|rootfs)/' &&
+				[ "$(ci_job scope)" = success ] && [ "$(ci_kept scope-binaries-differ)" = 0 ]; then
+				status "$sha" unit success "the programs for the scope are byte-identical to the base's (job scope)"
+			else
+				status "$sha" unit pending "changes what is only proven on a scope: the label unit-tested after a run on a unit"
+			fi
+			;;
 		esac
 	else
 		status "$sha" unit success "nothing that needs a scope"

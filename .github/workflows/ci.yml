@@ -31,6 +31,7 @@ jobs:
     outputs:
       matrix: ${{ steps.what.outputs.matrix }}
       compare: ${{ steps.what.outputs.compare }}
+      scope: ${{ steps.what.outputs.scope }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -233,3 +234,38 @@ jobs:
           else
             echo "nothing differs"
           fi
+  # Whether the programs that run on the scope change at all (ADR 0041): oos-ui, oos-fpgad and oos-update, built
+  # from the pull request and from its base in this one folder, compared byte for byte. Equal programs let the status
+  # `unit` pass without a run on a unit (tools/pr-gate.sh); a pull request whose programs differ keeps the artifact
+  # `scope-binaries-differ`, and needs the run. Only for a pull request that touches a path of a crate that a unit
+  # proves, and nothing of the image. Like `compare`, it reports and does not fail for a difference.
+  scope:
+    needs: files
+    if: github.event_name == 'pull_request' && needs.files.outputs.scope == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the pull request merged into its base: the first parent of that commit is the base
+          fetch-depth: 2
+          persist-credentials: false
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-unknown-linux-musl
+      - name: The programs for the scope against the base (tools/scope-binaries.sh)
+        id: scope
+        run: |
+          rc=0
+          tools/scope-binaries.sh HEAD^1 > /tmp/scope.txt || rc=$?
+          cat /tmp/scope.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "differs=$rc" >> "$GITHUB_OUTPUT"
+          [ "$rc" -le 1 ]
+      - name: Keep the sign that they differ
+        if: steps.scope.outputs.differs == '1'
+        run: echo "the programs for the scope differ from the base's" > /tmp/scope-binaries-differ.txt
+      - if: steps.scope.outputs.differs == '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scope-binaries-differ
+          path: /tmp/scope-binaries-differ.txt

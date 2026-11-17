@@ -7,6 +7,10 @@
 #   matrix=[{"name": ..., "layers": ..., "cache": ...}, ...]   the entries of CI's job `check`: parts of
 #                                                tools/check.sh, and the name of the build cache each one uses
 #   compare=true|false                           whether the job `compare` runs
+#   scope=true|false                             whether the job `scope` runs: the change touches a path that is
+#                                                only proven on a unit inside a crate, and nothing of the image
+#                                                (boot/, kernel/, rootfs/), so equal programs can stand for a run on
+#                                                a unit (tools/scope-binaries.sh, ADR 0041)
 #
 #   git diff --name-only BASE...HEAD | tools/ci-parts.sh
 #   tools/ci-parts.sh --all                      every part (a push to main, the weekly run)
@@ -23,10 +27,16 @@ case ${1:-} in
 '') ;;
 *) echo "usage: $0 [--all] < changed-file-names" >&2; exit 2 ;;
 esac
-hal=0 haltests=0 dsp=0 ui=0 fpgad=0 rust=0 compare=0
+hal=0 haltests=0 dsp=0 ui=0 fpgad=0 rust=0 compare=0 unitpath=0 image=0
 [ $all = 0 ] || { hal=1 dsp=1 ui=1 fpgad=1; }
 if [ $all = 0 ]; then
 	while IFS= read -r f; do
+		case $f in
+		'') ;;
+		# the paths of tools/pr-gate.sh that only a unit proves: inside a crate, or in the image
+		hal/src/dho/* | hal/src/update/* | ui/src/board/* | fpgad/*) unitpath=1 ;;
+		boot/* | kernel/* | rootfs/*) image=1 ;;
+		esac
 		case $f in
 		'') ;;
 		.github/workflows/ci.yml | tools/check.sh | tools/ci-parts.sh | rustfmt.toml | ui/tools/decoder-features.sh)
@@ -69,3 +79,4 @@ if [ $ui = 1 ]; then
 fi
 echo "matrix=[$entries]"
 [ $compare = 1 ] && echo compare=true || echo compare=false
+[ $unitpath = 1 ] && [ $image = 0 ] && echo scope=true || echo scope=false

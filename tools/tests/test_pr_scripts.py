@@ -81,15 +81,18 @@ class PullRequests(unittest.TestCase):
         name("graphql_datareposito").write_text(json.dumps(
             {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": threads}}}}}))
 
-    def ci(self, compare="success", kept=False):
-        """The run of CI for the commit abc: the conclusion of its job compare, and whether it kept what differed."""
+    def ci(self, compare="success", kept=False, scope=None, differs=False):
+        """The run of CI for the commit abc: the conclusions of its jobs compare and scope (None: did not run), and
+        whether they kept what differed."""
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
         name("repos/owner/oos/actions/runs?head_sha=abc&event=pull_request&per_page=20").write_text(json.dumps(
             {"workflow_runs": [{"id": 5, "name": "Gate"}, {"id": 9, "name": "CI"}]}))
         name("repos/owner/oos/actions/runs/9/jobs?per_page=100").write_text(json.dumps(
-            {"jobs": [{"name": "test", "conclusion": "success"}, {"name": "compare", "conclusion": compare}]}))
+            {"jobs": [{"name": "test", "conclusion": "success"}, {"name": "compare", "conclusion": compare},
+                      {"name": "scope", "conclusion": scope or "skipped"}]}))
         name("repos/owner/oos/actions/runs/9/artifacts").write_text(json.dumps(
-            {"artifacts": [{"name": "compare-base"}] if kept else []}))
+            {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs))
+                           if keep]}))
 
     def run_tool(self, tool):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
@@ -226,6 +229,20 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "success")
         self.pull(["ui/src/ui.rs", "hal/src/fsutil.rs", "docs/boot.md"])
         self.assertEqual(self.gate()["unit"], "success")
+
+    def test_equal_programs_for_the_scope(self):
+        self.pull(["hal/src/dho/seq.rs", "fpgad/Cargo.toml"])
+        self.ci(scope="success")
+        self.assertEqual(self.gate()["unit"], "success", "the programs for the scope are byte-identical")
+        self.ci(scope="success", differs=True)
+        self.assertEqual(self.gate()["unit"], "pending", "they differ: a run on a unit")
+        self.ci(scope="failure")
+        self.assertEqual(self.gate()["unit"], "pending", "the comparison could not be made")
+        self.ci()
+        self.assertEqual(self.gate()["unit"], "pending", "the job did not run")
+        self.pull(["hal/src/dho/seq.rs", "rootfs/init"])
+        self.ci(scope="success")
+        self.assertEqual(self.gate()["unit"], "pending", "the image is not in the programs")
 
     def test_labels(self):
         self.pull(["hal/src/dho/seq.rs", "docs/protocols/trigger.md", "tools/check.sh"], title="Trigger: something")
