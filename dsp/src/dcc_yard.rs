@@ -7,20 +7,15 @@
 //! Contributed by Arjen Halma (pull request #3). Checked against generated packets only, not yet against a track.
 
 /// Rail / command-station status derived from packets on the bus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TrackStatus {
     /// No valid DCC packets seen yet
+    #[default]
     Off,
     /// Idle or normal traffic; track is live
     Active,
     /// Emergency stop (broadcast or loco e-stop)
     Estop,
-}
-
-impl Default for TrackStatus {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 impl TrackStatus {
@@ -138,9 +133,9 @@ impl Yard {
                 let a = y.locos[i].addr;
                 y = y.apply_loco(a, data, true);
             }
-            if !estop && matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) {
-                y.status = TrackStatus::Active;
-            } else if !estop && y.status != TrackStatus::Estop {
+            if !estop
+                && (matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) || y.status != TrackStatus::Estop)
+            {
                 y.status = TrackStatus::Active;
             }
             return y;

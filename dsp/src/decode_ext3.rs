@@ -1091,7 +1091,7 @@ pub mod gen {
     pub fn dcc_bits(frames: &[DccFrame]) -> Vec<bool> {
         let mut bits = Vec::new();
         for f in frames {
-            bits.extend(std::iter::repeat(true).take(f.preamble.max(10) as usize));
+            bits.extend(std::iter::repeat_n(true, f.preamble.max(10) as usize));
             let mut bytes = vec![f.address];
             bytes.extend_from_slice(&f.data);
             let x = f.xor.unwrap_or_else(|| dcc_xor(&bytes));

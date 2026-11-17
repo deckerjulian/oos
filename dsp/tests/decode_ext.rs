@@ -565,7 +565,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
     let d64: Vec<u8> = (0..64).map(|i| if i < 16 { 0xff } else if i < 32 { 0x00 } else { r() as u8 }).collect();
     let frames = [
         fd(0x123, false, true, d8.clone()),
-        fd(0x1234_567, true, true, d20.clone()),
+        fd(0x0123_4567, true, true, d20.clone()),
         fd(0x7ff, false, true, d64.clone()),
         FdFrame { id: 0x055, ext: false, fd: true, brs: false, esi: true, data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
         FdFrame { id: 0x0f0, ext: false, fd: false, brs: false, esi: false, data: vec![0xde, 0xad] },
@@ -580,7 +580,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
     let mut v = l.sample(dt, 20.0 / nom);
     add_noise(&mut v, 0.1, 21);
     let p = can_fd(&v, dt, nom, dat, 1.65, 0.3, false);
-    assert_eq!(ids(&p), vec![(0x123, false, false), (0x1234_567, true, false), (0x7ff, false, false), (0x055, false, false), (0x0f0, false, false), (0x1fff_ffff, true, false), (0, false, false), (0x100, false, false)]);
+    assert_eq!(ids(&p), vec![(0x123, false, false), (0x0123_4567, true, false), (0x7ff, false, false), (0x055, false, false), (0x0f0, false, false), (0x1fff_ffff, true, false), (0, false, false), (0x100, false, false)]);
     assert_eq!(vals(&p, "DLC"), [8, 11, 15, 9, 2, 8, 0, 2]);
     let mut want: Vec<u32> = Vec::new();
     for d in [&d8, &d20, &d64] {
@@ -788,7 +788,7 @@ fn noise_and_garbage_never_panic() {
         while v.len() < n {
             let lvl = (r() % 1000) as f32 / 1000.0 * 4.0 - 0.5;
             let len = 1 + (r() % [3, 30, 300, 3000][round % 4]) as usize;
-            v.extend(std::iter::repeat(lvl).take(len));
+            v.extend(std::iter::repeat_n(lvl, len));
         }
         v.truncate(n);
         add_noise(&mut v, 0.3, round as u64 + 1);

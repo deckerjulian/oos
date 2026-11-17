@@ -316,7 +316,7 @@ pub struct Jitter {
 
 /// Inverse of the standard normal CDF (Acklam's rational approximation, relative error < 1.2e-9).
 pub fn norm_inv(p: f64) -> f64 {
-    const A: [f64; 6] = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.383577518672690e2, -3.066479806614716e1, 2.506628277459239];
+    const A: [f64; 6] = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1, 2.506628277459239];
     const B: [f64; 5] = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
     const C: [f64; 6] = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
     const D: [f64; 4] = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
@@ -602,6 +602,8 @@ pub fn bathtub(s: &[f64], j: &Jitter, period: f64, points: usize) -> Bathtub {
         if modelled {
             // the right tail of the left crossing, the left tail of the right crossing
             let p = beyond(t - j.right.0, j.right.1) + beyond(j.left.0 + period - t, j.left.1);
+            // min/max maps NaN to 1.0; clamp would propagate it and change the model.
+            #[allow(clippy::manual_clamp)]
             b.model.push((p.min(1.0).max(1e-300).log10() as f32).max(BATHTUB_FLOOR));
         }
     }
