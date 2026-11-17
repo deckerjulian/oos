@@ -892,3 +892,19 @@ impl Ui {
         }
     }
 }
+
+/// `s` centred in `r` in the first of `fonts` that fits; a text too long for the last one goes on two lines of it.
+fn fitted_text(cv: &mut Canvas, fonts: &[&'static Font], r: Rect, s: &str, c: Rgb) {
+    let room = r.w - 12;
+    let f = fit_font(fonts, room, s);
+    if f.width(s) <= room {
+        return cv.text_in(f, r, 1, s, c);
+    }
+    let words: Vec<&str> = s.split(' ').collect();
+    let first = (1..words.len()).rev().find(|&k| f.width(&words[..k].join(" ")) <= room).unwrap_or(1);
+    let (a, b) = (words[..first].join(" "), words[first..].join(" "));
+    cv.set_clip(r);
+    cv.text_in(f, Rect::new(r.x, r.y, r.w, r.h / 2 + 1), 1, &a, c);
+    cv.text_in(f, Rect::new(r.x, r.y + r.h / 2 - 1, r.w, r.h / 2 + 1), 1, &b, c);
+    cv.no_clip();
+}

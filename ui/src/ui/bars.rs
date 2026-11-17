@@ -661,3 +661,30 @@ impl Ui {
         m
     }
 }
+
+fn draw_slope(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
+    draw_slope1(cv, x, y, s, col);
+    draw_slope1(cv, x + 1, y, s, col);
+}
+
+fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
+    // 14 x 16 icon: rising / falling edge
+    let (x0, x1, x2, x3) = (x, x + 5, x + 9, x + 14);
+    let (ylo, yhi) = (y + 14, y + 2);
+    match s {
+        Slope::Rise => {
+            cv.hline(x0, x1, ylo, col);
+            cv.line(x1, ylo, x2, yhi, col);
+            cv.hline(x2, x3, yhi, col);
+        }
+        Slope::Fall => {
+            cv.hline(x0, x1, yhi, col);
+            cv.line(x1, yhi, x2, ylo, col);
+            cv.hline(x2, x3, ylo, col);
+        }
+        Slope::Either => {
+            cv.line(x0, ylo, x0 + 6, yhi, col);
+            cv.line(x0 + 7, yhi, x3, ylo, col);
+        }
+    }
+}
