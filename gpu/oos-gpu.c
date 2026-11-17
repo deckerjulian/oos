@@ -273,9 +273,12 @@ static const char *FS_LAYER = "#version 300 es\n"
  * (a monitor) the GPU's own filter mixes the four nearest indices, one fetch for all channels, and the LUT comes after
  * the mixing, so a thin trace keeps its brightness; unstretched (the panel) the texel is taken as it is, which gives
  * the CPU's pixels. Mixing the counts in the shader instead took 16 fetches of integer textures per pixel: 36 to
- * 41 ms for the traces of a 1920x1080 monitor, against 5 ms of the panel. */
+ * 41 ms for the traces of a 1920x1080 monitor, against 5 ms of the panel.
+ * The shaders that compute with counts declare `highp int`: in a fragment shader an int is `mediump` unless said
+ * otherwise, which a driver may keep in 16 bits (Mesa 26 does), and a count from 32768 up then turned negative: the
+ * densest pixels of a colour grade were left out. */
 static const char *FS_INDEX = "#version 300 es\n"
-			      "precision highp float; precision highp usampler2D;\n"
+			      "precision highp float; precision highp int; precision highp usampler2D;\n"
 			      "uniform usampler2D m0, m1, m2, m3; uniform ivec4 on; uniform ivec4 shift;\n"
 			      "out vec4 o;\n"
 			      "float e(usampler2D m, int c){ uint v = texelFetch(m, ivec2(gl_FragCoord.xy), 0).r;"
@@ -283,7 +286,7 @@ static const char *FS_INDEX = "#version 300 es\n"
 			      "void main(){ o = vec4(on.x == 1 ? e(m0, 0) : 0.0, on.y == 1 ? e(m1, 1) : 0.0,"
 			      " on.z == 1 ? e(m2, 2) : 0.0, on.w == 1 ? e(m3, 3) : 0.0); }\n";
 static const char *FS_TRACE = "#version 300 es\n"
-			      "precision highp float;\n"
+			      "precision highp float; precision highp int;\n"
 			      "uniform sampler2D under; uniform vec4 jl; uniform vec2 lsz; uniform highp sampler2D ix; uniform highp sampler2D lut;\n"
 			      "uniform vec3 col[4]; uniform vec2 msz; uniform int lin;\n"
 			      "in vec2 px; out vec4 o;\n"
@@ -297,7 +300,7 @@ static const char *FS_TRACE = "#version 300 es\n"
 /* Colour grade the same way: first, at the size of the maps, the sum of the shown maps as the index into the colour
  * LUT plus 1, then in the target that index's colour, opaque, where it is not empty. */
 static const char *FS_GRADE_PRE = "#version 300 es\n"
-				  "precision highp float; precision highp usampler2D;\n"
+				  "precision highp float; precision highp int; precision highp usampler2D;\n"
 				  "uniform usampler2D m0, m1, m2, m3; uniform int n; uniform int shift;\n"
 				  "out vec4 o;\n"
 				  "void main(){ ivec2 c = ivec2(gl_FragCoord.xy); uint s = texelFetch(m0, c, 0).r;"
@@ -305,7 +308,7 @@ static const char *FS_GRADE_PRE = "#version 300 es\n"
 				  " if (n > 3) s += texelFetch(m3, c, 0).r;"
 				  " o = vec4(s == 0u ? 0.0 : float(min(int(s) >> shift, 1023) + 1), 0.0, 0.0, 0.0); }\n";
 static const char *FS_GRADE = "#version 300 es\n"
-			      "precision highp float;\n"
+			      "precision highp float; precision highp int;\n"
 			      "uniform highp sampler2D ix; uniform highp sampler2D lut; uniform vec2 msz; uniform int lin;\n"
 			      "in vec2 px; out vec4 o;\n"
 			      "void main(){ float e = lin == 1 ? texture(ix, px).r : texelFetch(ix, clamp(ivec2(px * msz), ivec2(0), ivec2(msz) - 1), 0).r;"
