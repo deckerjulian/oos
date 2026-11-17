@@ -92,7 +92,7 @@ fn read_waveform(path: &std::path::Path) -> Parsed {
 }
 
 pub fn waveform(owner: *mut std::ffi::c_void, slot: usize) -> Result<Option<PathBuf>, String> {
-    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx)\0*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
+    let filter: Vec<u16> = "Waveforms (*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx;*.pwwf;*.tkwf)\0*.csv;*.bin;*.wfm;*.trc;*.isf;*.tr0;*.wfmx;*.pwwf;*.tkwf\0All files (*.*)\0*.*\0\0".encode_utf16().collect();
     let title: Vec<u16> = format!("Open waveform into R{}\0", slot + 1).encode_utf16().collect();
     let mut name = vec![0u16; 32_768];
     let mut options = OPENFILENAMEW {
