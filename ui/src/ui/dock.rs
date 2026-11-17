@@ -29,6 +29,8 @@ const WAVE_MIN_W: i32 = 300;
 const WAVE_MIN_H: i32 = 210;
 /// A drag starts when the finger has moved this far.
 const DRAG_PX: i32 = 12;
+/// Two taps on a strip this close (seconds) are a double tap.
+const DOUBLE_TAP: f64 = 0.45;
 /// Smallest floating panel, and the resize grip in its corner.
 const FLOAT_MIN_W: i32 = 220;
 const FLOAT_MIN_H: i32 = 170;
@@ -37,6 +39,9 @@ const GRIP: i32 = 44;
 const EDGE: i32 = 20;
 /// Least height of the overview strip: the zoom box and its handles.
 const OV_MIN: i32 = 40;
+/// The strip of a tab group: the room of the handle and the buttons, and a tab at least this wide.
+const TABS_FIXED_W: i32 = 130;
+pub(super) const TAB_W: i32 = 30;
 const E_L: u8 = 1;
 const E_R: u8 = 2;
 const E_B: u8 = 4;
@@ -87,6 +92,8 @@ pub(super) enum Node {
     Leaf(VKind),
     /// `ratio` is the share of the room the first child takes
     Split { dir: Dir, ratio: f32, a: Box<Node>, b: Box<Node> },
+    /// several views in one place, as tabs: `active` is the one shown (a group has two views at least)
+    Tabs { kinds: Vec<VKind>, active: usize },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -99,11 +106,45 @@ pub(super) enum Side {
 
 impl Node {
     pub(super) fn contains(&self, k: VKind) -> bool {
-        match self { Node::Leaf(l) => *l == k, Node::Split { a, b, .. } => a.contains(k) || b.contains(k) }
+        match self { Node::Leaf(l) => *l == k, Node::Split { a, b, .. } => a.contains(k) || b.contains(k), Node::Tabs { kinds, .. } => kinds.contains(&k) }
     }
 
+    /// Every view of the tree, the hidden tabs too.
     pub(super) fn leaves(&self, out: &mut Vec<VKind>) {
-        match self { Node::Leaf(k) => out.push(*k), Node::Split { a, b, .. } => { a.leaves(out); b.leaves(out); } }
+        match self { Node::Leaf(k) => out.push(*k), Node::Split { a, b, .. } => { a.leaves(out); b.leaves(out); } Node::Tabs { kinds, .. } => out.extend(kinds.iter().copied()) }
+    }
+
+    /// The tabs: a group of one view is that view, and an empty group is nothing.
+    pub(super) fn tabs_of(kinds: Vec<VKind>, active: VKind) -> Option<Node> {
+        match kinds.len() {
+            0 => None,
+            1 => Some(Node::Leaf(kinds[0])),
+            _ => { let a = kinds.iter().position(|k| *k == active).unwrap_or(0); Some(Node::Tabs { kinds, active: a }) }
+        }
+    }
+
+    /// The tab of `k` comes to the front, wherever the group is. False when `k` is in no group.
+    pub(super) fn activate(&mut self, k: VKind) -> bool {
+        match self {
+            Node::Leaf(_) => false,
+            Node::Split { a, b, .. } => a.activate(k) || b.activate(k),
+            Node::Tabs { kinds, active } => match kinds.iter().position(|x| *x == k) { Some(i) => { *active = i; true } None => false },
+        }
+    }
+
+    /// The tree with `kind` in the group of `at` (a group is made of a lone view).
+    pub(super) fn joined(&self, at: VKind, kind: VKind) -> Node {
+        match self {
+            Node::Leaf(l) if *l == at => Node::Tabs { kinds: vec![at, kind], active: 1 },
+            Node::Leaf(_) => self.clone(),
+            Node::Split { dir, ratio, a, b } => Node::Split { dir: *dir, ratio: *ratio, a: Box::new(a.joined(at, kind)), b: Box::new(b.joined(at, kind)) },
+            Node::Tabs { kinds, .. } if kinds.contains(&at) && !kinds.contains(&kind) => {
+                let mut k = kinds.clone();
+                k.push(kind);
+                Node::Tabs { active: k.len() - 1, kinds: k }
+            }
+            Node::Tabs { .. } => self.clone(),
+        }
     }
 
     /// The tree without `k`: the sibling takes the place of the split that held it. None when nothing is left.
@@ -115,14 +156,24 @@ impl Node {
                 (Some(n), None) | (None, Some(n)) => Some(n),
                 (None, None) => None,
             },
+            Node::Tabs { kinds, active } => {
+                let front = kinds[(*active).min(kinds.len() - 1)];
+                Self::tabs_of(kinds.iter().copied().filter(|x| *x != k).collect(), front)
+            }
         }
     }
 
-    /// The tree with the leaf of `at` replaced by `with`.
+    /// The tree with the leaf of `at` replaced by `with`. A view in a group: a lone view takes its tab, a bigger
+    /// arrangement takes the place of the whole group.
     pub(super) fn replace(&self, at: VKind, with: &Node) -> Node {
         match self {
             Node::Leaf(l) if *l == at => with.clone(),
             Node::Leaf(_) => self.clone(),
+            Node::Tabs { kinds, active } if kinds.contains(&at) => match with {
+                Node::Leaf(x) => Node::Tabs { kinds: kinds.iter().map(|k| if *k == at { *x } else { *k }).collect(), active: *active },
+                _ => with.replace(at, self),
+            },
+            Node::Tabs { .. } => self.clone(),
             Node::Split { dir, ratio, a, b } => Node::Split { dir: *dir, ratio: *ratio, a: Box::new(a.replace(at, with)), b: Box::new(b.replace(at, with)) },
         }
     }
@@ -133,6 +184,7 @@ impl Node {
             Node::Leaf(l) if *l == k => Node::Leaf(other),
             Node::Leaf(l) if *l == other => Node::Leaf(k),
             Node::Leaf(_) => self.clone(),
+            Node::Tabs { kinds, active } => Node::Tabs { kinds: kinds.iter().map(|x| if *x == k { other } else if *x == other { k } else { *x }).collect(), active: *active },
             Node::Split { dir, ratio, a, b } => {
                 // two views side by side trade their sizes with their places
                 let pair = matches!((&**a, &**b), (Node::Leaf(x), Node::Leaf(y)) if (*x == k && *y == other) || (*x == other && *y == k));
@@ -157,6 +209,11 @@ impl Node {
     fn min_along(&self, dir: Dir) -> i32 {
         match self {
             Node::Leaf(k) => if dir == Dir::H { k.min_w() } else { k.min_h() },
+            Node::Tabs { kinds, .. } => {
+                let m = kinds.iter().map(|k| if dir == Dir::H { k.min_w() } else { k.min_h() }).max().unwrap_or(0);
+                // the strip has the room of its buttons and a tab each
+                if dir == Dir::H { m.max(TABS_FIXED_W + TAB_W * kinds.len() as i32) } else { m }
+            }
             Node::Split { dir: d, a, b, .. } => {
                 let (x, y) = (a.min_along(dir), b.min_along(dir));
                 if *d == dir { x + GAP + y } else { x.max(y) }
@@ -170,6 +227,7 @@ impl Node {
     pub(super) fn text(&self) -> String {
         match self {
             Node::Leaf(k) => k.ch().to_string(),
+            Node::Tabs { kinds, active } => format!("G{}({})", active, kinds.iter().map(|k| k.ch()).collect::<String>()),
             Node::Split { dir, ratio, a, b } => format!("{}{:.3}({},{})", if *dir == Dir::H { 'H' } else { 'V' }, ratio, a.text(), b.text()),
         }
     }
@@ -190,6 +248,18 @@ impl Node {
         let c = *b.get(*i)?;
         *i += 1;
         if let Some(k) = VKind::from_ch(c) { return Some(Node::Leaf(k)); }
+        if c == 'G' {
+            let start = *i;
+            while b.get(*i).is_some_and(|c| c.is_ascii_digit()) { *i += 1; }
+            let active: usize = b[start..*i].iter().collect::<String>().parse().ok()?;
+            if *b.get(*i)? != '(' { return None; }
+            *i += 1;
+            let mut kinds = Vec::new();
+            while let Some(k) = b.get(*i).copied().and_then(VKind::from_ch) { kinds.push(k); *i += 1; }
+            if *b.get(*i)? != ')' { return None; }
+            *i += 1;
+            return (kinds.len() >= 2 && active < kinds.len()).then_some(Node::Tabs { kinds, active });
+        }
         let dir = match c { 'H' => Dir::H, 'V' => Dir::V, _ => return None };
         let start = *i;
         while b.get(*i).is_some_and(|c| c.is_ascii_digit() || *c == '.') { *i += 1; }
@@ -207,12 +277,27 @@ impl Node {
     }
 }
 
+/// What the button left of the X of a strip does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Extra {
+    /// the measurements alone fill the area
+    Expand,
+    /// every view in tabs of one group, this one in front
+    Maximise,
+    /// back from the measurements alone
+    RestoreOnly,
+    /// back from one group of tabs
+    RestoreTabs,
+    /// the eye leaves the whole plot for a pane beside it
+    RestoreEye,
+}
+
 /// What a press on a title strip may become.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum Press {
     /// the strip itself: a drag or a long press moves the view; a lift without either does nothing
     Strip { kind: VKind, x0: i32, y0: i32, x: i32, y: i32, t0: f64, grab: (i32, i32), free: bool },
-    /// the X, or the extra button of a strip (Measurements: maximize); acts on the lift
+    /// the X, or the extra button of a strip (maximize, or restore from it); acts on the lift
     Button { kind: VKind, close: bool },
     /// the List / Detailed switch of the measurements panel
     View { kind: VKind },
@@ -238,6 +323,8 @@ pub(super) enum Drop {
     Swap(VKind),
     Split(VKind, Side),
     Float(Rect),
+    /// into the tabs of that view
+    Tab(VKind),
 }
 
 #[derive(Default)]
@@ -255,7 +342,24 @@ pub(super) struct Dock {
     pub synced: Option<u32>,
     pub press: Option<Press>,
     pub drag: Option<DockDrag>,
+    /// the list of tabs that did not fit is open under the strip of this view
+    pub tab_list: Option<VKind>,
+    /// the arrangement before the views were put in tabs to fill the area (the way back of the restore button)
+    pub restore: Option<Saved>,
+    /// the views that were on at the last frame: one that comes back is brought to the front of its tabs
+    pub seen: Option<u16>,
+    /// the last tap on a strip: a second one on the same view is a double tap
+    pub last_tap: Option<(f64, VKind)>,
     pub cache: std::cell::RefCell<Option<(DockKey, Rc<DockLayout>)>>,
+}
+
+/// The arrangement kept while the views are tabs of one group.
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct Saved {
+    pub tree: Option<Node>,
+    pub floats: [bool; NK],
+    /// the measurements were floating (they follow the View menu)
+    pub meas_floating: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -281,11 +385,21 @@ pub(super) struct Divider {
     pub hi: i32,
 }
 
+/// Views in one place as tabs: the rectangle they share, their order and the one in front.
+#[derive(Clone, Debug)]
+pub(super) struct TabGroup {
+    pub rect: Rect,
+    pub kinds: Vec<VKind>,
+    pub active: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct DockLayout {
     pub region: Rect,
+    /// the views that are drawn: one per place (the tab in front for a group)
     pub leaves: Vec<(VKind, Rect)>,
     pub dividers: Vec<Divider>,
+    pub tabs: Vec<TabGroup>,
 }
 
 impl Default for Rect {
@@ -295,6 +409,11 @@ impl Default for Rect {
 fn lay(n: &Node, r: Rect, path: &mut Vec<bool>, out: &mut DockLayout) {
     match n {
         Node::Leaf(k) => out.leaves.push((*k, r)),
+        Node::Tabs { kinds, active } => {
+            let i = (*active).min(kinds.len() - 1);
+            out.leaves.push((kinds[i], r));
+            out.tabs.push(TabGroup { rect: r, kinds: kinds.clone(), active: i });
+        }
         Node::Split { dir, ratio, a, b } => {
             let total = if *dir == Dir::H { r.w } else { r.h };
             let avail = (total - GAP).max(2);
@@ -404,14 +523,27 @@ impl Ui {
         }
     }
 
-    pub(super) fn dock_floating(&self, k: VKind) -> bool {
+    pub(super) fn dock_floating(&self, k: VKind) -> bool { self.dock_raw_floating(k) && self.dock_forced() != Some(k) }
+
+    fn dock_raw_floating(&self, k: VKind) -> bool {
         if k == VKind::Measure {
             return self.studio.view == StudioView::Floating || (self.studio.view == StudioView::Offline && self.studio.dock.float_on[k.idx()]);
         }
         self.studio.dock.float_on[k.idx()]
     }
 
-    /// The views that are on and docked (in a split).
+    /// The view that is docked although it floats: when every view on the screen floats the dock would be an empty
+    /// frame with a copy of the waveform over it. The waveform (else the first view) goes back in the dock.
+    pub(super) fn dock_forced(&self) -> Option<VKind> {
+        if self.studio.view == StudioView::Only { return None; }
+        let mut shown = KINDS.into_iter().filter(|k| self.dock_shown(*k)).peekable();
+        shown.peek()?;
+        let all: Vec<VKind> = shown.collect();
+        if all.iter().any(|k| !self.dock_raw_floating(*k)) { return None; }
+        Some(if all.contains(&VKind::Wave) { VKind::Wave } else { all[0] })
+    }
+
+    /// The views that are on and docked (in a split or a group of tabs).
     pub(super) fn dock_docked_count(&self) -> usize { KINDS.into_iter().filter(|k| self.dock_docked(*k)).count() }
 
     /// May this view float: not when it is the last one docked, so the tree is never empty.
@@ -543,14 +675,212 @@ impl Ui {
 
     /// The waveform's rectangle, strip included. The table of the measurements alone has none: the whole room.
     pub(super) fn dock_wave_rect(&self) -> Rect {
-        self.dock_rect(VKind::Wave).unwrap_or_else(|| self.dock_region())
+        let region = self.dock_region();
+        // a tab behind another: the waveform is not on the screen, its place is beside it (nothing there takes a touch)
+        if self.dock_tabbed_out(VKind::Wave) { return Rect::new(region.x - region.w - 100, region.y, region.w, region.h); }
+        self.dock_rect(VKind::Wave).unwrap_or(region)
+    }
+
+    /// A docked view that is a tab behind another one of its group.
+    pub(super) fn dock_tabbed_out(&self, k: VKind) -> bool {
+        self.dock_docked(k) && self.studio.view != StudioView::Only && self.dock_layout().tabs.iter().any(|g| g.kinds.contains(&k) && g.kinds[g.active] != k)
+    }
+
+    /// The group of tabs a view is in.
+    pub(super) fn dock_tab_group(&self, k: VKind) -> Option<TabGroup> {
+        if self.studio.view == StudioView::Only || !self.dock_docked(k) { return None; }
+        self.dock_layout().tabs.iter().find(|g| g.kinds.contains(&k)).cloned()
     }
 
     pub(super) fn dock_close_rect(r: Rect) -> Rect { Rect::new(r.right() - 48, r.y, 48, STRIP_HIT.min(r.h)) }
-    fn dock_extra_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
-        (k == VKind::Measure && self.studio.view != StudioView::Only && self.studio.view != StudioView::Offline)
-            .then(|| Rect::new(r.right() - 96, r.y, 48, STRIP_HIT.min(r.h)))
+
+    /// The button left of the X: what it does depends on the view and the arrangement.
+    pub(super) fn dock_extra_kind(&self, k: VKind) -> Option<Extra> {
+        if !self.dock_on() { return None; }
+        if self.studio.view == StudioView::Only { return (k == VKind::Measure).then_some(Extra::RestoreOnly); }
+        if !self.dock_floating(k) && self.dock_tabs_root() { return Some(Extra::RestoreTabs); }
+        if k == VKind::Wave && self.eye_open() && self.m.eye_place == EyePlace::Full { return Some(Extra::RestoreEye); }
+        if k == VKind::Measure && self.studio.view != StudioView::Offline { return Some(Extra::Expand); }
+        (KINDS.into_iter().filter(|v| self.dock_shown(*v)).count() > 1).then_some(Extra::Maximise)
     }
+
+    pub(super) fn dock_extra_rect(&self, k: VKind, r: Rect) -> Option<Rect> {
+        self.dock_extra_kind(k).map(|_| Rect::new(r.right() - 96, r.y, 48, STRIP_HIT.min(r.h)))
+    }
+
+    /// One group of tabs holds every view that is docked: it fills the area.
+    pub(super) fn dock_tabs_root(&self) -> bool {
+        self.dock_on() && self.studio.view != StudioView::Only && { let l = self.dock_layout(); l.tabs.len() == 1 && l.leaves.len() == 1 }
+    }
+
+    /// A way back out of a full state is on the screen: a view that fills the area (measurements only, the eye on the
+    /// whole plot, everything in one group of tabs).
+    pub(super) fn dock_full_state(&self) -> bool {
+        self.dock_on() && (self.studio.view == StudioView::Only || self.dock_tabs_root() || (self.eye_open() && self.m.eye_place == EyePlace::Full))
+    }
+
+    /// Leaves a full state: the way back every exit (the button, Escape, the double tap, the menu) takes. False when
+    /// there was none.
+    pub(super) fn dock_exit_full(&mut self) -> bool {
+        if !self.dock_on() { return false; }
+        if self.studio.view == StudioView::Only { self.studio_set_view(StudioView::Docked); self.dock_changed(); return true; }
+        if self.dock_tabs_root() { self.dock_restore_layout(); return true; }
+        if self.eye_open() && self.m.eye_place == EyePlace::Full {
+            self.eye_set_place(EyePlace::Side);
+            self.dock_changed();
+            return true;
+        }
+        false
+    }
+
+    // ------------------------------------------------------------------------------------------------ tabs
+
+    /// The space of the title in a strip: its width, and whether the search field of the measurements replaces it.
+    fn dock_title_geo(&self, k: VKind, r: Rect) -> (i32, bool) {
+        let s = Self::dock_strip(r);
+        let close = Self::dock_close_rect(r);
+        let extra = self.dock_extra_rect(k, r);
+        let view = self.dock_view_rect(k, r);
+        let right = view.map_or(extra.map_or(close.x, |e| e.x), |v| v.x);
+        let bar = self.dock_bar_content(k, r).map(|p| self.panel_bar(p));
+        let right_title = bar.as_ref().map_or(right, |b| b.left - 6);
+        let zoom_in_strip = k == VKind::Wave && self.studio_zoom_active() && !self.zoom_tab_mode();
+        let right_title = if zoom_in_strip { self.zoom_readout().x - 4 } else { right_title };
+        ((right_title - s.x - 30).max(1), bar.as_ref().is_some_and(|b| b.field.is_some()))
+    }
+
+    /// The tabs in the strip of the view in front of its group: left-aligned, each as wide as its name (28 to 200 px).
+    /// What does not fit goes in the list behind the arrow (`dock_tab_more`); the one in front always stays.
+    pub(super) fn dock_tab_rects(&self, k: VKind, r: Rect) -> Vec<(VKind, Rect)> { self.dock_tab_layout(k, r).0 }
+
+    /// The arrow that opens the list of the tabs that did not fit.
+    pub(super) fn dock_tab_more(&self, k: VKind, r: Rect) -> Option<Rect> { self.dock_tab_layout(k, r).1 }
+
+    fn dock_tab_layout(&self, k: VKind, r: Rect) -> (Vec<(VKind, Rect)>, Option<Rect>) {
+        let none = (Vec::new(), None);
+        let Some(g) = self.dock_tab_group(k) else { return none };
+        if g.kinds[g.active] != k { return none; }
+        let (avail, field) = self.dock_title_geo(k, r);
+        if field { return none; }
+        let s = Self::dock_strip(r);
+        let f = self.fonts();
+        let want: Vec<i32> = g.kinds.iter().map(|v| (f.mb.width(&self.dock_name(*v)) + 20).clamp(TAB_W - 2, 200)).collect();
+        let total: i32 = want.iter().sum::<i32>() + 2 * want.len() as i32;
+        let mut keep: Vec<usize> = (0..g.kinds.len()).collect();
+        let mut more = false;
+        if total > avail {
+            // the arrow takes its place; the tab in front first, then the others in order while they fit
+            more = true;
+            let room = avail - TAB_W - 2;
+            keep = vec![g.active];
+            let mut used = want[g.active] + 2;
+            for i in 0..g.kinds.len() {
+                if i != g.active && used + want[i] + 2 <= room { keep.push(i); used += want[i] + 2; }
+            }
+            keep.sort();
+        }
+        let mut x = s.x + 26;
+        let room_end = s.x + 26 + avail;
+        let mut out = Vec::new();
+        for i in keep {
+            let w = want[i].min((room_end - x - if more { TAB_W + 2 } else { 0 }).max(TAB_W - 2));
+            out.push((g.kinds[i], Rect::new(x, s.y, w, s.h)));
+            x += w + 2;
+        }
+        let arrow = more.then(|| Rect::new((room_end - TAB_W).max(x), s.y, TAB_W, s.h));
+        (out, arrow)
+    }
+
+    /// The rows of the list of tabs (the views of the group that are not in the strip) under the arrow.
+    pub(super) fn dock_tab_list_rows(&self, front: VKind) -> Vec<(VKind, Rect)> {
+        let Some(r) = self.dock_rect(front) else { return Vec::new() };
+        let Some(g) = self.dock_tab_group(front) else { return Vec::new() };
+        let Some(arrow) = self.dock_tab_more(front, r) else { return Vec::new() };
+        let shown: Vec<VKind> = self.dock_tab_rects(front, r).into_iter().map(|(v, _)| v).collect();
+        let hidden: Vec<VKind> = g.kinds.iter().copied().filter(|v| !shown.contains(v)).collect();
+        let w = 200;
+        let x = (arrow.right() - w).max(r.x);
+        hidden.into_iter().enumerate().map(|(i, v)| (v, Rect::new(x, r.y + STRIP_H + 2 + i as i32 * 36, w, 36))).collect()
+    }
+
+    /// The view whose tab is under a point of a strip.
+    fn dock_tab_at(&self, k: VKind, r: Rect, x: i32, y: i32) -> Option<VKind> {
+        self.dock_tab_rects(k, r).into_iter().find(|(_, t)| t.contains(x, y)).map(|(v, _)| v)
+    }
+
+    /// The views of a group as they are, put in tabs with `k` in front: floating views too, so no window floats over
+    /// the one that fills the area. Where they were is kept for the way back.
+    pub(super) fn dock_maximise(&mut self, k: VKind) {
+        if self.studio.view == StudioView::Only || !self.dock_shown(k) { return; }
+        let region = self.dock_region();
+        let tree = self.dock_effective(region);
+        let mut kinds = Vec::new();
+        tree.leaves(&mut kinds);
+        for v in KINDS { if self.dock_shown(v) && !kinds.contains(&v) { kinds.push(v); } }
+        if kinds.len() < 2 { return; }
+        if self.dock_tabs_root() { self.dock_activate(k); return; }
+        let saved = Saved { tree: self.studio.dock.tree.clone(), floats: self.studio.dock.float_on, meas_floating: self.studio.view == StudioView::Floating };
+        for v in kinds.iter().copied() { if self.dock_floating(v) { self.dock_set_float(v, false); } }
+        self.studio.dock.tree = Node::tabs_of(kinds, k);
+        self.studio.dock.restore = Some(saved);
+        self.dock_changed();
+    }
+
+    /// The tab of a view comes to the front.
+    pub(super) fn dock_activate(&mut self, k: VKind) {
+        let region = self.dock_region();
+        let mut tree = self.dock_effective(region);
+        if tree.activate(k) {
+            self.studio.dock.tree = Some(tree);
+            self.dock_changed();
+        }
+    }
+
+    /// The way back of the views in one group of tabs: where they were, or (nothing was kept) side by side again.
+    pub(super) fn dock_restore_layout(&mut self) {
+        let region = self.dock_region();
+        if let Some(s) = self.studio.dock.restore.take() {
+            self.studio.dock.tree = s.tree;
+            self.studio.dock.float_on = s.floats;
+            if s.meas_floating && self.studio.view == StudioView::Docked { self.studio.view = StudioView::Floating; }
+            self.dock_changed();
+            return;
+        }
+        let tree = self.dock_effective(region);
+        let Node::Tabs { kinds, .. } = tree else { return };
+        let mut order = kinds;
+        order.sort_by_key(|k| (*k != VKind::Wave, k.idx()));
+        let mut t = Node::Leaf(order[0]);
+        for k in order.into_iter().skip(1) { t = insert_default(t, k, region, self.studio_panel_w(), self.dock_under()); }
+        self.studio.dock.tree = Some(t);
+        self.dock_changed();
+    }
+
+    /// Every frame: the dock keeps itself sane. A view that all the others float over is brought back into the dock,
+    /// and a view that is on again comes to the front of its tabs.
+    fn dock_normalize(&mut self) {
+        if !self.dock_on() { return; }
+        let mut changed = false;
+        if let Some(f) = self.dock_forced() {
+            if f != VKind::Measure { self.studio.dock.float_on[f.idx()] = false; } else { self.dock_set_float(f, false); }
+            changed = true;
+        }
+        let mask = KINDS.iter().fold(0u16, |m, k| m | ((self.dock_shown(*k) as u16) << k.idx()));
+        // the first frame of an arrangement only looks
+        let new = self.studio.dock.seen.map_or(0, |seen| mask & !seen);
+        self.studio.dock.seen = Some(mask);
+        if new != 0 {
+            let region = self.dock_region();
+            let mut tree = self.dock_effective(region);
+            let mut any = false;
+            for k in KINDS { if new & (1 << k.idx()) != 0 && !self.dock_floating(k) { any |= tree.activate(k); } }
+            if any { self.studio.dock.tree = Some(tree); changed = true; }
+        }
+        // a stale way back
+        if self.studio.dock.restore.is_some() && !self.dock_tabs_root() && self.studio.dock.drag.is_none() { self.studio.dock.restore = None; }
+        if changed { self.dock_changed(); }
+    }
+
     /// The edges of a floating panel a finger at (x, y) would drag: the corner, the sides and the bottom. The top is
     /// the strip, which moves the panel.
     pub(super) fn dock_edges_at(r: Rect, x: i32, y: i32) -> Option<u8> {
@@ -746,12 +1076,25 @@ impl Ui {
         let Some((tk, tr)) = leaf_at.filter(|_| self.studio.view != StudioView::Only) else {
             return if can_float { let r = float_at(); (Drop::Float(r), r) } else { (Drop::Stay, own) };
         };
+        let group = self.dock_tab_group(tk);
+        let own_group = group.as_ref().is_some_and(|g| g.kinds.contains(&kind));
         // a floating panel over the point takes it: the point is on the panel, not on the view under it
-        if tk == kind {
-            return match drop_zone(tr, x, y) {
-                Zone::Ring | Zone::Centre if can_float => { let r = float_at(); (Drop::Float(r), r) }
+        if tk == kind || own_group {
+            // a tab of the group it is in: an edge of the group splits it off at that side, the rest floats it
+            let other = group.as_ref().and_then(|g| g.kinds.iter().copied().find(|v| *v != kind));
+            return match (drop_zone(tr, x, y), other) {
+                (Zone::Edge(s), Some(t)) => {
+                    let half = half_of(tr, s);
+                    let (rest_w, rest_h) = match s { Side::Left | Side::Right => (tr.w - half.w - GAP, tr.h), _ => (tr.w, tr.h - half.h - GAP) };
+                    if rest_w < t.min_w() || rest_h < t.min_h() || half.w < kind.min_w() || half.h < kind.min_h() { (Drop::Stay, own) } else { (Drop::Split(t, s), half) }
+                }
+                (Zone::Ring | Zone::Centre, _) if can_float => { let r = float_at(); (Drop::Float(r), r) }
                 _ => (Drop::Stay, tr),
             };
+        }
+        // the title bar of another view: into its tabs (the middle of its top edge stays the edge that docks above)
+        if y < tr.y + STRIP_H && (x - (tr.x + tr.w / 2)).abs() > tr.w * 15 / 100 && self.dock_can_tab(kind, tk) {
+            return (Drop::Tab(tk), tr);
         }
         // a floating view can take the place of a view that can float, not of the waveform
         let swap_ok = !floating || (tk != VKind::Measure || matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline));
@@ -770,10 +1113,18 @@ impl Ui {
         }
     }
 
+    /// May `kind` join the tabs of `target`: a group holds seven views at most.
+    fn dock_can_tab(&self, kind: VKind, target: VKind) -> bool {
+        if self.studio.view == StudioView::Only { return false; }
+        if kind == VKind::Measure && !matches!(self.studio.view, StudioView::Docked | StudioView::Floating | StudioView::Offline) { return false; }
+        self.dock_tab_group(target).map_or(1, |g| g.kinds.len()) < 7
+    }
+
     /// Does what the preview showed.
     pub(super) fn dock_apply(&mut self, kind: VKind, drop: Drop) {
         let region = self.dock_region();
         let floating = self.dock_floating(kind);
+        if drop != Drop::Stay { self.studio.dock.restore = None; }
         match drop {
             Drop::Stay => {}
             Drop::Float(r) => {
@@ -799,6 +1150,12 @@ impl Ui {
                     self.dock_set_float(t, true);
                     self.dock_raise(t);
                 }
+            }
+            Drop::Tab(t) => {
+                let mut tree = self.dock_effective(region);
+                if !floating { tree = tree.without(kind).unwrap_or(Node::Leaf(t)); }
+                self.studio.dock.tree = Some(tree.joined(t, kind));
+                if floating { self.dock_set_float(kind, false); }
             }
             Drop::Split(t, side) => {
                 let mut tree = self.dock_effective(region);
@@ -860,6 +1217,10 @@ impl Ui {
     pub(super) fn dock_down(&mut self, x: i32, y: i32) -> bool {
         self.studio.dock.press = None;
         self.studio.dock.drag = None;
+        // the list of tabs: a row brings its view to the front, a touch elsewhere closes it
+        if let Some(front) = self.studio.dock.tab_list.take() {
+            if let Some((v, _)) = self.dock_tab_list_rows(front).into_iter().find(|(_, r)| r.contains(x, y)) { self.dock_activate(v); return true; }
+        }
         if self.studio.view == StudioView::Only {
             // one view only: its strip closes it, nothing moves
             if let Some(r) = self.dock_leaf(VKind::Measure) { return self.dock_down_strip(VKind::Measure, r, x, y, false); }
@@ -922,12 +1283,14 @@ impl Ui {
         }
         if !Self::dock_strip(r).contains(x, y) { return false; }
         if self.dock_down_button(k, r, x, y) { return true; }
-        let movable = self.studio.view != StudioView::Only;
-        if movable {
-            self.studio.dock.press = Some(Press::Strip { kind: k, x0: x, y0: y, x, y, t0: self.now, grab: (x - r.x, y - r.y), free: floating && !Self::dock_handle_rect(r).contains(x, y) });
-        } else {
+        if !floating && self.dock_tab_more(k, r).is_some_and(|m| m.contains(x, y)) {
+            self.studio.dock.tab_list = Some(k);
             self.studio.dock.press = None;
+            return true;
         }
+        // a tab of a group is the view it names
+        let kind = if floating { k } else { self.dock_tab_at(k, r, x, y).unwrap_or(k) };
+        self.studio.dock.press = Some(Press::Strip { kind, x0: x, y0: y, x, y, t0: self.now, grab: (x - r.x, y - r.y), free: floating && !Self::dock_handle_rect(r).contains(x, y) });
         true
     }
 
@@ -935,7 +1298,7 @@ impl Ui {
     pub(super) fn dock_move(&mut self, x: i32, y: i32) -> bool {
         if let Some(Press::Strip { kind, x0, y0, t0, grab, free, .. }) = self.studio.dock.press {
             self.studio.dock.press = Some(Press::Strip { kind, x0, y0, x, y, t0, grab, free });
-            if (x - x0).abs().max((y - y0).abs()) > DRAG_PX {
+            if (x - x0).abs().max((y - y0).abs()) > DRAG_PX && self.studio.view != StudioView::Only {
                 self.dock_begin_drag(kind, x, y, grab, free);
             }
             return true;
@@ -992,7 +1355,7 @@ impl Ui {
                 let (drop, _) = self.dock_drop_at(kind, x, y, grab);
                 if self.dock_floating(kind) {
                     // it already follows the finger: only a dock changes anything more
-                    if matches!(drop, Drop::Split(..) | Drop::Swap(_)) { self.dock_apply(kind, drop); } else { self.dock_changed(); }
+                    if matches!(drop, Drop::Split(..) | Drop::Swap(_) | Drop::Tab(_)) { self.dock_apply(kind, drop); } else { self.dock_changed(); }
                 } else {
                     self.dock_apply(kind, drop);
                 }
@@ -1003,7 +1366,7 @@ impl Ui {
                 let r = self.dock_rect(kind);
                 let hit = r.is_some_and(|r| if close { Self::dock_close_rect(r).contains(x, y) } else { self.dock_extra_rect(kind, r).is_some_and(|e| e.contains(x, y)) });
                 if hit {
-                    if close { self.dock_close(kind); } else { self.studio_set_view(StudioView::Only); }
+                    if close { self.dock_close(kind); } else { self.dock_extra_do(kind); }
                 }
                 true
             }
@@ -1016,16 +1379,40 @@ impl Ui {
                 true
             }
             (Some(Press::Bar), None) => { self.panel_strip_tap(x, y); true }
-            (Some(Press::Strip { .. }), None) => true,
+            (Some(Press::Strip { kind, .. }), None) => { self.dock_strip_tap(kind); true }
             (None, None) => false,
         }
     }
 
+    /// The button left of the X.
+    fn dock_extra_do(&mut self, k: VKind) {
+        match self.dock_extra_kind(k) {
+            Some(Extra::Expand) => self.studio_set_view(StudioView::Only),
+            Some(Extra::Maximise) => self.dock_maximise(k),
+            Some(Extra::RestoreOnly | Extra::RestoreTabs | Extra::RestoreEye) => { self.dock_exit_full(); }
+            None => {}
+        }
+    }
+
+    /// A tap on a strip that did not drag: the tab of a view comes to the front, and a second tap on the same view
+    /// puts every view in tabs (or, from a full state, back).
+    fn dock_strip_tap(&mut self, k: VKind) {
+        let dbl = self.studio.dock.last_tap.is_some_and(|(t, v)| v == k && self.now - t < DOUBLE_TAP);
+        if dbl {
+            self.studio.dock.last_tap = None;
+            if !self.dock_exit_full() { self.dock_maximise(k); }
+            return;
+        }
+        self.studio.dock.last_tap = Some((self.now, k));
+        if self.dock_tabbed_out(k) { self.dock_activate(k); }
+    }
+
     /// Every frame: a finger held on a strip for `LONG_PRESS` picks the view up.
     pub(super) fn dock_poll(&mut self) {
+        self.dock_normalize();
         self.dock_sync_setup();
         if let Some(Press::Strip { kind, x0, y0, x, y, t0, grab, free }) = self.studio.dock.press {
-            if self.now - t0 >= LONG_PRESS && (x - x0).abs().max((y - y0).abs()) <= DRAG_PX {
+            if self.now - t0 >= LONG_PRESS && (x - x0).abs().max((y - y0).abs()) <= DRAG_PX && self.studio.view != StudioView::Only {
                 self.dock_begin_drag(kind, x, y, grab, free);
             }
         }
@@ -1054,8 +1441,28 @@ impl Ui {
         let zoom_in_strip = k == VKind::Wave && self.studio_zoom_active() && !self.zoom_tab_mode();
         let right_title = if zoom_in_strip { self.zoom_readout().x - 4 } else { right_title };
         let avail = (right_title - s.x - 30).max(1);
+        let tabs = if floating { Vec::new() } else { self.dock_tab_rects(k, r) };
         if bar.as_ref().is_some_and(|b| b.field.is_some()) {
             // the search field replaces the title
+        } else if !tabs.is_empty() {
+            // the views of the group: the one in front is raised
+            for (v, t) in &tabs {
+                let on = *v == k;
+                let box_ = Rect::new(t.x, t.y + 2, t.w, t.h - 4);
+                chip(cv, box_, if on { mix(BTN, ACCENT, 70) } else { BAR }, if on { ACCENT } else { BTN_BORDER });
+                let full = self.dock_name(*v);
+                let label = if f.mb.width(&full) <= box_.w - 16 { full } else { self.dock_title_fit(*v, &full, (box_.w - 16).max(1)) };
+                cv.set_clip(box_);
+                cv.text_in(&f.mb, Rect::new(box_.x + 8, box_.y, box_.w - 8, box_.h), 0, &label, if on { TEXT } else { DIM });
+                cv.no_clip();
+            }
+            if let Some(m) = self.dock_tab_more(k, r) {
+                let box_ = Rect::new(m.x, m.y + 2, m.w, m.h - 4);
+                chip(cv, box_, BTN, BTN_BORDER);
+                let (cx, cy) = (box_.x + box_.w / 2, box_.y + box_.h / 2);
+                cv.line(cx - 5, cy - 2, cx, cy + 3, TEXT);
+                cv.line(cx, cy + 3, cx + 5, cy - 2, TEXT);
+            }
         } else {
             let name = self.dock_title_fit(k, &name, avail);
             cv.set_clip(Rect::new(s.x + 26, s.y, avail, s.h));
@@ -1074,7 +1481,15 @@ impl Ui {
         if let Some(v) = view { self.draw_view_switch(cv, v); }
         if let Some(e) = extra {
             chip(cv, Rect::new(e.x + 12, s.y + 1, 26, 24), BTN, BTN_BORDER);
-            super::studio::icon_expand(cv, e.x + e.w / 2, s.y + s.h / 2, TEXT);
+            let (cx, cy) = (e.x + e.w / 2, s.y + s.h / 2);
+            match self.dock_extra_kind(k) {
+                // two squares, one behind the other: back to where the views were
+                Some(Extra::RestoreOnly | Extra::RestoreTabs | Extra::RestoreEye) => {
+                    cv.rect(Rect::new(cx - 6, cy - 2, 8, 8), TEXT);
+                    cv.rect(Rect::new(cx - 2, cy - 6, 8, 8), TEXT);
+                }
+                _ => super::studio::icon_expand(cv, cx, cy, TEXT),
+            }
         }
         let dim = k == VKind::Wave && !self.view_on() && !(self.eye_open() && self.m.eye_place == EyePlace::Full);
         chip(cv, Rect::new(close.x + 12, s.y + 1, 26, 24), BTN, BTN_BORDER);
@@ -1127,6 +1542,17 @@ impl Ui {
             cv.round_outline(r.inset(-1), 6, BTN_BORDER);
             self.draw_dock_strip(cv, k, r, true, moving == Some(k));
         }
+        if let Some(front) = self.studio.dock.tab_list {
+            let rows = self.dock_tab_list_rows(front);
+            if let Some(f0) = rows.first() {
+                let f = self.fonts();
+                let h = rows.len() as i32 * 36;
+                let p = Rect::new(f0.1.x, f0.1.y, f0.1.w, h);
+                cv.round(p.inset(-1), 6, BTN_BORDER, 255);
+                cv.round(p, 5, PANEL_BG, 255);
+                for (v, rr) in &rows { cv.text_in(&f.mb, Rect::new(rr.x + 10, rr.y, rr.w - 10, rr.h), 0, &self.dock_name(*v), TEXT); }
+            }
+        }
         if let Some(DockDrag::Move { kind, x, y, grab, free: false }) = &self.studio.dock.drag {
             let (drop, prev) = self.dock_drop_at(*kind, *x, *y, *grab);
             if drop != Drop::Stay {
@@ -1136,6 +1562,7 @@ impl Ui {
                 let label = match drop {
                     Drop::Swap(_) => "Swap",
                     Drop::Float(_) => "Float",
+                    Drop::Tab(_) => "Tab",
                     _ => "Dock",
                 };
                 cv.text_in(&self.fonts().lb, prev, 1, label, TEXT);

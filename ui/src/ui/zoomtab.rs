@@ -14,7 +14,10 @@ const IDLE: f64 = 4.0;
 
 impl Ui {
     /// The controls are in the pull-down tab (else in the title strip).
-    pub(super) fn zoom_tab_mode(&self) -> bool { self.m.layout == Layout::Studio && self.m.studio_zoom_tab }
+    pub(super) fn zoom_tab_mode(&self) -> bool {
+        // the title bar of a waveform that is one of several tabs holds the tabs: its zoom controls are in the pull-down tab
+        self.m.layout == Layout::Studio && (self.m.studio_zoom_tab || self.dock_tab_group(super::dock::VKind::Wave).is_some())
+    }
 
     /// Zoom is on, with the tab setting.
     fn zoom_tab_on(&self) -> bool { self.zoom_tab_mode() && self.studio_zoom_active() }

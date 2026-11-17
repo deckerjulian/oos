@@ -136,6 +136,8 @@ mod batch31_tests;
 #[cfg(test)]
 mod batch33_tests;
 #[cfg(test)]
+mod dockwalk_tests;
+#[cfg(test)]
 mod scpimap;
 #[cfg(test)]
 mod uiaudit_tests;
@@ -1876,7 +1878,11 @@ impl Ui {
     pub(super) fn eye_pane_rect(&self) -> Rect {
         if self.dock_on() {
             // in the dock: the eye's own place, or the waveform's when it fills the plot
-            return self.dock_content(dock::VKind::Eye).unwrap_or_else(|| { let w = self.dock_wave_rect(); Rect::new(w.x, w.y + dock::STRIP_H, w.w, (w.h - dock::STRIP_H).max(1)) });
+            return self.dock_content(dock::VKind::Eye).unwrap_or_else(|| {
+                // the eye on the whole plot has the waveform's place; one that is a tab behind another has none on the screen
+                let w = if self.m.eye_place == EyePlace::Full { self.dock_wave_rect() } else { let r = self.dock_region(); Rect::new(r.x - r.w - 100, r.y, r.w, r.h) };
+                Rect::new(w.x, w.y + dock::STRIP_H, w.w, (w.h - dock::STRIP_H).max(1))
+            });
         }
         if let Some(rect) = self.workspace.eye_float { return rect; }
         let wave = self.plot_rect();
@@ -2359,12 +2365,13 @@ impl Ui {
     /// The strip between the overview and the zoomed view.
     fn zoom_readout(&self) -> Rect {
         // Studio: the zoom controls sit in the pull-down tab over the zoom view, or in the title strip of the waveform
-        if self.m.layout == Layout::Studio && self.m.studio_zoom_tab { return self.zoom_tab_region(); }
+        if self.zoom_tab_mode() { return self.zoom_tab_region(); }
         if self.m.layout == Layout::Studio {
             let r = self.dock_wave_rect();
             let s = Self::dock_strip(r);
             let left = s.x + 150;
-            return Rect::new(left, s.y, (Self::dock_close_rect(r).x - left).max(1), s.h);
+            let right = self.dock_extra_rect(dock::VKind::Wave, r).map_or(Self::dock_close_rect(r).x, |e| e.x);
+            return Rect::new(left, s.y, (right - left).max(1), s.h);
         }
         let (o, z) = self.split_zoom(self.grid);
         Rect::new(o.x, o.y + o.h, o.w, (z.y - o.y - o.h).max(1))
