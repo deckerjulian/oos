@@ -1,0 +1,13 @@
+1 allow dsp
+6 allow fpgad
+9 allow hal
+77 allow ui
+2435 lines ui/src/board/dho/hw.rs
+2551 lines ui/src/model.rs
+4538 lines ui/src/scpi.rs
+11001 lines ui/src/ui.rs
+2740 lines ui/src/ui/lint.rs
+0 unsafe dsp
+4 unsafe fpgad
+33 unsafe hal
+91 unsafe ui

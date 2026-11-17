@@ -22,11 +22,14 @@ there. These instructions are the same for every agent and every person; the rea
 - **Bring vendor code or data into the tree**: no firmware images, no code or binaries from stock or modified
   firmware, no calibration files, no `vendor.bin`. What is known about the hardware is described in `docs/` as
   behaviour (ADR 0013).
-- **Add a dependency** beyond `libc` to what runs on the scope, or to `oos-hal` and `oos-dsp`, without a strong reason
-  stated in the pull request (ADR 0013). A desktop-only build may use its platform's crates, behind its `cfg` and listed
-  in `docs/fork/deps.md` (ADR 0021).
+- **Add a dependency** beyond `libc` to one of the four crates without a strong reason stated in the pull request
+  (ADR 0013).
+- **Add code for a host that is not Unix.** OOS is built on Linux, macOS and Windows inside WSL 2; there is no native
+  Windows build, and no `cfg(windows)` (ADR 0033).
 - **Turn on a hardware function that is not verified on a unit by default** (ADR 0010).
 - **Put personal data** (serial numbers, MAC addresses, licence keys, a scope's address) into code, docs or commits.
+  `tools/privacy-scan.py` reads the commits of a branch for them; run it before you push, because a pushed commit
+  stays readable.
 - **Put vendor material into a text around the code**: commit messages, pull request descriptions and issues follow
   the same rule as the tree, and every commit is signed off by the person who submits it (ADR 0026).
 - **Push to main.** Work on a branch and open a pull request; it is merged squashed when CI is green, after the waiting
@@ -39,22 +42,37 @@ there. These instructions are the same for every agent and every person; the rea
 - Write hardware code from `docs/`: a fact the code needs and `docs/` lacks goes into `docs/` first, as behaviour at
   the scope's interfaces, in the same pull request (ADR 0030).
 - A change that is not meant to change behaviour proves it: `tools/compare-base.sh` reports no difference (same
-  pictures, same register sequences as the commit before the change), and the pull request says
+  pictures, stored files, answers to remote commands and register sequences as the commit before the change), and
+  the pull request says
   `Behaviour: unchanged`. CI runs the same comparison and fails such a pull request when something differs (ADR 0014,
   ADR 0032).
 - A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`), never into a transport; it takes the stock
-  name where the stock firmware has one, and [docs/scpi.md](docs/scpi.md) lists it (ADR 0022, ADR 0023). A new network
+  name where the stock firmware has one, [docs/scpi.md](docs/scpi.md) lists it, and its query is in
+  `ui/tests/scpi.txt`, so a change of its answer shows in the comparison (ADR 0022, ADR 0023). A new network
   service gets its switch under Remote services and the `net.allow` check when it can change the scope (ADR 0025).
 - New decoders, measurements and analyser pages come as modules behind their registry (ADR 0002). Identifiers that
   are stored (protocol keys, measurement numbers, feature ids) never change once released.
 - Hardware code builds step lists of `(offset, value)` in `oos-hal`; signal processing in `oos-dsp` stays free of
   hardware (ADR 0001).
+- Reuse before you add: look for code that already does the job (`git grep` for the idea, not only for a name) and
+  call it. A second implementation of something says in the pull request why it has to be one. Remove what your
+  change leaves unused, in the same pull request. A change that is not a feature leaves the tree no larger.
 - Docs change in the same pull request as the code they describe. A change that decides something others build on
   comes with a new ADR ([template](docs/adr/template.md)); a change of direction supersedes a record, it does not
   edit it.
 - Keep the look: neutral colours, white accent, round shapes, no empty areas; colours come from the named constants,
   not literals in drawing code; the top bar keeps its four entries (ADR 0007, ADR 0008). A second UI or a new layout
   of the screen needs a decision record first.
+
+## Standing agents
+
+Two agents work without being asked, each from a profile in `.github/agents`, and neither chooses its own work: the
+task is in the issue that starts it. `cleaner` does one piece of mechanical clean-up that changes no behaviour (the
+findings of one lint, dead code, one part out of a file that is too large). `docs-follower` brings the texts in line
+with one merged change. Everything above holds for them, and more: one task and about 400 changed lines at most, no
+fix and no feature on the side, no change to `.github/`, this file, `docs/adr/`, the check scripts, `boot/`,
+`kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull requests and
+never merge (ADR 0034).
 
 ## Layout of the tree
 
@@ -72,18 +90,42 @@ there. These instructions are the same for every agent and every person; the rea
 What `.gitignore` leaves out (`local/` with calibration files and surveys, `log/`, `device-test/`, backups, notes) is
 private to the person who made it; never move its content into the tree.
 
+## Keeping the texts true
+
+Every text has one home (ADR 0035): `README.md` is the entry page, `wiki/` the guide for people who use a scope
+(published as the wiki from the tree; never edited on the wiki itself), `docs/` the technical reference, `docs/adr/`
+the decisions, `CHANGELOG.md` what a user notices. A fact is written in its home and linked from elsewhere. A pull
+request that changes one of these brings the text along:
+
+| You change | Bring along |
+|---|---|
+| a remote command (`ui/src/scpi.rs`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
+| a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
+| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
+| a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
+| installing, updating, starting | `docs/boot.md`, `docs/update.md`, `wiki/Installation.md`, `wiki/Updates-and-Going-Back.md` |
+| a tool in `tools/` | `tools/README.md` |
+| a crate, a program, a thread, what talks to what | `docs/architecture.md` and its diagrams |
+| something others build on | a new record in `docs/adr/` and its row in the index |
+
+Diagrams are Mermaid in a fenced block, one C4 level each (context, programs, parts), as `flowchart` with `subgraph`,
+with the source files named under them.
+
 ## Build and check
 
 ```sh
 tools/check.sh                # every enforced host check, as CI runs them (ADR 0020)
-tools/check.sh test           # one layer: fmt clippy text syntax test target decoders (list: tools/check.sh list)
+tools/check.sh test           # one layer: fmt clippy text syntax test target decoders ratchet (tools/check.sh list)
 (cd ui && cargo run -- --serve)   # no display, no hardware: demo signals behind SCPI :5555 and the web page :8080
 ```
 
 Run `tools/check.sh` before you say a change is done, and say which layers ran. A compiler warning fails it. The
 layout of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016). Until the one formatting commit is in main,
 do not run `cargo fmt` over existing files, so a pull request does not reformat whole files; keep the layout of the
-file you edit. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR 0017). Tests
+file you edit. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR 0017). The
+numbers in `tools/ratchet.txt` only go down: a file over 2000 lines does not grow, no new file gets that large, and a
+crate gets no more `allow(` and no more `unsafe` than it has; after making one smaller, run `tools/ratchet.sh --lower`.
+Raising a number is the maintainer's decision, in a pull request that says why (ADR 0037). Tests
 that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
 fast the computer is: one that fails only under load is fixed, not run again (ADR 0020).
 

@@ -1,0 +1,40 @@
+# Publishes the folder wiki/ as the wiki of the repository (docs/adr/process/0035), when a change to it reaches main.
+# The wiki has a git repository of its own; this job copies the pages there and commits them. wiki/README.md stays
+# in the tree. No code of the tree runs here.
+name: Wiki
+on:
+  push:
+    branches: [main]
+    paths:
+      - wiki/**
+      - .github/workflows/wiki.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: wiki
+jobs:
+  publish:
+    if: github.repository == 'dekajoule/oos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Copy wiki/ into the wiki's repository
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git clone --quiet --depth 1 "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" \
+            "$RUNNER_TEMP/wiki"
+          rsync -a --delete --exclude .git --exclude README.md wiki/ "$RUNNER_TEMP/wiki/"
+          cd "$RUNNER_TEMP/wiki"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "the wiki is current"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "From the tree: ${GITHUB_SHA}"
+          git push --quiet
+          echo "published: $(git log -1 --format=%h)"

@@ -21,6 +21,12 @@ Added:
   - SSH starts or stops with the list.
   The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
 
+Removed:
+
+- The native Windows build: `build-windows.ps1`, `run-windows.ps1` and the desktop window with its keyboard and mouse
+  shortcuts and its file dialog. On a computer OOS runs with `oos-ui --serve` and the web remote in a browser, on
+  Linux, macOS and Windows inside WSL 2 (ADR 0033). The scope is not affected.
+
 Changed:
 
 - System > Overclock is only in the menu with `adc.overclock = on` in `/oos/system.conf`, or while `limits.conf` already

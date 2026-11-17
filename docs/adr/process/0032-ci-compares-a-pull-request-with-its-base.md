@@ -1,6 +1,7 @@
 # ADR 0032: CI compares the pictures and the register sequences of a pull request with its base
 
-- Status: proposed
+- Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
+  ADR 0031; an objection is an issue and can still change it)
 - Date: 2026-11-17
 - Category: process
 

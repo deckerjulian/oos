@@ -2,7 +2,8 @@
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # layout-check.sh: the guard of a layout change. Renders every script in tests/ at the three text sizes on the host and
-# compares the pictures with a saved set, pixel by pixel.
+# compares the pictures with a saved set, pixel by pixel. Next to the pictures it keeps and compares what a script
+# stores (set-ups, CSV, PNG) and the answers to remote commands that a script asks for (`scpi`, tests/scpi.txt).
 #   tools/layout-check.sh record [dir]   render with the current source and keep the pictures (default target/layout-base)
 #   tools/layout-check.sh check [dir]    render again and name every picture that differs, with the box of the change
 #   SIZE=1920x1080 tools/layout-check.sh record target/layout-1080   another screen size (host only, --size)
@@ -38,17 +39,23 @@ for ts in normal large larger; do
 			echo "$ts $name: oos-ui failed, see $work/err.txt" >&2
 			exit 1
 		}
+		# what the script stored: compared like the pictures
+		if [ -n "$(ls -A "$work/store")" ]; then
+			mkdir -p "$out/$ts/stored-$name"
+			cp -R "$work/store/." "$out/$ts/stored-$name/"
+		fi
 	done
 done
-(cd "$out" && find . -name '*.ppm' | sort | xargs shasum) > "$out.sums"
-n=$(wc -l < "$out.sums" | tr -d ' ')
+(cd "$out" && find . -type f | sort | xargs shasum) > "$out.sums"
+n=$(grep -c '\.ppm$' "$out.sums")
+m=$(grep -vc '\.ppm$' "$out.sums" || true)
 if [ "$mode" = record ]; then
-	echo "recorded $n pictures in $out"
+	echo "recorded $n pictures and $m other files in $out"
 	exit 0
 fi
 [ -f "$base.sums" ] || { echo "no saved set: run '$0 record $base' first" >&2; exit 2; }
 if cmp -s "$base.sums" "$out.sums"; then
-	echo "all $n pictures equal to $base"
+	echo "all $n pictures and $m other files equal to $base"
 	exit 0
 fi
 python3 -I - "$base" "$out" <<'EOF'
@@ -70,6 +77,13 @@ for k in sorted(set(a) | set(b)):
     if k not in a or k not in b:
         print('%-40s %s' % (k, 'only new' if k in b else 'missing'))
         continue
+    if not k.endswith('.ppm'):
+        # a stored file or the answers to remote commands: the first line that differs
+        la, lb = (open(os.path.join(d, k), 'rb').read().split(b'\n') for d in (base, new))
+        i = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y), min(len(la), len(lb)))
+        show = lambda l: (l[i][:60].decode('utf-8', 'replace') if i < len(l) else '(end)')
+        print('%-40s line %d: %s -> %s' % (k, i + 1, show(la), show(lb)))
+        continue
     wa, ha, pa = load(os.path.join(base, k))
     wb, hb, pb = load(os.path.join(new, k))
     if (wa, ha) != (wb, hb):
@@ -82,6 +96,6 @@ for k in sorted(set(a) | set(b)):
             xs.append(p % wa)
             ys.append(p // wa)
     print('%-40s %6d px  x %d..%d  y %d..%d' % (k, len(xs), min(xs), max(xs), min(ys), max(ys)))
-print('%d of %d pictures differ (saved: %s, new: %s)' % (bad, len(b), base, new))
+print('%d of %d pictures and files differ (saved: %s, new: %s)' % (bad, len(b), base, new))
 sys.exit(1)
 EOF

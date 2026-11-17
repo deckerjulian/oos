@@ -4,7 +4,6 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
-//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
 //!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
@@ -13,8 +12,8 @@
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner and
-// leaves them unused. The guard against dead code is the scope build (tools/check.sh target): there only the items that
-// the desktop window alone uses carry an allow, and what only the tests use is #[cfg(test)].
+// leaves them unused. The guard against dead code is the scope build (tools/check.sh target): what only the tests use
+// is #[cfg(test)] or carries an allow with its reason.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod clock;
@@ -66,8 +65,6 @@ mod zone;
 mod drm;
 #[cfg(target_os = "linux")]
 mod input;
-#[cfg(windows)]
-mod desktop;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -193,11 +190,6 @@ fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
-    } else if cfg!(windows) {
-        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
-        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -206,11 +198,7 @@ fn main() {
     {
         device_main(ui, &args);
     }
-    #[cfg(windows)]
-    {
-        desktop::run(ui, &args);
-    }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = ui;
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");
@@ -420,6 +408,8 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
     }
     ui.info = "host test run".into();
     let mut shot_n = 0;
+    // for the script command `scpi`: the interpreter without a port
+    let mut scpi = scpi::Scpi::open(0);
     // one frame: on the CPU, or in layers through the GPU and read back
     fn frame(ui: &mut Ui, cv: &mut Canvas, gpu: &mut Option<gpu::Gpu>, gl: &mut GpuLayers, shot_n: &mut u32) {
         ui.step(1.0 / 30.0);
@@ -464,6 +454,29 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                         let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| f.write_all(line.as_bytes()));
                     }
                 }
+            }
+            cmd::Out::Scpi(path, message) => {
+                // an answer that waits for an operation (`*OPC?` after `:SINGle`) gets frames until it is there; the
+                // bound is a number of frames, not a time
+                let mut program = scpi::Program::new(&message);
+                let mut answer = scpi.poll_program(ui, &cv, &mut program);
+                for _ in 0..600 {
+                    if answer.is_some() {
+                        break;
+                    }
+                    frame(ui, &mut cv, &mut gpu, &mut gl, &mut shot_n);
+                    answer = scpi.poll_program(ui, &cv, &mut program);
+                }
+                use std::io::Write;
+                // the message, then its answer on lines of its own; an empty answer is an empty line
+                let answer = answer.unwrap_or_else(|| b"(no answer after 600 frames)".to_vec());
+                let mut out = format!("> {}\n", message).into_bytes();
+                out.extend_from_slice(&answer);
+                if answer.last() != Some(&b'\n') {
+                    out.push(b'\n');
+                }
+                let file = std::fs::OpenOptions::new().create(true).append(true).open(&path);
+                file.and_then(|mut f| f.write_all(&out)).expect("write scpi answers");
             }
             cmd::Out::None => {}
         }

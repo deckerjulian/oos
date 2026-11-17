@@ -585,16 +585,7 @@ impl Ui {
         self.cancel_pointer();
     }
 
-    /// The file dialog of the desktop build for reference `slot`, without asking for the destination.
-    #[cfg(windows)]
-    pub(super) fn request_waveform_into(&mut self, slot: usize) {
-        self.request_waveform();
-        self.load_slot_ask = false;
-        self.load_destination = Some(slot);
-        self.open_wave_request = true;
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests read it
     pub fn waveform_destination(&self) -> Option<usize> { self.load_destination }
 
     pub(super) fn load_slot_box() -> Rect { Rect::new((W - 560) / 2, (H - 248) / 2, 560, 248) }

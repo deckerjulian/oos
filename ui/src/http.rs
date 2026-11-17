@@ -528,7 +528,7 @@ struct Pending {
     large: bool,
 }
 
-/// A waveform upload (`POST /waveform`) parsed on a thread of its own, as the desktop build's file picker does: a file
+/// A waveform upload (`POST /waveform`) parsed on a thread of its own: a file
 /// near the 128 MiB limit takes seconds to parse, which on the frame loop stopped the scope's screen and keys. The
 /// frame loop puts the traces into the slot (`Ui::commit_waveform_traces_at`) and answers the client, which waits.
 struct WaveJob {
@@ -1266,7 +1266,7 @@ mod tests {
     }
 
     /// An explicitly started, private backend for tools/scpi_validate.py.
-    /// It opens no desktop, hardware device or LAN discovery announcer.
+    /// It opens no display, hardware device or LAN discovery announcer.
     #[test]
     #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
     fn scpi_validation_fixture() {
@@ -1669,13 +1669,28 @@ setTimeout(() => {
     /// System > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
     /// frame). Nothing is swapped out of it (a swapped-in buffer stayed until the next read: the web page went back
     /// and forth between the new and an older screen), and the picture is one that came back.
+    ///
+    /// In both orders on purpose, like `live_picture_from_the_frame_loop_without_a_copy`: a request that is in before
+    /// the frame loop has said that it runs gets a copy of the canvas of that moment, which is no picture read back.
+    /// Which order ran was the client's timing, and the test failed now and then on a busy computer.
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
         let _sends = sends();
+        for frames_first in [true, false] {
+            live_picture_gpu(frames_first);
+        }
+    }
+
+    fn live_picture_gpu(frames_first: bool) {
         let mut h = Http::open(0);
         slow_encoder_guard(&h);
         let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        if frames_first {
+            // the frame loop runs before anybody asks
+            h.poll(&mut ui, &cv, &mut scpi);
+            h.before_gpu_frame();
+        }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(PICTURE_WAIT)).unwrap();
@@ -1684,6 +1699,12 @@ setTimeout(() => {
             let _ = c.read_to_end(&mut out);
             out
         });
+        // the request is in before the next frame, whatever the load; the screen at that moment
+        while h.shots.lock().waiting.is_empty() && !t.is_finished() {
+            h.poll(&mut ui, &cv, &mut scpi);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at_request = cv.px.clone();
         let mut read_back = Vec::new();
         let mut frame = 0u32;
         while !t.is_finished() {
@@ -1702,7 +1723,13 @@ setTimeout(() => {
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-        assert!(read_back.iter().any(|p| out[e..] == crate::store::png(cv.w as u32, cv.h as u32, p)), "the PNG of a picture read back");
+        let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+        if frames_first {
+            assert!(read_back.iter().any(|p| out[e..] == png(p)), "the PNG of a picture read back");
+        } else {
+            // before the first frame: the screen of that moment, copied
+            assert!(out[e..] == png(&at_request), "the PNG of the screen at the request");
+        }
     }
 
     /// The live picture: one encode per screen; a viewer with the newest picture waits (long poll) and gets 304 when

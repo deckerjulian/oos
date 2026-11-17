@@ -1,31 +1,45 @@
 # The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
-# Twice: on an arm64 runner (natively, the same compiler as on an arm64 host) and on an x86-64 runner (cross
-# compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
-# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
-# the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
-# The package is signed with the community key of the repository (keys/), as every build without a key of its own.
+# One build, on an arm64 runner (natively, the same compiler as on an arm64 host): for a tag, by hand, and when this
+# file changes. The package is signed with the community key of the repository (keys/), as every build without a key
+# of its own.
+#
+# By hand with `both_hosts`: also on an x86-64 runner (cross compiler for the kernel and oos-hw, QEMU for the arm64
+# containers, which takes hours), and a last job compares what the two put into the image (tools/image-manifest.py:
+# kernel, DTB, every file of the initramfs) and fails when they differ, apart from the programs built from the OOS
+# source (see the job). That is a check of the build, not a part of a release: a release needs one image.
 name: Image
 on:
   workflow_dispatch:
+    inputs:
+      both_hosts:
+        description: Also build on x86-64 and compare the two images (takes hours)
+        type: boolean
+        default: false
   push:
     tags: ['v*']
     # by hand only works from the default branch: on any branch it runs when this file changes (tags ignore paths)
     branches: ['**']
     paths: ['.github/workflows/image.yml']
+# the token can only read (it fetches the kernel source from a release); actions are named by their commit
+permissions:
+  contents: read
 jobs:
   image:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04-arm, ubuntu-24.04]
+        # one build; a second one on x86-64 only when it was asked for
+        runner: ${{ fromJSON(inputs.both_hosts && '["ubuntu-24.04-arm","ubuntu-24.04"]' || '["ubuntu-24.04-arm"]') }}
     runs-on: ${{ matrix.runner }}
     # x86-64: the arm64 containers (busybox, kexec-tools, Mesa for the GPU helper) run through QEMU, which takes hours
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: QEMU for the arm64 containers
         if: runner.arch != 'ARM64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
       - name: Rust
@@ -42,7 +56,7 @@ jobs:
       # the downloads of rootfs/deps.lock and Mesa's build (hours under QEMU). The key follows what they are made from;
       # an older cache is a start, its stamps (rootfs/deps.sh) say which part is built again
       - name: Cache of the downloads and Mesa
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             rootfs/out/*.tar.*
@@ -62,11 +76,11 @@ jobs:
             grep '  kernel/' manifest.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manifest-${{ runner.arch }}
           path: manifest.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: oos-image-${{ runner.arch }}
           path: |
@@ -80,9 +94,11 @@ jobs:
           if-no-files-found: error
   compare:
     needs: image
+    if: inputs.both_hosts
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: manifest-*
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,

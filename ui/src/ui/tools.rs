@@ -1025,12 +1025,8 @@ impl Ui {
         }
     }
 
-    /// Reference > Load file: a waveform file into the Slot row's reference. The desktop build asks with its file
-    /// dialog; the scope has none and takes the file from storage, as Import slot does.
+    /// Reference > Load file: a waveform file from storage into the Slot row's reference, as Import slot does.
     pub(super) fn ref_load(&mut self) {
-        #[cfg(windows)]
-        self.request_waveform_into(self.ref_sel);
-        #[cfg(not(windows))]
         self.ref_import();
     }
 

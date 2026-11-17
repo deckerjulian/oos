@@ -1,21 +1,48 @@
 # Tests without hardware. Tests that need the calibration files of a real unit skip themselves.
-# The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer, in
-# the order of the script. fmt and clippy run as well but do not fail the job until the rollout of ADR 0016 and
-# ADR 0017 makes them enforced layers of the script. A pull request is also compared with its base (job compare).
+# The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer.
+# Here the layers run next to each other, in jobs of their own (measured on 2026-11-17: nine minutes in a row, of
+# which the tests of hal take 94 s, those of ui 147 s, and the decoder layer 265 s). The job `test` at the end is the
+# one required check: it passes when all of them passed. fmt and clippy run as well, in the job `advice`, and do not
+# fail it until the rollout of ADR 0016 and ADR 0017. A pull request is also compared with its base (job compare).
+#
+# A pull request that only changes documents (*.md, docs/, wiki/) runs the job `files` and skips the rest.
+#
+# What keeps the workflow itself safe: the token can only read; an action is named by the commit it was reviewed at
+# (the release in the comment), not by a tag that can be moved; the checkout leaves no credentials behind for later
+# steps; every job has a time limit. A pull request's code runs here without secrets.
 name: CI
 on:
+  # a branch is tested through its pull request; a push only on main, so a commit is not tested twice
   push:
+    branches: [main]
   pull_request:
+permissions:
+  contents: read
+# a new push to a pull request ends the run of the push before it; runs on main are never cut short
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  test:
+  # The checks that need no compiler, and what the pull request changes.
+  files:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.what.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # the sign-off check reads every commit of a pull request
+          # the sign-off check and the list of changed files read every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
+          persist-credentials: false
+      # Dependabot and the standing agents (a copilot/ branch of this repository) cannot sign off: the person who
+      # merges their pull request signs off the squashed commit (ADR 0034)
       - name: Every commit is signed off (ADR 0026)
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          !(github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'copilot/'))
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -28,41 +55,161 @@ jobs:
             fi
           done
           exit $bad
-      - run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup target add aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
+      # reported, not yet enforced: a finding is a warning on the pull request
+      - name: Nothing of a person or a unit in the new lines and messages (tools/privacy-scan.py)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! python3 -I tools/privacy-scan.py "$BASE..$HEAD" > /tmp/privacy; then
+            sed 's/^/::warning::privacy: /' /tmp/privacy
+            exit 1
+          fi
+          cat /tmp/privacy
+      - name: Documents only, or code too
+        id: what
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # on main everything runs; in a pull request the jobs with a compiler run when a file other than a
+          # document changed. In doubt: code.
+          code=true
+          if [ -n "$BASE" ] && names=$(git diff --name-only "$BASE...$HEAD"); then
+            if [ -n "$names" ] && ! printf '%s\n' "$names" | grep -qvE '\.md$|^docs/|^wiki/'; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code: $code"
+      - name: Files, script syntax, the tests of the host tools
+        run: tools/check.sh text syntax test:tools
+  # The layers with a compiler, next to each other. Together with `files` they are every enforced layer.
+  check:
+    needs: files
+    if: needs.files.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: hal
+            layers: test:hal
+          - name: ui
+            layers: test:ui
+          - name: dsp, fpgad, target
+            layers: test:dsp test:fpgad target
+          - name: decoders, core
+            layers: decoders:core
+          - name: decoders, each
+            layers: decoders:each
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.layers }}
+          # pull requests read the caches of main and write none
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             hal -> target
             dsp -> target
             ui -> target
             fpgad -> target
-      - name: Host checks (tools/check.sh, every enforced layer)
-        run: tools/check.sh
+      - name: tools/check.sh ${{ matrix.layers }}
+        env:
+          LAYERS: ${{ matrix.layers }}
+        run: tools/check.sh $LAYERS
+  # fmt, clippy and the numbers that only go down: shown, not yet enforced
+  advice:
+    needs: files
+    if: needs.files.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup target add aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: advice
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            hal -> target
+            dsp -> target
+            ui -> target
+            fpgad -> target
       - name: Format (ADR 0016, not yet enforced)
         continue-on-error: true
         run: tools/check.sh fmt
       - name: Clippy (ADR 0017, not yet enforced)
         continue-on-error: true
         run: tools/check.sh clippy
+      - name: Numbers that only go down (ADR 0037, not yet enforced)
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # a number the pull request raised in the file is a notice for the reviewer, whatever the check says
+          if [ -n "$BASE" ]; then
+            git fetch --quiet --depth 1 origin "$BASE" || true
+            tools/ratchet.sh --base "$BASE" | sed 's/^/::notice::tools\/ratchet.txt, /'
+          fi
+          tools/check.sh ratchet
+  # The one required check: every enforced layer passed, or was skipped for a pull request of documents only.
+  test:
+    needs: [files, check]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "files and check: $RESULTS"
+          for r in $RESULTS; do
+            case $r in
+              success | skipped) ;;
+              *) echo "::error::a job ended as $r"; exit 1 ;;
+            esac
+          done
   # What a pull request does to the pictures and to the register sequences, against the commit it is merged onto
   # (ADR 0014, ADR 0032). It reports; it fails only when the comparison cannot be made, or when the pull request says
   # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.
   compare:
-    if: github.event_name == 'pull_request'
+    needs: files
+    if: github.event_name == 'pull_request' && needs.files.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the pull request merged into its base: the first parent of that commit is the base
           fetch-depth: 2
+          persist-credentials: false
       - run: rustup toolchain install stable --profile minimal
+      # Both sides are built the same way, so the comparison does not need the release's slow link step: without it a
+      # build of oos-ui takes a third of the time (measured on 2026-11-17: 20 s instead of 68 s on a laptop).
       - name: Pictures and register sequences against the base (tools/compare-base.sh)
         id: compare
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'off'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
         run: |
           rc=0
           tools/compare-base.sh HEAD^1 || rc=$?
@@ -71,7 +218,7 @@ jobs:
           [ "$rc" -le 1 ]
       - name: Keep what differs
         if: steps.compare.outputs.differs == '1'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: compare-base
           path: |
@@ -97,4 +244,23 @@ jobs:
             echo "::notice::pictures or register sequences differ from the base; the pull request text says why"
           else
             echo "nothing differs"
+          fi
+  # A standing agent does not change the rules, the checks, what decides how the scope starts, or the register
+  # sequences (ADR 0034). This job runs from the workflow file of the pull request itself: it helps the reviewer, it
+  # does not replace the look at what a pull request changes under .github/.
+  agent-paths:
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'copilot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the pull request merged into its base: the first parent of that commit is the base
+          fetch-depth: 2
+          persist-credentials: false
+      - name: No file an agent must not change (tools/agent-paths.sh)
+        run: |
+          if ! git diff --name-only HEAD^1 HEAD | tools/agent-paths.sh > /tmp/paths; then
+            sed 's/^/::error::an agent must not change /' /tmp/paths
+            exit 1
           fi

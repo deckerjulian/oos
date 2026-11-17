@@ -1126,14 +1126,7 @@ static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status { state: 
 /// Every IPv4 address with its netmask of the interfaces that are up (not loopback), in the order the kernel lists
 /// them; an interface can have several (a DHCP or set address and a link-local one).
 pub fn ipv4_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
-    #[cfg(unix)]
-    {
-        net::ipv4_all()
-    }
-    #[cfg(not(unix))]
-    {
-        Vec::new()
-    }
+    net::ipv4_all()
 }
 
 /// The responder's state, for the page (Off until it runs).
@@ -1147,7 +1140,6 @@ fn set_status(s: Status) {
     }
 }
 
-#[cfg(unix)]
 mod net {
     use super::*;
     use std::io;
@@ -1498,7 +1490,6 @@ impl Mdns {
 }
 
 /// The thread: sockets while on, a blocking wait between packets and timers.
-#[cfg(unix)]
 fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
@@ -1594,9 +1585,6 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
         s.wait(wake);
     }
 }
-
-#[cfg(not(unix))]
-fn run(_rx: std::sync::mpsc::Receiver<Ctl>, _only: Option<Vec<String>>) {}
 
 #[cfg(test)]
 mod tests {
@@ -2108,7 +2096,6 @@ mod tests {
     /// queries and the announcements do arrive on en0. Verified 2026-11-13 with dns-sd -G and -B.)
     #[test]
     #[ignore]
-    #[cfg(unix)]
     fn host_responder() {
         let lo = if cfg!(target_os = "linux") { "lo" } else { "lo0" };
         let only: Vec<String> = std::env::var("OOS_MDNS_IF").unwrap_or(lo.into()).split(',').map(str::to_string).collect();

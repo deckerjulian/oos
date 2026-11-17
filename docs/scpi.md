@@ -10,16 +10,16 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | --- | --- | --- |
 | Raw TCP SCPI | TCP 5555 | Recommended for scripts. Newline-terminated program messages; newline-terminated replies. |
 | HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. A reply is split into messages of the client's maximum message size, but of at least 4 KiB of data. |
-| VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. Not advertised by the Windows app. |
+| VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. Not offered on a computer (`--serve`). |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
-The source launcher can use different ports. For example:
+On a computer, `oos-ui --serve` offers the same interpreter without a scope, and can use other ports. For example:
 
-```powershell
-.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
+```sh
+(cd ui && cargo run --release -- --serve --offline --web-port 18080 --scpi-port 5555 --hislip-port 14880)
 ```
 
-For that launcher, use `TCPIP0::127.0.0.1::5555::SOCKET`, or HiSLIP resource `TCPIP0::127.0.0.1::hislip0,14880::INSTR`. On another computer, substitute the PC's LAN address. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
+For that, use `TCPIP0::127.0.0.1::5555::SOCKET`, or HiSLIP resource `TCPIP0::127.0.0.1::hislip0,14880::INSTR`. On another computer, substitute the PC's LAN address. These services are unauthenticated bench interfaces. A host build does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
 
 Keywords are case-insensitive. The capitalized part in a mixed-case spelling is the short form: `:TRIG:EDGE:SOUR?` and `:TRIGger:EDGE:SOURce?` are equivalent. Use either the complete long form or its documented short form. Intermediate abbreviations are not generally accepted.
 
@@ -33,7 +33,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 
 | Command | Meaning |
 | --- | --- |
-| `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>`. Desktop serial can be `0`. |
+| `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>`. On a computer the serial can be `0`. |
 | `*RST` | Restore the app's default configuration. This changes the acquisition workspace. |
 | `*CLS` | Clear the SCPI error/status state and pending operation-complete event registrations. Does not clear waveform memory. |
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
@@ -135,7 +135,7 @@ BYTE uses unsigned 8-bit samples. WORD uses unsigned **little-endian** 16-bit sa
 
 A block is `#<N><N decimal length digits><payload>`, followed by the response newline. Read the announced byte length; never use newline splitting inside a binary payload. Use `:WAV:STARt`/`:WAV:STOP` for smaller pages; preamble origin is the time of the page's first point. Metadata borrows the record without copying samples. Before copying DATA, the server rejects pages whose worst-case encoded size exceeds 64 MiB with -223; ASCII uses a conservative 14 bytes per sample bound. Long pages still encode on the main-loop path and slow receivers can stall it within existing send timeouts. WORD generally uses less memory than ASCII.
 
-Minimal standard-library Python reader for the running Windows app:
+Minimal standard-library Python reader for a host build started as above:
 
 ```python
 import socket
@@ -300,7 +300,7 @@ A file load is not an ADC acquisition. Multi-trace imports validate capacity bef
 :WAV:PRE?
 ```
 
-The exact path is an example from this Windows checkout; it is not valid on a Linux scope unless that file exists there. Load paths are not file uploads. For remote files use the UI/browser's explicit-slot upload workflow.
+The exact path is an example; it is not valid on a scope unless that file exists there. Load paths are not file uploads. For remote files use the UI/browser's explicit-slot upload workflow.
 
 ## Generator, logic and diagnostic extensions
 

@@ -1,0 +1,49 @@
+# What a machine can say about a pull request without running its code:
+#   - its labels (tools/pr-labels.sh): areas by path, type by title, `agent`, `risk/hardware`;
+#   - three statuses (tools/pr-gate.sh, docs/adr/process/0038): waited, owner and unit, which say whether it may be
+#     merged without a person pressing the button.
+#
+# This workflow runs the scripts as they are on main, never code of the pull request: `pull_request_target` checks
+# out the base. Its token reads the repository and writes labels and statuses, nothing else.
+name: Gate
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+  # the waits run out without an event, and an approving review is picked up here within the hour
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+concurrency:
+  group: gate-${{ github.event.pull_request.number || 'all' }}
+jobs:
+  gate:
+    if: github.repository == 'dekajoule/oos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: Labels by path, title and author (tools/pr-labels.sh)
+        if: github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: tools/pr-labels.sh "$PR"
+      - name: waited, owner, unit (tools/pr-gate.sh)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR" ]; then
+            tools/pr-gate.sh "$PR"
+          else
+            tools/pr-gate.sh --all
+          fi

@@ -1,6 +1,6 @@
 # ADR 0020: The checks come in layers; one command runs every host layer, the same as CI
 
-- Status: accepted
+- Status: accepted, amended by ADR 0032 (CI compares against the commit before a change)
 - Date: 2026-11-15
 - Category: process
 

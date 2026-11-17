@@ -8,6 +8,8 @@
 //!   drag <x0> <y0> <x1> <y1> touch drag (8 steps)
 //!   workflow <live|sim|load|measure|settings> direct source and measurement actions
 //!   shot <path>              screenshot (PPM)
+//!   scpi <path> <message>    host scripts only: a program message through the SCPI interpreter; the message and
+//!                            its answer are appended to <path> (the comparison of two builds, tools/compare-base.sh)
 //!   frames <n>               host only: advance n frames
 //!   storedir <path>          storage directory (setups, CSV, PNG)
 //!   textsize <name>          Display > Text size (normal, large, larger)
@@ -26,6 +28,8 @@ pub enum Out {
     None,
     Frames(u32),
     Shot(String),
+    /// (file, program message): `run_script` runs the message and appends it and its answer to the file
+    Scpi(String, String),
 }
 
 /// Commands the web remote may run: its own buttons and touch gestures. The others name files or end the program;
@@ -115,6 +119,11 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
         }
         "frames" if w.len() > 1 => return Out::Frames(num(w[1]).max(0) as u32),
         "shot" if w.len() > 1 => return Out::Shot(w[1].to_string()),
+        "scpi" if w.len() > 2 => {
+            // the message as written, with its spaces: everything after the path
+            let rest = line.trim_start()[4..].trim_start();
+            return Out::Scpi(w[1].to_string(), rest[w[1].len()..].trim().to_string());
+        }
         "quit" => ui.quit = true,
         "close" => ui.script_close(),
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),

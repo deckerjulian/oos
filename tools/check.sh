@@ -5,13 +5,15 @@
 #
 #   tools/check.sh                 every enforced layer, in order; stops at the first that fails
 #   tools/check.sh test target     only these layers
+#   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools,
+#                                  decoders:core decoders:each. CI runs the parts next to each other.
 #   tools/check.sh list            the layers, and which are enforced
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
 # ui/tools/layout-check.sh and tools/plan-matrix.sh (tools/compare-base.sh runs both against a commit before the
 # change, and so does CI for a pull request), tools/perf-guard.sh, tools/device-test.py.
 #
-# Layers: fmt clippy text syntax test target decoders sim. A compiler warning fails a layer like an error (ADR 0017).
+# Layers: fmt clippy text syntax test target decoders ratchet sim. A compiler warning fails a layer like an error (ADR 0017).
 # Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim
 # also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
 set -e
@@ -19,8 +21,9 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
-layers="fmt clippy text syntax test target decoders sim"
-# fmt and clippy join with the rollout of ADR 0016 and ADR 0017; sim needs Docker and builds that CI's check job lacks
+layers="fmt clippy text syntax test target decoders ratchet sim"
+# fmt and clippy join with the rollout of ADR 0016 and ADR 0017, ratchet with ADR 0037; sim needs Docker and builds
+# that CI's check job lacks
 enforced="text syntax test target decoders"
 
 tmp=$(mktemp -d)
@@ -111,7 +114,7 @@ layer_text() {
         sed 's/^/  /' "$tmp/eof"
         bad=1
     fi
-    { git ls-files '*.rs' '*.py' '*.c' '*.h' '*.ps1' | outside; shell_scripts; } | sort -u | while IFS= read -r f; do
+    { git ls-files '*.rs' '*.py' '*.c' '*.h' | outside; shell_scripts; } | sort -u | while IFS= read -r f; do
         head -n 5 "$f" | grep -q 'SPDX-License-Identifier:' || echo "$f"
     done >"$tmp/spdx"
     if [ -s "$tmp/spdx" ]; then
@@ -134,7 +137,7 @@ layer_text() {
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
 }
 
-# every tracked Python file, and every shell script by its first line (shell_scripts)
+# every tracked Python file, every shell script by its first line (shell_scripts), and the workflow files as YAML
 layer_syntax() {
     git ls-files '*.py' | outside >"$tmp/py"
     while IFS= read -r f; do
@@ -146,17 +149,33 @@ layer_syntax() {
         case $(head -n 1 "$f") in *bash*) sh=bash ;; *) sh=sh ;; esac
         $sh -n "$f" || fail "syntax: $f"
     done <"$tmp/sh"
-    echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts"
+    # the workflow files: one that does not parse runs no job at all, and nothing says so
+    if command -v ruby >/dev/null 2>&1; then
+        for f in .github/workflows/*.yml; do
+            ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" 2>"$tmp/yaml" || {
+                cat "$tmp/yaml" >&2
+                fail "syntax: $f"
+            }
+        done
+        yaml="$(ls .github/workflows/*.yml | wc -l | tr -d ' ') workflow files"
+    else
+        yaml="workflow files not parsed (no ruby)"
+    fi
+    echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts, $yaml"
 }
 
+# the tests of every crate and of the host tools; with a part (hal dsp ui fpgad tools) only that one
 layer_test() {
     for c in $crates; do
+        [ -z "$1" ] || [ "$1" = "$c" ] || continue
         say "test $c"
         (cd "$c" && strict cargo test --locked) || fail "test: $c"
     done
     # the host tools' own tests: offline, no scope, no listener
-    say "test tools"
-    python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
+    if [ -z "$1" ] || [ "$1" = tools ]; then
+        say "test tools"
+        python3 -m unittest discover -q -s tools/tests || fail "test: tools/tests"
+    fi
 }
 
 layer_target() {
@@ -173,14 +192,24 @@ layer_target() {
 }
 
 # the core decoders only, and every optional decoder alone (tests that need every decoder skip themselves)
+# with a part: core (the build without optional decoders) or each (every optional decoder alone)
 layer_decoders() {
-    (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
-    (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
-        fail "decoders: core only, target"
-    for d in $(ui/tools/decoder-features.sh list); do
-        (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
-            fail "decoders: dec-$d alone"
-    done
+    if [ -z "$1" ] || [ "$1" = core ]; then
+        (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
+        (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
+            fail "decoders: core only, target"
+    fi
+    if [ -z "$1" ] || [ "$1" = each ]; then
+        for d in $(ui/tools/decoder-features.sh list); do
+            (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
+                fail "decoders: dec-$d alone"
+        done
+    fi
+}
+
+# the numbers that only go down: the size of the large files, switched-off lints, `unsafe` (ADR 0037)
+layer_ratchet() {
+    tools/ratchet.sh || fail "ratchet: see docs/adr/process/0037-numbers-that-only-go-down.md"
 }
 
 # The simulations: the scripts of the image in arm64 containers and virtual machines, without a scope. Each needs what
@@ -202,12 +231,25 @@ if [ "$1" = list ]; then
 fi
 
 run=${*:-$enforced}
+# a layer, or layer:part
+parts_test="$crates tools"
+parts_decoders="core each"
 for l in $run; do
-    case " $layers " in *" $l "*) ;; *) fail "unknown layer '$l' (layers: $layers)" ;; esac
+    name=${l%%:*}
+    case " $layers " in *" $name "*) ;; *) fail "unknown layer '$name' (layers: $layers)" ;; esac
+    case $l in
+    *:*)
+        case $name in test) parts=$parts_test ;; decoders) parts=$parts_decoders ;; *) parts= ;; esac
+        case " $parts " in
+        *" ${l#*:} "*) ;;
+        *) fail "no part '${l#*:}' in layer '$name' (parts: ${parts:-none})" ;;
+        esac
+        ;;
+    esac
 done
 for l in $run; do
     say "$l"
-    "layer_$l"
+    case $l in *:*) "layer_${l%%:*}" "${l#*:}" ;; *) "layer_$l" "" ;; esac
 done
 say "passed: $run"
 if [ $# = 0 ]; then

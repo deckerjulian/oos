@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""privacy-scan.py: what a range of commits would publish that belongs to a person or a unit (AGENTS.md, "Never").
+
+    tools/privacy-scan.py [RANGE]      RANGE: commits as git names them, default origin/main..HEAD
+
+Reads every commit of the range on its own: the lines it adds and its message. A line that a later commit of the
+same range removes again still counts, because the commit stays readable in the pull request. Looks for
+
+    mac      a MAC address
+    serial   a serial number of a scope
+    key      the head of a private key
+    token    an access token of GitHub and of a few other services
+    home     a path inside somebody's home directory
+    address  an IPv4 address of a host in a private network
+    mail     an e-mail address (not in a Signed-off-by or Co-Authored-By line, not a no-reply address)
+
+Third-party files that are in the tree as they come (kernel/, the licence texts) are not read. A value that is meant
+to be in the tree, like the address in an example, goes into tools/privacy-allow.txt as `rule value`, in the same
+pull request, where the reviewer sees it. Exit 1 when something was found. Python's standard library only; reads
+the repository, touches no scope and no network.
+"""
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SKIP = ("kernel/", "rootfs/initramfs/etc/licenses/", "LICENSE", "THIRD-PARTY-LICENSES.md", "ui/Cargo.lock",
+        "hal/Cargo.lock", "dsp/Cargo.lock", "fpgad/Cargo.lock")
+RULES = {
+    "mac": re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:])"),
+    "serial": re.compile(r"\b[DM]HO[0-9][A-Z][A-Z0-9]{9,}\b"),
+    "key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    "token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}"
+                        r"|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{24,})"),
+    "home": re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\Users\\)([A-Za-z0-9._-]+)"),
+    "address": re.compile(r"(?<![0-9.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(?![0-9.])"),
+    "mail": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"),
+}
+# values that are nobody's: examples, and the accounts of the tools
+FINE = {
+    "mac": re.compile(r"^(?:00:){5}00$|^(?:ff:){5}ff$|^00:11:22:33:44:55$|^aa:bb:cc:dd:ee:ff$"
+                      r"|^02:00:00:00:00:[0-9a-f]{2}$", re.I),
+    "home": re.compile(r"^(?:runner|user|you|me|name|USER|\$USER|username)$"),
+    # a network, not a host
+    "address": re.compile(r"\.0$"),
+    "mail": re.compile(r"@(?:users\.noreply\.github\.com|example\.(?:com|org|net)|noreply\.[a-z.]+)$|^noreply@|^git@"),
+}
+TRAILER = re.compile(r"^(?:Signed-off-by|Co-authored-by|Reviewed-by|Tested-by|Reported-by):", re.I)
+
+
+def git(*args):
+    return subprocess.run(("git", "-C", ROOT) + args, check=True, capture_output=True).stdout.decode("utf-8", "replace")
+
+
+def allowed():
+    out = set()
+    try:
+        with open(os.path.join(ROOT, "tools", "privacy-allow.txt"), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    rule, _, value = line.partition(" ")
+                    out.add((rule, value.strip()))
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def find(text, allow, message=False):
+    """(rule, value) for everything in one line of text that a rule names and nothing excuses."""
+    if message and TRAILER.match(text):
+        return []
+    hits = []
+    for rule, pattern in RULES.items():
+        for m in pattern.finditer(text):
+            value = m.group(1) if rule == "home" else m.group(0)
+            if rule in FINE and FINE[rule].search(value):
+                continue
+            if (rule, value) in allow:
+                continue
+            hits.append((rule, value))
+    return hits
+
+
+def scan(rng):
+    allow = allowed()
+    hits = []
+    for commit in git("rev-list", "--no-merges", rng).split():
+        short = commit[:9]
+        for line in git("log", "-1", "--format=%B", commit).splitlines():
+            hits += [(short, "message", rule, value) for rule, value in find(line, allow, message=True)]
+        path = None
+        for line in git("show", "--format=", "--unified=0", "--no-color", commit).splitlines():
+            if line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else None
+            elif line.startswith("+") and path and not path.startswith(SKIP):
+                hits += [(short, path, rule, value) for rule, value in find(line[1:], allow)]
+    return hits
+
+
+def main(argv):
+    rng = argv[1] if len(argv) > 1 else "origin/main..HEAD"
+    hits = scan(rng)
+    for commit, where, rule, value in hits:
+        print(f"{commit} {where}: {rule}: {value}")
+    if hits:
+        print(f"{len(hits)} found in {rng}: take them out, in a commit range without them, or, for a value that is "
+              "meant to be public, add `rule value` to tools/privacy-allow.txt")
+        return 1
+    print(f"nothing found in {rng}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

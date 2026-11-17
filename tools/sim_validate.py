@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Validate PR6 SIM integration in a loopback OOS desktop app, without hardware.
+"""Validate PR6 SIM integration in a loopback OOS host build (`oos-ui --serve`), without hardware.
 
 Replaces R8 with generated records and leaves SIM stopped. Uses the identity
 guard of scpi_validate.py and the transport of oosclient.py. No GitHub calls.

@@ -846,7 +846,6 @@ fn keygen(a: &Args) {
         use std::io::Write;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
         let mut f = options.open(&out)
             .unwrap_or_else(|e| die(&format!("{}: {}", out.display(), e)));

@@ -1,0 +1,4 @@
+# Who has to review a change before it can be merged by someone else (docs/adr/process/0036). The ruleset
+# "main-review" asks for the review of the owner of every changed file; the maintainer's own pull requests pass it.
+# One owner for everything today. A second maintainer gets the lines of the parts they look after.
+* @dekajoule

@@ -4819,10 +4819,22 @@ mod tests {
 
     #[test]
     fn compatibility_disconnected_raw_client_cannot_resume_trailing_writes() {
+        // a hang guard, not a time the test depends on
+        let guard=Duration::from_secs(60);
         let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
         let mut client=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();
-        client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();for _ in 0..50 { s.poll(&mut ui,&cv); if !s.clients.is_empty() && s.clients[0].program.is_some() { break; } std::thread::sleep(std::time::Duration::from_millis(2)); }assert!(s.clients[0].program.is_some());
+        client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();
+        // until the program is in, however long the host takes to deliver the line (it was 50 polls, 100 ms)
+        let deadline=std::time::Instant::now()+guard;
+        while !s.clients.first().is_some_and(|c| c.program.is_some()) {
+            s.poll(&mut ui,&cv);assert!(std::time::Instant::now()<deadline,"the program never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         client.shutdown(std::net::Shutdown::Both).unwrap();drop(client);
+        // The close goes through the host's network stack and can reach the server's socket after the next poll on a
+        // busy computer; that poll would then resume the program. Wait until the server's side reads the end.
+        s.clients[0].s.set_read_timeout(Some(guard)).unwrap();
+        assert_eq!(s.clients[0].s.peek(&mut [0u8;1]).expect("the close is readable at the server"),0);
         line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);s.poll(&mut ui,&cv);
         assert!(s.clients.is_empty());assert_eq!(ui.m.run,RunState::Stop);assert_eq!(captures(&ui),1.0);
     }

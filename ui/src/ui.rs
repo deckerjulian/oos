@@ -1207,7 +1207,7 @@ enum Kind {
 pub enum Ev {
     Key(u8),
     Touch { id: i32, phase: Phase, x: i32, y: i32 },
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // made by the desktop window
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests make it
     Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
 }
 
@@ -1368,9 +1368,6 @@ pub struct Ui {
     pub open_wave_request: bool,
     load_slot_ask: bool,
     load_destination: Option<usize>,
-    pub lan_status: String,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // set by the desktop window
-    pub lan_web_port: Option<u16>,
     pub m: Model,
     pub src: Source,
     pub ph: Phosphor,
@@ -1774,8 +1771,6 @@ impl Ui {
             open_wave_request: false,
             load_slot_ask: false,
             load_destination: None,
-            lan_status: String::new(),
-            lan_web_port: None,
             m,
             src,
             ph: Phosphor::new(1, 1),
@@ -7395,8 +7390,6 @@ impl Ui {
 
     fn value(&self, it: Item) -> String {
         if it == Item::CatSourceC { return self.wave_name(self.cat_c); }
-        // the desktop build reports its own web port and listeners (wlan.rs `net_value`)
-        if it == Item::NetWeb && cfg!(windows) && !self.lan_status.is_empty() { return self.net_value(it); }
         if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
         if let Some(v) = PARTS.iter().find_map(|p| p.value.and_then(|f| f(self, it))) {
             return v;

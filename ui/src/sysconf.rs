@@ -351,8 +351,7 @@ impl SysConf {
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         use oos_hal::fsutil::{write_atomic, DirSync, Opts};
         let tmp = path.with_extension("conf.new");
-        // the rename reaches the disk with the directory; Windows cannot open a directory as a file (the desktop build
-        // keeps the rename alone)
+        // the rename reaches the disk with the directory
         write_atomic(path, self.text().as_bytes(), &Opts { tmp: Some(&tmp), dir_sync: DirSync::Required, ..Default::default() })
     }
 }

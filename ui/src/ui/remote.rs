@@ -240,7 +240,7 @@ impl Ui {
         }
     }
 
-    /// The address list the network servers check (main.rs, desktop.rs hand it to them); Allowed sets it.
+    /// The address list the network servers check (main.rs hands it to them); Allowed sets it.
     pub fn acl(&self) -> netacl::Shared {
         self.remote.acl.clone()
     }
