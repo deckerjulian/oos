@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""scpi-coverage.py: what a remote command or a setting lacks of the parts it should have (AGENTS.md, ADR 0022/0023).
+
+    tools/scpi-coverage.py [ROOT]          one line: the four counts, missing/total
+    tools/scpi-coverage.py --list [ROOT]   each count with the names behind it
+
+ROOT is the top of a tree (default: this tree). Read from it as it is:
+  words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs where <node> holds a
+                 node of the header (NODE below; not an argument such as `arg` or `item`), that docs/scpi.md does
+                 not name. A word is named in a file when `[:*]Word\\b` is in it, ignoring case, or when it follows
+                 `{` or `|` as one of the choices of `{A|B}`;
+  words-tests    the same words that ui/tests/scpi.txt does not name;
+  queries-tests  the queries of docs/scpi.md (the first command of a table row, without its arguments, when it ends
+                 in `?` or `[?]`) that no `scpi` line of ui/tests/scpi.txt asks, in the long or the short form;
+  fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
+                 and in the functions it hands `m` to) that ui/src/scpi.rs never names as `.field`. An upper bound:
+                 a field can be set by a command under another name, and some fields are no setting a remote
+                 command should have.
+
+A report only: it exits 0 whatever it counts. Python's standard library; reads files, touches no scope.
+"""
+import argparse
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCPI_RS = "ui/src/scpi.rs"
+SCPI_MD = "docs/scpi.md"
+SCPI_TXT = "ui/tests/scpi.txt"
+STORE_RS = "ui/src/store.rs"
+
+# The expressions scpi.rs passes to kw() that hold a node of the header. Not counted: `a`, `arg`, `s`, `item`, `first`,
+# `z`, which hold arguments (`kw(first, "MAXimum")` reads the first argument of :MEASure:STATistic:ITEM?).
+NODE = r"n0|n1|k0|k|n|x|last|node|leaf|which|nodes\[\d+\]|n\[\d+\]|suffix\((?:n|n0)\)\.0"
+KW = re.compile(r"\bkw\(\s*(?:" + NODE + r")\s*,\s*\"([A-Za-z0-9]+)\"\s*\)")
+FIELD = re.compile(r"\bm\.([a-z_][a-z0-9_]*)\b(?!\s*\()")
+HANDS_M = re.compile(r"\b([a-z_][a-z0-9_]*)\(\s*m\s*,")
+SCPI_LINE = re.compile(r"^scpi\s+\S+\s+(\S+)")
+ROW = re.compile(r"^\|\s*`([^`]+)`")
+
+
+def read(root, rel):
+    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def named(word, text):
+    """`[:*]Word\\b` ignoring case; also after `{` or `|`, where scpi.md lists choices (`:CURSor:XY:{AX|BX}`)."""
+    return re.search(r"[:*{|]" + re.escape(word) + r"\b", text, re.IGNORECASE) is not None
+
+
+def command_words(scpi_rs):
+    """The words of kw(<node>, "Word") in scpi.rs, once each (ignoring case), in the order of the file."""
+    seen = {}
+    for w in KW.findall(scpi_rs):
+        seen.setdefault(w.upper(), w)
+    return list(seen.values())
+
+
+def word_pattern(word):
+    """A keyword as the interpreter takes it: the long form or the short form (its upper-case letters and digits)."""
+    short = "".join(c for c in word if c.isupper() or c.isdigit())
+    forms = {word, short} if short else {word}
+    return "(?:" + "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True)) + ")"
+
+
+def query_pattern(doc):
+    """A regular expression for the queries a documented header stands for: `<n>` a number, `[:MAIN]` optional,
+    `{A|B}` one of them, `[?]` a `?`."""
+    out = []
+    for m in re.finditer(r"<[^>]*>|\[:[^\]]+\]|\{[^}]*\}|\[\?\]|[A-Za-z][A-Za-z0-9]*|.", doc):
+        t = m.group(0)
+        if t.startswith("<"):
+            out.append(r"\d+")
+        elif t.startswith("[:"):
+            out.append("(?::" + query_pattern(t[2:-1]) + ")?")
+        elif t.startswith("{"):
+            out.append("(?:" + "|".join(query_pattern(a) for a in t[1:-1].split("|")) + ")")
+        elif t == "[?]":
+            out.append(r"\?")
+        elif t[0].isalpha():
+            out.append(word_pattern(t))
+        else:
+            out.append(re.escape(t))
+    return "".join(out)
+
+
+def documented_queries(scpi_md):
+    """The first command of each table row of scpi.md, without arguments, when it is a query."""
+    out = []
+    for line in scpi_md.split("\n"):
+        m = ROW.match(line)
+        if not m:
+            continue
+        cmd = m.group(1).split(" ")[0]
+        if cmd.endswith(("?", "[?]")) and cmd not in out:
+            out.append(cmd)
+    return out
+
+
+def asked(scpi_txt):
+    return [m.group(1) for m in map(SCPI_LINE.match, scpi_txt.split("\n")) if m]
+
+
+def fn_body(src, name):
+    """The text of a top-level `fn name` of a Rust file, to its closing brace at the start of a line."""
+    m = re.search(r"^(?:pub(?:\([a-z]+\))? )?fn " + re.escape(name) + r"\b.*?^\}", src, re.MULTILINE | re.DOTALL)
+    return m.group(0) if m else ""
+
+
+def setup_fields(store_rs):
+    """The fields of the model setup_text writes: `m.<field>` in it and in the functions of store.rs it hands `m`
+    to. A name followed by `(` is a method, not a field."""
+    body = fn_body(store_rs, "setup_text")
+    text = body + "".join(fn_body(store_rs, f) for f in sorted(set(HANDS_M.findall(body))))
+    seen = []
+    for f in FIELD.findall(text):
+        if f not in seen:
+            seen.append(f)
+    return seen
+
+
+def counts(root):
+    """The four gaps as (key, what, missing, total); missing is a list of names. The keys name the gaps in the
+    summary, and are what a later --enforce keeps a number for."""
+    scpi_rs, scpi_md, scpi_txt = read(root, SCPI_RS), read(root, SCPI_MD), read(root, SCPI_TXT)
+    words = command_words(scpi_rs)
+    queries = documented_queries(scpi_md)
+    cmds = asked(scpi_txt)
+    fields = setup_fields(read(root, STORE_RS))
+    unasked = []
+    for q in queries:
+        pat = re.compile(query_pattern(q), re.IGNORECASE)
+        if not any(pat.fullmatch(c) for c in cmds):
+            unasked.append(q)
+    return [
+        ("words-docs", "command words of %s not in %s" % (SCPI_RS, SCPI_MD),
+         [w for w in words if not named(w, scpi_md)], len(words)),
+        ("words-tests", "command words of %s not in %s" % (SCPI_RS, SCPI_TXT),
+         [w for w in words if not named(w, scpi_txt)], len(words)),
+        ("queries-tests", "queries of %s not asked in %s" % (SCPI_MD, SCPI_TXT), unasked, len(queries)),
+        ("fields-scpi", "setup fields of %s not named in %s (an upper bound)" % (STORE_RS, SCPI_RS),
+         [f for f in fields if not re.search(r"\." + f + r"\b", scpi_rs)], len(fields)),
+    ]
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description="what a remote command or a setting lacks; a report, exit 0")
+    ap.add_argument("root", nargs="?", default=ROOT, help="top of the tree (default: this tree)")
+    ap.add_argument("--list", action="store_true", help="each count with its names")
+    args = ap.parse_args(argv)
+    result = counts(args.root)
+    if args.list:
+        for key, what, missing, total in result:
+            print("%s: %d of %d %s" % (key, len(missing), total, what))
+            for name in missing:
+                print("  " + name)
+    else:
+        print("scpi-coverage: " + ", ".join("%s %d/%d" % (k, len(m), t) for k, _, m, t in result) +
+              " missing (--list names them)")
+    # A later --enforce compares len(missing) of each key with numbers kept in the tree, as tools/ratchet.txt
+    # does, and fails when one grew. Until then this is a report and exits 0.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
