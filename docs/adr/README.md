@@ -48,10 +48,10 @@ A decision that touches two categories goes where its consequences are largest a
 | [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
 | [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
-| [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted |
+| [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted, amended by ADR 0030 |
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | accepted |
-| [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | proposed |
-| [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | proposed |
+| [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | accepted |
+| [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | accepted |
 | [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | accepted |
 | [0033](process/0033-development-on-linux-macos-and-wsl.md) | process | OOS is developed on Linux, macOS and Windows with WSL; there is no native Windows build | accepted |
 | [0034](process/0034-standing-agents-get-their-task-from-a-machine-a-person-merges.md) | process | Standing agents get their task from a machine and open one pull request; a person merges | accepted |

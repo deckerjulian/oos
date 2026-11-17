@@ -9,9 +9,9 @@ name: Gate
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
-  # the waits run out without an event, and an approving review is picked up here within the hour
+  # the waits run out without an event, and an approving review is picked up here within a quarter of an hour
   schedule:
-    - cron: '7 * * * *'
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,6 +1,7 @@
 # ADR 0031: Every change enters main through a pull request, the maintainer's too; decision records are decided there
 
-- Status: proposed
+- Status: accepted (2026-11-17, by the maintainer; in force since that day, and an objection is an issue and can
+  still change it)
 - Date: 2026-11-17
 - Category: process
 
