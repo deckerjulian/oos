@@ -10,19 +10,6 @@
 use crate::decode::{Kind, Packet};
 use crate::edges::{edges, states};
 
-fn pk(t0: f64, t1: f64, kind: Kind, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    Packet { t0, t1, kind, value, value2, ok }
-}
-
-fn field(t0: f64, t1: f64, label: &'static str, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    pk(t0, t1, Kind::Field(label), value, value2, ok)
-}
-
-/// A value-less event tag (label starting with '!').
-fn tag(t0: f64, t1: f64, label: &'static str, ok: bool) -> Packet {
-    pk(t0, t1, Kind::Field(label), 0, None, ok)
-}
-
 fn rising(clk: &[f32], thr: f32, hyst: f32) -> Vec<f64> {
     edges(clk, thr, hyst).into_iter().filter(|e| e.rising).map(|e| e.t).collect()
 }
@@ -67,12 +54,12 @@ pub fn swd(swclk: &[f32], swdio: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
         if bits[i].1 {
             let run = bits[i..].iter().take_while(|b| b.1).count();
             if run >= 50 {
-                out.push(tag(bits[i].0, bits[i + run - 1].0, "!RESET", true));
+                out.push(Packet::tag("!RESET", bits[i].0, bits[i + run - 1].0, true));
                 i += run;
                 continue;
             }
         } else if i + 16 <= n && lsb(&bits[i..i + 16]) == 0xe79e {
-            out.push(tag(bits[i].0, bits[i + 15].0, "!JTAG2SWD", true));
+            out.push(Packet::tag("!JTAG2SWD", bits[i].0, bits[i + 15].0, true));
             i += 16;
             continue;
         }
@@ -84,13 +71,15 @@ pub fn swd(swclk: &[f32], swdio: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
         let (ap, rnw) = (bits[i + 1].1, bits[i + 2].1);
         let a = lsb(&bits[i + 3..i + 5]);
         let par_ok = (ap as u32 + rnw as u32 + a.count_ones()) % 2 == bits[i + 5].1 as u32;
-        out.push(field(bits[i].0, bits[i + 7].0, "REQ", a << 2, Some(ap as u32 | (rnw as u32) << 1), par_ok));
+        out.push(
+            Packet::field("REQ", bits[i].0, bits[i + 7].0, a << 2, par_ok).with_value2(ap as u32 | (rnw as u32) << 1),
+        );
         // turnaround, ACK
         if i + 12 > n {
             break;
         }
         let ack = lsb(&bits[i + 9..i + 12]);
-        out.push(pk(bits[i + 9].0, bits[i + 11].0, Kind::Ack, ack, None, ack == 1));
+        out.push(Packet::new(Kind::Ack, bits[i + 9].0, bits[i + 11].0, ack, ack == 1));
         let mut j = i + 12;
         if ack == 1 {
             // read: data, parity, turnaround; write: turnaround, data, parity
@@ -100,7 +89,7 @@ pub fn swd(swclk: &[f32], swdio: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
             }
             let d = lsb(&bits[d0..d0 + 32]);
             let ok = d.count_ones() % 2 == bits[d0 + 32].1 as u32;
-            out.push(pk(bits[d0].0, bits[d0 + 32].0, Kind::Data, d, None, ok));
+            out.push(Packet::new(Kind::Data, bits[d0].0, bits[d0 + 32].0, d, ok));
             j += 34;
         } else {
             j += 1;
@@ -298,7 +287,7 @@ pub fn jtag(
     let mut out: Vec<Packet> = trans
         .iter()
         .filter(|x| x.1 == TapState::TestLogicReset && !(x.0 == 0.0 && start.is_some()))
-        .map(|x| tag(x.0, x.0, "!TLR", true))
+        .map(|x| Packet::tag("!TLR", x.0, x.0, true))
         .collect();
     let val = |b: &[bool]| b.iter().enumerate().fold(0u32, |v, (k, &x)| v | (x as u32) << k);
     for s in &shifts {
@@ -311,7 +300,8 @@ pub fn jtag(
                 (false, true) => "DR+",
             };
             let tdo = if s.tdo.is_empty() { None } else { Some(val(&s.tdo[a..a + ch.len()])) };
-            out.push(field(ch[0], ch[ch.len() - 1], label, val(&s.tdi[a..a + ch.len()]), tdo, true));
+            let tdi = val(&s.tdi[a..a + ch.len()]);
+            out.push(Packet { value2: tdo, ..Packet::field(label, ch[0], ch[ch.len() - 1], tdi, true) });
         }
     }
     out.sort_by(|a, b| a.t0.total_cmp(&b.t0));
@@ -513,7 +503,7 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
         };
         let Some((op, t0, t1)) = take(cmd_l, 8, &mut k) else { continue };
         let op = op as u8;
-        out.push(field(t0, t1, "CMD", op as u32, None, true));
+        out.push(Packet::field("CMD", t0, t1, op as u32, true));
         let f = if auto {
             qspi_opcode_cfg(op, qpi, if ab4 { 4 } else { 3 }, cfg.dummy_cycles).unwrap_or(*cfg)
         } else {
@@ -535,18 +525,18 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
         let (al, dl) = (lines(f.addr_lines), lines(f.data_lines));
         if f.addr_bytes > 0 {
             let Some((v, t0, t1)) = take(al, f.addr_bytes.min(4) as u32 * 8, &mut k) else { continue };
-            out.push(field(t0, t1, "ADDR", v, None, true));
+            out.push(Packet::field("ADDR", t0, t1, v, true));
         }
         if f.mode {
             let Some((v, t0, t1)) = take(al, 8, &mut k) else { continue };
-            out.push(field(t0, t1, "MODE", v, None, true));
+            out.push(Packet::field("MODE", t0, t1, v, true));
         }
         if f.dummy_cycles > 0 {
             let n = f.dummy_cycles as usize;
             if k + n > cyc.len() {
                 continue;
             }
-            out.push(field(cyc[k].0, cyc[k + n - 1].0, "DUMMY", f.dummy_cycles, None, true));
+            out.push(Packet::field("DUMMY", cyc[k].0, cyc[k + n - 1].0, f.dummy_cycles, true));
             k += n;
         }
         if dl == 1 {
@@ -554,12 +544,12 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
                 let c = &cyc[k..k + 8];
                 let mo = c.iter().fold(0u32, |v, x| v << 1 | (x.1 & 1));
                 let mi = c.iter().fold(0u32, |v, x| v << 1 | (x.1 >> 1 & 1));
-                out.push(pk(c[0].0, c[7].0, Kind::Data, mo, Some(mi), true));
+                out.push(Packet::new(Kind::Data, c[0].0, c[7].0, mo, true).with_value2(mi));
                 k += 8;
             }
         } else {
             while let Some((v, t0, t1)) = take(dl, 8, &mut k) {
-                out.push(pk(t0, t1, Kind::Data, v, None, true));
+                out.push(Packet::new(Kind::Data, t0, t1, v, true));
             }
         }
     }
@@ -660,20 +650,20 @@ impl I3c {
                 let (addr, rnw, ack) = (v8 >> 1, v8 & 1 == 1, !ninth);
                 let known = self.known.contains(&(addr as u8));
                 if addr == 0x7e && rnw && self.daa {
-                    self.out.push(pk(t0, t1, Kind::Addr { read: true }, addr, None, ack));
+                    self.out.push(Packet::new(Kind::Addr { read: true }, t0, t1, addr, ack));
                     self.ph = if ack { I3cPh::Pid } else { I3cPh::Idle };
                 } else if addr == 0x7e && !rnw {
-                    self.out.push(pk(t0, t1, Kind::Addr { read: false }, addr, None, ack));
+                    self.out.push(Packet::new(Kind::Addr { read: false }, t0, t1, addr, ack));
                     self.ccc = None;
                     self.daa = false;
                     self.ph = if ack { I3cPh::Ccc } else { I3cPh::Idle };
                 } else if self.after_start && rnw && known {
                     // a target's in-band interrupt request won the address arbitration after START
-                    self.out.push(field(t0, t1, "IBI", addr, None, ack));
+                    self.out.push(Packet::field("IBI", t0, t1, addr, ack));
                     self.ph = if ack { I3cPh::Bytes { read: true, i3c: true } } else { I3cPh::Idle };
                 } else {
                     let i3c = known || self.ccc.is_some_and(|c| c >= 0x80);
-                    self.out.push(pk(t0, t1, Kind::Addr { read: rnw }, addr, None, ack));
+                    self.out.push(Packet::new(Kind::Addr { read: rnw }, t0, t1, addr, ack));
                     self.ph = if ack || i3c { I3cPh::Bytes { read: rnw, i3c } } else { I3cPh::Idle };
                     if !ack && i3c {
                         self.ph = I3cPh::Idle;
@@ -681,14 +671,14 @@ impl I3c {
                 }
             }
             I3cPh::Ccc => {
-                self.out.push(field(t0, t1, "CCC", v8, None, t_odd));
+                self.out.push(Packet::field("CCC", t0, t1, v8, t_odd));
                 self.ccc = Some(v8 as u8);
                 self.ph = I3cPh::Bytes { read: false, i3c: true };
                 match v8 {
                     0x07 => self.daa = true,
                     0x06 => self.known = self.user.clone(),
                     0x20..=0x27 => {
-                        self.out.push(field(t1, t1, "!HDR", v8 & 7, None, true));
+                        self.out.push(Packet::field("!HDR", t1, t1, v8 & 7, true));
                         self.hdr = true;
                         self.ph = I3cPh::Idle;
                     }
@@ -697,37 +687,37 @@ impl I3c {
             }
             I3cPh::Bytes { read, i3c } => {
                 if !i3c {
-                    self.out.push(pk(t0, t1, Kind::Data, v8, None, !ninth));
+                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, !ninth));
                 } else if read {
-                    self.out.push(pk(t0, t1, Kind::Data, v8, None, true));
+                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, true));
                     if !ninth {
                         // T-bit low: the target ends the read
-                        self.out.push(tag(t1, t1, "!EOD", true));
+                        self.out.push(Packet::tag("!EOD", t1, t1, true));
                         self.ph = I3cPh::Idle;
                     }
                 } else if matches!(self.ccc, Some(0x87 | 0x88)) {
                     // SETDASA / SETNEWDA: the new dynamic address
                     let da = v8 >> 1;
-                    self.out.push(field(t0, t1, "DA", da, None, t_odd));
+                    self.out.push(Packet::field("DA", t0, t1, da, t_odd));
                     if t_odd && !self.known.contains(&(da as u8)) {
                         self.known.push(da as u8);
                     }
                 } else {
-                    self.out.push(pk(t0, t1, Kind::Data, v8, None, t_odd));
+                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, t_odd));
                 }
             }
             I3cPh::Pid => {
                 let pid = msb(&u[..48]);
-                self.out.push(field(t0, u[47].0, "PID", pid as u32, Some((pid >> 32) as u32), true));
-                self.out.push(field(u[48].0, u[55].0, "BCR", msb(&u[48..56]) as u32, None, true));
-                self.out.push(field(u[56].0, t1, "DCR", msb(&u[56..64]) as u32, None, true));
+                self.out.push(Packet::field("PID", t0, u[47].0, pid as u32, true).with_value2((pid >> 32) as u32));
+                self.out.push(Packet::field("BCR", u[48].0, u[55].0, msb(&u[48..56]) as u32, true));
+                self.out.push(Packet::field("DCR", u[56].0, t1, msb(&u[56..64]) as u32, true));
                 self.ph = I3cPh::Da;
             }
             I3cPh::Da => {
                 // 7-bit dynamic address, odd parity bit, target ACK
                 let da = v8 >> 1;
                 let ok = (v8.count_ones() % 2 == 1) && !ninth;
-                self.out.push(field(t0, t1, "DA", da, None, ok));
+                self.out.push(Packet::field("DA", t0, t1, da, ok));
                 if ok && !self.known.contains(&(da as u8)) {
                     self.known.push(da as u8);
                 }
@@ -779,7 +769,7 @@ pub fn i3c(sda: &[f32], scl: &[f32], i3c_addrs: &[u8], thr: f32, hyst: f32) -> V
                     if exit_cnt == 4 {
                         d.hdr = false;
                         d.ph = I3cPh::Idle;
-                        d.out.push(tag(t, t, "!HDREXIT", true));
+                        d.out.push(Packet::tag("!HDREXIT", t, t, true));
                     }
                 }
                 _ => {}
@@ -788,14 +778,14 @@ pub fn i3c(sda: &[f32], scl: &[f32], i3c_addrs: &[u8], thr: f32, hyst: f32) -> V
         }
         match k {
             1 if high(&scl_s, t) => {
-                d.out.push(pk(t, t, if d.in_frame { Kind::RepStart } else { Kind::Start }, 0, None, true));
+                d.out.push(Packet::new(if d.in_frame { Kind::RepStart } else { Kind::Start }, t, t, 0, true));
                 d.after_start = !d.in_frame;
                 d.in_frame = true;
                 d.ph = I3cPh::Addr;
                 d.buf.clear();
             }
             2 if high(&scl_s, t) => {
-                d.out.push(pk(t, t, Kind::Stop, 0, None, true));
+                d.out.push(Packet::new(Kind::Stop, t, t, 0, true));
                 d.in_frame = false;
                 d.daa = false;
                 d.ccc = None;
@@ -885,18 +875,13 @@ pub fn spdif(v: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         if right.is_none() {
-            out.push(field(e[i], e[i + 4], "BLK", blk, None, true));
+            out.push(Packet::field("BLK", e[i], e[i + 4], blk, true));
             blk += 1;
         }
         let vflag = bits >> 24 & 1 == 1;
-        out.push(pk(
-            e[i],
-            e[j],
-            Kind::Sample { right: right == Some(true) },
-            bits & 0xff_ffff,
-            Some(bits >> 24),
-            bits.count_ones() % 2 == 0 && !vflag,
-        ));
+        let kind = Kind::Sample { right: right == Some(true) };
+        let ok = bits.count_ones() % 2 == 0 && !vflag;
+        out.push(Packet::new(kind, e[i], e[j], bits & 0xff_ffff, ok).with_value2(bits >> 24));
         i = j;
     }
     out
@@ -1175,9 +1160,9 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
         }
     }
     let Some((s, si, m)) = best else { return };
-    out.push(field(b[0].0, b[s - 1].1, "PRE", s as u32, None, true));
+    out.push(Packet::field("PRE", b[0].0, b[s - 1].1, s as u32, true));
     let (label, _) = PD_SETS[si];
-    out.push(tag(b[s].0, b[s + 19].1, label, m == 4));
+    out.push(Packet::tag(label, b[s].0, b[s + 19].1, m == 4));
     if label.starts_with('!') {
         return;
     }
@@ -1193,27 +1178,27 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
     };
     let mut bytes = Vec::new();
     let Some((hdr, t0, t1)) = word(&mut p, 4) else {
-        out.push(tag(b[p.min(n - 1)].0, b[n - 1].1, "!ERR", false));
+        out.push(Packet::tag("!ERR", b[p.min(n - 1)].0, b[n - 1].1, false));
         return;
     };
-    out.push(field(t0, t1, "HDR", hdr, None, true));
+    out.push(Packet::field("HDR", t0, t1, hdr, true));
     bytes.extend_from_slice(&(hdr as u16).to_le_bytes());
     for _ in 0..(hdr >> 12 & 7) {
         let Some((d, t0, t1)) = word(&mut p, 8) else {
-            out.push(tag(b[p.min(n - 1)].0, b[n - 1].1, "!ERR", false));
+            out.push(Packet::tag("!ERR", b[p.min(n - 1)].0, b[n - 1].1, false));
             return;
         };
-        out.push(field(t0, t1, "PDO", d, None, true));
+        out.push(Packet::field("PDO", t0, t1, d, true));
         bytes.extend_from_slice(&d.to_le_bytes());
     }
     let Some((crc, t0, t1)) = word(&mut p, 8) else {
-        out.push(tag(b[p.min(n - 1)].0, b[n - 1].1, "!ERR", false));
+        out.push(Packet::tag("!ERR", b[p.min(n - 1)].0, b[n - 1].1, false));
         return;
     };
-    out.push(pk(t0, t1, Kind::Crc, crc, None, crc == usbpd_crc32(&bytes)));
+    out.push(Packet::new(Kind::Crc, t0, t1, crc, crc == usbpd_crc32(&bytes)));
     match sym(p) {
-        Some(PD_EOP) => out.push(tag(b[p].0, b[p + 4].1, "!EOP", true)),
-        _ => out.push(tag(b[p.min(n - 1)].0, b[n - 1].1, "!ERR", false)),
+        Some(PD_EOP) => out.push(Packet::tag("!EOP", b[p].0, b[p + 4].1, true)),
+        _ => out.push(Packet::tag("!ERR", b[p.min(n - 1)].0, b[n - 1].1, false)),
     }
 }
 

@@ -10,15 +10,6 @@
 use crate::decode::{Kind, Packet};
 use crate::edges::{edges, states};
 
-fn pk(kind: Kind, t0: f64, t1: f64, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    Packet { t0, t1, kind, value, value2, ok }
-}
-
-/// A value-less event tag (label starting with '!').
-fn tag(label: &'static str, t0: f64, t1: f64, ok: bool) -> Packet {
-    pk(Kind::Field(label), t0, t1, 0, None, ok)
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // ARINC 429
 
@@ -105,7 +96,7 @@ fn arinc429_word(p: &[Pulse], bit: f64, n: f64, out: &mut Vec<Packet>) {
         && p.iter().enumerate().all(|(k, q)| ((mid(q) - m0) / b - k as f64).abs() < 0.3);
     if !slots {
         if inside {
-            out.push(tag("!ERR", first.0, last.1, false));
+            out.push(Packet::tag("!ERR", first.0, last.1, false));
         }
         return;
     }
@@ -115,11 +106,11 @@ fn arinc429_word(p: &[Pulse], bit: f64, n: f64, out: &mut Vec<Packet>) {
     let lsb = |a: usize, len: usize| (0..len).fold(0u32, |acc, k| acc | (bits[a + k] as u32) << k);
     let label = bits[..8].iter().fold(0u32, |acc, &x| acc << 1 | x as u32);
     let odd = bits.iter().filter(|&&x| x).count() % 2 == 1;
-    out.push(pk(Kind::Id { ext: false, rtr: false }, at(0), at(8), label, None, true));
-    out.push(pk(Kind::Field("SDI"), at(8), at(10), lsb(8, 2), None, true));
-    out.push(pk(Kind::Data, at(10), at(29), lsb(10, 19), None, true));
-    out.push(pk(Kind::Field("SSM"), at(29), at(31), lsb(29, 2), None, true));
-    out.push(pk(Kind::Field("PAR"), at(31), at(32), bits[31] as u32, None, odd));
+    out.push(Packet::new(Kind::Id { ext: false, rtr: false }, at(0), at(8), label, true));
+    out.push(Packet::field("SDI", at(8), at(10), lsb(8, 2), true));
+    out.push(Packet::new(Kind::Data, at(10), at(29), lsb(10, 19), true));
+    out.push(Packet::field("SSM", at(29), at(31), lsb(29, 2), true));
+    out.push(Packet::field("PAR", at(31), at(32), bits[31] as u32, odd));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -208,23 +199,22 @@ pub fn sent(v: &[f32], dt: f64, tick: Option<f64>, nibbles: usize, thr: f32, hys
             continue;
         }
         let tick_ok = nom.is_none_or(|t| (tk / t - 1.0).abs() <= 0.2);
-        out.push(pk(Kind::Field("SYNC"), f[i], f[i + 1], (tk * dt * 1e9).round() as u32, None, tick_ok));
+        out.push(Packet::field("SYNC", f[i], f[i + 1], (tk * dt * 1e9).round() as u32, tick_ok));
         if let Some(k) = bad {
-            out.push(tag("!ERR", f[i + 1 + k], f[i + 2 + k], false));
+            out.push(Packet::tag("!ERR", f[i + 1 + k], f[i + 2 + k], false));
             i += 1 + k;
             continue;
         }
         let e = |k: usize| f[i + 1 + k]; // start of nibble k (0 = status)
-        out.push(pk(Kind::Field("STAT"), e(0), e(1), vals[0], None, true));
+        out.push(Packet::field("STAT", e(0), e(1), vals[0], true));
         let data: Vec<u8> = vals[1..=nn].iter().map(|&x| x as u8).collect();
         let value = data.iter().fold(0u32, |a, &x| a << 4 | x as u32);
-        out.push(pk(Kind::Data, e(1), e(nn + 1), value, Some(nn as u32), true));
-        out.push(pk(
+        out.push(Packet::new(Kind::Data, e(1), e(nn + 1), value, true).with_value2(nn as u32));
+        out.push(Packet::new(
             Kind::Crc,
             e(nn + 1),
             e(nn + 2),
             vals[nn + 1],
-            None,
             vals[nn + 1] == sent_crc(&data, false) as u32,
         ));
         i += nn + 3; // the edge that ends the CRC nibble
@@ -232,7 +222,7 @@ pub fn sent(v: &[f32], dt: f64, tick: Option<f64>, nibbles: usize, thr: f32, hys
         if let (Some(&a), Some(&b)) = (f.get(i + 1), f.get(i + 2)) {
             let p = (a - f[i]) / tk;
             if (11.5..=768.5).contains(&p) && ((b - a) / (56.0 * tk) - 1.0).abs() < 0.1 {
-                out.push(pk(Kind::Field("PAUSE"), f[i], a, p.round() as u32, None, true));
+                out.push(Packet::field("PAUSE", f[i], a, p.round() as u32, true));
                 i += 1;
             }
         }
@@ -478,9 +468,9 @@ pub fn usb(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
         match s {
             Ls::Se0 => {
                 if e - t >= reset {
-                    out.push(tag("!RESET", t, e, true));
+                    out.push(Packet::tag("!RESET", t, e, true));
                 } else if i > 0 && i + 1 < segs.len() {
-                    out.push(tag("!EOP", t, e, segs[i + 1].1 == Ls::J));
+                    out.push(Packet::tag("!EOP", t, e, segs[i + 1].1 == Ls::J));
                 }
                 i += 1;
             }
@@ -552,7 +542,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
                 if !pre {
                     let eop_end =
                         if bus.fs_pol { segs.get(next).map_or(te + 2.0 * bit, |s| s.0) } else { te + 2.0 * bit };
-                    out.push(tag("!EOP", te, eop_end, true));
+                    out.push(Packet::tag("!EOP", te, eop_end, true));
                 }
                 return next;
             }
@@ -586,7 +576,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
             tm.push(te);
             if l >= 8 {
                 usb_fields(&b, &tm, kbit, true, out);
-                out.push(tag("!EOP", te, if bus.fs_pol { segs[j].0 } else { te + 2.0 * bit }, true));
+                out.push(Packet::tag("!EOP", te, if bus.fs_pol { segs[j].0 } else { te + 2.0 * bit }, true));
             }
             j + 1
         }
@@ -598,7 +588,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
             tm.truncate(l);
             tm.push(te);
             usb_fields(&b, &tm, kbit, false, out);
-            out.push(tag("!STUFF", ts, ts + bit, false));
+            out.push(Packet::tag("!STUFF", ts, ts + bit, false));
             j + 1
         }
         None if j < segs.len() => {
@@ -607,7 +597,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
             tm.push(t);
             if segs[j].1 == Ls::Se1 {
                 usb_fields(&b, &tm, kbit, false, out);
-                out.push(tag("!ERR", t, e, false));
+                out.push(Packet::tag("!ERR", t, e, false));
                 return j + 1;
             }
             if e >= bus.n && e - t < reset {
@@ -618,7 +608,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
                 return j; // a reset right after the packet
             }
             let w = (e - t) / bit;
-            out.push(tag("!EOP", t, e, w > 0.6 && w < 3.5 && segs.get(j + 1).is_some_and(|s| s.1 == Ls::J)));
+            out.push(Packet::tag("!EOP", t, e, w > 0.6 && w < 3.5 && segs.get(j + 1).is_some_and(|s| s.1 == Ls::J)));
             j + 1
         }
         None => segs.len(),
@@ -666,36 +656,36 @@ fn usb_fields(b: &[bool], tm: &[f64], kbit: u32, whole: bool, out: &mut Vec<Pack
     }
     let val = |a: usize, len: usize| (0..len).fold(0u32, |acc, k| acc | (b[a + k] as u32) << k);
     let sync_ok = b[..7].iter().all(|&x| !x) && b[7];
-    out.push(pk(Kind::Field("SYNC"), tm[0], tm[8], kbit, None, sync_ok));
+    out.push(Packet::field("SYNC", tm[0], tm[8], kbit, sync_ok));
     if !sync_ok {
         return;
     }
     if l < 16 {
         if whole {
-            out.push(tag("!ERR", tm[8], tm[l], false));
+            out.push(Packet::tag("!ERR", tm[8], tm[l], false));
         }
         return;
     }
     let pid = val(8, 8) as u8;
     let pid_ok = pid >> 4 == !pid & 15;
-    out.push(pk(Kind::Field("PID"), tm[8], tm[16], pid as u32, None, pid_ok));
+    out.push(Packet::field("PID", tm[8], tm[16], pid as u32, pid_ok));
     if !whole {
         return;
     }
     let nb = (l - 8) / 8; // bytes after the SYNC, the PID included
-    let byte = |k: usize| pk(Kind::Data, tm[8 + 8 * k], tm[16 + 8 * k], val(8 + 8 * k, 8), None, true);
+    let byte = |k: usize| Packet::new(Kind::Data, tm[8 + 8 * k], tm[16 + 8 * k], val(8 + 8 * k, 8), true);
     // bytes shown, and whether the length fits the PID
     let (shown, len_ok) = match if pid_ok { pid & 15 } else { 0 } {
         // tokens, SOF: 11 bits and CRC5
         1 | 9 | 13 | 4 | 5 if nb >= 3 => {
             if pid & 15 == 5 {
-                out.push(pk(Kind::Field("FRAME"), tm[16], tm[27], val(16, 11), None, true));
+                out.push(Packet::field("FRAME", tm[16], tm[27], val(16, 11), true));
             } else {
-                out.push(pk(Kind::Field("ADDR"), tm[16], tm[23], val(16, 7), None, true));
-                out.push(pk(Kind::Field("ENDP"), tm[23], tm[27], val(23, 4), None, true));
+                out.push(Packet::field("ADDR", tm[16], tm[23], val(16, 7), true));
+                out.push(Packet::field("ENDP", tm[23], tm[27], val(23, 4), true));
             }
             let c = val(27, 5);
-            out.push(pk(Kind::Crc, tm[27], tm[32], c, None, c == usb_crc5(&b[16..27]) as u32));
+            out.push(Packet::new(Kind::Crc, tm[27], tm[32], c, c == usb_crc5(&b[16..27]) as u32));
             (3, nb == 3)
         }
         1 | 9 | 13 | 4 | 5 => (1, false),
@@ -705,7 +695,7 @@ fn usb_fields(b: &[bool], tm: &[f64], kbit: u32, whole: bool, out: &mut Vec<Pack
             out.extend((1..nb - 2).map(byte));
             let a = 8 + 8 * (nb - 2);
             let c = val(a, 16);
-            out.push(pk(Kind::Crc, tm[a], tm[a + 16], c, None, c == usb_crc16(&payload) as u32));
+            out.push(Packet::new(Kind::Crc, tm[a], tm[a + 16], c, c == usb_crc16(&payload) as u32));
             (nb, true)
         }
         3 | 11 | 7 | 15 => (1, false),
@@ -719,7 +709,7 @@ fn usb_fields(b: &[bool], tm: &[f64], kbit: u32, whole: bool, out: &mut Vec<Pack
     };
     let rest = 8 + 8 * shown;
     if !len_ok || l >= rest + 2 {
-        out.push(tag("!ERR", tm[rest], tm[l], false));
+        out.push(Packet::tag("!ERR", tm[rest], tm[l], false));
     }
 }
 
@@ -823,7 +813,7 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         };
         let pre_t0 = bits[pre0].unwrap().0;
         let pre_t1 = bits[pre0 + n_pre - 1].unwrap().1;
-        out.push(pk(Kind::Field("PRE"), pre_t0, pre_t1, n_pre as u32, None, true));
+        out.push(Packet::field("PRE", pre_t0, pre_t1, n_pre as u32, true));
         k += 1;
         // bytes: each is 8 bits MSB first, preceded by a 0 (already consumed for the first); after each byte a
         // separator: 0 = more data, 1 = end (last byte was the XOR)
@@ -893,21 +883,21 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         if let Some((t0, t1)) = err_at {
-            out.push(tag("!ERR", t0, t1.max(t0 + 1.0), false));
+            out.push(Packet::tag("!ERR", t0, t1.max(t0 + 1.0), false));
             continue;
         }
         if bytes.len() < 2 {
-            out.push(tag("!ERR", s0, s0 + 1.0, false));
+            out.push(Packet::tag("!ERR", s0, s0 + 1.0, false));
             continue;
         }
         let (xor_t0, xor_t1, xor) = bytes[bytes.len() - 1];
         let payload: Vec<u8> = bytes[..bytes.len() - 1].iter().map(|b| b.2).collect();
         let (a0, a1, addr) = bytes[0];
-        out.push(pk(Kind::Id { ext: false, rtr: false }, a0, a1, addr as u32, None, true));
+        out.push(Packet::new(Kind::Id { ext: false, rtr: false }, a0, a1, addr as u32, true));
         for &(t0, t1, d) in &bytes[1..bytes.len() - 1] {
-            out.push(pk(Kind::Data, t0, t1, d as u32, None, true));
+            out.push(Packet::new(Kind::Data, t0, t1, d as u32, true));
         }
-        out.push(pk(Kind::Crc, xor_t0, xor_t1, xor as u32, None, xor == dcc_xor(&payload)));
+        out.push(Packet::new(Kind::Crc, xor_t0, xor_t1, xor as u32, xor == dcc_xor(&payload)));
     }
     out
 }
