@@ -78,12 +78,16 @@ work on its own (ADR 0039). Everything above holds for it, and:
 - At most five of its pull requests are open at once, and no two change the same file.
 - It asks for Copilot's review of each pull request under the maintainer's account (`gh pr edit N --add-reviewer
   @copilot`, not through the App: GitHub asks Copilot by itself only for a person's pull request), reads it, fixes
-  what is right, answers what is not, and resolves the threads; `review` passes only then. It never makes a check pass by weakening it.
+  what is right, answers what is not, and resolves the threads; `review` passes only then. It never makes a check
+  pass by weakening it.
 - A change in the hardware paths (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`, `fpgad/`, `boot/`, `kernel/`,
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
   request what ran on the unit. Without that the pull request waits, unless CI's job `scope` finds the programs
-  for the scope byte-identical to the base's (`tools/scope-binaries.sh`, ADR 0041): then `unit` passes by itself.
+  for the scope byte-identical to the base's (`tools/scope-binaries.sh`, ADR 0041), or it is a refactoring of
+  code that builds register sequences, which the comparison proves (title `Lints:` or `Refactor:`, `Behaviour:
+  unchanged`; not the start, the update, `ui/src/board/` or the live paths of `hal/src/dho/`, ADR 0042): then `unit`
+  passes by itself. Register sequences, timing, start and update are what the run on a unit is for.
 - It never removes `hold`, and never merges or asks to merge a pull request of somebody else or of another bot.
 - When main is red it fixes that first and does nothing else.
 - At the end it reports to the maintainer: what it opened and merged, what ran on the unit, what it left open.

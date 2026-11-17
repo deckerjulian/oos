@@ -15,7 +15,10 @@
 #            commits of actions, or the maintainer has approved its newest commit.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested` (after a run on a
 #            unit), or the programs for the scope built from it are byte-identical to its base's: CI's job `scope`
-#            passed and kept no artifact `scope-binaries-differ`; not when it touches the image (ADR 0041)
+#            passed and kept no artifact `scope-binaries-differ`; not when it touches the image (ADR 0041); or it is
+#            a refactoring the comparison found equal: its title begins with `Lints:` or `Refactor:`, it says
+#            `Behaviour: unchanged`, CI's job `compare` passed and kept nothing, and it touches only code that builds
+#            register sequences, which the comparison proves - nothing of $live (ADR 0042)
 #   review   GitHub Copilot has reviewed it, once per pull request (ADR 0039), and left no open issue, or every
 #            thread it opened is resolved; pending until then, and for a draft. When the review was of an earlier
 #            commit, the status says so: what came after it was not read by Copilot.
@@ -34,6 +37,10 @@ maintainer=${OOS_MAINTAINER:-${repo%%/*}}
 agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 # paths whose effect is only seen on a unit: register sequences and the board, updates, how the scope starts
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
+# what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
+# live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
+live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/bin/oos-update\.rs$|ui/src/board/|'
+live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$)"
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
@@ -75,6 +82,11 @@ one() {
 	here=$(printf '%s' "$pr" | jq -r '.head.repo.full_name == .base.repo.full_name')
 	labels=$(printf '%s' "$pr" | jq -r '[.labels[].name] | join(" ")')
 	draft=$(printf '%s' "$pr" | jq -r '.draft == true')
+	# the pull request says it leaves behaviour as it was
+	unchanged=
+	if printf '%s' "$pr" | jq -r '.body // ""' | tr -d '\r' | grep -Eiq '^\**Behaviou?r:\** *unchanged'; then
+		unchanged=yes
+	fi
 	# the maintainer's own, or the development agent's: from a branch of this repository
 	own=
 	if [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
@@ -98,7 +110,7 @@ one() {
 	if [ -z "$quick" ] && ! printf '%s\n' "$files" | grep -Ev '^tools/tests/' | grep -Eq "$hardware|$unseen"; then
 		if ! printf '%s\n' "$files" | grep -Evq '\.md$|^docs/|^wiki/'; then
 			quick="documents only"
-		elif printf '%s' "$pr" | jq -r '.body // ""' | tr -d '\r' | grep -Eiq '^\**Behaviou?r:\** *unchanged'; then
+		elif [ -n "$unchanged" ]; then
 			# the run of CI for this commit: its job compare passed, and kept nothing because nothing differed
 			if [ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ]; then
 				quick="behaviour unchanged, the comparison found nothing"
@@ -171,11 +183,16 @@ one() {
 	# unit
 	if printf '%s\n' "$files" | grep -Eq "$hardware"; then
 		case " $labels " in
-		*" unit-tested "*) status "$sha" unit success "tried on a unit (label unit-tested)" ;;
+		*" unit-tested "*) status "$sha" unit success "tried on a unit or released by the maintainer (label unit-tested)" ;;
 		*)
+			title=$(printf '%s' "$pr" | jq -r .title)
 			if ! printf '%s\n' "$files" | grep -Eq '^(boot|kernel|rootfs)/' &&
 				[ "$(ci_job scope)" = success ] && [ "$(ci_kept scope-binaries-differ)" = 0 ]; then
 				status "$sha" unit success "the programs for the scope are byte-identical to the base's (job scope)"
+			elif ! printf '%s\n' "$files" | grep -Eq "$live" &&
+				printf '%s\n' "$title" | grep -Eq '^(Lints|Refactor):' && [ -n "$unchanged" ] &&
+				[ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ]; then
+				status "$sha" unit success "a refactoring the comparison found equal: no run on a unit (ADR 0042)"
 			else
 				status "$sha" unit pending "changes what is only proven on a scope: the label unit-tested after a run on a unit"
 			fi

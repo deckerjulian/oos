@@ -244,6 +244,28 @@ class PullRequests(unittest.TestCase):
         self.ci(scope="success")
         self.assertEqual(self.gate()["unit"], "pending", "the image is not in the programs")
 
+    def test_a_refactoring_the_comparison_found_equal(self):
+        unchanged = "**Behaviour:** unchanged.\n"
+        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/main.rs"]
+        self.ci()
+        self.pull(regs, title="Lints: the findings in the trigger code", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "success", "register sequences, which the comparison proves")
+        self.pull(regs, title="Refactor: one table for the trigger types", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "success")
+        self.pull(regs, title="Trigger: a new mode", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "pending", "not a refactoring by its title")
+        self.pull(regs, title="Lints: x", body="**Behaviour:** changed")
+        self.assertEqual(self.gate()["unit"], "pending", "it does not say unchanged")
+        for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/roll.rs", "hal/src/dho/selfcal.rs",
+                     "hal/src/dho/boot/mod.rs", "hal/src/update/pkg.rs", "fpgad/src/bin/oos-update.rs", "rootfs/init"):
+            self.pull(regs + [live], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "pending", f"{live}: timing, start or update need a unit")
+        self.ci(kept=True)
+        self.pull(regs, title="Lints: x", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "pending", "the comparison found a difference")
+        self.ci(compare=None)
+        self.assertEqual(self.gate()["unit"], "pending", "the comparison has not run")
+
     def test_labels(self):
         self.pull(["hal/src/dho/seq.rs", "docs/protocols/trigger.md", "tools/check.sh"], title="Trigger: something")
         self.assertEqual(self.labels(), {"area/hal", "area/docs", "area/tooling", "risk/hardware"})

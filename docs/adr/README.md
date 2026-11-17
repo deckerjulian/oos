@@ -58,10 +58,11 @@ A decision that touches two categories goes where its consequences are largest a
 | [0035](process/0035-every-text-has-one-home-the-wiki-comes-from-the-tree.md) | process | Every text has one home; the wiki is published from the tree, and a change brings its texts along | accepted |
 | [0036](process/0036-the-rules-of-the-repository-are-files-a-change-by-others-needs-the-maintainers-review.md) | process | The rules of the repository are files in the tree; a change by anyone else needs the maintainer's review | accepted |
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | accepted |
-| [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039 and ADR 0041 |
+| [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039, ADR 0041 and ADR 0042 |
 | [0039](process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md) | process | One development agent, with an identity of its own, opens and merges pull requests under the checks | accepted |
 | [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted |
 | [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
+| [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted |
 
 ## Reading order for agents
 
