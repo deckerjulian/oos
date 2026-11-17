@@ -110,7 +110,7 @@ jobs:
         env:
           LAYERS: ${{ matrix.layers }}
         run: tools/check.sh $LAYERS
-  # fmt and clippy: shown, not yet enforced
+  # fmt, clippy and the numbers that only go down: shown, not yet enforced
   advice:
     needs: files
     if: needs.files.outputs.code == 'true'
@@ -138,6 +138,17 @@ jobs:
       - name: Clippy (ADR 0017, not yet enforced)
         continue-on-error: true
         run: tools/check.sh clippy
+      - name: Numbers that only go down (ADR 0037, not yet enforced)
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # a number the pull request raised in the file is a notice for the reviewer, whatever the check says
+          if [ -n "$BASE" ]; then
+            git fetch --quiet --depth 1 origin "$BASE" || true
+            tools/ratchet.sh --base "$BASE" | sed 's/^/::notice::tools\/ratchet.txt, /'
+          fi
+          tools/check.sh ratchet
   # The one required check: every enforced layer passed, or was skipped for a pull request of documents only.
   test:
     needs: [files, check]

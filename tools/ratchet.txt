@@ -1,0 +1,17 @@
+1 allow dsp
+6 allow fpgad
+9 allow hal
+80 allow ui
+3392 lines ui/src/board/dho/hw.rs
+2066 lines ui/src/http.rs
+2151 lines ui/src/mdns.rs
+2623 lines ui/src/model.rs
+6115 lines ui/src/scpi.rs
+2705 lines ui/src/store.rs
+13747 lines ui/src/ui.rs
+2329 lines ui/src/ui/eyepage.rs
+2741 lines ui/src/ui/lint.rs
+0 unsafe dsp
+4 unsafe fpgad
+33 unsafe hal
+102 unsafe ui
