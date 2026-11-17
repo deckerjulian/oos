@@ -38,7 +38,7 @@ NODE = r"n0|n1|k0|k|n|x|last|node|leaf|which|nodes\[\d+\]|n\[\d+\]|suffix\((?:n|
 KW = re.compile(r"\bkw\(\s*(?:" + NODE + r")\s*,\s*\"([A-Za-z0-9]+)\"\s*\)")
 FIELD = re.compile(r"\bm\.([a-z_][a-z0-9_]*)\b(?!\s*\()")
 HANDS_M = re.compile(r"\b([a-z_][a-z0-9_]*)\(\s*m\s*,")
-SCPI_LINE = re.compile(r"^scpi\s+\S+\s+(\S+)")
+SCPI_LINE = re.compile(r"^scpi\s+\S+\s+(.+)$")
 ROW = re.compile(r"^\|\s*`([^`]+)`")
 
 
@@ -48,8 +48,9 @@ def read(root, rel):
 
 
 def named(word, text):
-    """`[:*]Word\\b` ignoring case; also after `{` or `|`, where scpi.md lists choices (`:CURSor:XY:{AX|BX}`)."""
-    return re.search(r"[:*{|]" + re.escape(word) + r"\b", text, re.IGNORECASE) is not None
+    """`[:*]Word\\b` ignoring case, also with a number after it (`:CHANnel1`, `:MATH2`); also after `{` or `|`, where
+    scpi.md lists choices (`:CURSor:XY:{AX|BX}`)."""
+    return re.search(r"[:*{|]" + re.escape(word) + r"\d*\b", text, re.IGNORECASE) is not None
 
 
 def command_words(scpi_rs):
@@ -101,8 +102,26 @@ def documented_queries(scpi_md):
     return out
 
 
+def commands(message):
+    """The headers of a message: every command of it, split at `;` outside quotes, its first word."""
+    parts, cur, quote = [], "", None
+    for ch in message:
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == ";":
+            parts.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    parts.append(cur)
+    return [p.split()[0] for p in parts if p.strip()]
+
+
 def asked(scpi_txt):
-    return [m.group(1) for m in map(SCPI_LINE.match, scpi_txt.split("\n")) if m]
+    """Every command header the `scpi FILE MESSAGE` lines of scpi.txt send, all of each `;` sequence."""
+    return [c for m in map(SCPI_LINE.match, scpi_txt.split("\n")) if m for c in commands(m.group(1))]
 
 
 def fn_body(src, name):

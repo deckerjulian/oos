@@ -96,6 +96,16 @@ class Coverage(unittest.TestCase):
         self.assertEqual(total, 8)
         self.assertEqual(missing, ["CHANnel", "POSition", "SOURce", "CAX", "SECRet"])
 
+    def test_numbered_forms_and_sequences(self):
+        # a number after the word names it (`:CHANnel1`, `:MATH2`); not a longer word
+        self.assertTrue(cov.named("CHANnel", ":CHANnel1:SCALe 1"))
+        self.assertTrue(cov.named("MATH", "x :MATH2:DISPlay?"))
+        self.assertFalse(cov.named("CHAN", ":CHANnel1"))
+        # every command of a `;` sequence is asked, a `;` inside quotes splits nothing
+        self.assertEqual(cov.commands(':CHAN1:SCAL 1;:CHAN1:SCAL?;:DISP:TEXT "a;b";*OPC?'),
+                         [":CHAN1:SCAL", ":CHAN1:SCAL?", ":DISP:TEXT", "*OPC?"])
+        self.assertEqual(cov.asked("scpi a.txt :RUN;:TRIG:MODE?\nscpi b.txt *IDN?\n"), [":RUN", ":TRIG:MODE?", "*IDN?"])
+
     def test_documented_queries(self):
         self.assertEqual(cov.documented_queries(SCPI_MD), [
             ":CHANnel<n>:SCALe[?]", ":CHANnel<n>:OFFSet[?]", ":CURSor:{MANual|TRACk}:{AXValue|BXValue}?",
