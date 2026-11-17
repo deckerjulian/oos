@@ -53,6 +53,8 @@ mod protocols;
 mod remote;
 mod scpi;
 mod sntp;
+#[cfg(test)]
+mod soak;
 mod sparse;
 mod ssh;
 mod store;
