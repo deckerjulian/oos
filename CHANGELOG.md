@@ -5,6 +5,14 @@
 Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
 it also ran on a DHO924S (2026-11-16).
 
+Fixed:
+
+- Measurements (host-tested against a pulse train of known values, not yet verified on hardware): Positive and Negative
+  Duty Cycle and the six Cycle rows (amplitude, top, base, peak-to-peak, maximum, minimum) had no value when the view
+  held one cycle between two falling edges, which is the default view of the 1 kHz probe signal; a count (edges,
+  pulses, ones) is written as a whole number, not "1.00"; a skew, setup or hold row without an edge pair inside its
+  window says "none in window".
+
 Added:
 
 - Remote commands (host-tested, not yet verified on hardware): the zone triggers (`:TRIGger:ZONE<n>:...`), the delay,

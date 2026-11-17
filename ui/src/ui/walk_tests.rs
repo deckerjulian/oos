@@ -939,3 +939,106 @@ fn a_math_lane_drags_up_and_down() {
     assert!(after < before - 0.5, "the math channel moved down: {before} -> {after} divisions");
     assert_eq!(u.m.ch[0].offset, -1.5, "CH1 did not move");
 }
+
+/// Audit: every measurement of the catalog, one at a time, on the demo signals (all four channels on). Prints what each
+/// row reads. `OOS_MEAS_AUDIT=1 cargo test meas_audit_table -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn meas_audit_table() {
+    for (_, def) in crate::measures::all() {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.relayout();
+        for c in 0..4 { u.m.ch[c].on = true; }
+        u.m.meas.clear();
+        u.m.meas2.clear();
+        u.m.cat.clear();
+        u.meas_src = WaveId::Ch(0);
+        u.meas_src_b = WaveId::Ch(1);
+        u.cat_c = WaveId::Ch(2);
+        u.cat_d = WaveId::Ch(3);
+        for _ in 0..6 { u.step(0.04); }
+        u.catalog_add(def);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        let mut rows = u.meas_rows();
+        loop {
+            u.step(0.04);
+            rows = u.meas_rows();
+            if rows.iter().all(|r| !r.computing) || std::time::Instant::now() > end { break; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let kind = match def.kind { crate::measures::Kind::Standard(_) => "std", crate::measures::Kind::Pair(_) => "pair", crate::measures::Kind::Module => "mod" };
+        match rows.first() {
+            Some(r) => println!("AUDIT|{}|{}|{}|{:?}|{}|{:e}|{}|{}|{}", def.id, kind, def.name, def.roles, r.text(), r.v, def.unit, if r.computing { "COMPUTING" } else { "" }, r.reason),
+            None => println!("AUDIT|{}|{}|{}|{:?}|NO ROW||{}||", def.id, kind, def.name, def.roles, def.unit),
+        }
+    }
+}
+
+/// A pulse train whose every figure is known: 1 kHz, 0 to 1 V, high for 300 µs, edges of 10 µs, ten cycles in 10 ms.
+fn known_pulses(delay: f64) -> Vec<f32> {
+    (0..10_000).map(|i| {
+        let t = (i as f64 * 1e-6 - 200e-6 - delay).rem_euclid(1e-3);
+        (if t < 10e-6 { t / 10e-6 } else if t < 300e-6 { 1.0 } else if t < 310e-6 { 1.0 - (t - 300e-6) / 10e-6 } else { 0.0 }) as f32
+    }).collect()
+}
+
+/// One catalog measurement on the known pulse train in R1 (and the same train 100 µs later in R2): its value.
+fn known_value(def: &'static crate::measures::Def) -> (f64, String) {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.run = RunState::Stop;
+    u.m.ch.iter_mut().for_each(|c| c.on = false);
+    u.m.meas.clear();
+    u.m.meas2.clear();
+    u.m.cat.clear();
+    u.m.meas_full_record = true;
+    for (r, delay) in [(0, 0.0), (1, 100e-6)] {
+        u.refs[r] = Some(RefWave { src: 0, color: r, label: String::new(), t0: -5e-3, dt: 1e-6, v: known_pulses(delay).into(), vpd: 0.2, offset: 0.0, on: true });
+    }
+    u.meas_src = WaveId::Ref(0);
+    u.meas_src_b = WaveId::Ref(1);
+    for _ in 0..3 { u.step(0.04); }
+    u.catalog_add(def);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        u.step(0.04);
+        let rows = u.meas_rows();
+        if rows.iter().all(|r| !r.computing) || std::time::Instant::now() > end {
+            return rows.first().map_or((f64::NAN, "NO ROW".into()), |r| (r.v, r.text()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// The standard and the pair measurements read what the pulse train is, each within 2 % (edge times within a sample).
+#[test]
+fn the_measurements_read_a_known_pulse_train() {
+    let rms = ((290.0 + 20.0 / 3.0) / 1000.0f64).sqrt();
+    let want: &[(&str, f64)] = &[
+        ("Amplitude", 1.0), ("Peak-to-Peak", 1.0), ("Maximum", 1.0), ("Minimum", 0.0), ("Top", 1.0), ("Base", 0.0),
+        ("Upper Level", 0.9), ("Middle Level", 0.5), ("Lower Level", 0.1), ("Positive Overshoot", 0.0), ("Negative Overshoot", 0.0),
+        ("Mean", 0.3), ("RMS", rms), ("AC RMS", (rms * rms - 0.09).sqrt()), ("Area", 3e-3), ("Standard Deviation", (rms * rms - 0.09).sqrt()),
+        ("Frequency", 1e3), ("Period", 1e-3), ("Positive Pulse Width", 300e-6), ("Negative Pulse Width", 700e-6),
+        ("Positive Duty Cycle", 30.0), ("Negative Duty Cycle", 70.0), ("Rise Time", 8e-6), ("Fall Time", 8e-6),
+        ("Rising Slew Rate", 1e5), ("Falling Slew Rate", -1e5), ("Rising Edges", 10.0), ("Falling Edges", 10.0),
+        ("Positive Pulses", 10.0), ("Negative Pulses", 9.0), ("Cycle Mean", 0.3), ("Cycle RMS", rms), ("Cycle Area", 300e-6),
+        ("Cycle Amplitude", 1.0), ("Cycle Top", 1.0), ("Cycle Base", 0.0), ("Cycle Peak-to-Peak", 1.0), ("Cycle Maximum", 1.0),
+        ("Cycle Minimum", 0.0), ("High Time", 292e-6), ("Low Time", 692e-6),
+        ("Delay rise-rise", 100e-6), ("Delay fall-fall", 100e-6), ("Phase rise-rise", 36.0), ("Phase fall-fall", 36.0),
+    ];
+    let mut bad = Vec::new();
+    let mut seen = 0;
+    for (_, def) in crate::measures::all() {
+        if matches!(def.kind, crate::measures::Kind::Module) { continue; }
+        let (v, text) = known_value(def);
+        let expect = want.iter().find(|w| w.0 == def.name).map(|w| w.1);
+        println!("KNOWN|{}|{}|{}|{:e}|{}", def.id, def.name, text, v, expect.map_or("-".to_string(), |e| format!("{e:e}")));
+        if let Some(e) = expect {
+            seen += 1;
+            let tol = if def.unit == "s" { 2e-6 } else { e.abs() * 0.02 + 0.012 };
+            if !(v - e).abs().le(&tol) { bad.push(format!("{}: {} (want {:e})", def.name, text, e)); }
+        }
+    }
+    assert_eq!(seen, want.len(), "a name of the table is not in the catalog");
+    assert!(bad.is_empty(), "{bad:#?}");
+}

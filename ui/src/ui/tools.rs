@@ -108,6 +108,9 @@ impl MeasRow {
             if self.reason.is_empty() { "----".into() } else { self.reason.clone() }
         } else if self.unit == "\u{b0}" {
             format!("{:.1}\u{b0}", v)
+        } else if self.unit.is_empty() && v.fract() == 0.0 && v.abs() < 1e6 {
+            // a count (edges, pulses, ones): a whole number is written as one
+            format!("{}", v as i64)
         } else {
             si_digits(v, self.unit, digits)
         }
@@ -242,8 +245,12 @@ impl Ui {
                 PairKind::SetupAndHold | PairKind::SetupAndHoldBoth => "",
                 _ => "s",
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
-                computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b), reason: String::new() });
+            let computing = self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b);
+            // skew, setup and hold only pair edges inside their window (nanoseconds unless the row sets another): say so
+            // when no pair is, a bare "----" reads as a fault
+            let windowed = !matches!(kind, PairKind::Delay | PairKind::Phase | PairKind::SetupAndHold | PairKind::SetupAndHoldBoth);
+            let reason = if windowed && !computing && !val.is_finite() { "none in window".to_string() } else { String::new() };
+            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit, computing, reason });
         }
         for &(id, a, b, c, d) in &self.m.cat {
             if let Some(row) = self.cat_row(id, a, b, c, d) {

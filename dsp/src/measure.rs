@@ -615,8 +615,10 @@ pub fn analyze_levels(v: &[f32], dt: f64, min_amp: f64, lv: &Levels) -> Analysis
     a.low_time = mean(&low);
     (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
     (a.out_hi, a.out_lo) = outside_spans(v, dt, &a, lv.out_volts);
-    if a.rises.len() >= 2 {
-        let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
+    // the cycles run from rise to rise; a view that only has one between two falling edges uses those
+    let cycles = if a.rises.len() >= 2 { &a.rises } else { &a.falls };
+    if cycles.len() >= 2 {
+        let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, cycles);
         (a.cyc_top, a.cyc_base, a.cyc_amp, a.cyc_pp, a.cyc_max, a.cyc_min) = (top, base, amp, pp, mx, mn);
     }
     // cycle mean, RMS and area: one value per cycle, then the mean of those
@@ -677,8 +679,14 @@ impl Analysis {
         }
         d
     }
+    /// Positive duty cycle. A view with one cycle between two falling edges has no rise-to-rise cycle: it is measured
+    /// as what the negative part leaves of that cycle.
     fn duty(&self) -> f64 {
-        mean(&self.duty_list(true))
+        let d = self.duty_list(true);
+        if d.is_empty() {
+            return 100.0 - mean(&self.duty_list(false));
+        }
+        mean(&d)
     }
     /// Mean width of complete positive (rise -> fall) or negative (fall -> rise) pulses. One pass over the sorted edges:
     /// a deep record has a hundred thousand of them, and this runs for every frame.
