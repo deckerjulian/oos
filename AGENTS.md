@@ -82,7 +82,8 @@ work on its own (ADR 0039). Everything above holds for it, and:
 - A change in the hardware paths (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`, `fpgad/`, `boot/`, `kernel/`,
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
-  request what ran on the unit. Without that the pull request waits.
+  request what ran on the unit. Without that the pull request waits, unless CI's job `scope` finds the programs
+  for the scope byte-identical to the base's (`tools/scope-binaries.sh`, ADR 0041): then `unit` passes by itself.
 - It never removes `hold`, and never merges or asks to merge a pull request of somebody else or of another bot.
 - When main is red it fixes that first and does nothing else.
 - At the end it reports to the maintainer: what it opened and merged, what ran on the unit, what it left open.

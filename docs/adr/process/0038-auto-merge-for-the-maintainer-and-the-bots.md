@@ -2,7 +2,7 @@
 
 - Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
   ADR 0031), amended by ADR 0039 (the development agent's pull requests are merged like the maintainer's; `review`
-  is required)
+  is required) and by ADR 0041 (`unit` passes when the programs for the scope are byte-identical to the base's)
 - Date: 2026-11-17
 - Category: process
 

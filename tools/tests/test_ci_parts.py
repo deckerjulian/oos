@@ -17,6 +17,12 @@ def parts(*files, all_parts=False):
     return set(layers.split()), lines["compare"] == "true"
 
 
+def scope(*files):
+    out = subprocess.run(["sh", str(ROOT / "tools/ci-parts.sh")], input="".join(f + "\n" for f in files),
+                         capture_output=True, text=True, check=True)
+    return dict(line.split("=", 1) for line in out.stdout.splitlines())["scope"] == "true"
+
+
 EVERYTHING = {"test:hal", "test:ui", "fmt", "test:dsp", "test:fpgad", "target", "decoders:core", "decoders:each/1",
               "decoders:each/2"}
 UI = {"test:ui", "fmt", "target", "decoders:core", "decoders:each/1", "decoders:each/2"}
@@ -43,6 +49,12 @@ class Parts(unittest.TestCase):
         for f in ("docs/scpi.md", "wiki/Home.md", "README.md", "tools/scout.py", "tools/tests/test_x.py",
                   ".github/workflows/image.yml", "gpu/oos-gpu.c", "boot/build-dev-image.sh", "kernel/config"):
             self.assertEqual(parts(f), (set(), False), f)
+
+    def test_the_programs_for_the_scope(self):
+        for f in ("hal/src/dho/seq.rs", "hal/src/update/pkg.rs", "ui/src/board/dho/hw.rs", "fpgad/Cargo.toml"):
+            self.assertTrue(scope(f), f)
+        self.assertFalse(scope("ui/src/scpi.rs", "hal/src/model.rs"), "no path a unit proves: unit passes anyway")
+        self.assertFalse(scope("hal/src/dho/seq.rs", "rootfs/init"), "the image: equal programs prove too little")
 
     def test_together(self):
         self.assertEqual(parts("docs/scpi.md", "fpgad/src/main.rs", "dsp/src/fft.rs"),
