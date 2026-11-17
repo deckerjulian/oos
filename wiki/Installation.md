@@ -79,8 +79,13 @@ more, run the same install from the stock system: it writes nothing but the sele
 **System > Boot mode** to **Persist** on OOS.
 
 The stock `recovery` is replaced by OOS. Everyday stock use does not need it, but anything that starts into it no
-longer works. Putting it back needs the card in a reader, with `recovery.bin` from the rescue set and
-`boot/card-install.py restore`.
+longer works. Putting it back needs the card in a reader (so the scope has to be opened) and `recovery.bin` from the
+rescue set. A dry run first, then the same with `--execute`:
+
+```sh
+sudo python3 boot/card-install.py restore /dev/rdiskM --backup OOS-rescue/recovery.bin
+sudo python3 boot/card-install.py restore /dev/rdiskM --backup OOS-rescue/recovery.bin --execute
+```
 
 ## Over ADB
 
@@ -140,17 +145,21 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
    Put the second card into the scope, close the instrument and start it once. The stock system must work as before,
    with its calibration and licences. Then unplug the scope and take the card out again.
 3. **Install OOS on the second card.** Put it in the reader. Unmount it, then do a dry run, which only checks the card
-   and prints the plan. With your own build, write `--image boot/out/oos-dev.img`:
+   and prints the plan. `img` is the file you downloaded, here 0.1.13, or `boot/out/oos-dev.img` of your own build:
 
    ```sh
+   img=oos-0.1.13.img
    diskutil unmountDisk /dev/diskM
-   sudo python3 boot/card-install.py install /dev/rdiskM --image oos-<version>.img --fallback-stock
+   sudo python3 boot/card-install.py install /dev/rdiskM --image "$img" --fallback-stock
    ```
+
+   On Linux (untested): `sudo umount /dev/sdX?*` instead of `diskutil`, and `/dev/sdX` instead of `/dev/rdiskM`, here
+   and in step 4.
 
    The tool refuses cards that do not have the stock layout. If the plan looks right, write it:
 
    ```sh
-   sudo python3 boot/card-install.py install /dev/rdiskM --image oos-<version>.img --fallback-stock --execute
+   sudo python3 boot/card-install.py install /dev/rdiskM --image "$img" --fallback-stock --execute
    ```
 
    This saves the current `recovery` partition to `backups/`, writes OOS into `recovery`, reads it back, and copies
@@ -238,7 +247,10 @@ After an install without opening the scope, running the same install again from 
 When OOS works for you, make it the normal system: set **System > Boot mode** to **Persist**, or run
 `oos-update mode persist`. It counts from the next power-on. One-shot goes back, and the next power-on starts stock.
 
-Even then, a start that does not complete leaves the stock boot in place, so the next power-on starts the stock system.
+Even then, a start that does not complete leaves the stock boot in place, so the next power-on starts the stock
+system. The exception is a kernel that hangs before the first script of the image runs: OOS then stays selected, and
+every power-on hangs the same way. On a second card, swap the cards; after an install without opening the scope, the
+card has to come out ([Troubleshooting](https://github.com/dekajoule/oos/wiki/Troubleshooting)).
 Switch the scope off at the mains and wait 30 seconds between two starts of OOS.
 
 Going back to stock, for one start or for good: [[Updates and Going Back]].
