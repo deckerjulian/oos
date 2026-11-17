@@ -49,6 +49,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted |
+| [0027](code/0027-a-session-is-one-file-of-setup-record-and-references.md) | code | A session is one file of the setup, the record on the screen and the reference slots | accepted, to be reviewed |
 
 ## Reading order for agents
 

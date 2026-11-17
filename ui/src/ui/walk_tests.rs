@@ -1150,3 +1150,72 @@ fn the_histogram_header_reads_the_samples_in_any_lane_height() {
         u.render(&mut cv);
     }
 }
+
+/// A session comes back whole: the settings, the record on the screen, the reference slots with their samples and
+/// their look. What was on the bench before the load is gone.
+#[test]
+fn a_session_saves_and_loads_the_whole_bench() {
+    let dir = std::env::temp_dir().join(format!("oos-session-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = fresh_live(Layout::Studio);
+    u.store_dir = dir.clone();
+    u.m.ch[1].on = true;
+    u.m.ch[0].vscale = 5;
+    u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ref(2))];
+    for _ in 0..10 { u.step(0.04); }
+    u.refs[2] = Some(RefWave { src: 1, color: 2, label: "golden".into(), t0: -1e-3, dt: 1e-6, v: known_pulses(0.0).into(), vpd: 0.5, offset: 0.25, on: true });
+    u.m.run = RunState::Stop;
+    for _ in 0..4 { u.step(0.04); }
+    let record = u.last[0].clone().expect("a record on the screen");
+    let (setup, tscale) = (u.setup_text_full(), u.m.tscale);
+    let settle = |u: &mut Ui| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut rows = u.meas_rows();
+        while rows.iter().any(|r| r.computing) && std::time::Instant::now() < end { u.step(0.04); rows = u.meas_rows(); }
+        rows.iter().map(|r| r.text()).collect::<Vec<_>>()
+    };
+    let readings = settle(&mut u);
+    assert!(readings.iter().all(|t| t != "----"), "the bench that is saved measures something: {readings:?}");
+    let file = u.session_save("").unwrap();
+    assert!(file.file_name().unwrap().to_str().unwrap().starts_with("session-") && file.extension().unwrap() == "oss");
+
+    // another bench: other settings, another reference, a slot the session does not have
+    let mut v = fresh_live(Layout::Minimal);
+    v.store_dir = dir.clone();
+    v.m.tscale = 8;
+    v.m.ch[1].on = false;
+    v.refs[0] = Some(RefWave { src: 0, color: 0, label: "left over".into(), t0: 0.0, dt: 1e-6, v: vec![0.5; 100].into(), vpd: 1.0, offset: 0.0, on: true });
+    v.session_load("").unwrap();
+    for _ in 0..4 { v.step(0.04); }
+    assert_eq!(v.m.run, RunState::Stop, "a loaded session is stopped");
+    assert_eq!((v.m.tscale, v.m.ch[1].on, v.m.layout), (tscale, true, Layout::Studio), "the settings");
+    assert_eq!(v.setup_text_full(), setup, "the whole setup text");
+    assert!(v.refs[0].is_none(), "a reference that is not in the session is gone");
+    let r = v.refs[2].as_ref().expect("R3 of the session");
+    assert_eq!((r.v.len(), r.dt, r.t0, r.vpd, r.offset, r.label.as_str(), r.on), (10_000, 1e-6, -1e-3, 0.5, 0.25, "golden", true), "the reference and its look");
+    assert_eq!(&r.v[..], &known_pulses(0.0)[..], "its samples");
+    let got = v.last[0].as_ref().expect("the record");
+    assert_eq!((got.dt, got.t0), (record.dt, record.t0));
+    for c in 0..2 { assert_eq!(got.ch[c], record.ch[c], "the samples of CH{}", c + 1); }
+    // measured again from what was loaded: the same readings as on the bench that was saved
+    assert_eq!(settle(&mut v), readings);
+
+    // over SCPI names, and what is refused
+    let named = dir.join("bench.oss");
+    v.session_save(named.to_str().unwrap()).unwrap();
+    assert!(named.is_file());
+    let bytes = std::fs::read(&named).unwrap();
+    assert!(crate::store::parse_session(&bytes[..bytes.len() - 7], NREF).is_err(), "a cut file");
+    assert!(crate::store::parse_session(&bytes[..40], NREF).is_err(), "a file cut in its setup");
+    assert!(crate::store::parse_session(b"OOSW\x01\x00\x00\x00\x00\x00\x00\x00", NREF).is_err(), "another kind of file");
+    let mut newer = bytes.clone();
+    newer[4] = 2;
+    assert!(crate::store::parse_session(&newer, NREF).err().is_some_and(|e| e.contains("version 2")));
+    std::fs::write(&named, &bytes[..bytes.len() / 2]).unwrap();
+    let before = v.setup_text_full();
+    assert!(v.session_load(named.to_str().unwrap()).is_err());
+    assert_eq!(v.setup_text_full(), before, "a file that does not load changes nothing");
+    assert!(v.refs[2].is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}

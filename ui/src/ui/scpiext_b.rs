@@ -14,7 +14,7 @@ pub(super) const T2: &[&str] = &[
     "MASK:CREate:REF", "MASK:CLEar", "MASK:INVert", "MASK:OUTPut", "MASK:SAVE", "MASK:LOAD",
     "SIM:DEFault", "SIM:ADDRef", "SIM:LOAD", "SIM:LIVE",
     "*SAV", "*RCL", "SYSTem:SETup", "SAVE:SETup", "LOAD:SETup", "SAVE:DESTination", "SAVE:SLOT",
-    "SAVE:WAVeform", "SAVE:IMAGe", "SAVE:FFRame", "LOAD:FFRame",
+    "SAVE:WAVeform", "SAVE:IMAGe", "SAVE:FFRame", "LOAD:FFRame", "SAVE:SESSion", "LOAD:SESSion",
     "TIMebase:DELay:SOURce", "TIMebase:DELay:VZOom", "TIMebase:DELay:VZOom:RESet", "TIMebase:DELay:FIT", "TIMebase:DELay:CENTer",
     "BANDwidth:STATe", "BANDwidth:SOURce", "BANDwidth:FREQuency", "BANDwidth:BINS",
     "SYSTem:LOG", "SYSTem:LOG:INTerval", "SYSTem:LOG:FILE", "SYSTem:LOG:INFO",
@@ -253,6 +253,14 @@ impl Ui {
                         Ok(()) => { self.mark_changed(); DONE }
                         Err(e) => Err(bad(&e)),
                     }
+                }
+            }
+            "SAVE:SESSion" | "LOAD:SESSion" => {
+                if q { return Some(Err(undefined(key))); }
+                let r = if key.starts_with("SAVE") { self.session_save(arg).map(|_| ()) } else { self.session_load(arg) };
+                match r {
+                    Ok(()) => { self.mark_changed(); DONE }
+                    Err(e) => Err(bad(&e)),
                 }
             }
             "SYSTem:SETup" => {

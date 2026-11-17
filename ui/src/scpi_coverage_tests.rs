@@ -440,6 +440,16 @@ fn storage_zoom(t: &mut T) {
     assert_eq!(t.ui.shot_request.as_deref(), Some(ip.to_string_lossy().as_ref()));
     t.go(":SAVE:IMAG");
     t.go(":SAVE:FFR");
+    // a session: saved, the bench changed, loaded back
+    let sess = t.ui.store_dir.join("bench.oss");
+    t.go(&format!(":SAVE:SESS \"{}\"", sess.display()));
+    assert!(sess.is_file());
+    let before = t.raw(":TIM:SCAL?");
+    t.go(":TIM:SCAL 5e-3");
+    t.go(&format!(":LOAD:SESS \"{}\"", sess.display()));
+    assert_eq!(t.raw(":TIM:SCAL?"), before, "the session brings its time base back");
+    t.no(":LOAD:SESS \"no-such-file.oss\"", "-224");
+    t.no(":SAVE:SESS?", "-113");
     t.go(":LOAD:FFR");
     // Studio zoom
     t.go(":TIM:DEL:ENAB OFF");

@@ -1033,6 +1033,9 @@ enum Item {
     StorePng,
     StoreFfSave,
     StoreFfLoad,
+    /// the whole bench as one file: setup, the record on the screen, the reference slots (ADR 0027)
+    StoreSessSave,
+    StoreSessLoad,
     MaskOn,
     MaskSrc,
     MaskX,
@@ -4497,6 +4500,81 @@ impl Ui {
         self.toast_saved(&p, r);
     }
 
+    /// The file of a session: `path` as given (relative: beside the setups), or the next `session-NNN.oss` of the save
+    /// folder for an empty one.
+    fn session_file(&self, path: &str, new: bool) -> Result<std::path::PathBuf, String> {
+        let raw = path.trim().trim_matches('"');
+        if raw.is_empty() {
+            return if new {
+                Ok(crate::store::next_name(&self.save_dir(), "session", "oss"))
+            } else {
+                crate::store::latest_name(&self.save_dir(), "session", "oss").ok_or_else(|| "missing session-NNN.oss in the save folder".to_string())
+            };
+        }
+        let named = std::path::Path::new(raw);
+        Ok(if named.is_absolute() { named.to_path_buf() } else { self.setup_path().parent().map(|d| d.join(named)).unwrap_or_else(|| named.to_path_buf()) })
+    }
+
+    /// Save session: the setup, the record on the screen and every loaded reference slot with its samples, as one file
+    /// (ADR 0027). Storage > Save session and `:SAVE:SESSion`.
+    pub(crate) fn session_save(&mut self, path: &str) -> Result<std::path::PathBuf, String> {
+        let p = self.session_file(path, true)?;
+        let setup = self.setup_text_full();
+        let refs: Vec<crate::store::SessionRef> = self.refs.iter().enumerate().filter_map(|(slot, r)| {
+            r.as_ref().map(|r| crate::store::SessionRef { slot, src: r.src, t0: r.t0, dt: r.dt, v: r.v.to_vec() })
+        }).collect();
+        let bytes = crate::store::session_bin(&setup, self.last[0].as_ref(), &self.m, &refs);
+        let r = crate::store::write(&p, &bytes);
+        let out = r.as_ref().map(|_| p.clone()).map_err(|e| e.to_string());
+        self.toast_saved(&p, r);
+        out
+    }
+
+    /// Load session: the scope stops and shows what the file holds. The setup is applied as Recall setup does, the
+    /// record becomes the one on the screen, and the reference slots are replaced by those of the file (a slot the file
+    /// does not have is emptied: the session is the whole bench, not an addition to it).
+    pub(crate) fn session_load(&mut self, path: &str) -> Result<(), String> {
+        let done = (|| {
+            let p = self.session_file(path, false)?;
+            let data = crate::store::read_waveform_file(&p)?;
+            let session = crate::store::parse_session(&data, NREF)?;
+            // checked before anything is changed: a file with a setup this build cannot read leaves the bench as it is
+            crate::store::parse_setup(&session.setup)?;
+            if self.record_mode() {
+                self.leave_session();
+            }
+            for r in self.refs.iter_mut() {
+                *r = None;
+            }
+            for r in session.refs {
+                self.refs[r.slot] = Some(RefWave { src: r.src, color: r.slot, label: String::new(), t0: r.t0, dt: r.dt, v: r.v.into(), vpd: 1.0, offset: 0.0, on: true });
+            }
+            // the look of the slots (scale, offset, colour, name, shown) is in the setup text and is applied with it
+            self.apply_setup_text(&session.setup)?;
+            self.m.run = RunState::Stop;
+            self.history.clear();
+            self.hist_pos = None;
+            if let Some(rec) = session.record {
+                self.last[0] = Some(rec);
+                self.cleared = false;
+            }
+            self.invalidate_reference_eye();
+            self.measure_last();
+            self.measure_refs();
+            Ok(p)
+        })();
+        match done {
+            Ok(p) => {
+                self.toast(&format!("Loaded {}", crate::store::file_name(&p)));
+                Ok(())
+            }
+            Err(e) => {
+                self.toast(&format!("Load failed: {e}"));
+                Err(e)
+            }
+        }
+    }
+
     fn ff_load(&mut self) {
         let p = match crate::store::latest_name(&self.save_dir(), "frame", "bin") {
             Some(p) => p,
@@ -6807,7 +6885,7 @@ impl Ui {
                 }
                 v
             }
-            MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StorePng],
+            MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StoreSessSave, Item::StoreSessLoad, Item::StorePng],
             MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
             MenuId::Eye => vec![Item::EyeAct, Item::EyeOn, Item::EyePlace, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyePll, Item::EyeClear],
             MenuId::Power => {
@@ -7692,7 +7770,7 @@ impl Ui {
             Item::ChScale(_) | Item::ChOffset(_) | Item::HScale | Item::HDelay | Item::TrigLevel | Item::AcqAvg | Item::CurA | Item::CurB | Item::Intensity | Item::GridBright => Kind::Value,
             Item::RefSave | Item::RefSaveNext | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
-            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
+            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::StoreSessSave | Item::StoreSessLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
             Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::RefLoad | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::MathOff | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::SpiTimeout => Kind::Value,
@@ -7740,6 +7818,8 @@ impl Ui {
             Item::StorePng => "Save screenshot (PNG)",
             Item::StoreFfSave => "Save fast-frame",
             Item::StoreFfLoad => "Load fast-frame",
+            Item::StoreSessSave => "Save session",
+            Item::StoreSessLoad => "Load session",
             Item::MaskOn => "Mask test",
             Item::MaskSrc => "Source",
             Item::MaskX => "Tolerance X",
@@ -9124,6 +9204,8 @@ impl Ui {
                 }
                 Item::StoreFfSave => self.ff_save(),
                 Item::StoreFfLoad => self.ff_load(),
+                Item::StoreSessSave => { let _ = self.session_save(""); }
+                Item::StoreSessLoad => { let _ = self.session_load(""); }
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
