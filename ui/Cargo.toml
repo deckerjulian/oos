@@ -44,6 +44,11 @@ debug = false
 [profile.dev.package.oos-dsp]
 opt-level = 2
 
+# The tests run optimised a little (docs/adr/process/0040): the tests of updates and pictures take seconds instead
+# of minutes. Debug assertions and overflow checks stay on.
+[profile.test]
+opt-level = 1
+
 # The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same list in every crate.
 [lints.clippy]
 # `!(dt > 0.0)` is meant: it is also true for NaN, and the signal paths rely on that

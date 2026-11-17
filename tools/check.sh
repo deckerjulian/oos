@@ -6,7 +6,9 @@
 #   tools/check.sh                 every enforced layer, in order; stops at the first that fails
 #   tools/check.sh test target     only these layers
 #   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools,
-#                                  decoders:core decoders:each. CI runs the parts next to each other.
+#                                  decoders:core decoders:each, and decoders:each/1 and each/2 (each half of the
+#                                  optional decoders). CI runs the parts a change can reach next to each other
+#                                  (tools/ci-parts.sh).
 #   tools/check.sh list            the layers, and which are enforced
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
@@ -194,19 +196,28 @@ layer_target() {
 }
 
 # the core decoders only, and every optional decoder alone (tests that need every decoder skip themselves)
-# with a part: core (the build without optional decoders) or each (every optional decoder alone)
+# with a part: core (the build without optional decoders), each (every optional decoder alone), each/1 or each/2
+# (the first or the second half of them)
 layer_decoders() {
     if [ -z "$1" ] || [ "$1" = core ]; then
         (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
         (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
             fail "decoders: core only, target"
     fi
-    if [ -z "$1" ] || [ "$1" = each ]; then
-        for d in $(ui/tools/decoder-features.sh list); do
+    case ${1:-each} in each | each/*)
+        all=$(ui/tools/decoder-features.sh list)
+        n=$(printf '%s\n' "$all" | wc -l)
+        half=$(((n + 1) / 2))
+        case $1 in
+        each/1) all=$(printf '%s\n' "$all" | head -n "$half") ;;
+        each/2) all=$(printf '%s\n' "$all" | tail -n +"$((half + 1))") ;;
+        esac
+        for d in $all; do
             (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
                 fail "decoders: dec-$d alone"
         done
-    fi
+        ;;
+    esac
 }
 
 # the numbers that only go down: the size of the large files, switched-off lints, `unsafe` (ADR 0037)
@@ -235,7 +246,7 @@ fi
 run=${*:-$enforced}
 # a layer, or layer:part
 parts_test="$crates tools"
-parts_decoders="core each"
+parts_decoders="core each each/1 each/2"
 for l in $run; do
     name=${l%%:*}
     case " $layers " in *" $name "*) ;; *) fail "unknown layer '$name' (layers: $layers)" ;; esac
