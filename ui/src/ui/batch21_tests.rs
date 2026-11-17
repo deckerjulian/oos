@@ -216,7 +216,7 @@ fn la_and_gen_pills_sit_after_plus_ch_and_open_their_sheets() {
         assert!(r.h >= 28 && Ui::hit40(r).h >= 40);
         assert!(r.right() < b.time.x - 5, "inside the room before the time base");
     }
-    for c in 0..n_ch() { if b.ch[c].w > 0 { assert!(b.ch[c].right() < b.add.x); assert!(b.ch[c].w >= 60); } }
+    for c in 0..n_ch() { if b.ch[c].w > 0 { assert!(b.ch[c].right() < b.add.x); assert!(b.ch[c].w >= if u.m.ch[c].on { 60 } else { 40 }); } }
     if let Some(r) = b.gen {
         let off_w = r.w;
         u.m.afg_on = true;
@@ -231,7 +231,8 @@ fn la_and_gen_pills_sit_after_plus_ch_and_open_their_sheets() {
         assert!(u.sheet_active());
         u.close_menu();
     }
-    if let Some(r) = b.la {
+    // the bar as it is now: the generator pill grew, the pills before it moved
+    if let Some(r) = u.studio_bottom().la {
         tap(&mut u, r);
         assert_eq!(u.menu, MenuId::La);
         assert!(u.sheet_active());

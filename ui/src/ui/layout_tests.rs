@@ -160,15 +160,16 @@ fn studio_bottom_bar_has_a_chip_per_channel_the_time_base_and_the_trigger() {
     shot(&mut u, "02-bottom");
     let b = u.studio_bottom();
     assert_eq!(u.studio_cards().time, b.time);
-    // the channels that are on have a chip; the ones that are off share "+ CH"
+    // every channel has a chip: wide while it is on, small while it is off
     let mut all: Vec<Rect> = b.ch.iter().copied().filter(|r| r.w > 0).collect();
-    assert_eq!(all.len(), 2);
+    assert_eq!(all.len(), 4);
+    assert_eq!(all.iter().filter(|r| r.w >= 96).count(), 2);
     all.extend([b.add, b.time, b.trig]);
     for (i, a) in all.iter().enumerate() {
         assert!(a.w > 0 && a.x >= 0 && a.right() <= W && a.y >= u.frame().bottom.y && a.bottom() <= H, "chip {i} inside the bar");
         for o in &all[i + 1..] { assert!(!overlaps(*a, *o), "chips do not overlap"); }
     }
-    assert!(b.ch[2].w == 0 && b.ch[3].w == 0, "no chips for channels that are off");
+    assert!(b.ch[2].w == 44 && b.ch[3].w == 44, "small chips for the channels that are off");
     // an on channel opens its page
     let b = u.studio_bottom();
     tap_in(&mut u, b.ch[0]);

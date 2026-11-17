@@ -249,6 +249,8 @@ pub(super) struct StudioBottom {
 /// A source pill is at most as wide as a channel pill was and shrinks to this; the pills are 5 px apart.
 const PILL_MAX_W: i32 = 170;
 const PILL_MIN_W: i32 = 18;
+/// Width of the pill of a channel that is off.
+const OFF_PILL_W: i32 = 44;
 /// The "+N" chip of the badge row.
 pub(super) const OVERFLOW_W: i32 = 46;
 /// Height a list row gets for the header of its source.
@@ -573,12 +575,23 @@ impl Ui {
         // the source pills (channels, refs, math) share what the fixed chips leave, by count
         let count = (chans.len() + shown.len() + maths.len()) as i32;
         let room = time.x - 9 - (bottom.x + 4) - (add_w + 5 + show_w + aux_w);
+        // a channel that is off has a small dim pill in its place: a tap switches it on. They give way when the
+        // sources that are on need the room (and in SIM, which has no channel pills at all)
+        let offs: Vec<usize> = if self.studio_ch_pills_hidden() { Vec::new() } else { (0..n).filter(|&c| !self.m.ch[c].on).collect() };
+        let off_room = offs.len() as i32 * (OFF_PILL_W + 5);
+        let show_off = !offs.is_empty() && room - off_room >= count * 96 + (count - 1).max(0) * 5;
+        let room = if show_off { room - off_room } else { room };
         let pw = Self::studio_pill_width(room, count);
         let mut ch = [Rect::new(0, y, 0, ph); NCH];
         let mut x = bottom.x + 4;
-        for &c in &chans {
-            ch[c] = Rect::new(x, y, pw, ph);
-            x += pw + 5;
+        for c in 0..n {
+            if chans.contains(&c) {
+                ch[c] = Rect::new(x, y, pw, ph);
+                x += pw + 5;
+            } else if show_off && offs.contains(&c) {
+                ch[c] = Rect::new(x, y, OFF_PILL_W, ph);
+                x += OFF_PILL_W + 5;
+            }
         }
         let mut refs = [Rect::new(0, y, 0, ph); NREF];
         for &i in &shown {
@@ -681,7 +694,7 @@ impl Ui {
         }
         if b.add.w > 0 {
             chip(cv, b.add, BTN, if self.studio.ch_picker { ACCENT } else { BTN_BORDER });
-            let label = if (0..n_ch()).all(|c| self.m.ch[c].on) { "Add source" } else { "+ CH" };
+            let label = if (0..n_ch()).all(|c| self.m.ch[c].on) { "Add source" } else if (0..n_ch()).any(|c| !self.m.ch[c].on && b.ch[c].w > 0) { "+ Add" } else { "+ CH" };
             cv.text_in(&f.sb, b.add, 1, label, if self.studio.ch_picker { ACCENT } else { TEXT });
         }
         // LA and GEN: a pill each, a dot for on / off and, for the generator, what it makes
@@ -833,9 +846,13 @@ impl Ui {
                 return;
             }
             if !self.m.ch[c].on {
+                // the pill of a channel that is off: on and selected, no sheet
+                if self.menu_open { self.close_menu(); }
                 self.m.ch[c].on = true;
                 self.settings_changed();
                 self.relayout();
+                self.select_workspace_source(WaveId::Ch(c));
+                return;
             }
             self.select_workspace_source(WaveId::Ch(c));
             return self.toggle_menu(MenuId::Channel(c));

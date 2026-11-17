@@ -326,5 +326,10 @@ fn the_badge_of_a_channel_pill_is_its_switch() {
     tap(&mut u, pill.x + 24, pill.y + pill.h / 2);
     assert!(!u.m.ch[1].on && !u.menu_open, "the badge switches CH2 off");
     assert!(u.m.ch[0].on, "CH1 is not touched");
-    assert_eq!(u.studio_bottom().ch[1].w, 0, "its pill leaves the bar");
+    // its pill stays as a small one, and a tap on that switches the channel on again without a sheet
+    let small = u.studio_bottom().ch[1];
+    assert_eq!(small.w, 44, "a small pill while it is off");
+    tap(&mut u, small.x + small.w / 2, small.y + small.h / 2);
+    assert!(u.m.ch[1].on && !u.menu_open, "the small pill switches CH2 on");
+    assert!(u.studio_bottom().ch[1].w >= 110);
 }
