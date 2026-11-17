@@ -5,10 +5,11 @@
 # button (docs/adr/process/0038), written to its newest commit as statuses:
 #
 #   waited   it has been open as long as ADR 0031 asks: 72 hours with a decision record, else 24. No wait at all for
-#            a pull request that only changes documents (not the decision records and not the rule texts), and for
-#            one that says `Behaviour: unchanged` where the comparison with its base ran and found nothing, both
-#            outside the hardware paths, the pipeline and the tools (ADR 0038). The label `no-wait` (a fix for a red
-#            main, a security fix) takes the wait away too.
+#            the maintainer's own pull requests (from a branch of this repository, not an agent's; the maintainer
+#            decided so on 2026-11-17), for one that only changes documents (not the decision records and not the
+#            rule texts), and for one that says `Behaviour: unchanged` where the comparison with its base ran and
+#            found nothing, the last two outside the hardware paths, the pipeline and the tools (ADR 0038). The
+#            label `no-wait` (a fix for a red main, a security fix) takes the wait away too.
 #   owner    pending for every pull request with the label `hold`, which the maintainer sets to stop one. Else: it
 #            is the maintainer's own, or Dependabot's and changes nothing but the commits of actions, or the
 #            maintainer has approved its newest commit. An agent's pull request (a copilot/ branch of this
@@ -55,9 +56,12 @@ one() {
 	case $(printf '%s' "$pr" | jq -r .head.ref) in copilot/*) [ "$here" != true ] || agent=true ;; esac
 	files=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename')
 
-	# waited: no wait for documents only, or for a change the comparison proved to leave behaviour as it was
+	# waited: no wait for the maintainer's own, for documents only, or for a change the comparison proved to leave
+	# behaviour as it was
 	quick=
-	if ! printf '%s\n' "$files" | grep -Ev '^tools/tests/' | grep -Eq "$hardware|$unseen"; then
+	if [ $agent = false ] && [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
+		quick="the maintainer's own"
+	elif ! printf '%s\n' "$files" | grep -Ev '^tools/tests/' | grep -Eq "$hardware|$unseen"; then
 		if ! printf '%s\n' "$files" | grep -Evq '\.md$|^docs/|^wiki/'; then
 			quick="documents only"
 		elif printf '%s' "$pr" | jq -r '.body // ""' | tr -d '\r' | grep -Eiq '^\**Behaviou?r:\** *unchanged'; then
