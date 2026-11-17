@@ -16,7 +16,9 @@ pub enum Mode {
     Peak,
     /// hardware averaging of `count` triggers: 0x1004 bit3, its own segment layout
     /// (`hz::avg_params`), 0x1110 window word, cleared with `avg_clear`. NOT VERIFIED ON THE UNIT.
-    Average { count: u32 },
+    Average {
+        count: u32,
+    },
 }
 
 /// Average count register: `count` - 1, at least 1 (stock: counts 1 and 2 both give 1).
@@ -67,7 +69,16 @@ pub const SA_DELAY_FS: i64 = 800_000;
 /// the pre-processing reset.
 /// `skew`: per-channel deskew in fs.
 #[allow(clippy::too_many_arguments)]
-pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u32, mode: Mode, la_deskew: Option<u32>, skew: [i64; 4]) -> Vec<Write> {
+pub fn configure_la(
+    sh: &mut Shadows,
+    p: &Params,
+    mask: u32,
+    invert: u32,
+    bwl: u32,
+    mode: Mode,
+    la_deskew: Option<u32>,
+    skew: [i64; 4],
+) -> Vec<Write> {
     let mut w = Vec::new();
     // real rates (`hz::prep`), so the real clock: the ratio max_rate / rate is the same at any clock
     let max_rate = crate::dho::clock::adc_hz() as u64 / p.ratio as u64;
@@ -90,7 +101,9 @@ pub fn configure_la(sh: &mut Shadows, p: &Params, mask: u32, invert: u32, bwl: u
     // sample delays (cold-boot.md 3.10): base 480 / 240 / 120 plus d / (ratio T)
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let d = |k: usize| on.get(k).map_or(0, |&c| skew[c]);
-    let at = |d: i64, base: i64, ratio: i64| (base + (d as f64 / (ratio * SA_DELAY_FS) as f64).round() as i64).clamp(0, 0xffff) as u32;
+    let at = |d: i64, base: i64, ratio: i64| {
+        (base + (d as f64 / (ratio * SA_DELAY_FS) as f64).round() as i64).clamp(0, 0xffff) as u32
+    };
     match p.ratio {
         1 => sh.s1080 = at(d(0), 480, 1) << 16 | (sh.s1080 & 0xffff),
         2 => sh.s1080 = at(d(0), 240, 2) << 16 | at(d(1), 240, 2),
@@ -162,9 +175,19 @@ mod tests {
         let mut sh = Shadows::HANDOVER;
         let w = configure_la(&mut sh, &prep(1, 200 * US, 0, 0), 1, 0, 0, Mode::Normal, None, [8_000_000, 0, 0, 0]);
         assert_eq!(last(&w, 0x1080), 490 << 16);
-        let w = configure_la(&mut sh, &prep(0b101, 200 * US, 0, 0), 0b101, 0, 0, Mode::Normal, None, [0, 0, 8_000_000, 0]);
+        let w =
+            configure_la(&mut sh, &prep(0b101, 200 * US, 0, 0), 0b101, 0, 0, Mode::Normal, None, [0, 0, 8_000_000, 0]);
         assert_eq!(last(&w, 0x1080), 240 << 16 | 245);
-        let w = configure_la(&mut sh, &prep(0b1111, 200 * US, 0, 0), 0b1111, 0, 0, Mode::Normal, None, [0, 0, 0, -3_200_000]);
+        let w = configure_la(
+            &mut sh,
+            &prep(0b1111, 200 * US, 0, 0),
+            0b1111,
+            0,
+            0,
+            Mode::Normal,
+            None,
+            [0, 0, 0, -3_200_000],
+        );
         assert_eq!((last(&w, 0x1080), last(&w, 0x1084)), (0x0078_0078, 120 << 16 | 119));
     }
 
@@ -206,7 +229,8 @@ mod tests {
             assert!(a.iter().filter(|x| x.0 == 0x1004).skip(1).all(|x| x.1 & 4 != 0));
         }
         // 200 us/div CH1 Auto: 2.5 M points -> (2,500,383 / 320 + 2) x 64 = 500,160 -> 524,288 bursts (normal 0x40000)
-        let w = configure(&mut Shadows::HANDOVER.clone(), &prep(1, 200 * US, 0, 0), 1, 0, 0, Mode::Average { count: 16 });
+        let w =
+            configure(&mut Shadows::HANDOVER.clone(), &prep(1, 200 * US, 0, 0), 1, 0, 0, Mode::Average { count: 16 });
         assert_eq!((last(&w, 0x10e0), last(&w, 0x1004)), (0x8_0000, 0x0400_000c));
         // counts 1 and 2 both give 1; 1024 gives 1023
         assert_eq!([1, 2, 3, 1024].map(avg_count_reg), [1, 1, 2, 1023]);

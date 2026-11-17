@@ -59,7 +59,11 @@ pub fn trig(m: &mut Model, bus: &str, key: &str, arg: &str, query: bool) -> Opti
             return t(rel_name(if addr { m.ser.addr_rel } else { m.ser.rel }).into());
         }
         let r = rel_of(arg)?;
-        if addr { m.ser.addr_rel = r } else { m.ser.rel = r }
+        if addr {
+            m.ser.addr_rel = r
+        } else {
+            m.ser.rel = r
+        }
         return Some(None);
     }
     if kw(key, "DMAX") || kw(key, "AMAX") {
@@ -280,12 +284,28 @@ mod tests {
     #[test]
     fn rs232() {
         let mut m = Model::default();
-        for (key, v, back) in [("WHEN", "DATA", "DATA"), ("WHEN", "CERRor", "CERR"), ("WHEN", "ERR", "ERR"), ("POLarity", "NEGative", "NEG"), ("STOP", "1.5", "1.5"), ("PARity", "EVEN", "EVEN"), ("WIDTh", "7", "7"), ("BAUD", "115200", "115200"), ("DATA", "65", "65"), ("RELation", "IN", "IN"), ("DMAX", "0x39", "57")] {
+        for (key, v, back) in [
+            ("WHEN", "DATA", "DATA"),
+            ("WHEN", "CERRor", "CERR"),
+            ("WHEN", "ERR", "ERR"),
+            ("POLarity", "NEGative", "NEG"),
+            ("STOP", "1.5", "1.5"),
+            ("PARity", "EVEN", "EVEN"),
+            ("WIDTh", "7", "7"),
+            ("BAUD", "115200", "115200"),
+            ("DATA", "65", "65"),
+            ("RELation", "IN", "IN"),
+            ("DMAX", "0x39", "57"),
+        ] {
             assert!(set(&mut m, "RS232", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "RS232", key), back, "{}", key);
         }
         assert!(m.ser.uart_inv && m.ser.uart_err == UartErr::Framing && m.dec_bits == 7 && m.ser.rel == Rel::In);
-        assert!(!set(&mut m, "RS232", "WIDTh", "9") && !set(&mut m, "RS232", "STOP", "3") && !set(&mut m, "RS232", "RELation", "ABOUT"));
+        assert!(
+            !set(&mut m, "RS232", "WIDTh", "9")
+                && !set(&mut m, "RS232", "STOP", "3")
+                && !set(&mut m, "RS232", "RELation", "ABOUT")
+        );
     }
 
     #[test]
@@ -294,15 +314,36 @@ mod tests {
         m.dec_cs = Some(2);
         assert!(set(&mut m, "SPI", "WHEN", "TIMeout"));
         assert_eq!((m.dec_cs, m.ser.spi_timeout, q(&mut m, "SPI", "WHEN")), (None, 1e-6, "TIM".to_string()));
-        for (key, v, back) in [("TIMeout", "2e-6", "2e-6"), ("SLOPe", "NEG", "NEG"), ("MODE", "HIGH", "HIGH"), ("WIDTh", "16", "16"), ("MASK", "0xff00", "65280"), ("WHEN", "CS", "CS")] {
+        for (key, v, back) in [
+            ("TIMeout", "2e-6", "2e-6"),
+            ("SLOPe", "NEG", "NEG"),
+            ("MODE", "HIGH", "HIGH"),
+            ("WIDTh", "16", "16"),
+            ("MASK", "0xff00", "65280"),
+            ("WHEN", "CS", "CS"),
+        ] {
             assert!(set(&mut m, "SPI", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "SPI", key), back, "{}", key);
         }
         assert_eq!((m.dec_mode, m.dec_cs, m.ser.spi_cs_high), (1, Some(2), true));
-        for (key, v, back) in [("WHEN", "ADDRess", "ADDR"), ("AWIDth", "10", "10"), ("ADDRess", "0x2a5", "677"), ("ARELation", "GT", "GT"), ("AMAX", "1023", "1023"), ("DIRection", "READ", "READ"), ("WHEN", "DATA", "DATA"), ("DBYTes", "3", "3"), ("DATA", "0x123456", "1193046")] {
+        for (key, v, back) in [
+            ("WHEN", "ADDRess", "ADDR"),
+            ("AWIDth", "10", "10"),
+            ("ADDRess", "0x2a5", "677"),
+            ("ARELation", "GT", "GT"),
+            ("AMAX", "1023", "1023"),
+            ("DIRection", "READ", "READ"),
+            ("WHEN", "DATA", "DATA"),
+            ("DBYTes", "3", "3"),
+            ("DATA", "0x123456", "1193046"),
+        ] {
             assert!(set(&mut m, "IIC", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "IIC", key), back, "{}", key);
         }
-        assert!(!set(&mut m, "IIC", "WHEN", "RESTart") && !set(&mut m, "IIC", "AWIDth", "8") && !set(&mut m, "IIC", "DBYTes", "6"));
+        assert!(
+            !set(&mut m, "IIC", "WHEN", "RESTart")
+                && !set(&mut m, "IIC", "AWIDth", "8")
+                && !set(&mut m, "IIC", "DBYTes", "6")
+        );
     }
 }

@@ -2,20 +2,31 @@
 //! Per-row parameters share the normal physical gate and its one bounded worker.
 //! Scalar results remain cached after large edge analyses are evicted.
 
-use super::*;
 use super::super::reflook::MeasOwn;
+use super::*;
 use std::collections::VecDeque;
 
 const ANALYSIS_LIMIT: usize = 4;
 const SCALAR_LIMIT: usize = super::super::tools::MEAS_MAX * (NREF + 1);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Key { source: WaveId, analysis: RefMeasureKey }
+struct Key {
+    source: WaveId,
+    analysis: RefMeasureKey,
+}
 
 #[derive(Clone, Copy)]
-struct Request { key: Key, kind: Meas, owner: WaveId }
+struct Request {
+    key: Key,
+    kind: Meas,
+    owner: WaveId,
+}
 
-struct Cached { key: Key, analysis: Option<Arc<oos_dsp::measure::Analysis>>, readings: Vec<f64> }
+struct Cached {
+    key: Key,
+    analysis: Option<Arc<oos_dsp::measure::Analysis>>,
+    readings: Vec<f64>,
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -24,16 +35,24 @@ pub(super) struct State {
 }
 
 fn analysis_key(mut key: RefMeasureKey) -> RefMeasureKey {
-    key.idle = 0; key.outside = 0; key.periods = 0; key.data = false; key.basic = false;
+    key.idle = 0;
+    key.outside = 0;
+    key.periods = 0;
+    key.data = false;
+    key.basic = false;
     key
 }
 
 impl Ui {
     fn own_params(&self, kind: Meas, owner: WaveId) -> Option<MeasOwn> {
         let own = self.meas_own.get(&(kind, owner)).copied()?;
-        if !(own.refs_set || (kind == Meas::Burst && own.idle_set)
+        if !(own.refs_set
+            || (kind == Meas::Burst && own.idle_set)
             || (kind == Meas::Outside && own.side_set)
-            || (kind == Meas::NPeriods && (own.n_set || own.data_set))) { return None; }
+            || (kind == Meas::NPeriods && (own.n_set || own.data_set)))
+        {
+            return None;
+        }
         let shared = MeasOwn::shared(&self.m);
         Some(MeasOwn {
             low: if own.refs_set { own.low } else { shared.low },
@@ -51,9 +70,13 @@ impl Ui {
             WaveId::Ch(c) => self.channel_measurement_key(c, false)?,
             WaveId::Ref(i) => self.reference_measurement_key(i)?,
         };
-        key.low = own.low.to_bits(); key.high = own.high.to_bits();
-        key.idle = own.idle.to_bits(); key.outside = own.side as u8;
-        key.periods = own.n; key.data = own.data; key.basic = false;
+        key.low = own.low.to_bits();
+        key.high = own.high.to_bits();
+        key.idle = own.idle.to_bits();
+        key.outside = own.side as u8;
+        key.periods = own.n;
+        key.data = own.data;
+        key.basic = false;
         Some((Key { source, analysis: key }, t0))
     }
 
@@ -65,19 +88,34 @@ impl Ui {
 
     fn reusable_own_analysis(&self, key: Key) -> Option<Arc<oos_dsp::measure::Analysis>> {
         let expected = analysis_key(key.analysis);
-        let cache = match key.source { WaveId::Ch(c) => self.azr.ch_measure.get(c)?, WaveId::Ref(i) => self.azr.ref_measure.get(i)? }.borrow();
+        let cache = match key.source {
+            WaveId::Ch(c) => self.azr.ch_measure.get(c)?,
+            WaveId::Ref(i) => self.azr.ref_measure.get(i)?,
+        }
+        .borrow();
         if let Some(cache) = cache.as_ref().filter(|cache| !cache.key.basic && analysis_key(cache.key) == expected) {
             return Some(Arc::clone(&cache.analysis));
         }
-        self.azr.own_measure.borrow().cached.iter().rev()
-            .find(|cache| cache.key.source == key.source && analysis_key(cache.key.analysis) == expected && cache.analysis.is_some())
+        self.azr
+            .own_measure
+            .borrow()
+            .cached
+            .iter()
+            .rev()
+            .find(|cache| {
+                cache.key.source == key.source
+                    && analysis_key(cache.key.analysis) == expected
+                    && cache.analysis.is_some()
+            })
             .and_then(|cache| cache.analysis.as_ref().map(Arc::clone))
     }
 
     fn own_job(&self, key: Key) -> Option<RefMeasureJob> {
         let analysis = self.reusable_own_analysis(key);
         let k = key.analysis;
-        let samples = if analysis.is_some() { MeasureSamples::Owned(Vec::new()) } else {
+        let samples = if analysis.is_some() {
+            MeasureSamples::Owned(Vec::new())
+        } else {
             match key.source {
                 WaveId::Ref(i) => MeasureSamples::Owned(self.refs.get(i)?.as_ref()?.v[k.lo..k.hi].to_vec()),
                 WaveId::Ch(c) => {
@@ -86,32 +124,48 @@ impl Ui {
                     if let Some(raw) = record.raw.as_ref().filter(|raw| {
                         let original = &raw.frame.ch[c];
                         let start = values.as_ptr() as usize;
-                        start >= original.as_ptr() as usize && start + std::mem::size_of_val(values)
-                            <= original.as_ptr() as usize + std::mem::size_of_val(original.as_slice())
+                        start >= original.as_ptr() as usize
+                            && start + std::mem::size_of_val(values)
+                                <= original.as_ptr() as usize + std::mem::size_of_val(original.as_slice())
                     }) {
-                        let lo = (values.as_ptr() as usize - raw.frame.ch[c].as_ptr() as usize) / std::mem::size_of::<f32>();
+                        let lo =
+                            (values.as_ptr() as usize - raw.frame.ch[c].as_ptr() as usize) / std::mem::size_of::<f32>();
                         MeasureSamples::Native { frame: Arc::clone(&raw.frame), channel: c, lo, hi: lo + values.len() }
-                    } else { MeasureSamples::Owned(values.to_vec()) }
+                    } else {
+                        MeasureSamples::Owned(values.to_vec())
+                    }
                 }
             }
         };
-        Some(RefMeasureJob { source: key.source, key: k, samples, dt: f64::from_bits(k.dt),
-            min_amp: 0.4 * f32::from_bits(k.vpd) as f64, low: f64::from_bits(k.low), high: f64::from_bits(k.high),
-            own: true, analysis })
+        Some(RefMeasureJob {
+            source: key.source,
+            key: k,
+            samples,
+            dt: f64::from_bits(k.dt),
+            min_amp: 0.4 * f32::from_bits(k.vpd) as f64,
+            low: f64::from_bits(k.low),
+            high: f64::from_bits(k.high),
+            own: true,
+            analysis,
+        })
     }
 
     fn cache_own_result(&self, key: Key, analysis: Arc<oos_dsp::measure::Analysis>, readings: Vec<f64>) {
         let mut state = self.azr.own_measure.borrow_mut();
         state.cached.retain(|cached| cached.key != key);
         state.cached.push_back(Cached { key, analysis: Some(analysis), readings });
-        while state.cached.len() > SCALAR_LIMIT { state.cached.pop_front(); }
+        while state.cached.len() > SCALAR_LIMIT {
+            state.cached.pop_front();
+        }
         // A scalar-only entry still answers all row reads; do not rescan because
         // its large edge arrays no longer occupy one of the four retained slots.
         let mut retained = 0;
         for cached in state.cached.iter_mut().rev() {
             if cached.analysis.is_some() {
                 retained += 1;
-                if retained > ANALYSIS_LIMIT { cached.analysis = None; }
+                if retained > ANALYSIS_LIMIT {
+                    cached.analysis = None;
+                }
             }
         }
     }
@@ -120,14 +174,23 @@ impl Ui {
         let Some(own) = self.own_params(kind, owner) else { return self.meas_at(source, kind) };
         let Some((key, t0)) = self.own_key(source, own) else { return f64::NAN };
         let index = ALL_MEAS.iter().position(|&entry| entry == kind).unwrap();
-        if let Some(value) = self.azr.own_measure.borrow().cached.iter().find(|cached| cached.key == key)
-            .and_then(|cached| cached.readings.get(index)).copied() {
+        if let Some(value) = self
+            .azr
+            .own_measure
+            .borrow()
+            .cached
+            .iter()
+            .find(|cached| cached.key == key)
+            .and_then(|cached| cached.readings.get(index))
+            .copied()
+        {
             return if matches!(kind, Meas::TVmax | Meas::TVmin) { value + t0 } else { value };
         }
         if key.analysis.hi - key.analysis.lo <= BACKGROUND_MEASUREMENT_POINTS {
             let Some(job) = self.own_job(key) else { return f64::NAN };
-            let analysis = job.analysis.unwrap_or_else(|| Arc::new(oos_dsp::measure::analyze_refs(
-                job.samples.slice(), job.dt, job.min_amp, job.low, job.high)));
+            let analysis = job.analysis.unwrap_or_else(|| {
+                Arc::new(oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high))
+            });
             let readings = scalar_readings(&analysis, key.analysis);
             let value = readings[index];
             self.cache_own_result(key, analysis, readings);
@@ -135,9 +198,14 @@ impl Ui {
         }
         {
             let mut state = self.azr.own_measure.borrow_mut();
-            state.pending.retain(|request| !(request.key.source == source && request.owner == owner && request.kind == kind && request.key != key));
-            if !state.pending.iter().any(|request| request.key == key && request.owner == owner && request.kind == kind) {
-                if state.pending.len() >= SCALAR_LIMIT { state.pending.pop_front(); }
+            state.pending.retain(|request| {
+                !(request.key.source == source && request.owner == owner && request.kind == kind && request.key != key)
+            });
+            if !state.pending.iter().any(|request| request.key == key && request.owner == owner && request.kind == kind)
+            {
+                if state.pending.len() >= SCALAR_LIMIT {
+                    state.pending.pop_front();
+                }
                 state.pending.push_back(Request { key, kind, owner });
             }
         }
@@ -154,16 +222,29 @@ impl Ui {
         let Some(request) = request else { return };
         let mut worker = self.azr.ref_measure_worker.borrow_mut();
         let worker = worker.get_or_insert_with(RefMeasureWorker::open);
-        if worker.busy { return; }
+        if worker.busy {
+            return;
+        }
         let Some(job) = self.own_job(request.key) else { return };
-        if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
+        if worker.input.try_send(job).is_ok() {
+            worker.busy = true;
+            worker.submitted += 1;
+        }
     }
 
     pub(super) fn commit_own_measurement(&self, result: RefMeasureResult) -> bool {
         let key = Key { source: result.source, analysis: result.key };
-        let accepted = self.azr.own_measure.borrow().pending.iter().any(|request| request.key == key && self.request_current(*request));
+        let accepted = self
+            .azr
+            .own_measure
+            .borrow()
+            .pending
+            .iter()
+            .any(|request| request.key == key && self.request_current(*request));
         self.azr.own_measure.borrow_mut().pending.retain(|request| request.key != key);
-        if accepted { self.cache_own_result(key, result.analysis, result.readings); }
+        if accepted {
+            self.cache_own_result(key, result.analysis, result.readings);
+        }
         accepted
     }
 
@@ -179,7 +260,11 @@ impl Ui {
 
     /// Labels only use the matching row analysis; an evicted large analysis may
     /// omit annotations while its numeric value remains cached and available.
-    pub(in crate::ui) fn meas_number_analysis(&self, source: WaveId, kind: Meas) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
+    pub(in crate::ui) fn meas_number_analysis(
+        &self,
+        source: WaveId,
+        kind: Meas,
+    ) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
         let Some(own) = self.own_params(kind, source) else { return self.meas_analysis(source) };
         let (key, t0) = self.own_key(source, own)?;
         let _ = self.measurement_with_own(source, kind, source);
@@ -196,8 +281,27 @@ mod tests {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.m.meas_full_record = true;
-        ui.m.meas.clear(); ui.m.meas2.clear();
-        ui.refs[0] = Some(RefWave { label: "row-test".into(), vpd: 0.2, ..RefWave::test((0..count).map(|i| { let k = i % 400; match k { 0..=99 => -0.5, 100..=199 => -0.5 + (k - 100) as f32 / 99.0, 200..=299 => 0.5, _ => 0.5 - (k - 300) as f32 / 99.0, } }).collect::<Vec<_>>(), 1e-9, 0.001) });
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        ui.refs[0] = Some(RefWave {
+            label: "row-test".into(),
+            vpd: 0.2,
+            ..RefWave::test(
+                (0..count)
+                    .map(|i| {
+                        let k = i % 400;
+                        match k {
+                            0..=99 => -0.5,
+                            100..=199 => -0.5 + (k - 100) as f32 / 99.0,
+                            200..=299 => 0.5,
+                            _ => 0.5 - (k - 300) as f32 / 99.0,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                1e-9,
+                0.001,
+            )
+        });
         ui
     }
 
@@ -212,7 +316,9 @@ mod tests {
         loop {
             ui.poll_reference_measurements();
             let values: Vec<_> = kinds.iter().map(|&kind| ui.meas_number(WaveId::Ref(0), kind)).collect();
-            if values.iter().all(|v| v.is_finite()) { return values; }
+            if values.iter().all(|v| v.is_finite()) {
+                return values;
+            }
             assert!(Instant::now() < end, "custom row jobs did not finish: {values:?}");
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -274,16 +380,23 @@ mod tests {
         assert!((value - 59.4e-9).abs() < 3e-9, "{value}");
         let state = ui.azr.own_measure.borrow();
         assert!(!state.cached.iter().any(|cache| cache.key == old), "stale result entered the cache");
-        assert!(state.cached.iter().all(|cache| !cache.key.analysis.full && cache.key.analysis.low == 0.2f64.to_bits()));
+        assert!(state
+            .cached
+            .iter()
+            .all(|cache| !cache.key.analysis.full && cache.key.analysis.low == 0.2f64.to_bits()));
     }
 
     #[test]
     fn evicting_edge_arrays_preserves_scalar_values_without_rescanning() {
         let mut ui = reference(800);
         let kinds = [Meas::Vpp, Meas::Vrms, Meas::Freq, Meas::Rise, Meas::Fall, Meas::TVmax];
-        for (i, &kind) in kinds.iter().enumerate() { custom(&mut ui, kind, 0.1 + i as f64 * 0.01, 0.9); }
+        for (i, &kind) in kinds.iter().enumerate() {
+            custom(&mut ui, kind, 0.1 + i as f64 * 0.01, 0.9);
+        }
         let first = ui.meas_number(WaveId::Ref(0), kinds[0]);
-        for &kind in &kinds[1..] { assert!(ui.meas_number(WaveId::Ref(0), kind).is_finite()); }
+        for &kind in &kinds[1..] {
+            assert!(ui.meas_number(WaveId::Ref(0), kind).is_finite());
+        }
         let state = ui.azr.own_measure.borrow();
         assert_eq!(state.cached.len(), kinds.len());
         assert_eq!(state.cached.iter().filter(|cache| cache.analysis.is_some()).count(), ANALYSIS_LIMIT);
@@ -293,5 +406,4 @@ mod tests {
         assert!(ui.azr.ref_measure_worker.borrow().is_none(), "scalar read must not recreate evicted edges");
         assert_eq!(ui.azr.own_measure.borrow().cached.len(), kinds.len());
     }
-
 }

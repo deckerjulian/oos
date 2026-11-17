@@ -70,7 +70,11 @@ impl Protocol for Arinc429 {
     /// Three high-speed words, 8 bit times apart, +-5 V.
     fn demo(&self) -> Option<Demo> {
         use x3::gen;
-        let w = [gen::arinc429_word(0o203, 0, 0x0_2710, 3, false), gen::arinc429_word(0o310, 1, 0x2_5a5a, 3, false), gen::arinc429_word(0o206, 0, 0x0_1388, 0, false)];
+        let w = [
+            gen::arinc429_word(0o203, 0, 0x0_2710, 3, false),
+            gen::arinc429_word(0o310, 1, 0x2_5a5a, 3, false),
+            gen::arinc429_word(0o206, 0, 0x0_1388, 0, false),
+        ];
         let l = gen::arinc429(&w, 100e3, 5.0, 8);
         let period = l.seg.last().map_or(1e-3, |s| s.0);
         Some(Demo { period, lines: [Some(Box::new(move |t| l.v(t))), None, None, None] })
@@ -105,11 +109,16 @@ impl Protocol for Mil1553 {
     }
     /// A bipolar bus: threshold at 0 V; the trigger on the first rising edge after 3 us of quiet bus (the command sync).
     fn setup(&self) -> Setup {
-        Setup { thr: 0.0, trig: Some(DemoTrig { role: 0, slope: Slope::Rise, idle: 3e-6, level: 2.0 }), ..Setup::default() }
+        Setup {
+            thr: 0.0,
+            trig: Some(DemoTrig { role: 0, slope: Slope::Rise, idle: 3e-6, level: 2.0 }),
+            ..Setup::default()
+        }
     }
     /// A command word and three data words, +-7 V, every 120 us.
     fn demo(&self) -> Option<Demo> {
-        let l = oos_dsp::sim::mil1553_wave(&[(true, 0x0c23), (false, 0xbeef), (false, 0x1234), (false, 0x00ff)], 7.0, 4.0);
+        let l =
+            oos_dsp::sim::mil1553_wave(&[(true, 0x0c23), (false, 0xbeef), (false, 0x1234), (false, 0x00ff)], 7.0, 4.0);
         Some(Demo { period: 120e-6, lines: [Some(Box::new(move |t| l.v(t))), None, None, None] })
     }
 }

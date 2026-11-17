@@ -66,7 +66,11 @@ mod tests {
     fn switch_and_prefixes() {
         FLAG.check_both_files();
         let p = parse_prefixes("2001:db8:1:2::/64\nfd00:1::/56 10.0.0.0/8 2000::/3 x/64 2001:db8::/129 ::1/128\n");
-        let want: Vec<(Ipv6Addr, u8)> = vec![("2001:db8:1:2::".parse().unwrap(), 64), ("fd00:1::".parse().unwrap(), 56), ("::1".parse().unwrap(), 128)];
+        let want: Vec<(Ipv6Addr, u8)> = vec![
+            ("2001:db8:1:2::".parse().unwrap(), 64),
+            ("fd00:1::".parse().unwrap(), 56),
+            ("::1".parse().unwrap(), 128),
+        ];
         assert_eq!(p, want);
     }
 

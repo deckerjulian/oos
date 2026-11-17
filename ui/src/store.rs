@@ -84,7 +84,9 @@ pub fn file_name(p: &Path) -> String {
 /// A stick is foreign data and this program runs as root: a link or a device node on it, under a name a save would use,
 /// could lead straight to the card. So only a regular file or a new one, and on the stick no link on the way there.
 pub fn check_target(path: &Path) -> std::io::Result<()> {
-    let refuse = |what: &str| Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{}: {}", path.display(), what)));
+    let refuse = |what: &str| {
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{}: {}", path.display(), what)))
+    };
     if path.starts_with("/mnt/usb") {
         for a in path.ancestors().skip(1).take_while(|a| a.starts_with("/mnt/usb") && *a != Path::new("/mnt/usb")) {
             if a.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
@@ -117,7 +119,8 @@ const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKin
 const WIN_MODES: [WinMode; 3] = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
 const VSYNCS: [VSync; 5] = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
 const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
-const CURSORS: [CursorMode; 5] = [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
+const CURSORS: [CursorMode; 5] =
+    [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 const VIDEO_STDS: [VideoStd; 2] = [VideoStd::Pal, VideoStd::Ntsc];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
@@ -199,10 +202,14 @@ pub fn setup_text(m: &Model) -> String {
         s.push('\n');
     };
     for (i, &seconds) in m.deskew_ch.iter().enumerate() {
-        if seconds != 0.0 { kv(&format!("deskew_ch{}", i + 1), seconds.to_string()); }
+        if seconds != 0.0 {
+            kv(&format!("deskew_ch{}", i + 1), seconds.to_string());
+        }
     }
     for (i, &seconds) in m.deskew_ref.iter().enumerate() {
-        if seconds != 0.0 { kv(&format!("deskew_ref{}", i + 1), seconds.to_string()); }
+        if seconds != 0.0 {
+            kv(&format!("deskew_ref{}", i + 1), seconds.to_string());
+        }
     }
     for (c, ch) in m.ch.iter().enumerate() {
         let p = |k: &str| format!("ch{}.{}", c + 1, k);
@@ -235,7 +242,17 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_src", m.trig_src.to_string());
     kv("trig_ref", m.trig_ref.map_or("none".into(), |i| i.to_string()));
     kv("trig_la", m.trig_la.map_or("none".to_string(), |n| n.to_string()));
-    kv("pat_la", m.pat_la.iter().map(|&b| match b { Bit::H => 'H', Bit::L => 'L', _ => 'X' }).collect());
+    kv(
+        "pat_la",
+        m.pat_la
+            .iter()
+            .map(|&b| match b {
+                Bit::H => 'H',
+                Bit::L => 'L',
+                _ => 'X',
+            })
+            .collect(),
+    );
     kv("trig_level", m.trig_level.to_string());
     kv("slope", name(m.slope));
     kv("trig_mode", name(m.trig_mode));
@@ -283,9 +300,19 @@ pub fn setup_text(m: &Model) -> String {
     kv("la_window", (m.la_win + 1).to_string());
     kv("ref_window", m.ref_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
-    kv("meas2", m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "));
+    kv(
+        "meas2",
+        m.meas2.iter().map(|&(k, a, b)| format!("{}:{}:{}", k, a.token(), b.token())).collect::<Vec<_>>().join(" "),
+    );
     if !m.cat.is_empty() {
-        kv("cat", m.cat.iter().map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token())).collect::<Vec<_>>().join(" "));
+        kv(
+            "cat",
+            m.cat
+                .iter()
+                .map(|&(k, a, b, c, d)| format!("{}:{}:{}:{}:{}", k, a.token(), b.token(), c.token(), d.token()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
     }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
@@ -362,34 +389,191 @@ pub fn setup_text(m: &Model) -> String {
     for (i, v) in m.view_slots.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
         kv(&format!("view{}", i + 1), v.clone());
     }
-    kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in.token(), m.bode_out.token(), m.bode_gen, m.bode_addr));
+    kv(
+        "bode",
+        format!(
+            "{} {} {} {} {} {} {} {}",
+            m.bode_start,
+            m.bode_stop,
+            m.bode_points,
+            m.bode_amp,
+            m.bode_in.token(),
+            m.bode_out.token(),
+            m.bode_gen,
+            m.bode_addr
+        ),
+    );
     // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
     kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
     // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
-    kv("bode_sweep", format!("{} {} {} {} {} {} {}", m.bode_sw_time, m.bode_sw_log, m.bode_sync + 1, name(m.bode_sync_slope), m.bode_sync_level, m.bode_sw_in, m.bode_ref));
-    kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src.token(), m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
+    kv(
+        "bode_sweep",
+        format!(
+            "{} {} {} {} {} {} {}",
+            m.bode_sw_time,
+            m.bode_sw_log,
+            m.bode_sync + 1,
+            name(m.bode_sync_slope),
+            m.bode_sync_level,
+            m.bode_sw_in,
+            m.bode_ref
+        ),
+    );
+    kv(
+        "spec",
+        format!(
+            "{} {} {} {} {} {} {} {} {}",
+            m.spec_src.token(),
+            m.spec_center,
+            m.spec_span,
+            m.spec_rbw,
+            name(m.spec_win),
+            m.spec_trace,
+            m.spec_ref,
+            m.spec_wf,
+            m.spec_dist
+        ),
+    );
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
     kv("eye_place", name(m.eye_place));
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
-    kv("meas_cfg", format!("{} {:?} {} {} {} {} {} {}", m.meas_idle, m.meas_out, m.meas_n, if m.meas_data { 1 } else { 0 }, m.meas_lpct, m.meas_hpct, m.meas_tsetup, m.meas_thold));
+    kv(
+        "meas_cfg",
+        format!(
+            "{} {:?} {} {} {} {} {} {}",
+            m.meas_idle,
+            m.meas_out,
+            m.meas_n,
+            if m.meas_data { 1 } else { 0 },
+            m.meas_lpct,
+            m.meas_hpct,
+            m.meas_tsetup,
+            m.meas_thold
+        ),
+    );
     kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     kv("bode_mode", name(m.bode_mode));
-    kv("eye_more", format!("{} {} {} {} {} {} {} {}", m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, if m.eye_npj { 1 } else { 0 }, opt(m.eye_rail), m.eye_notch, opt(m.eye_b), if m.eye_hp { 1 } else { 0 }));
-    kv("power_more", format!("{} {} {} {} {}", m.pw_fline, m.pw_fsw, opt(m.pw_vin), m.pw_ref.map(|v| v.to_string()).unwrap_or_else(|| "-".into()), opt(m.pw_clk)));
-    kv("magnetic", format!("{} {} {} {} {} {} {:?} {}", m.mag_v.token(), m.mag_i.token(), m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu, m.mag_plot, m.mag_cur));
+    kv(
+        "eye_more",
+        format!(
+            "{} {} {} {} {} {} {} {}",
+            m.eye_ber,
+            m.eye_pn_lo,
+            m.eye_pn_hi,
+            if m.eye_npj { 1 } else { 0 },
+            opt(m.eye_rail),
+            m.eye_notch,
+            opt(m.eye_b),
+            if m.eye_hp { 1 } else { 0 }
+        ),
+    );
+    kv(
+        "power_more",
+        format!(
+            "{} {} {} {} {}",
+            m.pw_fline,
+            m.pw_fsw,
+            opt(m.pw_vin),
+            m.pw_ref.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+            opt(m.pw_clk)
+        ),
+    );
+    kv(
+        "magnetic",
+        format!(
+            "{} {} {} {} {} {} {:?} {}",
+            m.mag_v.token(),
+            m.mag_i.token(),
+            m.mag_n,
+            m.mag_ae,
+            m.mag_le,
+            m.mag_rcu,
+            m.mag_plot,
+            m.mag_cur
+        ),
+    );
     let opt = |c: Option<WaveId>| c.map_or("off".into(), |c| c.token());
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
-    kv("inverter", format!("{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.inv_page, m.inv_a.token(), m.inv_b.token(), m.inv_c.token(), m.inv_ang, m.inv_poles, m.inv_an.token(), m.inv_volt, opt(m.inv_tq), opt(m.inv_ev), opt(m.inv_ei), m.inv_scale, m.inv_degv, m.inv_off, m.inv_elec, m.inv_qa, m.inv_qb, line(m.inv_qi), m.inv_cpr, m.inv_swap, m.inv_ha, m.inv_hb, m.inv_hc));
-    kv("dpt", format!("{} {} {} {:?} {} {} {:?}", m.dpt_v.token(), m.dpt_i.token(), m.dpt_g.token(), m.dpt_4th, m.dpt_4ch.token(), m.dpt_pct, m.dpt_zoom));
-    kv("sim", format!("{} {} {} {} {} {} {} {} {} {} {} {} {} {} {}", m.sim_preset, m.sim_slot, m.sim_rate, m.sim_prbs, m.sim_vhigh, m.sim_vlow, m.sim_rise, m.sim_noise, m.sim_bw, m.sim_deemph, if m.sim_ssc { 1 } else { 0 }, m.sim_rj, m.sim_pj, m.sim_pjhz, 0));
-    kv("sim_extra", format!("{} {} {} {} {} {}", m.sim_ssc_center, m.sim_ssc_deviation, m.sim_ssc_hz, m.sim_dcd_pp, m.sim_corr_rj, m.sim_corr_hz));
+    kv(
+        "inverter",
+        format!(
+            "{:?} {} {} {} {:?} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            m.inv_page,
+            m.inv_a.token(),
+            m.inv_b.token(),
+            m.inv_c.token(),
+            m.inv_ang,
+            m.inv_poles,
+            m.inv_an.token(),
+            m.inv_volt,
+            opt(m.inv_tq),
+            opt(m.inv_ev),
+            opt(m.inv_ei),
+            m.inv_scale,
+            m.inv_degv,
+            m.inv_off,
+            m.inv_elec,
+            m.inv_qa,
+            m.inv_qb,
+            line(m.inv_qi),
+            m.inv_cpr,
+            m.inv_swap,
+            m.inv_ha,
+            m.inv_hb,
+            m.inv_hc
+        ),
+    );
+    kv(
+        "dpt",
+        format!(
+            "{} {} {} {:?} {} {} {:?}",
+            m.dpt_v.token(),
+            m.dpt_i.token(),
+            m.dpt_g.token(),
+            m.dpt_4th,
+            m.dpt_4ch.token(),
+            m.dpt_pct,
+            m.dpt_zoom
+        ),
+    );
+    kv(
+        "sim",
+        format!(
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            m.sim_preset,
+            m.sim_slot,
+            m.sim_rate,
+            m.sim_prbs,
+            m.sim_vhigh,
+            m.sim_vlow,
+            m.sim_rise,
+            m.sim_noise,
+            m.sim_bw,
+            m.sim_deemph,
+            if m.sim_ssc { 1 } else { 0 },
+            m.sim_rj,
+            m.sim_pj,
+            m.sim_pjhz,
+            0
+        ),
+    );
+    kv(
+        "sim_extra",
+        format!(
+            "{} {} {} {} {} {}",
+            m.sim_ssc_center, m.sim_ssc_deviation, m.sim_ssc_hz, m.sim_dcd_pp, m.sim_corr_rj, m.sim_corr_hz
+        ),
+    );
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
-        kv(&format!("zone{}", k + 1), format!("{} {} {} {}", z.on, z.src + 1, z.inside, pts.join(" ")).trim().to_string());
+        kv(
+            &format!("zone{}", k + 1),
+            format!("{} {} {} {}", z.on, z.src + 1, z.inside, pts.join(" ")).trim().to_string(),
+        );
     }
     kv("z_src", m.z_src.map_or("off".to_string(), |c| (c + 1).to_string()));
     kv("hist", name(m.hist));
@@ -402,7 +586,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("quick", name(m.quick));
     kv("text_size", name(m.text_size));
     kv("la", m.la.to_text());
-    kv("dec_la", format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")));
+    kv(
+        "dec_la",
+        format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")),
+    );
     s
 }
 
@@ -446,14 +633,23 @@ fn p_idx(v: &str, n: usize) -> Result<usize, String> {
 
 fn p_decode_source(v: &str) -> Result<usize, String> {
     let source = if v.trim().starts_with(['R', 'r']) {
-        match WaveId::parse(v.trim())? { WaveId::Ref(i) => DEC_REF_BASE + i, _ => unreachable!() }
-    } else { p_idx(v, DEC_SOURCE_COUNT)? };
+        match WaveId::parse(v.trim())? {
+            WaveId::Ref(i) => DEC_REF_BASE + i,
+            _ => unreachable!(),
+        }
+    } else {
+        p_idx(v, DEC_SOURCE_COUNT)?
+    };
     decode_wave(source).map(|_| source).ok_or_else(|| "decoder source must be CH or R; LA uses dec_la".into())
 }
 
 fn p_decode_optional_one_based(v: &str) -> Result<Option<usize>, String> {
-    if v.trim() == "none" { return Ok(None); }
-    if v.trim().starts_with(['R', 'r']) { return p_decode_source(v).map(Some); }
+    if v.trim() == "none" {
+        return Ok(None);
+    }
+    if v.trim().starts_with(['R', 'r']) {
+        return p_decode_source(v).map(Some);
+    }
     let source = p_idx(v, DEC_SOURCE_COUNT + 1)?.max(1) - 1;
     decode_wave(source).map(|_| Some(source)).ok_or_else(|| "invalid decoder source".into())
 }
@@ -472,11 +668,18 @@ fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result
 }
 
 pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
-    if let Some((reference, suffix)) = k.strip_prefix("deskew_ch").map(|s| (false, s))
-        .or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s))) {
+    if let Some((reference, suffix)) =
+        k.strip_prefix("deskew_ch").map(|s| (false, s)).or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s)))
+    {
         let values: &mut [f64] = if reference { &mut m.deskew_ref } else { &mut m.deskew_ch };
-        let index = suffix.parse::<usize>().ok().and_then(|i| i.checked_sub(1)).filter(|&i| i < values.len()).ok_or("invalid deskew source")?;
-        let value = v.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
+        let index = suffix
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| i.checked_sub(1))
+            .filter(|&i| i < values.len())
+            .ok_or("invalid deskew source")?;
+        let value =
+            v.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
         values[index] = value;
         return Ok(());
     }
@@ -517,7 +720,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         match field {
             "on" => ch.on = p_bool(v)?,
             "vfine" => ch.vfine = p_f32(v)?.clamp(1.0, 2.5),
-            "unit" => ch.unit = *AmpUnit::ALL.iter().find(|u| u.name() == v.trim()).ok_or_else(|| format!("no unit {}", v))?,
+            "unit" => {
+                ch.unit = *AmpUnit::ALL.iter().find(|u| u.name() == v.trim()).ok_or_else(|| format!("no unit {}", v))?
+            }
             "bias" => ch.bias = p_f32(v)?,
             "skew" => ch.skew = p_f32(v)?.clamp(-SKEW_MAX, SKEW_MAX),
             // the keyboard takes ten characters; a hand-edited file gets no more
@@ -526,13 +731,18 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let x = p_f32(v)?;
                 // 20 V/div was once on the ladder, the hardware ends at 10
                 let x = x.min(VSCALES[VSCALES.len() - 1]);
-                ch.vscale = VSCALES.iter().position(|&s| (s - x).abs() <= s * 1e-3).ok_or_else(|| format!("no V/div step {}", v))?;
+                ch.vscale = VSCALES
+                    .iter()
+                    .position(|&s| (s - x).abs() <= s * 1e-3)
+                    .ok_or_else(|| format!("no V/div step {}", v))?;
             }
             // setups before the 100/200 uV steps: index into the old ladder (500 uV .. 20 V)
             "vscale" => ch.vscale = (p_idx(v, VSCALES.len() - 1)? + 2).min(VSCALES.len() - 1),
             "offset" => ch.offset = p_f32(v)?,
             "coupling" => ch.coupling = p_enum(v, &COUPLINGS)?,
-            "bw" => ch.bw = BWS.iter().position(|b| b.0 == v.trim()).ok_or_else(|| format!("unknown bandwidth {}", v))?,
+            "bw" => {
+                ch.bw = BWS.iter().position(|b| b.0 == v.trim()).ok_or_else(|| format!("unknown bandwidth {}", v))?
+            }
             // setups before 2026-11-03
             "bw20" => ch.bw = if p_bool(v)? { BW_20M } else { BW_FULL },
             "probe" => ch.probe = p_f32(v)?,
@@ -552,12 +762,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
         "trig_ref" => m.trig_ref = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
-"pat_la" => {
+        "pat_la" => {
             if v.trim().len() != 16 {
                 return Err(format!("pat_la: {:?}", v));
             }
             for (b, c) in m.pat_la.iter_mut().zip(v.trim().chars()) {
-                *b = match c { 'H' => Bit::H, 'L' => Bit::L, _ => Bit::X };
+                *b = match c {
+                    'H' => Bit::H,
+                    'L' => Bit::L,
+                    _ => Bit::X,
+                };
             }
         }
         "trig_la" => m.trig_la = if v.trim() == "none" { None } else { Some(p_idx(v, 16)? as u8) },
@@ -615,11 +829,13 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "la_window" => m.la_win = p_idx(v, 5)?.checked_sub(1).ok_or("window 0")?,
         "ref_window" => {
-            let w = p_list(v, crate::model::NREF, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            let w =
+                p_list(v, crate::model::NREF, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.ref_win.copy_from_slice(&w);
         }
         "math_window" => {
-            let w = p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            let w =
+                p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.math_win.copy_from_slice(&w);
         }
         "meas" => {
@@ -628,7 +844,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let (k, c) = e.split_once(':').ok_or_else(|| format!("not item:channel: {}", e))?;
                 out.push((p_enum(k, &ALL_MEAS)?, WaveId::parse(c)?));
             }
-            if out.len() + m.meas2.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
+            if out.len() + m.meas2.len() + m.cat.len() > MEAS_SELECTION_MAX {
+                return Err("too many selected measurements".into());
+            }
             m.meas = out;
         }
         "meas2" => {
@@ -638,7 +856,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let [k, a, b] = f[..] else { return Err(format!("not item:a:b: {}", e)) };
                 out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
-            if m.meas.len() + out.len() + m.cat.len() > MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
+            if m.meas.len() + out.len() + m.cat.len() > MEAS_SELECTION_MAX {
+                return Err("too many selected measurements".into());
+            }
             m.meas2 = out;
         }
         "cat" => {
@@ -647,10 +867,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let f: Vec<&str> = e.split(':').collect();
                 let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
                 let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
-                if !catalog_id_valid(id) { return Err(format!("unknown or non-Wave catalog id: {id}")); }
-                if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX { return Err("too many selected measurements".into()); }
+                if !catalog_id_valid(id) {
+                    return Err(format!("unknown or non-Wave catalog id: {id}"));
+                }
+                if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX {
+                    return Err("too many selected measurements".into());
+                }
                 let row = (id, WaveId::parse(a)?, WaveId::parse(b)?, WaveId::parse(c)?, WaveId::parse(d)?);
-                if out.contains(&row) { return Err("duplicate catalog row".into()); }
+                if out.contains(&row) {
+                    return Err("duplicate catalog row".into());
+                }
                 out.push(row);
             }
             m.cat = out;
@@ -726,7 +952,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_cphy_rate" => m.dec_cphy_rate = crate::decode::parse_cphy_rate(v)?,
         "dec_src4" => m.dec_src4 = p_decode_optional_one_based(v)?,
         "dec_diff" => m.dec_diff = p_decode_optional_one_based(v)?,
-        "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
+        "trig_bus" => {
+            m.trig_bus =
+                *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?
+        }
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,
         "ser.max" => m.ser.max = v.trim().parse().map_err(|e| format!("ser.max: {}", e))?,
@@ -743,9 +972,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "ser.bytes" => m.ser.bytes = p_u32(v)?.min(5) as u8,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
-        "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
+        "dec_proto" => {
+            m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?
+        }
         // a module's option indices; brought into range where they are used (`protocols::opt_fit`)
-        "dec_opt" => m.dec_opt = p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap(),
+        "dec_opt" => {
+            m.dec_opt =
+                p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap()
+        }
         "dec_src2" => m.dec_src2 = p_decode_source(v)?,
         "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_decode_source(v)?) },
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
@@ -787,7 +1021,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             (m.views, m.view_cur) = (n[0], n[1] - 1);
         }
-        k if k.strip_prefix("view").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) => {
+        k if k
+            .strip_prefix("view")
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) =>
+        {
             let i: usize = k[4..].parse().unwrap_or(1);
             m.view_slots[i - 1] = crate::ui::views::slot_checked(v)?;
         }
@@ -860,7 +1098,17 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             m.pw_v = WaveId::parse(w[0])?;
             m.pw_i = WaveId::parse(w[1])?;
-            m.pw_mode = p_enum(w[2], &[PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple, PowerMode::Capacitance, PowerMode::Rail])?;
+            m.pw_mode = p_enum(
+                w[2],
+                &[
+                    PowerMode::Quality,
+                    PowerMode::Harmonics,
+                    PowerMode::Switching,
+                    PowerMode::Ripple,
+                    PowerMode::Capacitance,
+                    PowerMode::Rail,
+                ],
+            )?;
         }
         "magnetic" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -884,14 +1132,25 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
             let ch = |s: &str| WaveId::parse(s);
-            let opt = |s: &str| -> Result<Option<WaveId>, String> { if s == "off" { Ok(None) } else { Ok(Some(ch(s)?)) } };
+            let opt = |s: &str| -> Result<Option<WaveId>, String> {
+                if s == "off" {
+                    Ok(None)
+                } else {
+                    Ok(Some(ch(s)?))
+                }
+            };
             let bit = |s: &str| -> Result<u8, String> {
                 let n = s.parse::<u8>().map_err(|e| e.to_string())?;
-                if n < 16 { Ok(n) } else { Err(format!("logic line {} out of range", n)) }
+                if n < 16 {
+                    Ok(n)
+                } else {
+                    Err(format!("logic line {} out of range", n))
+                }
             };
             m.inv_page = p_enum(w[0], &[InvPage::Dq0, InvPage::Mech])?;
             (m.inv_a, m.inv_b, m.inv_c) = (ch(w[1])?, ch(w[2])?, ch(w[3])?);
-            m.inv_ang = p_enum(w[4], &[InvAngle::Off, InvAngle::Phase, InvAngle::Analog, InvAngle::Quad, InvAngle::Hall])?;
+            m.inv_ang =
+                p_enum(w[4], &[InvAngle::Off, InvAngle::Phase, InvAngle::Analog, InvAngle::Quad, InvAngle::Hall])?;
             m.inv_poles = p_u32(w[5])?.clamp(1, 32);
             m.inv_an = ch(w[6])?;
             m.inv_volt = p_bool(w[7])?;
@@ -952,7 +1211,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             m.dec_la_in = w[0] == "1";
             for (r, s) in m.dec_la.iter_mut().zip(&w[1..]) {
-                *r = if *s == "-" { None } else { Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15)) };
+                *r = if *s == "-" {
+                    None
+                } else {
+                    Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15))
+                };
             }
         }
         "meas_full_record" => m.meas_full_record = p_bool(v)?,
@@ -962,7 +1225,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 return Err("meas_cfg: idle outside n data [lpct hpct tsetup thold]".into());
             }
             m.meas_idle = w[0].parse::<f64>().map_err(|e| e.to_string())?;
-            m.meas_out = p_enum(w[1], &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both])?;
+            m.meas_out = p_enum(
+                w[1],
+                &[oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both],
+            )?;
             m.meas_n = p_u32(w[2])?.clamp(1, 32);
             m.meas_data = p_bool(w[3])?;
             if w.len() == 8 {
@@ -978,7 +1244,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.spec_acpr_w = width.parse::<f64>().map_err(|e| e.to_string())?;
             m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
         }
-        "bode_mode" => m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?,
+        "bode_mode" => {
+            m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?
+        }
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() < 2 {
@@ -1009,7 +1277,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 return Err("sim_extra: center deviation frequency DCD correlated-RJ corner".into());
             };
             let bounded = |s: &str, low: f64, high: f64| -> Result<f64, String> {
-                s.parse::<f64>().ok().filter(|value| value.is_finite() && *value >= low && *value <= high)
+                s.parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= low && *value <= high)
                     .ok_or_else(|| format!("{s} must be between {low} and {high}"))
             };
             m.sim_ssc_center = p_bool(center)?;
@@ -1098,8 +1368,21 @@ fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
         m.dec_on = false;
     }
     // a protocol that became a module since the setup was written: its options from the shared decoder rows
-    if let (Proto::Module(i), false) = (m.dec_proto, text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "dec_opt"))) {
-        let old = crate::protocols::Legacy { baud: m.dec_baud, bits: m.dec_bits, parity: m.dec_parity, canrate: m.dec_canrate, canh: m.dec_canh, fdrate: m.dec_fdrate, arate: m.dec_arate, tick: m.dec_tick, nibbles: m.dec_nibbles, uspeed: m.dec_uspeed };
+    if let (Proto::Module(i), false) =
+        (m.dec_proto, text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "dec_opt")))
+    {
+        let old = crate::protocols::Legacy {
+            baud: m.dec_baud,
+            bits: m.dec_bits,
+            parity: m.dec_parity,
+            canrate: m.dec_canrate,
+            canh: m.dec_canh,
+            fdrate: m.dec_fdrate,
+            arate: m.dec_arate,
+            tick: m.dec_tick,
+            nibbles: m.dec_nibbles,
+            uspeed: m.dec_uspeed,
+        };
         if let Some(o) = crate::protocols::get(i).legacy(&old) {
             m.dec_opt = o.map(|x| x as u8);
             m.dec_opt = crate::protocols::opt_fit(i, m.dec_opt).map(|x| x as u8);
@@ -1144,11 +1427,21 @@ pub fn ref_setup_text(looks: &[Option<RefLook>]) -> String {
     for (i, l) in looks.iter().enumerate() {
         let Some(l) = l else { continue };
         let mut kv = |k: &str, v: String| s.push_str(&format!("ref{}.{} = {}\n", i + 1, k, v));
-        if let Some(v) = l.on { kv("on", v.to_string()); }
-        if let Some(v) = l.vdiv { kv("vdiv", v.to_string()); }
-        if let Some(v) = l.offset { kv("offset", v.to_string()); }
-        if let Some(v) = l.color { kv("color", v.to_string()); }
-        if let Some(v) = &l.label { kv("name", v.replace(['\r', '\n'], " ")); }
+        if let Some(v) = l.on {
+            kv("on", v.to_string());
+        }
+        if let Some(v) = l.vdiv {
+            kv("vdiv", v.to_string());
+        }
+        if let Some(v) = l.offset {
+            kv("offset", v.to_string());
+        }
+        if let Some(v) = l.color {
+            kv("color", v.to_string());
+        }
+        if let Some(v) = &l.label {
+            kv("name", v.replace(['\r', '\n'], " "));
+        }
     }
     s
 }
@@ -1326,7 +1619,8 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         return Err("waveform exceeds the 32-million-sample import limit".into());
     }
     let mut off = 36;
-    let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
+    let mut rec =
+        Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
     for _ in 0..nch {
         let c = f.u32(off)? as usize;
         off += 4;
@@ -1476,9 +1770,7 @@ pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
 
 /// Writes everything cached to the disks (a stick can be pulled, the scope switched off at the mains).
 pub fn sync_disks() {
-    unsafe {
-        libc::sync()
-    };
+    unsafe { libc::sync() };
 }
 
 #[cfg(test)]
@@ -1594,7 +1886,8 @@ mod tests {
     /// A non-default set-up in every group of fields.
     fn custom() -> Model {
         let mut m = Model::default();
-        (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) = (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
+        (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) =
+            (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
         m.ch[1].on = true;
         m.ch[1].vscale = 1; // 200 uV/div
         m.ch[1].offset = -0.123_456_79;
@@ -1641,17 +1934,57 @@ mod tests {
         m.cur_b = 0.875;
         m.touch_lock = true;
         m.aux_out = AuxOut::Off;
-        m.ser = SerialTrig { rel: Rel::Out, max: 0x1_2345_6789, mask: 0xf0f0, uart_inv: true, uart_stop: StopBits::Two, uart_err: UartErr::Parity, spi_cs_high: true, spi_timeout: 2e-6, addr_rel: Rel::In, addr_max: 0x3a0, dir: I2cDir::Read, ten_bit: true, bytes: 4 };
+        m.ser = SerialTrig {
+            rel: Rel::Out,
+            max: 0x1_2345_6789,
+            mask: 0xf0f0,
+            uart_inv: true,
+            uart_stop: StopBits::Two,
+            uart_err: UartErr::Parity,
+            spi_cs_high: true,
+            spi_timeout: 2e-6,
+            addr_rel: Rel::In,
+            addr_max: 0x3a0,
+            dir: I2cDir::Read,
+            ten_bit: true,
+            bytes: 4,
+        };
         m.trig_bus_val = 0xab_cdef_0123;
-        m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
+        m.maths[3] = crate::math::MathCh {
+            op: MathOp::Bpf,
+            a: 4,
+            b: 0,
+            scale: 7,
+            fc: 1234.0,
+            bw: 56.0,
+            offset: -1.5,
+            win: Window::Blackman,
+            lin: (1.0, 0.0),
+        };
         m.math_bw = 777.0;
-        m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
+        m.zones[1] = crate::zone::Zone {
+            on: true,
+            src: 2,
+            inside: false,
+            pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)],
+        };
         m.dots = true;
         m.z_src = Some(3);
         m.hist = Hist::Horizontal;
-        (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) = (AView::Spectrum, WaveId::Ch(2), 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
+        (
+            m.view,
+            m.spec_src,
+            m.spec_center,
+            m.spec_span,
+            m.spec_rbw,
+            m.spec_trace,
+            m.spec_ref,
+            m.spec_wf,
+            m.spec_dist,
+        ) = (AView::Spectrum, WaveId::Ch(2), 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
         (m.spec_sort, m.spec_harm, m.trend_sel) = (1, 4, [3, 1]);
-        (m.eye_src, m.eye_rate, m.pw_v, m.pw_i, m.pw_mode) = (WaveId::Ch(3), 1.25e9, WaveId::Ch(2), WaveId::Ch(0), PowerMode::Switching);
+        (m.eye_src, m.eye_rate, m.pw_v, m.pw_i, m.pw_mode) =
+            (WaveId::Ch(3), 1.25e9, WaveId::Ch(2), WaveId::Ch(0), PowerMode::Switching);
         m.math = MathOp::Fft;
         m.math_a = 2;
         m.math_b = 3;
@@ -1681,7 +2014,13 @@ mod tests {
         m.mask_y = 1.25;
         m.mask_stop = true;
         m.quick = Quick::SaveCsv;
-        m.la = crate::ui::la::LaSet { on: true, show: 0x0f0f, preset: [2, crate::ui::la::USER], user: [0.5, -0.25], height: 2 };
+        m.la = crate::ui::la::LaSet {
+            on: true,
+            show: 0x0f0f,
+            preset: [2, crate::ui::la::USER],
+            user: [0.5, -0.25],
+            height: 2,
+        };
         m
     }
 
@@ -1712,8 +2051,14 @@ mod tests {
         assert!(text.contains("meas = Vpp:R1"));
         assert!(text.contains("meas2 = 0:R1:2"));
         let back = parse_setup(&text).unwrap();
-        assert_eq!((back.mag_v, back.mag_i, back.dpt_v, back.inv_a, back.inv_tq), (m.mag_v, m.mag_i, m.dpt_v, m.inv_a, m.inv_tq));
-        assert_eq!((back.spec_src, back.eye_src, back.pw_v, back.pw_i, back.bode_in, back.bode_out), (m.spec_src, m.eye_src, m.pw_v, m.pw_i, m.bode_in, m.bode_out));
+        assert_eq!(
+            (back.mag_v, back.mag_i, back.dpt_v, back.inv_a, back.inv_tq),
+            (m.mag_v, m.mag_i, m.dpt_v, m.inv_a, m.inv_tq)
+        );
+        assert_eq!(
+            (back.spec_src, back.eye_src, back.pw_v, back.pw_i, back.bode_in, back.bode_out),
+            (m.spec_src, m.eye_src, m.pw_v, m.pw_i, m.bode_in, m.bode_out)
+        );
         assert_eq!((back.meas, back.meas2), (m.meas, m.meas2));
         // a setup written before refs were sources
         let old = parse_setup("magnetic = 1 2 1 0 0 0 IPsi 0\ninverter = Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2\ndpt = 1 2 3 Off 4 10 Both\n").unwrap();
@@ -1726,17 +2071,26 @@ mod tests {
 
     #[test]
     fn catalog_setup_validates_ids_sources_duplicates_and_shared_selection_limit() {
-        let mut model=Model::default();
-        set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").unwrap();
-        let text=setup_text(&model);let restored=parse_setup(&text).unwrap();assert_eq!(restored.cat,model.cat);
-        for invalid in ["999:R1:R2:3:4","1:R1:R2:3:4","90:R99:R2:3:4","90:R1:R2:3","90:R1:R2:3:4 90:R1:R2:3:4"] {
-            let before=model.cat.clone();assert!(set(&mut model,"cat",invalid).is_err(),"{invalid}");assert_eq!(model.cat,before);
+        let mut model = Model::default();
+        set(&mut model, "cat", "90:R1:R2:3:4 170:R3:R4:R5:4").unwrap();
+        let text = setup_text(&model);
+        let restored = parse_setup(&text).unwrap();
+        assert_eq!(restored.cat, model.cat);
+        for invalid in ["999:R1:R2:3:4", "1:R1:R2:3:4", "90:R99:R2:3:4", "90:R1:R2:3", "90:R1:R2:3:4 90:R1:R2:3:4"] {
+            let before = model.cat.clone();
+            assert!(set(&mut model, "cat", invalid).is_err(), "{invalid}");
+            assert_eq!(model.cat, before);
         }
-        model.meas=vec![(Meas::Vpp,WaveId::Ch(0));MEAS_SELECTION_MAX-1];model.meas2.clear();model.cat.clear();
-        assert!(set(&mut model,"cat","90:R1:R2:3:4 170:R3:R4:R5:4").is_err());assert!(model.cat.is_empty());
-        set(&mut model,"cat","90:R1:R2:3:4").unwrap();
-        assert!(set(&mut model,"meas2","0:1:2").is_err());assert!(model.meas2.is_empty());
-        set(&mut model,"cat","").unwrap();assert!(model.cat.is_empty());
+        model.meas = vec![(Meas::Vpp, WaveId::Ch(0)); MEAS_SELECTION_MAX - 1];
+        model.meas2.clear();
+        model.cat.clear();
+        assert!(set(&mut model, "cat", "90:R1:R2:3:4 170:R3:R4:R5:4").is_err());
+        assert!(model.cat.is_empty());
+        set(&mut model, "cat", "90:R1:R2:3:4").unwrap();
+        assert!(set(&mut model, "meas2", "0:1:2").is_err());
+        assert!(model.meas2.is_empty());
+        set(&mut model, "cat", "").unwrap();
+        assert!(model.cat.is_empty());
     }
 
     #[test]
@@ -1771,8 +2125,9 @@ mod tests {
         assert_eq!(old.sim_dcd_pp, 0.0);
         assert_eq!(old.sim_corr_rj, 0.0);
         assert_eq!(old.sim_corr_hz, 1e6);
-        for invalid in ["true NaN 33000 0 0 1e6", "false .005 0 0 0 1e6",
-                        "true .005 33000 -1 0 1e6", "false .005 33000 0 1 1e6"] {
+        for invalid in
+            ["true NaN 33000 0 0 1e6", "false .005 0 0 0 1e6", "true .005 33000 -1 0 1e6", "false .005 33000 0 1 1e6"]
+        {
             assert!(parse_setup(&format!("sim_extra = {invalid}\n")).is_err());
         }
     }
@@ -1848,7 +2203,16 @@ mod tests {
     fn csv_of_a_record() {
         let mut m = Model::default();
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
+        let mut rec = Record {
+            t0: -1e-3,
+            dt: 1e-6,
+            ch: Default::default(),
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        };
         rec.ch[0] = vec![0.5, 1.25, f32::NAN];
         rec.ch[2] = vec![-1.0, 0.0, 3.3];
         let csv = wave_csv(&rec, &m);
@@ -1886,7 +2250,20 @@ mod tests {
     fn oos_bin_and_wfm_round_trip() {
         let mut m = Model::default();
         m.ch[0].on = true;
-        let rec = Record { t0: -2e-6, dt: 5e-9, ch: { let mut c: [Vec<f32>; NCH] = Default::default(); c[0] = vec![0.1, 0.2, -0.3, 0.4]; c }, triggered: true, partial: false, raw: None, la: None, pairs: false };
+        let rec = Record {
+            t0: -2e-6,
+            dt: 5e-9,
+            ch: {
+                let mut c: [Vec<f32>; NCH] = Default::default();
+                c[0] = vec![0.1, 0.2, -0.3, 0.4];
+                c
+            },
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        };
         let bin = wave_bin(&rec, &m);
         let t = &parse_wave(&bin, "wave.bin").unwrap()[0];
         assert_eq!(t.v, rec.ch[0]);
@@ -1911,7 +2288,8 @@ mod tests {
 
     /// A short Tek WFM curve of f32 samples, little endian.
     fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
-        let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+        let (explicit, implicit, specification, curve) =
+            if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
         let mut b = vec![0u8; curve + v.len() * 4 + 8];
         b[0..2].copy_from_slice(&0x0F0Fu16.to_le_bytes());
         b[2..10].copy_from_slice(magic);
@@ -1937,7 +2315,8 @@ mod tests {
     #[test]
     fn all_tek_wfm_versions_keep_voltage_calibration_time_origin_and_byte_order() {
         for magic in [b":WFM#001", b":WFM#002", b":WFM#003"] {
-            let (explicit, implicit, specification, curve) = if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
+            let (explicit, implicit, specification, curve) =
+                if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
             for big_endian in [false, true] {
                 let codes = [-2.0, 0.0, 2.0, 4.0];
                 let mut bytes = wfm_f32(magic, -9.5e-7, 20e-12, &codes, "captured");
@@ -1945,9 +2324,15 @@ mod tests {
                 bytes[explicit + 8..explicit + 16].copy_from_slice(&0.75f64.to_le_bytes());
                 if big_endian {
                     bytes[0..2].copy_from_slice(&[0xf0, 0xf0]);
-                    for offset in [16, explicit + 72, specification + 14, specification + 18] { bytes[offset..offset + 4].reverse(); }
-                    for offset in [explicit, explicit + 8, implicit, implicit + 8] { bytes[offset..offset + 8].reverse(); }
-                    for offset in (curve..curve + codes.len() * 4).step_by(4) { bytes[offset..offset + 4].reverse(); }
+                    for offset in [16, explicit + 72, specification + 14, specification + 18] {
+                        bytes[offset..offset + 4].reverse();
+                    }
+                    for offset in [explicit, explicit + 8, implicit, implicit + 8] {
+                        bytes[offset..offset + 8].reverse();
+                    }
+                    for offset in (curve..curve + codes.len() * 4).step_by(4) {
+                        bytes[offset..offset + 4].reverse();
+                    }
                 }
                 let parsed = parse_wave(&bytes, "capture.wfm").unwrap();
                 assert_eq!(parsed[0].v, [0.5, 0.75, 1.0, 1.25]);
@@ -1983,7 +2368,16 @@ mod tests {
         let mut m = Model::default();
         m.ch[0].on = true;
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
+        let mut rec = Record {
+            t0: -1e-3,
+            dt: 1e-6,
+            ch: Default::default(),
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        };
         rec.ch[0] = vec![0.5, 1.25];
         rec.ch[2] = vec![-1.0, 0.0];
         let b = wave_bin(&rec, &m);
@@ -2052,11 +2446,14 @@ mod tests {
                 c
             });
             assert_eq!(crc32(d), crc, "CRC of {} bytes", n);
-            let (a, b) = d.iter().fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + (a + x as u32) % 65521) % 65521));
+            let (a, b) = d
+                .iter()
+                .fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + (a + x as u32) % 65521) % 65521));
             assert_eq!(adler32(d), b << 16 | a, "Adler of {} bytes", n);
         }
         assert_eq!(adler32(&[0xff; 100_000]), {
-            let (a, b) = (0..100_000).fold((1u64, 0u64), |(a, b), _| ((a + 255) % 65521, (b + (a + 255) % 65521) % 65521));
+            let (a, b) =
+                (0..100_000).fold((1u64, 0u64), |(a, b), _| ((a + 255) % 65521, (b + (a + 255) % 65521) % 65521));
             (b << 16 | a) as u32
         });
         assert_eq!(crc32(b"IEND"), 0xae42_6082);
@@ -2100,10 +2497,18 @@ mod tests {
     /// Independent inflate for what the encoder may write (stored and fixed Huffman blocks, not dynamic ones); returns the
     /// data and the number of bytes the stream took.
     fn inflate(z: &[u8]) -> (Vec<u8>, usize) {
-        const LBASE: [u32; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-        const LEXTRA: [u32; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-        const DBASE: [u32; 30] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-        const DEXTRA: [u32; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+        const LBASE: [u32; 29] = [
+            3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195,
+            227, 258,
+        ];
+        const LEXTRA: [u32; 29] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+        const DBASE: [u32; 30] = [
+            1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073,
+            4097, 6145, 8193, 12289, 16385, 24577,
+        ];
+        const DEXTRA: [u32; 30] =
+            [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
         let mut b = Bits { d: z, p: 0 };
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -2130,7 +2535,12 @@ mod tests {
                         let dc = (0..5).fold(0, |c, _| c << 1 | b.bit()) as usize;
                         assert!(dc < 30, "distance code {}", dc);
                         let dist = (DBASE[dc] + b.bits(DEXTRA[dc])) as usize;
-                        assert!(dist <= out.len(), "distance {} reaches before the start ({} bytes so far)", dist, out.len());
+                        assert!(
+                            dist <= out.len(),
+                            "distance {} reaches before the start ({} bytes so far)",
+                            dist,
+                            out.len()
+                        );
                         for _ in 0..len {
                             out.push(out[out.len() - dist]);
                         }
@@ -2208,7 +2618,10 @@ mod tests {
         b.extend_from_slice(&[255, 0, 0, 0, 0, 255]);
         let mut cv = Canvas::new(10, 4);
         assert_eq!(ppm_into(&b, &mut cv), Some((2, 1)));
-        assert_eq!((cv.px[(1 * 10 + 4) as usize], cv.px[(1 * 10 + 5) as usize]), (crate::gfx::rgb(255, 0, 0), crate::gfx::rgb(0, 0, 255)));
+        assert_eq!(
+            (cv.px[(1 * 10 + 4) as usize], cv.px[(1 * 10 + 5) as usize]),
+            (crate::gfx::rgb(255, 0, 0), crate::gfx::rgb(0, 0, 255))
+        );
         assert!(ppm_into(b"P5\n1 1\n255\n\0", &mut cv).is_none());
     }
 
@@ -2282,7 +2695,10 @@ mod tests {
     /// Cross-check with an independent decoder when the host has Python with Pillow (skipped otherwise).
     #[test]
     fn png_opens_in_pillow() {
-        let has_pillow = std::process::Command::new("python3").args(["-c", "import PIL"]).output().map_or(false, |o| o.status.success());
+        let has_pillow = std::process::Command::new("python3")
+            .args(["-c", "import PIL"])
+            .output()
+            .map_or(false, |o| o.status.success());
         if !has_pillow {
             return eprintln!("python3 with Pillow not found: check skipped");
         }
@@ -2299,7 +2715,14 @@ mod tests {
         let rgb_bytes: Vec<u8> = screen.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8]).collect();
         write(&dir.join("big.rgb"), &rgb_bytes).unwrap();
         let script = "import sys\nfrom PIL import Image\nim = Image.open(sys.argv[1]); im.load()\nprint(im.size[0], im.size[1], im.mode, *im.getpixel((5, 7)))\nbig = Image.open(sys.argv[2]); big.load()\nprint(big.tobytes() == open(sys.argv[3], 'rb').read())";
-        let out = std::process::Command::new("python3").arg("-c").arg(script).arg(&path).arg(&big).arg(dir.join("big.rgb")).output().unwrap();
+        let out = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .arg(&path)
+            .arg(&big)
+            .arg(dir.join("big.rgb"))
+            .output()
+            .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(out.status.success(), "Pillow: {}", String::from_utf8_lossy(&out.stderr));
         let s = String::from_utf8_lossy(&out.stdout);
@@ -2364,7 +2787,11 @@ mod tests {
         }
         let per_cmp = t.elapsed().as_secs_f64() / n as f64;
         assert!(same);
-        println!("frame loop: copy of the screen {:.3} ms; encoder thread: comparison {:.3} ms", per_copy * 1e3, per_cmp * 1e3);
+        println!(
+            "frame loop: copy of the screen {:.3} ms; encoder thread: comparison {:.3} ms",
+            per_copy * 1e3,
+            per_cmp * 1e3
+        );
     }
 
     #[test]
@@ -2432,7 +2859,8 @@ mod header_import_tests {
             assert!(parse_wave(b.as_bytes(), "bad.isf").is_err(), "{field}");
         }
         assert!(parse_wave(b":WFMPRE:BYT_NR 1;NR_PT 3;XINCR 1;:CURVE #12\0\x01", "short.isf")
-            .unwrap_err().contains("truncated"));
+            .unwrap_err()
+            .contains("truncated"));
     }
 
     #[test]
@@ -2490,7 +2918,9 @@ mod header_import_tests {
     fn header_import_wfmx_embedded_payload_uses_exact_length_not_binary_tag_bytes() {
         let values = [f32::from_bits(0x3f800020), 2.0];
         let mut b = b"<?xml?><DataFile><FileType>WaveformInternal</FileType><Points>2</Points><XOrg>0</XOrg><XInc>1</XInc><Data>".to_vec();
-        for value in values { b.extend(value.to_le_bytes()); }
+        for value in values {
+            b.extend(value.to_le_bytes());
+        }
         b.extend_from_slice(b"</Data></DataFile>");
         assert_eq!(parse_wave(&b, "embedded.wfmx").unwrap()[0].v, values);
         let mut b = b"<Data>".to_vec();
@@ -2512,7 +2942,9 @@ mod header_import_tests {
     #[test]
     fn header_import_wfmx_checks_the_whole_explicit_time_axis() {
         let mut payload = Vec::new();
-        for value in [0.0f64, 1.0, 3.0, 10.0, 20.0, 30.0] { payload.extend(value.to_le_bytes()); }
+        for value in [0.0f64, 1.0, 3.0, 10.0, 20.0, 30.0] {
+            payload.extend(value.to_le_bytes());
+        }
         assert!(wfmx_volts(&payload, 3, 0.0, 1.0).is_err());
         payload[16..24].copy_from_slice(&2.0f64.to_le_bytes());
         assert_eq!(wfmx_volts(&payload, 3, 0.0, 1.0).unwrap(), [10.0, 20.0, 30.0]);
@@ -2528,10 +2960,17 @@ mod header_import_tests {
         for interleaved in [false, true] {
             let mut payload = Vec::with_capacity(n * 8);
             if interleaved {
-                for i in 0..n { payload.extend(xs[i].to_le_bytes()); payload.extend(ys[i].to_le_bytes()); }
+                for i in 0..n {
+                    payload.extend(xs[i].to_le_bytes());
+                    payload.extend(ys[i].to_le_bytes());
+                }
             } else {
-                for x in &xs { payload.extend(x.to_le_bytes()); }
-                for y in &ys { payload.extend(y.to_le_bytes()); }
+                for x in &xs {
+                    payload.extend(x.to_le_bytes());
+                }
+                for y in &ys {
+                    payload.extend(y.to_le_bytes());
+                }
             }
             assert_eq!(wfmx_volts(&payload, n, t0, dt).unwrap(), ys);
             let at = if interleaved { (n - 1) * 8 } else { (n - 1) * 4 };
@@ -2550,7 +2989,9 @@ mod header_import_tests {
         assert_eq!(got[0].v, values);
         assert!((got[0].dt - 1e-9).abs() < 1e-16);
         let mut cols = Vec::new();
-        for i in 0..1000 { cols.extend([(i as f64 * 1e-9) as f32 as f64, i as f64]); }
+        for i in 0..1000 {
+            cols.extend([(i as f64 * 1e-9) as f32 as f64, i as f64]);
+        }
         cols[998 * 2] += 5e-9;
         assert!(traces_from_columns(&cols, 2, &[], true).unwrap_err().contains("nonuniform"));
     }
@@ -2562,10 +3003,14 @@ mod header_import_tests {
             isf_i16(0.0, 1e-9, 1e-3, &[0, 1000, -500, 250]),
             wavedesc_i16(0.0, 1e-9, 1e-3, 0.0, &[0, 1000, -500, 250]),
             ag_f32(0.0, 1e-9, &values, "lane"),
-            tr0_f32(0.0, 1e-9, &values), raw_f64(0.0, 1e-9, &values), wfmx_f32(0.0, 1e-9, &values),
+            tr0_f32(0.0, 1e-9, &values),
+            raw_f64(0.0, 1e-9, &values),
+            wfmx_f32(0.0, 1e-9, &values),
         ];
         for b in fixtures {
-            for end in 0..b.len() { let _ = parse_wave(&b[..end], "header.bin"); }
+            for end in 0..b.len() {
+                let _ = parse_wave(&b[..end], "header.bin");
+            }
             assert_eq!(parse_wave(&b, "header.bin").unwrap()[0].v.len(), 4);
         }
     }
@@ -2681,7 +3126,6 @@ mod header_import_tests {
         }
         b
     }
-
 
     // Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
     // build, failing to load as a whole

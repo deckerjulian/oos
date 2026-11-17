@@ -56,7 +56,9 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     }
     let src = &f.ch[m.trig_src];
     let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true);
+    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+        crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true)
+    };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
             crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots);
@@ -72,9 +74,23 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
 /// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger
 /// refinement on the source channel, and `deposit`, one channel into its map): trigger statistics, mapping, channels.
 #[allow(clippy::too_many_arguments)]
-fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool, present: [bool; NCH], stats: Option<Stats>, refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>), mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map)) -> bool {
+fn dense(
+    ph: &mut Phosphor,
+    m: &Model,
+    f: &Frame,
+    x_per_sample: f64,
+    pairs: bool,
+    present: [bool; NCH],
+    stats: Option<Stats>,
+    refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
+    mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map),
+) -> bool {
     let (w, h) = (ph.w, ph.h);
-    let col = if pairs { crate::compress::smooth_len(x_per_sample) } else { (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize };
+    let col = if pairs {
+        crate::compress::smooth_len(x_per_sample)
+    } else {
+        (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize
+    };
     let t = refine_edge(m, f, col, refine);
     if let (Some(s), Some((k, d))) = (stats, t.class) {
         if k == 2 {
@@ -141,7 +157,13 @@ pub fn screen_map(m: &Model, w: usize, h: usize, c: usize, x_per_sample: f64, ti
     let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
     let ppd_y = h as f32 / VDIV;
     let vpd = ch.volts_per_div();
-    crate::fastdraw::Map { ti, x_per_sample, x0, y_per_volt: -ppd_y / vpd, y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y }
+    crate::fastdraw::Map {
+        ti,
+        x_per_sample,
+        x0,
+        y_per_volt: -ppd_y / vpd,
+        y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y,
+    }
 }
 
 /// Smallest read-out the workers draw from its words (`draw_frame_codes`): 64 kB. Below it the f32 copy stays in the
@@ -199,11 +221,24 @@ thread_local! {
 /// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
 /// search is needed. None where this path does not apply (sparse, pairs, roll or scan, dots, a coupling that needs the
 /// frame mean): then decode and call `draw_frame`.
-pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], lay: &CodeLayout, stats: Option<Stats>) -> Option<bool> {
+pub fn draw_frame_codes(
+    ph: &mut Phosphor,
+    m: &Model,
+    f: &Frame,
+    bytes: &[u8],
+    lay: &CodeLayout,
+    stats: Option<Stats>,
+) -> Option<bool> {
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) {
+    if x_per_sample > 0.5
+        || f.envelope
+        || f.roll
+        || f.scan
+        || m.dots
+        || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject)
+    {
         return None;
     }
     let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
@@ -213,7 +248,9 @@ pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], l
             let v = &mut *t.borrow_mut();
             let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            if let Some(r) = crate::trignear::edge_near_window(v, a, src.n, f.pre, level, hyst, rising, either, half, col, |_| true) {
+            if let Some(r) =
+                crate::trignear::edge_near_window(v, a, src.n, f.pre, level, hyst, rising, either, half, col, |_| true)
+            {
                 return r;
             }
             #[cfg(test)]
@@ -222,7 +259,9 @@ pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], l
             crate::trignear::edge_smooth_near(v, f.pre, level, hyst, rising, either, half, col, |_| true)
         })
     };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24);
+    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
+        crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24)
+    };
     Some(dense(ph, m, f, x_per_sample, false, present, stats, refine, deposit))
 }
 
@@ -348,7 +387,24 @@ struct Key {
 
 impl Key {
     fn of(m: &Model, w: usize, h: usize) -> Key {
-        Key { ch: m.ch.clone(), tscale: m.tscale, delay: m.delay, trig: (m.trig_src, m.trig_line(), m.trig_type, m.slope, m.trig_level, m.trig_coup, m.trig_nrej, m.trig_on_la()), acq: m.acq, dots: m.dots, size: (w, h) }
+        Key {
+            ch: m.ch.clone(),
+            tscale: m.tscale,
+            delay: m.delay,
+            trig: (
+                m.trig_src,
+                m.trig_line(),
+                m.trig_type,
+                m.slope,
+                m.trig_level,
+                m.trig_coup,
+                m.trig_nrej,
+                m.trig_on_la(),
+            ),
+            acq: m.acq,
+            dots: m.dots,
+            size: (w, h),
+        }
     }
 }
 
@@ -458,7 +514,16 @@ impl Pipe {
         }
         mails.push(Default::default());
         let (home, pool) = channel();
-        Pipe { view, counters, workers, mails, open: Default::default(), live: Default::default(), home, pool: Mutex::new(pool) }
+        Pipe {
+            view,
+            counters,
+            workers,
+            mails,
+            open: Default::default(),
+            live: Default::default(),
+            home,
+            pool: Mutex::new(pool),
+        }
     }
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
@@ -499,16 +564,44 @@ impl Pipe {
     /// (`draw_frame_codes`). The buffer comes back through `take_buffer` when the batch is done. Frames nobody claims
     /// are counted as dropped.
     #[allow(clippy::too_many_arguments)]
-    pub fn feed_codes(&self, raw: Box<dyn RawBatch>, fb: usize, first: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) {
+    pub fn feed_codes(
+        &self,
+        raw: Box<dyn RawBatch>,
+        fb: usize,
+        first: usize,
+        frames: usize,
+        stamp: u64,
+        decode: DecodeInto,
+        codes: Option<CodesInto>,
+    ) {
         self.feed_batch(raw, fb, first, frames, stamp, decode, codes);
     }
 
     /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
     #[allow(clippy::too_many_arguments)]
-    fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, first: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
+    fn feed_batch(
+        &self,
+        raw: Box<dyn RawBatch>,
+        fb: usize,
+        first: usize,
+        frames: usize,
+        stamp: u64,
+        decode: DecodeInto,
+        codes: Option<CodesInto>,
+    ) -> Arc<Batch> {
         let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
         let next = AtomicUsize::new(first.min(frames));
-        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next, counters: self.counters, live: self.live.clone() });
+        let b = Arc::new(Batch {
+            lease: Lease { raw: Some(raw), home: self.home.clone() },
+            fb,
+            frames,
+            decode,
+            codes,
+            stamp,
+            next,
+            counters: self.counters,
+            live: self.live.clone(),
+        });
         self.live.fetch_add(1, Ordering::Acquire);
         {
             let mut open = self.open.lock().unwrap();
@@ -606,7 +699,6 @@ impl Pipe {
         }
         got
     }
-
 }
 
 /// Empty maps for view `v`, reusing `spare` when it has the size.
@@ -738,7 +830,11 @@ pub fn pipe() -> Option<&'static Pipe> {
 
 /// The mode in force, for the status line.
 pub fn mode() -> Mode {
-    if pipe().is_some() { Mode::Batch } else { Mode::Frames }
+    if pipe().is_some() {
+        Mode::Batch
+    } else {
+        Mode::Frames
+    }
 }
 
 #[cfg(test)]
@@ -772,8 +868,18 @@ mod tests {
     /// trigger point, a per-frame jitter, every fifth frame shifted up, every seventh without the crossing.
     fn batch(frames: usize, memsel: u32, two: bool) -> (Vec<u8>, usize, Settings, hz::Params) {
         let r = if two { 2 } else { 1 };
-        let p = hz::Params { ratio: r, rate: 1_250_000_000 / r as u64, memsel, dot_fs: 800_000, seg: 0, max_frames: 1000, pre: memsel / 2, post: memsel / 2 };
-        let s = Settings { mask: if two { 3 } else { 1 }, window: None, compress: 1, header: false, ..Settings::default() };
+        let p = hz::Params {
+            ratio: r,
+            rate: 1_250_000_000 / r as u64,
+            memsel,
+            dot_fs: 800_000,
+            seg: 0,
+            max_frames: 1000,
+            pre: memsel / 2,
+            post: memsel / 2,
+        };
+        let s =
+            Settings { mask: if two { 3 } else { 1 }, window: None, compress: 1, header: false, ..Settings::default() };
         let fb = oos_hal::dho::seq::frame_bytes(&s, &p);
         let mut bytes = Vec::new();
         for k in 0..frames {
@@ -781,7 +887,11 @@ mod tests {
             for i in 0..memsel as usize {
                 let ph = (i as f64 - memsel as f64 / 2.0 + jit) / 400.0 * std::f64::consts::TAU;
                 for c in 0..r as usize {
-                    let v = if k % 7 == 6 { 0.7 } else { 0.9 * (ph * (1.0 + c as f64 * 0.5)).sin() + if k % 5 == 0 { 0.05 } else { 0.0 } };
+                    let v = if k % 7 == 6 {
+                        0.7
+                    } else {
+                        0.9 * (ph * (1.0 + c as f64 * 0.5)).sin() + if k % 5 == 0 { 0.05 } else { 0.0 }
+                    };
                     bytes.extend(((32768.0 + v * 7500.0) as u16).to_le_bytes());
                 }
             }
@@ -802,9 +912,23 @@ mod tests {
 
     /// Frames of channels `mask` (ratio from the mask), `n` points each: per channel a signal from `sig(frame, channel,
     /// point)` in volts at 1 V/div (7500 codes per volt).
-    fn frames_of(mask: u32, n: u32, frames: usize, sig: &dyn Fn(usize, usize, usize) -> f64) -> (Vec<u8>, usize, Settings, hz::Params) {
+    fn frames_of(
+        mask: u32,
+        n: u32,
+        frames: usize,
+        sig: &dyn Fn(usize, usize, usize) -> f64,
+    ) -> (Vec<u8>, usize, Settings, hz::Params) {
         let r = hz::ratio(mask);
-        let p = hz::Params { ratio: r, rate: 1_250_000_000 / r as u64, memsel: n, dot_fs: 800_000 * r as u64, seg: 0, max_frames: 1000, pre: n / 2, post: n / 2 };
+        let p = hz::Params {
+            ratio: r,
+            rate: 1_250_000_000 / r as u64,
+            memsel: n,
+            dot_fs: 800_000 * r as u64,
+            seg: 0,
+            max_frames: 1000,
+            pre: n / 2,
+            post: n / 2,
+        };
         let s = Settings { mask, window: None, compress: 1, header: false, ..Settings::default() };
         let fb = oos_hal::dho::seq::frame_bytes(&s, &p);
         let map = oos_hal::dho::seq::code_map(mask, s.ch.map(|k| (k.scale, k.offset)));
@@ -828,7 +952,13 @@ mod tests {
     #[test]
     fn batch_picture_from_the_codes_equals_the_frames_mode() {
         let (w, h) = (970, 448);
-        let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin() + if k % 5 == 0 { 0.05 } else { 0.0 };
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0)
+                * (1.0 + c as f64 * 0.5)
+                * std::f64::consts::TAU)
+                .sin()
+                + if k % 5 == 0 { 0.05 } else { 0.0 }
+        };
         for (mask, n) in [(1u32, 100_000u32), (3, 70_312)] {
             let mut m = model(1e-5, mask == 3, false);
             m.meas = Vec::new();
@@ -837,7 +967,8 @@ mod tests {
             let pipe = Pipe::start(2, false, fresh());
             pipe.set_view(Some(&m), w, h);
             let (cs, cp) = (s.clone(), p);
-            let codes: CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
+            let codes: CodesInto =
+                Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
             pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 9, 0, dec(&s, &p), Some(codes));
             settle(&pipe);
             let mut got = Phosphor::new(w, h);
@@ -858,7 +989,12 @@ mod tests {
     #[test]
     fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
         let (w, h) = (970, 448);
-        let sine = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 - 50_000.0 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
+        let sine = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 - 50_000.0 + (k % 7) as f64 * 0.13) / 400.0)
+                * (1.0 + c as f64 * 0.5)
+                * std::f64::consts::TAU)
+                .sin()
+        };
         let square = |k: usize, c: usize, i: usize| {
             let x = i as f64 + 37.0 * k as f64 + 101.0 * c as f64;
             (if (x / 9_000.0).fract() < 0.5 { 1.2 } else { -1.2 }) + 0.03 * ((i * 7919 + k * 31) % 101) as f64 / 101.0
@@ -866,9 +1002,24 @@ mod tests {
         let flat = |_k: usize, c: usize, i: usize| 0.2 + 0.001 * (i % 3) as f64 + c as f64 * 0.1;
         let mut taken = 0;
         let mut cases = 0;
-        for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (1, 12_512, 1e-6), (3, 70_312, 1e-5), (3, 12_512, 1e-6), (15, 30_000, 1e-5), (5, 25_000, 1e-5), (1, 1408, 1e-7)] {
-            for (name, sig) in [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)] {
-                for (src, dots, coup) in [(0usize, false, TrigCoup::Dc), (1, false, TrigCoup::Dc), (0, true, TrigCoup::Dc), (0, false, TrigCoup::Ac)] {
+        for (mask, n, tdiv) in [
+            (1u32, 100_000u32, 1e-5),
+            (1, 12_512, 1e-6),
+            (3, 70_312, 1e-5),
+            (3, 12_512, 1e-6),
+            (15, 30_000, 1e-5),
+            (5, 25_000, 1e-5),
+            (1, 1408, 1e-7),
+        ] {
+            for (name, sig) in
+                [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)]
+            {
+                for (src, dots, coup) in [
+                    (0usize, false, TrigCoup::Dc),
+                    (1, false, TrigCoup::Dc),
+                    (0, true, TrigCoup::Dc),
+                    (0, false, TrigCoup::Ac),
+                ] {
                     let mut m = model(tdiv, false, dots);
                     for c in 0..NCH {
                         m.ch[c].on = mask & (1 << c) != 0;
@@ -885,14 +1036,28 @@ mod tests {
                         let mut g = Frame::default();
                         let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
                         assert!(g.ch.iter().all(|v| v.is_empty()) && (g.dt, g.pre, g.acq) == (f.dt, f.pre, f.acq));
-                        match draw_frame_codes(&mut b, &m, &g, chunk, &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) {
+                        match draw_frame_codes(
+                            &mut b,
+                            &m,
+                            &g,
+                            chunk,
+                            &lay,
+                            Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
+                        ) {
                             Some(t) => {
                                 tb += t as u32;
                                 taken += 1;
                             }
                             None => {
-                                assert!(dots || coup != TrigCoup::Dc || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5, "{} {} codes path refused", name, mask);
-                                tb += draw_frame(&mut b, &m, &f, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) as u32;
+                                assert!(
+                                    dots || coup != TrigCoup::Dc
+                                        || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5,
+                                    "{} {} codes path refused",
+                                    name,
+                                    mask
+                                );
+                                tb +=
+                                    draw_frame(&mut b, &m, &f, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) as u32;
                             }
                         }
                     }
@@ -917,7 +1082,9 @@ mod tests {
     #[ignore]
     fn perf_guard_codes_per_frame() {
         let (w, h) = (970, 448);
-        let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
+        };
         let mut worst: f64 = 0.0;
         for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (3, 70_312, 1e-5), (5, 50_000, 1e-5), (1, 40_000, 2e-6)] {
             let mut m = model(tdiv, false, false);
@@ -949,7 +1116,10 @@ mod tests {
             let r = new.as_secs_f64() / old.as_secs_f64();
             worst = worst.max(r);
             assert!(fb >= CODES_MIN_BYTES && hz::ratio(mask) as usize <= CODES_MAX_STRIDE);
-            println!("codes mask {:#x} {} pt: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})", mask, n, old, new, r);
+            println!(
+                "codes mask {:#x} {} pt: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})",
+                mask, n, old, new, r
+            );
         }
         assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
     }
@@ -963,7 +1133,15 @@ mod tests {
     }
 
     /// The frames mode for the same frames: `draw_frame` and the per-frame statistics on every frame, one by one.
-    fn reference(bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params, m: &Model, w: usize, h: usize) -> (Phosphor, u64, [u64; 4], (f64, f64), crate::framestats::Folds) {
+    fn reference(
+        bytes: &[u8],
+        fb: usize,
+        s: &Settings,
+        p: &hz::Params,
+        m: &Model,
+        w: usize,
+        h: usize,
+    ) -> (Phosphor, u64, [u64; 4], (f64, f64), crate::framestats::Folds) {
         let mut want = Phosphor::new(w, h);
         let (mut trig, mut edges, mut off) = (0, [0u64; 4], (0.0, 0.0));
         let mut folds = crate::framestats::folds_for(m);
@@ -982,9 +1160,18 @@ mod tests {
     #[test]
     fn batch_picture_equals_the_frames_mode() {
         let (w, h) = (970, 448);
-        for (tdiv, memsel, two, dots, workers, helper) in [(1e-6, 12_512u32, false, false, 2, false), (1e-6, 12_512, true, true, 4, true), (1e-7, 1408, false, false, 1, true), (2e-8, 400, true, false, 1, true)] {
+        for (tdiv, memsel, two, dots, workers, helper) in [
+            (1e-6, 12_512u32, false, false, 2, false),
+            (1e-6, 12_512, true, true, 4, true),
+            (1e-7, 1408, false, false, 1, true),
+            (2e-8, 400, true, false, 1, true),
+        ] {
             let mut m = model(tdiv, two, dots);
-            m.meas = vec![(Meas::Vpp, crate::model::WaveId::Ch(0)), (Meas::Vavg, crate::model::WaveId::Ch(0)), (Meas::Vrms, crate::model::WaveId::Ch(1))];
+            m.meas = vec![
+                (Meas::Vpp, crate::model::WaveId::Ch(0)),
+                (Meas::Vavg, crate::model::WaveId::Ch(0)),
+                (Meas::Vrms, crate::model::WaveId::Ch(1)),
+            ];
             let (bytes, fb, s, p) = batch(41, memsel, two);
             let c = fresh();
             let pipe = Pipe::start(workers, false, c);
@@ -1016,7 +1203,10 @@ mod tests {
             assert_eq!(n.folds.len(), folds.len());
             for ((k, a), (k2, b)) in n.folds.iter().zip(&folds) {
                 assert_eq!((k, a.n, a.min, a.max), (k2, b.n, b.min, b.max), "{}", what);
-                assert!((a.sum - b.sum).abs() <= 1e-12 * b.sum.abs().max(1.0) && (a.sumsq - b.sumsq).abs() <= 1e-12 * b.sumsq.abs().max(1.0));
+                assert!(
+                    (a.sum - b.sum).abs() <= 1e-12 * b.sum.abs().max(1.0)
+                        && (a.sumsq - b.sumsq).abs() <= 1e-12 * b.sumsq.abs().max(1.0)
+                );
             }
             assert!(tdiv < 1e-6 || folds.iter().all(|x| x.1.n > 30), "{}: {:?}", what, folds);
             assert_eq!(c.read(), (0, 0, 0), "{}: nothing dropped", what);
@@ -1148,10 +1338,20 @@ mod tests {
     #[ignore]
     fn perf_guard_deposit_worker_per_frame() {
         let (w, h) = (970, 448);
-        for (tdiv, memsel, meas) in [(1e-7, 1408u32, false), (1e-6, 12_512, false), (1e-6, 12_512, true), (1e-5, 125_000, false), (1e-5, 125_000, true)] {
+        for (tdiv, memsel, meas) in [
+            (1e-7, 1408u32, false),
+            (1e-6, 12_512, false),
+            (1e-6, 12_512, true),
+            (1e-5, 125_000, false),
+            (1e-5, 125_000, true),
+        ] {
             let mut m = model(tdiv, false, false);
             // the measurements made on every frame cost on top (reported, not guarded): the worst case, all of them on
-            m.meas = if meas { crate::framestats::CHEAP.iter().map(|&k| (k, crate::model::WaveId::Ch(0))).collect() } else { Vec::new() };
+            m.meas = if meas {
+                crate::framestats::CHEAP.iter().map(|&k| (k, crate::model::WaveId::Ch(0))).collect()
+            } else {
+                Vec::new()
+            };
             let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
             // the frames mode: decode + draw_frame on one thread (its measurements: a few records a second), against
@@ -1166,7 +1366,12 @@ mod tests {
                 1,
                 || {
                     for chunk in bytes.chunks_exact(fb) {
-                        std::hint::black_box(draw_frame(&mut ph, &m, &crate::board::dho::hw::decode(chunk, &s, &p, 0), None));
+                        std::hint::black_box(draw_frame(
+                            &mut ph,
+                            &m,
+                            &crate::board::dho::hw::decode(chunk, &s, &p, 0),
+                            None,
+                        ));
                     }
                 },
                 || {

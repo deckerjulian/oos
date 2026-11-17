@@ -14,10 +14,42 @@ pub const DIRECTION: u16 = 133;
 pub const ANGLE: u16 = 134;
 
 static MOTOR_DEFS: [Def; 5] = [
-    module(DQ0, "DQ0", "", Loop, &[0, 1, 2], &[(MOTOR, "DQ0 TRANSFORM")], "Direct-axis mean of the three phase sources."),
-    module(SPEED, "Speed", "rpm", Slope, &[0, 1, 2], &[(MOTOR, "SHAFT & EFFICIENCY")], "Mean shaft speed taken from the phase vector."),
-    module(ACCEL, "Acceleration", "rpm/s", Slope, &[0, 1, 2], &[(MOTOR, "SHAFT & EFFICIENCY")], "Slope of that speed across revolutions."),
-    module(DIRECTION, "Direction", "", Slope, &[0, 1, 2], &[(MOTOR, "SHAFT & EFFICIENCY")], "Sign of the speed: forward is 1, stopped is 0, reverse is -1."),
+    module(
+        DQ0,
+        "DQ0",
+        "",
+        Loop,
+        &[0, 1, 2],
+        &[(MOTOR, "DQ0 TRANSFORM")],
+        "Direct-axis mean of the three phase sources.",
+    ),
+    module(
+        SPEED,
+        "Speed",
+        "rpm",
+        Slope,
+        &[0, 1, 2],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Mean shaft speed taken from the phase vector.",
+    ),
+    module(
+        ACCEL,
+        "Acceleration",
+        "rpm/s",
+        Slope,
+        &[0, 1, 2],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Slope of that speed across revolutions.",
+    ),
+    module(
+        DIRECTION,
+        "Direction",
+        "",
+        Slope,
+        &[0, 1, 2],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Sign of the speed: forward is 1, stopped is 0, reverse is -1.",
+    ),
     module(ANGLE, "Angle", "\u{b0}", Loop, &[0, 1, 2], &[(MOTOR, "SHAFT & EFFICIENCY")], "Shaft angle at the trigger."),
 ];
 
@@ -52,7 +84,10 @@ impl MeasModule for Motor {
             .map(|&id| {
                 let nan = f64::NAN;
                 let v = match id {
-                    DQ0 => phases.as_ref().and_then(|v| oos_dsp::motor::dq0(v[0], v[1], v[2], x.dt, oos_dsp::motor::Theta::Vector)).map_or(nan, |q| q.d),
+                    DQ0 => phases
+                        .as_ref()
+                        .and_then(|v| oos_dsp::motor::dq0(v[0], v[1], v[2], x.dt, oos_dsp::motor::Theta::Vector))
+                        .map_or(nan, |q| q.d),
                     SPEED => shaft.as_ref().and_then(|s| s.rpm).unwrap_or(nan),
                     ACCEL => shaft.as_ref().and_then(|s| s.accel).unwrap_or(nan),
                     DIRECTION => shaft.as_ref().map_or(nan, |s| match s.direction {
@@ -75,9 +110,33 @@ pub const MECH_POWER: u16 = 136;
 pub const SYS_EFF: u16 = 137;
 
 static MECHANICAL_DEFS: [Def; 3] = [
-    module(TORQUE, "Torque", "N\u{b7}m", Bars, &[0, 1, 2, 3], &[(MOTOR, "SHAFT & EFFICIENCY")], "Mean of the torque source, in the chosen scale."),
-    module(MECH_POWER, "Mechanical Power", "W", Bars, &[0, 1, 2, 3], &[(MOTOR, "SHAFT & EFFICIENCY")], "Torque times the shaft speed."),
-    module(SYS_EFF, "System Efficiency", "", Bars, &[0, 1, 2, 3], &[(MOTOR, "SHAFT & EFFICIENCY")], "Mechanical power divided by the electrical power of the configured pair."),
+    module(
+        TORQUE,
+        "Torque",
+        "N\u{b7}m",
+        Bars,
+        &[0, 1, 2, 3],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Mean of the torque source, in the chosen scale.",
+    ),
+    module(
+        MECH_POWER,
+        "Mechanical Power",
+        "W",
+        Bars,
+        &[0, 1, 2, 3],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Torque times the shaft speed.",
+    ),
+    module(
+        SYS_EFF,
+        "System Efficiency",
+        "",
+        Bars,
+        &[0, 1, 2, 3],
+        &[(MOTOR, "SHAFT & EFFICIENCY")],
+        "Mechanical power divided by the electrical power of the configured pair.",
+    ),
 ];
 
 pub struct Mechanical;

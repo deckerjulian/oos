@@ -4,8 +4,8 @@
 //! Waveform sources (demo generator, replay of a captured frame), phosphor (hit-count) maps, measurements.
 //! The live FPGA source (oos-fpgad, Phase 4) will plug in as another `Source`.
 
-use crate::model::*;
 use crate::board::{board, Board};
+use crate::model::*;
 
 pub struct Rng(u64);
 impl Rng {
@@ -72,12 +72,31 @@ pub struct SegView {
 }
 
 pub enum Source {
-    Demo { t: f64 },
-    Replay { words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
+    Demo {
+        t: f64,
+    },
+    Replay {
+        words: Vec<u16>,
+        xinc: f64,
+        yinc: f64,
+        yorg: f64,
+        yref: f64,
+    },
     /// frames from the read-out-only debug source of the board (`Board::live`)
-    Live { shared: crate::board::LiveShared, seen: u64, words: Vec<u16>, xinc: f64, yinc: f64, yorg: f64, yref: f64 },
+    Live {
+        shared: crate::board::LiveShared,
+        seen: u64,
+        words: Vec<u16>,
+        xinc: f64,
+        yinc: f64,
+        yorg: f64,
+        yref: f64,
+    },
     /// acquisitions of the board (`Board::spawn`)
-    Hw { shared: crate::board::HwShared, seen: u64 },
+    Hw {
+        shared: crate::board::HwShared,
+        seen: u64,
+    },
 }
 
 /// What the demo signals show: plain, or with features for the selected trigger type (runts / missing pulses on CH1,
@@ -110,7 +129,16 @@ impl DemoGen {
     fn of(m: &Model) -> Option<DemoGen> {
         static LOOP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         let mask = *LOOP.get_or_init(|| std::env::var("OOS_DEMO_LOOP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
-        (mask != 0).then_some(DemoGen { mask, on: m.afg_on, wave: m.afg_wave, freq: m.afg_freq, ampl: m.afg_ampl, offset: m.afg_offset, duty: m.afg_duty / 100.0, probe: std::array::from_fn(|c| m.ch[c].probe) })
+        (mask != 0).then_some(DemoGen {
+            mask,
+            on: m.afg_on,
+            wave: m.afg_wave,
+            freq: m.afg_freq,
+            ampl: m.afg_ampl,
+            offset: m.afg_offset,
+            duty: m.afg_duty / 100.0,
+            probe: std::array::from_fn(|c| m.ch[c].probe),
+        })
     }
 
     fn v(&self, t: f64) -> f64 {
@@ -131,7 +159,11 @@ impl DemoGen {
                         }
                     }
                     2 => 1.0 - 4.0 * (ph - 0.5).abs(),
-                    4 => ((t * 1e9) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17) as f64 / u64::MAX as f64 * 2.0 - 1.0,
+                    4 => {
+                        ((t * 1e9) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(17) as f64 / u64::MAX as f64
+                            * 2.0
+                            - 1.0
+                    }
                     5 => 0.0,
                     _ => board().arb_at(ph),
                 }
@@ -153,7 +185,8 @@ impl DemoCfg {
 /// SPI mode 0, 2 MHz, words 9F/FF 00/1F 00/40 every 50 us.
 fn demo_bus() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::sim::Logic; 4]) {
     use oos_dsp::sim::{i2c_logic, spi_logic, I2cXfer};
-    static BUS: std::sync::OnceLock<(oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::sim::Logic; 4])> = std::sync::OnceLock::new();
+    static BUS: std::sync::OnceLock<(oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::sim::Logic; 4])> =
+        std::sync::OnceLock::new();
     BUS.get_or_init(|| {
         let (sda, scl) = i2c_logic(
             &[
@@ -168,10 +201,6 @@ fn demo_bus() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::s
         (sda, scl, spi)
     })
 }
-
-
-
-
 
 fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
     use std::f64::consts::PI;
@@ -325,7 +354,9 @@ impl Source {
             let mut state = shared.lock().unwrap();
             state.force = true;
             #[cfg(test)]
-            { state.force_requests += 1; }
+            {
+                state.force_requests += 1;
+            }
         }
     }
 
@@ -374,7 +405,12 @@ impl Source {
     /// Signal of channel `ch` sampled n times from t0 with step dt (no trigger), used by auto set-up.
     pub fn probe(&self, ch: usize, t0: f64, dt: f64, n: usize) -> Vec<f32> {
         match self {
-            Source::Demo { .. } => (0..n).map(|k| demo_signal(DemoCfg { runts: false, video: None, bus: None, gen: None }, ch, t0 + k as f64 * dt) as f32).collect(),
+            Source::Demo { .. } => (0..n)
+                .map(|k| {
+                    demo_signal(DemoCfg { runts: false, video: None, bus: None, gen: None }, ch, t0 + k as f64 * dt)
+                        as f32
+                })
+                .collect(),
             Source::Live { words, yinc, yorg, yref, xinc, .. } | Source::Replay { words, yinc, yorg, yref, xinc } => {
                 if ch != 0 || words.is_empty() {
                     return vec![0.0; n];
@@ -464,7 +500,10 @@ impl Source {
 
     /// Hardware source: asks for measure-unit levels (`Shared::levels_want`) and returns the latest answer; None for
     /// other sources.
-    pub fn hw_levels(&self, want: Option<(u64, u64, u32)>) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
+    pub fn hw_levels(
+        &self,
+        want: Option<(u64, u64, u32)>,
+    ) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
             g.levels_want = want;
@@ -530,7 +569,13 @@ impl Source {
         let mut g = shared.lock().unwrap();
         (g.seg.run, g.seg.running) = (run, running);
         let current = g.seg.done_run == run;
-        Some(SegView { phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle }, total: g.seg.total, recorded: g.seg.recorded, read: g.seg.read, queued: !g.queue.is_empty() })
+        Some(SegView {
+            phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle },
+            total: g.seg.total,
+            recorded: g.seg.recorded,
+            read: g.seg.read,
+            queued: !g.queue.is_empty(),
+        })
     }
 
     /// Hardware segments: the trigger times read back so far (seconds since the first trigger).
@@ -615,7 +660,9 @@ impl Source {
         let (window, n) = if full_demo && matches!(self, Source::Demo { .. }) {
             let (rate, points) = m.srate_depth();
             (points as f64 / rate, points as usize)
-        } else { (tdiv * HDIV as f64, 3600usize) };
+        } else {
+            (tdiv * HDIV as f64, 3600usize)
+        };
         let dt = window / n as f64;
         let t_first = m.delay as f64 - window / 2.0; // relative to the trigger
         let level = m.trig_level as f64;
@@ -656,7 +703,8 @@ impl Source {
             *seen = g.0;
             *words = g.1.clone();
             drop(g);
-            let mut tmp = Source::Replay { words: std::mem::take(words), xinc: *xinc, yinc: *yinc, yorg: *yorg, yref: *yref };
+            let mut tmp =
+                Source::Replay { words: std::mem::take(words), xinc: *xinc, yinc: *yinc, yorg: *yorg, yref: *yref };
             let r = tmp.acquire(m, dt_wall, rng);
             if let Source::Replay { words: w, .. } = tmp {
                 *words = w;
@@ -686,7 +734,9 @@ impl Source {
                         }
                         let sg = if m.ch[c].invert { -1.0 } else { 1.0 };
                         let (bias, skew) = (m.ch[c].bias as f64, m.ch[c].skew as f64);
-                        (0..ns).map(|k| (sg * (demo_signal(cfg, c, start + k as f64 * dts - skew) - bias)) as f32).collect()
+                        (0..ns)
+                            .map(|k| (sg * (demo_signal(cfg, c, start + k as f64 * dts - skew) - bias)) as f32)
+                            .collect()
                     })
                     .collect();
                 let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
@@ -707,10 +757,16 @@ impl Source {
                         })
                         .collect();
                     let e: [f32; 0] = [];
-                    let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &hit[..] } else { &e[..] }), dt: dts, hyst: [0.1; NCH] };
+                    let inp = oos_dsp::trigger::Input {
+                        ch: std::array::from_fn(|c| if c == 0 { &hit[..] } else { &e[..] }),
+                        dt: dts,
+                        hyst: [0.1; NCH],
+                    };
                     let bits = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
                     let t = match m.when() {
-                        Some(when) if m.trig_type == TrigType::Duration => Trigger::Duration { bits, levels: [0.5; NCH], when },
+                        Some(when) if m.trig_type == TrigType::Duration => {
+                            Trigger::Duration { bits, levels: [0.5; NCH], when }
+                        }
                         _ => Trigger::Pattern { bits, levels: [0.5; NCH] },
                     };
                     oos_dsp::trigger::find_first(&t, &inp, 0.0)
@@ -720,13 +776,20 @@ impl Source {
                     // protocol trigger on LA lines: the decoder over the demo lines
                     _ if m.bus_on_la() => {
                         let lines: Vec<u16> = (0..ns).map(|k| demo_la(start + k as f64 * dts)).collect();
-                        crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default()).first().copied()
+                        crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default())
+                            .first()
+                            .copied()
                     }
                     // LA line: 0 / 1 samples of the demo line, the same trigger on them at level 0.5
                     Some(n) => {
-                        let line: Vec<f32> = (0..ns).map(|k| (demo_la(start + k as f64 * dts) >> n & 1) as f32).collect();
+                        let line: Vec<f32> =
+                            (0..ns).map(|k| (demo_la(start + k as f64 * dts) >> n & 1) as f32).collect();
                         let e: [f32; 0] = [];
-                        let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &line[..] } else { &e[..] }), dt: dts, hyst: [0.1; NCH] };
+                        let inp = oos_dsp::trigger::Input {
+                            ch: std::array::from_fn(|c| if c == 0 { &line[..] } else { &e[..] }),
+                            dt: dts,
+                            hyst: [0.1; NCH],
+                        };
                         let mut s = m.clone();
                         (s.trig_la, s.trig_src, s.trig_level) = (None, 0, 0.5);
                         oos_dsp::trigger::find_first(&s.trigger(), &inp, 0.0)
@@ -751,7 +814,9 @@ impl Source {
                         continue;
                     }
                     let mut v = Vec::with_capacity(n);
-                    let noise = NOISE[c] * if m.acq == AcqMode::HiRes { 0.3 } else { 1.0 } * if cfg.gen.is_some() { 0.02 } else { 1.0 };
+                    let noise = NOISE[c]
+                        * if m.acq == AcqMode::HiRes { 0.3 } else { 1.0 }
+                        * if cfg.gen.is_some() { 0.02 } else { 1.0 };
                     let (bias, skew) = (m.ch[c].bias, m.ch[c].skew as f64);
                     for k in 0..n {
                         let tk = ttrig + jitter + t_first + k as f64 * dt;
@@ -775,10 +840,18 @@ impl Source {
                 let trig = if m.trig_channels().iter().enumerate().all(|(c, &u)| !u || c == 0) {
                     m.trigger()
                 } else {
-                    oos_dsp::trigger::Trigger::Edge { src: 0, slope: oos_dsp::trigger::Slope::Rising, level: level as f32 }
+                    oos_dsp::trigger::Trigger::Edge {
+                        src: 0,
+                        slope: oos_dsp::trigger::Slope::Rising,
+                        level: level as f32,
+                    }
                 };
                 let e: [f32; 0] = [];
-                let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| if c == 0 { &volts[..] } else { &e[..] }), dt: *xinc, hyst: [0.1 * m.ch[0].volts_per_div(); NCH] };
+                let inp = oos_dsp::trigger::Input {
+                    ch: std::array::from_fn(|c| if c == 0 { &volts[..] } else { &e[..] }),
+                    dt: *xinc,
+                    hyst: [0.1 * m.ch[0].volts_per_div(); NCH],
+                };
                 let ti = oos_dsp::trigger::find_first(&trig, &inp, 0.0);
                 let triggered = ti.is_some();
                 let ti = ti.unwrap_or(volts.len() as f64 / 2.0);
@@ -801,10 +874,22 @@ impl Source {
                 native[0] = volts;
                 let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&native[c]));
                 let native_len = native[0].len();
-                let frame = std::sync::Arc::new(crate::board::Frame { seq: 1, dt: *xinc,
+                let frame = std::sync::Arc::new(crate::board::Frame {
+                    seq: 1,
+                    dt: *xinc,
                     pre: ti.round().clamp(0.0, native_len.saturating_sub(1) as f64) as usize,
-                    ch: native, roll: false, envelope: false, scan: false, partial: false,
-                    acq: (1.0 / *xinc, native_len), stamp: 0, basic, la: None, fixed_ti: None, hw_avg: false });
+                    ch: native,
+                    roll: false,
+                    envelope: false,
+                    scan: false,
+                    partial: false,
+                    acq: (1.0 / *xinc, native_len),
+                    stamp: 0,
+                    basic,
+                    la: None,
+                    fixed_ti: None,
+                    hw_avg: false,
+                });
                 let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * *xinc, conditioned: true });
                 Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false })
             }
@@ -907,7 +992,18 @@ impl Phosphor {
     /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
     /// between its extremes; two dots would drop the edges of a slow time base.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_ex(&mut self, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool) {
+    pub fn draw_ex(
+        &mut self,
+        c: usize,
+        m: &Model,
+        view: (f32, f32),
+        rec_t0: f64,
+        dt: f64,
+        v: &[f32],
+        w: u16,
+        z: Option<&[f32]>,
+        pairs: bool,
+    ) {
         let (pw, ph) = (self.w, self.h);
         draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs);
     }
@@ -916,7 +1012,21 @@ impl Phosphor {
 /// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
 /// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
 #[allow(clippy::too_many_arguments)]
-pub fn draw_trace(band: &mut [u16], pw: usize, ph: usize, r_lo: usize, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool) {
+pub fn draw_trace(
+    band: &mut [u16],
+    pw: usize,
+    ph: usize,
+    r_lo: usize,
+    c: usize,
+    m: &Model,
+    view: (f32, f32),
+    rec_t0: f64,
+    dt: f64,
+    v: &[f32],
+    w: u16,
+    z: Option<&[f32]>,
+    pairs: bool,
+) {
     let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
     let wi = pw as i32;
     trace_columns(pw, ph, c, m, view, rec_t0, dt, v, w, z, pairs, (0, wi), |cx, r0, r1, w| {
@@ -933,7 +1043,21 @@ pub fn draw_trace(band: &mut [u16], pw: usize, ph: usize, r_lo: usize, c: usize,
 /// (`v` holds min/max pairs) and dots, each pair is one span from its minimum to its maximum over the columns it
 /// covers: two dots would lose the edges of a square at slow time bases.
 #[allow(clippy::too_many_arguments)]
-pub fn trace_columns(pw: usize, ph: usize, c: usize, m: &Model, view: (f32, f32), rec_t0: f64, dt: f64, v: &[f32], w: u16, z: Option<&[f32]>, pairs: bool, cols: (i32, i32), mut put: impl FnMut(i32, i32, i32, u16)) {
+pub fn trace_columns(
+    pw: usize,
+    ph: usize,
+    c: usize,
+    m: &Model,
+    view: (f32, f32),
+    rec_t0: f64,
+    dt: f64,
+    v: &[f32],
+    w: u16,
+    z: Option<&[f32]>,
+    pairs: bool,
+    cols: (i32, i32),
+    mut put: impl FnMut(i32, i32, i32, u16),
+) {
     let (wd, ht) = (pw as f32, ph as f32);
     let tdiv = view.0 as f64;
     let vdelay = view.1 as f64;
@@ -953,7 +1077,11 @@ pub fn trace_columns(pw: usize, ph: usize, c: usize, m: &Model, view: (f32, f32)
     };
     if m.dots && pairs {
         for (j, p) in v.chunks(2).enumerate() {
-            let (lo, hi_) = p.iter().copied().filter(|y| y.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), y| (a.min(y), b.max(y)));
+            let (lo, hi_) = p
+                .iter()
+                .copied()
+                .filter(|y| y.is_finite())
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), y| (a.min(y), b.max(y)));
             if lo > hi_ {
                 continue;
             }
@@ -1065,7 +1193,19 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
         top = vmax;
     }
     let amp = top - base;
-    let mut s = Stats { vmax, vmin, vavg, vrms, top, base, period: f64::NAN, pwidth: f64::NAN, rise: f64::NAN, fall: f64::NAN, valid: true };
+    let mut s = Stats {
+        vmax,
+        vmin,
+        vavg,
+        vrms,
+        top,
+        base,
+        period: f64::NAN,
+        pwidth: f64::NAN,
+        rise: f64::NAN,
+        fall: f64::NAN,
+        valid: true,
+    };
     if amp <= 0.0 {
         return s;
     }
@@ -1121,7 +1261,10 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
             let mut i = from;
             while i > 0 {
                 let (a, b) = (v[i - 1], v[i]);
-                if a.is_finite() && b.is_finite() && ((up && a < level && b >= level) || (!up && a > level && b <= level)) {
+                if a.is_finite()
+                    && b.is_finite()
+                    && ((up && a < level && b >= level) || (!up && a > level && b <= level))
+                {
                     return Some((i - 1) as f64 + ((level - a) / (b - a)) as f64);
                 }
                 i -= 1;
@@ -1130,7 +1273,10 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
         } else {
             for i in from + 1..v.len() {
                 let (a, b) = (v[i - 1], v[i]);
-                if a.is_finite() && b.is_finite() && ((up && a < level && b >= level) || (!up && a > level && b <= level)) {
+                if a.is_finite()
+                    && b.is_finite()
+                    && ((up && a < level && b >= level) || (!up && a > level && b <= level))
+                {
                     return Some((i - 1) as f64 + ((level - a) / (b - a)) as f64);
                 }
             }
@@ -1151,7 +1297,6 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     }
     s
 }
-
 
 /// Auto set-up: per channel find amplitude and frequency, choose V/div, offset, timebase and trigger.
 /// Live channels only. A shown reference uses `autoset_shown`.
@@ -1225,13 +1370,19 @@ pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32,
 /// This is an autoset estimate, never a replacement for measurement analysis.
 pub(crate) fn autoset_summary(v: &[f32], dt: f64) -> Stats {
     const WINDOW: usize = 16_384;
-    if v.len() <= WINDOW * 4 { return stats(v, dt); }
-    if !dt.is_finite() || dt <= 0.0 { return Stats::default(); }
+    if v.len() <= WINDOW * 4 {
+        return stats(v, dt);
+    }
+    if !dt.is_finite() || dt <= 0.0 {
+        return Stats::default();
+    }
     let mut summary = Stats { vmin: f32::INFINITY, vmax: f32::NEG_INFINITY, period: f64::NAN, ..Stats::default() };
     let mut candidates = [(0.0f32, f64::NAN); 3];
     for (index, start) in [0, (v.len() - WINDOW) / 2, v.len() - WINDOW].into_iter().enumerate() {
         let window = stats(&v[start..start + WINDOW], dt);
-        if !window.valid { continue; }
+        if !window.valid {
+            continue;
+        }
         summary.valid = true;
         summary.vmin = summary.vmin.min(window.vmin);
         summary.vmax = summary.vmax.max(window.vmax);
@@ -1248,8 +1399,12 @@ pub(crate) fn autoset_summary(v: &[f32], dt: f64) -> Stats {
     // Small fast noise on a slow waveform is not its period. A candidate must
     // carry a substantial part of the observed swing, as in hardware autoset.
     let swing = summary.vmax - summary.vmin;
-    summary.period = candidates.into_iter().filter(|&(height, period)| height >= 0.4 * swing && period.is_finite() && period > 0.0)
-        .map(|(_, period)| period).min_by(f64::total_cmp).unwrap_or(wide.period);
+    summary.period = candidates
+        .into_iter()
+        .filter(|&(height, period)| height >= 0.4 * swing && period.is_finite() && period > 0.0)
+        .map(|(_, period)| period)
+        .min_by(f64::total_cmp)
+        .unwrap_or(wide.period);
     summary
 }
 
@@ -1368,14 +1523,19 @@ pub fn place(m: &mut Model, found: &[(usize, Stats, f64)]) {
 mod tests {
     #[test]
     fn autoset_summary_handles_native_fast_edges_and_slow_signal_with_fast_noise() {
-        let count=1_000_000;
-        let fast:Vec<f32>=(0..count).map(|k|(k as f64*std::f64::consts::TAU/32.0).sin() as f32).collect();
-        let summary=super::autoset_summary(&fast,1e-9);
-        assert!((summary.period/32e-9-1.0).abs()<0.01);
-        let slow:Vec<f32>=(0..count).map(|k|((k as f64*std::f64::consts::TAU/100_000.0).sin()+0.005*(k as f64*std::f64::consts::TAU/32.0).sin()) as f32).collect();
-        let summary=super::autoset_summary(&slow,1e-9);
-        assert!((summary.period/100e-6-1.0).abs()<0.02,"period {}",summary.period);
-        assert!(summary.vmax-summary.vmin>1.9);
+        let count = 1_000_000;
+        let fast: Vec<f32> = (0..count).map(|k| (k as f64 * std::f64::consts::TAU / 32.0).sin() as f32).collect();
+        let summary = super::autoset_summary(&fast, 1e-9);
+        assert!((summary.period / 32e-9 - 1.0).abs() < 0.01);
+        let slow: Vec<f32> = (0..count)
+            .map(|k| {
+                ((k as f64 * std::f64::consts::TAU / 100_000.0).sin()
+                    + 0.005 * (k as f64 * std::f64::consts::TAU / 32.0).sin()) as f32
+            })
+            .collect();
+        let summary = super::autoset_summary(&slow, 1e-9);
+        assert!((summary.period / 100e-6 - 1.0).abs() < 0.02, "period {}", summary.period);
+        assert!(summary.vmax - summary.vmin > 1.9);
     }
     use super::*;
 
@@ -1457,7 +1617,9 @@ mod tests {
         }
         assert_eq!(periodic(&spikes, 1e-6), None);
         // min/max pairs of a dense record around a slow sine
-        let dense: Vec<f32> = (0..3600).map(|k| ((k / 2) as f32 / 300.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { -0.1 } else { 0.1 }).collect();
+        let dense: Vec<f32> = (0..3600)
+            .map(|k| ((k / 2) as f32 / 300.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { -0.1 } else { 0.1 })
+            .collect();
         assert!((periodic(&dense, 1e-6).unwrap() - 600e-6).abs() < 10e-6);
     }
 

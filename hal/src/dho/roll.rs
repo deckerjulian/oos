@@ -218,7 +218,11 @@ pub fn la_compress(rp: &Params, m: u32) -> u32 {
 /// alternate and share the counter (seen on the unit: LA 1, analog 2, LA 3, ...), so analog chunk n has the counter 2n.
 pub fn scan_column(counter: u16, la: bool) -> usize {
     let c = counter.max(1) as usize;
-    if la { (c / 2).max(1) - 1 } else { c - 1 }
+    if la {
+        (c / 2).max(1) - 1
+    } else {
+        c - 1
+    }
 }
 
 /// Time between two LA words of the stream (fs). An LA chunk of 100 words spans the time of an analog chunk of
@@ -329,7 +333,10 @@ mod tests {
         assert_eq!(rp.spacing_fs, 10_000_000_000);
         let w = config(&mut Shadows { ..Shadows::HANDOVER }, &rp, hp.memsel);
         let get = |r: u32| w.iter().find(|x| x.0 == r).unwrap().1;
-        assert_eq!((get(0x1170), get(0x11fc), get(0x11f0), get(0x1100), get(0x115c)), (0xc000_03e8, 100, 0xf4240, 0x3b9_af4c, 0x9fff_ffff));
+        assert_eq!(
+            (get(0x1170), get(0x11fc), get(0x11f0), get(0x1100), get(0x115c)),
+            (0xc000_03e8, 100, 0xf4240, 0x3b9_af4c, 0x9fff_ffff)
+        );
         assert_eq!(get(0x1154), 2);
         assert_eq!(w.last().unwrap().1 & (1 << 17), 1 << 17);
     }
@@ -418,7 +425,10 @@ mod tests {
         let s = split(&b, 0b1011);
         assert_eq!((s[0].len(), s[1].len(), s[2].len(), s[3].len()), (25, 25, 0, 25));
         assert_eq!((s[0][1], s[1][1], s[3][1]), (4, 5, 7));
-        assert_eq!((points_per_chunk(0b1011), points_per_chunk(0b1111), points_per_chunk(0b0101), points_per_chunk(0b0100)), (25, 25, 50, 100));
+        assert_eq!(
+            (points_per_chunk(0b1011), points_per_chunk(0b1111), points_per_chunk(0b0101), points_per_chunk(0b0100)),
+            (25, 25, 50, 100)
+        );
         assert!(split(&b, 0).iter().all(|c| c.is_empty()));
     }
 }
@@ -455,7 +465,8 @@ mod la_tests {
         let w = la_config(&rp(4, 8), &Timing { m: 4, rate: 1, n: 0, pre: 0 });
         assert!(w.contains(&(0x12cc, 100)) && w.contains(&(0x12c0, 1000)) && w.contains(&(0x1298, 0xc000_00a0)));
         assert!(w.contains(&(0x1280, 0x0c)) && w.contains(&(0x12b4, 0xffff_ffff)));
-        let w = la_config(&Params { f_num: 2, f_den: 1, ratio: 3, ..rp(1, 1) }, &Timing { m: 1, rate: 1, n: 0, pre: 0 });
+        let w =
+            la_config(&Params { f_num: 2, f_den: 1, ratio: 3, ..rp(1, 1) }, &Timing { m: 1, rate: 1, n: 0, pre: 0 });
         assert!(w.contains(&(0x12cc, 99)), "ratio x (n / ratio)");
         assert!(w.contains(&(0x1280, 0x08)) && w.contains(&(0x12b4, u32::MAX / 2)));
     }

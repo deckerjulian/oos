@@ -83,7 +83,9 @@ fn hss_clock_fills_the_single_channel_list() {
     check(Meas::CycTop, 0.5, 0.02, 1e-3);
     check(Meas::CycBase, -0.5, 0.02, 1e-3);
     let pulses = a.rises.len().min(a.falls.len());
-    for (m, n) in [(Meas::PPulses, pulses), (Meas::NPulses, pulses), (Meas::PEdges, a.rises.len()), (Meas::NEdges, a.falls.len())] {
+    for (m, n) in
+        [(Meas::PPulses, pulses), (Meas::NPulses, pulses), (Meas::PEdges, a.rises.len()), (Meas::NEdges, a.falls.len())]
+    {
         let got = a.get(m);
         assert!((got - n as f64).abs() <= 2.0, "{m:?} {got} vs {n}");
     }
@@ -197,7 +199,11 @@ fn hss_differential_pair_carries_a_planted_common_mode() {
         *y += cm;
     }
     assert!(close(eye::dc_common(&a, &b), vcm, 0.02), "dc {}", eye::dc_common(&a, &b));
-    assert!(close(eye::ac_common_pp(&a, Some(&b), dt, false), 2.0 * amp, 0.02), "ac {}", eye::ac_common_pp(&a, Some(&b), dt, false));
+    assert!(
+        close(eye::ac_common_pp(&a, Some(&b), dt, false), 2.0 * amp, 0.02),
+        "ac {}",
+        eye::ac_common_pp(&a, Some(&b), dt, false)
+    );
     assert!(close(eye::diff_crossover(&a, &b), vcm, 0.05), "x {}", eye::diff_crossover(&a, &b));
 }
 
@@ -275,7 +281,12 @@ fn hss_pcie4_nominal_opens_an_eye() {
     assert!(close(a.get(Meas::Vtop), settled, 0.03), "top {}", a.get(Meas::Vtop));
     assert!(close(a.get(Meas::Vbase), -settled, 0.03), "base {}", a.get(Meas::Vbase));
     // transition bits still reach the rails; the 12 GHz filter leaves an edge near 30 ps
-    assert!(a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45, "levels {} {}", a.get(Meas::Vmax), a.get(Meas::Vmin));
+    assert!(
+        a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45,
+        "levels {} {}",
+        a.get(Meas::Vmax),
+        a.get(Meas::Vmin)
+    );
     assert!(a.get(Meas::Rise) > 20e-12 && a.get(Meas::Rise) < 45e-12, "rise {}", a.get(Meas::Rise));
     assert!(a.get(Meas::Fall) > 20e-12 && a.get(Meas::Fall) < 45e-12, "fall {}", a.get(Meas::Fall));
     for m in oos_dsp::measure::ALL {

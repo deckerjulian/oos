@@ -79,7 +79,9 @@ pub(super) fn of(v: AView) -> Option<&'static dyn Analyser> {
 
 /// The views SCPI `:VIEW` sets, with their keywords: the waveform and every page that has one.
 pub(crate) fn scpi_views() -> Vec<(&'static str, AView)> {
-    std::iter::once(("SCOPe", AView::Scope)).chain(ANALYSERS.iter().filter_map(|a| a.scpi().map(|k| (k, a.view())))).collect()
+    std::iter::once(("SCOPe", AView::Scope))
+        .chain(ANALYSERS.iter().filter_map(|a| a.scpi().map(|k| (k, a.view()))))
+        .collect()
 }
 
 /// The views a setup may keep.
@@ -95,11 +97,15 @@ mod tests {
     /// Every view but the waveform has one page; views, feature ids, names, menus and SCPI keywords are unique.
     #[test]
     fn analysers_are_well_formed() {
-        let (mut views, mut ids, mut fnames, mut names, mut menus, mut scpi) = (HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new());
+        let (mut views, mut ids, mut fnames, mut names, mut menus, mut scpi) =
+            (HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new());
         for a in ANALYSERS {
             assert!(views.insert(format!("{:?}", a.view())), "{:?} twice", a.view());
             let (id, fname) = a.feature();
-            assert!(!id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()), "feature id {id:?}");
+            assert!(
+                !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+                "feature id {id:?}"
+            );
             assert!(ids.insert(id) && fnames.insert(fname), "feature {id} / {fname} twice");
             assert!(names.insert(a.name()), "name {} twice", a.name());
             assert!(menus.insert(format!("{:?}", a.menu())), "menu {:?} twice", a.menu());

@@ -12,9 +12,33 @@ pub const MAG_PROP: u16 = 111;
 pub const MAG_LOSS: u16 = 112;
 
 static DEFS: [Def; 3] = [
-    module(INDUCTANCE, "Inductance", "H", Loop, &[0, 1], &[(POWER, "MAGNETICS")], "Slope of flux linkage against current on the rising branch."),
-    module(MAG_PROP, "Magnetic Property", "", Loop, &[0, 1], &[(POWER, "MAGNETICS")], "Relative permeability when turns, area and path length are set."),
-    module(MAG_LOSS, "Magnetic Loss", "W", Loop, &[0, 1], &[(POWER, "MAGNETICS")], "Power left after the copper loss is taken out."),
+    module(
+        INDUCTANCE,
+        "Inductance",
+        "H",
+        Loop,
+        &[0, 1],
+        &[(POWER, "MAGNETICS")],
+        "Slope of flux linkage against current on the rising branch.",
+    ),
+    module(
+        MAG_PROP,
+        "Magnetic Property",
+        "",
+        Loop,
+        &[0, 1],
+        &[(POWER, "MAGNETICS")],
+        "Relative permeability when turns, area and path length are set.",
+    ),
+    module(
+        MAG_LOSS,
+        "Magnetic Loss",
+        "W",
+        Loop,
+        &[0, 1],
+        &[(POWER, "MAGNETICS")],
+        "Power left after the copper loss is taken out.",
+    ),
 ];
 
 pub struct Magnetic;
@@ -49,9 +73,9 @@ impl MeasModule for Magnetic {
             .iter()
             .map(|&id| {
                 let v = match id {
-                INDUCTANCE => g.as_ref().and_then(|g| g.l).unwrap_or(f64::NAN),
-                MAG_PROP => g.as_ref().and_then(|g| g.mu_r).unwrap_or(f64::NAN),
-                MAG_LOSS => g.as_ref().and_then(|g| g.loss).unwrap_or(f64::NAN),
+                    INDUCTANCE => g.as_ref().and_then(|g| g.l).unwrap_or(f64::NAN),
+                    MAG_PROP => g.as_ref().and_then(|g| g.mu_r).unwrap_or(f64::NAN),
+                    MAG_LOSS => g.as_ref().and_then(|g| g.loss).unwrap_or(f64::NAN),
                     _ => f64::NAN,
                 };
                 (id, v)

@@ -49,7 +49,13 @@ pub struct CalFiles {
     pub notes: Vec<String>,
 }
 
-fn read_first(own: Option<&str>, dir: &str, name: &str, parse: impl Fn(&[u8]) -> bool, notes: &mut Vec<String>) -> Option<Vec<u8>> {
+fn read_first(
+    own: Option<&str>,
+    dir: &str,
+    name: &str,
+    parse: impl Fn(&[u8]) -> bool,
+    notes: &mut Vec<String>,
+) -> Option<Vec<u8>> {
     let dir = dir.trim_end_matches('/');
     let first = own.map(|d| format!("{}/{}", d, name));
     for path in first.into_iter().chain([format!("{}/{}", dir, name), format!("{}/default/{}", dir, name)]) {
@@ -71,9 +77,16 @@ impl CalFiles {
     /// makes one) from `dir` (on the unit `/rigol/data`), read only.
     pub fn load(dir: &str) -> CalFiles {
         let mut notes = Vec::new();
-        let adc = read_first(Some(crate::dho::calfile::OOS_CAL_DIR), dir, "cal_adc.hex", |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(), &mut notes)
-            .and_then(|d| CalAdc::from_file_bytes(&d));
-        let ddr = read_first(None, dir, "cal_ddr.hex", |d| DdrCal::from_file_bytes(d).is_some(), &mut notes).and_then(|d| DdrCal::from_file_bytes(&d));
+        let adc = read_first(
+            Some(crate::dho::calfile::OOS_CAL_DIR),
+            dir,
+            "cal_adc.hex",
+            |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(),
+            &mut notes,
+        )
+        .and_then(|d| CalAdc::from_file_bytes(&d));
+        let ddr = read_first(None, dir, "cal_ddr.hex", |d| DdrCal::from_file_bytes(d).is_some(), &mut notes)
+            .and_then(|d| DdrCal::from_file_bytes(&d));
         CalFiles { adc, ddr, notes }
     }
 }

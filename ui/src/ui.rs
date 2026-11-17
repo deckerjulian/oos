@@ -3,89 +3,89 @@
 
 //! Layout, rendering, menus and input handling of the OOS scope screen (1024 x 600).
 
+use crate::board::{board, Board};
 use crate::font::{Font, Fonts};
-use crate::math::*;
 use crate::gfx::*;
+use crate::math::*;
 use crate::model::*;
 use crate::wave::*;
-use crate::board::{board, Board};
 
+mod afg;
 mod analysers;
 mod analysis;
-mod scroll;
-mod measure_pairs;
-mod bus;
-mod busview;
-mod magnetic;
-mod motor;
-mod dpt;
-mod eyepage;
-mod panes;
 mod autoset;
-mod selfcal;
-pub mod bode;
-mod sim;
-mod offline;
-mod reflook;
-mod workflow;
-mod deskew;
-pub mod startup;
-mod afg;
-mod sysinfo;
-mod tables;
-mod logger;
-mod measlabels;
-mod overclock;
-mod tools;
-mod hwmask;
-mod hwzone;
-mod sertrig;
-mod measurement_nav;
-mod meascatalog;
-pub(crate) mod facts;
-mod update;
-mod viewmore;
-mod wlan;
-mod windows;
-mod workspace;
 #[cfg(test)]
-mod fix_tests;
+mod batch1_tests;
 #[cfg(test)]
 mod batch2_tests;
 #[cfg(test)]
 mod batch5_tests;
+pub mod bode;
+mod bus;
+mod busview;
+mod deskew;
+mod dpt;
+mod eyepage;
+pub(crate) mod facts;
 #[cfg(test)]
-mod batch1_tests;
-mod trigger_controls;
+mod fix_tests;
+mod hwmask;
+mod hwzone;
+mod logger;
+mod magnetic;
+mod meascatalog;
+mod measlabels;
+mod measure_pairs;
+mod measurement_nav;
+mod motor;
+mod offline;
+mod overclock;
+mod panes;
+mod reflook;
 mod scpi_operations;
-pub(crate) use scpi_operations::{Operations, OperationState, OperationToken};
-mod reference_search;
-mod reference_decode;
-mod bus_candidate;
-mod mathwave;
-mod capture_memory;
-mod time;
-mod remote;
-mod ssh;
+mod scroll;
+mod selfcal;
+mod sertrig;
+mod sim;
+pub mod startup;
+mod sysinfo;
+mod tables;
+mod tools;
+mod trigger_controls;
+mod update;
+mod viewmore;
+mod windows;
+mod wlan;
+mod workflow;
+mod workspace;
+pub(crate) use scpi_operations::{OperationState, OperationToken, Operations};
 mod backlight;
-mod graphics;
-pub mod views;
-mod monitor;
+mod bus_candidate;
+mod capture_memory;
 mod features;
+mod graphics;
 #[cfg(test)]
 mod interplay_tests;
+mod mathwave;
+mod monitor;
+mod reference_decode;
+mod reference_search;
+mod remote;
 #[cfg(test)]
 mod session_tests;
+mod ssh;
+mod time;
+pub mod views;
 pub use views::VIEWS_MAX;
-mod script;
-#[cfg(test)]
-mod lint;
-#[cfg(test)]
-pub(crate) mod testkit;
 #[cfg(test)]
 mod backend_followup_tests;
 mod bwtest;
 pub mod la;
+#[cfg(test)]
+mod lint;
+mod script;
+#[cfg(test)]
+pub(crate) mod testkit;
 
 // The frame (top bar, waveform area, bottom bar with the cards) comes from the screen size: `Ui::frame`,
 // `crate::layout`. Top bar: run state, menu buttons, network (buttons drawn 30 px high, tapped over the full bar
@@ -163,9 +163,33 @@ pub struct Lay {
 
 /// The layouts of Normal, Large and Larger.
 pub const LAYS: [Lay; 3] = [
-    Lay { strip_row: 18, dlg_label: 96, dlg_col: 400, grid_col: 150, results_w: 196, card: (18, 42, 58), res_pitch: (22, 42) },
-    Lay { strip_row: 21, dlg_label: 104, dlg_col: 420, grid_col: 168, results_w: 224, card: (19, 43, 59), res_pitch: (24, 46) },
-    Lay { strip_row: 24, dlg_label: 116, dlg_col: 440, grid_col: 190, results_w: 250, card: (20, 43, 59), res_pitch: (26, 50) },
+    Lay {
+        strip_row: 18,
+        dlg_label: 96,
+        dlg_col: 400,
+        grid_col: 150,
+        results_w: 196,
+        card: (18, 42, 58),
+        res_pitch: (22, 42),
+    },
+    Lay {
+        strip_row: 21,
+        dlg_label: 104,
+        dlg_col: 420,
+        grid_col: 168,
+        results_w: 224,
+        card: (19, 43, 59),
+        res_pitch: (24, 46),
+    },
+    Lay {
+        strip_row: 24,
+        dlg_label: 116,
+        dlg_col: 440,
+        grid_col: 190,
+        results_w: 250,
+        card: (20, 43, 59),
+        res_pitch: (26, 50),
+    },
 ];
 /// Menu dialogs: header height, row pitch and control height of the list rows (touch targets of 40 px).
 const DLG_HEAD: i32 = 50;
@@ -231,7 +255,8 @@ const CAL_BANNER: Rgb = rgb(0x30, 0x22, 0x08);
 
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).
-const HEAT_STOPS: [(f32, f32, f32); 5] = [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
+const HEAT_STOPS: [(f32, f32, f32); 5] =
+    [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
 pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
@@ -277,7 +302,13 @@ const WEB_CSV_MAX: usize = 2_000_000;
 const DEC_BAND: i32 = 28;
 
 /// Colours of the references.
-const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", rgb(0xf0, 0x60, 0x60)), ("Green", rgb(0x60, 0xe0, 0x90)), ("Blue", rgb(0x70, 0xa8, 0xf8)), ("Violet", rgb(0xc8, 0x88, 0xf0))];
+const REF_COLORS: [(&str, Rgb); 5] = [
+    ("White", rgb(0xd8, 0xd8, 0xd8)),
+    ("Red", rgb(0xf0, 0x60, 0x60)),
+    ("Green", rgb(0x60, 0xe0, 0x90)),
+    ("Blue", rgb(0x70, 0xa8, 0xf8)),
+    ("Violet", rgb(0xc8, 0x88, 0xf0)),
+];
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
 /// The short names of the two-source variants (strip, SCPI).
@@ -305,25 +336,60 @@ pub use panes::{PANE_HARMS, TREND_SEL_N};
 pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 
 /// Keys of the frequency keypad: the unit ends the entry.
-const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
+const FREQ_KEYS: [&str; 18] =
+    ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
 /// Keys of the hex keypad picker.
 /// Largest protocol trigger value: 40 bits (five I2C data bytes).
 pub const BUS_VAL_MAX: u64 = 0xff_ffff_ffff;
 
-const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
+const KEYPAD: [&str; 19] =
+    ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
 
 /// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
 pub const LONG_PRESS: f64 = 0.6;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
-    ("navfwd", 0x06), ("navplay", 0x07), ("navback", 0x08),
-    ("ref", 0x01), ("la", 0x02), ("gi", 0x03), ("hmenu", 0x04), ("navigate", 0x05), ("slope", 0x09), ("force", 0x0a), ("clear", 0x0b),
-    ("runstop", 0x0c), ("auto", 0x0d), ("single", 0x0e), ("measure", 0x0f), ("cursor", 0x10), ("default", 0x11), ("analyse", 0x12),
-    ("touchlock", 0x13), ("quick", 0x14), ("ch1", 0x15), ("ch2", 0x16), ("ch3", 0x17), ("ch4", 0x18), ("math", 0x19), ("tmenu", 0x1a),
-    ("power", 0x1b), ("hpos", 0x8c), ("vpos", 0x9c), ("tlevel", 0xec),
+    ("navfwd", 0x06),
+    ("navplay", 0x07),
+    ("navback", 0x08),
+    ("ref", 0x01),
+    ("la", 0x02),
+    ("gi", 0x03),
+    ("hmenu", 0x04),
+    ("navigate", 0x05),
+    ("slope", 0x09),
+    ("force", 0x0a),
+    ("clear", 0x0b),
+    ("runstop", 0x0c),
+    ("auto", 0x0d),
+    ("single", 0x0e),
+    ("measure", 0x0f),
+    ("cursor", 0x10),
+    ("default", 0x11),
+    ("analyse", 0x12),
+    ("touchlock", 0x13),
+    ("quick", 0x14),
+    ("ch1", 0x15),
+    ("ch2", 0x16),
+    ("ch3", 0x17),
+    ("ch4", 0x18),
+    ("math", 0x19),
+    ("tmenu", 0x1a),
+    ("power", 0x1b),
+    ("hpos", 0x8c),
+    ("vpos", 0x9c),
+    ("tlevel", 0xec),
 ];
 /// Knob names -> CW code (CCW = CW + 1, push = CW + 2).
-pub const KNOB_NAMES: [(&str, u8); 7] = [("hpos", 0x8a), ("vpos", 0x9a), ("multi2", 0xaa), ("multi1", 0xba), ("hscale", 0xca), ("vscale", 0xda), ("tlevel", 0xea)];
+pub const KNOB_NAMES: [(&str, u8); 7] = [
+    ("hpos", 0x8a),
+    ("vpos", 0x9a),
+    ("multi2", 0xaa),
+    ("multi1", 0xba),
+    ("hscale", 0xca),
+    ("vscale", 0xda),
+    ("tlevel", 0xea),
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuId {
@@ -1164,10 +1230,53 @@ mod part_tests {
         let ui = crate::ui::testkit::demo_ui();
         let mut items: Vec<Item> = Vec::new();
         let menus = [
-            Main, Channel(0), ChMore(0), Logger, Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasHold, MeasPair,
-            Dvm, Cursor, Display, Utility, Math, Ref, Decode, Bus, Storage, Mask, Zone, Spectrum, Eye, Power, Magnetic,
-            Inverter, Dpt, Identify, SelfCal, Network, Features, Decoders(0), Remote, Ssh, Time, Bode, Sim,
-            SimAdvanced, Afg, BwTest, ViewMore, La, LaLines, LaPat, Windows, MeasSelected,
+            Main,
+            Channel(0),
+            ChMore(0),
+            Logger,
+            Horizontal,
+            Trigger,
+            Acquire,
+            Measure,
+            MeasAdd,
+            MeasHold,
+            MeasPair,
+            Dvm,
+            Cursor,
+            Display,
+            Utility,
+            Math,
+            Ref,
+            Decode,
+            Bus,
+            Storage,
+            Mask,
+            Zone,
+            Spectrum,
+            Eye,
+            Power,
+            Magnetic,
+            Inverter,
+            Dpt,
+            Identify,
+            SelfCal,
+            Network,
+            Features,
+            Decoders(0),
+            Remote,
+            Ssh,
+            Time,
+            Bode,
+            Sim,
+            SimAdvanced,
+            Afg,
+            BwTest,
+            ViewMore,
+            La,
+            LaLines,
+            LaPat,
+            Windows,
+            MeasSelected,
         ];
         for m in menus {
             for it in ui.items(m) {
@@ -1206,9 +1315,21 @@ enum Kind {
 
 pub enum Ev {
     Key(u8),
-    Touch { id: i32, phase: Phase, x: i32, y: i32 },
+    Touch {
+        id: i32,
+        phase: Phase,
+        x: i32,
+        y: i32,
+    },
     #[cfg_attr(not(test), allow(dead_code))] // only the tests make it
-    Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
+    Wheel {
+        x: i32,
+        y: i32,
+        steps: i32,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1230,7 +1351,11 @@ enum Drag {
     /// draw-a-box is armed: draw repeated zoom boxes until a tap/menu cancels
     ZoomBox,
     /// the corner button: its drawn origin when the finger went down, and where it sat before this gesture
-    FullBtn { ox: i32, oy: i32, prev: Option<(i32, i32)> },
+    FullBtn {
+        ox: i32,
+        oy: i32,
+        prev: Option<(i32, i32)>,
+    },
     Offset(usize),
     RefOffset(usize),
     Delay,
@@ -1309,7 +1434,8 @@ type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
 /// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
 /// on the unit).
 fn measure_channels(work: &[(usize, &[f32], f64, f64)]) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
-    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min));
+    let one =
+        |&(c, v, dt, min): &(usize, &[f32], f64, f64)| (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min));
     if work.len() < 2 {
         return work.iter().map(one).collect();
     }
@@ -1339,7 +1465,8 @@ impl MeasWorker {
             .spawn(move || {
                 crate::http::to_little_cores();
                 while let Ok((n, work)) = jobs.recv() {
-                    let w: Vec<(usize, &[f32], f64, f64)> = work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
+                    let w: Vec<(usize, &[f32], f64, f64)> =
+                        work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
                     if done.send((n, measure_channels(&w))).is_err() {
                         break;
                     }
@@ -1879,7 +2006,21 @@ impl Ui {
             meas_cfg: None,
             offline_ref: 0,
             offline_hold: None,
-            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, t0: 0.0, held: false, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
+            touch: TouchState {
+                down: false,
+                x0: 0,
+                y0: 0,
+                x: 0,
+                y: 0,
+                t0: 0.0,
+                held: false,
+                drag: Drag::None,
+                start_offset: 0.0,
+                start_delay: 0.0,
+                start_level: 0.0,
+                start_cur: 0.0,
+                win: 0,
+            },
             mstat: Vec::new(),
             trend: Vec::new(),
             pn: Default::default(),
@@ -1904,7 +2045,15 @@ impl Ui {
             ref_src: 0,
             ref_files: Vec::new(),
             xy: false,
-            pinch: Pinch { active: false, p0: (0, 0), p1: (0, 0), ref_dx: 0, ref_dy: 0, area: Rect::new(0, 0, 0, 0), detail: false },
+            pinch: Pinch {
+                active: false,
+                p0: (0, 0),
+                p1: (0, 0),
+                ref_dx: 0,
+                ref_dy: 0,
+                area: Rect::new(0, 0, 0, 0),
+                detail: false,
+            },
             knob_t: [0.0; 16],
             now: 0.0,
             level_seen: (f32::NAN, f32::NAN),
@@ -1989,7 +2138,14 @@ impl Ui {
     /// Channels with measurements, in the order of their first measurement (one strip row each).
     fn meas_groups(&self) -> Vec<WaveId> {
         let mut v = Vec::new();
-        for id in self.m.meas.iter().map(|e| e.1).chain(self.m.meas2.iter().map(|e| e.1)).chain(self.m.cat.iter().map(|e| meascatalog::primary_source(*e))) {
+        for id in self
+            .m
+            .meas
+            .iter()
+            .map(|e| e.1)
+            .chain(self.m.meas2.iter().map(|e| e.1))
+            .chain(self.m.cat.iter().map(|e| meascatalog::primary_source(*e)))
+        {
             if !v.contains(&id) {
                 v.push(id);
             }
@@ -2004,7 +2160,9 @@ impl Ui {
 
     /// Strip rows of the measurements of channel `c`: six to a row.
     fn meas_strip_rows(&self, id: WaveId) -> i32 {
-        let n = self.m.meas.iter().filter(|e| e.1 == id).count() + self.m.meas2.iter().filter(|e| e.1 == id).count() + self.m.cat.iter().filter(|e| meascatalog::primary_source(**e) == id).count();
+        let n = self.m.meas.iter().filter(|e| e.1 == id).count()
+            + self.m.meas2.iter().filter(|e| e.1 == id).count()
+            + self.m.cat.iter().filter(|e| meascatalog::primary_source(**e) == id).count();
         n.div_ceil(tools::STRIP_PER_ROW) as i32
     }
 
@@ -2013,7 +2171,8 @@ impl Ui {
         if self.results_pane_on() {
             return dvm;
         }
-        let meas = if self.results_panel() { 0 } else { self.meas_groups().iter().map(|&c| self.meas_strip_rows(c)).sum() };
+        let meas =
+            if self.results_panel() { 0 } else { self.meas_groups().iter().map(|&c| self.meas_strip_rows(c)).sum() };
         self.visible_measurement_rows(meas) + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
@@ -2073,11 +2232,17 @@ impl Ui {
 
     /// The eye's rectangle: to the right of the trace, or under it.
     pub(super) fn eye_pane_rect(&self) -> Rect {
-        if let Some(rect) = self.workspace.eye_float { return rect; }
+        if let Some(rect) = self.workspace.eye_float {
+            return rect;
+        }
         let wave = self.plot_rect();
-        if self.m.eye_place == EyePlace::Full { return wave; }
+        if self.m.eye_place == EyePlace::Full {
+            return wave;
+        }
         if self.eye_side() {
-            if self.workspace.eye_left { return Rect::new(self.plot_span().0, wave.y, (wave.x - self.plot_span().0 - 4).max(1), wave.h); }
+            if self.workspace.eye_left {
+                return Rect::new(self.plot_span().0, wave.y, (wave.x - self.plot_span().0 - 4).max(1), wave.h);
+            }
             let x = wave.x + wave.w + 4;
             Rect::new(x, wave.y, (self.plot_span().0 + self.plot_span().1 - x).max(1), wave.h)
         } else {
@@ -2109,18 +2274,32 @@ impl Ui {
 
     fn plot_top(&self) -> i32 {
         let y = if self.full_on() { 0 } else { self.frame().body.y };
-        if self.m.strip_dock == StripDock::Above { y + self.strip_rows_h() } else { y }
+        if self.m.strip_dock == StripDock::Above {
+            y + self.strip_rows_h()
+        } else {
+            y
+        }
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
     fn plot_bottom(&self) -> i32 {
-        if self.full_on() { self.scr.h } else { self.frame().bottom.y }
+        if self.full_on() {
+            self.scr.h
+        } else {
+            self.frame().bottom.y
+        }
     }
 
     /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
     fn n_wins(&self) -> usize {
-        if self.stacked() { return self.trace_sources().len().max(1); }
-        if self.m.zoom || self.view_on() || self.eye_open() { 1 } else { self.m.win_layout.count() }
+        if self.stacked() {
+            return self.trace_sources().len().max(1);
+        }
+        if self.m.zoom || self.view_on() || self.eye_open() {
+            1
+        } else {
+            self.m.win_layout.count()
+        }
     }
 
     /// The windows in the plot `g`, all of the same size (they share the phosphor size), in reading order.
@@ -2152,18 +2331,36 @@ impl Ui {
 
     /// Window of channel `c` (a window number beyond the layout goes to the last).
     fn win_of(&self, c: usize) -> usize {
-        if self.stacked() { return self.trace_sources().iter().position(|source| *source == workspace::Trace::Channel(c)).unwrap_or(usize::MAX); }
+        if self.stacked() {
+            return self
+                .trace_sources()
+                .iter()
+                .position(|source| *source == workspace::Trace::Channel(c))
+                .unwrap_or(usize::MAX);
+        }
         self.m.ch_win[c].min(self.wins.len().max(1) - 1)
     }
 
     /// Window of reference `i` in a split: its Windows row; in Stacked its own row.
     fn ref_win_of(&self, i: usize) -> usize {
-        if self.stacked() { return self.trace_sources().iter().position(|source| *source == workspace::Trace::Reference(i)).unwrap_or(usize::MAX); }
+        if self.stacked() {
+            return self
+                .trace_sources()
+                .iter()
+                .position(|source| *source == workspace::Trace::Reference(i))
+                .unwrap_or(usize::MAX);
+        }
         self.m.ref_win[i].min(self.wins.len().max(1) - 1)
     }
 
     fn math_win_of(&self, k: usize) -> usize {
-        if self.stacked() { return self.trace_sources().iter().position(|source| *source == workspace::Trace::Math(k)).unwrap_or(usize::MAX); }
+        if self.stacked() {
+            return self
+                .trace_sources()
+                .iter()
+                .position(|source| *source == workspace::Trace::Math(k))
+                .unwrap_or(usize::MAX);
+        }
         self.m.math_win[k].min(self.wins.len().max(1) - 1)
     }
 
@@ -2174,7 +2371,11 @@ impl Ui {
 
     /// The rectangle channel `c` is drawn in: its window, or the main waveform area (zoom).
     fn ch_area(&self, c: usize) -> Rect {
-        if self.wins.len() > 1 { self.wins.get(self.win_of(c)).copied().unwrap_or(self.area) } else { self.area }
+        if self.wins.len() > 1 {
+            self.wins.get(self.win_of(c)).copied().unwrap_or(self.area)
+        } else {
+            self.area
+        }
     }
 
     /// Window of the LA lanes.
@@ -2184,12 +2385,17 @@ impl Ui {
 
     /// Area whose time axis the LA lanes and the decoders on them use: the window of the LA, or the main area.
     fn lane_area(&self) -> Rect {
-        if self.wins.len() > 1 { self.wins[self.la_win_of()] } else { self.area }
+        if self.wins.len() > 1 {
+            self.wins[self.la_win_of()]
+        } else {
+            self.area
+        }
     }
 
     /// Whether window `w` has an analog channel or a math channel in it.
     fn win_has_analog(&self, w: usize) -> bool {
-        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
+        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w)
+            || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
     }
 
     /// Window of decoder `k`'s band in the plot, or None when it has a row under the LA lanes.
@@ -2199,14 +2405,21 @@ impl Ui {
             return if self.la_dec_count() > 0 { None } else { Some(0) };
         }
         if let Some(WaveId::Ref(i)) = decode_wave(m.dec_src) {
-            return self.source_area(WaveId::Ref(i)).and_then(|area| self.wins.iter().position(|r| *r == area)).or(Some(0));
+            return self
+                .source_area(WaveId::Ref(i))
+                .and_then(|area| self.wins.iter().position(|r| *r == area))
+                .or(Some(0));
         }
         Some(if self.wins.len() > 1 { self.win_of(m.dec_src) } else { 0 })
     }
 
     /// Area for cards over the plot (tables, results): the whole plot when it is split.
     fn over_area(&self) -> Rect {
-        if self.wins.len() > 1 { self.grid } else { self.area }
+        if self.wins.len() > 1 {
+            self.grid
+        } else {
+            self.area
+        }
     }
 
     /// Spreads the channels that are on over the windows of a new layout, in channel order (math channels after
@@ -2286,7 +2499,8 @@ impl Ui {
             // corner of the bracket, and the way its arms go (x, y)
             // pointing out while Full is selected, including when the panel keeps its bars for the external display
             let back = self.m.density == Density::Full && !self.m.touch_lock;
-            let (px, py, ax, ay) = if back { (cx + sx * 4, cy + sy * 3, sx, sy) } else { (cx + sx * 12, cy + sy * 9, -sx, -sy) };
+            let (px, py, ax, ay) =
+                if back { (cx + sx * 4, cy + sy * 3, sx, sy) } else { (cx + sx * 12, cy + sy * 9, -sx, -sy) };
             let (hx0, hx1) = (px.min(px + ax * (l - 1)), px.max(px + ax * (l - 1)));
             let (vy0, vy1) = (py.min(py + ay * (l - 1)), py.max(py + ay * (l - 1)));
             // 2 px thick, the second pixel on the side of the arms
@@ -2371,7 +2585,9 @@ impl Ui {
         let detail = Self::split_zoom(self.grid).1;
         if self.m.zoom && !self.view_on() && area.y >= detail.y && area.y < detail.y + detail.h {
             (self.zoom_vfactor, self.zoom_vcenter)
-        } else { (1.0, 0.0) }
+        } else {
+            (1.0, 0.0)
+        }
     }
 
     pub(super) fn zoom_y_of_divs(&self, area: Rect, divs: f32) -> f32 {
@@ -2425,38 +2641,63 @@ impl Ui {
     }
 
     fn pointer_wheel_motion(&mut self, x: i32, y: i32, steps: i32, zoom_time: bool, vertical: bool) -> bool {
-        if self.eye_open() && self.eye_pane_rect().contains(x,y) { return false; }
-        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.m.touch_lock || self.view_on() || !self.grid.contains(x, y) { return false; }
+        if self.eye_open() && self.eye_pane_rect().contains(x, y) {
+            return false;
+        }
+        if self.load_slot_ask
+            || self.menu_open
+            || self.dialog.is_some()
+            || self.power_dlg
+            || self.m.touch_lock
+            || self.view_on()
+            || !self.grid.contains(x, y)
+        {
+            return false;
+        }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
         let detail = self.m.zoom && lane.is_some();
-        if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) { return false; }
+        if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) {
+            return false;
+        }
         let source = if self.stacked() { lane.and_then(|lane| self.trace_sources().get(lane).copied()) } else { None };
         match source {
             Some(workspace::Trace::Channel(c)) => self.select_workspace_source(WaveId::Ch(c)),
             Some(workspace::Trace::Reference(i)) => self.select_workspace_source(WaveId::Ref(i)),
             Some(workspace::Trace::Math(i)) => self.m.math_select(i),
-            None => {},
+            None => {}
         }
         let steps = steps.clamp(-32, 32);
         if zoom_time {
-            let area = if detail { self.wins[lane.unwrap()] }
-                else if self.m.zoom { Self::split_zoom(self.grid).0 }
-                else { lane.map(|index| self.wins[index]).unwrap_or(self.area) };
+            let area = if detail {
+                self.wins[lane.unwrap()]
+            } else if self.m.zoom {
+                Self::split_zoom(self.grid).0
+            } else {
+                lane.map(|index| self.wins[index]).unwrap_or(self.area)
+            };
             let fraction = ((x - area.x) as f32 / area.w.max(1) as f32).clamp(0.0, 1.0);
             for _ in 0..steps.unsigned_abs() {
-                if detail { self.zoom_horizontal_step(-steps.signum(), area, fraction); }
-                else { self.main_horizontal_step(-steps.signum(), fraction); }
+                if detail {
+                    self.zoom_horizontal_step(-steps.signum(), area, fraction);
+                } else {
+                    self.main_horizontal_step(-steps.signum(), fraction);
+                }
             }
         } else if vertical {
             if detail {
                 let area = self.wins[lane.unwrap()];
                 let fraction = (y - area.y) as f32 / area.h.max(1) as f32;
-                for _ in 0..steps.unsigned_abs() { self.zoom_vertical_step(steps.signum(), area, fraction); }
+                for _ in 0..steps.unsigned_abs() {
+                    self.zoom_vertical_step(steps.signum(), area, fraction);
+                }
             } else {
                 match source {
                     Some(workspace::Trace::Math(_)) => self.adjust(Item::MathScale, -steps),
                     _ => match self.selected_workspace_source() {
-                        Some(WaveId::Ref(i)) => { self.ref_sel = i; self.adjust(Item::RefVpd, -steps); }
+                        Some(WaveId::Ref(i)) => {
+                            self.ref_sel = i;
+                            self.adjust(Item::RefVpd, -steps);
+                        }
                         Some(WaveId::Ch(c)) => self.adjust(Item::ChScale(c), -steps),
                         None => return false,
                     },
@@ -2468,7 +2709,10 @@ impl Ui {
         } else {
             let shift = steps as f32 * self.m.time_per_div() * 0.5;
             self.m.delay -= shift;
-            if self.m.zoom { self.m.zdelay -= shift; self.clamp_zoom(); }
+            if self.m.zoom {
+                self.m.zdelay -= shift;
+                self.clamp_zoom();
+            }
         }
         self.dirty_map = true;
         true
@@ -2477,7 +2721,12 @@ impl Ui {
     /// Compact controls in the existing zoom row; no additional panel space.
     fn zoom_controls(&self) -> [(Rect, &'static str); 5] {
         let row = self.zoom_readout();
-        std::array::from_fn(|i| (Rect::new(row.x + row.w - 480 + i as i32 * 62, row.y + 2, 58, row.h - 4), ["H-", "H+", "V-", "V+", "Box"][i]))
+        std::array::from_fn(|i| {
+            (
+                Rect::new(row.x + row.w - 480 + i as i32 * 62, row.y + 2, 58, row.h - 4),
+                ["H-", "H+", "V-", "V+", "Box"][i],
+            )
+        })
     }
 
     /// Zoom: overview on top, a readout row (with Close), zoomed view below.
@@ -2562,7 +2811,11 @@ impl Ui {
 
     /// The LA lines of the last record, one row per change.
     pub fn web_la_csv(&self) -> Result<String, String> {
-        let la = self.last[0].as_ref().and_then(|r| r.la.as_ref()).filter(|_| self.m.la_on()).ok_or("No logic analyser record")?;
+        let la = self.last[0]
+            .as_ref()
+            .and_then(|r| r.la.as_ref())
+            .filter(|_| self.m.la_on())
+            .ok_or("No logic analyser record")?;
         Ok(crate::store::la_csv(la, &self.m.la.lines()))
     }
 
@@ -2600,7 +2853,9 @@ impl Ui {
     }
 
     pub(super) fn set_record_zoom(&mut self, on: bool) {
-        if !self.zoom_user_closed { self.set_zoom(on); }
+        if !self.zoom_user_closed {
+            self.set_zoom(on);
+        }
     }
 
     /// Detail scale, delay and display magnification controls in the existing zoom row.
@@ -2608,7 +2863,12 @@ impl Ui {
         let f = self.fonts();
         let row = self.zoom_readout();
         let close = self.zoom_close();
-        let lbl = format!("Zoom \u{b7} {}/div \u{b7} {} \u{b7} V {:.2}x", si_short(tz as f64, "s"), si(dz as f64, "s"), self.zoom_vfactor);
+        let lbl = format!(
+            "Zoom \u{b7} {}/div \u{b7} {} \u{b7} V {:.2}x",
+            si_short(tz as f64, "s"),
+            si(dz as f64, "s"),
+            self.zoom_vfactor
+        );
         let reset = Rect::new(close.x - 76, close.y, 70, close.h);
         let controls = self.zoom_controls();
         let lab = Rect::new(row.x + 4, row.y, (controls[0].0.x - row.x - 10).max(1), row.h);
@@ -2628,7 +2888,9 @@ impl Ui {
     fn zoom_close_tap(&mut self, x: i32, y: i32) -> bool {
         if self.m.zoom && !self.view_on() {
             for (rect, text) in self.zoom_controls() {
-                if !rect.contains(x, y) { continue; }
+                if !rect.contains(x, y) {
+                    continue;
+                }
                 let area = self.wave_area();
                 match text {
                     "H-" => self.zoom_horizontal_step(1, area, 0.5),
@@ -2653,7 +2915,9 @@ impl Ui {
     }
 
     fn reset_zoom(&mut self) {
-        if !self.m.zoom { return; }
+        if !self.m.zoom {
+            return;
+        }
         self.m.zscale = self.m.tscale;
         self.m.zdelay = self.m.delay;
         self.zoom_vfactor = 1.0;
@@ -2686,8 +2950,10 @@ impl Ui {
 
     #[cfg(test)]
     pub(crate) fn measurement_statistics_snapshot_for_test(&self) -> Vec<(u64, [u64; 4])> {
-        self.mstat.iter().map(|stat| (stat.n,
-            [stat.sum.to_bits(), stat.sumsq.to_bits(), stat.min.to_bits(), stat.max.to_bits()])).collect()
+        self.mstat
+            .iter()
+            .map(|stat| (stat.n, [stat.sum.to_bits(), stat.sumsq.to_bits(), stat.min.to_bits(), stat.max.to_bits()]))
+            .collect()
     }
 
     /// Measurement `k` of channel `c` (NaN when off or not measurable).
@@ -2715,7 +2981,10 @@ impl Ui {
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
             && self.seg_pos.is_none()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::compress::live(&r.frame) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame)))
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
+                crate::compress::live(&r.frame)
+                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
+            })
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
@@ -2776,7 +3045,10 @@ impl Ui {
     }
 
     pub fn record_volts(&self, c: usize) -> Vec<f32> {
-        self.last[0].as_ref().map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
+        self.last[0]
+            .as_ref()
+            .map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
+            .unwrap_or_default()
     }
 
     /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
@@ -2993,12 +3265,18 @@ impl Ui {
         if hw_seg {
             self.seg_poll(running);
         }
-        if !running { self.cancel_demo_acquisition(); }
+        if !running {
+            self.cancel_demo_acquisition();
+        }
         let persist = PERSIST[self.m.persist].1;
         if self.record_mode() {
-            if self.m.run == RunState::Run { self.sim_play = true; }
+            if self.m.run == RunState::Run {
+                self.sim_play = true;
+            }
             self.sim_tick(dt_wall);
-            if self.m.run == RunState::Stop { self.refresh_stopped_reference(); }
+            if self.m.run == RunState::Stop {
+                self.refresh_stopped_reference();
+            }
         }
         if self.m.run == RunState::Stop && !self.record_mode() {
             self.refresh_capture_view();
@@ -3006,7 +3284,10 @@ impl Ui {
         }
         let live = self.m.n_on() > 0 || self.m.la_on();
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if !self.record_mode() && live && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared)) {
+        if !self.record_mode()
+            && live
+            && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared))
+        {
             if self.m.run == RunState::Run {
                 self.stop_ti_off = None;
                 (self.stop_raw, self.stop_pic) = (None, None);
@@ -3093,7 +3374,9 @@ impl Ui {
                 let t0 = std::time::Instant::now();
                 let r = self.acquire_bus_candidate(dt_wall / k as f64);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
-                if r.is_none() && self.bus_candidate_waiting() { break; }
+                if r.is_none() && self.bus_candidate_waiting() {
+                    break;
+                }
                 match r {
                     Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
                         // zone trigger: not a qualifying record
@@ -3102,15 +3385,25 @@ impl Ui {
                     }
                     // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
                     // decides; Single waits on for the record that holds the event
-                    Some(rec) if self.m.trig_type == TrigType::Bus && !self.mixed_bus_mode() && self.m.trig_mode != TrigMode::Auto && !rec.triggered && !rec.partial && self.bus_can_match(&rec) => {
+                    Some(rec)
+                        if self.m.trig_type == TrigType::Bus
+                            && !self.mixed_bus_mode()
+                            && self.m.trig_mode != TrigMode::Auto
+                            && !rec.triggered
+                            && !rec.partial
+                            && self.bus_can_match(&rec) =>
+                    {
                         self.m.status = TrigStatus::Wait;
                     }
                     Some(mut rec) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
                         for c in 0..NCH {
-                            if self.m.ch[c].on && !rec.ch[c].is_empty() && !self.src.is_hw()
-                                && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned) {
+                            if self.m.ch[c].on
+                                && !rec.ch[c].is_empty()
+                                && !self.src.is_hw()
+                                && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned)
+                            {
                                 let dt = rec.dt;
                                 condition(&self.m, c, &mut rec.ch[c], dt);
                             }
@@ -3157,11 +3450,31 @@ impl Ui {
                                 if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
                                     let shifted_main = self.deskew_channel_view(&rec, c, mainv);
                                     let main = shifted_main.as_deref().unwrap_or(&rec);
-                                    self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24, if shifted_main.is_some() { None } else { zw.as_deref() }, main.pairs);
+                                    self.ph.draw_ex(
+                                        c,
+                                        &self.m,
+                                        mainv,
+                                        main.t0 - self.m.deskew_ch[c],
+                                        main.dt,
+                                        &main.ch[c],
+                                        24,
+                                        if shifted_main.is_some() { None } else { zw.as_deref() },
+                                        main.pairs,
+                                    );
                                     if self.m.zoom {
                                         let shifted = self.deskew_channel_view(&rec, c, zv);
                                         let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                                        self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() }, z.pairs);
+                                        self.phz.draw_ex(
+                                            c,
+                                            &zoom_model,
+                                            zv,
+                                            z.t0 - self.m.deskew_ch[c],
+                                            z.dt,
+                                            &z.ch[c],
+                                            24,
+                                            if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
+                                            z.pairs,
+                                        );
                                     }
                                 }
                             }
@@ -3186,12 +3499,16 @@ impl Ui {
                             self.seg_n += 1;
                             // hardware segments end when the thread has read them all back (`seg_poll`)
                             if !hw_seg && self.seg_n >= self.seg_count() {
-                                if self.m.trig_mode == TrigMode::Single { self.scpi_finish_operation(OperationToken::Single(self.single_operation)); }
+                                if self.m.trig_mode == TrigMode::Single {
+                                    self.scpi_finish_operation(OperationToken::Single(self.single_operation));
+                                }
                                 self.m.run = RunState::Stop;
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
                             }
-                        } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {
+                        } else if self.m.trig_mode == TrigMode::Single
+                            && !self.last[0].as_ref().is_some_and(|r| r.partial)
+                        {
                             self.scpi_finish_operation(OperationToken::Single(self.single_operation));
                             self.m.run = RunState::Stop;
                             break;
@@ -3260,7 +3577,10 @@ impl Ui {
                     // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
                     // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
                     // second with GPU and HDMI Layout, unit 2026-11-15)
-                    let raw_deep = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
+                    let raw_deep = self.last[0]
+                        .as_ref()
+                        .and_then(|r| r.raw.as_ref())
+                        .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
                     if raw_deep && crate::deepmeas::want(&self.m).is_some() {
                         self.meas_pending = self.last[0].clone();
                     }
@@ -3295,11 +3615,31 @@ impl Ui {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
                         let shifted_main = self.deskew_channel_view(&rec, c, mainv);
                         let main = shifted_main.as_deref().unwrap_or(&rec);
-                        self.ph.draw_ex(c, &self.m, mainv, main.t0 - self.m.deskew_ch[c], main.dt, &main.ch[c], 24 * 6, if shifted_main.is_some() { None } else { zw.as_deref() }, main.pairs);
+                        self.ph.draw_ex(
+                            c,
+                            &self.m,
+                            mainv,
+                            main.t0 - self.m.deskew_ch[c],
+                            main.dt,
+                            &main.ch[c],
+                            24 * 6,
+                            if shifted_main.is_some() { None } else { zw.as_deref() },
+                            main.pairs,
+                        );
                         if self.m.zoom {
                             let shifted = self.deskew_channel_view(&rec, c, zv);
                             let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                            self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], 24 * 6, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() }, z.pairs);
+                            self.phz.draw_ex(
+                                c,
+                                &zoom_model,
+                                zv,
+                                z.t0 - self.m.deskew_ch[c],
+                                z.dt,
+                                &z.ch[c],
+                                24 * 6,
+                                if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
+                                z.pairs,
+                            );
                         }
                     }
                 }
@@ -3307,7 +3647,9 @@ impl Ui {
         }
         if self.analyzed_view != self.m.view {
             self.analyzed_view = self.m.view;
-            if self.m.view != AView::Scope { self.analyzer_update(); }
+            if self.m.view != AView::Scope {
+                self.analyzer_update();
+            }
         }
         // the measurements of the newest record (in the background: when they are done, also after a stop)
         self.meas_poll();
@@ -3318,7 +3660,9 @@ impl Ui {
             self.counter_update();
             for (i, row) in rows.iter().enumerate() {
                 if row.computing {
-                    if let Some(entry) = i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied() {
+                    if let Some(entry) =
+                        i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied()
+                    {
                         self.queue_catalog_statistics(entry, self.wfm_total);
                     }
                 }
@@ -3332,7 +3676,9 @@ impl Ui {
             self.stop_final = None;
         }
         if self.m.run == RunState::Stop {
-            if !self.record_mode() { self.m.status = TrigStatus::Stop; }
+            if !self.record_mode() {
+                self.m.status = TrigStatus::Stop;
+            }
             self.wfm_rate = 0.0;
         }
         let p3 = std::time::Instant::now();
@@ -3365,7 +3711,10 @@ impl Ui {
     /// One line of settings for the HDMI workspace: channels, time base, trigger, state, rate.
     pub fn hdmi_header(&self) -> String {
         let m = &self.m;
-        let mut parts: Vec<String> = (0..NCH).filter(|&c| m.ch[c].on).map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V"))).collect();
+        let mut parts: Vec<String> = (0..NCH)
+            .filter(|&c| m.ch[c].on)
+            .map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V")))
+            .collect();
         parts.push(format!("{}/div", si_short(m.time_per_div() as f64, "s")));
         if self.offline {
             let (name, sub) = self.ref_card_lines();
@@ -3470,7 +3819,9 @@ impl Ui {
             && m.z_src.is_none()
             && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
-            && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
+            && (0..NCH).all(|c| {
+                !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M)
+            })
     }
 
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
@@ -3483,7 +3834,11 @@ impl Ui {
         // the statistics of every frame for the voltage measurements, once the measurements of the record have set
         // up their rows
         let rows_ready = self.mstat.len() == m.meas.len() + m.meas2.len();
-        let fold: [bool; NCH] = std::array::from_fn(|c| rows_ready && m.ch[c].on && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k)));
+        let fold: [bool; NCH] = std::array::from_fn(|c| {
+            rows_ready
+                && m.ch[c].on
+                && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k))
+        });
         let t0 = std::time::Instant::now();
         let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
@@ -3519,7 +3874,8 @@ impl Ui {
                 self.acc_t[c] = vec![0; w * (h + 1)];
             }
         }
-        let bands = if frames.len() < 2 || on.is_empty() { 1 } else { (crate::fastdraw::helpers() + 1).div_ceil(on.len()) };
+        let bands =
+            if frames.len() < 2 || on.is_empty() { 1 } else { (crate::fastdraw::helpers() + 1).div_ceil(on.len()) };
         let band_cols = w.div_ceil(bands).max(1);
         let mut jobs: Vec<(usize, usize, &mut [u16])> = Vec::new();
         for (c, acc) in self.acc_t.iter_mut().enumerate() {
@@ -3544,8 +3900,18 @@ impl Ui {
             })
         });
         let t2 = std::time::Instant::now();
-        let pairs: Vec<(usize, &mut Vec<u16>, &mut Vec<u16>)> = self.ph.map.iter_mut().zip(self.acc_t.iter_mut()).enumerate().filter(|(c, _)| on.contains(c)).map(|(c, (a, b))| (c, a, b)).collect();
-        crate::fastdraw::par_each(pairs, |(c, map, acc)| crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1));
+        let pairs: Vec<(usize, &mut Vec<u16>, &mut Vec<u16>)> = self
+            .ph
+            .map
+            .iter_mut()
+            .zip(self.acc_t.iter_mut())
+            .enumerate()
+            .filter(|(c, _)| on.contains(c))
+            .map(|(c, (a, b))| (c, a, b))
+            .collect();
+        crate::fastdraw::par_each(pairs, |(c, map, acc)| {
+            crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1)
+        });
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);
         self.t_fast_ab.0 += 0.05 * (a - self.t_fast_ab.0);
         self.t_fast_ab.1 += 0.05 * (b - self.t_fast_ab.1);
@@ -3601,7 +3967,9 @@ impl Ui {
                 cv.round(Rect::new(edge - 3, o.y + o.h / 2 - 12, 7, 24), 3, ACCENT, 255);
             }
             cv.no_clip();
-            for &lane in &self.wins { self.draw_grid(l.under, lane); }
+            for &lane in &self.wins {
+                self.draw_grid(l.under, lane);
+            }
         } else {
             for &w in &self.wins {
                 self.draw_grid(l.under, w);
@@ -3633,7 +4001,9 @@ impl Ui {
                 if self.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
                         self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
-                    } else { self.draw_refs(cv); }
+                    } else {
+                        self.draw_refs(cv);
+                    }
                 }
                 self.draw_math(cv);
                 if i == self.la_win_of() {
@@ -3671,7 +4041,9 @@ impl Ui {
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
         // the zoom magnifier belongs to the scope picture: an analyser page has its own controls under it
-        if !(self.eye_open() && self.m.eye_place==EyePlace::Full && self.workspace.eye_float.is_none()) && !self.view_on() {
+        if !(self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none())
+            && !self.view_on()
+        {
             self.draw_zoom_btn(cv);
         }
         self.draw_auto_bar(cv);
@@ -3709,7 +4081,8 @@ impl Ui {
     /// window's maps.
     /// `all_sources`: every channel that is on (the zoom overview), else only those of the window being drawn.
     fn traces(&self, l: &mut Layers, area: Rect, zoom: bool, all_sources: bool) {
-        let (ph, vmax, vmax_cg) = if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
+        let (ph, vmax, vmax_cg) =
+            if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
         if l.over.is_none() {
             return self.draw_traces(l.under, area, ph, vmax, vmax_cg, all_sources);
         }
@@ -3755,7 +4128,15 @@ impl Ui {
 
     /// `render_view_layers` of the view in place.
     fn render_view_layers_as_is(&mut self, l: &mut Layers) {
-        let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
+        let keep = (
+            self.scr,
+            self.grid,
+            std::mem::take(&mut self.wins),
+            self.area,
+            self.cur_win,
+            self.frames,
+            self.hdmi_snap_want,
+        );
         self.scr = Screen { w: l.under.w, h: l.under.h };
         (self.view_pass, self.hdmi_snap_want) = (true, false);
         self.render_layers(l);
@@ -3832,8 +4213,13 @@ impl Ui {
     /// (V/div, offset, unit, colour) of the ref that labels the volt axis when no channel is shown here: the selected
     /// ref, else the first one this window holds.
     fn ref_axis_source(&self) -> Option<(f32, f32, &'static str, Rgb)> {
-        let here: Vec<usize> = self.shown_refs().into_iter().filter(|&i| self.workspace_source_visible_here(WaveId::Ref(i))).collect();
-        let i = here.iter().copied().find(|&i| self.selected_workspace_source() == Some(WaveId::Ref(i))).or(here.first().copied())?;
+        let here: Vec<usize> =
+            self.shown_refs().into_iter().filter(|&i| self.workspace_source_visible_here(WaveId::Ref(i))).collect();
+        let i = here
+            .iter()
+            .copied()
+            .find(|&i| self.selected_workspace_source() == Some(WaveId::Ref(i)))
+            .or(here.first().copied())?;
         let r = self.refs[i].as_ref()?;
         Some((r.vpd, r.offset, "V", self.wave_color(WaveId::Ref(i))))
     }
@@ -3845,10 +4231,17 @@ impl Ui {
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = self.fonts();
         let a = self.area;
-        let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i)) };
+        let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) {
+            Some(self.m.active)
+        } else {
+            (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i))
+        };
         // with no channel to label, the shown ref gives the axis (R1 in the lane or window that holds it)
         let axis = match c {
-            Some(c) => { let ch = &self.m.ch[c]; Some((ch.volts_per_div(), ch.offset, ch.unit.name(), CH_COLORS[c])) }
+            Some(c) => {
+                let ch = &self.m.ch[c];
+                Some((ch.volts_per_div(), ch.offset, ch.unit.name(), CH_COLORS[c]))
+            }
             None => self.ref_axis_source(),
         };
         if let Some((base_vpd, base_offset, unit, color)) = axis {
@@ -3860,7 +4253,9 @@ impl Ui {
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
-            let bands = (0..DECODERS).filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win)).count() as i32;
+            let bands = (0..DECODERS)
+                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win))
+                .count() as i32;
             if bands > 0 {
                 taken.push(Rect::new(a.x, a.y + a.h - 50 - (bands - 1) * DEC_BAND, a.w, bands * DEC_BAND));
             }
@@ -3886,7 +4281,9 @@ impl Ui {
                 backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
-        if self.stacked() && self.cur_win + 1 < self.wins.len() { return; }
+        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+            return;
+        }
         let (tdiv, delay) = self.view();
         let span = (HDIV / 2.0 * tdiv).abs() + delay.abs();
         // a narrow window (side by side) labels every second division, the centre always
@@ -3902,13 +4299,23 @@ impl Ui {
             let s = if zero { "0 s".to_string() } else { axis_label(t, tdiv, delay, span, "s") };
             let w = f.s.width(&s);
             let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
-            if tx < free + 8 { continue; }
+            if tx < free + 8 {
+                continue;
+            }
             free = tx + w;
             backed_text(cv, &f.s, tx, a.y + a.h - 6, &s, if zero { ACCENT } else { AXIS_TEXT });
         }
     }
 
-    fn draw_traces(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmaxs: &[u32; NCH], vmax_cg: u32, all_sources: bool) {
+    fn draw_traces(
+        &self,
+        cv: &mut Canvas,
+        area: Rect,
+        ph: &Phosphor,
+        vmaxs: &[u32; NCH],
+        vmax_cg: u32,
+        all_sources: bool,
+    ) {
         if self.m.color_grade {
             return self.draw_graded(cv, area, ph, vmax_cg, all_sources);
         }
@@ -4003,7 +4410,11 @@ impl Ui {
         let mut lut = [0u32; 1024];
         for (i, l) in lut.iter_mut().enumerate() {
             let v = (i as f32 + 0.5) / top;
-            *l = if i == 0 && shift == 0 { 0 } else { (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32 };
+            *l = if i == 0 && shift == 0 {
+                0
+            } else {
+                (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32
+            };
         }
         (lut, shift, floor as u32 / 2)
     }
@@ -4040,7 +4451,10 @@ impl Ui {
     /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
     /// built; per pixel it is an add per channel and one table look-up.
     fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32, all_sources: bool) {
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on && (all_sources || self.shows(c))).map(|c| ph.map[c].as_slice()).collect();
+        let maps: Vec<&[u16]> = (0..NCH)
+            .filter(|&c| self.m.ch[c].on && (all_sources || self.shows(c)))
+            .map(|c| ph.map[c].as_slice())
+            .collect();
         if maps.is_empty() {
             return;
         }
@@ -4185,7 +4599,8 @@ impl Ui {
         let ch = &self.m.ch[self.m.mask_src];
         let ppd = a.h as f32 / VDIV;
         let cy = a.y as f32 + a.h as f32 / 2.0;
-        let y_of = |v: f32| -> i32 { (cy - (v + ch.offset) / ch.volts_per_div() * ppd).round().clamp(-1e6, 1e6) as i32 };
+        let y_of =
+            |v: f32| -> i32 { (cy - (v + ch.offset) / ch.volts_per_div() * ppd).round().clamp(-1e6, 1e6) as i32 };
         let (top, bot) = (a.y, a.y + a.h);
         for x in 0..a.w {
             let (lo, hi) = mask.band(x as f64 / a.w as f64, (x + 1) as f64 / a.w as f64);
@@ -4276,7 +4691,8 @@ impl Ui {
                 let ch = &self.m.ch[c];
                 let ppd = h as f32 / VDIV;
                 let (factor, center) = self.zoom_vertical_transform(area);
-                let yl = h as f32 / 2.0 - ((self.m.trig_level + ch.offset) / ch.volts_per_div() - center) * factor * ppd;
+                let yl =
+                    h as f32 / 2.0 - ((self.m.trig_level + ch.offset) / ch.volts_per_div() - center) * factor * ppd;
                 let (r0, r1) = (((yl - ppd / 2.0).max(0.0)) as usize, ((yl + ppd / 2.0).max(0.0) as usize).min(h));
                 (0..w).map(|x| (r0..r1).map(|r| map[r * w + x] as u64).sum()).collect()
             }
@@ -4362,7 +4778,9 @@ impl Ui {
 
     /// The waveform of math channel `k` (empty for FFT/Off or missing sources).
     fn math_wave_of(&self, k: usize) -> Vec<f32> {
-        if self.m.math_ch(k).op == MathOp::Fft { return Vec::new(); }
+        if self.m.math_ch(k).op == MathOp::Fft {
+            return Vec::new();
+        }
         self.math_record(k).ok().flatten().map_or_else(Vec::new, |w| w.v.as_ref().clone())
     }
 
@@ -4385,7 +4803,8 @@ impl Ui {
             (c.scale, c.offset) = (3, 0.0);
         } else {
             let w = self.math_wave_of(k);
-            let (mn, mx) = w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            let (mn, mx) =
+                w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
             let sc = math_scales();
             if mx < mn {
                 c.scale = sc.iter().position(|&x| x >= 1.0).unwrap_or(0);
@@ -4396,19 +4815,29 @@ impl Ui {
                 c.offset = -((mx + mn) as f64 / 2.0 / sc[c.scale]) as f32;
             }
         }
-        if k == self.m.math_sel { (self.m.math_scale, self.m.math_offset) = (c.scale, c.offset); }
+        if k == self.m.math_sel {
+            (self.m.math_scale, self.m.math_offset) = (c.scale, c.offset);
+        }
         self.m.maths[k] = c;
     }
 
     fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
-        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
-        let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
+        let on: Vec<usize> = (0..NMATH)
+            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win)
+            .collect();
+        let labels: Vec<Option<String>> =
+            on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
         let f = self.fonts();
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
-                let r = Rect::new(self.area.x + self.area.w - 12 - f.s.width(label) - 16, self.area.y + 22 + 26 * row as i32, f.s.width(label) + 16, 20);
+                let r = Rect::new(
+                    self.area.x + self.area.w - 12 - f.s.width(label) - 16,
+                    self.area.y + 22 + 26 * row as i32,
+                    f.s.width(label) + 16,
+                    20,
+                );
                 cv.round(r, 4, rgb(0x1c, 0x16, 0x28), 230);
                 cv.text_in(&f.s, r, 1, label, MATH_COLORS[k % MATH_COLORS.len()]);
             }
@@ -4422,13 +4851,18 @@ impl Ui {
         let f = self.fonts();
         // the last stacked lane keeps its time labels clear: the trace is clipped above them
         let mut lane = self.area;
-        if self.stacked() && self.cur_win + 1 == self.wins.len() { lane.h = (lane.h - (f.s.size + 8)).max(f.s.size); }
+        if self.stacked() && self.cur_win + 1 == self.wins.len() {
+            lane.h = (lane.h - (f.s.size + 8)).max(f.s.size);
+        }
         cv.set_clip(lane);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
         let label;
         if c.op == MathOp::Fft {
-            let Some(w) = self.math_record(k).ok().flatten() else { cv.no_clip(); return None; };
+            let Some(w) = self.math_record(k).ok().flatten() else {
+                cv.no_clip();
+                return None;
+            };
             let df = w.dt;
             let db = w.v.as_ref();
             if db.is_empty() {
@@ -4455,13 +4889,23 @@ impl Ui {
                 }
                 prev = Some((x, y));
             }
-            label = format!("M{} FFT {} {}  {} dB/div  {}/div", k + 1, src_name(c.a), c.win.name(), dbdiv, si_short(span / HDIV as f64, "Hz"));
+            label = format!(
+                "M{} FFT {} {}  {} dB/div  {}/div",
+                k + 1,
+                src_name(c.a),
+                c.win.name(),
+                dbdiv,
+                si_short(span / HDIV as f64, "Hz")
+            );
         } else {
             let result = self.math_record(k);
             let rec = result.as_ref().ok().and_then(|w| w.as_ref());
             if rec.is_none() {
                 cv.no_clip();
-                let status = match result { Err(e) => e, _ => "Computing" };
+                let status = match result {
+                    Err(e) => e,
+                    _ => "Computing",
+                };
                 cv.text(&f.s, self.area.x + 60, self.area.y + 40 + 18 * row, &format!("M{}: {}", k + 1, status), col);
                 return None;
             }
@@ -4535,7 +4979,9 @@ impl Ui {
     /// The same for the decoder that m is the view of; cached per record and settings, up to four decoders run every frame.
     fn decode_packets_of(&self, m: &Model) -> Result<std::sync::Arc<Vec<oos_dsp::decode::Packet>>, &'static str> {
         use std::hash::{Hash, Hasher};
-        if Self::decoder_uses_refs(m) || (!m.dec_on_la() && m.deskew_ch.iter().any(|&shift| shift != 0.0)) { return self.reference_decode_packets(m); }
+        if Self::decoder_uses_refs(m) || (!m.dec_on_la() && m.deskew_ch.iter().any(|&shift| shift != 0.0)) {
+            return self.reference_decode_packets(m);
+        }
         let Some(rec) = &self.last[0] else { return Ok(std::sync::Arc::new(Vec::new())) };
         if m.dec_on_la() {
             return self.la_packets(m, rec).map(std::sync::Arc::new);
@@ -4605,8 +5051,11 @@ impl Ui {
         use oos_dsp::decode::Kind;
         let f = self.fonts();
         let a = self.area;
-        let col = if m.dec_on_la() { la::line_color(m.dec_la[0].unwrap_or(0)) }
-            else { decode_wave(m.dec_src).map_or(DIM, |source| self.wave_color(source)) };
+        let col = if m.dec_on_la() {
+            la::line_color(m.dec_la[0].unwrap_or(0))
+        } else {
+            decode_wave(m.dec_src).map_or(DIM, |source| self.wave_color(source))
+        };
         // rows under the lanes span all windows, like the lanes
         let a = if row.is_some() { self.lane_area() } else { a };
         let h = 20;
@@ -4614,8 +5063,11 @@ impl Ui {
         if row.is_none() {
             cv.blend(Rect::new(a.x, y - 3, a.w, h + 6), BG, 200);
         }
-        let name = if m.dec_on_la() { format!("{} {}", k + 1, m.dec_proto.name()) }
-            else { format!("{} {} {}", k + 1, m.dec_proto.name(), decode_source_name(m.dec_src)) };
+        let name = if m.dec_on_la() {
+            format!("{} {}", k + 1, m.dec_proto.name())
+        } else {
+            format!("{} {} {}", k + 1, m.dec_proto.name(), decode_source_name(m.dec_src))
+        };
         cv.text(&f.sb, a.x + 4, y + 15, &name, DIM);
         let packets = match self.decode_packets_of(m) {
             Ok(p) => p,
@@ -4647,7 +5099,8 @@ impl Ui {
             if x1 - x0 < 3 {
                 continue;
             }
-            let is_addr = matches!(p.kind, Kind::Addr { .. } | Kind::Id { .. } | Kind::Word { cmd: true } | Kind::Field(_));
+            let is_addr =
+                matches!(p.kind, Kind::Addr { .. } | Kind::Id { .. } | Kind::Word { cmd: true } | Kind::Field(_));
             let base = if is_addr { ACCENT } else { col };
             let fill = if p.ok { scale(base, 70) } else { rgb(0x70, 0x18, 0x18) };
             cv.fill(Rect::new(x0 + 3, y, x1 - x0 - 6, h), fill);
@@ -4665,7 +5118,10 @@ impl Ui {
         }
         // threshold line on the source trace (LA lines have no analog level)
         if !m.dec_on_la() && m.dec_proto != Proto::CPHY {
-            let Some(source) = decode_wave(m.dec_src) else { cv.no_clip(); return; };
+            let Some(source) = decode_wave(m.dec_src) else {
+                cv.no_clip();
+                return;
+            };
             let ty = self.y_of_wave(source, m.dec_thr);
             cv.dashed_hline(a.x + 26, a.x + a.w - 26, ty, 2, 6, scale(col, 160));
             if m.dec_proto.module().is_some_and(|p| p.key() == "Arinc429") {
@@ -4680,22 +5136,27 @@ impl Ui {
     /// Vertical scale and the sample rate of this record. Time per division stays the one horizontal scale.
     fn ref_badge_readout(r: &RefWave) -> (String, String) {
         let scale = format!("{}/div", si_short(r.vpd as f64, "V"));
-        let rate = if r.dt.is_finite() && r.dt > 0.0 {
-            si_short(1.0 / r.dt, "Sa/s")
-        } else {
-            "\u{2014}".into()
-        };
+        let rate = if r.dt.is_finite() && r.dt > 0.0 { si_short(1.0 / r.dt, "Sa/s") } else { "\u{2014}".into() };
         (scale, rate)
     }
 
     fn ref_badge_lines(&self, slot: usize, r: &RefWave, maximum: i32) -> (String, String) {
         let tag = format!("R{}", slot + 1);
-        let mut name = if r.label.trim().is_empty() || r.label.trim() == tag { tag.clone() } else { format!("{} {}", tag, r.label.trim()) };
+        let mut name = if r.label.trim().is_empty() || r.label.trim() == tag {
+            tag.clone()
+        } else {
+            format!("{} {}", tag, r.label.trim())
+        };
         let width = (maximum - 12).max(16);
         if self.fonts().sb.width(&name) > width {
-            while name.len() > tag.len() && self.fonts().sb.width(&format!("{}...", name)) > width { name.pop(); }
-            if self.fonts().sb.width(&format!("{}...", name)) <= width { name.push_str("..."); }
-            else { name = tag; }
+            while name.len() > tag.len() && self.fonts().sb.width(&format!("{}...", name)) > width {
+                name.pop();
+            }
+            if self.fonts().sb.width(&format!("{}...", name)) <= width {
+                name.push_str("...");
+            } else {
+                name = tag;
+            }
         }
         let (scale, rate) = Self::ref_badge_readout(r);
         (name, format!("{} · {}", scale, rate))
@@ -4723,7 +5184,11 @@ impl Ui {
 
     /// Room a ref badge keeps clear under it: the time labels along the bottom of the lowest lane.
     fn ref_badge_pad(&self) -> i32 {
-        if self.stacked() && self.cur_win + 1 < self.wins.len() { 2 } else { self.fonts().s.size + 10 }
+        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+            2
+        } else {
+            self.fonts().s.size + 10
+        }
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
@@ -4745,9 +5210,16 @@ impl Ui {
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
-            if !all_sources && self.stacked() && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i)) { continue; }
+            if !all_sources
+                && self.stacked()
+                && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i))
+            {
+                continue;
+            }
             // a split (not Stacked): each reference in the window its Windows row names
-            if !all_sources && !self.stacked() && self.wins.len() > 1 && self.ref_win_of(i) != self.cur_win { continue; }
+            if !all_sources && !self.stacked() && self.wins.len() > 1 && self.ref_win_of(i) != self.cur_win {
+                continue;
+            }
             if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
                 continue;
             }
@@ -4857,7 +5329,13 @@ impl Ui {
         let ts = self.m.trig_src;
         let lvl = self.trig_level_shown();
         let filtered = matches!(self.m.trig_coupling(), TrigCoup::Ac | TrigCoup::LfReject);
-        if self.m.trig_ref.is_none() && self.m.ch[ts].on && self.shows(ts) && self.m.trig_line().is_none() && !filtered && self.trigger_absolute_level_visible(false) {
+        if self.m.trig_ref.is_none()
+            && self.m.ch[ts].on
+            && self.shows(ts)
+            && self.m.trig_line().is_none()
+            && !filtered
+            && self.trigger_absolute_level_visible(false)
+        {
             let y = self.y_of_volts(ts, lvl).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
             let x1 = a.x + a.w - MARK_W;
             let r = Rect::new(x1 + 8, y - 8, 16, 16);
@@ -4881,8 +5359,13 @@ impl Ui {
         if let Some((c, tag)) = c2 {
             let secondary = matches!(t, TrigType::Delay | TrigType::SetupHold);
             let source = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
-            if source == WaveId::Ch(c) && self.m.ch[c].on && self.shows(c) && self.trigger_absolute_level_visible(secondary) {
-                let y = self.y_of_volts(c, self.m.trig_level2).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
+            if source == WaveId::Ch(c)
+                && self.m.ch[c].on
+                && self.shows(c)
+                && self.trigger_absolute_level_visible(secondary)
+            {
+                let y =
+                    self.y_of_volts(c, self.m.trig_level2).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
                 let x1 = a.x + a.w - MARK_W;
                 let r = Rect::new(x1 + 8, y - 8, 16, 16);
                 cv.round(r, 3, mix(BG, ACCENT, 170), 255);
@@ -4890,7 +5373,9 @@ impl Ui {
                 cv.text_in(&f.sb, r, 1, tag, DARK_TEXT);
                 let s = si_short(self.m.trig_level2 as f64, self.m.unit(ts));
                 backed_text(cv, &f.sb, x1 - 4 - f.sb.width(&s), y + 5, &s, mix(BG, ACCENT, 200));
-                if self.touch.drag == Drag::Level2 { cv.hline(a.x, a.x + a.w - 1, y, ACCENT); }
+                if self.touch.drag == Drag::Level2 {
+                    cv.hline(a.x, a.x + a.w - 1, y, ACCENT);
+                }
             }
         }
         self.draw_reference_trigger_markers(cv);
@@ -4915,12 +5400,31 @@ impl Ui {
             Drag::Offset(c) if self.shows(c) => {
                 let y = self.y_of_volts(c, 0.0);
                 cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, CH_COLORS[c]);
-                tag(cv, a.x + 8, y - 30, &format!("Offset {}", si(self.m.ch[c].offset as f64, self.m.unit(c))), CH_COLORS[c]);
+                tag(
+                    cv,
+                    a.x + 8,
+                    y - 30,
+                    &format!("Offset {}", si(self.m.ch[c].offset as f64, self.m.unit(c))),
+                    CH_COLORS[c],
+                );
             }
-            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT),
-            Drag::Level if self.shows(ts) && !filtered && self.m.trig_ref.is_none() && self.trigger_absolute_level_visible(false) => {
+            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => {
+                tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT)
+            }
+            Drag::Level
+                if self.shows(ts)
+                    && !filtered
+                    && self.m.trig_ref.is_none()
+                    && self.trigger_absolute_level_visible(false) =>
+            {
                 let y = self.y_of_volts(ts, self.m.trig_level);
-                tag(cv, a.x + a.w - 130, y - 30, &format!("Level {}", si(self.m.trig_level as f64, self.m.unit(ts))), ACCENT);
+                tag(
+                    cv,
+                    a.x + a.w - 130,
+                    y - 30,
+                    &format!("Level {}", si(self.m.trig_level as f64, self.m.unit(ts))),
+                    ACCENT,
+                );
             }
             _ => {}
         }
@@ -4929,7 +5433,10 @@ impl Ui {
     fn draw_cursors(&self, cv: &mut Canvas) {
         let source = self.cursor_source();
         if !self.workspace_source_visible_here(source)
-            && !(self.m.cursor == CursorMode::Track && self.workspace_source_visible_here(self.cursor_b_source())) { return; }
+            && !(self.m.cursor == CursorMode::Track && self.workspace_source_visible_here(self.cursor_b_source()))
+        {
+            return;
+        }
         let f = self.fonts();
         let a = self.area;
         cv.set_clip(a);
@@ -4951,7 +5458,9 @@ impl Ui {
                 let (ta, tb) = self.cursor_times();
                 for (frac, name, t) in [(self.m.cur_a, "X1", ta), (self.m.cur_b, "X2", tb)] {
                     // a cursor that the zoomed view does not show keeps its time and is not drawn
-                    if !(0.0..=1.0).contains(&frac) { continue; }
+                    if !(0.0..=1.0).contains(&frac) {
+                        continue;
+                    }
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
@@ -4982,7 +5491,9 @@ impl Ui {
     fn right_tag_x(&self, a: Rect, y: i32, w: i32) -> i32 {
         let mut x = a.x + a.w - 26;
         for r in [self.full_btn().0, self.zoom_btn().0] {
-            if x + w > r.x - 2 && x < r.right() + 2 && y < r.bottom() + 2 && y + 14 > r.y - 2 { x = r.x - 6 - w; }
+            if x + w > r.x - 2 && x < r.right() + 2 && y < r.bottom() + 2 && y + 14 > r.y - 2 {
+                x = r.x - 6 - w;
+            }
         }
         x
     }
@@ -5042,7 +5553,11 @@ impl Ui {
             CursorMode::Volt => {
                 let va = self.zoom_divs_at(area, self.m.cur_a) * scale - offset;
                 let vb = self.zoom_divs_at(area, self.m.cur_b) * scale - offset;
-                vec![("Y1".into(), si(va as f64, unit)), ("Y2".into(), si(vb as f64, unit)), ("\u{394}Y".into(), si((vb - va) as f64, unit))]
+                vec![
+                    ("Y1".into(), si(va as f64, unit)),
+                    ("Y2".into(), si(vb as f64, unit)),
+                    ("\u{394}Y".into(), si((vb - va) as f64, unit)),
+                ]
             }
         }
     }
@@ -5050,7 +5565,9 @@ impl Ui {
     /// Status line inside the top of the plot: touch lock, history position and search count on the left; a source that
     /// is not the live hardware on the right.
     fn draw_info(&self, cv: &mut Canvas) {
-        if self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none() { return; }
+        if self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none() {
+            return;
+        }
         let f = self.fonts();
         let g = self.grid;
         let y = g.y + 14;
@@ -5090,7 +5607,12 @@ impl Ui {
             } else if self.m.trig_ref.is_some() && self.reference_search_busy() {
                 format!("Search {} · full record · computing…", self.trigger_source_label())
             } else {
-                format!("Search {}{}: {} events", self.trigger_source_label(), if self.m.trig_ref.is_some() { " · full record" } else { "" }, events.len())
+                format!(
+                    "Search {}{}: {} events",
+                    self.trigger_source_label(),
+                    if self.m.trig_ref.is_some() { " · full record" } else { "" },
+                    events.len()
+                )
             };
             backed_text(cv, &f.sb, x, y, &label, AMBER);
         }
@@ -5113,12 +5635,20 @@ impl Ui {
     /// The "With live" note cut to `width`, naming how many references no longer fit ("+2").
     fn fit_ref_note(&self, note: &str, width: i32) -> String {
         let f = self.fonts();
-        if f.s.width(note) <= width { return note.to_string(); }
+        if f.s.width(note) <= width {
+            return note.to_string();
+        }
         let Some((head, rest)) = note.split_once(" · ") else { return note.to_string() };
         let parts: Vec<&str> = rest.split("   ").collect();
         for keep in (0..parts.len()).rev() {
-            let text = if keep == 0 { format!("{head} · +{}", parts.len()) } else { format!("{head} · {}   +{}", parts[..keep].join("   "), parts.len() - keep) };
-            if f.s.width(&text) <= width || keep == 0 { return text; }
+            let text = if keep == 0 {
+                format!("{head} · +{}", parts.len())
+            } else {
+                format!("{head} · {}   +{}", parts[..keep].join("   "), parts.len() - keep)
+            };
+            if f.s.width(&text) <= width || keep == 0 {
+                return text;
+            }
         }
         note.to_string()
     }
@@ -5156,17 +5686,27 @@ impl Ui {
 
     /// The measurement card in a dock (compact bottom bar), when it was docked rather than floated.
     fn results_docked(&self) -> Option<StripDock> {
-        (self.m.bar_compact && self.workspace.measure_docked && self.workspace.measure_float.is_none() && self.results_panel()).then_some(self.m.strip_dock)
+        (self.m.bar_compact
+            && self.workspace.measure_docked
+            && self.workspace.measure_float.is_none()
+            && self.results_panel())
+        .then_some(self.m.strip_dock)
     }
 
     /// Width a side-docked measurement card takes from the plot.
     fn results_side_w(&self) -> i32 {
-        if matches!(self.results_docked(), Some(StripDock::Left | StripDock::Right)) { self.lay().results_w + 6 } else { 0 }
+        if matches!(self.results_docked(), Some(StripDock::Left | StripDock::Right)) {
+            self.lay().results_w + 6
+        } else {
+            0
+        }
     }
 
     /// Height a card docked under or above the plot takes: the header and two rows, paged.
     fn results_band_h(&self) -> i32 {
-        if !matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) { return 0; }
+        if !matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) {
+            return 0;
+        }
         let total = self.measurement_count();
         let page = self.results_page_size();
         let lines = total.min(page).div_ceil(self.results_cols()) as i32;
@@ -5193,7 +5733,8 @@ impl Ui {
         }
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row).max(g.y + g.h + 4 + self.eye_below() + self.la_strip_h() + self.pane_h())
+        (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row)
+            .max(g.y + g.h + 4 + self.eye_below() + self.la_strip_h() + self.pane_h())
     }
 
     /// The column a side dock reserves, from the graticule down to the cards.
@@ -5229,7 +5770,13 @@ impl Ui {
                 let label = self.wave_name(id);
                 let mine: Vec<&tools::MeasRow> = rows.iter().filter(|r| r.src == id).collect();
                 for (i, row) in mine.iter().enumerate() {
-                    lines.push(StripLine { pill: (i == 0).then(|| (label.clone(), col)), name: row.name.clone(), value: row.text(), col, align: i > 0 });
+                    lines.push(StripLine {
+                        pill: (i == 0).then(|| (label.clone(), col)),
+                        name: row.name.clone(),
+                        value: row.text(),
+                        col,
+                        align: i > 0,
+                    });
                 }
             }
         }
@@ -5267,7 +5814,9 @@ impl Ui {
         if self.strip_rows() == 0 {
             return;
         }
-        if self.draw_paged_measurement_strip(cv) { return; }
+        if self.draw_paged_measurement_strip(cv) {
+            return;
+        }
         match self.m.strip_dock {
             StripDock::Left | StripDock::Right => self.draw_strip_side(cv),
             _ => self.draw_strip_band(cv, self.strip_band_y()),
@@ -5336,7 +5885,8 @@ impl Ui {
             let vals = self.cursor_values();
             let x0 = r.x + r.w + 10;
             // the pitch of the values, closer where a large text size would push the last one off the row
-            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }.min((row(y).right() - 6 - x0) / vals.len().max(1) as i32);
+            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }
+                .min((row(y).right() - 6 - x0) / vals.len().max(1) as i32);
             for (i, (l, v)) in vals.iter().enumerate() {
                 let x = x0 + i as i32 * pitch;
                 let x2 = cv.text(&f.s, x, y + base, l, DIM) + 8;
@@ -5414,23 +5964,38 @@ impl Ui {
         let (top, bottom, sw) = (fr.top.bottom(), fr.bottom.y, self.scr.w);
         let docked = self.results_docked();
         let strip_side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 };
-        let strip_h = { let rows = self.strip_rows(); if rows == 0 { 0 } else { rows * self.lay().strip_row + 4 } };
-        let (body_top, plot_x, plot_w) = (if self.full_on() { 0 } else { fr.body.y }, self.plot_span().0, self.plot_span().1);
+        let strip_h = {
+            let rows = self.strip_rows();
+            if rows == 0 {
+                0
+            } else {
+                rows * self.lay().strip_row + 4
+            }
+        };
+        let (body_top, plot_x, plot_w) =
+            (if self.full_on() { 0 } else { fr.body.y }, self.plot_span().0, self.plot_span().1);
         let default = match docked {
             Some(StripDock::Left) => (fr.body.x + strip_side + 2, body_top),
             Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
             Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
             Some(StripDock::Under) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
-            None => (a.x + a.w - 56 - rw, a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32),
+            None => (
+                a.x + a.w - 56 - rw,
+                a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32,
+            ),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
         // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
         let floating = docked.is_none();
         for r in if floating { vec![self.full_btn().0, self.zoom_btn().0] } else { Vec::new() } {
             let r = Rect::new(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
-            if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y { x = (r.x - rw).max(0); }
+            if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y {
+                x = (r.x - rw).max(0);
+            }
         }
-        if floating && self.m.zoom && !self.view_on() { y = y.max(self.zoom_readout().bottom() + 2); }
+        if floating && self.m.zoom && !self.view_on() {
+            y = y.max(self.zoom_readout().bottom() + 2);
+        }
         // Expanding a collapsed panel or changing its page must never put the
         // body and navigation beyond the touchable workspace.
         let x = x.clamp(0, sw - rw);
@@ -5454,7 +6019,9 @@ impl Ui {
             format!("{}-{} {}", self.wave_name(a), self.wave_name(b), tools::PAIRS[kind.min(tools::PAIRS.len() - 1)].0)
         } else if index >= self.m.meas.len() + self.m.meas2.len() {
             self.selected_measurement_label(index)
-        } else { format!("{} {}", self.wave_name(row.src), row.name) }
+        } else {
+            format!("{} {}", self.wave_name(row.src), row.name)
+        }
     }
 
     /// Measurement results with statistics as a translucent card over the plot: value, mean, ±σ, acquisitions;
@@ -5498,7 +6065,9 @@ impl Ui {
             let sd = if st.n > 1 {
                 let sd = (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt();
                 format!("\u{3c3} {}", si(sd, r.unit))
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             let sd_x = body.x + body.w - 10 - f.s.width(&sd);
             cv.set_clip(Rect::new(body.x + 10, by, (value_x - body.x - 15).max(1), y1 + 4));
             cv.text(&f.s, body.x + 10, by + y1, &name, LABEL);
@@ -5576,11 +6145,20 @@ impl Ui {
             self.top_right() - 8 - width >= required
         };
         let mut padding = 28;
-        if !fits(&all, padding) { padding = 20; }
-        for (button, short) in [(TopBtn::Menu(MenuId::Storage), "Store"), (TopBtn::Menu(MenuId::Display), "Disp"),
-            (TopBtn::Menu(MenuId::Measure), "Meas")] {
-            if fits(&all, padding) { break; }
-            if let Some((_, label)) = all.iter_mut().find(|(b, _)| *b == button) { *label = short; }
+        if !fits(&all, padding) {
+            padding = 20;
+        }
+        for (button, short) in [
+            (TopBtn::Menu(MenuId::Storage), "Store"),
+            (TopBtn::Menu(MenuId::Display), "Disp"),
+            (TopBtn::Menu(MenuId::Measure), "Meas"),
+        ] {
+            if fits(&all, padding) {
+                break;
+            }
+            if let Some((_, label)) = all.iter_mut().find(|(b, _)| *b == button) {
+                *label = short;
+            }
         }
         let mut x = self.top_right() - 8;
         let mut out = Vec::new();
@@ -5598,7 +6176,14 @@ impl Ui {
         let (caption, live) = self.acq_caption();
         if !live && self.fonts().s.width(&caption) > width {
             if let Some(r) = self.refs.get(self.active_reference()).and_then(Option::as_ref) {
-                return (format!("{} · {}", if self.session_is_sim { "SIM" } else { "REF" }, si_digits(r.v.len() as f64, "pts", 3)), false);
+                return (
+                    format!(
+                        "{} · {}",
+                        if self.session_is_sim { "SIM" } else { "REF" },
+                        si_digits(r.v.len() as f64, "pts", 3)
+                    ),
+                    false,
+                );
             }
         }
         (caption, live)
@@ -5647,7 +6232,9 @@ impl Ui {
         match self.m.acq {
             AcqMode::Normal => "Normal".to_string(),
             AcqMode::Peak => "Peak".to_string(),
-            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => format!("Average {} HW", self.m.avg_count),
+            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => {
+                format!("Average {} HW", self.m.avg_count)
+            }
             AcqMode::Average => format!("Average {}", self.m.avg_count),
             AcqMode::HiRes => "High res".to_string(),
         }
@@ -5697,11 +6284,13 @@ impl Ui {
         let room = self.view_box().map_or(buttons.first().map_or(self.top_right(), |b| b.2.x), |v| v.x) - 12;
         let x0 = single.right() + 8;
         let (caption, live_acq) = self.top_acq_caption((room - x0).max(1));
-        let acq_open = self.menu_open && self.menu_root() == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
+        let acq_open =
+            self.menu_open && self.menu_root() == if self.record_mode() { MenuId::Ref } else { MenuId::Acquire };
         let tcol = if acq_open { ACCENT } else { TEXT };
         cv.set_clip(Rect::new(x0, top.y, (room - x0).max(1), top.h));
         if live_acq {
-            let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+            let (sr, depth) =
+                self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
             let (bold, main, mode) = Self::top_acq(f, x0, room, sr, depth as f64, self.acq_name());
             let x = cv.text(if bold { &f.mb } else { &f.m }, x0, 25, &main, tcol);
             if let Some(m) = mode {
@@ -5724,14 +6313,30 @@ impl Ui {
         }
         // LAN: an address without a cable is only the fallback waiting for one
         let lan = self.addr_of("eth0").filter(|_| self.eth_link);
-        self.draw_link(cv, self.net_box(), if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} local" } else { "LAN \u{b7} DHCP" }, lan);
+        self.draw_link(
+            cv,
+            self.net_box(),
+            if lan.is_none() {
+                "LAN"
+            } else if self.net_fixed {
+                "LAN \u{b7} local"
+            } else {
+                "LAN \u{b7} DHCP"
+            },
+            lan,
+        );
         // WLAN and USB sticks, while they are there
         if self.wlan_stick {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
         if self.usb {
             let r = self.usb_box();
-            cv.round(r, 5, if self.menu_open && self.menu_root() == MenuId::Storage { ACCENT } else { BTN_BORDER }, 255);
+            cv.round(
+                r,
+                5,
+                if self.menu_open && self.menu_root() == MenuId::Storage { ACCENT } else { BTN_BORDER },
+                255,
+            );
             cv.round(r.inset(1), 4, BG, 255);
             cv.circle(r.x + 9, r.y + 15, 3, GREEN);
             cv.text(&f.sb, r.x + 16, r.y + 20, "USB", TEXT);
@@ -5888,8 +6493,14 @@ impl Ui {
     /// text size.
     fn card_sub_font(&self) -> &'static Font {
         let (f, chs) = (self.fonts(), self.cards().0);
-        let all_fit = (0..NCH).filter(|&c| chs[c].w > 0 && self.m.ch[c].on).all(|c| f.s.width(&self.card_sub(c)) <= chs[c].w - 22);
-        if all_fit { &f.s } else { &Fonts::get(0).s }
+        let all_fit = (0..NCH)
+            .filter(|&c| chs[c].w > 0 && self.m.ch[c].on)
+            .all(|c| f.s.width(&self.card_sub(c)) <= chs[c].w - 22);
+        if all_fit {
+            &f.s
+        } else {
+            &Fonts::get(0).s
+        }
     }
 
     /// Trigger card buttons, one over the other at the right edge (touch): source, sweep; the rest of the card, and with
@@ -5944,9 +6555,26 @@ impl Ui {
         // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
         let r = self.menu_btn();
         let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
-        cv.round(r, 7, if hl { ACCENT } else if lock { AMBER } else { CARD_BORDER }, 255);
+        cv.round(
+            r,
+            7,
+            if hl {
+                ACCENT
+            } else if lock {
+                AMBER
+            } else {
+                CARD_BORDER
+            },
+            255,
+        );
         cv.round(r.inset(2), 5, BAR, 255);
-        let col = if hl { ACCENT } else if lock { AMBER } else { TEXT };
+        let col = if hl {
+            ACCENT
+        } else if lock {
+            AMBER
+        } else {
+            TEXT
+        };
         for k in 0..3 {
             cv.fill(Rect::new(r.x + r.w / 2 - 11, r.y + 16 + k * 7, 22, 3), col);
         }
@@ -6004,7 +6632,13 @@ impl Ui {
         let tdiv = format!("{}/div", si_short(self.m.time_per_div() as f64, "s"));
         cv.text(Self::card_font(f, &tdiv, r.w - 20), r.x + 12, r.y + yb, &tdiv, TEXT);
         if self.m.zoom {
-            cv.text(&f.sb, r.x + 12, r.y + ys, &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")), ACCENT);
+            cv.text(
+                &f.sb,
+                r.x + 12,
+                r.y + ys,
+                &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")),
+                ACCENT,
+            );
         } else {
             let t = format!("delay {}", si_short(self.m.delay as f64, "s"));
             cv.text(small(&t, r.w - 18), r.x + 12, r.y + ys, &t, DIM);
@@ -6016,12 +6650,27 @@ impl Ui {
         cv.round(r.inset(2), 5, BAR, 255);
         // type and slope on the first line, the level under them: it has the width up to the buttons
         let tx = cv.text(&f.sb, r.x + 12, r.y + yn, &self.m.trig_type.name().to_uppercase(), LABEL) + 8;
-        if matches!(self.m.trig_type, TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay) {
+        if matches!(
+            self.m.trig_type,
+            TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay
+        ) {
             draw_slope(cv, tx, r.y + 6, self.m.slope, ACCENT);
         } else {
             let tag = match self.m.trig_type {
-                TrigType::Pulse | TrigType::Runt => if self.m.trig_pol == Pol::Pos { "+" } else { "-" },
-                TrigType::Video => if self.m.video_std == VideoStd::Pal { "P" } else { "N" },
+                TrigType::Pulse | TrigType::Runt => {
+                    if self.m.trig_pol == Pol::Pos {
+                        "+"
+                    } else {
+                        "-"
+                    }
+                }
+                TrigType::Video => {
+                    if self.m.video_std == VideoStd::Pal {
+                        "P"
+                    } else {
+                        "N"
+                    }
+                }
                 _ => "",
             };
             cv.text(&f.sb, tx, r.y + yn, tag, ACCENT);
@@ -6102,7 +6751,12 @@ impl Ui {
             MenuId::Power => vec![m.pw_v, m.pw_i],
             MenuId::Spectrum => vec![m.spec_src],
             MenuId::Eye => vec![m.eye_src],
-            MenuId::Bode if m.bode_gen == bode::FREE => [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(ch), Some(ch(m.bode_sync))].into_iter().flatten().collect(),
+            MenuId::Bode if m.bode_gen == bode::FREE => {
+                [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(ch), Some(ch(m.bode_sync))]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            }
             MenuId::Bode => vec![m.bode_in, m.bode_out],
             MenuId::Magnetic => vec![m.mag_v, m.mag_i],
             MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
@@ -6133,14 +6787,19 @@ impl Ui {
             MenuId::BwTest => vec![ch(m.bw_src)],
             MenuId::Mask => vec![ch(m.mask_src)],
             MenuId::Dvm if self.offline => Vec::new(),
-            MenuId::Dvm => [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect(),
+            MenuId::Dvm => {
+                [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect()
+            }
             MenuId::Decode if !m.dec_on_la() => decode_wave(m.dec_src).into_iter().collect(),
             _ => Vec::new(),
         };
-        let mut v: Vec<usize> = want.into_iter().filter_map(|id| match id {
-            WaveId::Ch(c) if c < n_ch() && !m.ch[c].on => Some(c),
-            _ => None,
-        }).collect();
+        let mut v: Vec<usize> = want
+            .into_iter()
+            .filter_map(|id| match id {
+                WaveId::Ch(c) if c < n_ch() && !m.ch[c].on => Some(c),
+                _ => None,
+            })
+            .collect();
         v.dedup();
         v
     }
@@ -6148,13 +6807,53 @@ impl Ui {
     fn menu_items(&self, menu: MenuId) -> Vec<Item> {
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
-            MenuId::Channel(c) => vec![Item::ChOn(c), Item::ChScale(c), Item::ChOffset(c), Item::ChCoupling(c), Item::ChBw(c), Item::ChProbe(c), Item::ChInvert(c), Item::ChFine, Item::ChLabel(c), Item::Open(MenuId::ChMore(c))],
-            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand],
+            MenuId::Channel(c) => vec![
+                Item::ChOn(c),
+                Item::ChScale(c),
+                Item::ChOffset(c),
+                Item::ChCoupling(c),
+                Item::ChBw(c),
+                Item::ChProbe(c),
+                Item::ChInvert(c),
+                Item::ChFine,
+                Item::ChLabel(c),
+                Item::Open(MenuId::ChMore(c)),
+            ],
+            MenuId::ChMore(c) => vec![
+                Item::ChUnit(c),
+                Item::ChBias(c),
+                Item::ChBiasZero(c),
+                Item::ChSkew(c),
+                Item::AutoDeskew,
+                Item::ChExpand,
+            ],
             MenuId::Horizontal => {
                 if self.m.zoom {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
+                    vec![
+                        Item::HScale,
+                        Item::HFine,
+                        Item::HExpandI,
+                        Item::HDelay,
+                        Item::HZero,
+                        Item::AutoDeskew,
+                        Item::ClearDeskew,
+                        Item::Zoom,
+                        Item::ZScale,
+                        Item::ZDelay,
+                        Item::AutoRoll,
+                    ]
                 } else {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::AutoRoll]
+                    vec![
+                        Item::HScale,
+                        Item::HFine,
+                        Item::HExpandI,
+                        Item::HDelay,
+                        Item::HZero,
+                        Item::AutoDeskew,
+                        Item::ClearDeskew,
+                        Item::Zoom,
+                        Item::AutoRoll,
+                    ]
                 }
             }
             MenuId::Trigger => self.trigger_items(),
@@ -6184,30 +6883,139 @@ impl Ui {
                 v
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
-            MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
+            MenuId::Dvm => vec![
+                Item::DvmOn,
+                Item::DvmSrc,
+                Item::DvmMode,
+                Item::CntOn,
+                Item::CntSrc,
+                Item::CntMode,
+                Item::CntDigits,
+                Item::CntClear,
+            ],
             // in the order of the groups of `measure_layout`
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::MeasRefs, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasClear],
+            MenuId::Measure => vec![
+                Item::MeasSrc,
+                Item::MeasSrcB,
+                Item::MeasCopyTo,
+                Item::MeasGate,
+                Item::MeasRefs,
+                Item::MeasStats,
+                Item::MeasLabels,
+                Item::StripDock,
+                Item::MeasIdle,
+                Item::MeasTsetup,
+                Item::MeasThold,
+                Item::MeasOutside,
+                Item::MeasN,
+                Item::MeasEdges,
+                Item::Open(MenuId::MeasPair),
+                Item::Open(MenuId::Dvm),
+                Item::MeasClear,
+            ],
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
-            MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefLoad, Item::RefExport, Item::RefImport].into_iter().filter(|&it| it != Item::RefLoad || self.feature_on("load")).chain((0..NREF).map(Item::RefShow)).collect(),
+            MenuId::Ref => vec![
+                Item::RefSrc,
+                Item::RefSave,
+                Item::RefClear,
+                Item::RefSel,
+                Item::RefVpd,
+                Item::RefOffset,
+                Item::RefColor,
+                Item::RefLabel,
+                Item::RefLoad,
+                Item::RefExport,
+                Item::RefImport,
+            ]
+            .into_iter()
+            .filter(|&it| it != Item::RefLoad || self.feature_on("load"))
+            .chain((0..NREF).map(Item::RefShow))
+            .collect(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasSelected => self.measurement_catalog(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
-            MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
-            MenuId::Cursor if self.m.cursor == CursorMode::Track => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB],
+            MenuId::Cursor if self.m.cursor == CursorMode::Xy => {
+                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
+            }
+            MenuId::Cursor if self.m.cursor == CursorMode::Track => {
+                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB]
+            }
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::BottomBar, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::HdmiView, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![
+                    Item::Open(MenuId::Windows),
+                    Item::Views,
+                    Item::Persist,
+                    Item::ColorGrade,
+                    Item::Intensity,
+                    Item::GridStyle,
+                    Item::GridBright,
+                    Item::GridFrame,
+                    Item::Dots,
+                    Item::BottomBar,
+                    Item::ZInput,
+                    Item::Histogram,
+                    Item::XyMode,
+                    Item::Hdmi,
+                    Item::HdmiView,
+                    Item::Backlight,
+                    Item::TextSize,
+                    Item::ClearDisp,
+                ];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
                 v
             }
-            MenuId::Storage => vec![Item::StoreDest, Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StoreFfSave, Item::StoreFfLoad, Item::StorePng],
-            MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecAcprW, Item::SpecAcprS, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
-            MenuId::Eye => vec![Item::EyeAct, Item::EyeOn, Item::EyePlace, Item::EyeSrc, Item::EyeRate, Item::EyeBer, Item::EyeB, Item::EyeHp, Item::EyePnLo, Item::EyePnHi, Item::EyeNpj, Item::EyeRail, Item::EyeNotch, Item::EyeClear],
+            MenuId::Storage => vec![
+                Item::StoreDest,
+                Item::StoreSlot,
+                Item::StoreSaveSetup,
+                Item::StoreRecall,
+                Item::StoreCsv,
+                Item::StoreBin,
+                Item::StoreFfSave,
+                Item::StoreFfLoad,
+                Item::StorePng,
+            ],
+            MenuId::Spectrum => vec![
+                Item::SpecOn,
+                Item::SpecSrc,
+                Item::SpecCenter,
+                Item::SpecSpan,
+                Item::SpecHarm,
+                Item::SpecRbw,
+                Item::SpecWin,
+                Item::SpecTrace,
+                Item::SpecRef,
+                Item::SpecWf,
+                Item::SpecDist,
+                Item::SpecAcprW,
+                Item::SpecAcprS,
+                Item::SpecPeak,
+                Item::SpecMargin,
+                Item::SpecLimitSet,
+                Item::SpecLimitClear,
+            ],
+            MenuId::Eye => vec![
+                Item::EyeAct,
+                Item::EyeOn,
+                Item::EyePlace,
+                Item::EyeSrc,
+                Item::EyeRate,
+                Item::EyeBer,
+                Item::EyeB,
+                Item::EyeHp,
+                Item::EyePnLo,
+                Item::EyePnHi,
+                Item::EyeNpj,
+                Item::EyeRail,
+                Item::EyeNotch,
+                Item::EyeClear,
+            ],
             MenuId::Power => {
                 let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
                 match self.m.pw_mode {
@@ -6219,7 +7027,17 @@ impl Ui {
             }
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::Open(MenuId::Remote), Item::NetPorts, Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Network => vec![
+                Item::NetEth,
+                Item::NetRetry10,
+                Item::NetMac,
+                Item::Open(MenuId::Remote),
+                Item::NetPorts,
+                Item::NetWlan,
+                Item::WlanScan,
+                Item::WlanForget,
+                Item::WlanInfo,
+            ],
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
@@ -6237,10 +7055,48 @@ impl Ui {
             MenuId::LaLines => self.la_line_items(),
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
             MenuId::Windows => self.win_items(),
-            MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
-            MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskInvert, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskFromRef, Item::MaskReset, Item::MaskClear, Item::MaskSave, Item::MaskLoad],
+            MenuId::Zone => vec![
+                Item::ZoneSel,
+                Item::ZoneOn,
+                Item::ZoneSrc,
+                Item::ZoneMode,
+                Item::ZoneBox,
+                Item::ZoneShape,
+                Item::ZoneClear,
+            ],
+            MenuId::Mask => vec![
+                Item::MaskOn,
+                Item::MaskSrc,
+                Item::MaskInvert,
+                Item::MaskX,
+                Item::MaskY,
+                Item::MaskAction,
+                Item::MaskCreate,
+                Item::MaskFromRef,
+                Item::MaskReset,
+                Item::MaskClear,
+                Item::MaskSave,
+                Item::MaskLoad,
+            ],
             MenuId::Utility => {
-                let mut v = vec![Item::Offline, Item::QuickAct, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Features), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock];
+                let mut v = vec![
+                    Item::Offline,
+                    Item::QuickAct,
+                    Item::AuxOut,
+                    Item::BootMode,
+                    Item::Overclock,
+                    Item::Graphics,
+                    Item::Shot,
+                    Item::Open(MenuId::SelfCal),
+                    Item::Open(MenuId::Network),
+                    Item::Open(MenuId::Features),
+                    Item::Open(MenuId::Time),
+                    Item::SysInfo,
+                    Item::About,
+                    Item::Update,
+                    Item::UpdateRollback,
+                    Item::Stock,
+                ];
                 // overclocking loses samples at the full rate: only with `adc.overclock = on` (overclock.rs)
                 if !overclock::shown(overclock::switch_on(), self.clock_next) {
                     v.retain(|&i| i != Item::Overclock);
@@ -6252,7 +7108,16 @@ impl Ui {
                 (0..n).map(Item::PickOpt).collect()
             }
             MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathFam, Item::MathOpI],
-            MenuId::Math if self.m.math == MathOp::Expr => vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto],
+            MenuId::Math if self.m.math == MathOp::Expr => vec![
+                Item::MathSel,
+                Item::MathFam,
+                Item::MathOpI,
+                Item::MathExprI,
+                Item::MathExprEdit,
+                Item::MathScale,
+                Item::MathOffset,
+                Item::MathAuto,
+            ],
             MenuId::Math => {
                 let mut v = vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathA];
                 if self.m.math.two_sources() {
@@ -6307,7 +7172,22 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", [Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Sim), Open(MenuId::Decode), Open(MenuId::Bus), Open(MenuId::Mask)].into_iter().filter(|it| !matches!(it, Open(m) if self.menu_left_out(*m))).collect()),
+            (
+                "Analysis",
+                [
+                    Open(MenuId::Measure),
+                    Open(MenuId::Cursor),
+                    Open(MenuId::Math),
+                    Open(MenuId::Ref),
+                    Open(MenuId::Sim),
+                    Open(MenuId::Decode),
+                    Open(MenuId::Bus),
+                    Open(MenuId::Mask),
+                ]
+                .into_iter()
+                .filter(|it| !matches!(it, Open(m) if self.menu_left_out(*m)))
+                .collect(),
+            ),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -6385,7 +7265,11 @@ impl Ui {
 
     /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
     pub fn seg_times_text(&self) -> String {
-        self.seg_times.iter().map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x))).collect::<Vec<_>>().join(",")
+        self.seg_times
+            .iter()
+            .map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x)))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
@@ -6399,7 +7283,9 @@ impl Ui {
     /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
     fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
-        if let Some(v) = self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0) {
+        if let Some(v) =
+            self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
+        {
             let n = v.recorded as i32;
             let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
@@ -6469,7 +7355,16 @@ impl Ui {
 
     /// A record with no samples, for an analyser whose sources are all stored refs.
     pub(super) fn blank_record() -> Record {
-        Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None, pairs: false }
+        Record {
+            t0: 0.0,
+            dt: 1.0,
+            ch: Default::default(),
+            triggered: false,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        }
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
@@ -6561,8 +7456,9 @@ impl Ui {
 
     /// Search: times (s, relative to the trigger) of all events of the trigger condition in the record shown.
     fn search_events(&self) -> std::sync::Arc<Vec<f64>> {
-        if self.m.trig_type == TrigType::Bus && (Self::decoder_uses_refs(&self.m)
-            || self.m.deskew_ch.iter().any(|&shift| shift != 0.0)) {
+        if self.m.trig_type == TrigType::Bus
+            && (Self::decoder_uses_refs(&self.m) || self.m.deskew_ch.iter().any(|&shift| shift != 0.0))
+        {
             return self.decoder_trigger_hits(&self.m).unwrap_or_default();
         }
         if let Some(slot) = self.m.trig_ref {
@@ -6693,7 +7589,11 @@ impl Ui {
             if r[1].is_some() && old[1].is_some() && m.dec_src2 != m.dec_src {
                 used.push(m.dec_src2);
             }
-            used.extend([(r[2], old[2], m.dec_cs), (r[3], old[3], m.dec_src4)].into_iter().filter_map(|(n, o, c)| n.and(o).and(c)));
+            used.extend(
+                [(r[2], old[2], m.dec_cs), (r[3], old[3], m.dec_src4)]
+                    .into_iter()
+                    .filter_map(|(n, o, c)| n.and(o).and(c)),
+            );
             let mut free = |m: &Model| {
                 let c = (0..NCH).find(|&c| m.ch[c].on && !used.contains(&c));
                 used.extend(c);
@@ -6719,7 +7619,11 @@ impl Ui {
             match r {
                 Row::Baud => m.dec_baud = v as usize,
                 Row::Bits => m.dec_bits = v,
-                Row::Parity => m.dec_parity = [oos_dsp::decode::Parity::None, oos_dsp::decode::Parity::Even, oos_dsp::decode::Parity::Odd][(v as usize).min(2)],
+                Row::Parity => {
+                    m.dec_parity =
+                        [oos_dsp::decode::Parity::None, oos_dsp::decode::Parity::Even, oos_dsp::decode::Parity::Odd]
+                            [(v as usize).min(2)]
+                }
                 Row::SpiMode => m.dec_mode = v as u8,
                 Row::CanRate => m.dec_canrate = v as usize,
                 Row::CanH => m.dec_canh = v != 0,
@@ -6730,7 +7634,9 @@ impl Ui {
         if changed {
             m.dec_opt = crate::protocols::opt_default(i);
             // a module with a view of its own: open it, when no other pane is open
-            if m.pane == 0 && crate::protocols::get(i).view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None).is_some() {
+            if m.pane == 0
+                && crate::protocols::get(i).view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None).is_some()
+            {
                 m.pane = tables::PANE_BUS;
             }
         }
@@ -6871,8 +7777,16 @@ impl Ui {
     /// Row label, with the trigger rows named after their role in the selected trigger type.
     fn item_label(&self, it: Item) -> &'static str {
         if it == Item::SimPlay {
-            if self.sim_generating() { return "Cancel generation"; }
-            return if !self.session_is_sim { "Start simulation" } else if self.m.run == RunState::Run { "Stop simulation" } else { "Run simulation" };
+            if self.sim_generating() {
+                return "Cancel generation";
+            }
+            return if !self.session_is_sim {
+                "Start simulation"
+            } else if self.m.run == RunState::Run {
+                "Stop simulation"
+            } else {
+                "Run simulation"
+            };
         }
         let t = self.m.trig_type;
         let two_level = matches!(t, TrigType::Slope | TrigType::Runt | TrigType::Window);
@@ -6893,7 +7807,9 @@ impl Ui {
             Item::TrigSlope2 if t == TrigType::SetupHold => "Clock edge",
             Item::TrigT1 if t == TrigType::Timeout => "Timeout",
             Item::DecOpt(k) => self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or("Option", |o| o.name),
-            Item::DecSrc if self.m.dec_proto.roles()[0] != Some("Source") => self.m.dec_proto.roles()[0].unwrap_or("Source"),
+            Item::DecSrc if self.m.dec_proto.roles()[0] != Some("Source") => {
+                self.m.dec_proto.roles()[0].unwrap_or("Source")
+            }
             Item::DecSrc2 if self.m.dec_proto.roles()[1].is_some() => self.m.dec_proto.roles()[1].unwrap_or("Clock"),
             Item::DecCs if self.m.dec_proto.roles()[2].is_some() => self.m.dec_proto.roles()[2].unwrap_or("CS"),
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
@@ -6927,7 +7843,9 @@ impl Ui {
                 return;
             }
         }
-        if self.set_reference_trigger_type(t) { return; }
+        if self.set_reference_trigger_type(t) {
+            return;
+        }
         if t == TrigType::Bus {
             // the decoder defines the protocol: switch it on with its demo sources and a value its traffic contains
             let before: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
@@ -6965,10 +7883,12 @@ impl Ui {
             }
             TrigType::Pulse => {
                 on(3, m);
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) = (3, Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
+                (m.trig_src, m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) =
+                    (3, Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
             }
             TrigType::Slope => {
-                (m.trig_src, m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) = (0, Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
+                (m.trig_src, m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
+                    (0, Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
             }
             TrigType::Video => {
                 on(1, m);
@@ -6978,7 +7898,15 @@ impl Ui {
             }
             TrigType::Pattern => {
                 on(3, m);
-                m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else if i == NCH - 1 { Bit::R } else { Bit::X });
+                m.pat = std::array::from_fn(|i| {
+                    if i == 0 {
+                        Bit::H
+                    } else if i == NCH - 1 {
+                        Bit::R
+                    } else {
+                        Bit::X
+                    }
+                });
                 m.trig_src = 0;
             }
             TrigType::Duration => {
@@ -6989,7 +7917,8 @@ impl Ui {
                 (m.trig_src, m.slope, m.trig_t1, m.trig_level) = (0, Slope::Rise, 1.2e-3, 1.5);
             }
             TrigType::Runt => {
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) = (0, Pol::Pos, WhenKind::Off, 2.0, 0.5);
+                (m.trig_src, m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) =
+                    (0, Pol::Pos, WhenKind::Off, 2.0, 0.5);
             }
             TrigType::Window => {
                 on(1, m);
@@ -6997,13 +7926,22 @@ impl Ui {
             }
             TrigType::Delay => {
                 on(3, m);
-                (m.trig_src, m.slope, m.trig_src2, m.trig_slope2, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
-                    (0, Slope::Rise, 3, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
+                (
+                    m.trig_src,
+                    m.slope,
+                    m.trig_src2,
+                    m.trig_slope2,
+                    m.trig_when,
+                    m.trig_t1,
+                    m.trig_level,
+                    m.trig_level2,
+                ) = (0, Slope::Rise, 3, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
             }
             TrigType::SetupHold => {
                 on(2, m);
                 on(3, m);
-                (m.trig_src, m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) = (2, 3, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
+                (m.trig_src, m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) =
+                    (2, 3, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
             }
             TrigType::NthEdge => {
                 on(2, m);
@@ -7016,7 +7954,9 @@ impl Ui {
         if !demo {
             // the second source of Delay and Setup/Hold on a channel that is on (PR #8, W4R)
             let src = m.trig_src;
-            if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) && (m.trig_src2 == src || !m.ch[m.trig_src2.min(NCH - 1)].on) {
+            if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold)
+                && (m.trig_src2 == src || !m.ch[m.trig_src2.min(NCH - 1)].on)
+            {
                 if let Some(c) = (0..NCH).find(|&k| k != src && m.ch[k].on) {
                     m.trig_src2 = c;
                 }
@@ -7030,8 +7970,12 @@ impl Ui {
     fn menu_title(&self, menu: MenuId) -> String {
         match menu {
             // where the files go now; /tmp is in RAM: say so
-            MenuId::Storage if self.save_dir() == std::path::Path::new(crate::store::USB_DIR) => "Storage \u{b7} USB stick".into(),
-            MenuId::Storage if self.save_dir().starts_with("/tmp") => format!("Storage \u{b7} {} (lost at power-off)", self.save_dir().display()),
+            MenuId::Storage if self.save_dir() == std::path::Path::new(crate::store::USB_DIR) => {
+                "Storage \u{b7} USB stick".into()
+            }
+            MenuId::Storage if self.save_dir().starts_with("/tmp") => {
+                format!("Storage \u{b7} {} (lost at power-off)", self.save_dir().display())
+            }
             MenuId::Storage => format!("Storage \u{b7} {}", self.save_dir().display()),
             MenuId::Mask => "Mask test".into(),
             MenuId::Zone => "Zone trigger".into(),
@@ -7068,21 +8012,33 @@ impl Ui {
             MenuId::MeasAdd => "Add measurement".into(),
             MenuId::MeasSelected => format!("Selected measurements ({})", self.measurement_count()),
             MenuId::MeasHold => "Add".into(),
-            MenuId::MeasPair => format!("Pairs {} to {}", self.pair_source_caption(self.meas_src), self.pair_source_caption(self.meas_src_b)),
+            MenuId::MeasPair => format!(
+                "Pairs {} to {}",
+                self.pair_source_caption(self.meas_src),
+                self.pair_source_caption(self.meas_src_b)
+            ),
             MenuId::Dvm => "DVM and counter".into(),
             MenuId::Logger => "Data logger".into(),
-            MenuId::Cursor => format!("Cursor · {}", self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))),
+            MenuId::Cursor => format!(
+                "Cursor · {}",
+                self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))
+            ),
             MenuId::Display => "Display".into(),
             MenuId::Windows => "Windows".into(),
             MenuId::Utility => "System".into(),
             MenuId::Math => "Math".into(),
-            MenuId::Ref => self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1),
-                |r| format!("Reference R{}{}{}", self.ref_sel + 1, if r.label.is_empty() { "" } else { " · " }, r.label)),
+            MenuId::Ref => {
+                self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1), |r| {
+                    format!("Reference R{}{}{}", self.ref_sel + 1, if r.label.is_empty() { "" } else { " · " }, r.label)
+                })
+            }
             MenuId::Decode => "Decode".into(),
             MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
-                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
+                Some(p) if p.it == Item::AfgFreqEntry => {
+                    format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz"))
+                }
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -7090,24 +8046,110 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if matches!(it, Item::AutoDeskew | Item::ClearDeskew) { return Kind::Action; }
+        if matches!(it, Item::AutoDeskew | Item::ClearDeskew) {
+            return Kind::Action;
+        }
         if let Some(k) = PARTS.iter().find_map(|p| p.kind.and_then(|f| f(it))) {
             return k;
         }
         match it {
-            Item::LogIvl | Item::ChBias(_) | Item::ChSkew(_) | Item::RefColor | Item::CurC | Item::CurD | Item::RefSel | Item::RefVpd | Item::RefOffset | Item::MathLinA | Item::MathLinB | Item::TrigHoldoff | Item::CntDigits | Item::MathScale | Item::MathOffset | Item::MathFc | Item::MathBw | Item::ZScale | Item::ZDelay | Item::DecThr => Kind::Value,
+            Item::LogIvl
+            | Item::ChBias(_)
+            | Item::ChSkew(_)
+            | Item::RefColor
+            | Item::CurC
+            | Item::CurD
+            | Item::RefSel
+            | Item::RefVpd
+            | Item::RefOffset
+            | Item::MathLinA
+            | Item::MathLinB
+            | Item::TrigHoldoff
+            | Item::CntDigits
+            | Item::MathScale
+            | Item::MathOffset
+            | Item::MathFc
+            | Item::MathBw
+            | Item::ZScale
+            | Item::ZDelay
+            | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2 | Item::TrigT1 | Item::TrigT2 | Item::VidLine | Item::PatLevel | Item::NthIdle | Item::NthN | Item::Setup | Item::Hold => Kind::Value,
-            Item::ChScale(_) | Item::ChOffset(_) | Item::HScale | Item::HDelay | Item::TrigLevel | Item::AcqAvg | Item::CurA | Item::CurB | Item::Intensity | Item::GridBright => Kind::Value,
+            Item::TrigLevel2
+            | Item::TrigT1
+            | Item::TrigT2
+            | Item::VidLine
+            | Item::PatLevel
+            | Item::NthIdle
+            | Item::NthN
+            | Item::Setup
+            | Item::Hold => Kind::Value,
+            Item::ChScale(_)
+            | Item::ChOffset(_)
+            | Item::HScale
+            | Item::HDelay
+            | Item::TrigLevel
+            | Item::AcqAvg
+            | Item::CurA
+            | Item::CurB
+            | Item::Intensity
+            | Item::GridBright => Kind::Value,
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
-            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::StoreFfSave | Item::StoreFfLoad | Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::RefLoad | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::AddMeas | Item::MeasCfg(_) | Item::MeasRemove(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::StoreSaveSetup
+            | Item::StoreRecall
+            | Item::StoreCsv
+            | Item::StorePng
+            | Item::StoreFfSave
+            | Item::StoreFfLoad
+            | Item::MaskCreate
+            | Item::MaskFromRef
+            | Item::MaskReset
+            | Item::MaskClear => Kind::Action,
+            Item::Open(_)
+            | Item::MathExprEdit
+            | Item::ChBiasZero(_)
+            | Item::RefLabel
+            | Item::RefExport
+            | Item::RefImport
+            | Item::RefLoad
+            | Item::DecTable
+            | Item::DecExport
+            | Item::SearchTable
+            | Item::SearchSave
+            | Item::StoreBin
+            | Item::MeasPair(_)
+            | Item::CntClear
+            | Item::MaskSave
+            | Item::MaskLoad
+            | Item::ChLabel(_)
+            | Item::SrcOn
+            | Item::WlanInfo
+            | Item::WlanScan
+            | Item::WlanForget
+            | Item::HZero
+            | Item::Trig50
+            | Item::MeasAdd(_)
+            | Item::AddMeas
+            | Item::MeasCfg(_)
+            | Item::MeasRemove(_)
+            | Item::MeasClear
+            | Item::AcqSegTable
+            | Item::ClearDisp
+            | Item::About
+            | Item::SysInfo
+            | Item::Shot
+            | Item::Stock
+            | Item::Update
+            | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::SpiTimeout => Kind::Value,
-            Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
-            Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
+            Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => {
+                Kind::Action
+            }
+            Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => {
+                Kind::Action
+            }
             _ => Kind::Choice,
         }
     }
@@ -7389,8 +8431,12 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if it == Item::CatSourceC { return self.wave_name(self.cat_c); }
-        if it == Item::CatSourceD { return self.wave_name(self.cat_d); }
+        if it == Item::CatSourceC {
+            return self.wave_name(self.cat_c);
+        }
+        if it == Item::CatSourceD {
+            return self.wave_name(self.cat_d);
+        }
         if let Some(v) = PARTS.iter().find_map(|p| p.value.and_then(|f| f(self, it))) {
             return v;
         }
@@ -7410,7 +8456,9 @@ impl Ui {
             Item::ChExpand => if m.v_expand_gnd { "Ground" } else { "Center" }.into(),
             Item::HFine => onoff(m.fine_t),
             Item::HExpandI => format!("{:?}", m.h_expand),
-            Item::RefColor => self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into(),
+            Item::RefColor => {
+                self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
+            }
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
             Item::TrigSrc => self.trigger_source_label(),
@@ -7422,7 +8470,13 @@ impl Ui {
             Item::TrigMode => format!("{:?}", m.trig_mode),
             Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
             Item::TrigType => m.trig_type.name().into(),
-            Item::SearchOn => if self.search_on { "On".into() } else { "Off".into() },
+            Item::SearchOn => {
+                if self.search_on {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
             Item::TrigSrc2 => Self::trigger_wave_label(m.trigger_wave2()),
             Item::TrigSlope2 => match m.trig_slope2 {
@@ -7430,7 +8484,13 @@ impl Ui {
                 Slope::Fall => "Falling".into(),
                 Slope::Either => "Either".into(),
             },
-            Item::TrigPol => if m.trig_pol == Pol::Pos { "Positive".into() } else { "Negative".into() },
+            Item::TrigPol => {
+                if m.trig_pol == Pol::Pos {
+                    "Positive".into()
+                } else {
+                    "Negative".into()
+                }
+            }
             Item::TrigWhen => match m.trig_when {
                 WhenKind::Off => "Off".into(),
                 WhenKind::Gt => ">".into(),
@@ -7440,7 +8500,13 @@ impl Ui {
             },
             Item::TrigT1 => si_short(m.trig_t1 as f64, "s"),
             Item::TrigT2 => si_short(m.trig_t2 as f64, "s"),
-            Item::VidStd => if m.video_std == VideoStd::Pal { "PAL".into() } else { "NTSC".into() },
+            Item::VidStd => {
+                if m.video_std == VideoStd::Pal {
+                    "PAL".into()
+                } else {
+                    "NTSC".into()
+                }
+            }
             Item::VidSync => match m.video_sync {
                 VSync::AllLines => "Lines".into(),
                 VSync::Line => "Line n".into(),
@@ -7473,27 +8539,43 @@ impl Ui {
                 AcqMode::HiRes => "High res".into(),
             },
             Item::AcqAvg => format!("{}", m.avg_count),
-            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { self.seg_count().to_string() },
+            Item::AcqSeg => {
+                if m.segments == 0 {
+                    "Off".into()
+                } else {
+                    self.seg_count().to_string()
+                }
+            }
             Item::AcqSegHw => onoff(m.seg_hw),
             Item::AcqAvgHw => onoff(m.avg_hw),
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::AcqCores => if m.cores { "Matched" } else { "Raw" }.into(),
             Item::AcqDrawPath => if m.draw_batch { "Batch" } else { "Standard" }.into(),
-            Item::AcqAlias => self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz"))),
+            Item::AcqAlias => {
+                self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))
+            }
             Item::MeasSrc => self.wave_name(self.meas_src),
             Item::MeasCopyTo => "Pick".into(),
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::CurSrcB => self.wave_name(self.cursor_b_source()),
             Item::ChFine => onoff(m.fine_v),
-            Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
+            Item::MathExprI => {
+                if m.math_expr[m.math_sel].is_empty() {
+                    "none".to_string()
+                } else {
+                    m.math_expr[m.math_sel].clone()
+                }
+            }
             Item::LogOn => onoff(self.log.file.is_some()),
             Item::LogIvl => si_short(logger::LOG_STEPS[m.log_ivl.min(logger::LOG_STEPS.len() - 1)], "s"),
             Item::LogInfo => self.log_info(),
             Item::CurC => self.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
             Item::CurD => self.cursor_values().get(3).map_or(format!("{:.0} %", m.cur_d * 100.0), |v| v.1.clone()),
             Item::RefSel => format!("R{}", self.ref_sel + 1),
-            Item::RefVpd => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V"))),
+            Item::RefVpd => {
+                self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
+            }
             Item::RefOffset => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
             Item::DvmOn => onoff(m.dvm_on),
             Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
@@ -7502,13 +8584,22 @@ impl Ui {
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
             Item::CntMode => tools::CNT_MODES[m.cnt_mode.min(2)].into(),
             Item::CntDigits => m.cnt_digits.to_string(),
-            Item::TrigHoldoff => if m.holdoff <= 0.0 { "Off".into() } else { si_short(m.holdoff as f64, "s") },
+            Item::TrigHoldoff => {
+                if m.holdoff <= 0.0 {
+                    "Off".into()
+                } else {
+                    si_short(m.holdoff as f64, "s")
+                }
+            }
             Item::MathLinA => format!("{:.3}", m.math_lin.0),
             Item::MathLinB => format!("{:.3}", m.math_lin.1),
             Item::CurMode => format!("{:?}", m.cursor),
             // where the cursor is, as the read-out under the plot says it; the percentage only without a record
             Item::CurA => self.cursor_values().first().map_or(format!("{:.0} %", m.cur_a * 100.0), |v| v.1.clone()),
-            Item::CurB => self.cursor_values().get(if m.cursor == CursorMode::Track { 2 } else { 1 }).map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
+            Item::CurB => self
+                .cursor_values()
+                .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
+                .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
             Item::Persist => PERSIST[m.persist].0.into(),
             Item::Intensity => format!("{} %", m.intensity),
             Item::GridStyle => format!("{:?}", m.grid),
@@ -7524,7 +8615,13 @@ impl Ui {
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
             Item::ZoneOn => onoff(m.zones[self.zone_sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_sel].src + 1),
-            Item::ZoneMode => if m.zones[self.zone_sel].inside { "Intersect".into() } else { "Not intersect".into() },
+            Item::ZoneMode => {
+                if m.zones[self.zone_sel].inside {
+                    "Intersect".into()
+                } else {
+                    "Not intersect".into()
+                }
+            }
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
             Item::AuxOut => m.aux_out.name().into(),
@@ -7547,15 +8644,41 @@ impl Ui {
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
             Item::TrigBusWhat => m.trig_bus.name().into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
-            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_value(it),
-            Item::DecCanH => if m.dec_canh { "CAN_H".into() } else { "RX/TX".into() },
+            Item::SerRel
+            | Item::SerMax
+            | Item::SerMask
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::SpiTimeout
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => self.serial_value(it),
+            Item::DecCanH => {
+                if m.dec_canh {
+                    "CAN_H".into()
+                } else {
+                    "RX/TX".into()
+                }
+            }
             Item::DecUsbSpeed => USPEED_NAMES[m.dec_uspeed].into(),
             Item::DecSrc4 => m.dec_src4.map_or("None".into(), decode_source_name),
             Item::DecDiff => m.dec_diff.map_or("None".into(), decode_source_name),
             Item::DecThr => si(m.dec_thr as f64, "V"),
-            Item::DecFmt => if m.dec_ascii { "ASCII".into() } else { "Hex".into() },
+            Item::DecFmt => {
+                if m.dec_ascii {
+                    "ASCII".into()
+                } else {
+                    "Hex".into()
+                }
+            }
             Item::DecProto => m.dec_proto.name().into(),
-            Item::DecOpt(k) => m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
+            Item::DecOpt(k) => m
+                .dec_proto
+                .module()
+                .and_then(|p| p.options().get(k))
+                .map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
             Item::DecSrc2 => decode_source_name(m.dec_src2),
             Item::DecCs => m.dec_cs.map_or("None".into(), decode_source_name),
             Item::DecMode => format!("{}", m.dec_mode),
@@ -7567,7 +8690,13 @@ impl Ui {
             },
             Item::ZScale => si_short(tscales()[m.zscale] as f64, "s"),
             Item::ZDelay => si(m.zdelay as f64, "s"),
-            Item::XyMode => if self.xy { "XY".into() } else { "YT".into() },
+            Item::XyMode => {
+                if self.xy {
+                    "XY".into()
+                } else {
+                    "YT".into()
+                }
+            }
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.clock_next),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),
@@ -7593,7 +8722,13 @@ impl Ui {
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
             Item::MaskX => format!("{:.2} div", m.mask_x),
             Item::MaskY => format!("{:.2} div", m.mask_y),
-            Item::MaskAction => if m.mask_stop { "Stop".into() } else { "None".into() },
+            Item::MaskAction => {
+                if m.mask_stop {
+                    "Stop".into()
+                } else {
+                    "None".into()
+                }
+            }
             Item::QuickAct => m.quick.name().into(),
             _ => String::new(),
         }
@@ -7632,7 +8767,11 @@ impl Ui {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
             let current = if it == Item::CatSourceC { self.cat_c } else { self.cat_d };
             let next = self.step_wave(current, d);
-            if it == Item::CatSourceC { self.cat_c = next; } else { self.cat_d = next; }
+            if it == Item::CatSourceC {
+                self.cat_c = next;
+            } else {
+                self.cat_d = next;
+            }
             return;
         }
         if matches!(it, Item::MathA | Item::MathB) {
@@ -7641,7 +8780,11 @@ impl Ui {
             if !sources.is_empty() {
                 let i = sources.iter().position(|&s| s == current).unwrap_or(0);
                 let source = sources[(i as i32 + d).rem_euclid(sources.len() as i32) as usize];
-                if it == Item::MathA { self.m.math_a = source; } else { self.m.math_b = source; }
+                if it == Item::MathA {
+                    self.m.math_a = source;
+                } else {
+                    self.m.math_b = source;
+                }
                 self.settings_changed();
             }
             return;
@@ -7663,7 +8806,11 @@ impl Ui {
         if matches!(it, Item::TrigLevel | Item::TrigLevel2) && self.m.trig_ref.is_some() {
             let secondary = it == Item::TrigLevel2 && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
             let step = d as f32 * self.trigger_vpd(secondary) / 25.0;
-            if it == Item::TrigLevel { self.m.trig_level += step; } else { self.m.trig_level2 += step; }
+            if it == Item::TrigLevel {
+                self.m.trig_level += step;
+            } else {
+                self.m.trig_level2 += step;
+            }
             self.replay.reset_search();
             return;
         }
@@ -7693,14 +8840,14 @@ impl Ui {
             Item::ChScale(c) => {
                 let old = m.ch[c].volts_per_div();
                 if m.fine_v {
-                // row by row through the calibration table: each scale has its own record
-                let rows = board().vscale_steps_nv();
-                let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
-                let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
-                let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
-                let i = VSCALES.iter().rposition(|&s| s <= want * 1.000001).unwrap_or(0);
-                let f = want / VSCALES[i];
-                (m.ch[c].vscale, m.ch[c].vfine) = (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f });
+                    // row by row through the calibration table: each scale has its own record
+                    let rows = board().vscale_steps_nv();
+                    let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
+                    let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
+                    let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
+                    let i = VSCALES.iter().rposition(|&s| s <= want * 1.000001).unwrap_or(0);
+                    let f = want / VSCALES[i];
+                    (m.ch[c].vscale, m.ch[c].vfine) = (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f });
                 } else {
                     m.ch[c].vscale = step_index(m.ch[c].vscale, VSCALES.len(), d);
                     m.ch[c].vfine = 1.0;
@@ -7784,14 +8931,18 @@ impl Ui {
                 self.set_trig_type(t);
             }
             Item::TrigLevel2 => {
-                let c = if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
+                let c =
+                    if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
                 m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
                 if m.trig_type.two_level() {
                     m.trig_level2 = m.trig_level2.min(m.trig_level);
                 }
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
-            Item::SearchOn => { self.search_on = !self.search_on; return; }
+            Item::SearchOn => {
+                self.search_on = !self.search_on;
+                return;
+            }
             Item::TrigSlope2 => {
                 let all = [Slope::Rise, Slope::Fall, Slope::Either];
                 let i = all.iter().position(|&x| x == m.trig_slope2).unwrap();
@@ -7799,7 +8950,11 @@ impl Ui {
             }
             Item::TrigPol => m.trig_pol = if m.trig_pol == Pol::Pos { Pol::Neg } else { Pol::Pos },
             Item::TrigWhen => {
-                let all: &[WhenKind] = if m.trig_type == TrigType::Runt { &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] } else { &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] };
+                let all: &[WhenKind] = if m.trig_type == TrigType::Runt {
+                    &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
+                } else {
+                    &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
+                };
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cycle(i, all.len(), d)];
             }
@@ -7814,9 +8969,15 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.video_sync).unwrap();
                 m.video_sync = all[cycle(i, all.len(), d)];
             }
-            Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32,
+            Item::VidLine => {
+                m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
+            }
             Item::Pat(c) => {
-                let all = if m.trig_type == TrigType::Duration { &[Bit::H, Bit::L, Bit::X][..] } else { &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..] };
+                let all = if m.trig_type == TrigType::Duration {
+                    &[Bit::H, Bit::L, Bit::X][..]
+                } else {
+                    &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..]
+                };
                 let i = all.iter().position(|&x| x == m.pat[c]).unwrap_or(0);
                 m.pat[c] = all[cycle(i, all.len(), d)];
             }
@@ -8025,7 +9186,8 @@ impl Ui {
                 let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
                 m.strip_dock = all[step_index(i, all.len(), d)];
                 // the statistics card follows the dock the strip uses
-                self.workspace.measure_docked = true; self.workspace.measure_float = None;
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
             }
             Item::DecOn => self.m.dec_on = !self.m.dec_on,
             Item::DecSel => {
@@ -8052,7 +9214,10 @@ impl Ui {
                 let n = self.trend_options().len() as i32;
                 self.m.trend_sel[k] = (self.m.trend_sel[k].min(n as usize - 1) as i32 + d).rem_euclid(n) as usize;
             }
-            Item::DecSrc => { let next = self.decoder_source_step(Some(self.m.dec_src), false, d); self.configure_decoder_source(0, next); }
+            Item::DecSrc => {
+                let next = self.decoder_source_step(Some(self.m.dec_src), false, d);
+                self.configure_decoder_source(0, next);
+            }
             Item::DecBaud => self.m.dec_baud = step_index(self.m.dec_baud, crate::decode::BAUDS.len(), d),
             Item::DecCphyRate => {
                 let rates = crate::decode::CPHY_RATES;
@@ -8064,8 +9229,20 @@ impl Ui {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
                 self.m.trig_bus = BUS_WHATS[cycle(i, BUS_WHATS.len(), d)];
             }
-            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64,
-            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_adjust(it, d),
+            Item::TrigBusVal => {
+                self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64
+            }
+            Item::SerRel
+            | Item::SerMax
+            | Item::SerMask
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::SpiTimeout
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => self.serial_adjust(it, d),
             Item::DecCanH => self.m.dec_canh = !self.m.dec_canh,
             Item::DecThr => self.m.dec_thr += d as f32 * self.decoder_vpd() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
@@ -8091,7 +9268,10 @@ impl Ui {
                 let next = self.decoder_source_step(self.m.dec_diff, true, d);
                 self.configure_decoder_source(4, next);
             }
-            Item::DecSrc2 => { let next = self.decoder_source_step(Some(self.m.dec_src2), false, d); self.configure_decoder_source(1, next); }
+            Item::DecSrc2 => {
+                let next = self.decoder_source_step(Some(self.m.dec_src2), false, d);
+                self.configure_decoder_source(1, next);
+            }
             Item::DecCs => {
                 let next = self.decoder_source_step(self.m.dec_cs, self.m.dec_proto != Proto::CPHY, d);
                 self.configure_decoder_source(2, next);
@@ -8184,7 +9364,10 @@ impl Ui {
         // whatever moved the upper level (50 %, SCPI's LEVel, a fit) leaves the two levels in order
         self.m.order_trigger_levels();
         self.cancel_bus_candidate(true);
-        if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run { self.single_armed = false; self.scpi_arm_operation(); }
+        if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run {
+            self.single_armed = false;
+            self.scpi_arm_operation();
+        }
         if self.m.run == RunState::Run {
             self.dirty_map = true;
         }
@@ -8213,7 +9396,12 @@ impl Ui {
                     self.open_submenu(id);
                 }
                 // start menu: the front-panel key functions; one-shot actions close the menu, stepping ones keep it
-                Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::ForceAct | Item::LockAct => {
+                Item::RunStop
+                | Item::SingleAct
+                | Item::AutosetAct
+                | Item::DefaultAct
+                | Item::ForceAct
+                | Item::LockAct => {
                     self.close_menu();
                     self.key(match it {
                         Item::RunStop => key::RUNSTOP,
@@ -8249,7 +9437,9 @@ impl Ui {
                     // keypad: digits edit the entry, OK sets the value and goes back
                     match KEYPAD.get(k).copied() {
                         Some("OK") => {
-                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(BUS_VAL_MAX);
+                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16)
+                                .unwrap_or(0)
+                                .min(BUS_VAL_MAX);
                             if let Some(p) = self.pick {
                                 self.set_hex(p.it, v);
                             }
@@ -8273,7 +9463,11 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName | Item::RemAllow)) => {
+                Item::PickOpt(k)
+                    if self.pick.is_some_and(|p| {
+                        matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName | Item::RemAllow)
+                    }) =>
+                {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -8319,10 +9513,16 @@ impl Ui {
                             self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                         }
                         self.clear_measurement_statistics();
-                        self.toast(&format!("{} {} removed", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
+                        self.toast(&format!(
+                            "{} {} removed",
+                            meascatalog::meas_long_name(k),
+                            self.wave_name(self.meas_src)
+                        ));
                         return;
                     } else {
-                        if !self.meas_make_room() { return; }
+                        if !self.meas_make_room() {
+                            return;
+                        }
                         self.m.meas.push(e);
                         self.clear_measurement_statistics();
                     }
@@ -8363,7 +9563,9 @@ impl Ui {
                     None => self.toast("That slot is empty"),
                 },
                 Item::ChBiasZero(c) => self.zero_input(c),
-                Item::MathExprEdit => self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel])),
+                Item::MathExprEdit => {
+                    self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel]))
+                }
                 Item::MeasRemove(index) => self.remove_measurement(index as usize),
                 Item::MeasClear => {
                     self.m.meas.clear();
@@ -8378,8 +9580,19 @@ impl Ui {
                     let rec = self.last[0].clone();
                     let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                         let (v, dt) = self.meas_wave(r, c);
-                        let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
-                        RefWave { src: c, color: 0, label: String::new(), t0, dt, v: v.into(), vpd: self.m.ch[c].volts_per_div(), offset: self.m.ch[c].offset, on: true }
+                        let t0 =
+                            if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
+                        RefWave {
+                            src: c,
+                            color: 0,
+                            label: String::new(),
+                            t0,
+                            dt,
+                            v: v.into(),
+                            vpd: self.m.ch[c].volts_per_div(),
+                            offset: self.m.ch[c].offset,
+                            on: true,
+                        }
                     });
                     match saved {
                         Some(w) => {
@@ -8397,7 +9610,7 @@ impl Ui {
                     self.refs = std::array::from_fn(|_| None);
                     self.measure_refs();
                     self.analyzer_update();
-                },
+                }
                 Item::ClearDisp => {
                     if self.menu == MenuId::Main {
                         self.close_menu();
@@ -8413,7 +9626,11 @@ impl Ui {
                     let mut d = vec![
                         "OOS".into(),
                         "An open operating system for the DHO800/DHO900".into(),
-                        if build.is_empty() { format!("oos-ui {}", env!("CARGO_PKG_VERSION")) } else { format!("Build {}", oos_hal::update::short(build.trim())) },
+                        if build.is_empty() {
+                            format!("oos-ui {}", env!("CARGO_PKG_VERSION"))
+                        } else {
+                            format!("Build {}", oos_hal::update::short(build.trim()))
+                        },
                         self.info.clone(),
                         format!("Rigol {}", p.ident()),
                         p.caps_line(),
@@ -8442,14 +9659,22 @@ impl Ui {
                 Item::ZoneBox | Item::ZoneShape => {
                     self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
                     self.close_menu();
-                    self.toast(if it == Item::ZoneShape { "Draw the zone with one finger" } else { "Drag a box for the zone" });
+                    self.toast(if it == Item::ZoneShape {
+                        "Draw the zone with one finger"
+                    } else {
+                        "Drag a box for the zone"
+                    });
                 }
                 Item::ZoneClear => {
-                    self.m.zones[self.zone_sel] = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    self.m.zones[self.zone_sel] =
+                        crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
-                    let r = crate::store::write(&p, format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes());
+                    let r = crate::store::write(
+                        &p,
+                        format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes(),
+                    );
                     self.toast_saved(&p, r);
                 }
                 Item::StoreRecall => self.recall_setup(),
@@ -8548,7 +9773,11 @@ impl Ui {
             crate::store::StoreDest::Stick => std::path::PathBuf::from(crate::store::USB_DIR),
             crate::store::StoreDest::Local => self.store_dir.clone(),
             crate::store::StoreDest::Auto => {
-                if self.usb_used() { std::path::PathBuf::from(crate::store::USB_DIR) } else { self.store_dir.clone() }
+                if self.usb_used() {
+                    std::path::PathBuf::from(crate::store::USB_DIR)
+                } else {
+                    self.store_dir.clone()
+                }
             }
         }
     }
@@ -8590,15 +9819,29 @@ impl Ui {
     /// in RAM is not used for it when OOS's data partition is there.
     fn setup_path(&self) -> std::path::PathBuf {
         let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() { keep } else { self.store_dir.as_path() };
+        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
+            keep
+        } else {
+            self.store_dir.as_path()
+        };
         dir.join(format!("setup{}.txt", self.store_slot))
     }
 
     /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
     fn ref_setup_text(&self) -> String {
-        let looks: Vec<_> = self.refs.iter().map(|r| r.as_ref().map(|r| crate::store::RefLook {
-            on: Some(r.on), vdiv: Some(r.vpd), offset: Some(r.offset), color: Some(r.color), label: Some(r.label.clone()),
-        })).collect();
+        let looks: Vec<_> = self
+            .refs
+            .iter()
+            .map(|r| {
+                r.as_ref().map(|r| crate::store::RefLook {
+                    on: Some(r.on),
+                    vdiv: Some(r.vpd),
+                    offset: Some(r.offset),
+                    color: Some(r.color),
+                    label: Some(r.label.clone()),
+                })
+            })
+            .collect();
         crate::store::ref_setup_text(&looks)
     }
 
@@ -8606,11 +9849,21 @@ impl Ui {
     fn apply_ref_looks(&mut self, looks: &[Option<crate::store::RefLook>]) {
         for (r, l) in self.refs.iter_mut().zip(looks) {
             let (Some(r), Some(l)) = (r.as_mut(), l) else { continue };
-            if let Some(v) = l.on { r.on = v; }
-            if let Some(v) = l.vdiv { r.vpd = v; }
-            if let Some(v) = l.offset { r.offset = v; }
-            if let Some(v) = l.color { r.color = v.min(REF_COLORS.len() - 1); }
-            if let Some(v) = &l.label { r.label = v.clone(); }
+            if let Some(v) = l.on {
+                r.on = v;
+            }
+            if let Some(v) = l.vdiv {
+                r.vpd = v;
+            }
+            if let Some(v) = l.offset {
+                r.offset = v;
+            }
+            if let Some(v) = l.color {
+                r.color = v.min(REF_COLORS.len() - 1);
+            }
+            if let Some(v) = &l.label {
+                r.label = v.clone();
+            }
         }
     }
 
@@ -8630,7 +9883,9 @@ impl Ui {
                 if self.record_mode() {
                     self.leave_session();
                 }
-                if let Ok(t) = &text { self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF)); }
+                if let Ok(t) = &text {
+                    self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF));
+                }
                 (m.run, m.status) = (self.m.run, self.m.status);
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;
@@ -8656,7 +9911,13 @@ impl Ui {
                 self.clear_measurement_statistics();
                 match bad.first() {
                     None => self.toast(&format!("Recalled {}", crate::store::file_name(&p))),
-                    Some(e) => self.toast(&format!("Recalled {}, {} line{} left out ({})", crate::store::file_name(&p), bad.len(), if bad.len() == 1 { "" } else { "s" }, e)),
+                    Some(e) => self.toast(&format!(
+                        "Recalled {}, {} line{} left out ({})",
+                        crate::store::file_name(&p),
+                        bad.len(),
+                        if bad.len() == 1 { "" } else { "s" },
+                        e
+                    )),
                 }
             }
             Err(e) => self.toast(&format!("Recall failed: {}", e)),
@@ -8664,7 +9925,11 @@ impl Ui {
     }
 
     fn level_50(&mut self) {
-        if self.m.trig_ref.is_some() { self.fit_reference_trigger_levels(); self.settings_changed(); return; }
+        if self.m.trig_ref.is_some() {
+            self.fit_reference_trigger_levels();
+            self.settings_changed();
+            return;
+        }
         let s = self.stats[self.m.trig_src];
         if s.valid {
             self.m.trig_level = crate::wave::mid_level(&s);
@@ -8727,7 +9992,14 @@ impl Ui {
     /// A finger held on Measure opens the short menu. The lift is handled by `meas_hold_up`, not as a tap.
     fn meas_hold_tick(&mut self) {
         let t = &self.touch;
-        if !t.down || t.held || self.m.touch_lock || self.full_on() || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if !t.down
+            || t.held
+            || self.m.touch_lock
+            || self.full_on()
+            || self.dialog.is_some()
+            || self.power_dlg
+            || self.wlan.osk.is_some()
+        {
             return;
         }
         if t.drag != Drag::None && t.drag != Drag::Pending {
@@ -8773,18 +10045,36 @@ impl Ui {
         }
         let v: &[&str] = match it {
             Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
-            Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn | Item::MaskInvert => &["Off", "On"],
+            Item::ChOn(_)
+            | Item::ChInvert(_)
+            | Item::MeasStats
+            | Item::MeasLabels
+            | Item::Zoom
+            | Item::AutoRoll
+            | Item::DecOn
+            | Item::SearchOn
+            | Item::ColorGrade
+            | Item::MaskOn
+            | Item::MaskInvert => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::MaskAction => &["None", "Stop"],
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
-            Item::TrigSrc | Item::TrigSrc2 => return self.trigger_sources().into_iter().map(Self::trigger_wave_label).collect(),
+            Item::TrigSrc | Item::TrigSrc2 => {
+                return self.trigger_sources().into_iter().map(Self::trigger_wave_label).collect()
+            }
             Item::DecSrc => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
             Item::RefSrc => return ch_names(),
-            Item::MeasSrc | Item::MeasSrcB | Item::CurSrcB | Item::CatSourceC | Item::CatSourceD => return self.wave_names(),
-            Item::MeasCopyTo => return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.meas_src)).collect(),
-            Item::MathA | Item::MathB => return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect(),
+            Item::MeasSrc | Item::MeasSrcB | Item::CurSrcB | Item::CatSourceC | Item::CatSourceD => {
+                return self.wave_names()
+            }
+            Item::MeasCopyTo => {
+                return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.meas_src)).collect()
+            }
+            Item::MathA | Item::MathB => {
+                return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect()
+            }
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
             Item::TrigMode => &["Auto", "Normal", "Single"],
@@ -8810,13 +10100,28 @@ impl Ui {
             Item::WinModeI => &["Enter", "Exit", "Inside"],
             Item::DecProto => return self.protos_on().iter().map(|p| p.name().to_string()).collect(),
             Item::DecUsbSpeed => &USPEED_NAMES,
-            Item::DecOpt(k) => return self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect()),
-            Item::DecSrc4 | Item::DecDiff => return std::iter::once("None".into()).chain(self.decoder_sources().into_iter().map(decode_source_name)).collect(),
+            Item::DecOpt(k) => {
+                return self
+                    .m
+                    .dec_proto
+                    .module()
+                    .and_then(|p| p.options().get(k))
+                    .map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect())
+            }
+            Item::DecSrc4 | Item::DecDiff => {
+                return std::iter::once("None".into())
+                    .chain(self.decoder_sources().into_iter().map(decode_source_name))
+                    .collect()
+            }
             Item::DecCanH => &["RX/TX", "CAN_H"],
             Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
             Item::DecSrc2 => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
-            Item::DecCs => return (if self.m.dec_proto == Proto::CPHY { Vec::new() } else { vec!["None".into()] }).into_iter()
-                .chain(self.decoder_sources().into_iter().map(decode_source_name)).collect(),
+            Item::DecCs => {
+                return (if self.m.dec_proto == Proto::CPHY { Vec::new() } else { vec!["None".into()] })
+                    .into_iter()
+                    .chain(self.decoder_sources().into_iter().map(decode_source_name))
+                    .collect()
+            }
             Item::DecMode => &["0", "1", "2", "3"],
             Item::DecParity => &["None", "Even", "Odd"],
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
@@ -8834,14 +10139,21 @@ impl Ui {
             Item::ZoneMode => &["Intersect", "Not intersect"],
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
-            Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
+            Item::AuxOut => {
+                return AuxOut::choices(board().mask_hw() || board().zone_hw())
+                    .iter()
+                    .map(|a| a.name().to_string())
+                    .collect()
+            }
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => &["Off", "On"],
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => {
+                &["Off", "On"]
+            }
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -8858,14 +10170,25 @@ impl Ui {
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
-            Item::AcqSeg => return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSeg => {
+                return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect()
+            }
             Item::AcqSegIvl => return SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect(),
             Item::DecBaud => return crate::decode::BAUDS.iter().map(|b| b.to_string()).collect(),
-            Item::DecCphyRate => return crate::decode::CPHY_RATES.into_iter().map(crate::decode::cphy_rate_label).collect(),
+            Item::DecCphyRate => {
+                return crate::decode::CPHY_RATES.into_iter().map(crate::decode::cphy_rate_label).collect()
+            }
             Item::DecCanRate => return crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
             // the value picker is a hex keypad
             Item::TrigBusVal | Item::SerMax | Item::SerMask => return KEYPAD.iter().map(|k| k.to_string()).collect(),
-            Item::SerRel | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => return Self::serial_options(it),
+            Item::SerRel
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
@@ -8945,7 +10268,9 @@ impl Ui {
     /// options moves by index, cycling or clamped), else stepping until it shows `want`.
     fn select_option(&mut self, it: Item, want: &str) {
         if it == Item::DecCphyRate {
-            if let Some(rate) = crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want) {
+            if let Some(rate) =
+                crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want)
+            {
                 self.m.dec_cphy_rate = rate;
                 self.settings_changed();
             }
@@ -8955,13 +10280,23 @@ impl Ui {
             if let Some(to) = self.wave_ids().into_iter().find(|&w| self.wave_name(w) == want) {
                 let from = self.meas_src;
                 let n = self.copy_measurements(from, to);
-                self.toast(&format!("{} measurement{} copied {} -> {}", n, if n == 1 { "" } else { "s" }, self.wave_name(from), want));
+                self.toast(&format!(
+                    "{} measurement{} copied {} -> {}",
+                    n,
+                    if n == 1 { "" } else { "s" },
+                    self.wave_name(from),
+                    want
+                ));
             }
             return;
         }
         if it == Item::EyePlace {
             // a placement choice always places the eye, also the one it already has while it floats
-            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")].into_iter().find(|(_, l)| *l == want).map(|(p, _)| p) {
+            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")]
+                .into_iter()
+                .find(|(_, l)| *l == want)
+                .map(|(p, _)| p)
+            {
                 self.workspace.eye_float = None;
                 self.eye_set_place(place);
                 self.relayout();
@@ -8972,7 +10307,8 @@ impl Ui {
             // every dock choice docks the card, also the one already selected after it was floated
             if let Some(dock) = StripDock::ALL.into_iter().find(|d| d.label() == want) {
                 self.m.strip_dock = dock;
-                self.workspace.measure_docked = true; self.workspace.measure_float = None;
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
                 self.relayout();
             }
             return;
@@ -9004,10 +10340,16 @@ impl Ui {
             MenuId::Main => (self.menu_btn().x, false),
             MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
             MenuId::ViewMore => (self.scr.w, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
+            MenuId::La | MenuId::LaLines | MenuId::LaPat => {
+                self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
+            }
             MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
             // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self.top_buttons().iter().find(|t| t.0 == TopBtn::Menu(m)).map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+            m => self
+                .top_buttons()
+                .iter()
+                .find(|t| t.0 == TopBtn::Menu(m))
+                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
         }
     }
 
@@ -9015,8 +10357,12 @@ impl Ui {
         if !self.menu_open {
             return None;
         }
-        if self.menu == MenuId::MeasAdd { return Some(self.catalog_dialog()); }
-        if self.menu == MenuId::MeasSelected { return Some(self.measurement_chooser_layout()); }
+        if self.menu == MenuId::MeasAdd {
+            return Some(self.catalog_dialog());
+        }
+        if self.menu == MenuId::MeasSelected {
+            return Some(self.measurement_chooser_layout());
+        }
         if self.menu == MenuId::Main {
             return Some(self.main_layout());
         }
@@ -9028,10 +10374,26 @@ impl Ui {
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey));
         let l = self.lay();
-        let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold { (1, 220 + l.grid_col - 150, DLG_ROW, 16) } else if wide { (2, l.dlg_col, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, l.grid_col + 40, DLG_ROW + 2, 8) } else if grid && self.menu == MenuId::MeasAdd {
+        let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold {
+            (1, 220 + l.grid_col - 150, DLG_ROW, 16)
+        } else if wide {
+            (2, l.dlg_col, DLG_ROW + 2, 8)
+        } else if self.menu == MenuId::ViewMore {
+            (1, l.grid_col + 40, DLG_ROW + 2, 8)
+        } else if grid && self.menu == MenuId::MeasAdd {
             // the whole catalogue in one grid: narrower columns where the larger text sizes would run off the screen
-            if n > 54 { (7, ((self.scr.w - 72) / 7).min(l.grid_col - 20), DLG_ROW + 2, 8) } else { (6, ((self.scr.w - 64) / 6).min(l.grid_col), DLG_ROW + 2, 8) }
-        } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
+            if n > 54 {
+                (7, ((self.scr.w - 72) / 7).min(l.grid_col - 20), DLG_ROW + 2, 8)
+            } else {
+                (6, ((self.scr.w - 64) / 6).min(l.grid_col), DLG_ROW + 2, 8)
+            }
+        } else if grid {
+            (4, l.grid_col, DLG_ROW + 2, 8)
+        } else if n > 5 {
+            (2, l.dlg_col, DLG_ROW, 16)
+        } else {
+            (1, l.dlg_col, DLG_ROW, 16)
+        };
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
@@ -9056,7 +10418,11 @@ impl Ui {
             let ry = r.y + DLG_HEAD + row * rh;
             let label = Rect::new(cx, ry, l.dlg_label, DLG_CTRL);
             let lw = l.dlg_label + 4;
-            let ctrl = if Self::kind(it) == Kind::Action { Rect::new(cx, ry, cw, DLG_CTRL) } else { Rect::new(cx + lw, ry, cw - lw, DLG_CTRL) };
+            let ctrl = if Self::kind(it) == Kind::Action {
+                Rect::new(cx, ry, cw, DLG_CTRL)
+            } else {
+                Rect::new(cx + lw, ry, cw - lw, DLG_CTRL)
+            };
             rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
         }
         Some(Dlg { r, close, back, rows, heads: Vec::new() })
@@ -9095,13 +10461,16 @@ impl Ui {
             Item::MeasSrc | Item::MeasSrcB | Item::MeasCopyTo => 0,
             Item::MeasGate | Item::MeasRefs => 1,
             Item::MeasStats | Item::MeasLabels | Item::StripDock => 2,
-            Item::MeasIdle | Item::MeasTsetup | Item::MeasThold | Item::MeasOutside | Item::MeasN | Item::MeasEdges => 3,
+            Item::MeasIdle | Item::MeasTsetup | Item::MeasThold | Item::MeasOutside | Item::MeasN | Item::MeasEdges => {
+                3
+            }
             _ => 4,
         }
     }
 
     /// The groups of the measurement settings: name and column.
-    const MEASURE_GROUPS: [(&'static str, usize); 5] = [("Sources", 0), ("Measure over", 0), ("Display", 0), ("Parameters", 1), ("More", 1)];
+    const MEASURE_GROUPS: [(&'static str, usize); 5] =
+        [("Sources", 0), ("Measure over", 0), ("Display", 0), ("Parameters", 1), ("More", 1)];
 
     /// Measurement settings: two columns of named groups (what is measured, over what, how the results show; the
     /// parameters of single measurements, and the pages beside them), below the top bar. The pages of the last group
@@ -9149,7 +10518,11 @@ impl Ui {
             col_y[col] += DLG_ROW;
             let label = Rect::new(cx, ry, l.dlg_label, DLG_CTRL);
             let lw = l.dlg_label + 4;
-            let ctrl = if Self::kind(it) == Kind::Action { Rect::new(cx, ry, cw, DLG_CTRL) } else { Rect::new(cx + lw, ry, cw - lw, DLG_CTRL) };
+            let ctrl = if Self::kind(it) == Kind::Action {
+                Rect::new(cx, ry, cw, DLG_CTRL)
+            } else {
+                Rect::new(cx + lw, ry, cw - lw, DLG_CTRL)
+            };
             rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
         }
         let h = col_y.into_iter().max().unwrap_or(y) - y + 6;
@@ -9178,7 +10551,9 @@ impl Ui {
     }
 
     fn draw_menu(&self, cv: &mut Canvas) {
-        if !self.menu_open { return; }
+        if !self.menu_open {
+            return;
+        }
         if self.menu == MenuId::MeasAdd {
             self.draw_catalog(cv);
             return;
@@ -9206,8 +10581,11 @@ impl Ui {
                 title = format!("\u{2026}{}", c.as_str());
             }
         }
-        if self.menu == MenuId::MeasPair { self.draw_pair_header(cv, &d); }
-        else { cv.text(&f.mb, d.r.x + 14, d.r.y + 31, &title, tcol); }
+        if self.menu == MenuId::MeasPair {
+            self.draw_pair_header(cv, &d);
+        } else {
+            cv.text(&f.mb, d.r.x + 14, d.r.y + 31, &title, tcol);
+        }
         btn(cv, d.close, BTN, BTN_BORDER);
         cv.text_in(&f.mb, d.close, 1, "\u{d7}", TEXT);
         if let Some(b) = d.back {
@@ -9259,7 +10637,9 @@ impl Ui {
                 }
                 Ctl::Button => {
                     let picked = match (row.it, self.pick) {
-                        (Item::PickOpt(k), Some(p)) => self.options(p.it).get(k).map(|o| (o.clone(), *o == self.value(p.it))),
+                        (Item::PickOpt(k), Some(p)) => {
+                            self.options(p.it).get(k).map(|o| (o.clone(), *o == self.value(p.it)))
+                        }
                         _ => None,
                     };
                     // orange: added measurement, current option of a picker, active state of a start menu entry
@@ -9275,7 +10655,13 @@ impl Ui {
                     let txt = match picked {
                         Some((o, _)) => o,
                         None if row.it == Item::QuickRun => format!("Quick \u{b7} {}", self.m.quick.short()),
-                        None if matches!(row.it, Item::MeasRemove(_)) => if let Item::MeasRemove(index) = row.it { format!("Remove {}", self.selected_measurement_label(index as usize)) } else { unreachable!() },
+                        None if matches!(row.it, Item::MeasRemove(_)) => {
+                            if let Item::MeasRemove(index) = row.it {
+                                format!("Remove {}", self.selected_measurement_label(index as usize))
+                            } else {
+                                unreachable!()
+                            }
+                        }
                         None if kind == Kind::Action => self.item_label(row.it).to_string(),
                         None => self.value(row.it),
                     };
@@ -9317,7 +10703,9 @@ impl Ui {
         if self.menu_open && self.menu == MenuId::MeasAdd {
             return self.catalog_tap(x, y);
         }
-        if self.measurement_group_tap(x, y) { return true; }
+        if self.measurement_group_tap(x, y) {
+            return true;
+        }
         let Some(d) = self.dlg_layout() else { return false };
         if !d.r.contains(x, y) {
             return false;
@@ -9338,7 +10726,10 @@ impl Ui {
         }
         if self.menu == MenuId::MeasPair {
             for (item, rect) in self.pair_header_sources(&d) {
-                if rect.contains(x, y) { self.open_picker(item); return true; }
+                if rect.contains(x, y) {
+                    self.open_picker(item);
+                    return true;
+                }
             }
         }
         for (i, row) in d.rows.iter().enumerate() {
@@ -9419,7 +10810,13 @@ impl Ui {
             cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
             for (i, l) in lines.iter().enumerate() {
                 let fnt = if i == 0 { &f.lb } else { &f.m };
-                cv.text_in(fnt, Rect::new(r.x, r.y + 20 + i as i32 * 30, r.w, 26), 1, l, if i == 0 { ACCENT } else { TEXT });
+                cv.text_in(
+                    fnt,
+                    Rect::new(r.x, r.y + 20 + i as i32 * 30, r.w, 26),
+                    1,
+                    l,
+                    if i == 0 { ACCENT } else { TEXT },
+                );
             }
         }
     }
@@ -9434,11 +10831,17 @@ impl Ui {
             Ev::Key(k) => self.panel_key(k),
             Ev::Touch { id, phase, x, y } => self.multi_touch(id, phase, x, y),
             Ev::Wheel { x, y, steps, ctrl, shift, alt } => {
-                if self.menu_open { crate::cmd::run(self, &format!("knob multi1 {steps:+}")); }
-                else if alt { crate::cmd::run(self, &format!("knob tlevel {:+}", steps.clamp(-32, 32) * 5)); }
-                else if ctrl { self.pointer_wheel(x, y, steps, true); }
-                else if shift { self.pointer_wheel_motion(x, y, steps, false, true); }
-                else { self.pointer_wheel(x, y, steps, false); }
+                if self.menu_open {
+                    crate::cmd::run(self, &format!("knob multi1 {steps:+}"));
+                } else if alt {
+                    crate::cmd::run(self, &format!("knob tlevel {:+}", steps.clamp(-32, 32) * 5));
+                } else if ctrl {
+                    self.pointer_wheel(x, y, steps, true);
+                } else if shift {
+                    self.pointer_wheel_motion(x, y, steps, false, true);
+                } else {
+                    self.pointer_wheel(x, y, steps, false);
+                }
             }
         }
     }
@@ -9462,7 +10865,10 @@ impl Ui {
             self.scpi_arm_operation();
             self.single_armed = false;
         }
-        if self.record_mode() { self.record_key(key::FORCE); return; }
+        if self.record_mode() {
+            self.record_key(key::FORCE);
+            return;
+        }
         self.bus_candidate_key(key::FORCE);
         self.m.run = RunState::Run;
         self.src.force_hw();
@@ -9502,7 +10908,9 @@ impl Ui {
     /// held on a channel's card: then the finger's lift is no tap.
     fn ch_hold_poll(&mut self) {
         if let Some((c, t)) = self.card_hold {
-            let still = self.touch.down && (self.touch.x - self.touch.x0).abs() < 16 && (self.touch.y - self.touch.y0).abs() < 16;
+            let still = self.touch.down
+                && (self.touch.x - self.touch.x0).abs() < 16
+                && (self.touch.y - self.touch.y0).abs() < 16;
             if !still {
                 self.card_hold = None;
             } else if self.now - t >= LONG_PRESS {
@@ -9534,9 +10942,19 @@ impl Ui {
         if k == 0 {
             return; // release
         }
-        if k == key::FORCE { self.force_trigger(); return; }
-        if self.load_slot_ask { self.cancel_load_slot(); return; }
-        if (k == key::RUNSTOP && self.m.run == RunState::Run) || k == key::SINGLE || k == key::DEFAULT || (0x15..=0x18).contains(&k) {
+        if k == key::FORCE {
+            self.force_trigger();
+            return;
+        }
+        if self.load_slot_ask {
+            self.cancel_load_slot();
+            return;
+        }
+        if (k == key::RUNSTOP && self.m.run == RunState::Run)
+            || k == key::SINGLE
+            || k == key::DEFAULT
+            || (0x15..=0x18).contains(&k)
+        {
             self.sim_cancel_generation();
         }
         if k == key::POWER {
@@ -9561,7 +10979,9 @@ impl Ui {
             self.dialog = None;
             return;
         }
-        if self.record_key(k) { return; }
+        if self.record_key(k) {
+            return;
+        }
         self.bus_candidate_key(k);
         let m = &mut self.m;
         match k {
@@ -9680,7 +11100,8 @@ impl Ui {
             }
             key::LA | key::GI => {
                 let p = oos_hal::model::platform();
-                let (name, has) = if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
+                let (name, has) =
+                    if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
                 if !has {
                     self.toast(&format!("The {} has no {}", p.caps.name, name));
                 } else if k == key::GI {
@@ -9707,15 +11128,20 @@ impl Ui {
             self.ref_sel = slot;
             match base {
                 0xd0 => {
-                    if push { self.toggle_menu(MenuId::Ref); }
-                    else { self.adjust(Item::RefVpd, -dir); }
+                    if push {
+                        self.toggle_menu(MenuId::Ref);
+                    } else {
+                        self.adjust(Item::RefVpd, -dir);
+                    }
                     return;
                 }
                 0x90 => {
                     if push {
                         self.refs[self.ref_sel].as_mut().unwrap().offset = 0.0;
                         self.settings_changed();
-                    } else { self.adjust(Item::RefOffset, dir * acc); }
+                    } else {
+                        self.adjust(Item::RefOffset, dir * acc);
+                    }
                     return;
                 }
                 _ => {}
@@ -9784,7 +11210,10 @@ impl Ui {
                 }
                 self.focus = self.focus.min(items.len() - 1);
                 let it = items[self.focus];
-                let picker = self.dlg_layout().and_then(|d| d.rows.get(self.focus).map(|r| matches!(r.ctl, Ctl::Pick))).unwrap_or(false);
+                let picker = self
+                    .dlg_layout()
+                    .and_then(|d| d.rows.get(self.focus).map(|r| matches!(r.ctl, Ctl::Pick)))
+                    .unwrap_or(false);
                 if push {
                     if picker {
                         // push on a choice with a long list: the list
@@ -9812,11 +11241,15 @@ impl Ui {
     /// Two fingers in the grid: horizontal spread = time/div, vertical spread = V/div of the active channel.
     fn multi_touch(&mut self, id: i32, ph: Phase, x: i32, y: i32) {
         if self.load_slot_ask {
-            if id == 0 && ph == Phase::Up { self.load_slot_tap(x, y); }
+            if id == 0 && ph == Phase::Up {
+                self.load_slot_tap(x, y);
+            }
             return;
         }
-        if self.eye_open() && self.eye_pane_rect().contains(x,y) {
-            if id == 0 { self.touch_ev(ph,x,y); }
+        if self.eye_open() && self.eye_pane_rect().contains(x, y) {
+            if id == 0 {
+                self.touch_ev(ph, x, y);
+            }
             return;
         }
         if self.m.touch_lock {
@@ -9826,7 +11259,8 @@ impl Ui {
             return;
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
-        let modal = self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
+        let modal =
+            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
         let p = &mut self.pinch;
         if id == 1 {
             match ph {
@@ -9893,14 +11327,21 @@ impl Ui {
         let fx = ((midpoint.0 - area.x as f32) / area.w.max(1) as f32).clamp(0.0, 1.0);
         let fy = ((midpoint.1 - area.y as f32) / area.h.max(1) as f32).clamp(0.0, 1.0);
         if dt != 0 {
-            if detail { self.zoom_horizontal_step(dt, area, fx); }
-            else { self.main_horizontal_step(dt, fx); }
+            if detail {
+                self.zoom_horizontal_step(dt, area, fx);
+            } else {
+                self.main_horizontal_step(dt, fx);
+            }
         }
         if dv != 0 {
-            if detail { self.zoom_vertical_step(-dv, area, fy); }
-            else if !self.m.zoom {
+            if detail {
+                self.zoom_vertical_step(-dv, area, fy);
+            } else if !self.m.zoom {
                 match self.selected_workspace_source() {
-                    Some(WaveId::Ref(i)) => { self.ref_sel = i; self.adjust(Item::RefVpd, dv); }
+                    Some(WaveId::Ref(i)) => {
+                        self.ref_sel = i;
+                        self.adjust(Item::RefVpd, dv);
+                    }
                     _ => self.adjust(Item::ChScale(self.m.active), dv),
                 }
             }
@@ -9909,12 +11350,18 @@ impl Ui {
 
     /// A finger in a split plot works in the window it went down in: its channels, its rectangle.
     fn touch_ev(&mut self, ph: Phase, x: i32, y: i32) {
-        if self.workspace_touch(ph, x, y) { return; }
+        if self.workspace_touch(ph, x, y) {
+            return;
+        }
         if self.wins.len() < 2 {
             return self.touch_in(ph, x, y);
         }
         let keep = (self.area, self.cur_win);
-        let w = if ph == Phase::Down { self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0) } else { self.touch.win.min(self.wins.len() - 1) };
+        let w = if ph == Phase::Down {
+            self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
+        } else {
+            self.touch.win.min(self.wins.len() - 1)
+        };
         (self.area, self.cur_win) = (self.wins[w], w);
         self.touch_in(ph, x, y);
         (self.area, self.cur_win) = keep;
@@ -9922,13 +11369,18 @@ impl Ui {
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
         let covered = self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
-        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !covered
-            && !(self.eye_open() && self.eye_pane_rect().contains(x,y));
+        let in_plot = ph == Phase::Down
+            && self.grid.contains(x, y)
+            && !covered
+            && !(self.eye_open() && self.eye_pane_rect().contains(x, y));
         // a press on the corner button moves that button; it is not a drag of the trace
         let on_full = ph == Phase::Down && !covered && self.full_btn().1.contains(x, y);
         // the plot buttons are taps; a zoom box starts on the waveform, not on them
         let on_chrome = ph == Phase::Down
-            && (on_full || (self.zoom_btn().1.contains(x, y) && !self.view_on()) || (self.m.zoom && self.zoom_readout().contains(x, y)) || (self.view_on() && self.view_btn().contains(x, y)));
+            && (on_full
+                || (self.zoom_btn().1.contains(x, y) && !self.view_on())
+                || (self.m.zoom && self.zoom_readout().contains(x, y))
+                || (self.view_on() && self.view_btn().contains(x, y)));
         let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
         let full_from = if on_full {
             let (r, _) = self.full_btn();
@@ -9937,12 +11389,35 @@ impl Ui {
             None
         };
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
-        let grip = if ph == Phase::Down && !self.m.touch_lock && self.dialog.is_none() && !self.power_dlg && self.wlan.osk.is_none() { self.scroll_grip(x, y) } else { None };
+        let grip = if ph == Phase::Down
+            && !self.m.touch_lock
+            && self.dialog.is_none()
+            && !self.power_dlg
+            && self.wlan.osk.is_none()
+        {
+            self.scroll_grip(x, y)
+        } else {
+            None
+        };
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
-                *t = TouchState { down: true, x0: x, y0: y, x, y, t0: self.now, held: false, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
+                *t = TouchState {
+                    down: true,
+                    x0: x,
+                    y0: y,
+                    x,
+                    y,
+                    t0: self.now,
+                    held: false,
+                    drag: Drag::None,
+                    start_offset: 0.0,
+                    start_delay: sd,
+                    start_level: self.m.trig_level,
+                    start_cur: 0.0,
+                    win: self.cur_win,
+                };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
@@ -9955,7 +11430,8 @@ impl Ui {
                 } else if !in_plot {
                     // a finger held on the card of a channel that is on: AC/DC, as the channel key
                     let (chs, _, _) = self.cards();
-                    self.card_hold = chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
+                    self.card_hold =
+                        chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
                 } else {
                     // an edge strip of the plot swipes between the views (not while a zoom box is armed)
                     let edge = zmap.is_none() && self.view_edge(x);
@@ -10006,39 +11482,67 @@ impl Ui {
                     };
                     let m = &self.m;
                     // the cursors stand in the window of the active channel
-                    let cur_hit = |frac: f32, vertical: bool| self.selected_workspace_source().is_some_and(|id| self.workspace_source_visible_here(id)) && cur_hit(frac, vertical);
+                    let cur_hit = |frac: f32, vertical: bool| {
+                        self.selected_workspace_source().is_some_and(|id| self.workspace_source_visible_here(id))
+                            && cur_hit(frac, vertical)
+                    };
                     let overview_drag = if m.zoom {
                         let overview = Self::split_zoom(self.grid).0;
                         if overview.contains(tx0, ty0) {
                             let ppd = overview.w as f32 / HDIV;
                             let half = tscales()[m.zscale] * HDIV * 0.5;
-                            let edge = |time| overview.x + overview.w / 2 + ((time - m.delay) / m.time_per_div() * ppd) as i32;
+                            let edge =
+                                |time| overview.x + overview.w / 2 + ((time - m.delay) / m.time_per_div() * ppd) as i32;
                             let left = (tx0 - edge(m.zdelay - half)).abs();
                             let right = (tx0 - edge(m.zdelay + half)).abs();
-                            Some(if left < 20 && left <= right { Drag::ZoomLeft }
-                                 else if right < 20 { Drag::ZoomRight }
-                                 else { Drag::Overview })
-                        } else { None }
-                    } else { None };
-                    let drag = if let Some(drag) = overview_drag { drag }
-                    else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_c, false) {
+                            Some(if left < 20 && left <= right {
+                                Drag::ZoomLeft
+                            } else if right < 20 {
+                                Drag::ZoomRight
+                            } else {
+                                Drag::Overview
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    let drag = if let Some(drag) = overview_drag {
+                        drag
+                    } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_c, false) {
                         Drag::CursorC
                     } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_d, false) {
                         Drag::CursorD
-                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) && cur_hit(m.cur_a, true) {
+                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy)
+                        && cur_hit(m.cur_a, true)
+                    {
                         Drag::CursorA
-                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) && cur_hit(m.cur_b, true) {
+                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy)
+                        && cur_hit(m.cur_b, true)
+                    {
                         Drag::CursorB
                     } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_a, false) {
                         Drag::CursorA
                     } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_b, false) {
                         Drag::CursorB
-                    } else if near_right && dy.abs() >= dx.abs() && self.trigger_absolute_level_visible(false) && (m.trig_ref.is_some() || self.shows(m.trig_src)) {
+                    } else if near_right
+                        && dy.abs() >= dx.abs()
+                        && self.trigger_absolute_level_visible(false)
+                        && (m.trig_ref.is_some() || self.shows(m.trig_src))
+                    {
                         let secondary = matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold);
                         let upper = self.trigger_level_y(m.trig_level, false).unwrap_or(ty0);
                         let lower = self.trigger_level_y(m.trig_level2, secondary).unwrap_or(ty0);
-                        if matches!(m.trig_type, TrigType::Runt | TrigType::Slope | TrigType::Window | TrigType::Delay | TrigType::SetupHold)
-                            && (ty0 - lower).abs() < (ty0 - upper).abs() { Drag::Level2 } else { Drag::Level }
+                        if matches!(
+                            m.trig_type,
+                            TrigType::Runt | TrigType::Slope | TrigType::Window | TrigType::Delay | TrigType::SetupHold
+                        ) && (ty0 - lower).abs() < (ty0 - upper).abs()
+                        {
+                            Drag::Level2
+                        } else {
+                            Drag::Level
+                        }
                     } else if m.zoom && dy.abs() > dx.abs() {
                         Drag::ZoomVertical
                     } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
@@ -10046,7 +11550,11 @@ impl Ui {
                     } else if dy.abs() > dx.abs() {
                         // nearest enabled channel marker when starting at the left edge, else the active channel (in a
                         // split plot: of this window)
-                        let mut c = if self.shows(m.active) { m.active } else { (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active) };
+                        let mut c = if self.shows(m.active) {
+                            m.active
+                        } else {
+                            (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active)
+                        };
                         let mut best = i32::MAX;
                         if near_left {
                             for i in 0..NCH {
@@ -10060,7 +11568,11 @@ impl Ui {
                             }
                         }
                         let bus_d = (self.bus_y() - ty0).abs();
-                        if m.bus.on && bus_d <= 18 && bus_d < best { Drag::Bus } else { Drag::Offset(c) }
+                        if m.bus.on && bus_d <= 18 && bus_d < best {
+                            Drag::Bus
+                        } else {
+                            Drag::Offset(c)
+                        }
                     } else {
                         Drag::Delay
                     };
@@ -10083,12 +11595,15 @@ impl Ui {
                     };
                     match drag {
                         Drag::ZoomVertical => {
-                            if let Some(i) = self.drag_reference() { self.select_workspace_source(WaveId::Ref(i)); }
-                            else if let Some(c) = (0..NCH).find(|&c| self.m.ch[c].on && self.shows(c)) { self.select_workspace_source(WaveId::Ch(c)); }
+                            if let Some(i) = self.drag_reference() {
+                                self.select_workspace_source(WaveId::Ref(i));
+                            } else if let Some(c) = (0..NCH).find(|&c| self.m.ch[c].on && self.shows(c)) {
+                                self.select_workspace_source(WaveId::Ch(c));
+                            }
                         }
                         Drag::Offset(c) => self.select_workspace_source(WaveId::Ch(c)),
                         Drag::RefOffset(i) => self.select_workspace_source(WaveId::Ref(i)),
-                        _ => {},
+                        _ => {}
                     }
                     let start_level = if drag == Drag::Level2 { self.m.trig_level2 } else { self.m.trig_level };
                     let t = &mut self.touch;
@@ -10114,17 +11629,26 @@ impl Ui {
                     Drag::Overview => {
                         let overview = Self::split_zoom(self.grid).0;
                         self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
-                        self.clamp_zoom(); self.settings_changed();
+                        self.clamp_zoom();
+                        self.settings_changed();
                     }
                     Drag::ZoomLeft | Drag::ZoomRight => {
                         let overview = Self::split_zoom(self.grid).0;
-                        let time = self.m.delay + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
+                        let time = self.m.delay
+                            + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV)
+                                * self.m.time_per_div();
                         let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
                         let wanted = (span / HDIV).max(tscales()[0]);
-                        self.m.zscale = tscales().iter().enumerate().min_by(|a, b| (a.1 - wanted).abs().total_cmp(&(b.1 - wanted).abs())).map_or(0, |(i, _)| i).min(self.m.tscale);
+                        self.m.zscale = tscales()
+                            .iter()
+                            .enumerate()
+                            .min_by(|a, b| (a.1 - wanted).abs().total_cmp(&(b.1 - wanted).abs()))
+                            .map_or(0, |(i, _)| i)
+                            .min(self.m.tscale);
                         let half = tscales()[self.m.zscale] * HDIV * 0.5;
                         self.m.zdelay = if t.drag == Drag::ZoomLeft { t.start_cur - half } else { t.start_cur + half };
-                        self.clamp_zoom(); self.settings_changed();
+                        self.clamp_zoom();
+                        self.settings_changed();
                     }
                     Drag::Offset(c) => {
                         let vpd = self.m.ch[c].volts_per_div();
@@ -10145,7 +11669,9 @@ impl Ui {
                         let lower = t.drag == Drag::Level2;
                         let secondary = lower && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
                         let id = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
-                        let ppy = self.source_area(id).map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
+                        let ppy = self
+                            .source_area(id)
+                            .map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
                         let level = t.start_level - dy as f32 / ppy * self.trigger_vpd(secondary);
                         // a two-level type: the dragged line stops at the other one, as the knob does
                         let two = self.m.trig_type.two_level();
@@ -10185,7 +11711,8 @@ impl Ui {
                         }
                     }
                     Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
-                        let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD) {
+                        let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD)
+                        {
                             t.start_cur + dy as f32 / self.area.h as f32
                         } else {
                             t.start_cur + dx as f32 / self.area.w as f32
@@ -10196,7 +11723,7 @@ impl Ui {
                             Drag::CursorB => self.m.cur_b = v,
                             Drag::CursorC => self.m.cur_c = v,
                             Drag::CursorD => self.m.cur_d = v,
-                            _ => {},
+                            _ => {}
                         }
                     }
                     _ => {}
@@ -10248,12 +11775,18 @@ impl Ui {
                 }
                 // a press on a list that did not move it is a tap on what is under the finger
                 if let Drag::Scroll(_, g) = was.1 {
-                    if matches!(g, scroll::Grip::Content { .. }) && (x - was.2).abs() < 16 && (y - was.3).abs() < scroll::SLOP {
+                    if matches!(g, scroll::Grip::Content { .. })
+                        && (x - was.2).abs() < 16
+                        && (y - was.3).abs() < scroll::SLOP
+                    {
                         self.tap(was.2, was.3);
                     }
                     return;
                 }
-                if (was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge) && (x - was.2).abs() < 16 && (y - was.3).abs() < 16 {
+                if (was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge)
+                    && (x - was.2).abs() < 16
+                    && (y - was.3).abs() < 16
+                {
                     self.tap(was.2, was.3);
                 }
             }
@@ -10270,7 +11803,9 @@ impl Ui {
         let ((x0, y0), (x1, y1)) = (path[0], path[1]);
         // A plain tap ends box drawing; valid boxes can be drawn repeatedly.
         if (x1 - x0).abs() < 12 || (y1 - y0).abs() < 12 {
-            if (x1 - x0).abs() < 12 && (y1 - y0).abs() < 12 { self.zoom_arm = false; }
+            if (x1 - x0).abs() < 12 && (y1 - y0).abs() < 12 {
+                self.zoom_arm = false;
+            }
             return;
         }
         let Some((a, tdiv, delay)) = map else { return };
@@ -10300,7 +11835,9 @@ impl Ui {
         let midpoint = (low + high) as f32 * 0.5;
         let next_center = center + (0.5 - (midpoint - a.y as f32) / a.h as f32) * VDIV / factor;
         let next_factor = (factor * a.h as f32 / (high - low).max(1) as f32).clamp(1.0, 1024.0);
-        if !on { self.zoom_saved = Some((self.m.tscale, self.m.tfine, self.m.delay)); }
+        if !on {
+            self.zoom_saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
+        }
         self.m.zscale = z;
         self.m.zdelay = (t0 + t1) * 0.5;
         self.m.zoom = true;
@@ -10325,10 +11862,15 @@ impl Ui {
         let ppx = a.w as f64 / HDIV as f64;
         let to_wave = |(x, y): (i32, i32)| {
             let t = (x - (a.x + a.w / 2)) as f64 / ppx * tdiv as f64 + delay as f64;
-            let v = self.zoom_divs_at(a, (y - a.y) as f32 / a.h as f32) as f64 * ch.volts_per_div() as f64 - ch.offset as f64;
+            let v = self.zoom_divs_at(a, (y - a.y) as f32 / a.h as f32) as f64 * ch.volts_per_div() as f64
+                - ch.offset as f64;
             (t, v)
         };
-        let ok = if shape { path.len() >= 3 } else { path.len() == 2 && (path[0].0 - path[1].0).abs() > 4 && (path[0].1 - path[1].1).abs() > 4 };
+        let ok = if shape {
+            path.len() >= 3
+        } else {
+            path.len() == 2 && (path[0].0 - path[1].0).abs() > 4 && (path[0].1 - path[1].1).abs() > 4
+        };
         if !ok {
             self.toast("Zone too small");
             return;
@@ -10357,7 +11899,13 @@ impl Ui {
                 (x.clamp(-1e4, 1e4).round() as i32, y.clamp(-1e4, 1e4).round() as i32)
             };
             let poly: Vec<(i32, i32)> = z.polygon().into_iter().map(px).collect();
-            let col = if !z.on { DIM } else if z.inside { GREEN } else { RED };
+            let col = if !z.on {
+                DIM
+            } else if z.inside {
+                GREEN
+            } else {
+                RED
+            };
             for i in 0..poly.len() {
                 let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
                 cv.line(p.0, p.1, q.0, q.1, col);
@@ -10387,12 +11935,24 @@ impl Ui {
     }
 
     pub fn tap(&mut self, x: i32, y: i32) {
-        if self.load_slot_tap(x, y) { return; }
-        let box_button = self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
-        if !box_button { self.zoom_arm = false; }
-        if self.workspace_popup_tap(x, y) { return; }
-        if self.single_btn().contains(x, y) { self.key(key::SINGLE); return; }
-        if !self.full_on() && self.m.bar_compact && self.workspace_footer_tap(x, y) { return; }
+        if self.load_slot_tap(x, y) {
+            return;
+        }
+        let box_button =
+            self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
+        if !box_button {
+            self.zoom_arm = false;
+        }
+        if self.workspace_popup_tap(x, y) {
+            return;
+        }
+        if self.single_btn().contains(x, y) {
+            self.key(key::SINGLE);
+            return;
+        }
+        if !self.full_on() && self.m.bar_compact && self.workspace_footer_tap(x, y) {
+            return;
+        }
         if self.power_dlg {
             self.power_dlg = false;
             let (_, [off, restart, _]) = self.pwr_layout();
@@ -10430,7 +11990,9 @@ impl Ui {
                 return;
             }
         }
-        if !self.menu_open && self.measurement_navigation_tap(x, y) { return; }
+        if !self.menu_open && self.measurement_navigation_tap(x, y) {
+            return;
+        }
         if self.auto_bar_tap(x, y) {
             return;
         }
@@ -10438,21 +12000,28 @@ impl Ui {
             self.toggle_expand();
             return;
         }
-        if !self.menu_open && self.eye_open() && self.eye_pane_rect().contains(x,y) {
-            if self.eye_tap(x,y) || self.eye_column_tap(x,y) { return; }
-            let a=self.eye_pane_rect();
-            if y<a.y+workspace::HEADER { self.eye_header_tap(x,y); }
+        if !self.menu_open && self.eye_open() && self.eye_pane_rect().contains(x, y) {
+            if self.eye_tap(x, y) || self.eye_column_tap(x, y) {
+                return;
+            }
+            let a = self.eye_pane_rect();
+            if y < a.y + workspace::HEADER {
+                self.eye_header_tap(x, y);
+            }
             return;
         }
         if self.zoom_btn().1.contains(x, y) && !self.view_on() {
             self.set_zoom(!self.m.zoom);
             return;
         }
-        if self.zoom_close_tap(x, y) { return; }
+        if self.zoom_close_tap(x, y) {
+            return;
+        }
         if self.view_on() && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
-        if !self.menu_open && self.m.view == AView::Eye && !self.xy && (self.eye_tap(x, y) || self.eye_column_tap(x, y)) {
+        if !self.menu_open && self.m.view == AView::Eye && !self.xy && (self.eye_tap(x, y) || self.eye_column_tap(x, y))
+        {
             return;
         }
         if self.table_tap(x, y) || self.pane_tap(x, y) {
@@ -10562,7 +12131,9 @@ impl Ui {
                     self.offline_ref = slot;
                     self.meas_src = WaveId::Ref(slot);
                     if x >= rect.x + rect.w - 42 && y < rect.y + 28 {
-                        if let Some(reference) = self.refs[slot].as_mut() { reference.on = !reference.on; }
+                        if let Some(reference) = self.refs[slot].as_mut() {
+                            reference.on = !reference.on;
+                        }
                         return;
                     }
                     return self.toggle_menu(MenuId::Ref);
@@ -10572,9 +12143,13 @@ impl Ui {
         if trg.contains(x, y) {
             if self.record_mode() {
                 let (run, live) = Self::session_buttons(trg);
-                if run.contains(x, y) { self.key(key::RUNSTOP); }
-                else if live.contains(x, y) { self.return_to_live(); }
-                else { self.toggle_menu(MenuId::Trigger); }
+                if run.contains(x, y) {
+                    self.key(key::RUNSTOP);
+                } else if live.contains(x, y) {
+                    self.return_to_live();
+                } else {
+                    self.toggle_menu(MenuId::Trigger);
+                }
                 return;
             }
             // the buttons are low: each takes its half of the card for the finger
@@ -10657,8 +12232,11 @@ fn heat_palette() -> &'static [Rgb; 256] {
 
 /// Where a reference badge goes: the wanted height, or the nearest free slot (36 px apart) between `lo` and `hi`.
 fn badge_spot(taken: &[i32], y: i32, lo: i32, hi: i32) -> i32 {
-    (0..8).flat_map(|k| [y + 36 * k, y - 36 * k]).map(|c| c.clamp(lo, hi))
-        .find(|c| taken.iter().all(|t| (t - c).abs() >= 36)).unwrap_or(y.clamp(lo, hi))
+    (0..8)
+        .flat_map(|k| [y + 36 * k, y - 36 * k])
+        .map(|c| c.clamp(lo, hi))
+        .find(|c| taken.iter().all(|t| (t - c).abs() >= 36))
+        .unwrap_or(y.clamp(lo, hi))
 }
 
 fn overlaps(a: Rect, b: Rect) -> bool {
@@ -10746,29 +12324,65 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
         return t;
     }
     let hex = |v: u32| if m.dec_bits > 8 { format!("{:04X}", v) } else { format!("{:02X}", v) };
-            match p.kind {
-                Kind::Addr { read } => format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" }),
-                Kind::Id { ext, rtr } => format!("ID {}{}{}", if ext { format!("{:08X}", p.value) } else if m.dec_proto == Proto::LIN { format!("{:02X}", p.value) } else { format!("{:03X}", p.value) }, if rtr { " RTR" } else { "" }, if p.ok { "" } else { " !P" }),
-                Kind::Sample { right } => format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4)),
-                Kind::Word { cmd } => format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" }),
-                Kind::Crc => format!("{} {:X}{}", if m.dec_proto == Proto::LIN { "CS" } else { "CRC" }, p.value, if p.ok { "" } else { " !" }),
-                Kind::Field(l) if matches!(l, "MAC" | "SRC") && p.value2.is_some() => {
-                    format!("{} {}{}", if l == "SRC" { "SRC" } else { "MAC" }, oos_dsp::linecode::mac_text(p.value, p.value2.unwrap_or(0)), if p.ok { "" } else { " !" })
-                }
-                Kind::Field(l) if matches!(l, "IP" | "DIP") => format!("{} {}{}", if l == "DIP" { "DIP" } else { "IP" }, oos_dsp::linecode::ip_text(p.value), if p.ok { "" } else { " !" }),
-                Kind::Field(l) => match p.value2 {
-                    Some(v2) if matches!(l, "DST" | "SRC" | "SER" | "PID") => format!("{} {:04X}{:08X}{}", l, v2, p.value, if p.ok { "" } else { " !" }),
-                    _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
-                },
-                Kind::Ack => format!("ACK {}", p.value),
-                _ if m.dec_proto == Proto::UART && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
-                _ if m.dec_proto == Proto::UART && m.dec_ascii && (0x21..0x7f).contains(&p.value) => format!("{}", p.value as u8 as char),
-                _ => match p.value2 {
-                    Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
-                    None if m.dec_proto == Proto::I2C && !p.ok => format!("{} N", hex(p.value)),
-                    None => hex(p.value),
-                },
+    match p.kind {
+        Kind::Addr { read } => {
+            format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" })
+        }
+        Kind::Id { ext, rtr } => format!(
+            "ID {}{}{}",
+            if ext {
+                format!("{:08X}", p.value)
+            } else if m.dec_proto == Proto::LIN {
+                format!("{:02X}", p.value)
+            } else {
+                format!("{:03X}", p.value)
+            },
+            if rtr { " RTR" } else { "" },
+            if p.ok { "" } else { " !P" }
+        ),
+        Kind::Sample { right } => {
+            format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4))
+        }
+        Kind::Word { cmd } => {
+            format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" })
+        }
+        Kind::Crc => format!(
+            "{} {:X}{}",
+            if m.dec_proto == Proto::LIN { "CS" } else { "CRC" },
+            p.value,
+            if p.ok { "" } else { " !" }
+        ),
+        Kind::Field(l) if matches!(l, "MAC" | "SRC") && p.value2.is_some() => {
+            format!(
+                "{} {}{}",
+                if l == "SRC" { "SRC" } else { "MAC" },
+                oos_dsp::linecode::mac_text(p.value, p.value2.unwrap_or(0)),
+                if p.ok { "" } else { " !" }
+            )
+        }
+        Kind::Field(l) if matches!(l, "IP" | "DIP") => format!(
+            "{} {}{}",
+            if l == "DIP" { "DIP" } else { "IP" },
+            oos_dsp::linecode::ip_text(p.value),
+            if p.ok { "" } else { " !" }
+        ),
+        Kind::Field(l) => match p.value2 {
+            Some(v2) if matches!(l, "DST" | "SRC" | "SER" | "PID") => {
+                format!("{} {:04X}{:08X}{}", l, v2, p.value, if p.ok { "" } else { " !" })
             }
+            _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
+        },
+        Kind::Ack => format!("ACK {}", p.value),
+        _ if m.dec_proto == Proto::UART && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
+        _ if m.dec_proto == Proto::UART && m.dec_ascii && (0x21..0x7f).contains(&p.value) => {
+            format!("{}", p.value as u8 as char)
+        }
+        _ => match p.value2 {
+            Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
+            None if m.dec_proto == Proto::I2C && !p.ok => format!("{} N", hex(p.value)),
+            None => hex(p.value),
+        },
+    }
 }
 
 /// The short tag of an event (start, stop, acknowledge ...), None for a field with a value.
@@ -10910,7 +12524,13 @@ fn raw_map(m: &Model, w: usize, h: usize, c: usize, f: &crate::board::Frame, ti:
 /// One frame of the fast path placed on the screen (`w` x `h` map): the trigger, the columns of a dense frame or the
 /// screen record of a sparse one, and the statistics of the channels in `fold`. Touches nothing but the frame, so the
 /// frames of a batch are placed on several cores; this is where most of the work is.
-pub fn fast_plan(m: &Model, w: usize, h: usize, f: &std::sync::Arc<crate::board::Frame>, fold: [bool; NCH]) -> FastFrame {
+pub fn fast_plan(
+    m: &Model,
+    w: usize,
+    h: usize,
+    f: &std::sync::Arc<crate::board::Frame>,
+    fold: [bool; NCH],
+) -> FastFrame {
     let tdiv = m.time_per_div() as f64;
     let window = tdiv * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
@@ -10933,7 +12553,9 @@ pub fn fast_plan(m: &Model, w: usize, h: usize, f: &std::sync::Arc<crate::board:
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
     let ti = t.ti;
     let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
-    let spans = std::array::from_fn(|c| (used(c) && !m.dots).then(|| crate::fastdraw::spans(w, h, &f.ch[c], &raw_map(m, w, h, c, f, ti))));
+    let spans = std::array::from_fn(|c| {
+        (used(c) && !m.dots).then(|| crate::fastdraw::spans(w, h, &f.ch[c], &raw_map(m, w, h, c, f, ti)))
+    });
     // the statistics on the samples of the screen window, as the measurements of a dense record
     let fold = std::array::from_fn(|c| {
         (fold[c] && used(c)).then(|| {
@@ -10950,7 +12572,8 @@ pub fn fast_plan(m: &Model, w: usize, h: usize, f: &std::sync::Arc<crate::board:
 fn rec_rows(m: &Model, h: usize, c: usize, v: &[f32]) -> (usize, usize) {
     let ch = &m.ch[c];
     let (vpd, ppd_y) = (ch.volts_per_div(), h as f32 / VDIV);
-    let (lo, hi) = v.iter().filter(|x| x.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+    let (lo, hi) =
+        v.iter().filter(|x| x.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
     if lo > hi {
         return (usize::MAX, 0);
     }
@@ -10963,7 +12586,16 @@ fn rec_rows(m: &Model, h: usize, c: usize, v: &[f32]) -> (usize, usize) {
 /// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
 /// `c_lo ..` of a map `w` x `h`, `h + 1` rows of them.
 #[allow(clippy::too_many_arguments)]
-pub fn fast_deposit_t(m: &Model, w: usize, h: usize, c: usize, band: &mut [u16], c_lo: usize, f: &crate::board::Frame, p: &FastPlan) {
+pub fn fast_deposit_t(
+    m: &Model,
+    w: usize,
+    h: usize,
+    c: usize,
+    band: &mut [u16],
+    c_lo: usize,
+    f: &crate::board::Frame,
+    p: &FastPlan,
+) {
     if !m.ch[c].on {
         return;
     }
@@ -10972,14 +12604,30 @@ pub fn fast_deposit_t(m: &Model, w: usize, h: usize, c: usize, band: &mut [u16],
             if !rec.ch[c].is_empty() {
                 let bw = band.len() / (h + 1);
                 let c_hi = (c_lo + bw) as i32;
-                crate::wave::trace_columns(w, h, c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs, (c_lo as i32, c_hi), |cx, r0, r1, wt| {
-                    crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
-                });
+                crate::wave::trace_columns(
+                    w,
+                    h,
+                    c,
+                    m,
+                    (m.time_per_div(), m.delay),
+                    rec.t0,
+                    rec.dt,
+                    &rec.ch[c],
+                    24,
+                    None,
+                    rec.pairs,
+                    (c_lo as i32, c_hi),
+                    |cx, r0, r1, wt| {
+                        crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
+                    },
+                );
             }
         }
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
             Some(s) => crate::fastdraw::add_spans_t(band, h, c_lo, s, 24),
-            None if !f.ch[c].is_empty() => crate::fastdraw::deposit_dots_t(band, h, c_lo, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24),
+            None if !f.ch[c].is_empty() => {
+                crate::fastdraw::deposit_dots_t(band, h, c_lo, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
+            }
             None => {}
         },
     }
@@ -10990,19 +12638,44 @@ pub fn fast_deposit_t(m: &Model, w: usize, h: usize, c: usize, band: &mut [u16],
 /// reference for the fast path's drawing.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, band: &mut [u16], r_lo: usize, f: &crate::board::Frame, p: &FastPlan) {
+pub fn fast_deposit(
+    m: &Model,
+    w: usize,
+    h: usize,
+    c: usize,
+    band: &mut [u16],
+    r_lo: usize,
+    f: &crate::board::Frame,
+    p: &FastPlan,
+) {
     if !m.ch[c].on {
         return;
     }
     match p {
         FastPlan::Rec(rec) => {
             if !rec.ch[c].is_empty() {
-                crate::wave::draw_trace(band, w, h, r_lo, c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
+                crate::wave::draw_trace(
+                    band,
+                    w,
+                    h,
+                    r_lo,
+                    c,
+                    m,
+                    (m.time_per_div(), m.delay),
+                    rec.t0,
+                    rec.dt,
+                    &rec.ch[c],
+                    24,
+                    None,
+                    rec.pairs,
+                );
             }
         }
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
             Some(s) => crate::fastdraw::add_spans(band, w, r_lo, s, 24),
-            None if !f.ch[c].is_empty() => crate::fastdraw::deposit_dots_band(band, w, r_lo, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24),
+            None if !f.ch[c].is_empty() => {
+                crate::fastdraw::deposit_dots_band(band, w, r_lo, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
+            }
             None => {}
         },
     }
@@ -11052,7 +12725,15 @@ mod tests {
         ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e7 / (tdiv * 16.0), 10_000_000), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e7 / (tdiv * 16.0), 10_000_000),
+            ..Default::default()
+        };
         let raw = |high: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect() };
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let mut seq = 0;
@@ -11153,16 +12834,41 @@ mod tests {
         }
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        let v: Vec<f32> = (0..n)
+            .map(|i| {
+                if (i / 2) % 50 < 10 {
+                    1.0
+                } else if i % 2 == 0 {
+                    -1.0
+                } else {
+                    -0.98
+                }
+            })
+            .collect();
         for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
             // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+            shared.lock().unwrap().queue.push_back(crate::board::Frame {
+                seq,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+                envelope,
+                acq: (1e9, 10_000_000),
+                ..Default::default()
+            });
             for _ in 0..3 {
                 ui.step(0.02);
             }
-            let (avg, rms, max, pp) = (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
+            let (avg, rms, max, pp) =
+                (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
             assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
-            assert!((max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05, "envelope {}: max {} pk-pk {}", envelope, max, pp);
+            assert!(
+                (max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05,
+                "envelope {}: max {} pk-pk {}",
+                envelope,
+                max,
+                pp
+            );
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
@@ -11185,7 +12891,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (625e6, 100_000), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (625e6, 100_000),
+            ..Default::default()
+        };
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.5 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
@@ -11216,7 +12930,10 @@ mod tests {
         }
         steps(&mut ui, 2);
         assert!(ui.stop_final.is_none());
-        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)), Some((5, false)));
+        assert_eq!(
+            ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)),
+            Some((5, false))
+        );
         assert!((ui.meas(0, Meas::Vavg) - 0.5).abs() < 0.03);
     }
 
@@ -11256,7 +12973,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e9, acq),
+            ..Default::default()
+        };
         let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
@@ -11274,7 +12999,10 @@ mod tests {
             let g = shared.lock().unwrap();
             assert!(g.hold && g.final_req == 1);
         }
-        assert!(ui.stop_final.is_some() && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope)));
+        assert!(
+            ui.stop_final.is_some()
+                && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope))
+        );
         // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
         {
             let mut g = shared.lock().unwrap();
@@ -11349,8 +13077,9 @@ mod tests {
             ..Default::default()
         };
         // what the thread answers for a view in STOP: the stored record read again, trigger at the point given
-        let view = |seq: u64, envelope: bool, v: Vec<f32>| {
-            crate::board::Frame { fixed_ti: Some((n / 2) as f64), ..frame(seq, envelope, v) }
+        let view = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            fixed_ti: Some((n / 2) as f64),
+            ..frame(seq, envelope, v)
         };
         // a square of a quarter duty, 2 V high: mean 0.5, RMS 1, std dev and AC RMS sqrt(0.75)
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
@@ -11567,7 +13296,15 @@ mod tests {
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
         let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
         let push = |seq: u64, envelope: bool, v: Vec<f32>| {
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+            shared.lock().unwrap().queue.push_back(crate::board::Frame {
+                seq,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                envelope,
+                acq: (1e9, 10_000_000),
+                ..Default::default()
+            });
         };
         let step = |ui: &mut Ui| {
             for _ in 0..3 {
@@ -11624,7 +13361,13 @@ mod tests {
                 (if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
             })
             .collect();
-        let frame = |seq: u64| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
         let mut seq = 0;
         let mut picture = |ui: &mut Ui, k: usize| -> Vec<u32> {
             {
@@ -11661,7 +13404,12 @@ mod tests {
             seq,
             dt: window / n as f64 * 1.2,
             pre: n / 2,
-            ch: [(0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(), Vec::new(), Vec::new(), Vec::new()],
+            ch: [
+                (0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
             ..Default::default()
         };
         let mut seq = 0;
@@ -11794,7 +13542,8 @@ mod tests {
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
-            let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+            let _ =
+                crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
         }
     }
 
@@ -11845,7 +13594,10 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().unwrap().triggered, "id {:x} not triggered", id);
             let p = ui.decode_packets().unwrap();
-            let hit = p.iter().find(|x| matches!(x.kind, Kind::Id { .. }) && x.value == id).expect("matching ID in the record");
+            let hit = p
+                .iter()
+                .find(|x| matches!(x.kind, Kind::Id { .. }) && x.value == id)
+                .expect("matching ID in the record");
             // trigger point = end of the matching ID field = t 0 (within one screen point of 500 us / 3600)
             assert!(hit.t1.abs() < 0.5e-6, "id {:x}: field ends at {} s", id, hit.t1);
             if id == 0x123 {
@@ -11889,7 +13641,13 @@ mod tests {
                 ui.m.trig_bus = what;
                 // a payload value of the demo traffic
                 if what == BusWhat::Data {
-                    ui.m.trig_bus_val = if proto == arinc { 0x2_5a5a } else if proto == sent { 0x7f_480b } else { 0x55 };
+                    ui.m.trig_bus_val = if proto == arinc {
+                        0x2_5a5a
+                    } else if proto == sent {
+                        0x7f_480b
+                    } else {
+                        0x55
+                    };
                 } else if what == BusWhat::Id && proto == sent {
                     ui.m.trig_bus_val = 0x4; // status nibble of the second frame
                 }
@@ -11904,18 +13662,29 @@ mod tests {
                 }
                 assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "{:?} {:?}: not triggered", proto, what);
                 let p = ui.decode_packets().unwrap();
-                assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
+                assert!(
+                    crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol),
+                    "{:?} {:?}: no matching field ends at 0: {:?}",
+                    proto,
+                    what,
+                    p
+                );
                 if what == BusWhat::Id && proto != sent {
                     let want = if proto == arinc { 0o310 } else { 0x2a };
                     assert_eq!(id_default, want);
-                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
+                    assert!(p
+                        .iter()
+                        .any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
                 }
                 if what == BusWhat::Id {
                     let mut cv = Canvas::new(PANEL_W, PANEL_H);
                     ui.render(&mut cv);
                     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                     let _ = std::fs::create_dir_all(&dir);
-                    let _ = crate::store::write(&dir.join(format!("j-bus-{}.png", proto.key()).to_lowercase()), &crate::store::png_of(&cv));
+                    let _ = crate::store::write(
+                        &dir.join(format!("j-bus-{}.png", proto.key()).to_lowercase()),
+                        &crate::store::png_of(&cv),
+                    );
                 }
             }
         }
@@ -11931,7 +13700,13 @@ mod tests {
         let tdiv = 5e-6f32;
         let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
         let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
-        for (what, val) in [(BusWhat::Id, None), (BusWhat::Id, Some(0x4B)), (BusWhat::Data, Some(0x40)), (BusWhat::Frame, None), (BusWhat::Error, None)] {
+        for (what, val) in [
+            (BusWhat::Id, None),
+            (BusWhat::Id, Some(0x4B)),
+            (BusWhat::Data, Some(0x40)),
+            (BusWhat::Frame, None),
+            (BusWhat::Error, None),
+        ] {
             let mut ui = crate::ui::testkit::demo_ui();
             ui.m.dec_proto = Proto::from_key("Usb").unwrap();
             ui.set_trig_type(TrigType::Bus);
@@ -11953,10 +13728,19 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "USB {:?} {:?}: not triggered", what, val);
             let p = ui.decode_packets().unwrap();
-            assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
+            assert!(
+                crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol),
+                "USB {:?}: no matching field ends at 0: {:?}",
+                what,
+                p
+            );
             match (what, val) {
-                (BusWhat::Id, None) => assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol)),
-                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol)),
+                (BusWhat::Id, None) => {
+                    assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol))
+                }
+                (BusWhat::Id, Some(v)) => {
+                    assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol))
+                }
                 (BusWhat::Frame, _) => assert!(p.iter().any(|x| x.kind == Kind::Field("SYNC") && x.t1.abs() < tol)),
                 _ => {}
             }
@@ -12214,7 +13998,15 @@ mod tests {
             co.replay(&mut po);
             for (name, a, b) in [("under", &u, &pu), ("over", &o, &po)] {
                 let bad = a.px.iter().zip(&b.px).position(|(p, q)| p != q);
-                assert!(bad.is_none(), "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed", what, name, bad.map(|i| (i as i32 % w, i as i32 / w)), bad.map_or(0, |i| a.px[i]), bad.map_or(0, |i| b.px[i]));
+                assert!(
+                    bad.is_none(),
+                    "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed",
+                    what,
+                    name,
+                    bad.map(|i| (i as i32 % w, i as i32 / w)),
+                    bad.map_or(0, |i| a.px[i]),
+                    bad.map_or(0, |i| b.px[i])
+                );
             }
         };
         let mut ui = crate::ui::testkit::demo_ui();
@@ -12280,7 +14072,8 @@ mod tests {
                 }
             }
         }
-        let kinds: Vec<String> = ui.azr.findings.iter().map(|f| format!("{:?} {:?} {:.2}", f.channels, f.kind, f.confidence)).collect();
+        let kinds: Vec<String> =
+            ui.azr.findings.iter().map(|f| format!("{:?} {:?} {:.2}", f.channels, f.kind, f.confidence)).collect();
         assert!(named.contains("CH3"), "toast: {:?}, seen {:?}, findings {:?}", named, ui.azr.watch_seen, kinds);
         assert!(ui.identify_items().len() > 1);
     }
@@ -12320,7 +14113,13 @@ mod tests {
         assert_eq!(ui.m.tscale, ts0, "time base restored");
         std::thread::sleep(std::time::Duration::from_millis(200));
         let cmds = got.lock().unwrap().clone();
-        assert!(cmds.contains(":SOUR1:APPL:SIN 1000,1,0") && cmds.contains(":OUTP1 ON") && cmds.contains(":SOUR1:APPL:SIN 100000"), "{}", cmds);
+        assert!(
+            cmds.contains(":SOUR1:APPL:SIN 1000,1,0")
+                && cmds.contains(":OUTP1 ON")
+                && cmds.contains(":SOUR1:APPL:SIN 100000"),
+            "{}",
+            cmds
+        );
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
     }
@@ -12329,7 +14128,8 @@ mod tests {
     fn bode_sweep_with_the_builtin_generator() {
         use super::*;
         let mut ui = crate::ui::testkit::demo_ui();
-        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) = (bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
+        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) =
+            (bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
         (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
         ui.activate(Item::BodeRun);
         assert!(ui.m.afg_on && ui.m.afg_freq == 1e3 && ui.m.afg_offset == 0.0);
@@ -12410,7 +14210,11 @@ mod tests {
             // the trigger that holds the demo still: I2S the falling WS edge on CH1, 1553 the first rising edge after
             // 3 us of quiet bus on CH3
             let m = &ui.m;
-            let want = if key == "I2s" { (TrigType::Edge, 0, Slope::Fall, 1.65) } else { (TrigType::NthEdge, 2, Slope::Rise, 2.0) };
+            let want = if key == "I2s" {
+                (TrigType::Edge, 0, Slope::Fall, 1.65)
+            } else {
+                (TrigType::NthEdge, 2, Slope::Rise, 2.0)
+            };
             assert_eq!((m.trig_type, m.trig_src, m.slope, m.trig_level), want, "{}", key);
             assert!(key == "I2s" || (m.nth_idle, m.nth_n) == (3e-6, 1));
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -12419,10 +14223,16 @@ mod tests {
             }
             let p = ui.decode_packets().unwrap();
             if key == "I2s" {
-                let s: Vec<(bool, u32)> = p.iter().filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None }).collect();
+                let s: Vec<(bool, u32)> = p
+                    .iter()
+                    .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
+                    .collect();
                 assert!(s.contains(&(false, 0x4000)) && s.contains(&(true, 0xc000)), "{:x?}", s);
             } else {
-                let w: Vec<(bool, u32, bool)> = p.iter().filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None }).collect();
+                let w: Vec<(bool, u32, bool)> = p
+                    .iter()
+                    .filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None })
+                    .collect();
                 assert!(w.contains(&(true, 0x0c23, true)) && w.contains(&(false, 0xbeef, true)), "{:x?}", w);
             }
             let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -12526,7 +14336,10 @@ mod tests {
                 }
             }
             assert!(active > 0, "the fixture must deposit trace samples");
-            let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * W + x) as usize])).count();
+            let hits = (a.y..a.y + a.h)
+                .flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y)))
+                .filter(|&(x, y)| pal.contains(&cv.px[(y * W + x) as usize]))
+                .count();
             // Axes and measurement labels cover a few trace pixels. The zoom
             // map can contain fewer than 1000 active pixels at this timebase.
             assert!(hits * 2 > active, "zoom {zoom}: {hits} of {active} graded pixels remain visible");
@@ -12549,7 +14362,12 @@ mod tests {
         ui.render(&mut cv);
         let row = ui.zoom_readout();
         let c = ui.zoom_close();
-        assert!(c.x >= row.x && c.x + c.w <= row.x + row.w && c.y >= row.y && c.y + c.h <= row.y + row.h, "close {:?} readout {:?}", c, row);
+        assert!(
+            c.x >= row.x && c.x + c.w <= row.x + row.w && c.y >= row.y && c.y + c.h <= row.y + row.h,
+            "close {:?} readout {:?}",
+            c,
+            row
+        );
         let (o, z) = Ui::split_zoom(ui.grid);
         assert!(c.y >= o.y + o.h && c.y + c.h <= z.y, "close {:?} between {:?} and {:?}", c, o, z);
         assert_ne!(cv.px[((c.y + c.h / 2) * W + c.x + c.w / 2) as usize], BG);
@@ -12728,7 +14546,14 @@ mod tests {
         assert_eq!(shared.lock().unwrap().seg.want, Some(98));
         assert_eq!(ui.seg_label(98), "Segment 99/100 \u{b7} 980 \u{b5}s \u{b7} \u{394}t 10.0 \u{b5}s");
         let v: Vec<f32> = (0..1000).map(|k| ((k as f32) * 0.1).sin()).collect();
-        let f = crate::board::Frame { seq: 1, dt: 1e-9, pre: 500, ch: [v, Vec::new(), Vec::new(), Vec::new()], acq: (1e9, 1000), ..Default::default() };
+        let f = crate::board::Frame {
+            seq: 1,
+            dt: 1e-9,
+            pre: 500,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            acq: (1e9, 1000),
+            ..Default::default()
+        };
         shared.lock().unwrap().seg.shown = Some((98, f));
         ui.step(0.02);
         assert_eq!(ui.seg_pos, Some(98));
@@ -12814,8 +14639,25 @@ mod tests {
         // 1 us/div, 12.5 k points at 0.8 ns, a 200 kHz sine through 0 V rising at the trigger point
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
-            let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() }
+            let v: Vec<f32> = (0..n)
+                .map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32)
+                .collect();
+            crate::board::Frame {
+                seq,
+                dt,
+                pre,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                roll: false,
+                envelope: false,
+                scan: false,
+                partial: false,
+                acq: (1.25e9, n),
+                stamp: 0,
+                la: None,
+                fixed_ti: None,
+                hw_avg: false,
+                basic: Default::default(),
+            }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -12845,9 +14687,33 @@ mod tests {
             let pre = n / 2;
             let frame = |seq: u64| {
                 let ch: [Vec<f32>; NCH] = std::array::from_fn(|c| {
-                    (0..n).map(|k| (2.0 * std::f64::consts::PI * 2e6 * (c + 1) as f64 * (k as f64 - pre as f64 + 0.1 * seq as f64) * dt).sin() as f32).collect()
+                    (0..n)
+                        .map(|k| {
+                            (2.0 * std::f64::consts::PI
+                                * 2e6
+                                * (c + 1) as f64
+                                * (k as f64 - pre as f64 + 0.1 * seq as f64)
+                                * dt)
+                                .sin() as f32
+                        })
+                        .collect()
                 });
-                crate::board::Frame { seq, dt, pre, ch, roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, n), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() }
+                crate::board::Frame {
+                    seq,
+                    dt,
+                    pre,
+                    ch,
+                    roll: false,
+                    envelope: false,
+                    scan: false,
+                    partial: false,
+                    acq: (1.0 / dt, n),
+                    stamp: 0,
+                    la: None,
+                    fixed_ti: None,
+                    hw_avg: false,
+                    basic: Default::default(),
+                }
             };
             let shared: crate::board::HwShared = Default::default();
             let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -12902,9 +14768,33 @@ mod tests {
                 let frames: Vec<crate::board::Frame> = (1..=24u64)
                     .map(|seq| {
                         // a sine with a frame-dependent phase and a spike, off the screen at the top in some frames
-                        let mut v: Vec<f32> = (0..n).map(|k| 3.0 * (2.0 * std::f64::consts::PI * 1.3e6 * (k as f64 - pre as f64 + 0.37 * seq as f64) * dt).sin() as f32).collect();
+                        let mut v: Vec<f32> = (0..n)
+                            .map(|k| {
+                                3.0 * (2.0
+                                    * std::f64::consts::PI
+                                    * 1.3e6
+                                    * (k as f64 - pre as f64 + 0.37 * seq as f64)
+                                    * dt)
+                                    .sin() as f32
+                            })
+                            .collect();
                         v[pre + 7] = if seq % 3 == 0 { 9.0 } else { -1.5 };
-                        crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, n), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() }
+                        crate::board::Frame {
+                            seq,
+                            dt,
+                            pre,
+                            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                            roll: false,
+                            envelope: false,
+                            scan: false,
+                            partial: false,
+                            acq: (1.0 / dt, n),
+                            stamp: 0,
+                            la: None,
+                            fixed_ti: None,
+                            hw_avg: false,
+                            basic: Default::default(),
+                        }
                     })
                     .collect();
                 let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 });
@@ -12936,15 +14826,38 @@ mod tests {
         // frame k: a sine of amplitude 1 + k/10 around 0.25 V
         let frame = |seq: u64| {
             let a = 1.0 + seq as f64 / 10.0;
-            let v: Vec<f32> = (0..n).map(|k| (0.25 + a * (2.0 * std::f64::consts::PI * 2e6 * (k as f64 - pre as f64) * dt).sin()) as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, n), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() }
+            let v: Vec<f32> = (0..n)
+                .map(|k| (0.25 + a * (2.0 * std::f64::consts::PI * 2e6 * (k as f64 - pre as f64) * dt).sin()) as f32)
+                .collect();
+            crate::board::Frame {
+                seq,
+                dt,
+                pre,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                roll: false,
+                envelope: false,
+                scan: false,
+                partial: false,
+                acq: (1.0 / dt, n),
+                stamp: 0,
+                la: None,
+                fixed_ti: None,
+                hw_avg: false,
+                basic: Default::default(),
+            }
         };
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
-        ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Vavg, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(0)), (Meas::StdDev, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0))];
+        ui.m.meas = vec![
+            (Meas::Vpp, WaveId::Ch(0)),
+            (Meas::Vavg, WaveId::Ch(0)),
+            (Meas::Vrms, WaveId::Ch(0)),
+            (Meas::StdDev, WaveId::Ch(0)),
+            (Meas::Freq, WaveId::Ch(0)),
+        ];
         ui.m.meas2.clear();
         // the first record sets up the rows
         shared.lock().unwrap().queue.push_back(frame(0));
@@ -12957,7 +14870,12 @@ mod tests {
         assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
         assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
         // the largest Pk-pk is that of frame 20 (amplitude 3), the smallest that of frame 0
-        assert!((ui.mstat[0].max - 6.0).abs() < 0.01 && (ui.mstat[0].min - 2.0).abs() < 0.01, "{} {}", ui.mstat[0].min, ui.mstat[0].max);
+        assert!(
+            (ui.mstat[0].max - 6.0).abs() < 0.01 && (ui.mstat[0].min - 2.0).abs() < 0.01,
+            "{} {}",
+            ui.mstat[0].min,
+            ui.mstat[0].max
+        );
         // a frame's fold gives the values of the measurements on the same samples
         let f = frame(7);
         let fo = crate::fastdraw::Fold::of(&f.ch[0][1000..9000]);
@@ -13019,7 +14937,13 @@ mod tests {
     fn fast_path_keeps_to_its_budget() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let frame = |seq: u64| crate::board::Frame { seq, dt: 0.8e-9, pre: 50, ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: 0.8e-9,
+            pre: 50,
+            ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
         shared.lock().unwrap().queue.extend((1..=100).map(frame));
         let mut src = Source::Hw { shared: shared.clone(), seen: 0 };
         let got = src.drain_newest(30);
@@ -13098,7 +15022,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
         ui.m.run = RunState::Run;
-        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
+        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame {
+            seq,
+            dt: 0.8e-9,
+            pre: 6250,
+            ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()],
+            acq: (1.25e9, 12_500),
+            hw_avg,
+            ..Default::default()
+        };
         let mid = |ui: &Ui| {
             let c = &ui.last[0].as_ref().unwrap().ch[0];
             c[c.len() / 2]
@@ -13174,7 +15106,10 @@ mod tests {
         q(&mut ui, ":ACQ:AVER 256");
         q(&mut ui, ":ACQ:AVER:HARD ON");
         assert_eq!((ui.m.acq, ui.m.avg_count, ui.m.avg_hw), (AcqMode::Average, 256, true));
-        assert_eq!((q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")), ("AVER".into(), "256".into(), "1".into()));
+        assert_eq!(
+            (q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")),
+            ("AVER".into(), "256".into(), "1".into())
+        );
         // a count the menu does not offer snaps down to the next one it does (PR #8, as the stock firmware); a bogus type
         // leaves the type alone
         q(&mut ui, ":ACQ:AVER 100");
@@ -13237,11 +15172,26 @@ mod tests {
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
-        for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
+        for m in [
+            MenuId::Main,
+            MenuId::Trigger,
+            MenuId::Math,
+            MenuId::MeasAdd,
+            MenuId::Utility,
+            MenuId::Channel(0),
+            MenuId::Display,
+            MenuId::Acquire,
+        ] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
             let fr = ui.frame();
-            assert!(d.close.h >= 40 && d.r.y >= fr.top.bottom() && d.r.bottom() <= fr.bottom.y, "{:?} {:?} {:?}", m, d.r, fr.bottom);
+            assert!(
+                d.close.h >= 40 && d.r.y >= fr.top.bottom() && d.r.bottom() <= fr.bottom.y,
+                "{:?} {:?} {:?}",
+                m,
+                d.r,
+                fr.bottom
+            );
             assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}", m);
         }
     }
@@ -13306,8 +15256,25 @@ mod tests {
         use super::*;
         let mut ui = crate::ui::testkit::demo_ui();
         let items = [
-            Item::TrigType, Item::MathOpI, Item::MathFam, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
-            Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode, Item::StoreDest,
+            Item::TrigType,
+            Item::MathOpI,
+            Item::MathFam,
+            Item::FftWin,
+            Item::VidSync,
+            Item::AcqDepth,
+            Item::Persist,
+            Item::AcqAvg,
+            Item::DecBaud,
+            Item::QuickAct,
+            Item::AcqMode,
+            Item::TrigWhen,
+            Item::Pat(1),
+            Item::DecCs,
+            Item::DecProto,
+            Item::GridStyle,
+            Item::ChProbe(0),
+            Item::TrigMode,
+            Item::StoreDest,
             Item::TrigCoup,
         ];
         for it in items {
@@ -13319,7 +15286,9 @@ mod tests {
             }
         }
         // long lists get a picker, short ones segmented buttons
-        for it in [Item::TrigType, Item::FftWin, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct] {
+        for it in
+            [Item::TrigType, Item::FftWin, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct]
+        {
             assert!(matches!(ui.ctl(it, 300), Ctl::Pick), "{:?}", it);
         }
         assert!(matches!(ui.ctl(Item::AcqMode, 300), Ctl::Seg(..)));
@@ -13353,7 +15322,10 @@ mod tests {
         assert_eq!(ui.m.run, RunState::Stop);
         // no trace pixel in the plot (below the mask pill)
         let a = ui.area;
-        let yellow = (a.y + 60..a.y + a.h - 20).flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0]).count();
+        let yellow = (a.y + 60..a.y + a.h - 20)
+            .flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y)))
+            .filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0])
+            .count();
         assert_eq!(yellow, 0);
         // Display > Clear does the same; SINGLE acquires and draws again
         ui.key(key::SINGLE);
@@ -13371,7 +15343,23 @@ mod tests {
         use super::*;
         let mut ui = crate::ui::testkit::demo_ui();
         let rest = vec![
-            Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::MeasRefs, Item::MeasStats, Item::MeasLabels, Item::StripDock, Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasClear,
+            Item::MeasSrc,
+            Item::MeasSrcB,
+            Item::MeasCopyTo,
+            Item::MeasGate,
+            Item::MeasRefs,
+            Item::MeasStats,
+            Item::MeasLabels,
+            Item::StripDock,
+            Item::MeasIdle,
+            Item::MeasTsetup,
+            Item::MeasThold,
+            Item::MeasOutside,
+            Item::MeasN,
+            Item::MeasEdges,
+            Item::Open(MenuId::MeasPair),
+            Item::Open(MenuId::Dvm),
+            Item::MeasClear,
         ];
         ui.key(key::MEASURE);
         assert_eq!(ui.menu, MenuId::MeasAdd);
@@ -13481,7 +15469,8 @@ mod tests {
             let room = ui.top_buttons().first().map_or(ui.top_right(), |b| b.2.x) - 12;
             for (sr, depth) in [(1.25e9, 125e6), (625e6, 62.5e6), (3.125e6, 1.25e6)] {
                 let (bold, main, mode) = Ui::top_acq(f, r.x + r.w + 14, room, sr, depth, "Average 1024".into());
-                let w = if bold { f.mb.width(&main) } else { f.m.width(&main) } + mode.as_ref().map_or(0, |m| f.m.width(m));
+                let w =
+                    if bold { f.mb.width(&main) } else { f.m.width(&main) } + mode.as_ref().map_or(0, |m| f.m.width(m));
                 assert!(r.x + r.w + 14 + w <= room, "{:?} {} {}", ts, main, w);
             }
         }
@@ -13582,7 +15571,15 @@ mod tests {
             ui.step(0.033);
         }
         // the menu keys
-        for (k, m) in [(key::HMENU, MenuId::Acquire), (key::ANALYSE, MenuId::Decode), (key::TMENU, MenuId::Trigger), (key::MEASURE, MenuId::MeasAdd), (key::CURSOR, MenuId::Cursor), (key::MATH, MenuId::Math), (key::REF, MenuId::Ref)] {
+        for (k, m) in [
+            (key::HMENU, MenuId::Acquire),
+            (key::ANALYSE, MenuId::Decode),
+            (key::TMENU, MenuId::Trigger),
+            (key::MEASURE, MenuId::MeasAdd),
+            (key::CURSOR, MenuId::Cursor),
+            (key::MATH, MenuId::Math),
+            (key::REF, MenuId::Ref),
+        ] {
             ui.close_menu();
             ui.key(k);
             assert!(ui.menu_open && ui.menu == m, "key {:#x}", k);
@@ -13594,10 +15591,36 @@ mod tests {
         ui.tap(x, y);
         assert_eq!(ui.menu, MenuId::Main);
         let all = ui.items(MenuId::Main);
-        for it in [Item::RunStop, Item::SingleAct, Item::AutosetAct, Item::ClearDisp, Item::DefaultAct, Item::SlopeAct, Item::ForceAct, Item::NavHist, Item::QuickRun, Item::Shot, Item::LockAct, Item::PowerAct] {
+        for it in [
+            Item::RunStop,
+            Item::SingleAct,
+            Item::AutosetAct,
+            Item::ClearDisp,
+            Item::DefaultAct,
+            Item::SlopeAct,
+            Item::ForceAct,
+            Item::NavHist,
+            Item::QuickRun,
+            Item::Shot,
+            Item::LockAct,
+            Item::PowerAct,
+        ] {
             assert!(all.contains(&it), "{:?}", it);
         }
-        for m in [MenuId::Acquire, MenuId::Trigger, MenuId::Horizontal, MenuId::Measure, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Decode, MenuId::Display, MenuId::Storage, MenuId::Mask, MenuId::Utility] {
+        for m in [
+            MenuId::Acquire,
+            MenuId::Trigger,
+            MenuId::Horizontal,
+            MenuId::Measure,
+            MenuId::Cursor,
+            MenuId::Math,
+            MenuId::Ref,
+            MenuId::Decode,
+            MenuId::Display,
+            MenuId::Storage,
+            MenuId::Mask,
+            MenuId::Utility,
+        ] {
             assert!(all.contains(&Item::Open(m)), "{:?}", m);
             ui.open_menu(MenuId::Main);
             let (x, y) = mid(row_of(&ui, Item::Open(m)).ctrl);
@@ -13723,7 +15746,11 @@ mod aux_out_tests {
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
         let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        let want: &[&str] = if board().mask_hw() || board().zone_hw() {
+            &["Trigger out", "Off", "Pass/fail"]
+        } else {
+            &["Trigger out", "Off"]
+        };
         assert_eq!(ui.options(Item::AuxOut), want);
         assert_eq!(ui.value(Item::AuxOut), "Trigger out");
         ui.select_option(Item::AuxOut, "Off");

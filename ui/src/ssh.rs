@@ -67,7 +67,8 @@ impl Key {
     /// One line for a list or a picker: type, comment, the start of the fingerprint.
     pub fn label(&self) -> String {
         let fp = self.fingerprint();
-        let comment = if self.comment.is_empty() { "(no comment)".to_string() } else { self.comment.chars().take(28).collect() };
+        let comment =
+            if self.comment.is_empty() { "(no comment)".to_string() } else { self.comment.chars().take(28).collect() };
         format!("{} {} {}\u{2026}", self.short_kind(), comment, &fp[..fp.len().min(19)])
     }
 
@@ -149,7 +150,11 @@ pub fn parse_line(line: &str) -> Result<Key, String> {
     let mut w = rest.splitn(3, char::is_whitespace);
     let kind = w.next().unwrap_or("");
     if !is_type(kind) {
-        return Err(if kind.contains("PRIVATE") || l.contains("PRIVATE KEY") { "a private key, not a public one".into() } else { "not a public key".into() });
+        return Err(if kind.contains("PRIVATE") || l.contains("PRIVATE KEY") {
+            "a private key, not a public one".into()
+        } else {
+            "not a public key".into()
+        });
     }
     let blob = w.next().and_then(base64_decode).ok_or("key data is not base64")?;
     let mut at = 0;
@@ -272,7 +277,11 @@ impl Keys {
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-        let opts = oos_hal::fsutil::Opts { mode: Some(0o600), dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+        let opts = oos_hal::fsutil::Opts {
+            mode: Some(0o600),
+            dir_sync: oos_hal::fsutil::DirSync::Required,
+            ..Default::default()
+        };
         oos_hal::fsutil::write_atomic(&dir.join(KEYS_FILE), self.text().as_bytes(), &opts)
     }
 }
@@ -444,7 +453,13 @@ mod tests {
     #[test]
     fn import_adds_each_key_once_and_keeps_other_lines() {
         let mut ks = Keys::parse("# mine\nfrom=\"10.0.0.1\" ssh-rsa broken\n");
-        let r = ks.import(&format!("{}\n\n{}\n{}\n-----BEGIN OPENSSH PRIVATE KEY-----\nfrom=\"x\" {}\n", ED, ED, rsa_line(4096), ED));
+        let r = ks.import(&format!(
+            "{}\n\n{}\n{}\n-----BEGIN OPENSSH PRIVATE KEY-----\nfrom=\"x\" {}\n",
+            ED,
+            ED,
+            rsa_line(4096),
+            ED
+        ));
         assert_eq!((r.added, r.known, r.full), (2, 1, 0));
         assert_eq!(r.bad, vec!["a private key, not a public one".to_string(), "options are not imported".to_string()]);
         assert_eq!(r.summary(), "2 keys added, 1 already trusted, 2 not taken (a private key, not a public one)");
@@ -502,7 +517,8 @@ mod tests {
         std::fs::write(stick.join("id_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
         std::fs::write(stick.join("OOS").join("authorized_keys"), rsa_line(3072)).unwrap();
         std::fs::write(stick.join("notes.txt"), "x").unwrap();
-        let names: Vec<String> = stick_files(&stick).iter().map(|p| p.strip_prefix(&stick).unwrap().display().to_string()).collect();
+        let names: Vec<String> =
+            stick_files(&stick).iter().map(|p| p.strip_prefix(&stick).unwrap().display().to_string()).collect();
         assert_eq!(names, ["OOS/authorized_keys", "id_ed25519.pub"]);
         let r = ks.import(&stick_text(&stick).unwrap());
         assert_eq!((r.added, r.known), (1, 1));

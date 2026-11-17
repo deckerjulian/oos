@@ -34,7 +34,14 @@ impl Protocol for Swd {
     /// SWDIO on CH3, SWCLK on CH4 at 1 MHz: line reset, JTAG-to-SWD, line reset, a read of the DP IDCODE.
     fn demo(&self) -> Option<Demo> {
         use x2::gen::SwdOp;
-        let ops = [SwdOp::LineReset, SwdOp::JtagToSwd, SwdOp::LineReset, SwdOp::Idle(2), SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false }, SwdOp::Idle(4)];
+        let ops = [
+            SwdOp::LineReset,
+            SwdOp::JtagToSwd,
+            SwdOp::LineReset,
+            SwdOp::Idle(2),
+            SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false },
+            SwdOp::Idle(4),
+        ];
         let (clk, dio) = x2::gen::swd(&ops, 1e6, 0.0, 3.3);
         let end = |l: &oos_dsp::sim::Logic| l.seg.last().map_or(1e-3, |s| s.0);
         let period = end(&dio).max(end(&clk)) + 20e-6;
@@ -74,7 +81,10 @@ mod tests {
     // Break it catches: a setup written while SWD and JTAG were built in losing its protocol or its sources
     #[test]
     fn old_setups_keep_protocol_and_sources() {
-        let m = crate::store::parse_setup("dec_on = true\ndec_proto = Jtag\ndec_src = 0\ndec_src2 = 1\ndec_cs = 2\ndec_src4 = 4\n").unwrap();
+        let m = crate::store::parse_setup(
+            "dec_on = true\ndec_proto = Jtag\ndec_src = 0\ndec_src2 = 1\ndec_cs = 2\ndec_src4 = 4\n",
+        )
+        .unwrap();
         assert_eq!((m.dec_proto.name(), m.dec_src, m.dec_src2, m.dec_cs, m.dec_src4), ("JTAG", 0, 1, Some(2), Some(3)));
         let m = crate::store::parse_setup("dec_on = true\ndec_proto = Swd\n").unwrap();
         assert_eq!(m.dec_proto.name(), "SWD");
@@ -87,9 +97,21 @@ mod tests {
         let d = Swd.demo().unwrap();
         let dt = 10e-9;
         let n = (d.period / dt) as usize;
-        let wave = |k: usize| -> Vec<f32> { (0..n).map(|i| d.lines[k].as_ref().unwrap()(i as f64 * dt) as f32).collect() };
+        let wave =
+            |k: usize| -> Vec<f32> { (0..n).map(|i| d.lines[k].as_ref().unwrap()(i as f64 * dt) as f32).collect() };
         let (dio, clk) = (wave(0), wave(1));
-        let p = Swd.decode(&Lines { lines: [Some(&dio), Some(&clk), None, None], dt, thr: 1.65, hy: 0.1, opt: [0; OPTS], sh: Shared::default(), chans: [None; 4], src: [None; 4] }).unwrap();
+        let p = Swd
+            .decode(&Lines {
+                lines: [Some(&dio), Some(&clk), None, None],
+                dt,
+                thr: 1.65,
+                hy: 0.1,
+                opt: [0; OPTS],
+                sh: Shared::default(),
+                chans: [None; 4],
+                src: [None; 4],
+            })
+            .unwrap();
         assert!(p.iter().any(|x| x.kind == Kind::Data && x.value == 0x2BA0_1477), "{:?}", p);
         let ack = p.iter().find(|x| x.kind == Kind::Ack).unwrap();
         assert_eq!(Swd.text(ack, &[0; OPTS]).as_deref(), Some("ACK 1"));

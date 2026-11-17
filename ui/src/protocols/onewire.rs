@@ -27,7 +27,14 @@ impl Protocol for OneWire {
     /// Reset with presence, Read ROM, and the ROM of a DS18B20 (family 28) as far as the third byte.
     fn demo(&self) -> Option<Demo> {
         use x1::gen::Ow;
-        let ow = [Ow::Reset { presence: true }, Ow::Write(0x33), Ow::Read(0x28), Ow::Read(0xFF), Ow::Read(0x4C), Ow::Read(0x3D)];
+        let ow = [
+            Ow::Reset { presence: true },
+            Ow::Write(0x33),
+            Ow::Read(0x28),
+            Ow::Read(0xFF),
+            Ow::Read(0x4C),
+            Ow::Read(0x3D),
+        ];
         let a = x1::gen::onewire_logic(&ow, 0.0, 3.3);
         let period = a.seg.last().map_or(1e-3, |s| s.0) + 200e-6;
         Some(Demo { period, lines: [Some(Box::new(move |t| a.v(t))), None, None, None] })

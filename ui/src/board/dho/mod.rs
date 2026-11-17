@@ -36,7 +36,9 @@ pub fn wave(g: &GenCh) -> afg::Wave {
 /// The generator's modulation (sine, square and ramp carriers only).
 pub fn modulation(g: &GenCh) -> afg::Mod {
     use afg::{Mod, ModShape};
-    let shape = [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise][g.mod_shape.min(5)];
+    let shape =
+        [ModShape::Sine, ModShape::Square, ModShape::Triangle, ModShape::UpRamp, ModShape::DownRamp, ModShape::Noise]
+            [g.mod_shape.min(5)];
     let rate = g.mod_rate;
     match g.modulation {
         _ if g.wave > 2 => Mod::None,
@@ -50,8 +52,17 @@ pub fn modulation(g: &GenCh) -> afg::Mod {
 /// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`hw::batch_plan`). New
 /// entries go to the end: setups store the position.
 const DEPTHS: [(&str, u64); 11] = [
-    ("Auto", 0), ("1k", 1_000), ("10k", 10_000), ("100k", 100_000), ("1M", 1_000_000), ("10M", 10_000_000),
-    ("25M", 25_000_000), ("50M", 50_000_000), ("62.5M", 62_500_000), ("100M", 100_000_000), ("125M", 125_000_000),
+    ("Auto", 0),
+    ("1k", 1_000),
+    ("10k", 10_000),
+    ("100k", 100_000),
+    ("1M", 1_000_000),
+    ("10M", 10_000_000),
+    ("25M", 25_000_000),
+    ("50M", 50_000_000),
+    ("62.5M", 62_500_000),
+    ("100M", 100_000_000),
+    ("125M", 125_000_000),
 ];
 
 impl Board for Dho {
@@ -202,7 +213,10 @@ impl Board for Dho {
     }
 
     fn thermal_zones(&self) -> Vec<Zone> {
-        board::thermal_zones(std::path::Path::new("/sys/class/thermal")).into_iter().map(|z| Zone { name: z.name, temp: z.temp }).collect()
+        board::thermal_zones(std::path::Path::new("/sys/class/thermal"))
+            .into_iter()
+            .map(|z| Zone { name: z.name, temp: z.temp })
+            .collect()
     }
 
     fn clock_steps(&self) -> &'static [f64] {

@@ -22,7 +22,17 @@ use crate::model::*;
 /// compression of records above 1 M points, roll, scan) are no samples of the signal: these come out wrong on them,
 /// while maximum, minimum and peak-peak stay right.
 pub fn needs_samples(k: Meas) -> bool {
-    matches!(k, Meas::Vavg | Meas::Vrms | Meas::VavgCyc | Meas::VrmsCyc | Meas::VrmsAc | Meas::StdDev | Meas::Area | Meas::AreaCyc)
+    matches!(
+        k,
+        Meas::Vavg
+            | Meas::Vrms
+            | Meas::VavgCyc
+            | Meas::VrmsCyc
+            | Meas::VrmsAc
+            | Meas::StdDev
+            | Meas::Area
+            | Meas::AreaCyc
+    )
 }
 
 /// The measurements made per frame.
@@ -73,7 +83,10 @@ pub type Folds = Vec<((Meas, usize), Fold)>;
 
 /// Empty statistics for the measurements of `m` made per frame.
 pub fn folds_for(m: &Model) -> Folds {
-    m.meas.iter().filter_map(|&(k, s)| s.ch().filter(|&c| CHEAP.contains(&k) && m.ch[c].on).map(|c| ((k, c), Fold::default()))).collect()
+    m.meas
+        .iter()
+        .filter_map(|&(k, s)| s.ch().filter(|&c| CHEAP.contains(&k) && m.ch[c].on).map(|c| ((k, c), Fold::default())))
+        .collect()
 }
 
 /// Adds `b` to `a` (the same measurements: merged by key).
@@ -204,7 +217,8 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
         if v.len() < 2 || i1 > v.len() {
             continue;
         }
-        let std = m.meas.iter().any(|(x, y)| *y == crate::model::WaveId::Ch(*c) && matches!(x, Meas::StdDev | Meas::VrmsAc));
+        let std =
+            m.meas.iter().any(|(x, y)| *y == crate::model::WaveId::Ch(*c) && matches!(x, Meas::StdDev | Meas::VrmsAc));
         let vals = cache[*c].get_or_insert_with(|| Values::of(&v[i0..i1], std));
         if let Some(x) = vals.as_ref().map(|s| s.get(*k)).filter(|x| x.is_finite()) {
             fold.push(x);
@@ -300,7 +314,9 @@ mod tests {
                 std::hint::black_box(values_reference(std::hint::black_box(&v[..])));
             },
             || {
-                std::hint::black_box(Values::of(std::hint::black_box(&v[..]), true).map(|x| (x.avg, x.rms, x.std, x.vmax, x.vmin)));
+                std::hint::black_box(
+                    Values::of(std::hint::black_box(&v[..]), true).map(|x| (x.avg, x.rms, x.std, x.vmax, x.vmin)),
+                );
             },
         );
         let (a, b) = (values_reference(&v).unwrap(), Values::of(&v, true).unwrap());
@@ -315,13 +331,23 @@ mod tests {
     /// What the record path gives for frame `f`: `to_record`, the samples `Ui::meas_slice` takes, `analyze_min`.
     fn reference(f: &Frame, m: &Model, folds: &mut Folds) {
         let window = m.time_per_div() as f64 * HDIV as f64;
-        let rec = crate::board::to_record(&Arc::new(f.clone()), m, crate::sparse::POINTS, window, m.delay as f64 - window / 2.0);
+        let rec = crate::board::to_record(
+            &Arc::new(f.clone()),
+            m,
+            crate::sparse::POINTS,
+            window,
+            m.delay as f64 - window / 2.0,
+        );
         for ((k, c), fold) in folds.iter_mut() {
             let Some(r) = rec.raw.as_ref() else { continue };
             if !(r.i1 <= r.frame.ch[*c].len() && r.i1 - r.i0 > rec.ch[*c].len()) {
                 continue;
             }
-            let a = oos_dsp::measure::analyze_min(&r.frame.ch[*c][r.i0..r.i1], r.frame.dt, 0.4 * m.ch[*c].volts_per_div() as f64);
+            let a = oos_dsp::measure::analyze_min(
+                &r.frame.ch[*c][r.i0..r.i1],
+                r.frame.dt,
+                0.4 * m.ch[*c].volts_per_div() as f64,
+            );
             let x = a.get(*k);
             if x.is_finite() {
                 fold.push(x);
@@ -333,14 +359,19 @@ mod tests {
     // trigger point, other expressions), frames counted that the record path measures on interpolated points.
     #[test]
     fn per_frame_statistics_equal_measuring_every_record() {
-        for (tdiv, len, two) in [(1e-6, 12_512usize, false), (1e-6, 12_512, true), (2e-6, 30_000, false), (1e-7, 1408, false)] {
+        for (tdiv, len, two) in
+            [(1e-6, 12_512usize, false), (1e-6, 12_512, true), (2e-6, 30_000, false), (1e-7, 1408, false)]
+        {
             let mut m = Model::default();
             m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
             m.trig_level = 0.0;
             for c in 0..NCH {
                 (m.ch[c].on, m.ch[c].offset) = (c == 0 || c == 1 && two, 0.0);
             }
-            m.meas = CHEAP.iter().flat_map(|&k| [(k, crate::model::WaveId::Ch(0)), (k, crate::model::WaveId::Ch(1))]).collect();
+            m.meas = CHEAP
+                .iter()
+                .flat_map(|&k| [(k, crate::model::WaveId::Ch(0)), (k, crate::model::WaveId::Ch(1))])
+                .collect();
             let r = if two { 2.0 } else { 1.0 };
             let dt = r / 1.25e9;
             let (mut got, mut want) = (folds_for(&m), folds_for(&m));
@@ -348,7 +379,12 @@ mod tests {
             for k in 0..30 {
                 let mut ch: [Vec<f32>; NCH] = Default::default();
                 for (c, v) in ch.iter_mut().enumerate().take(if two { 2 } else { 1 }) {
-                    let p = oos_dsp::sim::PulseTrain::square(3e5 * (1.0 + c as f64 * 0.4), -0.7, 0.9 + k as f64 * 0.01, 2e-8);
+                    let p = oos_dsp::sim::PulseTrain::square(
+                        3e5 * (1.0 + c as f64 * 0.4),
+                        -0.7,
+                        0.9 + k as f64 * 0.01,
+                        2e-8,
+                    );
                     *v = oos_dsp::sim::sample(|t| p.v(t), -(len as f64 / 2.0) * dt + k as f64 * 1.1e-10, dt, len);
                     oos_dsp::sim::add_noise(v, 0.04, k as u64 + 3 * c as u64);
                 }
@@ -364,7 +400,14 @@ mod tests {
                     assert_eq!(a, b, "{:?} {} s/div", k, tdiv);
                 }
                 let close = |x: f64, y: f64| (x - y).abs() <= 1e-12 * y.abs().max(1e-3);
-                assert!(close(a.sum, b.sum) && close(a.sumsq, b.sumsq) && close(a.min, b.min) && close(a.max, b.max), "{:?} {} s/div: {:?} vs {:?}", k, tdiv, a, b);
+                assert!(
+                    close(a.sum, b.sum) && close(a.sumsq, b.sumsq) && close(a.min, b.min) && close(a.max, b.max),
+                    "{:?} {} s/div: {:?} vs {:?}",
+                    k,
+                    tdiv,
+                    a,
+                    b
+                );
             }
             let sparse = len == 1408;
             assert!(if sparse { counted == 0 } else { counted == 30 }, "{} s/div: {} counted", tdiv, counted);
@@ -376,7 +419,11 @@ mod tests {
     // 1 M points read through the FPGA compression): the mean of the pairs of a square with a 20 % duty is not its mean
     #[test]
     fn envelope_frames_count_extremes_only() {
-        let mut m = Model { tscale: tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-9).unwrap(), trig_level: 0.0, ..Model::default() };
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-9).unwrap(),
+            trig_level: 0.0,
+            ..Model::default()
+        };
         for c in 0..NCH {
             m.ch[c].on = c == 0;
         }
@@ -384,13 +431,31 @@ mod tests {
         // min/max pairs of a -1/+1 square with 20 % duty: every pair holds both levels around the edges, only one
         // level elsewhere
         let len = 12_512usize;
-        let v: Vec<f32> = (0..len).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        let v: Vec<f32> = (0..len)
+            .map(|i| {
+                if (i / 2) % 50 < 10 {
+                    1.0
+                } else if i % 2 == 0 {
+                    -1.0
+                } else {
+                    -0.98
+                }
+            })
+            .collect();
         let dt = 1.0 / 1.25e9;
         let mut folds = folds_for(&m);
         // a deep record read through the compression (deeper than the live compression, whose pair frames do not
         // count at all: compress.rs)
         let deep = (1.25e9, crate::compress::MAX_DEPTH as usize * 10);
-        let env = Frame { seq: 1, dt, pre: len / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope: true, acq: deep, ..Default::default() };
+        let env = Frame {
+            seq: 1,
+            dt,
+            pre: len / 2,
+            ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+            envelope: true,
+            acq: deep,
+            ..Default::default()
+        };
         assert!(fold_frame(&env, &m, &mut folds));
         for ((k, _), f) in &folds {
             assert_eq!(f.n, if needs_samples(*k) { 0 } else { 1 }, "{:?}", k);
@@ -405,5 +470,4 @@ mod tests {
         let live = Frame { envelope: true, acq: (1.25e9, 100_000), ..raw };
         assert!(!fold_frame(&live, &m, &mut folds));
     }
-
 }

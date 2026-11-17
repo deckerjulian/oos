@@ -14,18 +14,23 @@ pub fn run(args: &[String]) -> Result<String, String> {
     while i < args.len() {
         match args[i].as_str() {
             "--k" => {
-                k = Some(args.get(i + 1).ok_or("--k needs a value")?.parse::<usize>().map_err(|e| format!("--k: {}", e))?);
+                k = Some(
+                    args.get(i + 1).ok_or("--k needs a value")?.parse::<usize>().map_err(|e| format!("--k: {}", e))?,
+                );
                 i += 1;
             }
             "--mask" => {
-                mask = crate::num(args.get(i + 1).ok_or("--mask needs a value")?).map_err(|e| format!("--mask {}", e))?;
+                mask =
+                    crate::num(args.get(i + 1).ok_or("--mask needs a value")?).map_err(|e| format!("--mask {}", e))?;
                 i += 1;
             }
             f => files.push(f.to_string()),
         }
         i += 1;
     }
-    let [raw, comp] = files.as_slice() else { return Err("compress-check <raw.bin> <compressed.bin> --k K [--mask M]".into()) };
+    let [raw, comp] = files.as_slice() else {
+        return Err("compress-check <raw.bin> <compressed.bin> --k K [--mask M]".into());
+    };
     let k = k.filter(|&k| k >= 2).ok_or("--k K (2 or more) is needed")?;
     if !(1..=15).contains(&mask) {
         return Err("--mask 1..0xf".into());
@@ -43,18 +48,19 @@ pub fn report(raw: &[u8], comp: &[u8], k: usize, mask: u32) -> String {
             continue;
         }
         let (r, c) = (&r[ch], &c[ch]);
-        out += &format!("CH{}: {} raw points, {} compressed points (raw / k = {})\n", ch + 1, r.len(), c.len(), r.len().div_ceil(k));
+        out += &format!(
+            "CH{}: {} raw points, {} compressed points (raw / k = {})\n",
+            ch + 1,
+            r.len(),
+            c.len(),
+            r.len().div_ceil(k)
+        );
         let fits = pairs::check(r, c, k);
         for f in fits.iter().take(3) {
             let l = f.layout;
             out += &format!(
                 "  block {}k, {:?} order, shift {:+}: {} of {} points within one code, largest difference {}\n",
-                l.block_k,
-                l.order,
-                l.shift,
-                f.within,
-                f.points,
-                f.max_err
+                l.block_k, l.order, l.shift, f.within, f.points, f.max_err
             );
         }
         let best = fits.first();
@@ -78,7 +84,9 @@ mod tests {
 
     #[test]
     fn report_names_the_layout() {
-        let raw: Vec<u16> = (0..40_000u32).map(|i| (30_000 + (i * 7919) % 3001 + if (i / 900) % 2 == 0 { 0 } else { 2000 }) as u16).collect();
+        let raw: Vec<u16> = (0..40_000u32)
+            .map(|i| (30_000 + (i * 7919) % 3001 + if (i / 900) % 2 == 0 { 0 } else { 2000 }) as u16)
+            .collect();
         let ok = report(&bytes(&raw), &bytes(&pairs::model(&raw, 16, pairs::LAYOUT)), 16, 1);
         assert!(ok.contains("PASS"), "{}", ok);
         let other = pairs::Layout { block_k: 1, order: pairs::Order::MinFirst, ..pairs::LAYOUT };

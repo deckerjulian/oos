@@ -12,12 +12,17 @@ pub enum Kind {
     /// UART character / SPI word / I2C data byte
     Data,
     /// I2C address byte (value = 7-bit address, `read` flag)
-    Addr { read: bool },
+    Addr {
+        read: bool,
+    },
     Start,
     RepStart,
     Stop,
     /// CAN identifier (value = 11- or 29-bit ID) / LIN protected identifier (value = 6-bit ID, `ok` = parity)
-    Id { ext: bool, rtr: bool },
+    Id {
+        ext: bool,
+        rtr: bool,
+    },
     /// CAN CRC-15 / LIN checksum (`ok` = it matches)
     Crc,
     /// CAN ACK slot (`ok` = acknowledged, i.e. dominant)
@@ -25,9 +30,13 @@ pub enum Kind {
     /// LIN break field
     Break,
     /// I2S audio sample (value = the word, two's complement in `bits`; `right` = right channel)
-    Sample { right: bool },
+    Sample {
+        right: bool,
+    },
     /// MIL-STD-1553 word (value = 16 bits; `cmd` = command/status sync, else data sync; `ok` = odd parity)
-    Word { cmd: bool },
+    Word {
+        cmd: bool,
+    },
     /// any other labelled field of the extended decoders (`decode_ext`, `decode_ext2`): the label is shown before the
     /// value ("CMD", "ADDR", "ROM", "SOF", "HDR", ...); `ok` = check passed. A label starting with '!' marks an
     /// event without a value (shown as a tag like Start/Stop).
@@ -55,7 +64,16 @@ pub enum Parity {
 
 /// UART: start bit, `bits` data bits LSB first, parity, 1 stop bit; idle high (`invert` = idle low). Samples each
 /// bit in its middle, timed from the start-bit edge.
-pub fn uart(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, thr: f32, hyst: f32, invert: bool) -> Vec<Packet> {
+pub fn uart(
+    v: &[f32],
+    dt: f64,
+    baud: f64,
+    bits: u32,
+    parity: Parity,
+    thr: f32,
+    hyst: f32,
+    invert: bool,
+) -> Vec<Packet> {
     let spb = 1.0 / baud / dt;
     let mut out = Vec::new();
     if spb < 2.5 {
@@ -102,7 +120,14 @@ pub fn uart(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, thr: f32, 
         if !complete || stop.is_none() {
             break;
         }
-        out.push(Packet { t0: s, t1: s + (2.0 + nb) * spb, kind: Kind::Data, value: val, value2: None, ok: stop == Some(true) && par_ok });
+        out.push(Packet {
+            t0: s,
+            t1: s + (2.0 + nb) * spb,
+            kind: Kind::Data,
+            value: val,
+            value2: None,
+            ok: stop == Some(true) && par_ok,
+        });
         busy_until = s + (1.0 + nb + 0.5) * spb;
     }
     out
@@ -131,7 +156,14 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
         match k {
             1 | 2 if at(&scl_s, t) => {
                 if k == 1 {
-                    out.push(Packet { t0: t, t1: t, kind: if in_frame { Kind::RepStart } else { Kind::Start }, value: 0, value2: None, ok: true });
+                    out.push(Packet {
+                        t0: t,
+                        t1: t,
+                        kind: if in_frame { Kind::RepStart } else { Kind::Start },
+                        value: 0,
+                        value2: None,
+                        ok: true,
+                    });
                     in_frame = true;
                     first = true;
                 } else {
@@ -152,7 +184,14 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
                 } else {
                     let ack = !b;
                     let p = if first {
-                        Packet { t0, t1: t, kind: Kind::Addr { read: bits & 1 == 1 }, value: bits >> 1, value2: None, ok: ack }
+                        Packet {
+                            t0,
+                            t1: t,
+                            kind: Kind::Addr { read: bits & 1 == 1 },
+                            value: bits >> 1,
+                            value2: None,
+                            ok: ack,
+                        }
                     } else {
                         Packet { t0, t1: t, kind: Kind::Data, value: bits, value2: None, ok: ack }
                     };
@@ -170,7 +209,18 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
 
 /// SPI: words of `bits` bits sampled on the capture edge of `mode` (0/3: rising, 1/2: falling); a word ends after
 /// `bits` edges; `cs` (active low) delimits frames, without CS a clock pause longer than `gap` samples restarts.
-pub fn spi(clk: &[f32], mosi: &[f32], miso: Option<&[f32]>, cs: Option<&[f32]>, mode: u8, bits: u32, msb_first: bool, thr: f32, hyst: f32, gap: f64) -> Vec<Packet> {
+pub fn spi(
+    clk: &[f32],
+    mosi: &[f32],
+    miso: Option<&[f32]>,
+    cs: Option<&[f32]>,
+    mode: u8,
+    bits: u32,
+    msb_first: bool,
+    thr: f32,
+    hyst: f32,
+    gap: f64,
+) -> Vec<Packet> {
     let sample_rising = matches!(mode, 0 | 3);
     let mo = states(mosi, thr, hyst);
     let mi = miso.map(|m| states(m, thr, hyst));
@@ -190,7 +240,8 @@ pub fn spi(clk: &[f32], mosi: &[f32], miso: Option<&[f32]>, cs: Option<&[f32]>, 
             continue;
         }
         // frame boundary: CS edge or clock pause since the last bit
-        let restart = if cs.is_some() { cs_e.iter().any(|c| !c.rising && c.t > last && c.t < e.t) } else { e.t - last > gap };
+        let restart =
+            if cs.is_some() { cs_e.iter().any(|c| !c.rising && c.t > last && c.t < e.t) } else { e.t - last > gap };
         if restart {
             n = 0;
         }
@@ -236,7 +287,18 @@ mod tests {
         // decoded as odd parity: parity errors
         assert!(uart(&v, dt, baud, 7, Parity::Odd, 1.65, 0.2, false).iter().all(|x| !x.ok));
         // wrong baud rate: framing errors
-        assert!(uart(&sample(|t| uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3).v(t), 0.0, dt, 1200), dt, baud * 1.5, 8, Parity::None, 1.65, 0.2, false).iter().any(|x| !x.ok));
+        assert!(uart(
+            &sample(|t| uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3).v(t), 0.0, dt, 1200),
+            dt,
+            baud * 1.5,
+            8,
+            Parity::None,
+            1.65,
+            0.2,
+            false
+        )
+        .iter()
+        .any(|x| !x.ok));
     }
 
     #[test]
@@ -351,7 +413,8 @@ pub fn can(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32, invert: bool) 
             continue;
         }
         // SOF: dominant edge after >= 7 recessive bit times (or the record start when the bus was idle before)
-        let idle_from = last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
+        let idle_from =
+            last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
         if x.t - idle_from < 7.0 * spb {
             continue;
         }
@@ -364,7 +427,12 @@ pub fn can(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32, invert: bool) 
 }
 
 /// One CAN frame from its SOF edge at `sof`: the packets and the time after the ACK delimiter.
-fn can_frame(sof: f64, spb: f64, rec: &dyn Fn(f64) -> Option<bool>, edge_near: &dyn Fn(f64, f64) -> Option<f64>) -> Option<(Vec<Packet>, f64)> {
+fn can_frame(
+    sof: f64,
+    spb: f64,
+    rec: &dyn Fn(f64) -> Option<bool>,
+    edge_near: &dyn Fn(f64, f64) -> Option<f64>,
+) -> Option<(Vec<Packet>, f64)> {
     let mut start = sof;
     let mut raw: Vec<(bool, f64, f64)> = Vec::new(); // (level, bit start, bit end)
     let mut next = || -> Option<(bool, f64, f64)> {
@@ -418,7 +486,8 @@ fn can_frame(sof: f64, spb: f64, rec: &dyn Fn(f64) -> Option<bool>, edge_near: &
         }
     }
     let val = |r: std::ops::Range<usize>| bits[r].iter().fold(0u32, |a, b| a << 1 | b.0 as u32);
-    let (id, rtr, dlc_at) = if ext { (val(1..12) << 18 | val(14..32), bits[32].0, 35) } else { (val(1..12), bits[12].0, 15) };
+    let (id, rtr, dlc_at) =
+        if ext { (val(1..12) << 18 | val(14..32), bits[32].0, 35) } else { (val(1..12), bits[12].0, 15) };
     let dlc = val(dlc_at..dlc_at + 4);
     let n = if rtr { 0 } else { dlc.min(8) as usize };
     let data_at = dlc_at + 4;
@@ -433,7 +502,14 @@ fn can_frame(sof: f64, spb: f64, rec: &dyn Fn(f64) -> Option<bool>, edge_near: &
     let (_, _, _) = next()?;
     let ack = next()?;
     let ack_del = next()?;
-    let pk = |kind, a: usize, b: usize, value: u32, ok: bool| Packet { t0: bits[a].1, t1: bits[b].2, kind, value, value2: None, ok };
+    let pk = |kind, a: usize, b: usize, value: u32, ok: bool| Packet {
+        t0: bits[a].1,
+        t1: bits[b].2,
+        kind,
+        value,
+        value2: None,
+        ok,
+    };
     let mut out = vec![Packet { t0: bits[0].1, t1: bits[0].2, kind: Kind::Start, value: 0, value2: None, ok: true }];
     let id_end = if ext { 31 } else { 11 };
     out.push(pk(Kind::Id { ext, rtr }, 1, id_end, id, true));
@@ -491,7 +567,12 @@ pub fn lin(v: &[f32], dt: f64, baud: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         }
         out.push(Packet { kind: Kind::Data, ..fr[0].clone() }); // sync
         let pid = fr[1].value as u8;
-        out.push(Packet { kind: Kind::Id { ext: false, rtr: false }, value: (pid & 0x3f) as u32, ok: lin_pid(pid & 0x3f) == pid, ..fr[1].clone() });
+        out.push(Packet {
+            kind: Kind::Id { ext: false, rtr: false },
+            value: (pid & 0x3f) as u32,
+            ok: lin_pid(pid & 0x3f) == pid,
+            ..fr[1].clone()
+        });
         if fr.len() >= 3 {
             let data: Vec<u8> = fr[2..fr.len() - 1].iter().map(|p| p.value as u8).collect();
             for p in &fr[2..fr.len() - 1] {
@@ -596,8 +677,9 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         let first_pos = !b.rising; // positive before the middle edge
-        // the bus must really be driven (beyond the hysteresis), not idle at 0 V where the comparator keeps its state
-        let driven = |t: f64, lv: bool| v.get(t as usize).map_or(false, |&x| if lv { x > thr + hyst } else { x < thr - hyst });
+                                   // the bus must really be driven (beyond the hysteresis), not idle at 0 V where the comparator keeps its state
+        let driven =
+            |t: f64, lv: bool| v.get(t as usize).map_or(false, |&x| if lv { x > thr + hyst } else { x < thr - hyst });
         let held = |from: f64, to: f64, lv: bool| (0..=6).all(|i| driven(from + (to - from) * i as f64 / 6.0, lv));
         if !held(mid - 1.3 * us, mid - 0.15 * us, first_pos) || !held(mid + 0.15 * us, mid + 1.3 * us, !first_pos) {
             continue;
@@ -624,7 +706,14 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         ok &= ones % 2 == 1;
-        out.push(Packet { t0: mid - 1.5 * us, t1: start + 17.0 * us, kind: Kind::Word { cmd: first_pos }, value: val, value2: None, ok });
+        out.push(Packet {
+            t0: mid - 1.5 * us,
+            t1: start + 17.0 * us,
+            kind: Kind::Word { cmd: first_pos },
+            value: val,
+            value2: None,
+            ok,
+        });
         busy_until = start + 17.0 * us - 0.5 * us;
     }
     out

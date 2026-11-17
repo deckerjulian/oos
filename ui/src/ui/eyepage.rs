@@ -22,14 +22,58 @@ const REFRESH: f64 = 0.2;
 /// Figures on the eye page, in the order the boxes draw them. The long form is what `:EYE:ITEM?` accepts
 /// (the upper-case letters are the short form). A missing figure is stored as NaN.
 pub const EYE_ITEMS: &[&str] = &[
-    "ONE", "ZERO", "AMPLitude", "CROSsing", "RISe", "FALL", "HEIGht", "WIDTh", "Q", "HBER", "RECords", "EDGes", "UI", "SAMPling",
-    "TPP", "TRMS", "DCD", "DDJ", "PJRms", "PRMS", "C2C", "F2", "F4", "F8", "SRJ", "PN", "TPRE", "TPOST", "PPRE", "PPOST", "DCCM", "ACCM", "XOVer", "TNT", "SSCPpm", "SSCRate",
-    "TJ", "RJ", "DJ", "OPENing", "SEEN", "TJBer", "EWBer", "J2", "J9", "NPJ",
+    "ONE",
+    "ZERO",
+    "AMPLitude",
+    "CROSsing",
+    "RISe",
+    "FALL",
+    "HEIGht",
+    "WIDTh",
+    "Q",
+    "HBER",
+    "RECords",
+    "EDGes",
+    "UI",
+    "SAMPling",
+    "TPP",
+    "TRMS",
+    "DCD",
+    "DDJ",
+    "PJRms",
+    "PRMS",
+    "C2C",
+    "F2",
+    "F4",
+    "F8",
+    "SRJ",
+    "PN",
+    "TPRE",
+    "TPOST",
+    "PPRE",
+    "PPOST",
+    "DCCM",
+    "ACCM",
+    "XOVer",
+    "TNT",
+    "SSCPpm",
+    "SSCRate",
+    "TJ",
+    "RJ",
+    "DJ",
+    "OPENing",
+    "SEEN",
+    "TJBer",
+    "EWBer",
+    "J2",
+    "J9",
+    "NPJ",
 ];
 
 /// The figures `eye_facts` adds beside the ones `text_jitter` and `text_eye` already stored.
 const EYE_FACTS: &[&str] = &[
-    "HBER", "F2", "F4", "F8", "SRJ", "PN", "TPRE", "TPOST", "PPRE", "PPOST", "DCCM", "ACCM", "XOVer", "TNT", "SSCPpm", "SSCRate", "TJBer", "EWBer", "J2", "J9", "NPJ",
+    "HBER", "F2", "F4", "F8", "SRJ", "PN", "TPRE", "TPOST", "PPRE", "PPOST", "DCCM", "ACCM", "XOVer", "TNT", "SSCPpm",
+    "SSCRate", "TJBer", "EWBer", "J2", "J9", "NPJ",
 ];
 /// TIE values kept, the newest.
 const POOL: usize = 16384;
@@ -86,7 +130,12 @@ pub(super) struct Layout {
 pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     if fill {
         let empty = Rect::new(a.x, a.y, 0, 0);
-        let plot = Rect::new(a.x + EYE_GUTTER, a.y + EYE_TITLE, (a.w - EYE_GUTTER - 16).max(1), (a.h - EYE_TITLE - EYE_FOOT).max(1));
+        let plot = Rect::new(
+            a.x + EYE_GUTTER,
+            a.y + EYE_TITLE,
+            (a.w - EYE_GUTTER - 16).max(1),
+            (a.h - EYE_TITLE - EYE_FOOT).max(1),
+        );
         return Layout {
             eye: a,
             plot,
@@ -106,7 +155,8 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     let lw = a.w * 57 / 100;
     let (rx, rw) = (a.x + lw + GAP, a.w - lw - GAP);
     let bottom = a.y + a.h;
-    let rows = |pct: i32, most: i32| if a.h < BOXES_MIN_H { 0 } else { ((a.h * pct / 100 - BOX_HEAD) / ROW).clamp(3, most) };
+    let rows =
+        |pct: i32, most: i32| if a.h < BOXES_MIN_H { 0 } else { ((a.h * pct / 100 - BOX_HEAD) / ROW).clamp(3, most) };
     let (fig_rows, jit_rows) = (rows(28, 8), rows(42, 16));
     let box_h = |r: i32| if r == 0 { 0 } else { BOX_HEAD + r * ROW };
     let (fh, jh) = (box_h(fig_rows), box_h(jit_rows));
@@ -114,7 +164,12 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     let jit = Rect::new(rx, bottom - jh, rw, jh);
     let eye = Rect::new(a.x, a.y, lw, a.h - fh - if fh > 0 { GAP } else { 0 });
     // the tab on the right edge of the eye has its own margin
-    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, eye.w - EYE_GUTTER - 10 - (TAB_W - 4), eye.h - EYE_TITLE - EYE_FOOT);
+    let plot = Rect::new(
+        eye.x + EYE_GUTTER,
+        eye.y + EYE_TITLE,
+        eye.w - EYE_GUTTER - 10 - (TAB_W - 4),
+        eye.h - EYE_TITLE - EYE_FOOT,
+    );
     let head = Rect::new(rx, a.y, rw - 54, HEAD_H);
     let (gy, gh) = (a.y + HEAD_H, a.h - HEAD_H - jh - if jh > 0 { GAP } else { 0 });
     let (cw, ch) = ((rw - GAP) / 2, (gh - GAP) / 2);
@@ -125,7 +180,14 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
         Rect::new(x, y, w, h)
     };
     let charts = [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)];
-    let plots = charts.map(|c| Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, c.w - CHART_GUTTER - 10, (c.h - CHART_TITLE - CHART_FOOT).max(1)));
+    let plots = charts.map(|c| {
+        Rect::new(
+            c.x + CHART_GUTTER,
+            c.y + CHART_TITLE,
+            c.w - CHART_GUTTER - 10,
+            (c.h - CHART_TITLE - CHART_FOOT).max(1),
+        )
+    });
     Layout { eye, plot, head, charts, plots, fig, jit, fig_rows, jit_rows }
 }
 
@@ -179,7 +241,12 @@ fn charts_shown(l: &Layout, big: Option<u8>) -> ([Rect; 4], [Rect; 4]) {
         let (x0, y0) = (l.charts[0].x, l.charts[0].y);
         let (x1, y1) = (l.charts[1].x + l.charts[1].w, l.charts[2].y + l.charts[2].h);
         charts[k] = Rect::new(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1));
-        plots[k] = Rect::new(charts[k].x + CHART_GUTTER, charts[k].y + CHART_TITLE, (charts[k].w - CHART_GUTTER - 6).max(1), (charts[k].h - CHART_TITLE - CHART_FOOT).max(1));
+        plots[k] = Rect::new(
+            charts[k].x + CHART_GUTTER,
+            charts[k].y + CHART_TITLE,
+            (charts[k].w - CHART_GUTTER - 6).max(1),
+            (charts[k].h - CHART_TITLE - CHART_FOOT).max(1),
+        );
     }
     (charts, plots)
 }
@@ -201,7 +268,12 @@ fn layout_stacked(a: Rect) -> Layout {
     let charts_on = a.w >= 280 && a.h >= 240;
     let ch = if charts_on { (a.h * 42 / 100).clamp(120, 200) } else { 0 };
     let eye = Rect::new(a.x, a.y, a.w, (a.h - ch - if ch > 0 { GAP } else { 0 }).max(1));
-    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, (eye.w - EYE_GUTTER - 10 - if charts_on { TAB_W - 4 } else { 0 }).max(1), (eye.h - EYE_TITLE - EYE_FOOT).max(1));
+    let plot = Rect::new(
+        eye.x + EYE_GUTTER,
+        eye.y + EYE_TITLE,
+        (eye.w - EYE_GUTTER - 10 - if charts_on { TAB_W - 4 } else { 0 }).max(1),
+        (eye.h - EYE_TITLE - EYE_FOOT).max(1),
+    );
     let gy = eye.y + eye.h + if ch > 0 { GAP } else { 0 };
     let (cw, rh) = if ch > 0 { ((a.w - GAP) / 2, (ch - GAP) / 2) } else { (0, 0) };
     let cell = |c: i32, r: i32| {
@@ -218,7 +290,12 @@ fn layout_stacked(a: Rect) -> Layout {
         if c.w < 40 {
             return Rect::new(c.x, c.y, 0, 0);
         }
-        Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, (c.w - CHART_GUTTER - 10).max(1), (c.h - CHART_TITLE - CHART_FOOT).max(1))
+        Rect::new(
+            c.x + CHART_GUTTER,
+            c.y + CHART_TITLE,
+            (c.w - CHART_GUTTER - 10).max(1),
+            (c.h - CHART_TITLE - CHART_FOOT).max(1),
+        )
     });
     Layout {
         eye,
@@ -436,7 +513,13 @@ impl Page {
         let peak = e.hits.iter().copied().max().unwrap_or(0);
         let k = 255.0 / (1.0 + peak as f32).ln().max(1e-6);
         self.img.clear();
-        self.img.extend(e.hits.iter().map(|&h| if h == 0 { 0 } else { pal[(((1.0 + h as f32).ln() * k) as usize).min(255)] }));
+        self.img.extend(e.hits.iter().map(|&h| {
+            if h == 0 {
+                0
+            } else {
+                pal[(((1.0 + h as f32).ln() * k) as usize).min(255)]
+            }
+        }));
         self.img_w = e.w;
     }
 
@@ -486,7 +569,8 @@ impl Page {
             return (f64::NAN, why);
         }
         let (df, s) = eye::tie_spectrum(&tr[..tr.len().min(SPECTRUM_UI)], clk.period);
-        let Some((k, &pk)) = s.iter().enumerate().skip(2).max_by(|a, b| a.1.total_cmp(b.1)).filter(|p| *p.1 > 0.0) else {
+        let Some((k, &pk)) = s.iter().enumerate().skip(2).max_by(|a, b| a.1.total_cmp(b.1)).filter(|p| *p.1 > 0.0)
+        else {
             c.empty = "No jitter in the record".into();
             return (0.0, String::new());
         };
@@ -522,7 +606,20 @@ impl Page {
         let ddj = self.means.ddj();
         let dcd = self.means.dcd();
         self.readings.clear();
-        for (name, v) in [("TPP", j.pp), ("TRMS", j.rms), ("DCD", dcd), ("DDJ", ddj), ("PJRms", pj), ("PRMS", j.period_jitter_rms), ("C2C", j.c2c_rms), ("TJ", j.tj_pp), ("RJ", j.rj_rms), ("DJ", j.dj_pp), ("OPENing", self.tub.opening), ("SEEN", self.tub.seen)] {
+        for (name, v) in [
+            ("TPP", j.pp),
+            ("TRMS", j.rms),
+            ("DCD", dcd),
+            ("DDJ", ddj),
+            ("PJRms", pj),
+            ("PRMS", j.period_jitter_rms),
+            ("C2C", j.c2c_rms),
+            ("TJ", j.tj_pp),
+            ("RJ", j.rj_rms),
+            ("DJ", j.dj_pp),
+            ("OPENing", self.tub.opening),
+            ("SEEN", self.tub.seen),
+        ] {
             self.put_fig(name, v);
         }
         self.measured = vec![
@@ -531,13 +628,19 @@ impl Page {
             figure("DCD", dcd, "s", Kind::Measured, &means),
             figure("DDJ", ddj, "s", Kind::Measured, if dcd.is_finite() { "one run length" } else { &means }),
             // no line over the floor is a finding, not a jitter of 0 s
-            if pj == 0.0 { cell("PJ rms", "no lines".into(), Kind::Missing) } else { figure("PJ rms", pj, "s", Kind::Measured, if pj_why.is_empty() { &few } else { "needs 64 UI" }) },
+            if pj == 0.0 {
+                cell("PJ rms", "no lines".into(), Kind::Missing)
+            } else {
+                figure("PJ rms", pj, "s", Kind::Measured, if pj_why.is_empty() { &few } else { "needs 64 UI" })
+            },
             figure("Period rms", j.period_jitter_rms, "s", Kind::Measured, &few),
             figure("Cycle-cycle", j.c2c_rms, "s", Kind::Measured, &few),
         ];
         let at_most = |v: f64| format!("under {}", si(v, "s"));
         self.model = match j.fit {
-            JitterFit::TooFew => ["TJ 1e-12", "RJ rms", "DJ", "Opening"].iter().map(|l| cell(l, few.clone(), Kind::Missing)).collect(),
+            JitterFit::TooFew => {
+                ["TJ 1e-12", "RJ rms", "DJ", "Opening"].iter().map(|l| cell(l, few.clone(), Kind::Missing)).collect()
+            }
             JitterFit::Limit => vec![
                 cell("TJ 1e-12", at_most(j.tj_pp), Kind::Model),
                 cell("RJ rms", at_most(j.rj_rms), Kind::Model),
@@ -565,18 +668,48 @@ impl Page {
             (_, true) => format!("{}  \u{3c3} < {}", si(v, "V"), si(row, "V")),
             _ => format!("{}  \u{3c3} {}", si(v, "V"), si(s, "V")),
         };
-        let tr = if m.rise.is_finite() && m.fall.is_finite() { format!("{} / {}", si(m.rise, "s"), si(m.fall, "s")) } else { "not resolved".to_string() };
-        for (name, v) in [("ONE", m.one), ("ZERO", m.zero), ("AMPLitude", m.amplitude), ("CROSsing", m.crossing_pct), ("RISe", m.rise), ("FALL", m.fall), ("HEIGht", m.height), ("WIDTh", m.width), ("Q", m.q_factor), ("RECords", self.records as f64), ("EDGes", self.pool.len() as f64), ("UI", self.ui.mean()), ("SAMPling", dt)] {
+        let tr = if m.rise.is_finite() && m.fall.is_finite() {
+            format!("{} / {}", si(m.rise, "s"), si(m.fall, "s"))
+        } else {
+            "not resolved".to_string()
+        };
+        for (name, v) in [
+            ("ONE", m.one),
+            ("ZERO", m.zero),
+            ("AMPLitude", m.amplitude),
+            ("CROSsing", m.crossing_pct),
+            ("RISe", m.rise),
+            ("FALL", m.fall),
+            ("HEIGht", m.height),
+            ("WIDTh", m.width),
+            ("Q", m.q_factor),
+            ("RECords", self.records as f64),
+            ("EDGes", self.pool.len() as f64),
+            ("UI", self.ui.mean()),
+            ("SAMPling", dt),
+        ] {
             self.put_fig(name, v);
         }
         self.eye_measured = vec![
             cell("One", level(m.one, m.sigma_one), if m.one.is_finite() { Kind::Measured } else { Kind::Missing }),
             cell("Zero", level(m.zero, m.sigma_zero), if m.zero.is_finite() { Kind::Measured } else { Kind::Missing }),
             figure("Amplitude", m.amplitude, "V", Kind::Measured, empty),
-            if m.crossing_pct.is_finite() { cell("Crossing", format!("{:.1} %", m.crossing_pct), Kind::Measured) } else { cell("Crossing", empty.into(), Kind::Missing) },
-            cell("Rise / fall", tr, if m.rise.is_finite() && m.fall.is_finite() { Kind::Measured } else { Kind::Missing }),
+            if m.crossing_pct.is_finite() {
+                cell("Crossing", format!("{:.1} %", m.crossing_pct), Kind::Measured)
+            } else {
+                cell("Crossing", empty.into(), Kind::Missing)
+            },
+            cell(
+                "Rise / fall",
+                tr,
+                if m.rise.is_finite() && m.fall.is_finite() { Kind::Measured } else { Kind::Missing },
+            ),
         ];
-        let q = if m.sigma_one + m.sigma_zero < row { cell("Q", format!("over {:.0}", m.amplitude / row), Kind::Model) } else { cell("Q", format!("{:.1}", m.q_factor), Kind::Model) };
+        let q = if m.sigma_one + m.sigma_zero < row {
+            cell("Q", format!("over {:.0}", m.amplitude / row), Kind::Model)
+        } else {
+            cell("Q", format!("{:.1}", m.q_factor), Kind::Model)
+        };
         self.eye_model = vec![
             figure("Height", m.height, "V", Kind::Model, empty),
             figure("Width", m.width, "s", Kind::Model, empty),
@@ -588,7 +721,11 @@ impl Page {
             cell("Records", format!("{}", self.records), Kind::Measured),
             cell("Edges", format!("{} of {}", self.pool.len(), self.edges), Kind::Measured),
             figure("UI mean", self.ui.mean(), "s", Kind::Measured, empty),
-            if self.rms.n > 0 { cell("TIE rms", format!("{} .. {}", si(self.rms.min, "s"), si(self.rms.max, "s")), Kind::Measured) } else { cell("TIE rms", format!("needs {} edges", eye::MIN_EDGES), Kind::Missing) },
+            if self.rms.n > 0 {
+                cell("TIE rms", format!("{} .. {}", si(self.rms.min, "s"), si(self.rms.max, "s")), Kind::Measured)
+            } else {
+                cell("TIE rms", format!("needs {} edges", eye::MIN_EDGES), Kind::Missing)
+            },
             cell("Sampling", format!("{} ({:.0}/UI)", si(dt, "s"), period / dt), Kind::Measured),
         ];
     }
@@ -602,7 +739,9 @@ impl Page {
             match j.fit {
                 JitterFit::TooFew => format!("Needs {} edges for a model", eye::MIN_EDGES),
                 JitterFit::Quiet => "No jitter above the time resolution".into(),
-                JitterFit::Limit if n < eye::TAIL_EDGES => format!("Upper limits: tail fit from {} edges", eye::TAIL_EDGES),
+                JitterFit::Limit if n < eye::TAIL_EDGES => {
+                    format!("Upper limits: tail fit from {} edges", eye::TAIL_EDGES)
+                }
                 JitterFit::Limit => "Upper limits: the TIE has no Gaussian tails".into(),
                 JitterFit::Tails => "Model: dual-Dirac fit of the TIE tails".into(),
             }
@@ -617,8 +756,11 @@ impl Ui {
         match id {
             WaveId::Ref(i) => {
                 let r = self.refs.get(i)?.as_ref()?;
-                (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0)
-                    .then(|| WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt })
+                (r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0).then(|| WaveSamp {
+                    v: r.v.as_ref().clone(),
+                    t0: self.source_time_origin(id, r.t0),
+                    dt: r.dt,
+                })
             }
             WaveId::Ch(c) => {
                 let (values, dt, t0) = self.eye_channel_samples(rec, c)?;
@@ -630,14 +772,23 @@ impl Ui {
     /// Eye timing always uses the entire retained native acquisition, never the
     /// interpolated screen record or its current measurement/view gate.
     fn eye_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
-        if c >= n_ch() || !self.m.ch[c].on { return None; }
+        if c >= n_ch() || !self.m.ch[c].on {
+            return None;
+        }
         let (values, dt, t0) = if let Some(raw) = &rec.raw {
-            if raw.frame.envelope || self.m.acq == AcqMode::HiRes { return None; }
+            if raw.frame.envelope || self.m.acq == AcqMode::HiRes {
+                return None;
+            }
             let values = raw.frame.ch.get(c)?;
             (values.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt)
-        } else { (rec.ch.get(c)?.as_slice(), rec.dt, rec.t0) };
-        (values.len() >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite())
-            .then_some((values, dt, self.source_time_origin(WaveId::Ch(c), t0)))
+        } else {
+            (rec.ch.get(c)?.as_slice(), rec.dt, rec.t0)
+        };
+        (values.len() >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite()).then_some((
+            values,
+            dt,
+            self.source_time_origin(WaveId::Ch(c), t0),
+        ))
     }
 
     fn eye_input_problem(&self, rec: &Record, id: WaveId) -> Option<&'static str> {
@@ -654,7 +805,10 @@ impl Ui {
 
     fn eye_source_ready(&self, rec: &Record, id: WaveId) -> bool {
         match id {
-            WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref)
+            WaveId::Ref(i) => self
+                .refs
+                .get(i)
+                .and_then(Option::as_ref)
                 .is_some_and(|r| r.v.len() >= 2 && r.dt.is_finite() && r.dt > 0.0),
             WaveId::Ch(i) => self.eye_channel_samples(rec, i).is_some(),
         }
@@ -692,7 +846,9 @@ impl Ui {
             let t0 = self.source_time_origin(source, r.t0);
             let data_identity = if self.session_is_sim && i == self.m.sim_slot {
                 self.replay.sim_revision ^ r.dt.to_bits() ^ t0.to_bits()
-            } else { ref_fp(&r.v, r.dt, t0) };
+            } else {
+                ref_fp(&r.v, r.dt, t0)
+            };
             h = h.rotate_left(13) ^ data_identity ^ i as u64;
             h = h.rotate_left(13) ^ r.vpd.to_bits() as u64 ^ ((r.offset.to_bits() as u64) << 32);
         }
@@ -720,13 +876,18 @@ impl Ui {
     pub(super) fn eye_update(&mut self, rec: &Record) {
         for id in [Some(self.m.eye_src), self.m.eye_b, self.m.eye_rail].into_iter().flatten() {
             if let Some(problem) = self.eye_input_problem(rec, id) {
-                self.azr.eye = None; self.azr.eye_res = None; self.azr.eye_auto.summary = None;
+                self.azr.eye = None;
+                self.azr.eye_res = None;
+                self.azr.eye_auto.summary = None;
                 self.azr.eye_auto.invalidate();
-                self.azr.page = Page::default(); self.azr.page.status = [self.wave_name(id), problem.into()];
+                self.azr.page = Page::default();
+                self.azr.page.status = [self.wave_name(id), problem.into()];
                 return;
             }
         }
-        if self.eye_auto_update(rec) { return; }
+        if self.eye_auto_update(rec) {
+            return;
+        }
         let id = self.m.eye_src;
         let clk_id = self.m.eye_b;
         if !self.eye_source_ready(rec, id) {
@@ -760,8 +921,11 @@ impl Ui {
         let reference_changed = fp.is_some() && fp != self.azr.eye_ref && !sim_capture;
         let (v, clk_v, dt, t0) = if let Some(b) = clk_id {
             let Some((v, clock, dt, t0)) = self.eye_pair(rec, id, b) else {
-                self.azr.eye = None; self.azr.eye_res = None; self.azr.page = Page::default();
-                self.azr.page.status = ["No overlapping Eye data/clock interval".into(), "Check source timing and deskew".into()];
+                self.azr.eye = None;
+                self.azr.eye_res = None;
+                self.azr.page = Page::default();
+                self.azr.page.status =
+                    ["No overlapping Eye data/clock interval".into(), "Check source timing and deskew".into()];
                 return;
             };
             (v, Some(clock), dt, t0)
@@ -778,23 +942,28 @@ impl Ui {
         let (clk_vpd, _) = self.eye_scale(recov_id);
         // A strobe idles near one rail between bursts; histogram top/base sit on that rail and the
         // comparator chatters. Peak-to-peak with a wide hysteresis keeps the burst edges.
-        let (thr, hyst) = if let Some(summary) = self.azr.eye_auto.summary.as_ref().filter(|_| self.azr.eye_auto.enabled) {
-            (summary.threshold, summary.hysteresis)
-        } else if clk_id.is_some() {
-            let (lo, hi) = (st.vmin, st.vmax);
-            (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
-        } else {
-            let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
-            (thr, 0.1 * clk_vpd)
-        };
+        let (thr, hyst) =
+            if let Some(summary) = self.azr.eye_auto.summary.as_ref().filter(|_| self.azr.eye_auto.enabled) {
+                (summary.threshold, summary.hysteresis)
+            } else if clk_id.is_some() {
+                let (lo, hi) = (st.vmin, st.vmax);
+                (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
+            } else {
+                let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
+                (thr, 0.1 * clk_vpd)
+            };
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         // An idle live bus keeps its accumulated eye. A replacement reference
         // without edges must not display the previous reference's results.
         let recovered = if self.azr.eye_auto.enabled && clk_id.is_none() {
             eye::recover_clock_pll(recov, dt, thr, hyst, rate, 0.0, true)
-        } else { eye::recover_clock(recov, dt, thr, hyst, rate) };
+        } else {
+            eye::recover_clock(recov, dt, thr, hyst, rate)
+        };
         let Some(clk) = recovered else {
-            if reference_changed { self.invalidate_reference_eye(); }
+            if reference_changed {
+                self.invalidate_reference_eye();
+            }
             self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
         };
@@ -802,11 +971,16 @@ impl Ui {
         let left = self.azr.eye.as_ref().is_some_and(|e| {
             let (lo, hi) = (e.v_min as f64, e.v_max as f64);
             let (span, swing) = (hi - lo, (data_st.vmax - data_st.vmin) as f64);
-            data_st.vmax as f64 > hi + EYE_OUT * span || (data_st.vmin as f64) < lo - EYE_OUT * span || swing < EYE_SHRUNK * span
+            data_st.vmax as f64 > hi + EYE_OUT * span
+                || (data_st.vmin as f64) < lo - EYE_OUT * span
+                || swing < EYE_SHRUNK * span
         });
         if self.azr.eye.is_none() || self.azr.eye_key != key || left || reference_changed {
             // the eye fills its plot whatever the scale of the channel; the signal itself sets the range
-            let (lo, hi) = v.iter().filter(|x| x.is_finite()).fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x as f64), b.max(x as f64)));
+            let (lo, hi) = v
+                .iter()
+                .filter(|x| x.is_finite())
+                .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x as f64), b.max(x as f64)));
             let (lo, hi, step) = eye_range(lo, hi);
             self.azr.eye = Some(eye::Eye::new(pw as usize, ph as usize, 2, lo as f32, hi as f32));
             self.azr.eye_key = key;
@@ -844,7 +1018,9 @@ impl Ui {
             self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
             return;
         }
-        if sim_capture { self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision)); }
+        if sim_capture {
+            self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision));
+        }
         self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
         self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
@@ -856,7 +1032,16 @@ impl Ui {
     }
 
     /// The heavy part of the page, from the pool and the last record.
-    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], dt: f64, t0: f64, lay: &Layout, wave: &[f32], rec: &Record) {
+    fn eye_refresh(
+        &mut self,
+        clk: &eye::Clock,
+        tie: &[f64],
+        dt: f64,
+        t0: f64,
+        lay: &Layout,
+        wave: &[f32],
+        rec: &Record,
+    ) {
         let clock = if let Some(b) = self.m.eye_b {
             format!("clock from {}", self.wave_name(b))
         } else if self.m.eye_from_record {
@@ -866,7 +1051,15 @@ impl Ui {
         } else {
             "clock fitted to the edges".into()
         };
-        let source = if let WaveId::Ref(i) = self.m.eye_src { format!("{} · {}", self.wave_name(self.m.eye_src), if self.session_is_sim && i == self.m.sim_slot { "live SIM captures" } else { "fixed full record" }) } else { self.wave_name(self.m.eye_src) };
+        let source = if let WaveId::Ref(i) = self.m.eye_src {
+            format!(
+                "{} · {}",
+                self.wave_name(self.m.eye_src),
+                if self.session_is_sim && i == self.m.sim_slot { "live SIM captures" } else { "fixed full record" }
+            )
+        } else {
+            self.wave_name(self.m.eye_src)
+        };
         let title = format!("{} \u{b7} {} \u{b7} {}", source, si(1.0 / clk.period, "b/s"), clock);
         let Some(e) = self.azr.eye.as_ref() else { return };
         let meas = e.measure(clk.period);
@@ -899,13 +1092,36 @@ impl Ui {
     }
 
     /// Gather optional companions; the DSP/figure builder is also used off-thread.
-    fn eye_facts(&mut self, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, t0: f64, rec: &Record, means: &EdgeMeans) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    fn eye_facts(
+        &mut self,
+        clk: &eye::Clock,
+        tie: &[f64],
+        trend: &[f32],
+        j: &Jitter,
+        meas: &eye::EyeMeas,
+        wave: &[f32],
+        dt: f64,
+        t0: f64,
+        rec: &Record,
+        means: &EdgeMeans,
+    ) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
         let settings = FactSettings::from(&self.m);
         let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| eye_on_grid(s, t0, dt, wave.len()));
         let companion = self.m.eye_b.and_then(|id| self.eye_pair(rec, self.m.eye_src, id));
-        populate_eye_facts(&mut self.azr.page, settings, clk, tie, trend, j, meas, wave, dt, means,
+        populate_eye_facts(
+            &mut self.azr.page,
+            settings,
+            clk,
+            tie,
+            trend,
+            j,
+            meas,
+            wave,
+            dt,
+            means,
             rail.as_ref().map(|v| (v.as_slice(), dt)),
-            companion.as_ref().map(|(a, b, dt, _)| (a.as_slice(), b.as_slice(), *dt)))
+            companion.as_ref().map(|(a, b, dt, _)| (a.as_slice(), b.as_slice(), *dt)),
+        )
     }
 
     /// Where the column sits this frame: 0 has left the screen, 1 is home.
@@ -961,21 +1177,34 @@ impl Ui {
 
     pub(super) fn eye_pane_close(&self) -> Rect {
         let a = self.eye_pane_rect();
-        let full=self.full_btn().0;
-        let right=if full.y<a.y+workspace::HEADER && full.y+full.h>a.y && full.x>a.x && full.x<a.x+a.w {full.x-8} else {a.x+a.w-2};
-        Rect::new(right-48, a.y + 1, 48, workspace::HEADER - 2)
+        let full = self.full_btn().0;
+        let right = if full.y < a.y + workspace::HEADER && full.y + full.h > a.y && full.x > a.x && full.x < a.x + a.w {
+            full.x - 8
+        } else {
+            a.x + a.w - 2
+        };
+        Rect::new(right - 48, a.y + 1, 48, workspace::HEADER - 2)
     }
 
     pub(super) fn eye_set_place(&mut self, place: EyePlace) {
         let previous = self.m.eye_place;
-        if place == EyePlace::Full { self.workspace.eye_float = None; self.workspace.eye_left = false; }
+        if place == EyePlace::Full {
+            self.workspace.eye_float = None;
+            self.workspace.eye_left = false;
+        }
         self.m.eye_place = place;
         if place == EyePlace::Under && self.eye_below() == 0 {
             self.m.eye_place = EyePlace::Side;
-            self.toast("Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.");
+            self.toast(
+                "Eye stays beside the trace: not enough room below. Hide the logic lanes or measurements to use Under.",
+            );
         }
-        if self.m.eye_place == previous { return; }
-        if !self.azr.eye_auto.enabled && !self.auto_eye_large() { self.azr.eye = None; }
+        if self.m.eye_place == previous {
+            return;
+        }
+        if !self.azr.eye_auto.enabled && !self.auto_eye_large() {
+            self.azr.eye = None;
+        }
         self.relayout();
         self.analyzer_update();
     }
@@ -1000,11 +1229,16 @@ impl Ui {
         // Selection is intentional: never switch away from a flat/weak selected
         // signal merely because another visible channel has an easier clock.
         let id = self.selected_workspace_source().or_else(|| {
-            (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch)
-                .chain((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(WaveId::Ref)).next()
+            (0..n_ch())
+                .filter(|&c| self.m.ch[c].on)
+                .map(WaveId::Ch)
+                .chain((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(WaveId::Ref))
+                .next()
         });
         self.close_menu();
-        if let Some(id) = id { self.m.eye_src = id; }
+        if let Some(id) = id {
+            self.m.eye_src = id;
+        }
         self.m.eye_from_record = true;
         self.m.eye_rate = 0.0;
         self.m.eye_b = None;
@@ -1020,7 +1254,11 @@ impl Ui {
         self.relayout();
         let rec = self.last[0].clone().unwrap_or_else(Self::blank_record);
         self.eye_update(&rec);
-        self.toast(if id.is_some() { "Automatic Eye/Jitter on the selected source" } else { "No active or loaded waveform: select a source" });
+        self.toast(if id.is_some() {
+            "Automatic Eye/Jitter on the selected source"
+        } else {
+            "No active or loaded waveform: select a source"
+        });
     }
 
     /// The eye in its pane, with Side / Under and Close on the bar. The trace stays in the plot.
@@ -1062,19 +1300,26 @@ impl Ui {
         }
         let source = self.eye_header_source().contains(x, y);
         self.open_menu(MenuId::Eye);
-        if source { self.open_picker(Item::EyeSrc); }
+        if source {
+            self.open_picker(Item::EyeSrc);
+        }
     }
 
     pub(super) fn eye_rate_caption(&self) -> String {
         if self.m.eye_rate > 0.0 {
             format!("{}{}", if self.azr.eye_auto.enabled { "Est." } else { "" }, si_short(self.m.eye_rate, "b/s"))
-        } else { "Auto rate".into() }
+        } else {
+            "Auto rate".into()
+        }
     }
 
     fn draw_eye_bar(&self, cv: &mut Canvas, a: Rect) {
         let close = self.eye_pane_close();
         cv.fill(Rect::new(a.x + 1, a.y + 1, a.w - 2, workspace::HEADER - 1), BAR);
-        let source = match self.m.eye_src { WaveId::Ch(c) => format!("CH{}", c + 1), WaveId::Ref(i) => format!("R{}", i + 1) };
+        let source = match self.m.eye_src {
+            WaveId::Ch(c) => format!("CH{}", c + 1),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        };
         let rate = self.eye_rate_caption();
         let pick = self.eye_header_source();
         btn(cv, pick, BTN, BTN_BORDER);
@@ -1108,7 +1353,13 @@ impl Ui {
         cv.fill(a, BG);
         self.eye_plot(cv, &l);
         if l.fig_rows > 0 {
-            self.eye_box(cv, l.fig, "Eye figures", l.fig_rows, &[("Measured", &p.eye_measured), ("Model", &p.eye_model), ("Records", &p.stats)]);
+            self.eye_box(
+                cv,
+                l.fig,
+                "Eye figures",
+                l.fig_rows,
+                &[("Measured", &p.eye_measured), ("Model", &p.eye_model), ("Records", &p.stats)],
+            );
         }
         if l.charts[0].x < a.x + a.w {
             cv.set_clip(a);
@@ -1133,7 +1384,13 @@ impl Ui {
                 }
             }
             if l.jit_rows > 0 {
-                self.eye_box(cv, l.jit, "Jitter breakdown", l.jit_rows, &[("Measured", &p.measured), ("Model", &p.model)]);
+                self.eye_box(
+                    cv,
+                    l.jit,
+                    "Jitter breakdown",
+                    l.jit_rows,
+                    &[("Measured", &p.measured), ("Model", &p.model)],
+                );
             }
             cv.no_clip();
         }
@@ -1183,7 +1440,13 @@ impl Ui {
             cv.vline(x, r.y, r.y + r.h - 1, if k % 2 == 1 { GRID_AXIS } else { GRID_LINE });
             let s = ["-0.5", "0", "0.5", "1", "1.5 UI"][k as usize];
             let w = f.s.width(s);
-            let tx = if k == 4 { x - w } else if k == 0 { x } else { x - w / 2 };
+            let tx = if k == 4 {
+                x - w
+            } else if k == 0 {
+                x
+            } else {
+                x - w / 2
+            };
             cv.text(&f.s, tx, r.y + r.h + 13, s, AXIS_TEXT);
         }
         if let Some(e) = &self.azr.eye {
@@ -1195,7 +1458,13 @@ impl Ui {
                 cv.hline(r.x, r.x + r.w - 1, y, GRID_LINE);
                 // a sum of steps misses zero by a rounding error
                 let s = si_short(if v.abs() < 1e-3 * p.vstep { 0.0 } else { v }, "V");
-                let ty = if k == 0 { y + 10 } else if k == lines { y } else { y + 4 };
+                let ty = if k == 0 {
+                    y + 10
+                } else if k == lines {
+                    y
+                } else {
+                    y + 4
+                };
                 cv.text(&f.s, r.x - 4 - f.s.width(&s), ty, &s, AXIS_TEXT);
             }
             blit_hits(cv, r, &p.img, p.img_w);
@@ -1349,16 +1618,43 @@ impl Ui {
 }
 
 #[derive(Clone, Copy)]
-struct FactSettings { ber: f64, npj: bool, pn_lo: f64, pn_hi: f64, notch: f64, hp: bool }
+struct FactSettings {
+    ber: f64,
+    npj: bool,
+    pn_lo: f64,
+    pn_hi: f64,
+    notch: f64,
+    hp: bool,
+}
 
 impl From<&Model> for FactSettings {
     fn from(m: &Model) -> Self {
-        Self { ber: m.eye_ber, npj: m.eye_npj, pn_lo: m.eye_pn_lo, pn_hi: m.eye_pn_hi, notch: m.eye_notch, hp: m.eye_hp }
+        Self {
+            ber: m.eye_ber,
+            npj: m.eye_npj,
+            pn_lo: m.eye_pn_lo,
+            pn_hi: m.eye_pn_hi,
+            notch: m.eye_notch,
+            hp: m.eye_hp,
+        }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn populate_eye_facts(page: &mut Page, settings: FactSettings, clk: &eye::Clock, tie: &[f64], trend: &[f32], j: &Jitter, meas: &eye::EyeMeas, wave: &[f32], dt: f64, means: &EdgeMeans, rail: Option<(&[f32], f64)>, companion: Option<(&[f32], &[f32], f64)>) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+fn populate_eye_facts(
+    page: &mut Page,
+    settings: FactSettings,
+    clk: &eye::Clock,
+    tie: &[f64],
+    trend: &[f32],
+    j: &Jitter,
+    meas: &eye::EyeMeas,
+    wave: &[f32],
+    dt: f64,
+    means: &EdgeMeans,
+    rail: Option<(&[f32], f64)>,
+    companion: Option<(&[f32], &[f32], f64)>,
+) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
     let few = format!("needs {} edges", eye::MIN_EDGES);
     let miss = |l| cell(l, few.clone(), Kind::Missing);
     if j.fit == JitterFit::TooFew {
@@ -1366,25 +1662,62 @@ fn populate_eye_facts(page: &mut Page, settings: FactSettings, clk: &eye::Clock,
             page.put_fig(name, f64::NAN);
         }
         let model = ["TJ@BER", "EW@BER", "J2", "J9", "NPJ"].map(miss).to_vec();
-        let measured = ["F/2", "F/4", "F/8", "SRJ", "Pn rms", "Pn note", "TIE pre", "TIE post", "DC CM", "AC CM", "Cross", "T/nT", "SSC ppm", "SSC rate"].map(miss).to_vec();
+        let measured = [
+            "F/2", "F/4", "F/8", "SRJ", "Pn rms", "Pn note", "TIE pre", "TIE post", "DC CM", "AC CM", "Cross", "T/nT",
+            "SSC ppm", "SSC rate",
+        ]
+        .map(miss)
+        .to_vec();
         let eye_model = vec![cell("Ht@BER", "no eye".into(), Kind::Missing)];
         return (measured, model, eye_model);
     }
     let ber = settings.ber;
-    let (tjber, ewber, j2, j9) = (eye::tj_at(j, ber), eye::eye_width_at(j, clk.period, ber), eye::tj_at(j, eye::BER_J2), eye::tj_at(j, eye::BER_J9));
+    let (tjber, ewber, j2, j9) = (
+        eye::tj_at(j, ber),
+        eye::eye_width_at(j, clk.period, ber),
+        eye::tj_at(j, eye::BER_J2),
+        eye::tj_at(j, eye::BER_J9),
+    );
     let npj = if settings.npj { eye::npj(tie, clk, trend, means) } else { f64::NAN };
-    let (f2, f4, f8) = (eye::subrate_pp(trend, clk.period, 2), eye::subrate_pp(trend, clk.period, 4), eye::subrate_pp(trend, clk.period, 8));
+    let (f2, f4, f8) = (
+        eye::subrate_pp(trend, clk.period, 2),
+        eye::subrate_pp(trend, clk.period, 4),
+        eye::subrate_pp(trend, clk.period, 8),
+    );
     let srj = eye::srj_pp(trend, clk.period);
     let pn = eye::phase_noise(trend, clk.period, settings.pn_lo, settings.pn_hi);
     let ps = eye::psij(trend, clk, tie, rail, settings.notch, meas.height, meas.width, Some((wave, dt)));
     let (dc, ac, cross) = companion.map_or_else(
         || (f64::NAN, eye::ac_common_pp(wave, None, dt, settings.hp), f64::NAN),
-        |(a, b, dt)| (eye::dc_common(a, b), eye::ac_common_pp(a, Some(b), dt, settings.hp), eye::diff_crossover(a, b)));
+        |(a, b, dt)| (eye::dc_common(a, b), eye::ac_common_pp(a, Some(b), dt, settings.hp), eye::diff_crossover(a, b)),
+    );
     let tnt = eye::tnt_ratio(wave, dt, clk);
     let (ppm, _) = eye::ssc_deviation(clk);
     let ssc_hz = eye::ssc_rate(clk);
     let hber = meas.height_at(ber);
-    for (name, v) in [("HBER", hber), ("F2", f2), ("F4", f4), ("F8", f8), ("SRJ", srj), ("PN", pn), ("TPRE", ps.before.tie_pp), ("TPOST", ps.after.tie_pp), ("PPRE", ps.before.pj), ("PPOST", ps.after.pj), ("DCCM", dc), ("ACCM", ac), ("XOVer", cross), ("TNT", tnt), ("SSCPpm", ppm), ("SSCRate", ssc_hz), ("TJBer", tjber), ("EWBer", ewber), ("J2", j2), ("J9", j9), ("NPJ", npj)] {
+    for (name, v) in [
+        ("HBER", hber),
+        ("F2", f2),
+        ("F4", f4),
+        ("F8", f8),
+        ("SRJ", srj),
+        ("PN", pn),
+        ("TPRE", ps.before.tie_pp),
+        ("TPOST", ps.after.tie_pp),
+        ("PPRE", ps.before.pj),
+        ("PPOST", ps.after.pj),
+        ("DCCM", dc),
+        ("ACCM", ac),
+        ("XOVer", cross),
+        ("TNT", tnt),
+        ("SSCPpm", ppm),
+        ("SSCRate", ssc_hz),
+        ("TJBer", tjber),
+        ("EWBer", ewber),
+        ("J2", j2),
+        ("J9", j9),
+        ("NPJ", npj),
+    ] {
         page.put_fig(name, v);
     }
     let mut model = vec![
@@ -1404,7 +1737,11 @@ fn populate_eye_facts(page: &mut Page, settings: FactSettings, clk: &eye::Clock,
         figure("F/8", f8, "s", Kind::Measured, &few),
         figure("SRJ", srj, "s", Kind::Measured, &few),
         figure("Pn rms", pn, "s", Kind::Measured, &few),
-        cell("Pn note", if eye::is_clock(clk) { "clock" } else { "data" }.into(), if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing }),
+        cell(
+            "Pn note",
+            if eye::is_clock(clk) { "clock" } else { "data" }.into(),
+            if eye::is_clock(clk) { Kind::Measured } else { Kind::Missing },
+        ),
     ];
     measured.push(figure("TIE pre", ps.before.tie_pp, "s", Kind::Measured, &few));
     measured.push(figure("TIE post", ps.after.tie_pp, "s", Kind::Measured, &few));
@@ -1436,15 +1773,26 @@ fn ref_fp(v: &[f32], dt: f64, t0: f64) -> u64 {
 
 /// Reference-only Eye alignment; ordinary analyser measurement gates are unchanged.
 fn eye_common_grid(a: &WaveSamp, b: &WaveSamp) -> Option<(f64, f64, usize)> {
-    if a.v.len() < 2 || b.v.len() < 2 || !a.dt.is_finite() || !b.dt.is_finite() || a.dt <= 0.0 || b.dt <= 0.0
-        || !a.t0.is_finite() || !b.t0.is_finite() { return None; }
+    if a.v.len() < 2
+        || b.v.len() < 2
+        || !a.dt.is_finite()
+        || !b.dt.is_finite()
+        || a.dt <= 0.0
+        || b.dt <= 0.0
+        || !a.t0.is_finite()
+        || !b.t0.is_finite()
+    {
+        return None;
+    }
     let grid = if a.dt <= b.dt { a } else { b };
     let start = a.t0.max(b.t0);
     let stop = (a.t0 + (a.v.len() - 1) as f64 * a.dt).min(b.t0 + (b.v.len() - 1) as f64 * b.dt);
     let snap = |x: f64| if (x - x.round()).abs() <= 1e-7 { x.round() } else { x };
     let first = snap((start - grid.t0) / grid.dt).ceil().max(0.0);
     let last = snap((stop - grid.t0) / grid.dt).floor().min((grid.v.len() - 1) as f64);
-    if last < first + 1.0 { return None; }
+    if last < first + 1.0 {
+        return None;
+    }
     Some((grid.dt, grid.t0 + first * grid.dt, (last - first + 1.0) as usize))
 }
 
@@ -1453,16 +1801,25 @@ fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
         source.v.resize(n, f32::NAN);
         return source.v;
     }
-    (0..n).map(|k| {
-        let x = (t0 + k as f64 * dt - source.t0) / source.dt;
-        if x < 0.0 || x > source.v.len().saturating_sub(1) as f64 { return f32::NAN; }
-        let i = x as usize;
-        let a = source.v[i];
-        let b = source.v[(i + 1).min(source.v.len() - 1)];
-        let fraction = (x - i as f64) as f32;
-        if a.is_finite() && b.is_finite() { a * (1.0 - fraction) + b * fraction }
-        else if a.is_finite() { a } else { b }
-    }).collect()
+    (0..n)
+        .map(|k| {
+            let x = (t0 + k as f64 * dt - source.t0) / source.dt;
+            if x < 0.0 || x > source.v.len().saturating_sub(1) as f64 {
+                return f32::NAN;
+            }
+            let i = x as usize;
+            let a = source.v[i];
+            let b = source.v[(i + 1).min(source.v.len() - 1)];
+            let fraction = (x - i as f64) as f32;
+            if a.is_finite() && b.is_finite() {
+                a * (1.0 - fraction) + b * fraction
+            } else if a.is_finite() {
+                a
+            } else {
+                b
+            }
+        })
+        .collect()
 }
 
 /// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put. Both go
@@ -1627,14 +1984,18 @@ mod tests {
         let dt = 1.0 / (64.0 * rate);
         let edges = oos_dsp::hss::ssc_edge_times(4002, rate, 0.01, modulation, "Down-spread only");
         let mut at = 0;
-        let samples: Vec<f32> = (0..256_000).map(|i| {
-            let t = i as f64 * dt;
-            while at + 1 < edges.len() && edges[at + 1] <= t { at += 1; }
-            let level = if at % 2 == 0 { 1.0 } else { -1.0 };
-            // A short linear transition, with all edge times coming from the SSC ramp.
-            let fraction = ((t - edges[at]) / (0.1 / rate)).clamp(0.0, 1.0);
-            (-level + 2.0 * level * fraction) as f32
-        }).collect();
+        let samples: Vec<f32> = (0..256_000)
+            .map(|i| {
+                let t = i as f64 * dt;
+                while at + 1 < edges.len() && edges[at + 1] <= t {
+                    at += 1;
+                }
+                let level = if at % 2 == 0 { 1.0 } else { -1.0 };
+                // A short linear transition, with all edge times coming from the SSC ramp.
+                let fraction = ((t - edges[at]) / (0.1 / rate)).clamp(0.0, 1.0);
+                (-level + 2.0 * level * fraction) as f32
+            })
+            .collect();
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.run = RunState::Stop;
         ui.session_is_sim = false;
@@ -1694,9 +2055,19 @@ mod tests {
             let a = Rect::new(0, 40, PANEL_W, h);
             let l = layout(a, false);
             let bottom = a.y + a.h;
-            assert_eq!(l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 }, bottom, "right column, height {}", h);
+            assert_eq!(
+                l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 },
+                bottom,
+                "right column, height {}",
+                h
+            );
             assert_eq!(l.charts[3].y + l.charts[3].h, l.charts[2].y + l.charts[2].h);
-            assert_eq!(l.eye.y + l.eye.h + if l.fig_rows > 0 { GAP + l.fig.h } else { 0 }, bottom, "left column, height {}", h);
+            assert_eq!(
+                l.eye.y + l.eye.h + if l.fig_rows > 0 { GAP + l.fig.h } else { 0 },
+                bottom,
+                "left column, height {}",
+                h
+            );
             assert_eq!(l.charts[1].x + l.charts[1].w, a.x + a.w, "height {}", h);
             assert!(l.plots.iter().all(|p| p.h >= 1 && p.w > 40), "{:?}", l.plots);
             assert_eq!(l.fig_rows > 0, h >= BOXES_MIN_H);
@@ -1854,7 +2225,10 @@ mod tests {
                 ui.relayout();
                 let content = ui.eye_page_rect();
                 let close = ui.eye_pane_close();
-                assert!(content.y >= close.y + close.h, "workspace header must reserve Close before laying out any charts");
+                assert!(
+                    content.y >= close.y + close.h,
+                    "workspace header must reserve Close before laying out any charts"
+                );
                 let l = layout(content, false);
                 for r in [l.eye, l.head, l.fig, l.jit].iter().chain(&l.charts) {
                     assert!(!overlaps(*r, close), "{:?} sits under actual Close {:?}", r, close);
@@ -1875,7 +2249,11 @@ mod tests {
                 assert!(f.s.width(&c.empty) <= l.plots[k].w, "'{}'", c.empty);
                 assert!(f.s.width(&c.y.0).max(f.s.width(&c.y.1)) + 3 <= CHART_GUTTER, "{:?}", c.y);
             }
-            assert!(f.sb.width(&p.status[0]) + 2 <= l.head.w && f.s.width(&p.status[1]) + 2 <= l.head.w, "{:?}", p.status);
+            assert!(
+                f.sb.width(&p.status[0]) + 2 <= l.head.w && f.s.width(&p.status[1]) + 2 <= l.head.w,
+                "{:?}",
+                p.status
+            );
             assert!(f.sb.width(&p.title) + 6 + 196 <= l.eye.w, "'{}'", p.title);
             let room = |r: Rect, n: i32| (r.w - 12) / n - 4;
             for cells in [&p.eye_measured, &p.eye_model, &p.stats] {
@@ -1925,7 +2303,11 @@ mod tests {
         assert!((period - 10e-9).abs() < 1e-11, "{}", period);
         assert!(p.charts.iter().all(|c| c.empty.is_empty()), "{:?}", p.charts);
         assert!(!p.trend.is_empty() && !p.hist.is_empty() && !p.spec.is_empty() && !p.tub.model.is_empty());
-        assert!(p.measured.iter().filter(|c| c.label == "DDJ" || c.label == "PJ rms").all(|c| c.kind == Kind::Measured), "{:?}", p.measured);
+        assert!(
+            p.measured.iter().filter(|c| c.label == "DDJ" || c.label == "PJ rms").all(|c| c.kind == Kind::Measured),
+            "{:?}",
+            p.measured
+        );
         assert!(p.model.iter().any(|c| c.label == "TJ 1e-12" && c.kind == Kind::Model));
     }
 
@@ -1966,7 +2348,11 @@ mod tests {
     }
 
     fn separated(a: Rect, b: Rect) -> bool {
-        a.w > 0 && b.w > 0 && a.h > 0 && b.h > 0 && !(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
+        a.w > 0
+            && b.w > 0
+            && a.h > 0
+            && b.h > 0
+            && !(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
     }
 
     #[test]
@@ -1976,7 +2362,12 @@ mod tests {
         let mut noise = Noise(3);
         for (slot, signal) in [(0, CLEAN), (1, Sig { rate: CLEAN.rate * 2.0, ..CLEAN })] {
             let rec = record(signal, &mut noise);
-            ui.refs[slot] = Some(RefWave { color: slot, label: format!("Rate {slot}"), vpd: 0.2, ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
+            ui.refs[slot] = Some(RefWave {
+                color: slot,
+                label: format!("Rate {slot}"),
+                vpd: 0.2,
+                ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0)
+            });
         }
         ui.select_workspace_source(WaveId::Ref(1));
         ui.eye_make();
@@ -2011,7 +2402,9 @@ mod tests {
         ui.open_menu(MenuId::Eye);
         assert!(ui.items(MenuId::Eye).contains(&Item::EyeAct));
         let b = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::EyeAct).unwrap().ctrl;
-        for phase in [Phase::Down, Phase::Up] { ui.handle(Ev::Touch { id: 0, phase, x: b.x+b.w/2, y: b.y+b.h/2 }); }
+        for phase in [Phase::Down, Phase::Up] {
+            ui.handle(Ev::Touch { id: 0, phase, x: b.x + b.w / 2, y: b.y + b.h / 2 });
+        }
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.m.eye_from_record);
         assert_eq!(ui.m.eye_place, EyePlace::Side);
@@ -2086,7 +2479,12 @@ mod tests {
         ui.tap(tab.x + tab.w / 2, tab.y + tab.h / 2);
         ui.now += SLIDE;
         ui.analyzer_update();
-        assert!(ui.azr.page.records > 1 && ui.azr.page.pool.len() >= pool, "{} {}", ui.azr.page.records, ui.azr.page.pool.len());
+        assert!(
+            ui.azr.page.records > 1 && ui.azr.page.pool.len() >= pool,
+            "{} {}",
+            ui.azr.page.records,
+            ui.azr.page.pool.len()
+        );
         assert_eq!(ui.azr.page.img_w, w);
         assert!(ui.eye_column_open() < 0.01);
     }
@@ -2101,7 +2499,12 @@ mod tests {
             let tab = ui.eye_tab();
             assert!(!overlaps(tab, ui.view_btn()), "open {} tab {:?} btn {:?}", open, tab, ui.view_btn());
             assert!(tab.w >= 40 && tab.h >= 40, "{:?}", tab);
-            assert!(ui.eye_page_rect().contains(tab.x + 1, tab.y + 1) && ui.eye_page_rect().contains(tab.x + tab.w - 2, tab.y + tab.h - 2), "{:?}", tab);
+            assert!(
+                ui.eye_page_rect().contains(tab.x + 1, tab.y + 1)
+                    && ui.eye_page_rect().contains(tab.x + tab.w - 2, tab.y + tab.h - 2),
+                "{:?}",
+                tab
+            );
         }
     }
 
@@ -2176,7 +2579,12 @@ mod tests {
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
         };
-        for (name, s, n) in [("eye-clean", CLEAN, 40), ("eye-noisy", NOISY, 60), ("eye-few", few, 6), ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3)] {
+        for (name, s, n) in [
+            ("eye-clean", CLEAN, 40),
+            ("eye-noisy", NOISY, 60),
+            ("eye-few", few, 6),
+            ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3),
+        ] {
             let mut ui = page(s, n);
             save(&mut ui, name);
             ui.m.run = RunState::Stop;
@@ -2280,7 +2688,10 @@ mod automatic_setup_tests {
         assert!(ui.azr.eye.as_ref().unwrap().hits.iter().map(|&n| n as u64).sum::<u64>() > first_hits);
         let threshold = ui.azr.eye_auto.summary.as_ref().unwrap().threshold;
         ui.m.run = RunState::Stop;
-        for _ in 0..20 { ui.m.zdelay += 1e-9; ui.analyzer_update(); }
+        for _ in 0..20 {
+            ui.m.zdelay += 1e-9;
+            ui.analyzer_update();
+        }
         assert_eq!(ui.azr.page.records, 2, "stopped panning cannot manufacture observations");
         assert_eq!(ui.azr.eye_auto.summary.as_ref().unwrap().threshold, threshold);
         assert!(!ui.azr.page.img.is_empty() && !ui.azr.page.hist.is_empty());
@@ -2304,7 +2715,10 @@ mod automatic_setup_tests {
         assert!((ui.m.eye_rate / 2e9 - 1.0).abs() < 0.01);
         let submitted = ui.azr.eye_auto.submitted;
         let records = ui.azr.page.records;
-        for _ in 0..30 { ui.m.zdelay += 1e-9; ui.analyzer_update(); }
+        for _ in 0..30 {
+            ui.m.zdelay += 1e-9;
+            ui.analyzer_update();
+        }
         assert_eq!((ui.azr.eye_auto.submitted, ui.azr.page.records), (submitted, records));
         assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
     }

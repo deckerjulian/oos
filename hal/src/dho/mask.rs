@@ -127,7 +127,16 @@ pub struct Map {
 
 impl Default for Map {
     fn default() -> Map {
-        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1) }
+        Map {
+            domain: Domain::ReadOut,
+            codes_per_div: CODES_PER_DIV,
+            mid: MID,
+            shift: SHIFT,
+            offset: 0.0,
+            invert: false,
+            layout: Layout::Record,
+            range: (0, COLUMNS as u16 - 1),
+        }
     }
 }
 
@@ -177,7 +186,8 @@ impl Map {
     pub fn set(&mut self, kv: &str) -> Result<(), String> {
         let (k, v) = kv.split_once('=').ok_or_else(|| format!("no '=' in {}", kv))?;
         let (k, v) = (k.trim(), v.trim());
-        let num = |v: &str| v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v));
+        let num =
+            |v: &str| v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v));
         match k {
             "domain" => {
                 self.domain = match v {
@@ -197,7 +207,9 @@ impl Map {
                     "clocks" => Layout::Clocks,
                     "stock" => Layout::Stock,
                     r if r.starts_with("raw:") => {
-                        let (c, u) = r[4..].split_once(':').ok_or_else(|| format!("cols raw:<count>:<samples per strobe>: {}", v))?;
+                        let (c, u) = r[4..]
+                            .split_once(':')
+                            .ok_or_else(|| format!("cols raw:<count>:<samples per strobe>: {}", v))?;
                         let u = num(u)?;
                         if u <= 0.0 {
                             return Err(format!("samples per strobe must be > 0: {}", v));
@@ -227,7 +239,18 @@ impl Map {
             Layout::Raw { count, unit } => format!("raw:{}:{}", count, unit),
         };
         let d = if self.domain == Domain::PreGain { "pregain" } else { "readout" };
-        format!("domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{}", d, self.codes_per_div, self.mid, self.shift, self.offset, self.invert as u8, cols, self.range.0, self.range.1)
+        format!(
+            "domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{}",
+            d,
+            self.codes_per_div,
+            self.mid,
+            self.shift,
+            self.offset,
+            self.invert as u8,
+            cols,
+            self.range.0,
+            self.range.1
+        )
     }
 }
 
@@ -309,12 +332,20 @@ impl Column {
         let (l, h) = (lo.floor(), hi.ceil());
         let lo_en = l.is_finite() && l > 0.0;
         let hi_en = h.is_finite() && h < CODE_MAX;
-        Column { lo: if lo_en { l.min(CODE_MAX) as u8 } else { 0 }, hi: if hi_en { h.max(0.0) as u8 } else { CODE_MAX as u8 }, lo_en, hi_en }
+        Column {
+            lo: if lo_en { l.min(CODE_MAX) as u8 } else { 0 },
+            hi: if hi_en { h.max(0.0) as u8 } else { CODE_MAX as u8 },
+            lo_en,
+            hi_en,
+        }
     }
 
     /// The table word for column `c`, write enable set.
     pub fn word(&self, c: usize) -> u32 {
-        let mut w = table::WRITE | (c as u32 & 0x3ff) << table::COL_SHIFT | (self.hi as u32) << table::HI_SHIFT | self.lo as u32;
+        let mut w = table::WRITE
+            | (c as u32 & 0x3ff) << table::COL_SHIFT
+            | (self.hi as u32) << table::HI_SHIFT
+            | self.lo as u32;
         if self.lo_en {
             w |= table::LO_EN;
         }
@@ -324,7 +355,6 @@ impl Column {
         w
     }
 }
-
 
 /// Writes that load `cols` (column order 0..), then drop the write enable. The test must be off meanwhile.
 pub fn load(cols: &[Column]) -> Vec<Write> {
@@ -359,7 +389,8 @@ pub fn compress_word(n: u32) -> u32 {
 
 /// Writes that select `slot` in the control shadow `s1190` and, with `clear`, reset both counters.
 pub fn select(s1190: &mut u32, slot: u32, clear: bool) -> Vec<Write> {
-    *s1190 = (*s1190 & !(ctrl::SLOT_MASK | ctrl::LATCH | ctrl::CLEAR_FAILS | ctrl::CLEAR_FRAMES)) | (1 << (slot & 3)) << ctrl::SLOT_SHIFT;
+    *s1190 = (*s1190 & !(ctrl::SLOT_MASK | ctrl::LATCH | ctrl::CLEAR_FAILS | ctrl::CLEAR_FRAMES))
+        | (1 << (slot & 3)) << ctrl::SLOT_SHIFT;
     if clear {
         vec![(CTRL, *s1190 | ctrl::CLEAR_FAILS | ctrl::CLEAR_FRAMES), (CTRL, *s1190)]
     } else {
@@ -408,7 +439,12 @@ pub fn read(bus: &mut impl Bus, s1190: u32) -> Raw {
     bus.wr(CTRL, base);
     bus.wr(CTRL, base | ctrl::LATCH);
     bus.wr(CTRL, base);
-    Raw { frames_lo: bus.rd(FRAMES_LO), frames_hi: bus.rd(FRAMES_HI), fails_lo: bus.rd(FAILS_LO), fails_hi: bus.rd(FAILS_HI) }
+    Raw {
+        frames_lo: bus.rd(FRAMES_LO),
+        frames_hi: bus.rd(FRAMES_HI),
+        fails_lo: bus.rd(FAILS_LO),
+        fails_hi: bus.rd(FAILS_HI),
+    }
 }
 
 #[cfg(test)]
@@ -437,7 +473,10 @@ mod tests {
         let c = Column::of_band(-1.0, 1.0, 1.0, 0.0);
         assert_eq!(c, Column { lo: 98, hi: 158, lo_en: true, hi_en: true });
         // no data in the reference: both limits off
-        assert_eq!(Column::of_band(f32::NEG_INFINITY, f32::INFINITY, 1.0, 0.0), Column { lo: 0, hi: 255, lo_en: false, hi_en: false });
+        assert_eq!(
+            Column::of_band(f32::NEG_INFINITY, f32::INFINITY, 1.0, 0.0),
+            Column { lo: 0, hi: 255, lo_en: false, hi_en: false }
+        );
         // beyond the code range (more than about 4.4 div from the centre): off
         assert_eq!(Column::of_band(-5.0, 5.0, 1.0, 0.0), Column { lo: 0, hi: 255, lo_en: false, hi_en: false });
         // a band on one side of the range keeps the other limit
@@ -488,7 +527,16 @@ mod tests {
     #[test]
     fn map_keys_round_trip() {
         let mut m = Map::default();
-        for kv in ["domain=pregain", "cpd=6848", "mid=32000", "shift=8", "offs=-2.5", "invert=1", "cols=clocks", "range=10-20"] {
+        for kv in [
+            "domain=pregain",
+            "cpd=6848",
+            "mid=32000",
+            "shift=8",
+            "offs=-2.5",
+            "invert=1",
+            "cols=clocks",
+            "range=10-20",
+        ] {
             m.set(kv).unwrap();
         }
         assert_eq!(m.text(), "domain=pregain cpd=6848 mid=32000 shift=8 offs=-2.5 invert=1 cols=clocks range=10-20");
@@ -503,7 +551,12 @@ mod tests {
         assert_eq!(m.layout, Layout::Raw { count: 100, unit: 2.5 });
         assert!(m.text().contains("cols=raw:100:2.5"));
         assert!(m.set("cols=raw:100").is_err() && m.set("cols=raw:100:0").is_err());
-        assert!(m.set("cols=").is_err() && m.set("domain=raw").is_err() && m.set("nope=1").is_err() && m.set("cpd").is_err());
+        assert!(
+            m.set("cols=").is_err()
+                && m.set("domain=raw").is_err()
+                && m.set("nope=1").is_err()
+                && m.set("cpd").is_err()
+        );
     }
 
     #[test]
@@ -559,14 +612,28 @@ mod tests {
         assert_eq!(Column { hi_en: false, ..k }.word(1), 0x1401_3412);
         let w = load(&[k; COLUMNS]);
         assert_eq!(w.len(), COLUMNS + 1);
-        assert!(w[..COLUMNS].iter().enumerate().all(|(c, x)| x.0 == 0x1194 && (x.1 >> 16) & 0x3ff == c as u32 && x.1 & table::WRITE != 0));
+        assert!(w[..COLUMNS]
+            .iter()
+            .enumerate()
+            .all(|(c, x)| x.0 == 0x1194 && (x.1 >> 16) & 0x3ff == c as u32 && x.1 & table::WRITE != 0));
         assert_eq!(w[COLUMNS], (0x1194, 0));
     }
 
     #[test]
     fn slots_are_stream_slots() {
         // (mask, channel) -> slot
-        let cases = [(0b0001, 0, Some(0)), (0b0010, 1, Some(0)), (0b1000, 3, Some(0)), (0b0011, 0, Some(0)), (0b0011, 1, Some(1)), (0b1100, 2, Some(0)), (0b1100, 3, Some(1)), (0b1111, 3, Some(3)), (0b0111, 2, Some(2)), (0b0001, 1, None)];
+        let cases = [
+            (0b0001, 0, Some(0)),
+            (0b0010, 1, Some(0)),
+            (0b1000, 3, Some(0)),
+            (0b0011, 0, Some(0)),
+            (0b0011, 1, Some(1)),
+            (0b1100, 2, Some(0)),
+            (0b1100, 3, Some(1)),
+            (0b1111, 3, Some(3)),
+            (0b0111, 2, Some(2)),
+            (0b0001, 1, None),
+        ];
         for (m, c, want) in cases {
             assert_eq!(slot(m, c), want, "{:#b} CH{}", m, c + 1);
         }

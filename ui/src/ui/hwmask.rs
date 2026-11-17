@@ -8,12 +8,17 @@
 use super::*;
 use crate::board::{MaskRead, MaskWant};
 
-
 impl Ui {
     /// The mask test runs in the hardware: enabled on this board, live hardware frames, the mask on and built, its
     /// channel acquired. The fast display path then stays on.
     pub(super) fn mask_hw_active(&self) -> bool {
-        board().mask_hw() && self.src.is_hw() && self.m.mask_on && self.mask.is_some() && self.mask_cols.is_some() && self.m.ch[self.m.mask_src].on && self.unit_blocked.is_none()
+        board().mask_hw()
+            && self.src.is_hw()
+            && self.m.mask_on
+            && self.mask.is_some()
+            && self.mask_cols.is_some()
+            && self.m.ch[self.m.mask_src].on
+            && self.unit_blocked.is_none()
     }
 
     /// Takes the stall guard's verdict (`Shared::unit_blocked`); a new block is shown once.
@@ -35,7 +40,13 @@ impl Ui {
     pub(super) fn mask_hw_poll(&mut self) {
         self.unit_blocked_poll();
         let want = if self.mask_hw_active() {
-            self.mask_cols.as_ref().map(|(lo, hi)| MaskWant { ch: self.m.mask_src, lo: lo.clone(), hi: hi.clone(), stop: self.m.mask_stop, clear: self.mask_hw_clear })
+            self.mask_cols.as_ref().map(|(lo, hi)| MaskWant {
+                ch: self.m.mask_src,
+                lo: lo.clone(),
+                hi: hi.clone(),
+                stop: self.m.mask_stop,
+                clear: self.mask_hw_clear,
+            })
         } else {
             None
         };
@@ -67,9 +78,18 @@ impl Ui {
     /// counters of the pipeline (docs/fork/hwmask.md).
     pub fn mask_debug_text(&self) -> String {
         let (acq, used, _) = crate::drawpipe::counters().read();
-        let sw = format!("sw_pass={},sw_fail={},acquired={},used={},records={}", self.mask_pass, self.mask_fail, acq, used, self.records);
+        let sw = format!(
+            "sw_pass={},sw_fail={},acquired={},used={},records={}",
+            self.mask_pass, self.mask_fail, acq, used, self.records
+        );
         let Some(r) = self.mask_hw else {
-            return format!("off,enabled={},active={},blocked={},{}", board().mask_hw() as u8, self.mask_hw_active() as u8, self.unit_blocked.is_some() as u8, sw);
+            return format!(
+                "off,enabled={},active={},blocked={},{}",
+                board().mask_hw() as u8,
+                self.mask_hw_active() as u8,
+                self.unit_blocked.is_some() as u8,
+                sw
+            );
         };
         format!(
             "ch={},slot={},ctrl={:#010x},frames_lo={:#010x},frames_hi={:#010x},fails_lo={:#010x},fails_hi={:#010x},frames={},fails={},n={},{}",
@@ -99,7 +119,14 @@ impl Ui {
         let frame = self.last[0].as_ref().and_then(|x| x.raw.as_ref()).map(|x| x.frame.clone()).filter(|f| !f.envelope);
         let samples: &[f32] = frame.as_ref().map_or(&[], |f| &f.ch[r.ch][..]);
         let (cols, per) = board().mask_layout(r.points, r.chans);
-        columns_view(&t[..cols.min(t.len())], samples, per, |v| board().mask_code(v as f64, r.scale, r.offset, r.gain), a, b)
+        columns_view(
+            &t[..cols.min(t.len())],
+            samples,
+            per,
+            |v| board().mask_code(v as f64, r.scale, r.offset, r.gain),
+            a,
+            b,
+        )
     }
 }
 
@@ -112,8 +139,13 @@ fn columns_view(table: &[[u8; 4]], samples: &[f32], per: f64, code: impl Fn(f32)
     let mut rows = Vec::new();
     for c in a..=b {
         let [lo, hi, le, he] = table[c];
-        let (k0, k1) = (((c as f64 * per) as usize).min(samples.len()), (((c + 1) as f64 * per) as usize).min(samples.len()));
-        let (mn, mx) = samples[k0..k1].iter().filter(|v| v.is_finite()).map(|&v| code(v).floor()).fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
+        let (k0, k1) =
+            (((c as f64 * per) as usize).min(samples.len()), (((c + 1) as f64 * per) as usize).min(samples.len()));
+        let (mn, mx) = samples[k0..k1]
+            .iter()
+            .filter(|v| v.is_finite())
+            .map(|&v| code(v).floor())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
         let fail = mn.is_finite() && ((le == 1 && mn < lo as f64) || (he == 1 && mx > hi as f64));
         if fail {
             fails.push(c);
@@ -121,7 +153,16 @@ fn columns_view(table: &[[u8; 4]], samples: &[f32], per: f64, code: impl Fn(f32)
         rows.push(format!("{}:{}-{}/{}{}:{}-{}{}", c, lo, hi, le, he, mn, mx, if fail { "!" } else { "" }));
     }
     let first: Vec<String> = fails.iter().take(8).map(|c| c.to_string()).collect();
-    format!("cols={}-{},samples={},per={:.1},fail={},first={};{}", a, b, samples.len(), per, fails.len(), first.join(" "), rows.join(";"))
+    format!(
+        "cols={}-{},samples={},per={:.1},fail={},first={};{}",
+        a,
+        b,
+        samples.len(),
+        per,
+        fails.len(),
+        first.join(" "),
+        rows.join(";")
+    )
 }
 
 /// A new reading `now` after `before` shows a new failure on channel `src` (a cleared counter is none).
@@ -170,7 +211,10 @@ mod tests {
         let t = [[90, 110, 1, 1], [90, 110, 1, 1], [90, 110, 0, 0]];
         let v = [0.0, 0.5, -2.0, 0.0, 5.0, -5.0];
         let s = columns_view(&t, &v, 2.0, |x| x as f64 * 10.0 + 100.0, 0, 9);
-        assert_eq!(s, "cols=0-2,samples=6,per=2.0,fail=1,first=1;0:90-110/11:100-105;1:90-110/11:80-100!;2:90-110/00:50-150");
+        assert_eq!(
+            s,
+            "cols=0-2,samples=6,per=2.0,fail=1,first=1;0:90-110/11:100-105;1:90-110/11:80-100!;2:90-110/00:50-150"
+        );
         assert!(columns_view(&t, &[], 2.0, |x| x as f64, 0, 1).contains("fail=0"));
     }
 
