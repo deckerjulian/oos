@@ -655,7 +655,8 @@ impl Ui {
             if r.w == 0 { continue; }
             let (col, ch) = (CH_COLORS[c], &self.m.ch[c]);
             let sel = root == Some(MenuId::Channel(c));
-            let border = if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
+            let clip = self.channel_clipping(c);
+            let border = if clip { RED } else if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
             chip(cv, r, if ch.on { BTN } else { BAR }, border);
             // the channel badge: filled while the channel is on; on / off: a dot in the corner
             cv.circle(r.x + 5, r.y + 5, 3, if ch.on { GREEN } else { DIM });

@@ -755,3 +755,187 @@ fn fit_all_lanes_scales_every_source_to_its_lane() {
     let text = crate::store::setup_text(&u.m);
     assert!(text.contains("studio_traces = overlay"), "the setup has the trace mode");
 }
+
+/// The pull-down zoom tab by touch: a tap opens the toolbar, a pull down opens it, and zoom stays on either way.
+#[test]
+fn the_zoom_tab_opens_on_a_tap_and_on_a_pull() {
+    let studio = || {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); u.render(&mut Canvas::new(1024, 600)); }
+        u.set_zoom(true);
+        for _ in 0..6 { u.step(0.04); u.render(&mut Canvas::new(1024, 600)); }
+        u
+    };
+    // a tap, at several places on the tab
+    for (dx, dy) in [(0, 10), (-50, 10), (50, 10), (0, 4), (0, 17), (0, 30)] {
+        let mut u = studio();
+        assert!(u.m.zoom && u.zoom_tab_mode(), "zoom with the pull-down tab");
+        let r = u.zoom_tab_rect();
+        let (x, y) = (r.x + r.w / 2 + dx, r.y + dy);
+        u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        u.step(0.04);
+        u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+        for _ in 0..3 { u.step(0.04); }
+        assert!(u.m.zoom, "tap at ({dx},{dy}): zoom stays on");
+        assert!(u.zoom_tab_open(), "tap at ({dx},{dy}): the toolbar opens");
+    }
+    // a pull down from the tab
+    for pull in [14, 30, 60] {
+        let mut u = studio();
+        let r = u.zoom_tab_rect();
+        let (x, y) = (r.x + r.w / 2, r.y + 10);
+        let zscale = u.m.zscale;
+        u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        for s in 1..=6 { u.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x + 2, y: y + pull * s / 6 }); u.step(0.02); }
+        u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: x + 2, y: y + pull });
+        for _ in 0..3 { u.step(0.04); }
+        assert!(u.m.zoom, "pull {pull}: zoom stays on");
+        assert!(u.zoom_tab_open(), "pull {pull}: the toolbar opens");
+        assert_eq!(u.m.zscale, zscale, "pull {pull}: the pull does not change the zoom");
+    }
+}
+
+/// One frame as the device runs it: the picture is drawn after every step.
+fn frame(u: &mut Ui) { u.step(0.033); u.render(&mut Canvas::new(1024, 600)); }
+
+/// A tap as a finger makes it: it lands, wanders a few pixels, and lifts a little off where it landed.
+fn finger_tap(u: &mut Ui, x: i32, y: i32, wander: i32) {
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    frame(u);
+    for (dx, dy) in [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0)] {
+        u.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x + dx * wander, y: y + dy * wander });
+        frame(u);
+    }
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: x - wander, y });
+    for _ in 0..3 { frame(u); }
+}
+
+/// A hold as a finger makes it: it rests for `frames`, never quite still, then lifts.
+fn finger_hold(u: &mut Ui, x: i32, y: i32, wander: i32, frames: usize) {
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    for k in 0..frames {
+        let (dx, dy) = [(1, 0), (0, 1), (-1, 0), (0, -1)][k % 4];
+        u.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x + dx * wander, y: y + dy * wander });
+        frame(u);
+    }
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+    for _ in 0..3 { frame(u); }
+}
+
+/// Real fingers: the long-press menu of the plot and the zoom tab must work when the finger wanders by a few pixels.
+#[test]
+fn a_wandering_finger_still_taps_and_holds() {
+    for wander in [0, 2, 4, 6] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.relayout();
+        for _ in 0..12 { frame(&mut u); }
+        // the long-press menu
+        let g = u.wins[1];
+        finger_hold(&mut u, g.x + g.w / 3, g.y + g.h / 2, wander, 24);
+        assert!(u.studio.ctx.is_some(), "wander {wander}: a held finger opens the plot menu");
+        let rows = u.studio_ctx_rows();
+        let r = rows.iter().find(|(k, _, _)| *k == super::studioctx::CtxRow::Overlay).unwrap().2;
+        finger_tap(&mut u, r.x + r.w / 2, r.y + r.h / 2, wander.min(3));
+        assert_eq!(u.wins.len(), 1, "wander {wander}: a tap on Overlay traces overlays");
+        // the zoom tab
+        u.set_zoom(true);
+        for _ in 0..6 { frame(&mut u); }
+        let t = u.zoom_tab_rect();
+        finger_tap(&mut u, t.x + t.w / 2, t.y + 10, wander);
+        assert!(u.m.zoom, "wander {wander}: a tap on the zoom tab keeps zoom on");
+        assert!(u.zoom_tab_open(), "wander {wander}: a tap on the zoom tab opens the toolbar");
+    }
+}
+
+/// The desktop window: a right click opens the plot menu (`context_menu`), a left click on a row picks it.
+#[test]
+fn a_right_click_menu_row_acts_on_a_left_click() {
+    for with_panel in [false, true] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        if with_panel { u.desktop_panel = Some(false); }
+        u.relayout();
+        for _ in 0..12 { frame(&mut u); }
+        let g = u.wins[1];
+        u.context_menu(g.x + g.w / 3, g.y + g.h / 2);
+        for _ in 0..4 { frame(&mut u); }
+        assert!(u.studio.ctx.is_some(), "panel {with_panel}: the right click opens the plot menu");
+        let rows = u.studio_ctx_rows();
+        let r = rows.iter().find(|(k, _, _)| *k == super::studioctx::CtxRow::Overlay).unwrap().2;
+        finger_tap(&mut u, r.x + r.w / 2, r.y + r.h / 2, 0);
+        assert_eq!(u.wins.len(), 1, "panel {with_panel}: the left click on Overlay traces overlays");
+        assert!(u.studio.ctx.is_none(), "panel {with_panel}: the menu closes");
+        // Stacked again, then Fit all lanes
+        let g = u.wins[0];
+        u.context_menu(g.x + g.w / 3, g.y + g.h / 2);
+        for _ in 0..4 { frame(&mut u); }
+        let rows = u.studio_ctx_rows();
+        let r = rows.iter().find(|(k, _, _)| *k == super::studioctx::CtxRow::Stacked).unwrap().2;
+        finger_tap(&mut u, r.x + r.w / 2, r.y + r.h / 2, 0);
+        assert_eq!(u.wins.len(), 2, "panel {with_panel}: Stacked traces");
+    }
+}
+
+/// A channel that reaches the end of the ADC range says so in the plot and over SCPI; one that does not is quiet.
+#[test]
+fn a_clipping_channel_warns_on_screen_and_over_scpi() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..20 { frame(&mut u); }
+    assert!(u.clipping_channels().is_empty(), "the demo signals fit their scales");
+    let quiet = sig(&mut u).0;
+    // CH1 at 200 mV/div: its 2.5 V square runs off the converter
+    u.m.ch[0].vscale = VSCALES.iter().position(|&v| v >= 0.2).unwrap();
+    u.m.ch[0].offset = 0.0;
+    for _ in 0..20 { frame(&mut u); }
+    assert_eq!(u.clipping_channels(), vec![0], "CH1 clips, CH2 does not");
+    assert_ne!(sig(&mut u).0, quiet, "the plot says so");
+    let mut scpi = crate::scpi::Scpi::open(0);
+    let cv = Canvas::new(1024, 600);
+    let ask = |scpi: &mut crate::scpi::Scpi, u: &mut Ui, q: &str| String::from_utf8(scpi.exec_line(u, &cv, q)).unwrap().trim().to_string();
+    if let Ok(dir) = std::env::var("OOS_WALK_SHOTS") {
+        let mut pic = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut pic);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join("clipping.png"), &crate::store::png_of(&pic));
+    }
+    assert_eq!(ask(&mut scpi, &mut u, ":CHANnel1:CLIPping?"), "1");
+    assert_eq!(ask(&mut scpi, &mut u, ":CHANnel2:CLIPping?"), "0");
+    assert_eq!(ask(&mut scpi, &mut u, ":CHAN3:CLIP?"), "0", "a channel that is off does not clip");
+    // back on a scale that holds it
+    u.m.ch[0].vscale = VSCALES.iter().position(|&v| v >= 1.0).unwrap();
+    u.m.ch[0].offset = -1.5;
+    for _ in 0..20 { frame(&mut u); }
+    assert!(u.clipping_channels().is_empty());
+    assert_eq!(ask(&mut scpi, &mut u, ":CHANnel1:CLIPping?"), "0");
+}
+
+/// A vertical drag in the lane of a math channel moves it, as it moves a channel in its lane.
+#[test]
+fn a_math_lane_drags_up_and_down() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.ch[1].on = true;
+    u.relayout();
+    for _ in 0..12 { frame(&mut u); }
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    u.relayout();
+    for _ in 0..12 { frame(&mut u); }
+    let lane = *u.wins.last().unwrap();
+    let before = u.m.math_ch(0).offset;
+    let (x, y) = (lane.x + lane.w / 2, lane.y + lane.h / 2);
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    for s in 1..=8 { u.handle(Ev::Touch { id: 0, phase: Phase::Move, x, y: y + 5 * s }); frame(&mut u); }
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y: y + 40 });
+    for _ in 0..3 { frame(&mut u); }
+    let after = u.m.math_ch(0).offset;
+    assert!(after < before - 0.5, "the math channel moved down: {before} -> {after} divisions");
+    assert_eq!(u.m.ch[0].offset, -1.5, "CH1 did not move");
+}

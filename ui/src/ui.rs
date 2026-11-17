@@ -1068,6 +1068,8 @@ enum Drag {
     FullBtn { ox: i32, oy: i32, prev: Option<(i32, i32)> },
     Offset(usize),
     RefOffset(usize),
+    /// the vertical position of math channel k (its lane was dragged up or down)
+    MathOffset(usize),
     Delay,
     Overview,
     /// a new zoom box drawn on the empty overview (Studio)
@@ -3561,6 +3563,34 @@ impl Ui {
         }
     }
 
+    /// The ADC converts 7500 codes per division around the middle of the screen, so its 16-bit range ends 4.37
+    /// divisions above and below it. A channel whose record reaches either end is clipping: what it shows there is
+    /// the limit of the converter, not the signal, and every amplitude measured from it is too small.
+    pub const CLIP_DIVS: f32 = 4.35;
+
+    /// Channel `c` is on and its record reaches the end of the ADC range.
+    pub fn channel_clipping(&self, c: usize) -> bool {
+        let Some(ch) = self.m.ch.get(c).filter(|ch| ch.on) else { return false };
+        if self.record_mode() { return false; }
+        let a = &self.ana[c];
+        if !a.valid { return false; }
+        let vpd = ch.volts_per_div().max(1e-12) as f64;
+        let (top, bottom) = ((a.vmax + ch.offset as f64) / vpd, (a.vmin + ch.offset as f64) / vpd);
+        top >= Self::CLIP_DIVS as f64 || bottom <= -(Self::CLIP_DIVS as f64)
+    }
+
+    /// The channels that clip now, for the warning in the plot.
+    pub fn clipping_channels(&self) -> Vec<usize> {
+        (0..n_ch()).filter(|&c| self.channel_clipping(c)).collect()
+    }
+
+    /// The math channel whose lane holds the point (stacked lanes only).
+    fn math_lane_at(&self, x: i32, y: i32) -> Option<usize> {
+        if !self.stacked() { return None; }
+        let lane = self.wins.iter().position(|w| w.contains(x, y))?;
+        match self.trace_sources().get(lane) { Some(workspace::Trace::Math(k)) if self.m.math_ch(*k).op != MathOp::Fft => Some(*k), _ => None }
+    }
+
     /// The scale of the math channel drawn in this lane: volts per division, offset in volts, unit, colour.
     fn math_axis_source(&self) -> Option<(f32, f32, &'static str, Rgb)> {
         let k = (0..NMATH).find(|&k| self.m.math_shown(k) && self.math_win_of(k) == self.cur_win)?;
@@ -4942,6 +4972,12 @@ impl Ui {
             backed_text(cv, &f.s, self.full_home().0.x - 16 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
+        // a channel at the end of the ADC range: said in red, first on the line
+        let clip = self.clipping_channels();
+        if !clip.is_empty() {
+            let names: Vec<String> = clip.iter().map(|c| format!("CH{}", c + 1)).collect();
+            x = backed_text(cv, &f.sb, x, y, &format!("Clipping: {} \u{b7} raise V/div or move the trace", names.join(" ")), RED) + 16;
+        }
         if self.m.touch_lock {
             let hint = if self.m.layout == Layout::Studio { "Touch locked \u{b7} tap the gear to unlock" } else { "Touch locked \u{b7} tap Unlock" };
             x = backed_text(cv, &f.sb, x, y, hint, AMBER) + 16;
@@ -8137,6 +8173,8 @@ impl Ui {
                         "OOS".into(),
                         "An open operating system for the DHO800/DHO900".into(),
                         if build.is_empty() { format!("oos-ui {}", env!("CARGO_PKG_VERSION")) } else { format!("Build {}", oos_hal::update::short(build.trim())) },
+                        // the commit this binary was built from: the same line on the scope and on a desktop
+                        option_env!("OOS_GIT").map_or(String::new(), |g| format!("Commit {g}")),
                         self.info.clone(),
                         p.ident(),
                         p.caps_line(),
@@ -9790,6 +9828,9 @@ impl Ui {
                     } else if under.is_some() && !(m.bus.on && (self.bus_y() - ty0).abs() <= 18) {
                         // the trace under the finger moves, not the active channel
                         match under { Some(WaveId::Ref(i)) => Drag::RefOffset(i), Some(WaveId::Ch(c)) => Drag::Offset(c), None => Drag::Delay }
+                    } else if dy.abs() > dx.abs() && self.math_lane_at(tx0, ty0).is_some() {
+                        // a lane of a math channel: it moves like a channel's does
+                        Drag::MathOffset(self.math_lane_at(tx0, ty0).unwrap())
                     } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
                         Drag::RefOffset(self.drag_reference().unwrap())
                     } else if dy.abs() > dx.abs() {
@@ -9816,6 +9857,7 @@ impl Ui {
                     let start_offset = match drag {
                         Drag::Offset(c) => self.m.ch[c].offset,
                         Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
+                        Drag::MathOffset(k) => self.m.math_ch(k).offset,
                         Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
                         Drag::ZoomVertical => self.zoom_vcenter,
                         Drag::Bus => self.m.bus.pos,
@@ -9860,6 +9902,14 @@ impl Ui {
                         if let Some(reference) = &mut self.refs[i] {
                             reference.offset = t.start_offset - dy as f32 / ppy * reference.vpd;
                         }
+                    }
+                    Drag::MathOffset(k) => {
+                        // a math channel's position is in divisions
+                        let mut c = self.m.math_ch(k);
+                        c.offset = t.start_offset - dy as f32 / ppy;
+                        if k == self.m.math_sel { self.m.math_offset = c.offset; }
+                        self.m.maths[k] = c;
+                        self.settings_changed();
                     }
                     Drag::Overview => {
                         let overview = self.split_zoom(self.grid).0;
