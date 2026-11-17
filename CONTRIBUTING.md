@@ -78,9 +78,10 @@ need the calibration files of a real unit skip themselves without them. See the 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
 CI also compares every pull request with its base: the pictures of the screen and the register sequences
-(`tools/compare-base.sh`, about three minutes on a laptop). The result is in the summary of the `compare` job, with the
-pictures that differ to download. A difference is not an error; a pull request that says `Behaviour: unchanged` while
-something differs is.
+(`tools/compare-base.sh`, about three minutes on a laptop). The register sequences are printed with a made-up
+calibration set, because CI has no files of a unit: it shows that a calibrated value moves, not what a real unit
+gets. The result is in the summary of the `compare` job, with the pictures that differ to download. A difference is
+not an error; a pull request that says `Behaviour: unchanged` while something differs is.
 
 A pull request from a fork enters main squashed, one commit per topic, made from the state that was reviewed; your
 name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when

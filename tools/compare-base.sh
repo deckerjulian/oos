@@ -13,7 +13,10 @@
 # compares.
 #
 # The register sequences are printed with the calibration files in OOS_CAL_DIR, else in local/cal of this tree, else
-# without any: then the calibrated values are missing from both sides, and only the rest is compared. CI has none.
+# with a made-up calibration set: `oos-fpgad made-up-cal` of this tree writes it once into the work folder, and both
+# sides read it. Its values are invented (docs/protocols/self-cal.md 16), so the comparison sees every register value
+# that calibration changes, but not the values of a real unit. CI has no files of a unit and takes this way. Only an
+# oos-fpgad from before the made-up set leaves the calibrated values out of both sides.
 #
 # Exit 0: nothing differs. 1: a picture or a register sequence differs. 2: the comparison could not be made.
 # The report is in ui/target/compare-base/: summary.md, pictures.txt, registers.diff and differing/ with both
@@ -51,9 +54,8 @@ elif [ -f "$root/local/cal/cal_adc.hex" ]; then
 	cal=$root/local/cal
 	cal_note="with the calibration files in local/cal"
 else
-	cal=$work/no-cal
-	mkdir -p "$cal"
-	cal_note="without calibration files"
+	# decided when this tree's oos-fpgad is built
+	cal=
 fi
 
 echo "== base $(git log -1 --format='%h %s' "$base")"
@@ -74,10 +76,24 @@ grep -E '^\./[^ ]+ +([0-9]+ px|line [0-9]+:)' "$work/pictures.txt" | head -n 12 
 	cp "ui/target/layout-new/$name" "$work/differing/new/$name"
 done
 
-echo "== register sequences, $cal_note"
 for t in "$tree" "$root"; do
 	(cd "$t/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $t"
 done
+if [ -z "$cal" ]; then
+	# no files of a unit: the made-up set, written new by this tree's oos-fpgad and read by both sides. An oos-fpgad
+	# that does not know the command prints its help and writes nothing.
+	cal=$work/made-up-cal
+	rm -rf "$cal"
+	if fpgad/target/release/oos-fpgad made-up-cal "$cal" >/dev/null 2>&1 && [ -f "$cal/cal_adc.hex" ]; then
+		cal_note="with the made-up calibration set"
+	else
+		rm -rf "$cal"
+		cal=$work/no-cal
+		mkdir -p "$cal"
+		cal_note="without calibration files"
+	fi
+fi
+echo "== register sequences, $cal_note"
 OOS_CAL_DIR=$cal "$tree/tools/plan-matrix.sh" "$tree/fpgad/target/release/oos-fpgad" >"$work/registers-base.txt"
 OOS_CAL_DIR=$cal tools/plan-matrix.sh fpgad/target/release/oos-fpgad >"$work/registers-new.txt"
 lines=$(wc -l <"$work/registers-new.txt" | tr -d ' ')
