@@ -115,18 +115,17 @@ with the source files named under them.
 
 ```sh
 tools/check.sh                # every enforced host check, as CI runs them (ADR 0020)
-tools/check.sh test           # one layer: fmt clippy text syntax test target decoders ratchet (tools/check.sh list)
+tools/check.sh test           # one layer: fmt text syntax test target decoders clippy ratchet (tools/check.sh list)
 (cd ui && cargo run -- --serve)   # no display, no hardware: demo signals behind SCPI :5555 and the web page :8080
 ```
 
-Run `tools/check.sh` before you say a change is done, and say which layers ran. A compiler warning fails it. The
-layout of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016). Until the one formatting commit is in main,
-do not run `cargo fmt` over existing files, so a pull request does not reformat whole files; keep the layout of the
-file you edit. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR 0017). The
-numbers in `tools/ratchet.txt` only go down: a file over 2000 lines does not grow, no new file gets that large, and a
-crate gets no more `allow(` and no more `unsafe` than it has; after making one smaller, run `tools/ratchet.sh --lower`.
-Raising a number is the maintainer's decision, in a pull request that says why (ADR 0037). Tests
-that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
+Run `tools/check.sh` before you say a change is done, and say which layers ran. A compiler warning fails it. The layout
+of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016): run `cargo fmt` in the crate you changed, the
+layer `fmt` fails otherwise. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR
+0017). The numbers in `tools/ratchet.txt` only go down: a file over 2000 lines does not grow, no new file gets that
+large, and a crate gets no more `allow(` and no more `unsafe` than it has; after making one smaller, run
+`tools/ratchet.sh --lower`. Raising a number is the maintainer's decision, in a pull request that says why (ADR 0037).
+Tests that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
 fast the computer is: one that fails only under load is fixed, not run again (ADR 0020).
 
 ## Style
