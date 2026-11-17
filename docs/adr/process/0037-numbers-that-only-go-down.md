@@ -20,7 +20,8 @@ switched on either: nine files would fail it on the first day.
 ## Decision
 
 - **`tools/ratchet.txt` records where the tree stands**, one number a line: the lines of every Rust file over 2 000
-  lines, and per crate how often a lint is switched off and how many lines use `unsafe`.
+  lines, and per crate how often a lint is switched off and how many lines use `unsafe`. A test module inside a file
+  is not counted, so adding a test never costs room.
 - **`tools/ratchet.sh` compares the tree with the file** (layer `ratchet` of `tools/check.sh`). A number that went up
   fails it. A Rust file that crosses 2 000 lines and has no line in the file fails it. A number that went down fails
   it too, until `tools/ratchet.sh --lower` has written the lower number, so the file never allows more than the tree

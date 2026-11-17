@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # ratchet.sh - numbers of the tree that may only go down (docs/adr/process/0037), kept in tools/ratchet.txt:
 #
-#   lines FILE     the lines of every Rust file with more than 2000 lines; a file without a line here has at most 2000
+#   lines FILE     the lines of every Rust file with more than 2000 lines; a file without a line here has at most
+#                  2000. A test module inside the file (`#[cfg(test)] mod name {` to its closing brace, both at the
+#                  start of a line) is not counted, so a test never costs room.
 #   allow CRATE    how often a crate switches a lint off (`allow(`)
 #   unsafe CRATE   the lines of a crate with `unsafe` in the code
 #
@@ -24,7 +26,12 @@ trap 'rm -rf "$tmp"' EXIT
 
 measure() {
 	git ls-files '*.rs' | while IFS= read -r f; do
-		n=$(wc -l <"$f" | tr -d ' ')
+		n=$(awk '
+			skip { if ($0 == "}") skip = 0; next }
+			/^#\[cfg\(test\)\]$/ { held = 1; n++; next }
+			held && /^(pub(\([a-z]+\))? )?mod [A-Za-z0-9_]+ \{$/ { held = 0; n--; skip = 1; next }
+			{ held = 0; n++ }
+			END { print n + 0 }' "$f")
 		[ "$n" -le $limit ] || echo "$n lines $f"
 	done
 	for c in hal dsp ui fpgad; do

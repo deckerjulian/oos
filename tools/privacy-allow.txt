@@ -5,3 +5,6 @@
 address 10.1.2.3
 address 10.0.0.2
 serial DHO9A000123456
+
+# the address OOS took without DHCP before 0.1.9; the guide names it
+address 192.168.177.64

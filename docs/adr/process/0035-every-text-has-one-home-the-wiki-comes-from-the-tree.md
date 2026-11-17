@@ -34,7 +34,7 @@ belongs to which change, and `docs/architecture.md` drew the structure in text a
 - **Diagrams are Mermaid, by the C4 levels**: the scope and who uses it, the programs of the image, the parts inside
   the programs; one level per diagram, drawn as a flowchart, with the source files named under it.
   `docs/architecture.md` holds them.
-- **The docs steward checks once a week** what the pull requests missed (ADR 0034).
+- **The docs follower is started for a merge that left its texts behind** (ADR 0034).
 
 ## Alternatives
 
