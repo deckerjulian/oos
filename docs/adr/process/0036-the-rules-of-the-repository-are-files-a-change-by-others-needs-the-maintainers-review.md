@@ -52,10 +52,14 @@ agents can be given work (ADR 0034) and whether a second person can be given wri
 - A token of the maintainer acts with the maintainer's rights, the right to pass `main-review` by included. Such a
   token is only given to what must act as the maintainer, and it is not given the right to administer the
   repository.
-- The branch protection rule of the older kind stays set until the rulesets have been in force for a while; both ask
-  for the same. It is removed by hand then, and `tools/repo-settings.sh` says as long as it is there.
+- The branch protection rule of the older kind was removed on 2026-11-17, when the ruleset `main` held everything it
+  asked for. `tools/repo-settings.sh` would say so if one were set again.
 - The files are not in force by being merged. After the merge an administrator runs `tools/repo-settings.sh --apply`
   once, and again after every change of them; run without `--apply`, it shows whether GitHub still matches.
+- 2026-11-17, later: the ruleset `main` also asks for an automatic review by GitHub Copilot of every pull request
+  that is ready for review, once per pull request (not on every push, not on drafts; the effort is the lowest). It
+  comments; it neither approves nor blocks. A status that holds a pull request until its comments are answered is
+  looked at when the first reviews have been seen.
 - 2026-11-17: `main-review` is removed again and its review is asked by the status `owner` (ADR 0038); `main` holds
   five required checks. `CODEOWNERS` stays: GitHub asks the owner for a review by itself.
 - Tried on 2026-11-17: GitHub took the two rulesets as written, and both are in force. It fills in three fields

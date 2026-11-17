@@ -103,13 +103,17 @@ The same way for everyone, the maintainer included
   and three statuses: `waited` (the waiting time is over), `owner` (it is the maintainer's, or the maintainer approved
   its newest commit) and `unit` (it changes nothing that is only proven on a scope, or it was tried on one). A pull
   request from a fork needs the maintainer's approval and is merged by the maintainer.
+- No waiting time for a pull request that only corrects documents, or that says `Behaviour: unchanged` and whose
+  comparison with the base found nothing, outside the hardware paths, the pipeline, the tools and the rules. The
+  label `hold` stops any pull request.
 - The pull request opened first is merged first when two touch the same code; the later one is rebased. Allow edits by
   maintainers on your pull request and the rebase is done for you.
 - Large changes that do not change behaviour (formatting, moves) are announced in an issue with their day, and wait
   for the open pull requests.
-- An automatic review (GitHub Copilot code review) may comment on a pull request. Its comments are advice: take the
-  ones that are right, and say so where one is wrong. It does not approve and it does not merge. What it is asked to
-  look for is in [.github/instructions/review.instructions.md](.github/instructions/review.instructions.md).
+- Every pull request gets an automatic review (GitHub Copilot code review) once it is ready for review, one per
+  pull request. Its comments are advice: take the ones that are right, and say so where one is wrong. It does not
+  approve and it does not merge. What it is asked to look for is in
+  [.github/instructions/review.instructions.md](.github/instructions/review.instructions.md).
 
 ## Coordinating work
 
@@ -139,8 +143,9 @@ The same way for everyone, the maintainer included
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml), and Clippy clean except for the allowed lints in
   `Cargo.toml` ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md),
-  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). Both are proposed: until the one formatting
-  commit is in main, keep the layout of the file you edit and do not reformat whole files.
+  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). The layout is enforced: `tools/check.sh`
+  fails on code that `cargo fmt` would change. A branch from before 2026-11-17 runs `cargo fmt` on itself first and
+  rebases then.
 - Commits: `Area: what changed, as a statement`, one topic each, the body says why and how it was tested; formatting
   and lint fixes in commits of their own. A change people would notice on the scope gets a `CHANGELOG.md` entry
   ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
