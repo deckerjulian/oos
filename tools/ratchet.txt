@@ -2,7 +2,7 @@
 6 allow fpgad
 9 allow hal
 77 allow ui
-2954 lines ui/src/board/dho/hw.rs
+2951 lines ui/src/board/dho/hw.rs
 2795 lines ui/src/model.rs
 5097 lines ui/src/scpi.rs
 12628 lines ui/src/ui.rs
