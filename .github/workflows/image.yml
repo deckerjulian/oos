@@ -7,12 +7,27 @@
 # containers, which takes hours), and a last job compares what the two put into the image (tools/image-manifest.py:
 # kernel, DTB, every file of the initramfs) and fails when they differ, apart from the programs built from the OOS
 # source (see the job). That is a check of the build, not a part of a release: a release needs one image.
+#
+# With `sims` (the weekly run asks for it): the simulations run on what was built (tools/check.sh sim).
 name: Image
 on:
   workflow_dispatch:
     inputs:
       both_hosts:
         description: Also build on x86-64 and compare the two images (takes hours)
+        type: boolean
+        default: false
+      sims:
+        description: Run the simulations on what was built (tools/check.sh sim)
+        type: boolean
+        default: false
+  # the weekly run
+  workflow_call:
+    inputs:
+      both_hosts:
+        type: boolean
+        default: false
+      sims:
         type: boolean
         default: false
   push:
@@ -92,6 +107,17 @@ jobs:
             kernel/out/base/SHA256SUMS
             kernel/out/base/config
           if-no-files-found: error
+      # After the image: its scripts and programs in containers and virtual machines, without a scope. From the
+      # weekly run or by hand with `sims`, and when this file changes on a branch (a test of this step); never for a
+      # tag: a release is not held up by them.
+      - name: Simulations (tools/check.sh sim)
+        if: >-
+          runner.arch == 'ARM64' &&
+          (inputs.sims || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')))
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+          tools/check.sh sim
   compare:
     needs: image
     if: inputs.both_hosts
