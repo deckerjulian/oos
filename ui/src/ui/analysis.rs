@@ -827,6 +827,8 @@ impl Ui {
                         self.m.spec_span = (p.f / 5.0).max(1.0);
                     }
                     self.azr.spec_avg = None;
+                } else {
+                    self.toast("No peak yet: open the spectrum first");
                 }
             }
             Item::EyeClear => {

@@ -24,6 +24,8 @@ pub(super) struct SimGeo {
     pub up: Rect,
     pub down: Rect,
     pub play: Rect,
+    /// adds the signal of the knobs as one more ref
+    pub add: Rect,
 }
 
 impl Ui {
@@ -134,7 +136,10 @@ impl Ui {
         let p = self.studio_panel_rect().filter(|_| self.m.layout == Layout::Studio && self.studio.view == StudioView::Sim)?;
         let tab_w = (p.w - 16) / 2;
         let list_y = p.y + 74;
-        let play = Rect::new(p.x + 6, p.bottom() - 46, p.w - 12, 38);
+        // Add beside Play: the signal of the knobs as one more ref, so that Play runs several
+        let add_w = (p.w - 18) * 2 / 5;
+        let add = Rect::new(p.x + 6, p.bottom() - 46, add_w, 38);
+        let play = Rect::new(add.right() + 6, add.y, p.w - 18 - add_w, 38);
         let nav_y = play.y - 36;
         let page = (((nav_y - 4 - list_y) / SIM_ROW).max(1)) as usize;
         Some(SimGeo {
@@ -147,6 +152,7 @@ impl Ui {
             up: Rect::new(p.right() - 82, nav_y, 36, 30),
             down: Rect::new(p.right() - 42, nav_y, 36, 30),
             play,
+            add,
         })
     }
 
@@ -161,9 +167,10 @@ impl Ui {
         let p = g.p;
         cv.round(p, 8, CARD_BORDER, 255);
         cv.round(p.inset(1), 7, PANEL_BG, 255);
-        let state = if self.session_is_sim { "on the lanes" } else if self.sim_generating() { "generating" } else { "not playing" };
+        let ready = self.sim_shown_refs().len();
+        let state = if self.sim_mode() { "on the lanes".to_string() } else if self.sim_generating() { "generating".to_string() } else if ready > 0 { format!("{ready} added, ready to play") } else { "not playing".to_string() };
         cv.set_clip(Rect::new(p.x + 14, p.y + 4, p.w - 28, 24));
-        cv.text(&f.s, p.x + 14, p.y + 21, &format!("{} \u{b7} {} \u{b7} {}", self.sim_preset_name(), si_short(self.m.sim_rate, "b/s"), state), DIM);
+        cv.text(&f.s, p.x + 14, p.y + 21, &format!("{} \u{b7} {} \u{b7} {}", self.sim_preset_name(), si_short(self.m.sim_rate, "b/s"), state), DIM); // state is a String
         cv.no_clip();
         for (r, label, on) in [(g.presets, "Presets", !self.studio.sim_knobs), (g.knobs, "Knobs", self.studio.sim_knobs)] {
             chip(cv, r, if on { mix(BTN, ACCENT, 40) } else { BTN }, if on { ACCENT } else { BTN_BORDER });
@@ -190,7 +197,13 @@ impl Ui {
         let running = self.studio_sim_running();
         chip(cv, g.play, if running { mix(BTN, GREEN, 60) } else { BTN }, if running { GREEN } else { BTN_BORDER });
         if running { icon_stop(cv, g.play.x + g.play.w / 2 - 38, g.play.y + g.play.h / 2, TEXT); } else { icon_play(cv, g.play.x + g.play.w / 2 - 38, g.play.y + g.play.h / 2, TEXT); }
-        cv.text_in(&f.mb, Rect::new(g.play.x + g.play.w / 2 - 18, g.play.y, 80, g.play.h), 0, if running { "Stop" } else { "Play" }, TEXT);
+        let label = if running { "Stop".to_string() } else if ready > 1 && !self.sim_mode() { format!("Play {ready}") } else { "Play".to_string() };
+        cv.text_in(&f.mb, Rect::new(g.play.x + g.play.w / 2 - 18, g.play.y, 80, g.play.h), 0, &label, TEXT);
+        // Add: a plus and the slot it goes to
+        let free = (0..NREF).find(|&i| self.refs[i].is_none());
+        chip(cv, g.add, BTN, BTN_BORDER);
+        let word = free.map_or("Add".to_string(), |i| format!("+ Add R{}", i + 1));
+        cv.text_in(&f.mb, g.add, 1, &word, if free.is_some() { TEXT } else { DIM });
     }
 
     fn draw_sim_preset(&self, cv: &mut Canvas, r: Rect, i: usize) {
@@ -244,6 +257,8 @@ impl Ui {
             self.studio.panel.scroll_top();
         } else if g.up.contains(x, y) || g.down.contains(x, y) {
             self.studio_page(total, g.page, g.down.contains(x, y));
+        } else if g.add.contains(x, y) {
+            self.sim_add_next();
         } else if g.play.contains(x, y) {
             self.activate(Item::SimPlay);
         } else if g.list.contains(x, y) {
@@ -432,7 +447,7 @@ mod tests {
         let g = u.studio_sim_geo().expect("the SIM panel");
         assert!(g.p.x >= u.grid.right() && g.p.right() <= W && g.p.bottom() <= u.frame().bottom.y, "beside the plot, above the bar");
         assert_eq!(u.studio_panel_rect(), Some(g.p));
-        for r in [g.presets, g.knobs, g.up, g.down, g.play, g.list] {
+        for r in [g.presets, g.knobs, g.up, g.down, g.play, g.add, g.list] {
             assert!(g.p.contains(r.x, r.y) && g.p.contains(r.right() - 1, r.bottom() - 1), "{r:?} inside the panel");
         }
         assert!(!overlaps(g.list, g.up) && !overlaps(g.list, g.play) && !overlaps(g.up, g.play) && !overlaps(g.presets, g.list));

@@ -77,7 +77,7 @@ fn check_top(u: &Ui) {
     for (name, r) in &rects { assert!(r.x >= top.x && r.right() <= top.right() && r.y >= top.y && r.bottom() <= top.bottom(), "{name} {r:?} in {top:?}"); }
     for p in rects.windows(2) { assert!(p[0].1.right() <= p[1].1.x, "{} {:?} overlaps {} {:?}", p[0].0, p[0].1, p[1].0, p[1].1); }
     let labels = &super::studio::TOP_LABELS[t.tier];
-    for (r, label) in [(t.autoset, labels[0]), (t.clear, labels[1]), (t.force, labels[2]), (t.add, labels[3]), (t.cursors, labels[5]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
+    for (r, label) in [(t.add, labels[3]), (t.cursors, labels[5]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
         assert!(r.w > 0 && f.mb.width(label) <= r.w - 4, "{label:?} in {r:?}");
     }
     assert!(t.acq.right() <= t.add.x, "the caption stays left of the buttons");
@@ -86,26 +86,30 @@ fn check_top(u: &Ui) {
 // ------------------------------------------------------------------------------------------------ top bar
 
 #[test]
-fn autoset_clear_and_force_are_in_the_top_bar_and_act() {
+fn autoset_clear_and_force_are_front_panel_keys_and_not_in_the_top_bar() {
     let mut u = studio();
     check_top(&u);
     let t = u.studio_top();
-    assert!(t.autoset.w > 0 && t.clear.w > 0 && t.force.w > 0);
-    assert!(t.single.right() < t.autoset.x && t.force.right() < t.add.x, "near Run / Stop and Single, left of the right group");
+    assert!(t.autoset.w == 0 && t.clear.w == 0 && t.force.w == 0, "the bar does not repeat the keys of the front panel");
     shot(&mut u, "topbar");
-    tap(&mut u, t.autoset);
-    assert!(toast_text(&u).contains("Auto set-up"), "{}", toast_text(&u));
-    u.cleared = false;
-    let t = u.studio_top();
-    let (x, y) = centre(t.clear);
+    // a tap where they were opens the acquisition page, like the rest of the read-out
+    let (x, y) = centre(t.acq);
+    assert!(t.acq.x < t.single.right() + 120, "the read-out starts where the buttons were: {:?}", t.acq);
     u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
     u.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+    assert!(u.menu_open && u.menu == MenuId::Acquire);
+    u.close_menu();
+    // the keys act, and the Menu has the three as entries
+    u.key(key::AUTO);
+    assert!(toast_text(&u).contains("Auto set-up"), "{}", toast_text(&u));
+    u.cleared = false;
+    u.key(key::CLEAR);
     assert!(u.cleared, "Clear clears the display");
-    frame(&mut u);
     u.toast = None;
-    let t = u.studio_top();
-    tap(&mut u, t.force);
-    assert!(toast_text(&u).contains("Force trigger"), "Force works at any time: {}", toast_text(&u));
+    u.key(key::FORCE);
+    assert!(toast_text(&u).contains("Force trigger"), "{}", toast_text(&u));
+    let menu: Vec<String> = u.main_groups().into_iter().flat_map(|(_, items)| items).map(|it| u.item_label(it).to_string()).collect();
+    for name in ["Autoset", "Clear", "Force"] { assert!(menu.iter().any(|l| l == name), "{name} in {menu:?}"); }
 }
 
 #[test]
@@ -156,9 +160,6 @@ fn a_narrow_top_bar_shortens_labels_and_drops_nothing() {
     tap(&mut u, t.display);
     assert_eq!(u.menu, MenuId::Display);
     u.close_menu();
-    let t = u.studio_top();
-    tap(&mut u, t.force);
-    assert!(toast_text(&u).contains("Force"), "{}", toast_text(&u));
     // in the SIM mode (Live, the preset chip) the bar still fits
     let t = u.studio_top();
     tap(&mut u, t.simbtn);
@@ -248,17 +249,26 @@ fn the_sim_button_runs_the_simulation_mode_and_live_returns() {
 }
 
 #[test]
-fn adding_to_a_ref_is_refused_while_the_simulation_runs() {
+fn adding_while_the_simulation_runs_goes_to_live_and_adds_one_more_ref() {
     let mut u = studio();
     u.activate(Item::SimPlay);
     u.wait_sim_generation();
     assert!(u.session_is_sim);
     let before = u.refs.iter().filter(|r| r.is_some()).count();
-    u.sim_slot_set(5);
+    assert_eq!(before, 1, "the played signal is in its slot");
+    // another signal: the knobs of now, not those from before Play
+    u.select_option(Item::SimPreset, "USB 2.0 HS");
+    u.wait_sim_generation();
     u.activate(Item::SimAddRef);
-    assert!(u.refs[5].is_none());
-    assert_eq!(u.refs.iter().filter(|r| r.is_some()).count(), before);
-    assert!(toast_text(&u).contains("Live"), "{}", toast_text(&u));
+    u.wait_sim_generation();
+    for _ in 0..6 { frame(&mut u); }
+    assert!(!u.sim_mode(), "Live while the new ref is made");
+    assert_eq!(u.refs.iter().filter(|r| r.is_some()).count(), before + 1, "{}", toast_text(&u));
+    assert!(u.refs[1].as_ref().is_some_and(|r| r.label == "USB 2.0 HS" && r.on), "the first free slot has the new signal");
+    assert!(u.refs[0].as_ref().is_some_and(|r| r.on), "the first signal stays shown");
+    // Play now runs both
+    u.activate(Item::SimPlay);
+    assert!(u.sim_mode() && u.sim_refs == vec![0, 1], "{:?}", u.sim_refs);
 }
 
 // ------------------------------------------------------------------------------------------------ pills

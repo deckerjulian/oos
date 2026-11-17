@@ -443,11 +443,11 @@ impl Ui {
             Rect::new(x, CHIP_Y, (f.mb.width(self.sim_preset_name()) + 56).min(if tier == 0 { 220 } else { 170 }), CHIP_H)
         } else { Rect::new(x, CHIP_Y, 0, CHIP_H) };
         if sim.w > 0 { x = sim.right() + gap; }
-        // Autoset, Clear, Force: the acquisition actions of the front panel
-        let autoset = Rect::new(x, CHIP_Y, btn_w(labels[0]), CHIP_H);
-        let clear = Rect::new(autoset.right() + gap, CHIP_Y, btn_w(labels[1]), CHIP_H);
-        let force = Rect::new(clear.right() + gap, CHIP_Y, btn_w(labels[2]), CHIP_H);
-        x = force.right() + 8;
+        // Autoset, Clear, Force are keys of the front panel (and entries of the Menu): the bar does not repeat them,
+        // its room goes to the acquisition read-out
+        let autoset = Rect::new(x, CHIP_Y, 0, CHIP_H);
+        let (clear, force) = (autoset, autoset);
+        x += 4;
         // the right group is laid out from the edge: gear, View, Storage, Display, Cursors, Measure, + Add
         let mut r = top.right() - 8;
         let gear = Rect::new(r - 40, CHIP_Y, 40, CHIP_H);
@@ -533,7 +533,7 @@ impl Ui {
         self.draw_view_box(cv);
         // Autoset, Clear, Force: Force is dimmed while no trigger is waiting, and still works
         let waiting = !self.record_mode() && self.m.run == RunState::Run && self.m.status == TrigStatus::Wait;
-        for (r, label, lit) in [(t.autoset, labels[0], true), (t.clear, labels[1], true), (t.force, labels[2], waiting)] {
+        for (r, label, lit) in [(t.autoset, labels[0], true), (t.clear, labels[1], true), (t.force, labels[2], waiting)].into_iter().filter(|(r, ..)| r.w > 0) {
             let pressed = self.touch.down && self.top_hit(r).contains(self.touch.x0, self.touch.y0);
             btn(cv, r, if pressed { mix(BTN, ACCENT, 60) } else { BTN }, if pressed { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if lit { TEXT } else { DIM });
@@ -1014,11 +1014,11 @@ impl Ui {
             self.studio_run_stop();
         } else if hit(t.single) {
             self.studio_single();
-        } else if hit(t.autoset) {
+        } else if t.autoset.w > 0 && hit(t.autoset) {
             self.key(key::AUTO);
-        } else if hit(t.clear) {
+        } else if t.clear.w > 0 && hit(t.clear) {
             self.key(key::CLEAR);
-        } else if hit(t.force) {
+        } else if t.force.w > 0 && hit(t.force) {
             self.key(key::FORCE);
         } else if t.sim.w > 0 && hit(t.sim) {
             if self.menu_open { self.close_menu(); }

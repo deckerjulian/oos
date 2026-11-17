@@ -282,6 +282,9 @@ impl Ui {
             Item::SimShow => {
                 if let Some(r) = &mut self.refs[self.m.sim_slot] {
                     r.on = !r.on;
+                } else {
+                    let slot = self.m.sim_slot + 1;
+                    self.toast(&format!("R{slot} is empty: Play or Add to ref first"));
                 }
             }
             _ => return false,
@@ -509,11 +512,33 @@ impl Ui {
 
     /// Add to ref: the signal of the SIM sheet is written to the chosen slot, named after the signal, and nothing else
     /// changes: no SIM mode, no other slot, no channel switched off.
-    pub(super) fn sim_add_to_ref(&mut self) {
-        let slot = self.m.sim_slot;
+    /// Adds the signal the knobs describe as one more ref, in the first free slot: the way to several simulated
+    /// signals. While the simulation mode plays, it goes back to Live first (the knobs stay as they are set now),
+    /// and the next Play runs every shown ref together.
+    pub(super) fn sim_add_next(&mut self) {
+        if self.sim_generating() { return self.toast("SIM is busy generating"); }
+        let Some(free) = (0..NREF).find(|&i| self.refs[i].is_none()) else {
+            return self.toast("All ten refs are in use: clear one to add a signal");
+        };
         if self.sim_mode() {
-            return self.toast("Leave the simulation mode (Live) to add a signal to a ref");
+            // Live restores the settings from before Play: the SIM knobs of now come along
+            let now = self.m.clone();
+            self.return_to_live();
+            let m = &mut self.m;
+            (m.sim_preset, m.sim_rate, m.sim_prbs, m.sim_vhigh, m.sim_vlow, m.sim_rise, m.sim_noise, m.sim_bw, m.sim_deemph) =
+                (now.sim_preset, now.sim_rate, now.sim_prbs, now.sim_vhigh, now.sim_vlow, now.sim_rise, now.sim_noise, now.sim_bw, now.sim_deemph);
+            (m.sim_ssc, m.sim_ssc_center, m.sim_ssc_deviation, m.sim_ssc_hz, m.sim_rj, m.sim_pj, m.sim_pjhz, m.sim_dcd_pp, m.sim_corr_rj, m.sim_corr_hz) =
+                (now.sim_ssc, now.sim_ssc_center, now.sim_ssc_deviation, now.sim_ssc_hz, now.sim_rj, now.sim_pj, now.sim_pjhz, now.sim_dcd_pp, now.sim_corr_rj, now.sim_corr_hz);
         }
+        self.m.sim_slot = free;
+        self.sim_add_to_ref();
+    }
+
+    pub(super) fn sim_add_to_ref(&mut self) {
+        if self.sim_mode() {
+            return self.sim_add_next();
+        }
+        let slot = self.m.sim_slot;
         let lane = self.sim_lane();
         let count = match serial::sample_count(&lane) { Ok(c) => c, Err(e) => return self.toast(&format!("SIM: {e}")) };
         if count <= 65_536 {
