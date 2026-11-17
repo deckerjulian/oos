@@ -58,6 +58,10 @@ Added:
     its menu button); Minimal greys Overlay and Stacked out while an analyser has the plot;
   - a long information line of a sheet (Network > Other access) breaks in two instead of losing its first letters; a
     lane no longer repeats the trigger level as a scale label beside the trigger tag;
+  - a SIM waveform added to a reference while the scope runs live is generated as long as the live screen, up to
+    4 million samples (it was always 65 536 samples, a few microseconds of a fast lane and a blip beside a
+    millisecond record). SIM Play keeps its own short record. At 4 million samples USB 2.0 HS covers 1 ms and
+    PCIe 1.0 0.2 ms; the fastest lanes still cover tens of microseconds, which is all their sample rate gives;
   - a SIM waveform added to a reference while the scope runs live says how long it is when it is far shorter than the
     screen, and its message carries the tick of a done action instead of the warning triangle;
   - the Histogram view of Studio uses its whole height (it copied the position of the channel's lane, a third of the

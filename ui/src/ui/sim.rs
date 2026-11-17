@@ -17,6 +17,9 @@ mod sim_bus_tests;
 
 const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
 
+/// Most samples of a SIM record made for a reference beside live channels: 16 MB of samples.
+const SIM_REF_SAMPLES: usize = 4_000_000;
+
 struct Request {
     id: u64,
     lane: Lane,
@@ -29,6 +32,8 @@ struct Request {
     bus_trigger: Option<Result<sim_bus_candidate::Plan, &'static str>>,
     /// Add to ref: the result is only written to the slot, no SIM session starts
     add_only: bool,
+    /// a record of this many samples instead of the usual one (a reference beside live channels, as long as their screen)
+    samples: Option<usize>,
 }
 
 struct Generated {
@@ -71,7 +76,8 @@ impl Generation {
         std::thread::Builder::new().name("oos-sim".into()).spawn(move || {
             while let Ok(mut request) = input.recv() {
                 while let Ok(newer) = input.try_recv() { request = newer; }
-                let generated = serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
+                let made = match request.samples { Some(n) => serial::try_generate_len(&request.lane, n), None => serial::try_generate(&request.lane) };
+                let generated = made.map(|samples| Generated::evaluate(&request, samples));
                 if output.send((request, generated)).is_err() { break; }
             }
         }).map_err(|error| format!("Could not start SIM generator: {error}"))?;
@@ -460,7 +466,7 @@ impl Ui {
     fn sim_capture_request(&self, lane: Lane, slot: usize, continuing: bool, fresh: bool, run: bool) -> Request {
         let model = self.sim_trigger_model(&lane, slot, continuing);
         let vpd = self.sim_candidate_vpd(&lane, slot, continuing, run);
-        Request { id: 0, lane, slot, continuing, fresh, run, add_only: false,
+        Request { id: 0, lane, slot, continuing, fresh, run, add_only: false, samples: None,
             guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd),
             bus_trigger: if self.m.trig_on_la(){Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))}else if matches!(model.trig_type,TrigType::Pattern|TrigType::Duration){Some(Err("SIM Pattern/Duration qualification is unavailable"))}else if model.trig_type==TrigType::Bus{Some(self.prepare_sim_bus(&model,slot,vpd))}else{None} }
     }
@@ -542,7 +548,12 @@ impl Ui {
         }
         let slot = self.m.sim_slot;
         let lane = self.sim_lane();
-        let count = match serial::sample_count(&lane) { Ok(c) => c, Err(e) => return self.toast(&format!("SIM: {e}")) };
+        // beside live channels the reference is as long as their screen, as far as the sample rate of the lane allows
+        // within SIM_REF_SAMPLES; the usual record of a fast lane is a few microseconds, a blip on a millisecond screen
+        let screen = self.m.time_per_div() as f64 * HDIV as f64;
+        let counted = if self.record_mode() { serial::sample_count(&lane) } else { serial::sample_count_for(&lane, screen, SIM_REF_SAMPLES) };
+        let count = match counted { Ok(c) => c, Err(e) => return self.toast(&format!("SIM: {e}")) };
+        let longer = serial::sample_count(&lane).is_ok_and(|usual| count > usual);
         if count <= 65_536 {
             match serial::try_generate(&lane) {
                 Ok(v) => self.sim_store_ref(slot, &lane, v),
@@ -555,7 +566,7 @@ impl Ui {
             match Generation::new() { Ok(w) => self.sim_generation = Some(w), Err(e) => return self.toast(&format!("SIM: {e}")) }
         }
         let name = lane.name;
-        let request = Request { id: 0, lane, slot, continuing: false, fresh: false, run: false, guard: String::new(), trigger: None, bus_trigger: None, add_only: true };
+        let request = Request { id: 0, lane, slot, continuing: false, fresh: false, run: false, guard: String::new(), trigger: None, bus_trigger: None, add_only: true, samples: longer.then_some(count) };
         match self.sim_generation.as_mut().unwrap().submit(request) {
             Ok(()) => self.toast(&format!("Generating {name} ({:.1} M samples)", count as f64 / 1e6)),
             Err(e) => self.toast(&format!("SIM: {e}")),

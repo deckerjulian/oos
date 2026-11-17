@@ -99,6 +99,13 @@ fn sim_mode_plays_a_file_ref_and_an_added_ref_together() {
     u.activate(Item::SimPlay);
     assert_eq!(u.sim_refs, vec![0, 1]);
     play(&mut u, 40);
+    // the added reference is as long as the live screen now (millions of samples) and is measured in the background:
+    // the playback goes on until both have statistics, however long the computer takes for that
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while (stat_n(&u, 0) <= 1 || stat_n(&u, 1) <= 1) && std::time::Instant::now() < end {
+        play(&mut u, 5);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert!(stat_n(&u, 0) > 1, "R1 n = {}", stat_n(&u, 0));
     assert!(stat_n(&u, 1) > 1, "R2 n = {}", stat_n(&u, 1));
     let caption = u.record_caption();
