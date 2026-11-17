@@ -14,8 +14,9 @@
 #            is the maintainer's own or the development agent's, or Dependabot's and changes nothing but the
 #            commits of actions, or the maintainer has approved its newest commit.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
-#   review   GitHub Copilot has reviewed it (the ruleset asks for one review per pull request, once it is ready) and
-#            left no open issue, or every thread it opened is resolved; pending until then, and for a draft.
+#   review   GitHub Copilot has reviewed its newest commit (the ruleset asks for a review when it is ready and on
+#            every push) and left no open issue, or every thread it opened is resolved; pending until then, and for a
+#            draft. A review of an older commit does not count: what came after it has not been read.
 #            Dependabot's pull requests that only move the commits of actions get no review and need none.
 #
 #   tools/pr-gate.sh NUMBER        one pull request
@@ -125,13 +126,15 @@ one() {
 		status "$sha" owner pending "needs the maintainer's approving review of this commit"
 	fi
 
-	# review: the newest review by Copilot; "No open issues" in its overview, or every thread of its resolved
-	review=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
-		jq -s 'add | [.[] | select(.is_copilot_code_review == true)] | last // empty')
+	# review: Copilot's newest review of this commit; "No open issues" in its overview, or every thread of its resolved
+	reviews=$(gh api --paginate "repos/$repo/pulls/$n/reviews" | jq -s 'add | [.[] | select(.is_copilot_code_review)]')
+	review=$(printf '%s' "$reviews" | jq --arg s "$sha" '[.[] | select(.commit_id == $s)] | last // empty')
 	if [ "$draft" = true ]; then
 		status "$sha" review pending "a draft: the review comes when it is ready for review"
 	elif [ $bump = true ] && [ -z "$review" ]; then
 		status "$sha" review success "Dependabot: only the commits of actions, no review needed"
+	elif [ -z "$review" ] && [ "$(printf '%s' "$reviews" | jq length)" != 0 ]; then
+		status "$sha" review pending "Copilot reviewed an older commit; the newest is not reviewed yet"
 	elif [ -z "$review" ]; then
 		status "$sha" review pending "no review by Copilot yet"
 	else

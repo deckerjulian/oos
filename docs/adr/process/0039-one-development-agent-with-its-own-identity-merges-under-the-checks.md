@@ -31,7 +31,7 @@ and ADR 0038 let the maintainer's own pull requests merge themselves. After the 
   commits carry the maintainer's sign-off: the maintainer answers for them (ADR 0026).
 - **Its pull requests need no waiting time** (`waited` passes for them as for the maintainer's own) and **merge by
   themselves** once the required checks pass: `test`, `compare`, `owner`, `unit` and now **`review`**: Copilot has
-  reviewed the newest state and every comment it left is answered and resolved. The label `hold` stops any of them.
+  reviewed the newest commit (it reviews on every push) and every comment it left is answered and resolved. The label `hold` stops any of them.
 - **A change in the hardware paths is tried on the unit first.** When the maintainer has put the scope on the bench
   for it in that session (AGENTS.md, "Never"), the agent tries the change there (deploy to RAM,
   `tools/device-test.py`, restore what was installed) and then sets `unit-tested`, saying in the pull request what
