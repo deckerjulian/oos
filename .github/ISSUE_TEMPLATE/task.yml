@@ -1,0 +1,53 @@
+name: Task
+description: A bounded change that a person or a coding agent can make in one pull request
+labels: [agent-ready]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One task is one pull request, small enough to review in one sitting (about 400 changed lines). Larger work
+        is several tasks. The rules for whoever takes it are in AGENTS.md.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What changes and why, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: What can be seen or tested when it is done, one point a line.
+      placeholder: |
+        - [ ] `:TRIGger:MODE?` answers NORM after `:TRIGger:MODE NORM`
+        - [ ] a test covers the reply
+        - [ ] docs/scpi.md lists the command
+    validations:
+      required: true
+  - type: dropdown
+    id: behaviour
+    attributes:
+      label: Behaviour
+      description: Unchanged means that pictures and register sequences stay the same; CI compares them.
+      options: [unchanged, changes (say what under Goal)]
+    validations:
+      required: true
+  - type: dropdown
+    id: unit
+    attributes:
+      label: Does it need a scope
+      description: Register sequences, calibration, start-up and updates are only proven on a unit.
+      options: ['no: host only', 'yes: to be tried on a unit before it is merged']
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Not part of it
+      description: What the pull request must leave alone.
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Where to look
+      description: Files, decision records, earlier pull requests.

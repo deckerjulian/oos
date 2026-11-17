@@ -99,6 +99,10 @@ The same way for everyone, the maintainer included
   opened, and `risk/hardware` for what is only proven on a scope. A pull request gets its areas, `agent` and
   `risk/hardware` by itself (`tools/pr-labels.sh`), and its type when its title starts with `CI:`, `Docs:`, `Tests:`,
   `Process:` or `Build:`.
+- **Some labels say what an issue needs:** `hardware` (a report from a scope), `agent-ready` (a task with a goal, a
+  "done when" and limits, small enough for one pull request, for a person or a coding agent), `needs-unit` (it has to
+  be tried on a scope before it is merged or closed), and `flaky` (a test that fails now and then; it is fixed, not run
+  again). The issue forms ask for what each kind needs.
 - **Draft pull requests are welcome early.** A draft shows where you are going before it is done and lets others plan
   around it.
 - **Say which area you work on** in the pull request title (`Trigger:`, `SCPI:`, `Docs:`), as in the commit subjects;
