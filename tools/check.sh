@@ -24,9 +24,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
 layers="fmt clippy text syntax test target decoders ratchet sim"
-# clippy joins with the rollout of ADR 0017, ratchet with ADR 0037; sim needs Docker and builds
-# that CI's check job lacks
-enforced="fmt text syntax test target decoders"
+# sim needs Docker and builds that CI's check job lacks: it is run by name
+enforced="fmt clippy text syntax test target decoders ratchet"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

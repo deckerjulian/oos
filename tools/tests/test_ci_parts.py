@@ -23,9 +23,9 @@ def scope(*files):
     return dict(line.split("=", 1) for line in out.stdout.splitlines())["scope"] == "true"
 
 
-EVERYTHING = {"test:hal", "test:ui", "fmt", "test:dsp", "test:fpgad", "target", "decoders:core", "decoders:each/1",
-              "decoders:each/2"}
-UI = {"test:ui", "fmt", "target", "decoders:core", "decoders:each/1", "decoders:each/2"}
+EVERYTHING = {"test:hal", "test:ui", "fmt", "test:dsp", "test:fpgad", "target", "clippy", "decoders:core",
+              "decoders:each/1", "decoders:each/2"}
+UI = {"test:ui", "fmt", "target", "clippy", "decoders:core", "decoders:each/1", "decoders:each/2"}
 
 
 class Parts(unittest.TestCase):
@@ -41,7 +41,8 @@ class Parts(unittest.TestCase):
         self.assertEqual(parts("dsp/src/fft.rs"), (UI | {"test:dsp"}, True), "dsp reaches ui")
         self.assertEqual(parts("ui/src/scpi.rs"), (UI, True))
         self.assertEqual(parts("ui/Cargo.toml"), (UI, True), "the decoder list reaches what ui reaches")
-        self.assertEqual(parts("fpgad/src/main.rs"), ({"fmt", "test:fpgad", "target"}, True), "fpgad reaches nothing")
+        self.assertEqual(parts("fpgad/src/main.rs"), ({"fmt", "test:fpgad", "target", "clippy"}, True),
+                         "fpgad reaches nothing")
 
     def test_what_reaches_less(self):
         self.assertEqual(parts("rootfs/init"), ({"test:hal"}, False), "read by the tests of hal, built into nothing")

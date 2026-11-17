@@ -145,8 +145,8 @@ The same way for everyone, the maintainer included
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml), and Clippy clean except for the allowed lints in
   `Cargo.toml` ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md),
-  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). The layout is enforced: `tools/check.sh`
-  fails on code that `cargo fmt` would change. A branch from before 2026-11-17 runs `cargo fmt` on itself first and
+  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). Both are enforced: `tools/check.sh`
+  fails on code that `cargo fmt` would change and on a Clippy warning. A branch from before 2026-11-17 runs `cargo fmt` on itself first and
   rebases then.
 - Commits: `Area: what changed, as a statement`, one topic each, the body says why and how it was tested; formatting
   and lint fixes in commits of their own. A change people would notice on the scope gets a `CHANGELOG.md` entry
