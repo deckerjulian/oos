@@ -344,7 +344,8 @@ pub fn persisted(id: u16) -> bool {
 
 /// The groups of category `cat` with their tiles, in the order of the page.
 pub fn groups(cat: u8) -> &'static [(&'static str, Vec<&'static Def>)] {
-    static G: std::sync::OnceLock<Vec<Vec<(&'static str, Vec<&'static Def>)>>> = std::sync::OnceLock::new();
+    type Groups = Vec<(&'static str, Vec<&'static Def>)>;
+    static G: std::sync::OnceLock<Vec<Groups>> = std::sync::OnceLock::new();
     let all = G.get_or_init(|| {
         (0..CATEGORIES.len() as u8)
             .map(|c| {

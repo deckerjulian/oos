@@ -310,8 +310,7 @@ mod tests {
 
     #[test]
     fn spi_and_iic() {
-        let mut m = Model::default();
-        m.dec_cs = Some(2);
+        let mut m = Model { dec_cs: Some(2), ..Default::default() };
         assert!(set(&mut m, "SPI", "WHEN", "TIMeout"));
         assert_eq!((m.dec_cs, m.ser.spi_timeout, q(&mut m, "SPI", "WHEN")), (None, 1e-6, "TIM".to_string()));
         for (key, v, back) in [

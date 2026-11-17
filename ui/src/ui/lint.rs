@@ -1409,8 +1409,7 @@ fn what_the_screen_says_reaches_the_settings() {
     );
     assert!((s.delay - 2e-4).abs() < 1e-9);
     // a trigger source that is switched off is acquired all the same, and keeps its role
-    let mut m = Model::default();
-    m.trig_src = 1;
+    let mut m = Model { trig_src: 1, ..Default::default() };
     assert_eq!((hw(&m).mask, hw(&m).trig_src), (0b11, 2));
     m.trig_src = 0;
     m.trig_type = TrigType::Delay;
@@ -1425,10 +1424,12 @@ fn what_the_screen_says_reaches_the_settings() {
         t => panic!("{:?}", t),
     }
     // roll and scan: no depth below 1 M, the delay stays out of it; a small depth at the slowest time base is no crash
-    let mut m = Model::default();
-    m.tscale = tscales().len() - 1;
-    m.mdepth = mdepths().iter().position(|d| d.1 == 1000).unwrap();
-    m.delay = 1.0;
+    let m = Model {
+        tscale: tscales().len() - 1,
+        mdepth: mdepths().iter().position(|d| d.1 == 1000).unwrap(),
+        delay: 1.0,
+        ..Default::default()
+    };
     let s = hw(&m);
     assert!(s.depth >= 1_000_000 && s.delay == 0.0, "{}", s.depth);
     oos_hal::dho::hz::prep(1, oos_hal::dho::seq::tdiv_fs(1000.0), 1000, 0);
@@ -2168,8 +2169,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
 
     let mut screen: [Vec<f32>; NCH] = Default::default();
     screen[0] = vec![0.25, 0.5, 0.75, 1.0];
-    let mut frame = crate::board::Frame::default();
-    frame.dt = 2e-9;
+    let mut frame = crate::board::Frame { dt: 2e-9, ..Default::default() };
     frame.ch[0] = vec![0.0; 200];
     frame.ch[0][10] = 9.0;
     u.last[0] = Some(Record {

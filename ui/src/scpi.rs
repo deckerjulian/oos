@@ -200,7 +200,7 @@ fn persist_index(arg: &str) -> Option<usize> {
 /// The answer to `:DISPlay:GRADing:TIME?` for entry `i` of `PERSIST`.
 fn persist_token(i: usize) -> String {
     match PERSIST.get(i).map(|p| p.1) {
-        Some(s) if s == 0.0 => "MIN".into(),
+        Some(0.0) => "MIN".into(),
         Some(s) if s > 0.0 => s.to_string(),
         _ => "INF".into(),
     }
@@ -2250,7 +2250,7 @@ impl Scpi {
                 if query {
                     return t(&wave_tok(if second { ui.meas_source_b() } else { ui.meas_source() }));
                 }
-                let Some(id) = self.named_source(arg) else { return None };
+                let id = self.named_source(arg)?;
                 if second {
                     ui.set_meas_source_b(id);
                 } else {
@@ -2286,13 +2286,8 @@ impl Scpi {
                     self.push_err("-224,\"Illegal parameter value\"".into());
                     return None;
                 }
-                let Some(a) = self.named_source(words[0]) else { return None };
-                let b = if words.len() == 2 {
-                    let Some(b) = self.named_source(words[1]) else { return None };
-                    Some(b)
-                } else {
-                    None
-                };
+                let a = self.named_source(words[0])?;
+                let b = if words.len() == 2 { Some(self.named_source(words[1])?) } else { None };
                 ui.set_meas_source(a);
                 if let Some(b) = b {
                     ui.set_meas_source_b(b);
@@ -2852,7 +2847,7 @@ impl Scpi {
             }
         };
         if let Some(k) = meas_kind(item) {
-            let Some(src) = source(self, parts.next(), ui.meas_source()) else { return None };
+            let src = source(self, parts.next(), ui.meas_source())?;
             if parts.next().is_some() {
                 self.push_err("-224,\"Too many measurement sources\"".into());
                 return None;
@@ -2863,8 +2858,8 @@ impl Scpi {
             return None;
         }
         if let Some(k) = pair_kind(item) {
-            let Some(a) = source(self, parts.next(), ui.meas_source()) else { return None };
-            let Some(b) = source(self, parts.next(), ui.meas_source_b()) else { return None };
+            let a = source(self, parts.next(), ui.meas_source())?;
+            let b = source(self, parts.next(), ui.meas_source_b())?;
             if parts.next().is_some() {
                 self.push_err("-224,\"Too many measurement sources\"".into());
                 return None;
@@ -4568,7 +4563,7 @@ impl Scpi {
         }
         if kw(n0, "SHOW") || kw(n0, "DISPlay") {
             let (slot, rest) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if query {
                 return t(if ui.ref_shown_slot(slot) == Some(true) { "1" } else { "0" });
             }
@@ -4600,7 +4595,7 @@ impl Scpi {
         }
         if kw(n0, "SOURce") {
             let (slot, rest) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if query {
                 return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
             }
@@ -4618,7 +4613,7 @@ impl Scpi {
         if kw(n0, "VSCale") || kw(n0, "VOFFset") {
             let scale = kw(n0, "VSCale");
             let (slot, rest) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if query {
                 let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
                 return match v {
@@ -4643,7 +4638,7 @@ impl Scpi {
         }
         if n.len() >= 2 && kw(n0, "LABel") && kw(n[1], "CONTent") {
             let (slot, rest) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if query {
                 return match ui.ref_label(slot) {
                     Some(s) => t(&s),
@@ -4662,7 +4657,7 @@ impl Scpi {
         }
         if kw(n0, "RESet") && !query {
             let (slot, _) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if ui.ref_reset_scale(slot) {
                 ui.mark_changed();
             } else {
@@ -4672,7 +4667,7 @@ impl Scpi {
         }
         if kw(n0, "COLor") {
             let (slot, rest) = self.ref_pair(ui, arg);
-            let Some(slot) = slot else { return None };
+            let slot = slot?;
             if query {
                 return match ui.ref_color(slot) {
                     Some(i) => t(Self::ref_color_name(i)),

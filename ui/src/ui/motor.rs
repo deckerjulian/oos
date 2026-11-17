@@ -386,8 +386,8 @@ impl Ui {
             }
         };
         for (slot, id) in roles.into_iter().enumerate() {
-            if id.is_some() && taken.opt[slot].is_none() {
-                self.azr.inv_note = missing_wave(id.unwrap());
+            if let Some(id) = id.filter(|_| taken.opt[slot].is_none()) {
+                self.azr.inv_note = missing_wave(id);
                 return;
             }
         }
@@ -432,8 +432,8 @@ impl Ui {
             }
         };
         for (slot, id) in roles.into_iter().enumerate() {
-            if id.is_some() && taken.opt[slot].is_none() {
-                self.azr.inv_note = missing_wave(id.unwrap());
+            if let Some(id) = id.filter(|_| taken.opt[slot].is_none()) {
+                self.azr.inv_note = missing_wave(id);
                 return;
             }
         }

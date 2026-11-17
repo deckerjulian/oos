@@ -28,7 +28,10 @@ enum Op {
     Fn(fn(f64) -> f64),
 }
 
-const FUNCS: [(&str, fn(f64) -> f64); 8] = [
+/// A function of one argument by its name.
+type Func = (&'static str, fn(f64) -> f64);
+
+const FUNCS: [Func; 8] = [
     ("sin", f64::sin),
     ("cos", f64::cos),
     ("tan", f64::tan),

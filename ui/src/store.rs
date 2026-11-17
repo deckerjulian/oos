@@ -2026,20 +2026,22 @@ mod tests {
 
     #[test]
     fn a_ref_in_a_setup_stays_a_ref_and_a_channel_number_stays_a_channel() {
-        let mut m = Model::default();
-        m.mag_v = WaveId::Ref(1);
-        m.mag_i = WaveId::Ch(0);
-        m.dpt_v = WaveId::Ref(0);
-        m.inv_a = WaveId::Ref(4);
-        m.inv_tq = Some(WaveId::Ref(9));
-        m.spec_src = WaveId::Ref(0);
-        m.eye_src = WaveId::Ref(2);
-        m.pw_v = WaveId::Ref(1);
-        m.pw_i = WaveId::Ch(0);
-        m.bode_in = WaveId::Ref(3);
-        m.bode_out = WaveId::Ch(1);
-        m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
-        m.meas2 = vec![(0, WaveId::Ref(0), WaveId::Ch(1))];
+        let m = Model {
+            mag_v: WaveId::Ref(1),
+            mag_i: WaveId::Ch(0),
+            dpt_v: WaveId::Ref(0),
+            inv_a: WaveId::Ref(4),
+            inv_tq: Some(WaveId::Ref(9)),
+            spec_src: WaveId::Ref(0),
+            eye_src: WaveId::Ref(2),
+            pw_v: WaveId::Ref(1),
+            pw_i: WaveId::Ch(0),
+            bode_in: WaveId::Ref(3),
+            bode_out: WaveId::Ch(1),
+            meas: vec![(Meas::Vpp, WaveId::Ref(0))],
+            meas2: vec![(0, WaveId::Ref(0), WaveId::Ch(1))],
+            ..Default::default()
+        };
         let text = setup_text(&m);
         assert!(text.contains("magnetic = R2 1 "));
         assert!(text.contains("dpt = R1 "));
@@ -2106,14 +2108,16 @@ mod tests {
 
     #[test]
     fn setup_sim_advanced_round_trip_and_legacy_defaults() {
-        let mut model = Model::default();
-        model.sim_prbs = 13;
-        model.sim_ssc_center = true;
-        model.sim_ssc_deviation = 0.01;
-        model.sim_ssc_hz = 40e3;
-        model.sim_dcd_pp = 8e-12;
-        model.sim_corr_rj = 2e-12;
-        model.sim_corr_hz = 2e6;
+        let model = Model {
+            sim_prbs: 13,
+            sim_ssc_center: true,
+            sim_ssc_deviation: 0.01,
+            sim_ssc_hz: 40e3,
+            sim_dcd_pp: 8e-12,
+            sim_corr_rj: 2e-12,
+            sim_corr_hz: 2e6,
+            ..Default::default()
+        };
         let setup = setup_text(&model);
         assert_eq!(parse_setup(&setup).unwrap(), model);
         let legacy = setup.lines().filter(|line| !line.starts_with("sim_extra =")).collect::<Vec<_>>().join("\n");
@@ -2157,8 +2161,7 @@ mod tests {
     #[test]
     fn setup_quick_key() {
         for &q in QUICKS.iter() {
-            let mut m = Model::default();
-            m.quick = q;
+            let m = Model { quick: q, ..Default::default() };
             let text = setup_text(&m);
             assert!(text.contains(&format!("quick = {:?}\n", q)));
             assert_eq!(parse_setup(&text).unwrap().quick, q);
@@ -2173,8 +2176,7 @@ mod tests {
     #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn setup_protocols_by_name() {
         for &p in PROTOS.iter() {
-            let mut m = Model::default();
-            m.dec_proto = p;
+            let m = Model { dec_proto: p, ..Default::default() };
             let text = setup_text(&m);
             assert!(text.contains(&format!("dec_proto = {}\n", p.key())));
             assert_eq!(parse_setup(&text).unwrap().dec_proto, p);
@@ -2184,9 +2186,7 @@ mod tests {
             assert_eq!(parse_setup(&format!("dec_proto = {}\n", old)).unwrap().dec_proto.name(), name);
         }
         // a module's options go with it
-        let mut m = Model::default();
-        m.dec_proto = Proto::from_key("Example").unwrap();
-        m.dec_opt = [2, 1, 0, 0];
+        let m = Model { dec_proto: Proto::from_key("Example").unwrap(), dec_opt: [2, 1, 0, 0], ..Default::default() };
         let text = setup_text(&m);
         assert!(text.contains("dec_proto = Example\n") && text.contains("dec_opt = 2 1 0 0\n"));
         assert_eq!(parse_setup(&text).unwrap(), m);
@@ -3129,9 +3129,7 @@ mod header_import_tests {
     // build, failing to load as a whole
     #[test]
     fn a_setup_loads_what_it_can() {
-        let mut m = Model::default();
-        m.dec_on = true;
-        m.tscale = 5;
+        let m = Model { dec_on: true, tscale: 5, ..Default::default() };
         // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
         let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
         assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");

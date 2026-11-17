@@ -840,14 +840,13 @@ impl Ui {
         {
             return Err("The file needs at least two samples and a valid sample interval.".into());
         }
-        let first = if destination.is_none() {
-            (0..NREF)
+        let first = match destination {
+            Some(d) => d,
+            None => (0..NREF)
                 .find(|&start| {
                     start + traces.len() <= NREF && self.refs[start..start + traces.len()].iter().all(Option::is_none)
                 })
-                .ok_or("No empty reference slots; select a slot and use Reference > Import to replace it")?
-        } else {
-            destination.unwrap()
+                .ok_or("No empty reference slots; select a slot and use Reference > Import to replace it")?,
         };
         if first + traces.len() > NREF {
             return Err("The file has more traces than the remaining reference slots".into());

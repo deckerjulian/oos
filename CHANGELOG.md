@@ -64,6 +64,8 @@ Changed:
 
 Fixed:
 
+- Colour grade drawn by the GPU: the densest pixels (a summed count from 32768 up) were left out on a driver that
+  keeps `mediump` integers in 16 bits; the shaders now compute counts in `highp` (host, Mesa 26).
 - Bode: the generator amplitude knob reaches 10 mVpp (it stopped at 1 Vpp).
 - Measure: a burst idle, setup or hold time above 5 s (set over SCPI) steps down to 5 s instead of turning off, also
   in a measurement's own settings.

@@ -133,9 +133,9 @@ impl Yard {
                 let a = y.locos[i].addr;
                 y = y.apply_loco(a, data, true);
             }
-            if !estop && matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) {
-                y.status = TrackStatus::Active;
-            } else if !estop && y.status != TrackStatus::Estop {
+            if !estop
+                && (matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) || y.status != TrackStatus::Estop)
+            {
                 y.status = TrackStatus::Active;
             }
             return y;

@@ -38,8 +38,8 @@ pub(super) const CRC_T: [[u32; 256]; 8] = {
 pub fn crc32(data: &[u8]) -> u32 {
     let t = &CRC_T;
     let mut c = !0u32;
-    let mut it = data.chunks_exact(8);
-    for b in &mut it {
+    let (blocks, rest) = data.as_chunks::<8>();
+    for b in blocks {
         let lo = c ^ u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
         c = t[7][(lo & 0xff) as usize]
             ^ t[6][(lo >> 8 & 0xff) as usize]
@@ -50,7 +50,7 @@ pub fn crc32(data: &[u8]) -> u32 {
             ^ t[1][b[6] as usize]
             ^ t[0][b[7] as usize];
     }
-    !it.remainder().iter().fold(c, |c, &b| t[0][((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
+    !rest.iter().fold(c, |c, &b| t[0][((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
 }
 
 /// Adler-32 (zlib). Sixteen lanes side by side (the compiler makes vector code of the lane loop): lane `k` sums the
@@ -60,20 +60,20 @@ pub fn adler32(data: &[u8]) -> u32 {
     let (mut a, mut b) = (1u64, 0u64);
     for chunk in data.chunks(5552) {
         let (mut sa, mut sb) = ([0u32; 16], [0u32; 16]);
-        let mut blocks = chunk.chunks_exact(16);
-        for blk in &mut blocks {
+        let (blocks, rest) = chunk.as_chunks::<16>();
+        for blk in blocks {
             for k in 0..16 {
                 sa[k] += blk[k] as u32;
                 sb[k] += sa[k];
             }
         }
-        let n = (chunk.len() - blocks.remainder().len()) as u64;
+        let n = (chunk.len() - rest.len()) as u64;
         let sum_a: u64 = sa.iter().map(|&x| x as u64).sum();
         let sum_b: u64 = sb.iter().map(|&x| x as u64).sum();
         let weighted: u64 = sa.iter().enumerate().map(|(k, &x)| k as u64 * x as u64).sum();
         b += n * a + 16 * sum_b - weighted;
         a += sum_a;
-        for &x in blocks.remainder() {
+        for &x in rest {
             a += x as u64;
             b += a;
         }

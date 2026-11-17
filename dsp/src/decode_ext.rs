@@ -697,14 +697,17 @@ enum DsPend {
 /// reset / single bit / triplet come from the next status read with 1WB = 0 (presence = PPD and not SD); a read
 /// byte from the following read of the read data register (pointer 0xE1). Commands without a status poll are
 /// completed at the next command.
+/// One I2C transaction of the DS2482: (read, t0, bytes with their start and end).
+type Xfer = (bool, f64, Vec<(u8, f64, f64)>);
+
 pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
     let mut net = OwNet::new(false);
     let mut ptr = DS_STATUS;
     let mut pend: Option<DsPend> = None;
     let mut read_ready: Option<f64> = None;
     // a transaction: (read, t0, bytes)
-    let mut xfers: Vec<(bool, f64, Vec<(u8, f64, f64)>)> = Vec::new();
-    let mut cur: Option<(bool, f64, Vec<(u8, f64, f64)>)> = None;
+    let mut xfers: Vec<Xfer> = Vec::new();
+    let mut cur: Option<Xfer> = None;
     for p in i2c {
         match p.kind {
             Kind::Addr { read } => {

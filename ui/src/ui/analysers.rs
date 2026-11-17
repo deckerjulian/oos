@@ -157,8 +157,7 @@ mod tests {
             assert_eq!(ui.m.view, v, ":VIEW {k}");
         }
         for v in stored_views() {
-            let mut m = Model::default();
-            m.view = v;
+            let m = Model { view: v, ..Default::default() };
             assert_eq!(crate::store::parse_setup(&crate::store::setup_text(&m)).unwrap().view, v);
         }
         let bw = of(AView::Step).unwrap();

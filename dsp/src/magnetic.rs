@@ -352,10 +352,8 @@ fn branch_fit(pts: &[(f64, f64)], i_peak_hint: f64) -> Option<(f64, f64, f64, bo
             yu.push(psi);
         }
     }
-    let sat = match (lin_slope(&xl, &yl), lin_slope(&xu, &yu)) {
-        (Some(a), Some(b)) if a > 0.0 && b > 0.0 && (b > 2.0 * a || a > 2.0 * b) => true,
-        _ => false,
-    };
+    let sat = matches!((lin_slope(&xl, &yl), lin_slope(&xu, &yu)),
+        (Some(a), Some(b)) if a > 0.0 && b > 0.0 && (b > 2.0 * a || a > 2.0 * b));
     Some((slope, lo, hi, sat))
 }
 

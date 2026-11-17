@@ -1021,6 +1021,9 @@ enum Item {
     CatSourceD,
 }
 
+/// The choices of an item, for its picker.
+type OptionsFn = fn(&Ui, Item) -> Option<Vec<String>>;
+
 /// One part of the menus (a module of ui/): what it answers about the items it owns, None where it has nothing of
 /// that kind. A part answers None (false) for an item that is not its own, and no item of a menu belongs to two parts
 /// (`no_menu_item_has_two_parts`), so the order of `PARTS` decides nothing.
@@ -1030,7 +1033,7 @@ struct Part {
     value: Option<fn(&Ui, Item) -> Option<String>>,
     adjust: Option<fn(&mut Ui, Item, i32) -> bool>,
     activate: Option<fn(&mut Ui, Item) -> bool>,
-    options: Option<fn(&Ui, Item) -> Option<Vec<String>>>,
+    options: Option<OptionsFn>,
     /// a line of text, not a control
     text: Option<fn(Item) -> bool>,
 }
@@ -1166,7 +1169,6 @@ const PARTS: [Part; 22] = [
         activate: Some(Ui::time_activate),
         options: Some(Ui::time_options),
         text: Some(Ui::time_text),
-        ..NO_PART
     },
     Part {
         kind: Some(Ui::remote_kind),
@@ -1872,8 +1874,7 @@ impl Ui {
     }
 
     pub fn new(src: Source) -> Ui {
-        let mut m = Model::default();
-        m.meas = Self::default_meas();
+        let mut m = Model { meas: Self::default_meas(), ..Default::default() };
         if let Source::Replay { .. } = src {
             // the replayed frame of 2026-11-02: 3.2 µs at 0.8 ns
             m.tscale = tscales().iter().position(|&t| (t - 200e-9).abs() < 1e-12).unwrap_or(0);
@@ -10885,9 +10886,7 @@ impl Ui {
             self.ch_hold = Some((c, self.now, false));
             return;
         }
-        if k == 0 {
-            self.ch_release();
-        } else if self.ch_hold.is_some() {
+        if k == 0 || self.ch_hold.is_some() {
             self.ch_release();
         }
         self.key(k);

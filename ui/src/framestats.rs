@@ -120,16 +120,15 @@ impl Values {
         let (vmin, vmax) = crate::fastdraw::min_max(v);
         const L: usize = 8;
         let (mut sum, mut sumsq) = ([0.0f64; L], [0.0f64; L]);
-        let mut chunks = v.chunks_exact(L);
-        for c in &mut chunks {
-            let c: &[f32; L] = c.try_into().expect("L samples");
+        let (chunks, rest) = v.as_chunks::<L>();
+        for c in chunks {
             for j in 0..L {
                 let y = c[j] as f64;
                 sum[j] += y;
                 sumsq[j] += y * y;
             }
         }
-        for (j, &x) in chunks.remainder().iter().enumerate() {
+        for (j, &x) in rest.iter().enumerate() {
             sum[j] += x as f64;
             sumsq[j] += x as f64 * x as f64;
         }
@@ -159,15 +158,14 @@ impl Values {
     fn std_two_pass(v: &[f32], avg: f64) -> f64 {
         const L: usize = 8;
         let mut d = [0.0f64; L];
-        let mut chunks = v.chunks_exact(L);
-        for c in &mut chunks {
-            let c: &[f32; L] = c.try_into().expect("L samples");
+        let (chunks, rest) = v.as_chunks::<L>();
+        for c in chunks {
             for j in 0..L {
                 let e = c[j] as f64 - avg;
                 d[j] += e * e;
             }
         }
-        for (j, &x) in chunks.remainder().iter().enumerate() {
+        for (j, &x) in rest.iter().enumerate() {
             d[j] += (x as f64 - avg) * (x as f64 - avg);
         }
         (d.iter().sum::<f64>() / v.len() as f64).sqrt()
@@ -271,9 +269,8 @@ mod tests {
         const L: usize = 8;
         let (mut hi, mut lo) = ([v[0]; L], [v[0]; L]);
         let (mut sum, mut sumsq) = ([0.0f64; L], [0.0f64; L]);
-        let mut chunks = v.chunks_exact(L);
-        for c in &mut chunks {
-            let c: &[f32; L] = c.try_into().expect("L samples");
+        let (chunks, rest) = v.as_chunks::<L>();
+        for c in chunks {
             for j in 0..L {
                 let x = c[j];
                 hi[j] = if x > hi[j] { x } else { hi[j] };
@@ -283,7 +280,7 @@ mod tests {
                 sumsq[j] += y * y;
             }
         }
-        for (j, &x) in chunks.remainder().iter().enumerate() {
+        for (j, &x) in rest.iter().enumerate() {
             hi[j] = if x > hi[j] { x } else { hi[j] };
             lo[j] = if x < lo[j] { x } else { lo[j] };
             sum[j] += x as f64;
@@ -362,9 +359,11 @@ mod tests {
         for (tdiv, len, two) in
             [(1e-6, 12_512usize, false), (1e-6, 12_512, true), (2e-6, 30_000, false), (1e-7, 1408, false)]
         {
-            let mut m = Model::default();
-            m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
-            m.trig_level = 0.0;
+            let mut m = Model {
+                tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+                trig_level: 0.0,
+                ..Default::default()
+            };
             for c in 0..NCH {
                 (m.ch[c].on, m.ch[c].offset) = (c == 0 || c == 1 && two, 0.0);
             }

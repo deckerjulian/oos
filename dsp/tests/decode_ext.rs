@@ -604,7 +604,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
         .collect();
     let frames = [
         fd(0x123, false, true, d8.clone()),
-        fd(0x1234_567, true, true, d20.clone()),
+        fd(0x0123_4567, true, true, d20.clone()),
         fd(0x7ff, false, true, d64.clone()),
         FdFrame {
             id: 0x055,
@@ -630,7 +630,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
         ids(&p),
         vec![
             (0x123, false, false),
-            (0x1234_567, true, false),
+            (0x0123_4567, true, false),
             (0x7ff, false, false),
             (0x055, false, false),
             (0x0f0, false, false),

@@ -245,8 +245,10 @@ mod tests {
     }
 
     fn model(tdiv: f64, chans: usize) -> Model {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+            ..Default::default()
+        };
         for c in 0..NCH {
             m.ch[c].on = c < chans;
         }
@@ -371,7 +373,8 @@ mod tests {
             for chans in [1usize, 4] {
                 let dt = chans as f64 / 1.25e9;
                 let len = ((tdiv * HDIV as f64 / dt) * 1.15) as usize + 40;
-                let sigs: Vec<(String, Box<dyn Fn(f64) -> f64>)> = vec![
+                type Sig = (String, Box<dyn Fn(f64) -> f64>);
+                let sigs: Vec<Sig> = vec![
                     ("sine 0.05".into(), Box::new(move |t: f64| 3.8 * (t / dt * 0.05 * std::f64::consts::TAU).sin())),
                     (
                         "sine 0.2".into(),
@@ -391,9 +394,11 @@ mod tests {
                     ),
                 ];
                 for (name, sig) in &sigs {
-                    let mut m = Model::default();
-                    m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
-                    m.trig_level = 0.0;
+                    let mut m = Model {
+                        tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+                        trig_level: 0.0,
+                        ..Default::default()
+                    };
                     m.ch[0].offset = 0.0;
                     let mut v = oos_dsp::sim::sample(sig, -(len as f64 / 2.0) * dt + 0.37 * dt, dt, len);
                     if name == "square" {

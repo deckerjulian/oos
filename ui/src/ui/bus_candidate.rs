@@ -15,6 +15,261 @@ pub(super) struct State {
     last_hit: Option<f64>,
 }
 
+impl Ui {
+    pub(super) fn mixed_bus_mode(&self) -> bool {
+        !self.record_mode()
+            && self.m.trig_type == TrigType::Bus
+            && self.m.dec_src < NCH
+            && Self::decoder_uses_refs(&self.m)
+            && board().slow_mode(&self.m) == crate::board::Slow::Off
+    }
+    fn candidate_guard(&self, record: &Record) -> String {
+        format!(
+            "{}|{}|{}|{:?}|{}|{:?}|{}",
+            self.bus_candidate.epoch,
+            self.workflow_epoch,
+            self.m.hw_stamp,
+            (self.m.trig_bus, self.m.trig_bus_val, self.m.trig_mode),
+            crate::store::setup_text(&self.m),
+            self.m.run,
+            self.decoder_key_at(&self.m, Some(record)).unwrap_or_default()
+        )
+    }
+    pub(super) fn cancel_bus_candidate(&mut self, clear_event: bool) {
+        let active = self.bus_candidate.record.is_some() || self.mixed_bus_mode();
+        self.bus_candidate.record = None;
+        self.bus_candidate.guard.clear();
+        self.bus_candidate.force = false;
+        self.bus_candidate.ready_hit = None;
+        self.bus_candidate.epoch = self.bus_candidate.epoch.wrapping_add(1);
+        if clear_event {
+            self.bus_candidate.last_hit = None;
+        }
+        if active {
+            self.m.hw_stamp = self.m.hw_stamp.wrapping_add(1);
+            self.bus_candidate.minimum_stamp = self.m.hw_stamp;
+        }
+    }
+    pub(super) fn bus_candidate_guard_tick(&mut self) {
+        let mixed = self.mixed_bus_mode();
+        let stale = self.bus_candidate.record.as_ref().is_some_and(|record| {
+            !mixed || self.m.run != RunState::Run || self.candidate_guard(record) != self.bus_candidate.guard
+        });
+        if stale {
+            self.cancel_bus_candidate(!mixed || self.m.run == RunState::Run);
+        }
+        if mixed {
+            self.bus_candidate.minimum_stamp = self.bus_candidate.minimum_stamp.max(self.m.hw_stamp);
+        } else {
+            self.bus_candidate.last_hit = None;
+            self.bus_candidate.ready_hit = None;
+            self.bus_candidate.force = false;
+        }
+    }
+    pub(super) fn bus_candidate_waiting(&self) -> bool {
+        self.bus_candidate.record.is_some()
+    }
+    pub(super) fn bus_candidate_key(&mut self, key_code: u8) {
+        if matches!(key_code, key::DEFAULT | 0x15..=0x18) {
+            self.cancel_bus_candidate(true);
+            return;
+        }
+        if !self.mixed_bus_mode() {
+            return;
+        }
+        match key_code {
+            key::RUNSTOP => self.cancel_bus_candidate(false),
+            key::SINGLE => {
+                self.cancel_bus_candidate(true);
+                self.single_armed = false;
+                self.m.status = TrigStatus::Wait;
+            }
+            key::FORCE => {
+                self.bus_candidate.force = true;
+                self.m.status = TrigStatus::Wait;
+            }
+            _ => {}
+        }
+    }
+    /// Remote acquisition commands bypass modal UI input but retain assignment
+    /// semantics, including a repeated RUN leaving the pending candidate alone.
+    pub(crate) fn mixed_bus_command(&mut self, command: u8) -> bool {
+        if !self.mixed_bus_mode() {
+            return false;
+        }
+        match command {
+            0 => {
+                if self.m.run != RunState::Stop {
+                    self.cancel_bus_candidate(false);
+                }
+                self.m.run = RunState::Stop;
+                self.m.status = TrigStatus::Stop;
+            }
+            1 => {
+                if self.m.run != RunState::Run {
+                    self.cancel_bus_candidate(false);
+                }
+                if self.m.trig_mode == TrigMode::Single {
+                    self.m.trig_mode = TrigMode::Normal;
+                }
+                self.m.run = RunState::Run;
+                self.m.status = TrigStatus::Wait;
+            }
+            2 => {
+                self.scpi_arm_operation();
+                self.cancel_bus_candidate(true);
+                self.single_armed = false;
+                self.m.trig_mode = TrigMode::Single;
+                self.m.run = RunState::Run;
+                self.m.status = TrigStatus::Wait;
+                self.m.floor_live_tdiv();
+                self.dirty_map = true;
+            }
+            3 => {
+                self.bus_candidate.force = true;
+                self.m.run = RunState::Run;
+                self.m.status = TrigStatus::Wait;
+            }
+            _ => return false,
+        }
+        true
+    }
+    fn acquire_mixed_bus_record(&mut self, elapsed: f64) -> Option<Record> {
+        if let Source::Hw { shared, seen } = &mut self.src {
+            let mut candidate_model = self.m.clone();
+            candidate_model.trig_type = TrigType::Edge;
+            candidate_model.trig_mode = TrigMode::Auto;
+            candidate_model.trig_src = candidate_model.dec_src;
+            candidate_model.trig_ref = None;
+            candidate_model.trig_level = candidate_model.dec_thr;
+            candidate_model.slope = Slope::Rise;
+            let mut state = shared.lock().unwrap();
+            state.want = Some(board().want(&candidate_model));
+            state.slow = crate::board::Slow::Off;
+            state.stamp = self.m.hw_stamp;
+            let frame = state.queue.pop_front()?;
+            *seen = frame.seq;
+            drop(state);
+            if frame.stamp < self.bus_candidate.minimum_stamp || !frame.dt.is_finite() || frame.dt <= 0.0 {
+                return None;
+            }
+            let window = self.m.time_per_div() as f64 * HDIV as f64;
+            // Preserve the hardware's original time zero. Refining an Edge on
+            // CH alone here would shift it relative to the fixed R roles.
+            let pre = frame.pre as f64;
+            return Some(crate::board::resample_record(
+                &std::sync::Arc::new(frame),
+                &self.m,
+                3600,
+                window,
+                self.m.delay as f64 - window * 0.5,
+                pre,
+                false,
+            ));
+        }
+        let previous =
+            (self.m.trig_type, self.m.trig_mode, self.m.trig_src, self.m.trig_ref, self.m.trig_level, self.m.slope);
+        self.m.trig_type = TrigType::Edge;
+        self.m.trig_mode = TrigMode::Auto;
+        self.m.trig_src = self.m.dec_src;
+        self.m.trig_ref = None;
+        self.m.trig_level = self.m.dec_thr;
+        self.m.slope = Slope::Rise;
+        let record = self.acquire_display_record(elapsed);
+        (self.m.trig_type, self.m.trig_mode, self.m.trig_src, self.m.trig_ref, self.m.trig_level, self.m.slope) =
+            previous;
+        record
+    }
+    pub(super) fn acquire_bus_candidate(&mut self, elapsed: f64) -> Option<Record> {
+        if !self.mixed_bus_mode() {
+            return self.acquire_display_record(elapsed);
+        }
+        self.bus_candidate_guard_tick();
+        if self.m.run != RunState::Run {
+            return None;
+        }
+        if self.bus_candidate.record.is_none() {
+            // The hardware cannot read reference memory. Acquire edge/auto
+            // candidates, then apply the actual Bus condition here. SINGLE's
+            // arm stamp is checked explicitly before a candidate is retained.
+            let record = self.acquire_mixed_bus_record(elapsed)?;
+            if record.raw.as_ref().is_some_and(|raw| raw.frame.stamp < self.bus_candidate.minimum_stamp) {
+                return None;
+            }
+            self.bus_candidate.guard = self.candidate_guard(&record);
+            self.bus_candidate.record = Some(record);
+        }
+        if self.bus_candidate.force {
+            self.bus_candidate.force = false;
+            self.bus_candidate.ready_hit = None;
+            let mut record = self.bus_candidate.record.take()?;
+            record.triggered = false;
+            return Some(record);
+        }
+        let record = self.bus_candidate.record.as_ref()?;
+        let packets = self.reference_decode_packets_at(&self.m, Some(record));
+        let packets = match packets {
+            Err(super::reference_decode::COMPUTING) => {
+                self.m.status = TrigStatus::Wait;
+                return None;
+            }
+            result => result,
+        };
+        let hit = packets.as_ref().ok().and_then(|packets| {
+            crate::trig::points(&self.m, packets).into_iter().min_by(|a, b| a.abs().total_cmp(&b.abs()))
+        });
+        if hit.is_none() && self.m.trig_mode != TrigMode::Auto {
+            self.bus_candidate.record = None;
+            self.m.status = TrigStatus::Wait;
+            return None;
+        }
+        let mut record = self.bus_candidate.record.take()?;
+        record.triggered = hit.is_some();
+        self.bus_candidate.ready_hit = hit;
+        if let Some(time) = hit {
+            let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
+            if time < self.m.delay as f64 - half || time >= self.m.delay as f64 + half {
+                self.m.delay = time as f32;
+                if let Some(display) = self.captured_record_view(&record, (self.m.time_per_div(), self.m.delay)) {
+                    record = display.as_ref().clone();
+                    record.triggered = true;
+                }
+            }
+        }
+        // Retain original hardware/ref origins. Packet times therefore remain
+        // aligned across mixed sources and can be reused by bands and Search.
+        if let Ok(packets) = packets {
+            self.seed_accepted_decode(&record, packets);
+        }
+        Some(record)
+    }
+    pub(super) fn bus_candidate_committed(&mut self) {
+        if self.mixed_bus_mode() {
+            self.bus_candidate.last_hit = self.bus_candidate.ready_hit.take();
+        }
+    }
+    pub(super) fn draw_bus_event(&self, canvas: &mut Canvas) {
+        if !self.mixed_bus_mode() {
+            return;
+        }
+        let Some(time) = self.bus_candidate.last_hit else {
+            return;
+        };
+        if self.source_area(WaveId::Ch(self.m.dec_src)).is_some_and(|area| area != self.area) {
+            return;
+        }
+        let area = self.area;
+        let x = self.x_of_time(time as f32);
+        if x < area.x || x >= area.x + area.w {
+            return;
+        }
+        canvas.set_clip(area);
+        canvas.dashed_vline(x, area.y + 21, area.y + area.h - 1, 2, 6, AMBER);
+        canvas.text(&self.fonts().sb, (x + 4).min(area.x + area.w - 66), area.y + 31, "Bus event", AMBER);
+        canvas.no_clip();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,260 +580,5 @@ mod tests {
         ui.m.set_trigger_wave(WaveId::Ref(0), false);
         ui.trigger_type_set(TrigType::Bus);
         assert!(!ui.record_mode(), "Bus activation must follow its CH primary rather than a stale reference workspace");
-    }
-}
-
-impl Ui {
-    pub(super) fn mixed_bus_mode(&self) -> bool {
-        !self.record_mode()
-            && self.m.trig_type == TrigType::Bus
-            && self.m.dec_src < NCH
-            && Self::decoder_uses_refs(&self.m)
-            && board().slow_mode(&self.m) == crate::board::Slow::Off
-    }
-    fn candidate_guard(&self, record: &Record) -> String {
-        format!(
-            "{}|{}|{}|{:?}|{}|{:?}|{}",
-            self.bus_candidate.epoch,
-            self.workflow_epoch,
-            self.m.hw_stamp,
-            (self.m.trig_bus, self.m.trig_bus_val, self.m.trig_mode),
-            crate::store::setup_text(&self.m),
-            self.m.run,
-            self.decoder_key_at(&self.m, Some(record)).unwrap_or_default()
-        )
-    }
-    pub(super) fn cancel_bus_candidate(&mut self, clear_event: bool) {
-        let active = self.bus_candidate.record.is_some() || self.mixed_bus_mode();
-        self.bus_candidate.record = None;
-        self.bus_candidate.guard.clear();
-        self.bus_candidate.force = false;
-        self.bus_candidate.ready_hit = None;
-        self.bus_candidate.epoch = self.bus_candidate.epoch.wrapping_add(1);
-        if clear_event {
-            self.bus_candidate.last_hit = None;
-        }
-        if active {
-            self.m.hw_stamp = self.m.hw_stamp.wrapping_add(1);
-            self.bus_candidate.minimum_stamp = self.m.hw_stamp;
-        }
-    }
-    pub(super) fn bus_candidate_guard_tick(&mut self) {
-        let mixed = self.mixed_bus_mode();
-        let stale = self.bus_candidate.record.as_ref().is_some_and(|record| {
-            !mixed || self.m.run != RunState::Run || self.candidate_guard(record) != self.bus_candidate.guard
-        });
-        if stale {
-            self.cancel_bus_candidate(!mixed || self.m.run == RunState::Run);
-        }
-        if mixed {
-            self.bus_candidate.minimum_stamp = self.bus_candidate.minimum_stamp.max(self.m.hw_stamp);
-        } else {
-            self.bus_candidate.last_hit = None;
-            self.bus_candidate.ready_hit = None;
-            self.bus_candidate.force = false;
-        }
-    }
-    pub(super) fn bus_candidate_waiting(&self) -> bool {
-        self.bus_candidate.record.is_some()
-    }
-    pub(super) fn bus_candidate_key(&mut self, key_code: u8) {
-        if matches!(key_code, key::DEFAULT | 0x15..=0x18) {
-            self.cancel_bus_candidate(true);
-            return;
-        }
-        if !self.mixed_bus_mode() {
-            return;
-        }
-        match key_code {
-            key::RUNSTOP => self.cancel_bus_candidate(false),
-            key::SINGLE => {
-                self.cancel_bus_candidate(true);
-                self.single_armed = false;
-                self.m.status = TrigStatus::Wait;
-            }
-            key::FORCE => {
-                self.bus_candidate.force = true;
-                self.m.status = TrigStatus::Wait;
-            }
-            _ => {}
-        }
-    }
-    /// Remote acquisition commands bypass modal UI input but retain assignment
-    /// semantics, including a repeated RUN leaving the pending candidate alone.
-    pub(crate) fn mixed_bus_command(&mut self, command: u8) -> bool {
-        if !self.mixed_bus_mode() {
-            return false;
-        }
-        match command {
-            0 => {
-                if self.m.run != RunState::Stop {
-                    self.cancel_bus_candidate(false);
-                }
-                self.m.run = RunState::Stop;
-                self.m.status = TrigStatus::Stop;
-            }
-            1 => {
-                if self.m.run != RunState::Run {
-                    self.cancel_bus_candidate(false);
-                }
-                if self.m.trig_mode == TrigMode::Single {
-                    self.m.trig_mode = TrigMode::Normal;
-                }
-                self.m.run = RunState::Run;
-                self.m.status = TrigStatus::Wait;
-            }
-            2 => {
-                self.scpi_arm_operation();
-                self.cancel_bus_candidate(true);
-                self.single_armed = false;
-                self.m.trig_mode = TrigMode::Single;
-                self.m.run = RunState::Run;
-                self.m.status = TrigStatus::Wait;
-                self.m.floor_live_tdiv();
-                self.dirty_map = true;
-            }
-            3 => {
-                self.bus_candidate.force = true;
-                self.m.run = RunState::Run;
-                self.m.status = TrigStatus::Wait;
-            }
-            _ => return false,
-        }
-        true
-    }
-    fn acquire_mixed_bus_record(&mut self, elapsed: f64) -> Option<Record> {
-        if let Source::Hw { shared, seen } = &mut self.src {
-            let mut candidate_model = self.m.clone();
-            candidate_model.trig_type = TrigType::Edge;
-            candidate_model.trig_mode = TrigMode::Auto;
-            candidate_model.trig_src = candidate_model.dec_src;
-            candidate_model.trig_ref = None;
-            candidate_model.trig_level = candidate_model.dec_thr;
-            candidate_model.slope = Slope::Rise;
-            let mut state = shared.lock().unwrap();
-            state.want = Some(board().want(&candidate_model));
-            state.slow = crate::board::Slow::Off;
-            state.stamp = self.m.hw_stamp;
-            let frame = state.queue.pop_front()?;
-            *seen = frame.seq;
-            drop(state);
-            if frame.stamp < self.bus_candidate.minimum_stamp || !frame.dt.is_finite() || frame.dt <= 0.0 {
-                return None;
-            }
-            let window = self.m.time_per_div() as f64 * HDIV as f64;
-            // Preserve the hardware's original time zero. Refining an Edge on
-            // CH alone here would shift it relative to the fixed R roles.
-            let pre = frame.pre as f64;
-            return Some(crate::board::resample_record(
-                &std::sync::Arc::new(frame),
-                &self.m,
-                3600,
-                window,
-                self.m.delay as f64 - window * 0.5,
-                pre,
-                false,
-            ));
-        }
-        let previous =
-            (self.m.trig_type, self.m.trig_mode, self.m.trig_src, self.m.trig_ref, self.m.trig_level, self.m.slope);
-        self.m.trig_type = TrigType::Edge;
-        self.m.trig_mode = TrigMode::Auto;
-        self.m.trig_src = self.m.dec_src;
-        self.m.trig_ref = None;
-        self.m.trig_level = self.m.dec_thr;
-        self.m.slope = Slope::Rise;
-        let record = self.acquire_display_record(elapsed);
-        (self.m.trig_type, self.m.trig_mode, self.m.trig_src, self.m.trig_ref, self.m.trig_level, self.m.slope) =
-            previous;
-        record
-    }
-    pub(super) fn acquire_bus_candidate(&mut self, elapsed: f64) -> Option<Record> {
-        if !self.mixed_bus_mode() {
-            return self.acquire_display_record(elapsed);
-        }
-        self.bus_candidate_guard_tick();
-        if self.m.run != RunState::Run {
-            return None;
-        }
-        if self.bus_candidate.record.is_none() {
-            // The hardware cannot read reference memory. Acquire edge/auto
-            // candidates, then apply the actual Bus condition here. SINGLE's
-            // arm stamp is checked explicitly before a candidate is retained.
-            let record = self.acquire_mixed_bus_record(elapsed)?;
-            if record.raw.as_ref().is_some_and(|raw| raw.frame.stamp < self.bus_candidate.minimum_stamp) {
-                return None;
-            }
-            self.bus_candidate.guard = self.candidate_guard(&record);
-            self.bus_candidate.record = Some(record);
-        }
-        if self.bus_candidate.force {
-            self.bus_candidate.force = false;
-            self.bus_candidate.ready_hit = None;
-            let mut record = self.bus_candidate.record.take()?;
-            record.triggered = false;
-            return Some(record);
-        }
-        let record = self.bus_candidate.record.as_ref()?;
-        let packets = self.reference_decode_packets_at(&self.m, Some(record));
-        let packets = match packets {
-            Err(super::reference_decode::COMPUTING) => {
-                self.m.status = TrigStatus::Wait;
-                return None;
-            }
-            result => result,
-        };
-        let hit = packets.as_ref().ok().and_then(|packets| {
-            crate::trig::points(&self.m, packets).into_iter().min_by(|a, b| a.abs().total_cmp(&b.abs()))
-        });
-        if hit.is_none() && self.m.trig_mode != TrigMode::Auto {
-            self.bus_candidate.record = None;
-            self.m.status = TrigStatus::Wait;
-            return None;
-        }
-        let mut record = self.bus_candidate.record.take()?;
-        record.triggered = hit.is_some();
-        self.bus_candidate.ready_hit = hit;
-        if let Some(time) = hit {
-            let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
-            if time < self.m.delay as f64 - half || time >= self.m.delay as f64 + half {
-                self.m.delay = time as f32;
-                if let Some(display) = self.captured_record_view(&record, (self.m.time_per_div(), self.m.delay)) {
-                    record = display.as_ref().clone();
-                    record.triggered = true;
-                }
-            }
-        }
-        // Retain original hardware/ref origins. Packet times therefore remain
-        // aligned across mixed sources and can be reused by bands and Search.
-        if let Ok(packets) = packets {
-            self.seed_accepted_decode(&record, packets);
-        }
-        Some(record)
-    }
-    pub(super) fn bus_candidate_committed(&mut self) {
-        if self.mixed_bus_mode() {
-            self.bus_candidate.last_hit = self.bus_candidate.ready_hit.take();
-        }
-    }
-    pub(super) fn draw_bus_event(&self, canvas: &mut Canvas) {
-        if !self.mixed_bus_mode() {
-            return;
-        }
-        let Some(time) = self.bus_candidate.last_hit else {
-            return;
-        };
-        if self.source_area(WaveId::Ch(self.m.dec_src)).is_some_and(|area| area != self.area) {
-            return;
-        }
-        let area = self.area;
-        let x = self.x_of_time(time as f32);
-        if x < area.x || x >= area.x + area.w {
-            return;
-        }
-        canvas.set_clip(area);
-        canvas.dashed_vline(x, area.y + 21, area.y + area.h - 1, 2, 6, AMBER);
-        canvas.text(&self.fonts().sb, (x + 4).min(area.x + area.w - 66), area.y + 31, "Bus event", AMBER);
-        canvas.no_clip();
     }
 }
