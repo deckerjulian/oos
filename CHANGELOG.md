@@ -7,6 +7,12 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- `tools/plan-matrix.sh` also covers averaging, the logic analyser, roll and scan, the generator, LA thresholds, the
+  cold-boot dry run and the PLL table of another clock.
+- `tools/device-deploy.sh` deploys over SSH too (`OOS_SHELL=ssh`) and checks every uploaded file with SHA-256
+  (unit, over telnet); `device-deploy-ssh.sh` is gone.
+- `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
+- CI: every commit of a pull request needs a Signed-off-by line (ADR 0026); CI runs `tools/check.sh` itself.
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:
@@ -17,6 +23,24 @@ Added:
 
 Changed:
 
+- The waveform is drawn with the Batch path by default (Acquire > Draw path): from 100 ns to 500 us/div it draws 1.2 to
+  1.6 times as many of the acquired frames at about 30 frames a second (unit). `acq.pipeline = frames` in system.conf
+  starts with Standard; the path at start-up comes from system.conf, not from the last setup (ADR 0029).
+- system.conf: of two lines with the same key the last one wins, and `#` starts a comment only at the start of a line
+  or after a space or tab, as `oos-conf` reads it.
+- `trig.serial_hw`, `acq.frame0`, `zone.batch` and `mask.map.*` are also taken from the image defaults
+  (/etc/oos/system.conf).
+- The computer's mDNS announcer refuses queries with forward name pointers, as the scope does.
+- `oos-fpgad`: a wrong FPGA version names the value read in `roll`, `selfcal` and `afg`; a bad number names its value.
+  The `roll [--scan]` dry run also lists the fill pulse, sweep restart and stop writes.
+- Image build: a new version in `rootfs/deps.lock` or a changed build script rebuilds wpa_supplicant, e2fsck, kexec,
+  the GPU helper and Mesa by itself. Mesa comes from archive.mesa3d.org (same SHA-256), no Ubuntu source package is
+  needed. Build images are made again when their Dockerfile changes.
+- Card tools: `card-install.py`, `switch.py`, `sdcard-layout.py` and the image's `oos-oneshot` check the same stock
+  partition-table marks, now including `recovery`.
+- Docs: overclocking above 1.25 GHz loses about 5 % of the samples at the full rate (unit), so frequencies read too
+  high; 1.25 GHz stays (docs/models.md 4.1). Unit profiles for `OOS_UNIT=<name>` are described in docs/models.md 4.2;
+  `rootfs/unit/` is private and ignored by git.
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.
@@ -30,6 +54,12 @@ Changed:
 
 Fixed:
 
+- Bode: the generator amplitude knob reaches 10 mVpp (it stopped at 1 Vpp).
+- Measure: a burst idle, setup or hold time above 5 s (set over SCPI) steps down to 5 s instead of turning off, also
+  in a measurement's own settings.
+- Waveform import: a damaged file is refused with "truncated waveform" wherever a field lies past its end.
+- `oos-fpgad` without a command, or with `help`, prints its usage again (it printed nothing).
+- Tests no longer depend on the speed of the computer in the UI either (wall-time limits replaced).
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
   keeps the panel's bars while the external display has the waveform.
