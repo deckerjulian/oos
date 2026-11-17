@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 11: the last gaps of the Studio hands-on audit. The zoom keeps its factor and its place in the overview
 //! when the main time base changes; each measurement's card has a Stats page; a press on a title strip moves the view
 //! even where a divider's wide hit area reaches into the strip.

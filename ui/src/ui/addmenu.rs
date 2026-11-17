@@ -3,7 +3,7 @@
 //! button and the Meas button: Measurement comes first, then the views (results table, plot, cursors, search), the sources
 //! (math, reference, bus) and the screen (zoom, the measurement strip). Every row is a short way into a page that exists.
 use super::addrail::AddKind;
-use super::studio::{icon_cursors, icon_expand, StudioView};
+use super::studio::{icon_cursors, StudioView};
 use super::*;
 
 const MENU_W: i32 = 252;
@@ -22,9 +22,6 @@ pub(super) enum AddRow {
     Bus,
     Zoom,
     ZoomBox,
-    ZoomControls,
-    Strip,
-    MeasureSettings,
 }
 
 /// The rows in their groups; a `None` is a separator.
@@ -50,9 +47,6 @@ impl Ui {
             AddRow::Bus => "Bus",
             AddRow::Zoom => "Zoom",
             AddRow::ZoomBox => "Zoom box",
-            AddRow::ZoomControls => if self.m.studio_zoom_tab { "Zoom bar: pull-down tab" } else { "Zoom bar: title bar" },
-            AddRow::Strip => if self.studio.hide_badges { "Show measurement strip" } else { "Measurement strip" },
-            AddRow::MeasureSettings => "Measure settings",
         }
     }
 
@@ -68,10 +62,7 @@ impl Ui {
             AddRow::Reference => self.refs.iter().any(Option::is_some),
             AddRow::Bus => self.rail_kind_on_pub(AddKind::Bus),
             AddRow::Zoom => self.m.zoom,
-            AddRow::ZoomControls => false,
             AddRow::ZoomBox => self.zoom_arm,
-            AddRow::Strip => !self.studio.hide_badges,
-            AddRow::MeasureSettings => false,
         }
     }
 
@@ -117,10 +108,7 @@ impl Ui {
             AddRow::Reference => cv.text_in(&f.sb, Rect::new(cx - 10, cy - 9, 20, 18), 1, "R", c),
             AddRow::Bus => { for dy in [-5, 0, 5] { cv.hline(cx - 7, cx + 7, cy + dy, c); } cv.vline(cx - 3, cy - 7, cy + 7, c); cv.vline(cx + 3, cy - 7, cy + 7, c); }
             AddRow::ZoomBox => { cv.round_outline(Rect::new(cx - 7, cy - 5, 14, 10), 1, c); cv.fill(Rect::new(cx - 7, cy - 5, 4, 2), c); }
-            AddRow::ZoomControls => { cv.hline(cx - 7, cx + 7, cy - 4, c); cv.fill(Rect::new(cx - 3, cy - 1, 7, 5), c); }
             AddRow::Zoom => { cv.circle(cx - 2, cy - 2, 5, c); cv.circle(cx - 2, cy - 2, 3, PANEL_BG); cv.line(cx + 2, cy + 2, cx + 7, cy + 7, c); cv.hline(cx - 4, cx, cy - 2, c); cv.vline(cx - 2, cy - 4, cy, c); }
-            AddRow::Strip => { cv.round_outline(Rect::new(cx - 8, cy - 5, 17, 11), 5, c); cv.circle(cx, cy, 2, c); }
-            AddRow::MeasureSettings => icon_expand(cv, cx, cy, c),
         }
     }
 
@@ -171,13 +159,6 @@ impl Ui {
             AddRow::Bus => self.add_open_kind(AddKind::Bus),
             AddRow::Zoom => { let on = !self.m.zoom; self.set_zoom(on); }
             AddRow::ZoomBox => self.arm_zoom_area(),
-            AddRow::ZoomControls => { self.m.studio_zoom_tab = !self.m.studio_zoom_tab; self.zoom_tab_set(false); self.settings_changed(); self.relayout(); }
-            AddRow::Strip => {
-                self.studio.hide_badges = !self.studio.hide_badges;
-                self.studio.md.hide_undo = None;
-                self.relayout();
-            }
-            AddRow::MeasureSettings => self.toggle_menu(MenuId::Measure),
         }
         true
     }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 27: one shared zoom for every lane, the zoom source popover (hold the Zoom button), and a horizontal scale
 //! of their own for references (hold an R pill, or Fit). OOS_SHOTS=<dir> writes pictures (b27-*).
 use super::sharedzoom::{RPart, ZPart};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 12: gestures of the Studio measurements list. A row swiped left is removed with an Undo bar; a held row is
 //! dragged to reorder or onto the badge strip to pin; a held badge dragged off the strip unpins; a tile of the Add
 //! measurement panel dragged onto a channel adds the measurement for it. Every gesture has a tap equivalent.

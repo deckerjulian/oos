@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 25: SIM hides the live channel pills, the bottom bar shares its width by pill count, and Load file is on the
 //! Reference and SIM sheets. OOS_SHOTS=<dir> writes pictures (b25-*).
 use super::studio::StudioView;

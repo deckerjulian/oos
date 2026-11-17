@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 9: the rest of the Studio menus on the Settings Sheet (Spectrum, Eye, Power, Storage, Mask, SIM, LA), source
 //! pickers and a Measure page in the Add panel, vertical zoom on the zoom bar, and the minus of Number rows.
 //! OOS_SHOTS=<dir> writes pictures (b9-*).

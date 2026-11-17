@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 29: input and limits. The value of a number row in the classic dialog opens the numeric pad; every stepper has
 //! its limits in the range table (`ranges.rs`) and returns where it started after N presses up and N down; the
 //! horizontal delay steps on a grid; SCPI, the stepper and the pad limit a trigger level the same way.

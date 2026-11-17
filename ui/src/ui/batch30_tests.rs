@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 30: feedback and sources. A new view starts as a copy of the shown one, a chosen count closes the dialog and
 //! says which view is shown, Studio has a view switcher in its top bar; a source row given a channel that is off turns
 //! it on; the controls of an empty reference slot are greyed and say "Store a reference first"; clearing with nothing

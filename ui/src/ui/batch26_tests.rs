@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 26: the trigger level slider (a tap on the level tag), loaded refs that stay in Live, and floating views that
 //! move freely unless they are dragged by their dock handle. OOS_SHOTS=<dir> writes pictures (b26-*).
 use super::dock::{DockDrag, VKind, STRIP_H};

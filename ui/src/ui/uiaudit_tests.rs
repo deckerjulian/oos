@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! UI audit: repro of the Add measurements overlap and the big walk (ignored; run `uiaudit -- --ignored`).
 use super::*;
 
