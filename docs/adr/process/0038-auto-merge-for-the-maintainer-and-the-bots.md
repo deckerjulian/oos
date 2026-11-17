@@ -28,6 +28,15 @@ does not see timing, calibrated values, or what the hardware does.
   - `waited`: it has been open as long as ADR 0031 asks: 72 hours when it brings or changes a decision record, else
     24. The label `no-wait`, which only the maintainer can set, is for what ADR 0031 lets in at once: a fix for a
     red main, a security fix, a correction of a document.
+    **No wait at all** (added on 2026-11-17, on the maintainer's decision) for two kinds of pull request that stay
+    outside the hardware paths, `.github/`, the tools (but their tests), the decision records and the rule texts
+    (`AGENTS.md`, `CONTRIBUTING.md`):
+    - one that only changes documents (`*.md`, `docs/`, `wiki/`);
+    - one that says `Behaviour: unchanged` and whose comparison with the base ran and found nothing (the job
+      `compare` passed and kept nothing). That is what lints, dead code, a move and new tests look like.
+
+    The wait was there so others see a change coming. For these two a machine has checked what a person would look
+    for in the wait; what they change shows in the list of merged pull requests.
   - `owner`: it is the maintainer's own; or it is Dependabot's and changes nothing but the commits of actions in
     the workflow files; or the maintainer has approved its newest commit. A pull request from a fork always needs
     that approval. An agent's pull request (a `copilot/` branch of this repository) is opened in the name of the
@@ -37,6 +46,8 @@ does not see timing, calibrated values, or what the hardware does.
   - `unit`: it touches nothing that is only proven on a scope (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`,
     `fpgad/`, `boot/`, `kernel/`, `rootfs/`); or it carries the label `unit-tested`, which the maintainer sets after
     trying it on a unit.
+- **The label `hold`** stops any pull request: `owner` stays pending while it is set. The maintainer sets it, also
+  on the maintainer's own pull requests, to look before something is merged by itself.
 - **These three, `test` and `compare` become required checks of main.** A pull request is merged when all five have
   passed, by whoever presses the button or by GitHub.
 - **GitHub is asked to merge by itself** (workflow `Auto-merge`) for pull requests from branches of this repository

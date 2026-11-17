@@ -48,10 +48,10 @@ class PullRequests(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
 
     def pull(self, files, author="owner", fork=False, hours=1, labels=(), reviews=(), title="UI: something", bot=False,
-             patches=None, ref="topic", draft=False):
+             patches=None, ref="topic", draft=False, body=""):
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
         pr = {"head": {"sha": "abc", "ref": ref, "repo": {"full_name": "other/oos" if fork else "owner/oos"}},
-              "draft": draft,
+              "draft": draft, "body": body,
               "base": {"repo": {"full_name": "owner/oos"}}, "user": {"login": author, "type": "Bot" if bot else "User"},
               "labels": [{"name": l} for l in labels], "created_at": ago(hours), "title": title}
         name("repos/owner/oos/pulls/7").write_text(json.dumps(pr))
@@ -59,6 +59,16 @@ class PullRequests(unittest.TestCase):
         name("repos/owner/oos/pulls/7/files").write_text(json.dumps(entries))
         name("repos/owner/oos/pulls/7/reviews").write_text(json.dumps(
             [{"user": {"login": who}, "state": state, "commit_id": sha} for who, state, sha in reviews]))
+
+    def ci(self, compare="success", kept=False):
+        """The run of CI for the commit abc: the conclusion of its job compare, and whether it kept what differed."""
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+        name("repos/owner/oos/actions/runs?head_sha=abc&event=pull_request&per_page=20").write_text(json.dumps(
+            {"workflow_runs": [{"id": 5, "name": "Gate"}, {"id": 9, "name": "CI"}]}))
+        name("repos/owner/oos/actions/runs/9/jobs?per_page=100").write_text(json.dumps(
+            {"jobs": [{"name": "test", "conclusion": "success"}, {"name": "compare", "conclusion": compare}]}))
+        name("repos/owner/oos/actions/runs/9/artifacts").write_text(json.dumps(
+            {"artifacts": [{"name": "compare-base"}] if kept else []}))
 
     def run_tool(self, tool):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
@@ -84,6 +94,36 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["waited"], "success", "the index alone is no decision record")
         self.pull(["docs/adr/process/0099-x.md"], hours=1, labels=["no-wait"])
         self.assertEqual(self.gate()["waited"], "success")
+
+    def test_no_wait_when_it_is_proven(self):
+        unchanged = "**What changes:** x\n\n**Behaviour:** unchanged.\n"
+        self.pull(["README.md", "docs/boot.md", "wiki/Home.md"])
+        self.assertEqual(self.gate()["waited"], "success", "documents only")
+        for path in ("docs/adr/process/0099-x.md", "AGENTS.md", "CONTRIBUTING.md"):
+            self.pull(["README.md", path])
+            self.assertEqual(self.gate()["waited"], "pending", f"{path} is a rule, not a document to correct")
+        self.ci()
+        self.pull(["ui/src/ui.rs", "dsp/src/x.rs", "tools/tests/test_x.py"], body=unchanged)
+        self.assertEqual(self.gate()["waited"], "success", "unchanged, and the comparison found nothing")
+        self.pull(["ui/src/ui.rs"], body="**Behaviour:** changed: the menu")
+        self.assertEqual(self.gate()["waited"], "pending", "it does not say unchanged")
+        self.ci(kept=True)
+        self.pull(["ui/src/ui.rs"], body=unchanged)
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison kept what differed")
+        self.ci(compare="failure")
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison failed")
+        self.ci(compare=None)
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison has not run yet")
+        self.ci()
+        for path in ("hal/src/dho/seq.rs", ".github/workflows/ci.yml", "tools/check.sh", "ui/tools/layout-check.sh"):
+            self.pull(["ui/src/ui.rs", path], body=unchanged)
+            self.assertEqual(self.gate()["waited"], "pending", f"{path} is not seen by the comparison")
+
+    def test_hold(self):
+        self.pull(["ui/src/ui.rs"], labels=["hold"])
+        self.assertEqual(self.gate()["owner"], "pending", "the maintainer's own, held")
+        self.pull(["ui/src/ui.rs"], labels=["holder"])
+        self.assertEqual(self.gate()["owner"], "success", "only the label hold")
 
     def test_whose_it_is(self):
         self.pull(["ui/src/ui.rs"])
