@@ -1,6 +1,6 @@
 # Asks GitHub to merge a pull request by itself once every required check has passed (docs/adr/process/0038), for
-# pull requests from branches of this repository by the maintainer, by Dependabot and by the standing agents. A pull
-# request from a fork never gets it here.
+# pull requests from branches of this repository by the maintainer and by Dependabot. A pull request from a fork and
+# one of an agent (a copilot/ branch) never get it here: the maintainer merges those.
 #
 # It does nothing until three things are set by the maintainer: the repository allows auto-merge, the variable
 # AUTO_MERGE is `on`, and the secret MAINTAINER_TOKEN holds a token of the maintainer (contents and pull requests:
@@ -20,8 +20,8 @@ jobs:
       github.repository == 'dekajoule/oos' && vars.AUTO_MERGE == 'on' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
-      contains(fromJSON('["dekajoule", "dependabot[bot]", "Copilot", "copilot-swe-agent[bot]"]'),
-      github.event.pull_request.user.login)
+      !startsWith(github.event.pull_request.head.ref, 'copilot/') &&
+      contains(fromJSON('["dekajoule", "dependabot[bot]"]'), github.event.pull_request.user.login)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

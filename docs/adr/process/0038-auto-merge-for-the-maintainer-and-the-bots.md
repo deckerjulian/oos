@@ -40,8 +40,8 @@ does not see timing, calibrated values, or what the hardware does.
 - **These three, `test` and `compare` become required checks of main.** A pull request is merged when all five have
   passed, by whoever presses the button or by GitHub.
 - **GitHub is asked to merge by itself** (workflow `Auto-merge`) for pull requests from branches of this repository
-  by the maintainer, by Dependabot and by the standing agents, once they are not drafts. Never for a fork: there the
-  maintainer decides, and may then ask for it by hand.
+  by the maintainer and by Dependabot. Never for a fork and never for an agent: there the maintainer looks and
+  merges. (Changed on 2026-11-17, on the maintainer's decision: the first version included the agents.)
 - **The squashed commit** carries the title of the pull request, the messages of its commits and the sign-off of the
   maintainer, who answers for it (ADR 0026, ADR 0034).
 - **The review of ADR 0036 is asked by the status `owner`** once this is switched on; the ruleset `main-review` is
