@@ -1243,3 +1243,41 @@ impl Scpi {
         None
     }
 }
+
+#[cfg(test)]
+mod vernier_tests {
+    #[test]
+    fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |c: &str| crate::ui::testkit::q(&mut scpi, &mut ui, &cv, c);
+        // coarse: the nearest 1-2-5 step
+        assert_eq!(q(":CHAN1:VERN?"), "0");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "5.000000E-01");
+        // fine: a row of the ladder is kept, between rows the next one up
+        q(":CHAN1:VERN ON");
+        assert_eq!(q(":CHAN1:VERN?"), "1");
+        q(":CHAN1:SCAL 0.37");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.700000E-01");
+        q(":CHAN1:SCAL 0.371");
+        assert_eq!(q(":CHAN1:SCAL?"), "3.750000E-01");
+        q(":CHAN2:PROB 10");
+        q(":CHAN2:SCAL 1.234");
+        assert_eq!(q(":CHAN2:SCAL?"), "1.240000E+00");
+        // the ends of the ladder hold, nonsense changes nothing
+        q(":CHAN1:SCAL 1e-9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E-04");
+        q(":CHAN1:SCAL 1e9");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        q(":CHAN1:SCAL -1");
+        assert_eq!(q(":CHAN1:SCAL?"), "1.000000E+01");
+        // off keeps the scale until the next coarse step
+        q(":CHAN1:SCAL 0.37");
+        q(":CHAN1:VERN OFF");
+        assert_eq!((q(":CHAN1:VERN?"), q(":CHAN1:SCAL?")), ("0".to_string(), "3.700000E-01".to_string()));
+        drop(q);
+        // a saved setup keeps both
+        let b = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert_eq!(b.ch[0].volts_per_div(), ui.m.ch[0].volts_per_div());
+    }
+}

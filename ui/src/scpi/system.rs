@@ -181,3 +181,84 @@ impl Scpi {
         None
     }
 }
+
+#[cfg(test)]
+mod aux_out_tests {
+    use super::*;
+
+    #[test]
+    fn aux_out_over_scpi_and_in_the_setup() {
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
+        assert_eq!(q(&mut ui, ":SYST:AOUT?"), "TOUT", "trigger out by default, as the FPGA powers up");
+        q(&mut ui, ":SYSTem:AOUTput off");
+        assert_eq!((q(&mut ui, ":SYSTem:AOUTput?"), ui.m.aux_out), ("OFF".to_string(), AuxOut::Off));
+        assert!(crate::store::setup_text(&ui.m).contains("aux_out = Off\n"));
+        q(&mut ui, ":SYST:AOUT TOUT");
+        assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
+        q(&mut ui, ":SYST:AOUT PFAil");
+        assert_eq!(ui.m.aux_out == AuxOut::PassFail, board().mask_hw() || board().zone_hw());
+        q(&mut ui, ":SYST:AOUT TOUT");
+        q(&mut ui, ":SYST:AOUT blink");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        // fork: the mask unit's debug line, off without the hardware test
+        assert!(q(&mut ui, ":SYSTem:DEBug:MASK?").starts_with("off,enabled=0,active=0,blocked=0,sw_pass=0,sw_fail=0,"));
+        assert!(q(&mut ui, ":SYSTem:DEBug:ZONE?").starts_with("off,enabled=0,active=0,sw_drops=0,"));
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:UART?"), "off,enabled=0");
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:SERial?"), "off,enabled=0");
+        // the protocol trigger's settings through the dispatcher, into the setup
+        q(&mut ui, ":TRIGger:RS232:WHEN DATA");
+        q(&mut ui, ":TRIG:RS232:RELation OUT");
+        q(&mut ui, ":TRIG:RS232:DMAX 0x7e");
+        assert_eq!(
+            (q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus),
+            ("OUT".to_string(), 0x7e, BusWhat::Data)
+        );
+        assert!(crate::store::setup_text(&ui.m).contains("ser.rel = Out\n"));
+        q(&mut ui, ":TRIG:IIC:AWIDth 8");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));
+        while !q(&mut ui, ":SYST:ERR?").starts_with("0,") {}
+        // the comparator mapping: set one key, read it back, put the original back
+        let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
+        assert!(orig.starts_with("domain="), "{}", orig);
+        q(&mut ui, ":SYSTem:DEBug:MASK:MAP cols=stock");
+        assert!(q(&mut ui, ":SYST:DEB:MASK:MAP?").contains("cols=stock"));
+        q(&mut ui, ":SYST:DEB:MASK:MAP cols=bogus");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+        for kv in orig.split(' ') {
+            q(&mut ui, &format!(":SYST:DEB:MASK:MAP {}", kv));
+        }
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:MAP?"), orig);
+        assert_eq!(q(&mut ui, ":SYST:DEB:MASK:COL? 0,3"), "off");
+    }
+}
+
+#[cfg(test)]
+mod draw_path_tests {
+    use super::*;
+
+    // Break it catches: the draw path switch not reaching the model or the setup, or the pipe running where the
+    // switch is off
+    #[test]
+    fn draw_path_over_scpi_in_the_menu_and_the_setup() {
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
+        assert_eq!(q(&mut ui, ":SYST:PIP?"), "BATC", "Batch is the default (ADR 0029)");
+        q(&mut ui, ":SYST:PIP STANdard");
+        assert!(!ui.m.draw_batch);
+        assert!(crate::store::setup_text(&ui.m).contains("draw_path = standard\n"));
+        assert!(!crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().draw_batch);
+        q(&mut ui, ":SYSTem:PIPeline BATCh");
+        assert!(ui.m.draw_batch);
+        assert!(crate::store::setup_text(&ui.m).contains("draw_path = batch\n"));
+        let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert!(back.draw_batch);
+        // the demo source is not the hardware: no workers
+        ui.step(0.02);
+        assert!(crate::drawpipe::pipe().is_none());
+        q(&mut ui, ":SYST:PIP FRAM");
+        assert!(!ui.m.draw_batch);
+        q(&mut ui, ":SYST:PIP BOGUS");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
+    }
+}
