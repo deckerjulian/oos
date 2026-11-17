@@ -120,7 +120,7 @@ impl CalAdc {
             core % 4
         } else {
             let (lo, hi) = FINE_PAIR[mode];
-            if core % 2 == 0 {
+            if core.is_multiple_of(2) {
                 lo
             } else {
                 hi

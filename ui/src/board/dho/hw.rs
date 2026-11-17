@@ -200,7 +200,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         window: None,
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m))
-            .then(|| Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
+            .then_some(Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
         aux: aux_out(m.aux_out),
         // the mask test and zone trigger come from the UI (`Shared::mask_want`, `zone_want`), merged in the acquisition
         // thread (`hw_merge`)
@@ -1089,7 +1089,7 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     static LINES: AtomicU32 = AtomicU32::new(0);
     static FRAMES: AtomicU64 = AtomicU64::new(0);
-    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
+    let words: Vec<String> = h.as_chunks::<2>().0.iter().map(|&b| format!("{:04x}", u16::from_le_bytes(b))).collect();
     let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
     let hyst = (0.3 * s.ch[tc].scale) as f32;
     let span = v.len();
@@ -1101,7 +1101,7 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     let mut line = String::new();
     if only_off {
         let n = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
-        if n % 10_000 == 0 {
+        if n.is_multiple_of(10_000) {
             line = format!("frames {}\n", n);
         }
         let rising = !matches!(s.slope, oos_hal::dho::tpu::Slope::Falling);
@@ -3075,8 +3075,10 @@ mod tests {
     /// `mask_on` too) keeps every frame raw, so the fast path the hardware mask keeps on draws uncompressed frames.
     #[test]
     fn a_mask_keeps_live_compression_off() {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap(),
+            ..Default::default()
+        };
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert!(s.compress > 1, "compression applies at 10 us/div without a mask");
@@ -3315,8 +3317,10 @@ mod tests {
             (zone_batch_from(""), zone_batch_from("zone.batch = 8\n"), zone_batch_from("zone.batch = 0\n")),
             (1, 8, 1)
         );
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
+        let m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap(),
+            ..Default::default()
+        };
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
         assert!(batch_plan(&s, &p).frames > 1);
@@ -3464,7 +3468,8 @@ mod tests {
         let t0 = Some((1, 2, 7));
         let ch = |c: usize| Some(crate::board::DvmWant { ch: c, lane: None });
         // (want, mask, config, running, elapsed) -> (step, running after)
-        let cases: [(Option<crate::board::DvmWant>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>); 9] = [
+        type Case = (Option<crate::board::DvmWant>, u32, u64, Option<DvmKey>, f64, DvmStep, Option<DvmKey>);
+        let cases: [Case; 9] = [
             (None, 0b11, 7, None, 0.0, DvmStep::Idle, None),
             // CH2 of CH1+CH2: lane 2
             (ch(1), 0b11, 7, None, 0.0, DvmStep::Start(2), t0),
@@ -3584,9 +3589,11 @@ mod tests {
     /// that way puts the trigger where the record had it.
     #[test]
     fn stop_reads_the_part_of_the_record_the_view_shows() {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap();
-        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap(),
+            mdepth: mdepths().iter().position(|d| d.1 == 10_000_000).unwrap(),
+            ..Default::default()
+        };
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
         let b = batch_plan(&s, &p);
@@ -3672,8 +3679,10 @@ mod tests {
 
     #[test]
     fn short_time_bases_read_beyond_the_screen() {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap(),
+            ..Default::default()
+        };
         // 100 ns/div, one channel: 1250 points per screen at 1.25 GSa/s -> 1408 at the same rate
         let s = settings(&m, false);
         assert_eq!(s.depth, 1408);
@@ -3695,8 +3704,10 @@ mod tests {
     #[test]
     fn live_compression_plan_by_time_base() {
         let plan = |tdiv: f64, two: bool| {
-            let mut m = Model::default();
-            m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
+            let mut m = Model {
+                tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap(),
+                ..Default::default()
+            };
             m.ch[1].on = two;
             let mut s = settings(&m, false);
             let raw = s.clone();
@@ -3734,9 +3745,11 @@ mod tests {
         assert_eq!((p.rate, p.memsel, k, raw_frames), (625_000_000, 100_000, 15, 20), "{:?}", p);
         assert_eq!((fb, frames), (13_328, 300));
         // the model needs every sample
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
-        m.trig_mode = TrigMode::Single;
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap(),
+            trig_mode: TrigMode::Single,
+            ..Default::default()
+        };
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
@@ -3757,8 +3770,10 @@ mod tests {
     fn modes_that_need_raw_frames_never_compress() {
         use crate::math::MathOp;
         let base = || {
-            let mut m = Model::default();
-            m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+            let m = Model {
+                tscale: tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap(),
+                ..Default::default()
+            };
             m
         };
         let k = |m: &Model, needs_raw: bool| {
@@ -3770,7 +3785,8 @@ mod tests {
         assert!(k(&base(), false) > 1, "the base set-up compresses");
         let zone =
             crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
-        let rows: Vec<(&str, Box<dyn Fn(&mut Model)>)> = vec![
+        type Row = (&'static str, Box<dyn Fn(&mut Model)>);
+        let rows: Vec<Row> = vec![
             ("Single", Box::new(|m| m.trig_mode = TrigMode::Single)),
             ("zoom", Box::new(|m| m.zoom = true)),
             ("FFT math channel", Box::new(|m| m.maths[0].op = MathOp::Fft)),
@@ -3829,9 +3845,11 @@ mod tests {
     // the deep measurements, or of a batch that was not read through the compression
     #[test]
     fn final_replay_at_stop() {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap(),
+            mdepth: mdepths().iter().position(|d| d.1 == 10_000_000).unwrap(),
+            ..Default::default()
+        };
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
         let b = batch_plan(&s, &p);
@@ -3873,9 +3891,11 @@ mod tests {
     #[test]
     fn deep_raw_window_for_the_measurements() {
         let plan = |tdiv: f64, depth: u64, two: bool| {
-            let mut m = Model::default();
-            m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
-            m.mdepth = mdepths().iter().position(|d| d.1 == depth).unwrap();
+            let mut m = Model {
+                tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap(),
+                mdepth: mdepths().iter().position(|d| d.1 == depth).unwrap(),
+                ..Default::default()
+            };
             m.ch[1].on = two;
             let s = settings(&m, false);
             let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
@@ -3918,9 +3938,11 @@ mod tests {
     #[test]
     fn a_deep_record_at_a_short_time_base_reads_the_screen_window() {
         // 10 M at 100 ns/div, CH1: 1.25 GSa/s, the screen is 1250 of the 10 M points
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap();
-        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap(),
+            mdepth: mdepths().iter().position(|d| d.1 == 10_000_000).unwrap(),
+            ..Default::default()
+        };
         let s = settings(&m, false);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
         let b = batch_plan(&s, &p);
@@ -3949,9 +3971,11 @@ mod tests {
 
     #[test]
     fn depth_stays_within_the_limit_of_the_channels_on() {
-        let mut m = Model::default();
-        m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap();
-        m.tscale = tscales().iter().position(|&t| t >= 1e-3).unwrap();
+        let mut m = Model {
+            mdepth: mdepths().iter().position(|d| d.1 == 125_000_000).unwrap(),
+            tscale: tscales().iter().position(|&t| t >= 1e-3).unwrap(),
+            ..Default::default()
+        };
         for c in 0..NCH {
             m.ch[c].on = c == 0;
         }
@@ -3967,8 +3991,10 @@ mod tests {
     // or without the header that carries the stamp.
     #[test]
     fn hardware_segments_only_where_they_record() {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap(),
+            ..Default::default()
+        };
         (m.segments, m.seg_hw, m.seg_ivl) = (500, true, 0.0);
         let s = settings(&m, false);
         assert_eq!(s.segments, Some(Segments { n: 500, interval: 0.0 }));
@@ -4042,7 +4068,7 @@ mod tests {
                         let fb = oos_hal::dho::seq::frame_bytes(&b, &p);
                         checked += 1;
                         la_seen |= s.la.is_some();
-                        if fb % 8 != 0 {
+                        if !fb.is_multiple_of(8) {
                             bad.push((la, chans, tscales()[t], mdepths()[d].0, fb));
                         }
                     }

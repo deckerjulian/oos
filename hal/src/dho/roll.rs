@@ -69,7 +69,7 @@ fn gcd(a: u64, b: u64) -> u64 {
 pub fn params(mask: u32, tdiv_fs: i128, depth: i128, p: &hz::Params) -> Params {
     let dot = p.dot_fs.max(1);
     let s = ((tdiv_fs / 100) as u64 / dot).max(1); // column = time/div / 100, in sample periods
-    let k = (1..=s).find(|&k| s % k == 0 && s / k <= 1000).unwrap_or(s);
+    let k = (1..=s).find(|&k| s.is_multiple_of(k) && s / k <= 1000).unwrap_or(s);
     let (mut num, mut den) = (1u64, 1u64);
     if 1000 * s / k < 1_000_000 {
         let req = hz::requested_rate(mask, tdiv_fs, depth) as u64;
@@ -115,7 +115,7 @@ pub fn config(sh: &mut Shadows, rp: &Params, memsel: u32) -> Vec<Write> {
         (0x1160, 0),
         (0x1164, 0xffff_ffff),
         (0x11fc, 100 / r),
-        (0x11f0, (rp.len + 7) / 8 * 8),
+        (0x11f0, rp.len.div_ceil(8) * 8),
         (0x1170, 0xc000_0000 | (10 * r * rp.k)),
         (0x1174, 0x4000_0001),
     ];
@@ -242,7 +242,7 @@ pub fn la_config(rp: &Params, t: &crate::dho::la::Timing) -> Vec<Write> {
     let lin_on = rp.f_num != rp.f_den;
     vec![
         (0x12cc, r * (100 / r)),
-        (0x12c0, (rp.len + 7) / 8 * 8),
+        (0x12c0, rp.len.div_ceil(8) * 8),
         (0x1298, 0xc000_0000 | (la_compress(rp, t.m) & 0x0fff_ffff)),
         (0x129c, 0x4000_0001),
         (0x1280, if lin_on { 0x08 } else { 0x0c }),
@@ -269,9 +269,9 @@ pub fn is_la_chunk(chunk: &[u8]) -> bool {
 pub fn split_la(bytes: &[u8], mask: u32) -> ([Vec<u16>; 4], Vec<u16>) {
     let mut analog = Vec::with_capacity(bytes.len());
     let mut la = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(CHUNK_BYTES) {
+    for chunk in bytes.as_chunks::<CHUNK_BYTES>().0 {
         if is_la_chunk(chunk) {
-            la.extend(chunk[16..].chunks_exact(2).map(|w| u16::from_le_bytes([w[0], w[1]])));
+            la.extend(chunk[16..].as_chunks::<2>().0.iter().map(|w| u16::from_le_bytes([w[0], w[1]])));
         } else {
             analog.extend_from_slice(chunk);
         }
@@ -293,7 +293,7 @@ pub fn split(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
     if mask & 0xf == 0 {
         return out;
     }
-    for chunk in bytes.chunks_exact(CHUNK_BYTES) {
+    for chunk in bytes.as_chunks::<CHUNK_BYTES>().0 {
         for (o, c) in out.iter_mut().zip(crate::dho::seq::deinterleave(&chunk[16..], mask)) {
             o.extend(c);
         }
@@ -476,7 +476,7 @@ mod la_tests {
         let chunk = |la: bool, v: u16| {
             let mut c = vec![0u8; CHUNK_BYTES];
             c[2] = if la { 2 } else { 0 };
-            for w in c[16..].chunks_exact_mut(2) {
+            for w in c[16..].as_chunks_mut::<2>().0 {
                 w.copy_from_slice(&v.to_le_bytes());
             }
             c

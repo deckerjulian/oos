@@ -61,7 +61,7 @@ pub fn reference_window(err: &[u32; 32], lane: u32) -> Option<RefWnd> {
     if len < min + 1 {
         return None;
     }
-    let c = e - (len + 1) / 2;
+    let c = e - len.div_ceil(2);
     Some(RefWnd { c, p: bit(c), s: e - len + 1, end: e - 1, len, e })
 }
 

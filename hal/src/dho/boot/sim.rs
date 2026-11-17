@@ -168,7 +168,7 @@ impl Bus for Unit {
                 let reg = (self.last_adc >> 16) & 0x7f;
                 let data = if reg == 7 {
                     (self.sync_do[self.sync_delay] as u32) << 1 | self.sync_low[self.sync_delay] as u32
-                } else if reg >= 0x16 && (reg - 0x16) % 8 == 0 && reg <= 0x4e {
+                } else if reg >= 0x16 && (reg - 0x16).is_multiple_of(8) && reg <= 0x4e {
                     let n = ((reg - 0x16) / 8) as usize;
                     self.adc_trim[n] += 1;
                     if self.trim_polls != u32::MAX && self.adc_trim[n] >= self.trim_polls {

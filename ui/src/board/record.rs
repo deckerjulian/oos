@@ -287,8 +287,8 @@ mod tests {
             basic: Default::default(),
         });
         let rms = |v: &[f32]| (v.iter().map(|y| (y - 1.0) * (y - 1.0)).sum::<f32>() / v.len() as f32).sqrt();
-        let mut m = Model::default();
-        m.trig_level = 5.0; // nothing to trigger on: the window stays at the hardware point
+        // nothing to trigger on: the window stays at the hardware point
+        let mut m = Model { trig_level: 5.0, ..Default::default() };
         let normal = to_record(&frame, &m, 3600, window, -window / 2.0);
         m.acq = AcqMode::HiRes;
         let hires = to_record(&frame, &m, 3600, window, -window / 2.0);
@@ -309,8 +309,7 @@ mod tests {
         // rising edges at 4600 and 5600; 5600 is nearer the hardware point, but the window would run off the frame
         let v: Vec<f32> =
             (0..10_000).map(|i| if (4600..5000).contains(&i) || i >= 5600 { 2.0 } else { -2.0 }).collect();
-        let mut m = Model::default();
-        m.trig_level = 0.0;
+        let m = Model { trig_level: 0.0, ..Default::default() };
         let window = 9000e-9;
         let f = Frame {
             seq: 1,
@@ -465,11 +464,13 @@ mod bench {
     #[ignore]
     fn bench_record() {
         for &(tdiv, pts) in &[(1e-7, 1408usize), (1e-7, 352), (1e-6, 12_500), (1e-5, 100_000)] {
-            let mut m = Model::default();
-            m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
-            m.trig_level = 0.0;
+            let mut m = Model {
+                tscale: tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+                trig_level: 0.0,
+                ..Default::default()
+            };
             m.ch[0].offset = 0.0;
-            let dt = 0.8e-9 * (tdiv / 1e-7).max(1.0) * 1408.0 / pts as f64 * if pts == 1408 { 1.0 } else { 1.0 };
+            let dt = 0.8e-9 * (tdiv / 1e-7).max(1.0) * 1408.0 / pts as f64;
             let f = 3.0 / (tdiv * 10.0);
             let v: Vec<f32> = (0..pts).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
             let fr = Arc::new(Frame {

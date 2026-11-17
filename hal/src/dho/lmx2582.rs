@@ -538,7 +538,8 @@ pub fn table_for(f_out_hz: f64) -> Result<Table, String> {
     let step = (pn / pd) as u64 * base.pll_n_pre as u64;
     let base_vco = base.f_vco_exact().ok_or("PLL_TABLE VCO not integral")?;
     let order = base.mash_order.min(4) as usize;
-    let mut best: Option<((bool, u64, u32), ChDiv, u32, u32, u32)> = None;
+    type Best = ((bool, u64, u32), ChDiv, u32, u32, u32);
+    let mut best: Option<Best> = None;
     for d in CHDIVS {
         let Some(vco) = f.checked_mul(d.total as u64) else { continue };
         if vco < VCO_MIN_HZ.max(d.vco_min_hz) || vco > VCO_MAX_HZ.min(d.vco_max_hz) {
@@ -556,7 +557,7 @@ pub fn table_for(f_out_hz: f64) -> Result<Table, String> {
             continue;
         }
         let key = (rem != 0, vco.abs_diff(base_vco), d.total);
-        if best.as_ref().map_or(true, |b| key < b.0) {
+        if best.as_ref().is_none_or(|b| key < b.0) {
             best = Some((key, d, n, num as u32, den as u32));
         }
     }

@@ -139,7 +139,7 @@ impl Fdt {
             st.extend_from_slice(&BEGIN.to_be_bytes());
             st.extend_from_slice(n.name.as_bytes());
             st.push(0);
-            while st.len() % 4 != 0 {
+            while !st.len().is_multiple_of(4) {
                 st.push(0);
             }
             for (k, v) in &n.props {
@@ -157,7 +157,7 @@ impl Fdt {
                 st.extend_from_slice(&(v.len() as u32).to_be_bytes());
                 st.extend_from_slice(&off.to_be_bytes());
                 st.extend_from_slice(v);
-                while st.len() % 4 != 0 {
+                while !st.len().is_multiple_of(4) {
                     st.push(0);
                 }
             }

@@ -535,7 +535,7 @@ impl State {
         if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
             return vec![];
         }
-        let clear = self.mask_run.map_or(true, |r| r.0 != run.0 || r.2 != run.2);
+        let clear = self.mask_run.is_none_or(|r| r.0 != run.0 || r.2 != run.2);
         let mut w = vec![];
         self.sh.s4020 = mask::scu_bits(self.sh.s4020, false, false);
         w.push((0x4020, self.sh.s4020));
@@ -596,7 +596,7 @@ impl State {
         if self.zone_run == Some(run) && tabs.iter().enumerate().all(|(i, t)| self.zone_tabs[i].as_ref() == Some(t)) {
             return vec![];
         }
-        let clear = self.zone_run.map_or(true, |r| r.0 != run.0 || r.3 != run.3);
+        let clear = self.zone_run.is_none_or(|r| r.0 != run.0 || r.3 != run.3);
         let mut w = vec![];
         self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
         w.push((0x4020, self.sh.s4020));
@@ -1008,7 +1008,7 @@ pub fn window(s: &Settings, p: &hz::Params) -> (u32, u32) {
 /// channel; ratio 2 = lower channel on even words, higher on odd; ratio 4 = word 4i+k is CH k+1 (horizontal-config.md
 /// 2.2). Channels not enabled stay empty.
 pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
-    let w: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+    let w: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
     let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
     let mut out: [Vec<u16>; 4] = Default::default();
     match hz::ratio(mask) {
@@ -1131,7 +1131,7 @@ fn slots(mask: u32, ratio: usize) -> [Option<usize>; 4] {
 fn lane<const G: usize>(bytes: &[u8], k: usize, a: f32, off: f32, o: &mut Vec<f32>) {
     let at = o.len();
     o.resize(at + bytes.len() / G, 0.0);
-    for (d, g) in o[at..].iter_mut().zip(bytes.chunks_exact(G)) {
+    for (d, g) in o[at..].iter_mut().zip(bytes.as_chunks::<G>().0) {
         *d = volt32(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), a, off);
     }
 }
@@ -1393,7 +1393,7 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
                 std::thread::sleep(std::time::Duration::from_micros(500));
                 last = bar.rd(*reg);
                 k += 1;
-                if k % 20 == 0 && last & bit == 0 && stop() {
+                if k.is_multiple_of(20) && last & bit == 0 && stop() {
                     log(format!("{} {} ({:.1} ms)", what, NEW_SETTINGS, t.elapsed().as_secs_f64() * 1e3));
                     return Err(NEW_SETTINGS.into());
                 }

@@ -1030,7 +1030,7 @@ mod tests {
         use crate::dho::serialtrig::{Dir, I2c, I2cCond, Spi};
         use crate::dho::uarttrig::Relation;
         let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
-        let last = |w: &[Write], r: u32| w.iter().filter(|x| x.0 == r).last().map(|x| x.1);
+        let last = |w: &[Write], r: u32| w.iter().rfind(|x| x.0 == r).map(|x| x.1);
         let mut sh = Shadows::APP;
         let s = Spi {
             clk: 2,
@@ -1091,7 +1091,7 @@ mod tests {
         assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
         // not inverted: bit 23 clear
         let w = uart(&mut sh, 2, &Uart { invert: false, ..u }, 1.5e9, &vt);
-        assert_eq!(w.iter().filter(|x| x.0 == 0x204c).last().unwrap().1 & 1 << 23, 0);
+        assert_eq!(w.iter().rfind(|x| x.0 == 0x204c).unwrap().1 & 1 << 23, 0);
     }
 
     #[test]

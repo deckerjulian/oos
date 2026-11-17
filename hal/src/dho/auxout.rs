@@ -85,20 +85,15 @@ impl PassFail {
 }
 
 /// What the AUX OUT BNC carries.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum AuxOut {
     /// a pulse per trigger (power-up state)
+    #[default]
     TriggerOut,
     /// constant low
     Off,
     /// the pass/fail pulse; needs the hardware mask unit (or the zone trigger) to produce results
     PassFail(PassFail),
-}
-
-impl Default for AuxOut {
-    fn default() -> AuxOut {
-        AuxOut::TriggerOut
-    }
 }
 
 /// The writes that put `a` on the BNC: the pulse configuration before the select, so the output never runs on the

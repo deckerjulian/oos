@@ -49,7 +49,7 @@ pub fn lanes(mask: u32, chans: u32) -> u32 {
                 f(on[0]) * 0xf
             }
         }
-        2 => f(on[0]) * 0x3 | f(on[1]) * 0xc,
+        2 => (f(on[0]) * 0x3) | (f(on[1]) * 0xc),
         _ => chans & 0xf,
     }
 }
