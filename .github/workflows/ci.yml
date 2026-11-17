@@ -2,20 +2,35 @@
 # The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer, in
 # the order of the script. fmt and clippy run as well but do not fail the job until the rollout of ADR 0016 and
 # ADR 0017 makes them enforced layers of the script. A pull request is also compared with its base (job compare).
+#
+# What keeps the workflow itself safe: the token can only read; an action is named by the commit it was reviewed at
+# (the release in the comment), not by a tag that can be moved; the checkout leaves no credentials behind for later
+# steps; every job has a time limit. A pull request's code runs here without secrets.
 name: CI
 on:
+  # a branch is tested through its pull request; a push only on main, so a commit is not tested twice
   push:
+    branches: [main]
   pull_request:
+permissions:
+  contents: read
+# a new push to a pull request ends the run of the push before it; runs on main are never cut short
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the sign-off check reads every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
+          persist-credentials: false
+      # Dependabot cannot sign off: the person who merges its pull request signs off the squashed commit
       - name: Every commit is signed off (ADR 0026)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -31,7 +46,7 @@ jobs:
       - run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup target add aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             hal -> target
@@ -52,14 +67,16 @@ jobs:
   compare:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the pull request merged into its base: the first parent of that commit is the base
           fetch-depth: 2
+          persist-credentials: false
       - run: rustup toolchain install stable --profile minimal
       - name: Pictures and register sequences against the base (tools/compare-base.sh)
         id: compare
@@ -71,7 +88,7 @@ jobs:
           [ "$rc" -le 1 ]
       - name: Keep what differs
         if: steps.compare.outputs.differs == '1'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: compare-base
           path: |

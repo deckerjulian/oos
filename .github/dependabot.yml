@@ -1,0 +1,16 @@
+# The workflows name the actions they use by commit (.github/workflows). Dependabot keeps those commits current: once a
+# week it opens one pull request with every action that has a newer release, and the comment behind each commit is
+# changed with it. The pull request is reviewed and merged like any other.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: CI
+    open-pull-requests-limit: 2

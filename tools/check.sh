@@ -134,7 +134,7 @@ layer_text() {
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
 }
 
-# every tracked Python file, and every shell script by its first line (shell_scripts)
+# every tracked Python file, every shell script by its first line (shell_scripts), and the workflow files as YAML
 layer_syntax() {
     git ls-files '*.py' | outside >"$tmp/py"
     while IFS= read -r f; do
@@ -146,7 +146,19 @@ layer_syntax() {
         case $(head -n 1 "$f") in *bash*) sh=bash ;; *) sh=sh ;; esac
         $sh -n "$f" || fail "syntax: $f"
     done <"$tmp/sh"
-    echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts"
+    # the workflow files: one that does not parse runs no job at all, and nothing says so
+    if command -v ruby >/dev/null 2>&1; then
+        for f in .github/workflows/*.yml; do
+            ruby -ryaml -e 'YAML.load_file(ARGV[0])' "$f" 2>"$tmp/yaml" || {
+                cat "$tmp/yaml" >&2
+                fail "syntax: $f"
+            }
+        done
+        yaml="$(ls .github/workflows/*.yml | wc -l | tr -d ' ') workflow files"
+    else
+        yaml="workflow files not parsed (no ruby)"
+    fi
+    echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts, $yaml"
 }
 
 layer_test() {
