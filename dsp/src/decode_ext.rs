@@ -8,23 +8,10 @@
 //! sample indices, `ok` = the check of the field (CRC, parity, framing) passed. Fields without an own `Kind` use
 //! `Kind::Field(label)`. Signal generators for tests and the demo source are in `gen`.
 
+pub use crate::decode::crc::{can_fd_crc, flexray_frame_crc, flexray_header_crc, modbus_crc, ow_crc8};
 use crate::decode::{can_crc15, uart, Kind, Packet, Parity};
 use crate::edges::{edges, states, Edge};
 use crate::trigger::Slope;
-
-/// Bitwise CRC, MSB first, without reflection or final XOR (`poly` may include the x^len term).
-pub(crate) fn crc_msb(bits: impl IntoIterator<Item = bool>, len: u32, poly: u32, init: u32) -> u32 {
-    let mask = if len >= 32 { u32::MAX } else { (1u32 << len) - 1 };
-    let mut crc = init & mask;
-    for b in bits {
-        let top = (crc >> (len - 1)) & 1 == 1;
-        crc = (crc << 1) & mask;
-        if top != b {
-            crc ^= poly & mask;
-        }
-    }
-    crc
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Parallel bus
@@ -283,18 +270,6 @@ fn rdm(s: &[Byte], out: &mut Vec<Packet>) {
 // ---------------------------------------------------------------------------------------------------------------
 // Modbus
 
-/// CRC-16/MODBUS (Modbus over serial line V1.02, 6.2.2): init 0xFFFF, reflected polynomial 0xA001; sent low byte first.
-pub fn modbus_crc(bytes: &[u8]) -> u16 {
-    let mut crc: u16 = 0xffff;
-    for &b in bytes {
-        crc ^= b as u16;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 { crc >> 1 ^ 0xa001 } else { crc >> 1 };
-        }
-    }
-    crc
-}
-
 /// Modbus ASCII LRC: two's complement of the 8-bit sum.
 pub fn modbus_lrc(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0u8, |a, &b| a.wrapping_add(b)).wrapping_neg()
@@ -475,23 +450,6 @@ fn bytes_from(out: &mut Vec<Packet>, d: &[Byte], from: usize) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // 1-Wire
-
-/// Dallas/Maxim 1-Wire CRC-8 (x^8 + x^5 + x^4 + 1, reflected 0x8C, init 0), as in the ROM code and scratchpads.
-pub fn ow_crc8(bytes: &[u8]) -> u8 {
-    let mut c = 0u8;
-    for &b in bytes {
-        let mut x = b;
-        for _ in 0..8 {
-            let mix = (c ^ x) & 1;
-            c >>= 1;
-            if mix != 0 {
-                c ^= 0x8c;
-            }
-            x >>= 1;
-        }
-    }
-    c
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum OwPhase {
@@ -812,13 +770,6 @@ pub const FD_LEN: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 
 /// and used by `gen::can_fd_bits`.
 pub const FD_SP: f64 = 0.75;
 
-/// CAN FD CRC (ISO 11898-1:2015): CRC-17 (0x3685B) for up to 16 data bytes, CRC-21 (0x302899) above, register
-/// initialised with a 1 in the MSB; over SOF .. data field including the dynamic stuff bits, then the stuff count.
-pub fn can_fd_crc(bits: &[bool], len: u32) -> u32 {
-    let poly = if len == 21 { 0x30_2899 } else { 0x3_685b };
-    crc_msb(bits.iter().copied(), len, poly, 1 << (len - 1))
-}
-
 /// Bit timing reader: one bit at a time from the current position, resynchronised on edges near the bit end.
 struct BitClock<'a> {
     t: f64,
@@ -1031,19 +982,6 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
 
 // ---------------------------------------------------------------------------------------------------------------
 // FlexRay
-
-/// FlexRay header CRC-11 (FlexRay Protocol Specification V3.0.1, 4.5.2): polynomial 0x385, init 0x1A, over the
-/// 20 bits sync frame indicator, startup frame indicator, frame ID, payload length (`bits20`, MSB first).
-pub fn flexray_header_crc(bits20: u32) -> u32 {
-    crc_msb((0..20).rev().map(|i| (bits20 >> i) & 1 == 1), 11, 0x385, 0x1a)
-}
-
-/// FlexRay frame CRC-24 (V3.0.1, 4.5.3): polynomial 0x5D6DCB, init 0xFEDCBA (channel A) / 0xABCDEF (channel B),
-/// over header and payload bytes, MSB first.
-pub fn flexray_frame_crc(bytes: &[u8], channel_b: bool) -> u32 {
-    let init = if channel_b { 0xab_cdef } else { 0xfe_dcba };
-    crc_msb(bytes.iter().flat_map(|&b| (0..8).rev().map(move |i| (b >> i) & 1 == 1)), 24, 0x5d_6dcb, init)
-}
 
 /// FlexRay frames (FlexRay Protocol Specification V3.0.1) on one channel at `rate` (normally 10 Mbit/s), as on the
 /// transceiver RxD pin (idle high; `invert` = low) or a BP − BM difference from `diff` (idle 0 V reads as high).

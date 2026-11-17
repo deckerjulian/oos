@@ -7,6 +7,7 @@
 //! fractional sample indices, protocol-specific fields are `Kind::Field(label)`. Signal generators for the tests are
 //! in `gen`.
 
+pub use crate::decode::crc::usbpd_crc32;
 use crate::decode::{Kind, Packet};
 use crate::edges::{edges, states};
 
@@ -955,18 +956,6 @@ const PD_SETS: [(&str, [u8; 4]); 7] = [
     ("!HRST", [PD_RST1, PD_RST1, PD_RST1, PD_RST2]),
     ("!CRST", [PD_RST1, PD_SYNC1, PD_RST1, PD_SYNC3]),
 ];
-
-/// CRC-32 of USB PD (IEEE 802.3: reflected polynomial 0xEDB88320, init and final XOR 0xFFFFFFFF).
-pub fn usbpd_crc32(data: &[u8]) -> u32 {
-    let mut c = 0xffff_ffffu32;
-    for &b in data {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { c >> 1 ^ 0xedb8_8320 } else { c >> 1 };
-        }
-    }
-    !c
-}
 
 /// Message type name from a USB PD message header (r3.1 tables 6-5 control, 6-6 data, 6-53 extended).
 pub fn usbpd_msg_name(hdr: u16) -> &'static str {

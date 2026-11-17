@@ -7,6 +7,7 @@
 //! fractional sample indices, `ok` = the check of the field passed, protocol-specific fields are `Kind::Field(label)`.
 //! Signal generators for the tests and the demo source are in `gen`.
 
+pub use crate::decode::crc::{sent_crc, usb_crc16, usb_crc5};
 use crate::decode::{Kind, Packet};
 use crate::edges::{edges, states};
 
@@ -115,25 +116,6 @@ fn arinc429_word(p: &[Pulse], bit: f64, n: f64, out: &mut Vec<Packet>) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // SENT
-
-/// SENT CRC-4 (SAE J2716): polynomial x^4 + x^3 + x^2 + 1, seed 0101, over the data nibbles (not the status
-/// nibble). The recommended method (J2716 APR2010) appends a zero nibble; `legacy` = without it (earlier issues).
-pub fn sent_crc(data: &[u8], legacy: bool) -> u8 {
-    // c * x^4 + nibble, mod the polynomial
-    let step = |c: u8, nib: u8| {
-        let mut r = c;
-        for _ in 0..4 {
-            r = ((r << 1) ^ if r & 8 != 0 { 0x1d } else { 0 }) & 0xf;
-        }
-        r ^ (nib & 0xf)
-    };
-    let c = data.iter().fold(5u8, |c, &d| step(c, d));
-    if legacy {
-        c
-    } else {
-        step(c, 0)
-    }
-}
 
 /// SENT (SAE J2716, fast channel): every nibble is the time between two falling edges in clock ticks, 12 + value.
 /// A frame: synchronisation / calibration pulse of 56 ticks, status nibble, `nibbles` data nibbles (1..6), CRC
@@ -274,21 +256,6 @@ pub fn usb_pid_name(pid: u8) -> &'static str {
         0x78 => "SPLIT",
         _ => "?",
     }
-}
-
-/// USB CRC5 of tokens and SOF: x^5 + x^2 + 1 over the bits in bus order (every field LSB first), preset to ones,
-/// the remainder inverted. The result is the CRC field as read from the bus LSB first (bit 0 = the first CRC bit
-/// sent, the x^4 coefficient), comparable to the received field.
-pub fn usb_crc5(bits: &[bool]) -> u8 {
-    let r = bits.iter().fold(0x1fu8, |r, &b| if (r & 1 != 0) != b { r >> 1 ^ 0x14 } else { r >> 1 });
-    r ^ 0x1f
-}
-
-/// USB CRC16 of data packets: x^16 + x^15 + x^2 + 1 over the payload bytes (LSB first), preset to ones, inverted;
-/// sent low byte first.
-pub fn usb_crc16(data: &[u8]) -> u16 {
-    // the Modbus CRC (same polynomial, preset and bit order), inverted
-    !crate::decode_ext::modbus_crc(data)
 }
 
 /// Line state of the USB pair.
