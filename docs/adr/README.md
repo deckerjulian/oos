@@ -60,6 +60,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | accepted |
 | [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039 |
 | [0039](process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md) | process | One development agent, with an identity of its own, opens and merges pull requests under the checks | accepted |
+| [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted |
 
 ## Reading order for agents
 

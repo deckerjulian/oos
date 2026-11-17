@@ -1,11 +1,12 @@
 # Tests without hardware. Tests that need the calibration files of a real unit skip themselves.
 # The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer.
-# Here the layers run next to each other, in jobs of their own (measured on 2026-11-17: nine minutes in a row, of
-# which the tests of hal take 94 s, those of ui 147 s, and the decoder layer 265 s). The job `test` at the end is the
-# one required check: it passes when all of them passed. clippy runs as well, in the job `advice`, and does not fail
+# Here the layers run next to each other, in jobs of their own, and in a pull request only the parts its changes can
+# reach (tools/ci-parts.sh, ADR 0040): a change of the tools or the documents builds nothing, one of fpgad does not
+# run the tests of ui. A push to main runs every part. The job `test` at the end is the one required check: it passes
+# when all of them passed. clippy runs as well, in the job `advice`, and does not fail
 # it until the rollout of ADR 0017. A pull request is also compared with its base (job compare).
 #
-# A pull request that only changes documents (*.md, docs/, wiki/) runs the job `files` and skips the rest.
+# A pull request that only changes documents or host tools runs the job `files` and skips the rest.
 #
 # What keeps the workflow itself safe: the token can only read; an action is named by the commit it was reviewed at
 # (the release in the comment), not by a tag that can be moved; the checkout leaves no credentials behind for later
@@ -28,7 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      code: ${{ steps.what.outputs.code }}
+      matrix: ${{ steps.what.outputs.matrix }}
+      compare: ${{ steps.what.outputs.compare }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -65,42 +67,30 @@ jobs:
             exit 1
           fi
           cat /tmp/privacy
-      - name: Documents only, or code too
+      - name: What the changes can reach (tools/ci-parts.sh)
         id: what
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          # on main everything runs; in a pull request the jobs with a compiler run when a file other than a
-          # document changed. In doubt: code.
-          code=true
-          if [ -n "$BASE" ] && names=$(git diff --name-only "$BASE...$HEAD"); then
-            if [ -n "$names" ] && ! printf '%s\n' "$names" | grep -qvE '\.md$|^docs/|^wiki/'; then
-              code=false
-            fi
+          # on main every part runs; in a pull request the parts its changed files reach. In doubt: every part.
+          if [ -n "$BASE" ] && names=$(git diff --name-only "$BASE...$HEAD") && [ -n "$names" ]; then
+            printf '%s\n' "$names" | tools/ci-parts.sh > /tmp/parts
+          else
+            tools/ci-parts.sh --all > /tmp/parts
           fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "code: $code"
+          cat /tmp/parts | tee -a "$GITHUB_OUTPUT"
       - name: Files, script syntax, the tests of the host tools
         run: tools/check.sh text syntax test:tools
-  # The layers with a compiler, next to each other. Together with `files` they are every enforced layer.
+  # The layers with a compiler, next to each other: the parts tools/ci-parts.sh chose. Together with `files` they are
+  # every enforced layer.
   check:
     needs: files
-    if: needs.files.outputs.code == 'true'
+    if: needs.files.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: hal
-            layers: test:hal
-          - name: ui
-            layers: test:ui
-          - name: fmt, dsp, fpgad, target
-            layers: fmt test:dsp test:fpgad target
-          - name: decoders, core
-            layers: decoders:core
-          - name: decoders, each
-            layers: decoders:each
+        include: ${{ fromJSON(needs.files.outputs.matrix) }}
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -113,7 +103,7 @@ jobs:
           rustup target add aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ${{ matrix.layers }}
+          key: ${{ matrix.cache }}
           # pull requests read the caches of main and write none
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
@@ -128,7 +118,7 @@ jobs:
   # clippy and the numbers that only go down: shown, not yet enforced
   advice:
     needs: files
-    if: needs.files.outputs.code == 'true'
+    if: needs.files.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -184,7 +174,7 @@ jobs:
   # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.
   compare:
     needs: files
-    if: github.event_name == 'pull_request' && needs.files.outputs.code == 'true'
+    if: github.event_name == 'pull_request' && needs.files.outputs.compare == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
