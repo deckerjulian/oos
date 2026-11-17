@@ -91,16 +91,8 @@ pub fn place(r: Role) {
             return;
         };
         let cpus = plan.cpus(r);
-        // SAFETY: a local CPU set for the calling thread
-        let rc = unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for &c in cpus {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set)
-        };
-        if rc != 0 {
-            eprintln!("oos-ui: placement {:?} on {:?}: {}", r, cpus, std::io::Error::last_os_error());
+        if let Err(e) = crate::system::pin_current_thread(cpus) {
+            eprintln!("oos-ui: placement {:?} on {:?}: {}", r, cpus, e);
         }
     }
     #[cfg(not(target_os = "linux"))]

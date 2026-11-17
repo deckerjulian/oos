@@ -59,6 +59,7 @@ mod sparse;
 mod ssh;
 mod store;
 mod sysconf;
+mod system;
 mod trig;
 mod trignear;
 mod ui;
