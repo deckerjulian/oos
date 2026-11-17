@@ -29,8 +29,10 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   verified on hardware". Keep that honest: a wrong "verified" costs someone else days.
 - **Be careful with other people's scopes.** OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and
   `parameter` partitions. Changes that would need any of this will not be accepted without a very good case.
-- **Keep the analog path unchanged unless that is the point.** `tools/plan-matrix.sh` prints the register sequences of a
-  fixed set of acquisitions. Run it before and after a change and compare the output. Say in your pull request whether they differ.
+- **Keep behaviour unchanged unless that is the point.** `tools/compare-base.sh` builds the commit before your change
+  next to your tree and compares the pictures of the screen and the register sequences of a fixed set of acquisitions.
+  Say in your pull request `Behaviour: unchanged`, or what changes and why; CI runs the same comparison
+  ([ADR 0032](docs/adr/process/0032-ci-compares-a-pull-request-with-its-base.md)).
 - **No personal data in issues or commits:** no serial numbers, MAC addresses or licence keys.
 
 ## A new protocol decoder
@@ -57,6 +59,11 @@ need the calibration files of a real unit skip themselves without them. See the 
 [README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
+
+CI also compares every pull request with its base: the pictures of the screen and the register sequences
+(`tools/compare-base.sh`, about three minutes on a laptop). The result is in the summary of the `compare` job, with the
+pictures that differ to download. A difference is not an error; a pull request that says `Behaviour: unchanged` while
+something differs is.
 
 A pull request from a fork enters main squashed, one commit per topic, made from the state that was reviewed; your
 name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when
