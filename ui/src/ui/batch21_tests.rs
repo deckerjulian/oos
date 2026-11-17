@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 21: the grouped Menu, the LA and GEN pills, SIM and Live in the top bar, the measurement views and the classic
 //! badge strip. One test per item that can be tested. OOS_SHOTS=<dir> writes pictures (b21-*).
 use super::studio::StudioView;

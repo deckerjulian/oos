@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 14: fixes from the hands-on walkthrough of Batch 13 (audit/walkthrough-b13.md). One test per item.
 //! OOS_SHOTS=<dir> writes pictures (b14-*).
 use super::dock::VKind;

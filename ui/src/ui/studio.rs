@@ -325,6 +325,8 @@ impl Ui {
         let text = self.m.studio_dock.clone();
         self.dock_restore(&text);
         self.view_state_restore("");
+        // Overlay or lanes come back as they were left
+        self.studio.overlay = self.m.studio_overlay;
         self.studio.enter = self.m.layout == Layout::Studio;
     }
 
@@ -352,7 +354,9 @@ impl Ui {
         self.studio_sync_views();
         if !std::mem::take(&mut self.studio.enter) { return; }
         if self.m.layout == Layout::Studio {
-            self.trace_mode(true);
+            // lanes, unless Overlay traces was chosen (it is kept with the setup)
+            let overlay = self.studio.overlay;
+            self.trace_mode(!overlay);
             // Studio is entered with its bars: a full-screen state left from another layout would hide them
             if self.m.density == Density::Full {
                 self.m.density = Density::Scope;
@@ -654,7 +658,8 @@ impl Ui {
             if r.w == 0 { continue; }
             let (col, ch) = (CH_COLORS[c], &self.m.ch[c]);
             let sel = root == Some(MenuId::Channel(c));
-            let border = if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
+            let clip = self.channel_clipping(c);
+            let border = if clip { RED } else if sel { ACCENT } else if ch.on { col } else { BTN_BORDER };
             chip(cv, r, if ch.on { BTN } else { BAR }, border);
             // the channel badge: filled while the channel is on; on / off: a dot in the corner
             cv.circle(r.x + 5, r.y + 5, 3, if ch.on { GREEN } else { DIM });
@@ -663,7 +668,7 @@ impl Ui {
             let label = format!("CH{}", c + 1);
             let bw = if r.w >= 70 { 42 } else { (f.sb.width(&label) + 8).min(r.w - 4).max(8) };
             let (label, bw) = if f.sb.width(&label) + 4 <= bw { (label, bw) } else { ((c + 1).to_string(), bw) };
-            let chev = r.w >= 110;
+            let chev = r.w >= 130; // a narrower pill gives the chevron's room to its scale
             let badge = if r.w >= 70 { Rect::new(r.x + 8, r.y + 5, bw, 20) } else { Rect::new(r.x + (r.w - bw) / 2, r.y + 8, bw, 18) };
             cv.round(badge, 4, if ch.on { col } else { mix(BAR, col, 70) }, 255);
             cv.text_in(&f.sb, badge, 1, &label, if ch.on { DARK_TEXT } else { mix(BAR, col, 200) });
@@ -676,7 +681,9 @@ impl Ui {
                 // the probe, then the line itself, and the scale loses its "/div" before it is dropped
                 let two_lines = f.mb.size + f.s.size <= TWO_LINE_MAX;
                 let text = if f.mb.width(&full) <= tw { full } else { short };
-                if f.mb.width(&text) <= tw {
+                if f.mb.width(&text) > tw && f.s.width(&text) <= tw {
+                    cv.text_in(&f.s, Rect::new(tx, r.y, tw, r.h), 0, &text, if ch.on { TEXT } else { DIM });
+                } else if f.mb.width(&text) <= tw {
                     match Some(self.studio_ch_detail(c, tw)).filter(|d| ch.on && two_lines && f.s.width(d) <= tw) {
                         Some(d) => {
                             cv.text(&f.mb, tx, r.y + 13, &text, TEXT);
@@ -829,7 +836,7 @@ impl Ui {
         let badge = Rect::new(r.x + 8, r.y + 5, 42, 20);
         cv.round(badge, 4, col, 255);
         cv.text_in(&f.sb, badge, 1, name, DARK_TEXT);
-        let chev = r.w >= 110;
+        let chev = r.w >= 130; // a narrower pill gives the chevron's room to its scale
         let (tx, tw) = (badge.right() + 8, (r.right() - if chev { 20 } else { 4 } - badge.right() - 8).max(1));
         cv.set_clip(Rect::new(badge.right() + 2, r.y, (tw + 6).min(r.right() - badge.right() - 2).max(1), r.h));
         let two_lines = !detail.is_empty() && f.mb.size + f.s.size <= TWO_LINE_MAX && f.s.width(detail) <= tw;

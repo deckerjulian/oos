@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 11 (docking, part two): the histogram, XY and the analysers are views of their own that tile beside the
 //! waveform; every view can float (the last docked one cannot); the measurements and the search events resize by their
 //! dividers, move and float. OOS_SHOTS=<dir> writes pictures (b11-*).

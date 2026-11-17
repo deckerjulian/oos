@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The docking walk (batch 35): Studio views in tabs, the full states and the way back out of them.
 //!
 //! A scripted part (the owner's two bugs, the tabs, every exit of a full state) and a random walk over the docking

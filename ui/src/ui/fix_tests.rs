@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Regression tests for the compact (Minimal) chrome audit.
 use super::*;
 use super::workspace::Action;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 17: colour carries the source. One small header per source in the list (none with one source), a thin colour
 //! bar on the rows, the table names the source only in the first row of a group, badges have no chip.
 //! OOS_SHOTS=<dir> writes pictures (b17-*).

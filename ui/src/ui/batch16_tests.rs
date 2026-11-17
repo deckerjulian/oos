@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 16: a figure of its own for every catalogue measurement, short names on the trace and in the badges, and
 //! labels that do not collide. OOS_SHOTS=<dir> writes pictures (b16-*).
 use super::meascatalog::{cat_from, Cat};

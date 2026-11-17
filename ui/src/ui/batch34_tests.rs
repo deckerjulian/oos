@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 34: a source row turns on only the channel it ends on. Stepping a source row through the channels gives back
 //! the ones it turned on on the way; a picker sets its choice straight away; setting up the eye never turns on a
 //! secondary source; the Measurements panel of a view without measurements says so.

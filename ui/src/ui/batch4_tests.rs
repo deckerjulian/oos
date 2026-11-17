@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 4: the touch model. One long-press time, one hold action per channel, 40 px targets, tappable markers,
 //! a drag that moves the trace under the finger, the same Run in every layout, Autoset in two taps.
 use super::*;

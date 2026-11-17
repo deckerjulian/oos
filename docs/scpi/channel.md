@@ -17,6 +17,7 @@ Part of the [SCPI reference](README.md).
 | `:CHANnel<n>:BWLimit` | Set / Query | `OFF\|20M\|AUTO` or a supported filter name. OOS filtering extends stock choices. | `AUTO` | Channel > Bandwidth | Rigol-compatible |
 | `:CHANnel<n>:PROBe` | Set / Query | Positive attenuation factor. | `1.000000E+00` | Channel > Probe | Rigol-compatible |
 | `:CHANnel<n>:INVert` | Set / Query | Boolean. | `0` | Channel > Invert | Rigol-compatible |
+| `:CHANnel<n>:CLIPping?` | Query | `1` while the record on screen reaches the end of the ADC range on this channel (4.35 divisions above or below the middle of the screen), else `0`. `0` for a channel that is off. | `0` | the red Clipping note in the plot | OOS extension |
 | `:CHANnel<n>:POSition` | Set / Query | Vertical position in divisions, converted through that channel's current scale. | `-1.500000E+00` | Channel > Offset | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:UNITs` | Set / Query | Supported channel unit. Use the configured unit when interpreting cursor/readout values. | `VOLT` | Channel more > Unit | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:VERNier` | Set / Query | Boolean fine vertical control. | `0` | Channel > Fine scale | Rigol-style (command family of the DHO guide) |

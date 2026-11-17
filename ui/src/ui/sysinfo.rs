@@ -160,6 +160,7 @@ impl Ui {
         }
         a.push(Row::Head("Software".into()));
         a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
+        if let Some(g) = option_env!("OOS_GIT") { a.push(kv("Commit", g.to_string())); }
         a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
         a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),

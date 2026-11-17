@@ -1380,6 +1380,8 @@ pub struct Model {
     pub studio_ov: i32,
     /// the Studio measurements panel shows the detailed table instead of the list
     pub studio_detail: bool,
+    /// Studio draws its sources on one graticule (Overlay traces) instead of a lane each; kept like the layout
+    pub studio_overlay: bool,
     /// Studio zoom controls: a pull-down tab over the zoom view (true, the default) or the waveform title bar
     pub studio_zoom_tab: bool,
     /// the pinned badges under the lanes in the classic strip: a row per source, name and value pairs in columns
@@ -1847,6 +1849,7 @@ impl Default for Model {
             studio_dock: String::new(),
             studio_ov: 0,
             studio_detail: true,
+            studio_overlay: false,
             studio_zoom_tab: true,
             studio_classic: false,
             hdmi: HdmiMode::Waveform,

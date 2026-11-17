@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 11c: a view draws only inside its own rectangle, a narrow spectrum keeps its width for the plot, a narrow
 //! table puts its controls on a row of their own, and the "+ CH" chip stays when every channel is on.
 //! OOS_SHOTS=<dir> writes pictures (b11c-*).

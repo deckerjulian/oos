@@ -33,10 +33,17 @@ jobs:
           command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+      # A fork's releases need not carry the kernel source: then it comes from the upstream release. Either way
+      # kernel/build-base.sh refuses a file that does not match kernel/base.sha256.
       - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern 'linux-6.12.115-base.tar.xz' --dir kernel/src
+        run: |
+          mkdir -p kernel/src
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern 'linux-6.12.115-base.tar.xz' --dir kernel/src \
+            || curl -fL --retry 3 -o kernel/src/linux-6.12.115-base.tar.xz \
+              https://github.com/dekajoule/oos/releases/latest/download/linux-6.12.115-base.tar.xz
+          (cd kernel && sha256sum -c base.sha256)
       - name: Kernel
         run: kernel/build-base.sh
       - name: Image

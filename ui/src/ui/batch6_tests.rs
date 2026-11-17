@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 6: the zoom workflow (bar under the zoomed view, overview box, wheel) and measurements of sources that are off.
 //! OOS_SHOTS=<dir> writes a picture of each scene.
 use super::*;

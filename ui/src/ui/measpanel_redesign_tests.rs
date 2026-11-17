@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The Studio measurements panel with content first: the table is the default view, the chrome sits in the title bar
 //! (or one slim toolbar when it is narrow), the list scrolls by swipe, the pin is a thumbtack.
 //! OOS_SHOTS=<dir> writes pictures (b32-*).
@@ -444,7 +445,7 @@ fn the_meas_tab_is_gone_and_hiding_the_strip_is_reversible_in_one_tap() {
         // the Add menu adds things: showing the strip is the chip above and View > Show pinned badges
         let t = u.studio_top();
         tap(&mut u, t.add);
-        assert!(u.studio_add_rows().iter().all(|(k, _)| !matches!(k, super::addmenu::AddRow::Strip | super::addmenu::AddRow::ZoomControls | super::addmenu::AddRow::MeasureSettings)));
+        assert_eq!(u.studio_add_rows().len(), 10, "measurement, results table, plot, cursors, search, math, reference, bus, zoom, zoom box");
         u.studio.add_menu = false;
     }
     // without any pinned measurement the restore chip is there all the same

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 22: the detailed measurement table without overlaps, the Studio / Classic switch in the badge row, and the
 //! zoom with too few samples (a line through the samples, each one marked). OOS_SHOTS=<dir> writes pictures (b22-*).
 use super::dock::{Dir, VKind};

@@ -3,6 +3,7 @@
 
 //! SCPI server (TCP 5555, the port of the stock firmware), a stock-compatible subset:
 //! *IDN? *RST *OPC[?] *CLS *ESR?, :RUN :STOP :SINGle :TFORce :AUToscale :CLEar,
+//! :CHANnel<n>:CLIPping? (OOS: 1 while the record reaches the end of the ADC range),
 //! :CHANnel<n>:DISPlay|SCALe|OFFSet|POSition|COUPling|BWLimit|PROBe|INVert|UNITs|VERNier|TCALibrate|BIAS|EXPand|LABel:SHOW|LABel:CONTent,
 //! :TIMebase[:MAIN]:SCALe|OFFSet, :TIMebase:DELay:ENABle|SCALe|OFFSet, :TIMebase:VERNier, :TIMebase:HREFerence:MODE, :TIMebase:MODE, :TIMebase:ROLL,
 //! :TIMebase:XY:ENABle|X|Y|Z,
@@ -1147,6 +1148,8 @@ impl Scpi {
                 return None;
             }
         }
+        // read before the settings are borrowed for writing: which channels clip now (:CHANnel<n>:CLIPping?)
+        let clipping: Vec<bool> = (0..NCH).map(|c| ui.channel_clipping(c)).collect();
         let m = &mut ui.m;
         let src = &ui.src;
         let r: Option<Option<Vec<u8>>> = (|| {
@@ -1221,6 +1224,14 @@ impl Scpi {
                             Some(None)
                         }
                     };
+                }
+                if kw(n1, "CLIPping") {
+                    // OOS: the record on screen reaches the limit of the ADC range on this channel (query only).
+                    if !query {
+                        self.push_err("-113,\"Undefined header\" CLIPping is a query".into());
+                        return Some(None);
+                    }
+                    return Some(t(if clipping.get(c).copied().unwrap_or(false) { "1" } else { "0" }));
                 }
                 if kw(n1, "EXPand") {
                     // One switch for every channel: scale around ground, or around the screen center.

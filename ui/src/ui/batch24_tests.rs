@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 24: SIM mode plays offline refs (from a file or Add to R<n>) as a live simulation. OOS_SHOTS=<dir> writes
 //! pictures (b24-*).
 use super::studio::StudioView;

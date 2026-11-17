@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 33: independent views. A view is a workspace of its own for everything that is presentation and analysis (the
 //! measurement list and its pins, the panels, the cursors, the zoom, the lanes shown, the analysis set-ups); the scope
 //! (channels, time base, trigger, acquisition) is one for all. OOS_SHOTS=<dir> writes pictures (b33-*).
