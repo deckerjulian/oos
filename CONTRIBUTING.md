@@ -154,6 +154,14 @@ points to it); point your tool to it if it does not read it by itself. The agent
 what was tested on a unit, what only on the host, and what was not tested. An agent does not write to a scope unless
 its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-people-and-agents.md)).
 
+Two agents also work without being asked
+([ADR 0034](docs/adr/process/0034-standing-agents-get-their-task-from-a-machine-a-person-merges.md)): one does a piece
+of mechanical clean-up a week, one brings the texts in line after a merge that left them behind. Each gets its task
+in an issue; neither chooses its own work, fixes errors or adds features. Their pull requests come from `copilot/`
+branches, are small, and are reviewed and merged by the maintainer like any other. If one of them is wrong, say so
+in the pull request: that is how their instructions in `.github/agents` get better. Once a week a script lists what
+is new in the forum and in the fork as an issue with the label `scout`.
+
 ## Licence
 
 By contributing you agree that your work is published under the licence of the project,

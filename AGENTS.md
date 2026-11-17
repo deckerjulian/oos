@@ -54,12 +54,25 @@ there. These instructions are the same for every agent and every person; the rea
   are stored (protocol keys, measurement numbers, feature ids) never change once released.
 - Hardware code builds step lists of `(offset, value)` in `oos-hal`; signal processing in `oos-dsp` stays free of
   hardware (ADR 0001).
+- Reuse before you add: look for code that already does the job (`git grep` for the idea, not only for a name) and
+  call it. A second implementation of something says in the pull request why it has to be one. Remove what your
+  change leaves unused, in the same pull request. A change that is not a feature leaves the tree no larger.
 - Docs change in the same pull request as the code they describe. A change that decides something others build on
   comes with a new ADR ([template](docs/adr/template.md)); a change of direction supersedes a record, it does not
   edit it.
 - Keep the look: neutral colours, white accent, round shapes, no empty areas; colours come from the named constants,
   not literals in drawing code; the top bar keeps its four entries (ADR 0007, ADR 0008). A second UI or a new layout
   of the screen needs a decision record first.
+
+## Standing agents
+
+Two agents work without being asked, each from a profile in `.github/agents`, and neither chooses its own work: the
+task is in the issue that starts it. `cleaner` does one piece of mechanical clean-up that changes no behaviour (the
+findings of one lint, dead code, one part out of a file that is too large). `docs-follower` brings the texts in line
+with one merged change. Everything above holds for them, and more: one task and about 400 changed lines at most, no
+fix and no feature on the side, no change to `.github/`, this file, `docs/adr/`, the check scripts, `boot/`,
+`kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull requests and
+never merge (ADR 0034).
 
 ## Layout of the tree
 

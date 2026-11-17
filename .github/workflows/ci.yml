@@ -35,9 +35,14 @@ jobs:
           # the sign-off check and the list of changed files read every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
-      # Dependabot cannot sign off: the person who merges its pull request signs off the squashed commit
+      # Dependabot and the standing agents (a copilot/ branch of this repository) cannot sign off: the person who
+      # merges their pull request signs off the squashed commit (ADR 0034)
       - name: Every commit is signed off (ADR 0026)
-        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          !(github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'copilot/'))
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -239,4 +244,23 @@ jobs:
             echo "::notice::pictures or register sequences differ from the base; the pull request text says why"
           else
             echo "nothing differs"
+          fi
+  # A standing agent does not change the rules, the checks, what decides how the scope starts, or the register
+  # sequences (ADR 0034). This job runs from the workflow file of the pull request itself: it helps the reviewer, it
+  # does not replace the look at what a pull request changes under .github/.
+  agent-paths:
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'copilot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the pull request merged into its base: the first parent of that commit is the base
+          fetch-depth: 2
+          persist-credentials: false
+      - name: No file an agent must not change (tools/agent-paths.sh)
+        run: |
+          if ! git diff --name-only HEAD^1 HEAD | tools/agent-paths.sh > /tmp/paths; then
+            sed 's/^/::error::an agent must not change /' /tmp/paths
+            exit 1
           fi

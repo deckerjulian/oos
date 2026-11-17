@@ -1,0 +1,148 @@
+# Gives the standing agents their work (docs/adr/process/0034). The task is chosen here, by counting, and written
+# into an issue; the agent does that task and opens one pull request, which a person reviews and merges.
+#
+#   cleaner         once a week: the findings of one lint, or one part out of the largest file (tools/agent-target.py)
+#   docs-follower   after a merge that changed code and no text: the texts for that change
+#   scout           once a week: new replies in the forum and new work in the fork, as one issue (tools/scout.py);
+#                   no agent, no model
+#
+# GitHub starts an agent only for a person, not for a workflow's own token: the secret COPILOT_TASK_TOKEN holds a
+# fine-grained token of the maintainer for this repository (metadata: read; actions, contents, issues and pull
+# requests: read and write). Without it the two agents are not started, and the job says so. The step that holds
+# the token runs tools/agent-start.sh and nothing else; cargo runs in a step without it.
+name: Standing agents
+on:
+  schedule:
+    - cron: '17 5 * * 1' # Monday: cleaner
+    - cron: '17 5 * * 5' # Friday: scout
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Which one
+        type: choice
+        options: [cleaner, docs-follower, scout]
+        required: true
+      task:
+        description: 'cleaner, docs-follower: the task, title on the first line (empty: chosen as on the schedule)'
+        type: string
+permissions:
+  contents: read
+jobs:
+  cleaner:
+    if: >-
+      github.repository == 'dekajoule/oos' &&
+      (github.event.schedule == '17 5 * * 1' || inputs.agent == 'cleaner')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: The task (tools/agent-target.py)
+        env:
+          TASK: ${{ inputs.task }}
+        run: |
+          if [ -n "$TASK" ]; then
+            printf '%s\n' "$TASK" > "$RUNNER_TEMP/task.md"
+          else
+            rustup toolchain install stable --profile minimal --component clippy
+            python3 -I tools/agent-target.py > "$RUNNER_TEMP/task.md" || {
+              echo "::notice::nothing for the cleaner to do"
+              rm -f "$RUNNER_TEMP/task.md"
+            }
+          fi
+      - name: Start (tools/agent-start.sh)
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_TASK_TOKEN }}
+        run: |
+          [ -f "$RUNNER_TEMP/task.md" ] || exit 0
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::no secret COPILOT_TASK_TOKEN: not started. The task would have been:"
+            cat "$RUNNER_TEMP/task.md"
+            exit 0
+          fi
+          tools/agent-start.sh cleaner "$RUNNER_TEMP/task.md"
+  docs-follower:
+    if: >-
+      github.repository == 'dekajoule/oos' &&
+      (github.event_name == 'push' || inputs.agent == 'docs-follower')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the commit that was merged, and the one before it
+          fetch-depth: 2
+          persist-credentials: false
+      - name: The task
+        env:
+          TASK: ${{ inputs.task }}
+        run: |
+          if [ -n "$TASK" ]; then
+            printf '%s\n' "$TASK" > "$RUNNER_TEMP/task.md"
+            exit 0
+          fi
+          # a change of code without a change of a text; clean-up, tests and the pipeline need none
+          subject=$(git log -1 --format=%s)
+          case ${subject%%:*} in
+            CI | Tests | Lints | Refactor | Docs | Process | Build)
+              echo "'${subject%%:*}': no texts to follow"
+              exit 0
+              ;;
+          esac
+          files=$(git diff --name-only HEAD^ HEAD)
+          code=$(printf '%s\n' "$files" | grep -E '^(ui|hal|dsp|fpgad|gpu|boot|rootfs|tools)/' |
+            grep -v '^tools/README\.md$' || true)
+          text=$(printf '%s\n' "$files" |
+            grep -E '^(docs|wiki)/|^README\.md$|^CHANGELOG\.md$|^tools/README\.md$' || true)
+          if [ -z "$code" ] || [ -n "$text" ]; then
+            echo "no code changed, or its texts came with it"
+            exit 0
+          fi
+          {
+            echo "Docs: the texts for $(git log -1 --format=%h) ($subject)"
+            echo "**Task:** the commit $(git rev-parse HEAD) changed code and no text."
+            echo "Bring the texts in line with it."
+            echo
+            echo "**The change:** $subject"
+            echo
+            echo '```'
+            printf '%s\n' "$code" | head -n 40
+            echo '```'
+            echo
+            echo "**Done when:** every text that describes what this commit changed is true again,"
+            echo "or a comment here says that none needed a change and which were checked."
+            echo
+            echo "**Not part of it:** code, tests, decision records, and texts about other things."
+          } > "$RUNNER_TEMP/task.md"
+      - name: Start (tools/agent-start.sh)
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_TASK_TOKEN }}
+        run: |
+          [ -f "$RUNNER_TEMP/task.md" ] || exit 0
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::no secret COPILOT_TASK_TOKEN: not started. The task would have been:"
+            cat "$RUNNER_TEMP/task.md"
+            exit 0
+          fi
+          tools/agent-start.sh docs-follower "$RUNNER_TEMP/task.md"
+  scout:
+    if: >-
+      github.repository == 'dekajoule/oos' &&
+      (github.event.schedule == '17 5 * * 5' || inputs.agent == 'scout')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: New replies in the forum, new work in the fork (tools/scout.py)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I tools/scout.py
