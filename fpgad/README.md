@@ -14,6 +14,7 @@ oos-fpgad cold-boot --execute [--power-on [--slot 0x400000]]   # cold boot on th
 oos-fpgad temp                         # read only: SoC thermal zones, FPGA die temperature / VCCINT (XADC 0x1438)
 oos-fpgad beep [once|long]             # beeper through pwm-gpio (2 kHz, 20 %): 20 ms click / 4 s alarm
 oos-fpgad guard [--period 1] [--power-off]   # over-temperature guard, see below
+oos-fpgad made-up-cal <dir>            # a made-up calibration set (invented values) for comparing builds without a unit
 oos-fpgad help                         # all acquisition options
 ```
 

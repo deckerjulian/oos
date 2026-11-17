@@ -88,7 +88,9 @@ Each crate builds on its own. The hardware code is Linux-only, so it is checked 
   `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of them.
 - **Register sequences.** `tools/plan-matrix.sh` prints the register sequences of a fixed set of acquisitions without
   touching the hardware. Run it with two builds and compare the output to prove that a change leaves the analog path
-  alone; `tools/compare-base.sh` does that for you.
+  alone; `tools/compare-base.sh` does that for you. Without the files of a unit, `oos-fpgad made-up-cal DIR` writes a
+  made-up calibration set for it (`OOS_CAL_DIR=DIR`): invented values that mean nothing for a scope, enough to see
+  that a change moves a calibrated register value ([self-cal.md 16](docs/protocols/self-cal.md)).
 - **Menus and pictures.** The test `every_menu_fits` walks all menus and fails on text wider than its control or a
   dialog off the screen. `OOS_GALLERY=<dir> cargo test gallery -- --ignored` in `ui/` writes every screen as a picture.
 - **Simulations.** `tools/gel-sim.sh` runs the USB install on a file laid out like a stock card. `tools/usb-sim.sh`
@@ -99,9 +101,10 @@ Each crate builds on its own. The hardware code is Linux-only, so it is checked 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
 CI also compares every pull request with its base: the pictures of the screen and the register sequences
-(`tools/compare-base.sh`, about three minutes on a laptop). The result is in the summary of the `compare` job, with the
-pictures that differ to download. A difference is not an error; a pull request that says `Behaviour: unchanged` while
-something differs is.
+(`tools/compare-base.sh`, about three minutes on a laptop). The register sequences are printed with a made-up
+calibration set, because CI has no files of a unit: it shows that a calibrated value moves, not what a real unit
+gets. The result is in the summary of the `compare` job, with the pictures that differ to download. A difference is
+not an error; a pull request that says `Behaviour: unchanged` while something differs is.
 
 A pull request from a fork enters main squashed, one commit per topic, made from the state that was reviewed; your
 name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when

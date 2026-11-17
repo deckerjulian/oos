@@ -2,6 +2,7 @@
 
 The code is `hal::dho::selfcal`, `hal::dho::calfile`, `hal::dho::adc::measure`, the commands `oos-fpgad selfcal ...` and the page
 System > Self-cal of `oos-ui`.
+A made-up set of calibration files for computers without a scope is in section 16 (`hal::dho::madeup`).
 
 Status: the vertical and AFE zero calibrations ran on the unit (section 13). The ADC core calibration is host-tested
 only and not yet verified on hardware (section 15).
@@ -613,3 +614,44 @@ Volatile writes only:
 (off by default), fpgad `selfcal all --adc`. Host test: an 8-core model with the permuted order 0,2,1,3,4,6,5,7, gain errors
 up to 1.2 % and offsets up to 40 LSB converges (gain spread < 0.2 %, every slot within 1.5 LSB of mid-scale). It needs every
 input of the channel set disconnected.
+
+## 16. A made-up calibration set
+
+A computer without a scope has no calibration files, and the files of a real unit never enter the tree. Without them
+the register sequences leave out everything calibration changes: no ADC mode switch, no AFE set-up, no ADC parameters
+and DDR taps in the cold-boot dry run. For such computers, CI among them, there is a made-up set:
+
+```sh
+oos-fpgad made-up-cal DIR                                 # writes the eight files into DIR
+OOS_CAL_DIR=DIR tools/plan-matrix.sh path/to/oos-fpgad    # the register sequences with them
+```
+
+`tools/compare-base.sh` does this by itself when it finds neither `OOS_CAL_DIR` nor `local/cal`, and gives both
+sides the same set.
+
+**Every value in it is invented and means nothing for a real unit.** The set is for comparing two builds on a
+computer: it shows that a change moves a calibrated register value, not what the value should be. It is never put on
+a scope: `oos-fpgad made-up-cal` refuses `/rigol` and `/oos`, and a folder that holds calibration files which are not
+a made-up set.
+
+| file | payload | invented content |
+|---|---|---|
+| `cal_adc.hex` | 0x738 B (14.10) | offsets by mode and core, gains by channel and core, delays by mode, fine codes |
+| `cal_ddr.hex` | 48 B | six taps |
+| `cal_lsb.hex` | 128 B | 10 + channel microvolts per code, ten times that per input-gain path |
+| `cal_afe_zero.hex` | 320 B (3.1) | by channel and slot |
+| `cal_afe_bandwidth.hex` | 320 B | the trims OOS takes from the file, by channel and input-gain path |
+| `cal_vertical.hex` | 16 x 801 x 56 B | gain codes by row, digital gain and zero code by channel, group and row |
+| `cal_la.hex` | 8 B | the two zero codes |
+| `cal_afg.hex` | 0x17858 B | two ranges per used record, k and b by record and range |
+
+The rules are in `hal::dho::madeup`, one per file. They are small round numbers that follow the indices, so code that
+takes the value of another channel, group, row, mode, core or slot writes other registers; a test exchanges two
+channels and looks at the planned writes. Every value stays inside its field. The gain codes keep the pairs the zero
+trims know (input gain 0 with VGA 0 or 1, input gain 1..3 with VGA 2). Every file has the header stamp
+2000-01-01 00:00:00 and is the same, byte for byte, on every run and every computer; a test holds the check sums.
+`vendor.bin` and `cal_ext.hex` are not part of the set: OOS reads no `cal_ext.hex`, and without `vendor.bin` it takes
+the unit for a DHO924S.
+
+With the set `tools/plan-matrix.sh` prints as many lines as with the files of a unit that has a generator
+calibration; the generator lines then end in `(cal_afg.hex)`.

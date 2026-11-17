@@ -8,7 +8,8 @@
 # `oos-fpgad plan` only prints, it touches no hardware, so this is safe on the unit (busybox sh) and on the Mac. Run it
 # with the old build still on the unit BEFORE installing a new image, and with the new build, then `diff`: the analog
 # path must not change at 1.25 GHz. Needs the calibration files: on the unit
-# /rigol/data, on a host computer `OOS_CAL_DIR=local/cal`.
+# /rigol/data, on a host computer `OOS_CAL_DIR=local/cal`, and without the files of a unit a made-up set
+# (`oos-fpgad made-up-cal DIR`, then `OOS_CAL_DIR=DIR`; invented values, docs/protocols/self-cal.md 16).
 #
 # Besides `plan` it prints the other dry runs that write nothing: roll and scan, the generator, the LA thresholds, the
 # cold boot against the unit model and the PLL table for another clock.
