@@ -344,16 +344,19 @@ fn mode_and_lock() {
     set_mode(&f.state(), true).unwrap();
     assert!(f.st().persist);
     let l = lock(&f.state()).unwrap();
-    // a second lock from another thread waits until the first is dropped
-    let p = f.state();
+    // a second lock from another thread waits until the first is dropped: it can only see `released` set
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let released = std::sync::Arc::new(AtomicBool::new(false));
+    let (p, r) = (f.state(), released.clone());
     let t = std::thread::spawn(move || {
-        let t0 = std::time::Instant::now();
         set_mode(&p, false).unwrap();
-        t0.elapsed()
+        r.load(Ordering::SeqCst)
     });
+    // time for the thread to reach the lock; if it comes later, the test still holds but shows less
     std::thread::sleep(std::time::Duration::from_millis(200));
+    released.store(true, Ordering::SeqCst);
     drop(l);
-    assert!(t.join().unwrap() >= std::time::Duration::from_millis(150));
+    assert!(t.join().unwrap(), "the second lock did not wait for the first");
     assert!(!f.st().persist);
 }
 

@@ -12318,9 +12318,17 @@ mod tests {
         assert!(!ui.bode.running, "sweep did not finish ({} of {})", ui.bode.idx, ui.bode.freqs.len());
         assert_eq!(ui.bode.points.len(), 5);
         assert_eq!(ui.m.tscale, ts0, "time base restored");
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let cmds = got.lock().unwrap().clone();
-        assert!(cmds.contains(":SOUR1:APPL:SIN 1000,1,0") && cmds.contains(":OUTP1 ON") && cmds.contains(":SOUR1:APPL:SIN 100000"), "{}", cmds);
+        // the generator's thread reads what the sweep sent at its own pace; a minute is a hang guard
+        let sent = |c: &str| c.contains(":SOUR1:APPL:SIN 1000,1,0") && c.contains(":OUTP1 ON") && c.contains(":SOUR1:APPL:SIN 100000");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let cmds = loop {
+            let cmds = got.lock().unwrap().clone();
+            if sent(&cmds) || std::time::Instant::now() >= deadline {
+                break cmds;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        assert!(sent(&cmds), "{}", cmds);
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
     }
