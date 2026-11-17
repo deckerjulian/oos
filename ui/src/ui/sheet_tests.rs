@@ -315,7 +315,7 @@ fn system_has_four_tabs_and_the_destructive_items_are_in_the_footer() {
 
 #[test]
 fn the_other_layouts_keep_their_menus() {
-    for layout in [Layout::Default, Layout::Minimal] {
+    for layout in [Layout::Default] {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.m.layout = layout;
         for _ in 0..8 { u.step(0.05); }
@@ -515,4 +515,31 @@ fn pictures_of_the_converted_pages() {
     u.open_menu(MenuId::Trigger);
     u.m.trig_type = crate::model::TrigType::Slope;
     shot(&mut u, "sheet-trigger-slope");
+}
+
+#[test]
+fn minimal_opens_the_sheets_and_a_tap_on_a_row_changes_the_setting() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Minimal;
+    for _ in 0..8 { u.step(0.05); }
+    for menu in [MenuId::Channel(0), MenuId::Trigger, MenuId::Horizontal, MenuId::Math, MenuId::Ref, MenuId::Storage, MenuId::Measure, MenuId::Display, MenuId::Cursor] {
+        u.open_menu(menu);
+        assert!(u.sheet_active(), "{menu:?} is a sheet in Minimal");
+        let g = u.sheet_geo().expect("a sheet");
+        assert!(!g.rows.is_empty(), "{menu:?} has rows on its first tab");
+        assert!(g.r.bottom() <= u.frame().bottom.y && g.r.right() <= u.scr.w, "{menu:?} stays between the bars");
+        u.close_menu();
+    }
+    // the Menu and the measurement catalog stay what they are in Minimal
+    u.open_menu(MenuId::Main);
+    assert!(!u.sheet_active());
+    u.close_menu();
+    // a tap on a segment of the trigger slope sets it
+    u.open_menu(MenuId::Trigger);
+    let g = u.sheet_geo().unwrap();
+    let row = g.rows.iter().find(|r| r.it == Item::TrigSlope).expect("slope row");
+    u.tap(row.ctrl.x + row.ctrl.w / 2, row.ctrl.y + row.ctrl.h / 2);
+    assert_eq!(u.value(Item::TrigSlope), "Falling");
+    // the strip dock stays reachable from the Measure page
+    assert!(u.sheet_spec(MenuId::Measure).unwrap().tabs[0].rows.contains(&Item::StripDock));
 }

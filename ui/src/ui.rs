@@ -4124,7 +4124,7 @@ impl Ui {
     /// Picks the math scale so that the waveform spans about 6 divisions.
     /// Studio: the menu of a math channel that is on starts with its Turn off.
     fn with_math_off(&self, mut v: Vec<Item>) -> Vec<Item> {
-        if self.m.layout == Layout::Studio && self.m.math != MathOp::Off { v.insert(0, Item::MathOff); }
+        if self.sheets_on() && self.m.math != MathOp::Off { v.insert(0, Item::MathOff); }
         v
     }
 
@@ -6744,7 +6744,7 @@ impl Ui {
             MenuId::Pick => match self.pick {
                 Some(p) if p.it == Item::TrigBusVal => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
-                Some(p) if p.it == Item::RefImport && self.m.layout == Layout::Studio => format!("Load file into R{}", self.ref_sel + 1),
+                Some(p) if p.it == Item::RefImport && self.sheets_on() => format!("Load file into R{}", self.ref_sel + 1),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -7964,7 +7964,7 @@ impl Ui {
                 Item::SearchSave => self.events_export(tables::TableKind::Search),
                 Item::StoreBin => self.store_wave(false, None),
                 Item::RefExport => self.ref_export(),
-                Item::RefImport if self.m.layout == Layout::Studio => self.studio_load_file(self.ref_sel),
+                Item::RefImport if self.sheets_on() => self.studio_load_file(self.ref_sel),
                 Item::RefImport => self.ref_import(),
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
@@ -7997,7 +7997,7 @@ impl Ui {
                         Some(w) => {
                             let next = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
                             // Studio: into the slot the picker shows; the secondary action goes to the next free one
-                            let slot = if self.m.layout == Layout::Studio && it != Item::RefSaveNext { self.ref_sel } else { next };
+                            let slot = if self.sheets_on() && it != Item::RefSaveNext { self.ref_sel } else { next };
                             self.m.deskew_ref[slot] = self.m.deskew_ch[c];
                             self.refs[slot] = Some(w);
                             self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
@@ -8516,7 +8516,7 @@ impl Ui {
             Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
             // Studio: the ten slots are one list (ui/sheet.rs)
-            Item::RefSel if self.m.layout == Layout::Studio => return (1..=NREF).map(|i| format!("R{i}")).collect(),
+            Item::RefSel if self.sheets_on() => return (1..=NREF).map(|i| format!("R{i}")).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],
         };
@@ -11566,6 +11566,7 @@ mod tests {
     fn pickers_open_and_set_the_value() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
         ui.open_menu(MenuId::Main);
         ui.activate(Item::Open(MenuId::Trigger));
         let row = row_of(&ui, Item::TrigType);
@@ -11924,6 +11925,7 @@ mod tests {
     fn nested_menu_back_restores_each_parent_and_its_focus_after_a_picker() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
         let back = |ui: &mut Ui| {
             let (x, y) = mid(ui.dlg_layout().unwrap().back.expect("nested menu has Back"));
             ui.tap(x, y);

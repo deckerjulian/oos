@@ -473,6 +473,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
+        u.m.layout = Layout::Default; // the direct slot import of the stock dialog
         u.store_dir = dir.clone();
         put(&mut u, 1, square(1.0), true);
         assert!(u.m.ch[0].on && u.look == RefLook::Live);
@@ -484,6 +485,7 @@ mod tests {
         std::fs::write(dir.join("ref1.csv"), csv).unwrap();
         u.ref_sel = 0;
         u.activate(Item::RefImport);
+        u.m.layout = Layout::Minimal;
         assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
         assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
         assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);

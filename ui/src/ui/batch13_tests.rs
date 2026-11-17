@@ -287,8 +287,9 @@ fn a_hold_or_a_right_click_on_a_math_chip_opens_turn_off_and_settings() {
     assert_eq!(u.menu_items(MenuId::Math).first(), Some(&Item::MathOff));
     u.activate(Item::MathOff);
     assert_eq!(u.m.math, crate::math::MathOp::Off);
-    // not in the other layouts
+    // not in the stock layout, whose menus are the stock dialogs
     let mut v = Ui::new(Source::Demo { t: 0.0 });
+    v.m.layout = Layout::Default;
     v.m.math = crate::math::MathOp::Add;
     assert!(!v.menu_items(MenuId::Math).contains(&Item::MathOff));
 }

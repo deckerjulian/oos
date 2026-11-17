@@ -262,7 +262,7 @@ fn press(u: &mut Ui, keys: &[super::numpad::NumKey]) {
 
 #[test]
 fn the_value_of_a_number_row_opens_the_pad_in_minimal_and_default_and_enter_applies() {
-    for layout in [Layout::Minimal, Layout::Default] {
+    for layout in [Layout::Default] {
         let mut u = fresh(layout);
         u.open_menu(MenuId::Trigger);
         frame(&mut u);
@@ -300,7 +300,7 @@ fn the_value_of_a_number_row_opens_the_pad_in_minimal_and_default_and_enter_appl
 
 #[test]
 fn other_number_rows_take_the_pad_too_with_their_own_unit() {
-    for layout in [Layout::Minimal, Layout::Default] {
+    for layout in [Layout::Default] {
         let mut u = fresh(layout);
         // Intensity: a whole number, in percent, through the stepper's own path
         u.open_menu(MenuId::Display);
@@ -330,7 +330,7 @@ fn every_number_row_of_the_classic_menus_opens_the_pad() {
     ];
     let mut rows = 0;
     let mut missed = Vec::new();
-    for layout in [Layout::Minimal, Layout::Default] {
+    for layout in [Layout::Default] {
         for &menu in &menus {
             let mut u = fresh(layout);
             u.open_menu(menu);
@@ -401,7 +401,7 @@ fn scpi_limits_a_trigger_level_like_the_stepper_and_the_pad() {
 
 #[test]
 fn pictures_of_the_pad_from_a_dialog_and_a_level_at_its_limit() {
-    let mut u = fresh(Layout::Minimal);
+    let mut u = fresh(Layout::Default);
     u.open_menu(MenuId::Trigger);
     frame(&mut u);
     tap_value(&mut u, Item::TrigLevel);

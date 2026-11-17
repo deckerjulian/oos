@@ -244,6 +244,7 @@ mod tests {
     fn native_pointer_menu_back_and_close_win_over_overlapping_statistics_and_eye_headers() {
         for panel in [Panel::Measurements, Panel::Eye] {
             let mut ui = mixed();
+            ui.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
             ui.stats_on = true;
             ui.results_min = false;
             if panel == Panel::Eye { ui.m.view = AView::Eye; }

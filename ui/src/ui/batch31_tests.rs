@@ -428,7 +428,7 @@ fn the_eye_placement_under_is_kept_in_studio_and_shown() {
 
 #[test]
 fn the_bus_read_write_bit_included_is_shown_after_a_tap() {
-    for layout in [Layout::Minimal, Layout::Default] {
+    for layout in [Layout::Default] {
         let mut u = fresh(layout);
         u.open_menu(MenuId::Bus);
         frame(&mut u);

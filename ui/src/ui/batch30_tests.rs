@@ -295,7 +295,7 @@ fn tapping_a_greyed_reference_row_in_the_dialog_or_the_sheet_shows_the_toast() {
         tap_rect(&mut u, mid);
         assert_eq!(toast(&u), "Store a reference first", "{l:?}: the value");
         assert!(u.numpad.is_none(), "{l:?}");
-        if l != Layout::Studio {
+        if l == Layout::Default {
             // the slot rows R1..R10 of the classic dialog
             clear_toast(&mut u);
             let r = u.dlg_layout().unwrap().rows.into_iter().find(|r| r.it == Item::RefShow(2)).expect("R3 row").ctrl;

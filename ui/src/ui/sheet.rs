@@ -164,7 +164,7 @@ impl Ui {
                 AutoDeskew | ClearDeskew => Slot::Foot(0),
                 _ => Slot::Tab(0),
             }),
-            M::Cursor => (&["Cursors", "Position"], |it| match it { CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
+            M::Cursor => (&["Cursors", "Position"], |it| match it { CurMode | CurType | CurSrc | CurSrcB | CurReadout | CurLink => Slot::Tab(0), CurRemove => Slot::Foot(0), _ => Slot::Tab(1) }),
             M::Search => (&["Edge search"], |it| match it { SrchRemove => Slot::Foot(0), _ => Slot::Tab(0) }),
             M::Ref => (&["Reference", "Scale and files"], |it| match it {
                 RefSel | RefSrc | RefLabel | RefColor | RefSaveNext | RefImport => Slot::Tab(0),
@@ -272,7 +272,11 @@ impl Ui {
 
     /// The sheet of a menu, or None when the menu has none yet or does not fit the pattern.
     pub(super) fn sheet_spec(&self, menu: MenuId) -> Option<SheetSpec> {
-        if self.m.layout != Layout::Studio {
+        if !self.sheets_on() {
+            return None;
+        }
+        // the Menu page and the measurement row page scroll and drag with Studio's touch handling: Studio only
+        if matches!(menu, MenuId::Main | MenuId::MeasRow) && self.m.layout != Layout::Studio {
             return None;
         }
         let spec = if menu == MenuId::Main {
@@ -293,6 +297,15 @@ impl Ui {
                     Slot::Tab(i) => tabs[i].rows.push(it),
                     Slot::Foot(i) => tabs[i].foot.push(it),
                     Slot::Skip => {}
+                }
+            }
+            // Minimal keeps the stock strip and cursors: where the strip docks stays on the Measure page, and the
+            // three cursor rows are one tab
+            if self.m.layout != Layout::Studio {
+                if menu == MenuId::Measure && self.items(menu).contains(&Item::StripDock) { tabs[0].rows.push(Item::StripDock); }
+                if menu == MenuId::Cursor && tabs.len() > 1 {
+                    let rest: Vec<Item> = tabs.drain(1..).flat_map(|t| t.rows).collect();
+                    tabs[0].rows.extend(rest);
                 }
             }
             // the next-free action is offered only when the selected slot is taken
@@ -328,12 +341,17 @@ impl Ui {
     // ------------------------------------------------------------------------------------------------ state
 
     /// The sheet is the menu on screen: Studio, a menu open, a plan for it.
+    /// The layouts whose menus are sheets: Minimal and Studio. The stock layout keeps the stock dialogs.
+    pub(super) fn sheets_on(&self) -> bool {
+        self.m.compact()
+    }
+
     pub(super) fn sheet_active(&self) -> bool {
-        if self.m.layout != Layout::Studio || !self.menu_open || self.full_on() {
+        if !self.sheets_on() || !self.menu_open || self.full_on() {
             return false;
         }
         match self.menu {
-            MenuId::MeasAdd | MenuId::AddPanel => true,
+            MenuId::MeasAdd | MenuId::AddPanel => self.m.layout == Layout::Studio,
             MenuId::Pick => self.pick.is_some_and(|p| !keypad_pick(p.it) && !self.options(p.it).is_empty() && self.sheet_spec(p.menu).is_some()),
             m => self.sheet_spec(m).is_some(),
         }

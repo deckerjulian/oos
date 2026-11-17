@@ -85,7 +85,8 @@ fn the_remaining_studio_menus_are_sheets_and_every_setting_stays_reachable() {
 
 #[test]
 fn default_and_minimal_keep_their_menus() {
-    for l in [Layout::Default, Layout::Minimal] {
+    // Minimal has the sheets of Studio since the UI audit: only the stock layout keeps the stock dialogs
+    for l in [Layout::Default] {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.m.layout = l;
         for _ in 0..4 { u.step(0.05); }

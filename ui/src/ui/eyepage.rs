@@ -1992,6 +1992,7 @@ mod tests {
     #[test]
     fn one_press_reads_the_rate_and_keeps_the_trace() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.layout = crate::model::Layout::Default; // the stock dialogs: Minimal and Studio open sheets
         ui.m.eye_place = EyePlace::Side;
         ui.m.run = RunState::Stop;
         ui.m.eye_rate = 123.0;

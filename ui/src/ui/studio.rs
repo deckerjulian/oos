@@ -1941,7 +1941,7 @@ impl Ui {
     /// Plot width less the docked panel: `plot_span` calls this.
     pub(super) fn studio_dock_w(&self) -> i32 {
         if self.dock_on() { return 0; }
-        if self.m.layout == Layout::Studio && self.sheet_active() { return self.sheet_dock_w(); }
+        if self.sheet_active() { return self.sheet_dock_w(); }
         if self.m.layout == Layout::Studio && self.studio.view.is_docked() { self.studio_panel_w() + 4 } else { 0 }
     }
 

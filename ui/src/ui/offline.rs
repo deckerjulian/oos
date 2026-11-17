@@ -319,6 +319,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut live = ui();
+        live.m.layout = Layout::Default; // direct slot import of the stock dialog
         live.store_dir = dir.clone();
         let scale = live.m.tscale;
         let dt = 5e-9;
@@ -326,6 +327,7 @@ mod tests {
         let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
+        live.m.layout = Layout::Minimal;
         assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
         assert_eq!(live.m.tscale, scale, "import cannot silently change the ADC timebase");
         assert!(live.cards().0.iter().any(|card| card.w > 0));
@@ -363,7 +365,9 @@ mod tests {
         assert!(u.dvm_value().is_finite());
 
         u.ref_sel = 0;
+        u.m.layout = Layout::Default; // direct slot import of the stock dialog
         u.activate(Item::RefImport);
+        u.m.layout = Layout::Minimal;
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(!u.sim_play);
         assert_eq!(u.run_caption().0, "STOP");

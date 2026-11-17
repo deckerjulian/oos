@@ -520,6 +520,7 @@ fn math_ln_and_linear() {
 #[test]
 fn ten_references() {
     let mut u = with_two_channels();
+    u.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
     for _ in 0..12 {
         u.activate(Item::RefSave);
     }
@@ -1585,6 +1586,7 @@ fn a_reference_has_its_colour_and_name() {
 fn a_reference_travels_through_a_file() {
     let dir = std::env::temp_dir().join(format!("oos-ref-{}", std::process::id()));
     let mut u = with_two_channels();
+    u.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
     u.store_dir = dir.clone();
     u.activate(Item::RefSave);
     let a = u.refs[0].as_ref().unwrap().v.clone();
@@ -1617,6 +1619,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
+    u.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
     u.store_dir = dir.clone();
     let rec = u.last[0].as_ref().unwrap().clone();
     let want = rec.ch[0].clone();
@@ -1665,6 +1668,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
     u.store_dir = dir.clone();
     assert!(matches!(u.src, Source::Demo { .. }));
 

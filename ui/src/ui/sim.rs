@@ -893,6 +893,7 @@ mod tests {
     #[test]
     fn advanced_sim_controls_are_reachable_and_use_explicit_units() {
         let mut u = ui();
+        u.m.layout = Layout::Default; // the stock dialogs: Minimal and Studio open sheets
         u.open_menu(MenuId::Sim);
         assert!(u.items(MenuId::Sim).contains(&Item::Open(MenuId::SimAdvanced)));
         u.activate(Item::Open(MenuId::SimAdvanced));
