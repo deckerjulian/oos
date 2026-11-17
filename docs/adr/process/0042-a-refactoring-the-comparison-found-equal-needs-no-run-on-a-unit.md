@@ -21,13 +21,16 @@ calibrated ones included with the made-up calibration set (#98). It does not run
 
 - **What the comparison proves goes in without a unit when it is a refactoring.** `unit` passes when the title
   begins with `Lints:` or `Refactor:`, the pull request says `Behaviour: unchanged`, CI's job `compare` passed and kept
-  nothing, and every path it touches that a unit proves is code that builds register sequences: the comparison
+  nothing **and compared the register sequences with calibration values** (artifact `compare-calibrated`: the
+  made-up set of #98; without it CI prints them without calibration, and this rule does not apply), and every path it
+  touches that a unit proves is code that builds register sequences: the comparison
   prints them for acquisitions, triggers, mask, logic analyser, generator, roll and scan plans, the PLL table and the
   cold boot against the unit model (`tools/plan-matrix.sh`), so a change of one shows there and the run on a unit is
   asked for again.
 - **What only a unit proves still needs one**, refactoring or not, unless the programs are byte-identical (ADR 0041):
   - start and update: `boot/`, `kernel/`, `rootfs/`, `hal/src/update/`, `hal/src/dho/boot/`,
     `fpgad/src/bin/oos-update.rs`;
+  - the commands of oos-fpgad that work on the board (`fpgad/src/main.rs`, `fpgad/src/board.rs`);
   - timing and the live run against the board: `ui/src/board/`, and in `hal/src/dho/` the buses and read paths
     (`bus`, `gpio`, `panel`), the roll stream, segmented memory, self-calibration, core trim, levels, board
     supervision.

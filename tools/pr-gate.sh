@@ -17,7 +17,8 @@
 #            unit), or the programs for the scope built from it are byte-identical to its base's: CI's job `scope`
 #            passed and kept no artifact `scope-binaries-differ`; not when it touches the image (ADR 0041); or it is
 #            a refactoring the comparison found equal: its title begins with `Lints:` or `Refactor:`, it says
-#            `Behaviour: unchanged`, CI's job `compare` passed and kept nothing, and it touches only code that builds
+#            `Behaviour: unchanged`, CI's job `compare` passed with calibration values (artifact `compare-calibrated`)
+#            and kept nothing, and it touches only code that builds
 #            register sequences, which the comparison proves - nothing of $live (ADR 0042)
 #   review   GitHub Copilot has reviewed it, once per pull request (ADR 0039), and left no open issue, or every
 #            thread it opened is resolved; pending until then, and for a draft. When the review was of an earlier
@@ -39,7 +40,7 @@ agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/bin/oos-update\.rs$|ui/src/board/|'
+live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board)\.rs$|ui/src/board/|'
 live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$)"
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
@@ -47,7 +48,7 @@ unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUT
 dry=0
 
 # the run of CI for the commit $sha, asked for once: the conclusion of one of its jobs, and how many artifacts of a name
-# it kept (1 when that cannot be read)
+# it kept (when that cannot be read: the second argument, else 1)
 run=
 ci_run() {
 	[ -n "$run" ] || run=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request&per_page=20" \
@@ -60,9 +61,9 @@ ci_job() {
 		--jq "[.jobs[] | select(.name == \"$1\")] | first | .conclusion // empty" 2>/dev/null || true
 }
 ci_kept() {
-	ci_run || { echo 1; return 0; }
+	ci_run || { echo "${2:-1}"; return 0; }
 	gh api "repos/$repo/actions/runs/$run/artifacts" \
-		--jq "[.artifacts[] | select(.name == \"$1\")] | length" 2>/dev/null || echo 1
+		--jq "[.artifacts[] | select(.name == \"$1\")] | length" 2>/dev/null || echo "${2:-1}"
 }
 
 status() { # status SHA CONTEXT STATE TEXT
@@ -191,7 +192,8 @@ one() {
 				status "$sha" unit success "the programs for the scope are byte-identical to the base's (job scope)"
 			elif ! printf '%s\n' "$files" | grep -Eq "$live" &&
 				printf '%s\n' "$title" | grep -Eq '^(Lints|Refactor):' && [ -n "$unchanged" ] &&
-				[ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ]; then
+				[ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ] &&
+				[ "$(ci_kept compare-calibrated 0)" = 1 ]; then
 				status "$sha" unit success "a refactoring the comparison found equal: no run on a unit (ADR 0042)"
 			else
 				status "$sha" unit pending "changes what is only proven on a scope: the label unit-tested after a run on a unit"
