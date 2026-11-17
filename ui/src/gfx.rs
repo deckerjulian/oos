@@ -825,6 +825,7 @@ mod tests {
 /// Test-only drawing log used by ui/uiaudit_tests.rs.
 #[cfg(test)]
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // the fields are read through Debug, in the message of a failing test
 pub enum Au {
     Text { s: String, ink: Option<(i32, i32, i32, i32)>, adv: (i32, i32), bound: Option<Rect>, clip: (i32, i32, i32, i32), size: i32, c: Rgb, missing: Vec<char> },
     Fill { r: Rect, opaque: bool, c: Rgb, clip: (i32, i32, i32, i32) },

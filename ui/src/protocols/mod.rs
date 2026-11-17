@@ -253,6 +253,7 @@ pub struct Setup {
     /// decision threshold (V)
     pub thr: f32,
     /// a trigger that holds the demo traffic still, set when the protocol is chosen; `None` leaves the trigger alone
+    #[allow(dead_code)] // set by the protocol table; the demo does not apply it yet
     pub trig: Option<DemoTrig>,
     /// switch the channels of all its roles on when the protocol is chosen (the demo traffic is on all of them)
     pub show: bool,
@@ -275,6 +276,7 @@ impl Default for Setup {
 /// The trigger of [`Setup::trig`]: an edge of `slope` on the channel of role `role` at `level` (V). With an `idle` time
 /// (s) only the first edge after the line was quiet that long (Nth edge, n = 1), else every edge (Edge).
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)] // see `trig`: filled in, not applied yet
 pub struct DemoTrig {
     pub role: usize,
     pub slope: Slope,

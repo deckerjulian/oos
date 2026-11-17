@@ -6644,6 +6644,26 @@ mod tests {
         assert_eq!([ui.ref_volts(0), ui.ref_volts(1)], original);
     }
 
+    /// The arrangement text goes back and forth through the interpreter: no ';' in it, which would end the command.
+    #[test]
+    fn dock_layout_round_trips_through_the_parser() {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, ":DISPlay:LAYout STUDio");
+        line(&mut s, &mut ui, &cv, ":DOCK:SHOW MEAS");
+        line(&mut s, &mut ui, &cv, ":DOCK:FLOAT MEAS,300,80,400,280");
+        line(&mut s, &mut ui, &cv, ":DOCK:MOVE MEAS,WAVE,TOP");
+        line(&mut s, &mut ui, &cv, ":DOCK:SIZE MEAS,0.3");
+        let saved = line(&mut s, &mut ui, &cv, ":DOCK:LAYout?");
+        assert!(saved.contains('|') && !saved.contains(';'), "{saved}");
+        let list = line(&mut s, &mut ui, &cv, ":DOCK:LIST?");
+        line(&mut s, &mut ui, &cv, ":DOCK:MOVE MEAS,WAVE,LEFT");
+        assert_ne!(line(&mut s, &mut ui, &cv, ":DOCK:LIST?"), list);
+        line(&mut s, &mut ui, &cv, &format!(":DOCK:LAYout {}", saved.trim()));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?").trim(), "0,\"No error\"");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DOCK:LAYout?"), saved);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":DOCK:LIST?"), list);
+    }
+
     fn reference_session() -> (Scpi, Ui, Canvas) {
         let (mut s, mut ui, cv) = session();
         // Import is additive in Live. These tests explicitly exercise stored

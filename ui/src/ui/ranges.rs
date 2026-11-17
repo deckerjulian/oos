@@ -164,6 +164,7 @@ impl Ui {
     }
 
     /// Every item of the table in the present state (one per channel, and so on).
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn range_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::TrigLevel, Item::TrigLevel2, Item::PatLevel, Item::HDelay, Item::MathOffset, Item::DecThr, Item::BusClkThr, Item::BusDataThr,

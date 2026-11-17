@@ -278,7 +278,7 @@ pub struct Server {
 
 impl Server {
     pub fn open(port: u16) -> Server {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = TcpListener::bind((crate::listen_ip(), port)).ok();
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
             eprintln!("oos-ui: HiSLIP on port {}", l.local_addr().map(|a| a.port()).unwrap_or(port));

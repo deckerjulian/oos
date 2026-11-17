@@ -1,0 +1,255 @@
+<h1 id="ch-about"><span class="num">1</span>About This Manual</h1>
+<p>This manual describes how to control OOS Plus remotely with SCPI (Standard Commands for Programmable Instruments). It applies to OOS Plus running on a supported oscilloscope (DHO800/DHO900-class hardware) and to the OOS desktop application for Windows. Both use the same command interpreter.</p>
+<p>OOS Plus implements a <b>subset of the Rigol DHO800/DHO900 SCPI command set</b>, together with OOS extensions for stored references, simulation and analysis. A command that is not described in this manual is not supported, even when the Rigol programming guide lists it. <code>*IDN?</code> identifies the instrument as OOS, not as Rigol.</p>
+
+<h2 id="about-conventions">Conventions</h2>
+<table>
+<thead><tr><th>Notation</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>:TRIGger:EDGE:SOURce</code></td><td>Upper-case letters form the short form (<code>:TRIG:EDGE:SOUR</code>). Either the complete long form or the short form is accepted, in any letter case.</td></tr>
+<tr><td><code>&lt;n&gt;</code></td><td>A numeric suffix, for example the channel number in <code>:CHANnel&lt;n&gt;</code>.</td></tr>
+<tr><td><code>[ ]</code></td><td>An optional keyword or parameter. <code>:TIMebase[:MAIN]:SCALe</code> may be sent as <code>:TIM:SCAL</code>.</td></tr>
+<tr><td><code>{A|B|C}</code></td><td>Exactly one of the listed values.</td></tr>
+<tr><td><code>&lt;source&gt;</code></td><td>A waveform name: <code>CHAN1</code>…<code>CHAN4</code> (inputs present on the model) or <code>R1</code>…<code>R10</code> (references; <code>REF1</code>…<code>REF10</code> are accepted too).</td></tr>
+<tr><td><span class="ext" style="font:600 7pt Segoe UI,Arial,sans-serif;color:#fff;background:#6b7c8f;border-radius:2pt;padding:1pt 4pt">OOS</span></td><td>Marks a command that is an OOS extension and has no equivalent in the Rigol DHO command set.</td></tr>
+</tbody></table>
+<p>Each command entry gives the syntax, a description, the parameters with their type and range, remarks, the format of the reply and an example. Values are always in base SI units: volts, seconds, hertz.</p>
+
+<h1 id="ch-overview"><span class="num">2</span>Programming Overview</h1>
+
+<h2 id="ov-interfaces"><span class="num">2.1</span>Remote Interfaces</h2>
+<p>All interfaces feed the same SCPI interpreter. Commands from several connections are executed in the order they arrive.</p>
+<table>
+<thead><tr><th>Interface</th><th>Default port</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Raw TCP socket</td><td>5555</td><td>Recommended for scripts. One command per line, terminated by line feed (<code>\n</code>). Every reply ends with <code>\n</code>.</td></tr>
+<tr><td>HiSLIP</td><td>4880</td><td>For VISA libraries that use <code>::INSTR</code> resources. Basic sessions; locking and overlapped operation are not implemented.</td></tr>
+<tr><td>VXI-11</td><td>111 (portmapper)</td><td>On the scope only, partial implementation. A read issued while a reply is still pending returns a timeout immediately; prefer the socket or HiSLIP.</td></tr>
+<tr><td>HTTP <code>POST /mcp</code></td><td>Web port (8080)</td><td>JSON-RPC tool <code>scpi</code> for AI agents (Model Context Protocol). Not a VISA interface. It cannot wait for <code>*OPC?</code>.</td></tr>
+</tbody></table>
+<p>The interfaces have no authentication. Operate the instrument on a trusted bench network only. The services can be switched off under System &gt; Remote services, or with the <code>:SYSTem:REMote:SERVice</code> commands.</p>
+<div class="note"><b>Windows desktop app.</b> By default the desktop application listens on this PC only (127.0.0.1). Start it with <code>--lan</code> to accept connections from other computers. The ports can be changed with <code>--scpi-port</code>, <code>--hislip-port</code> and <code>--web-port</code>.</div>
+
+<h2 id="ov-connect"><span class="num">2.2</span>Connecting</h2>
+<p>VISA resource strings:</p>
+<pre>TCPIP0::&lt;address&gt;::5555::SOCKET           raw socket
+TCPIP0::&lt;address&gt;::hislip0::INSTR         HiSLIP on port 4880
+TCPIP0::&lt;address&gt;::hislip0,14880::INSTR   HiSLIP on another port</pre>
+<p>With a raw socket, set the VISA read and write termination to line feed. For example with PyVISA:</p>
+<pre>import pyvisa
+rm = pyvisa.ResourceManager()
+scope = rm.open_resource('TCPIP0::192.168.1.50::5555::SOCKET',
+                         read_termination='\n', write_termination='\n', timeout=10000)
+print(scope.query('*IDN?'))</pre>
+<p>No VISA library is needed for the socket: any language that can open a TCP connection can send commands. Chapter 4 shows a complete client in standard-library Python.</p>
+
+<h2 id="ov-syntax"><span class="num">2.3</span>Command Syntax</h2>
+<p>A command consists of a header, optionally followed by a space and one or more parameters separated by commas. A query is a header ending in <code>?</code>.</p>
+<pre>:CHANnel1:SCALe 0.5          command with one parameter
+:CHAN1:SCAL?                 query
+:MEASure:ITEM? VPP,CHAN1     query with parameters</pre>
+<ul>
+<li><b>Keywords</b> are case-insensitive. Use either the complete long form or the short form. Intermediate abbreviations (<code>:TRIGG</code>) are not accepted.</li>
+<li><b>Several commands</b> may be sent on one line separated by <code>;</code>. Each must have its complete header starting with <code>:</code>; relative headers after a semicolon are not supported. Send one query per line when its reply itself contains semicolons.</li>
+<li><b>Binary arguments:</b> a definite-length block (<code>#&lt;N&gt;&lt;length&gt;&lt;data&gt;</code>, section 2.7) that follows a space or comma is taken whole; semicolons and line feeds inside it do not split the message.</li>
+<li><b>Termination:</b> every program message ends with line feed. Carriage return also ends a message, so CR LF works as well.</li>
+<li><b>Setters do not reply.</b> Their errors are placed in the error queue (section 2.6). A query always replies, even when it fails, so that a client never waits forever on a wrong query.</li>
+</ul>
+
+<h2 id="ov-params"><span class="num">2.4</span>Parameter and Reply Types</h2>
+<table>
+<thead><tr><th>Type</th><th>Sent as</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Real</td><td><code>0.5</code>, <code>2e-1</code>, <code>-1.5E-6</code></td><td>Plain or scientific notation in base units. Unit suffixes such as <code>mV</code> or <code>us</code> are not accepted. Settings with a fixed set of values (vertical scale, timebase) snap to the nearest supported value; read the setting back when the exact value matters.</td></tr>
+<tr><td>Integer</td><td><code>3</code>, <code>1000000</code></td><td>Memory depth also accepts the suffixes <code>K</code> and <code>M</code> (<code>1M</code>).</td></tr>
+<tr><td>Bool</td><td><code>ON</code>, <code>OFF</code>, <code>1</code>, <code>0</code></td><td>Queries return <code>1</code> or <code>0</code>.</td></tr>
+<tr><td>Discrete</td><td><code>EDGE</code>, <code>POSitive</code></td><td>One of a list of keywords. Long or short form accepted. Queries return the short form unless the entry says otherwise.</td></tr>
+<tr><td>ASCII string</td><td><code>"D:/data/run1.wfm"</code></td><td>Enclosed in double quotes where the entry says so.</td></tr>
+<tr><td>Block</td><td><code>#9000001024&lt;bytes&gt;</code></td><td>IEEE 488.2 definite-length block (section 2.7).</td></tr>
+</tbody></table>
+<p><b>Numeric replies.</b> Real values are returned in scientific notation with seven significant digits, for example <code>5.000000E-01</code> or <code>-1.500000E-06</code> (C format <code>%.6E</code>). Integer settings and counts are returned as plain integers. A few replies use other formats; the command entries say so.</p>
+<p><b>Invalid value.</b> Numeric results that do not exist (no edge found, no signal, analysis still being calculated) are returned as <code>9.9E37</code>. It is never a real measurement. Treat it as "no reading" and query again later if the result may still be pending.</p>
+
+<h2 id="ov-sync"><span class="num">2.5</span>Synchronization</h2>
+<p><code>*OPC?</code> waits until the finite operation in progress has completed, then returns <code>1</code>. The operations it waits for are:</p>
+<ul>
+<li>an armed single acquisition (<code>:SINGle</code>) until it has captured,</li>
+<li>Autoset (<code>:AUToscale</code>),</li>
+<li>a simulation run (<code>:SIM:PLAY ON</code>).</li>
+</ul>
+<p>It does not wait for continuous acquisition or for background analysis (measurements on long records, Math, protocol decoding, Eye). Poll those results instead: they return <code>9.9E37</code> or <code>BUSY</code> while pending. A single acquisition with no trigger event can wait indefinitely, so set the client timeout accordingly, or poll <code>:TRIGger:STATus?</code> and use <code>:TFORce</code>.</p>
+<p>A waiting <code>*OPC?</code> on the raw socket or HiSLIP does not block the instrument or other clients. If the operation is cancelled or re-armed while waiting, the query is interrupted with error -410 and returns no <code>1</code>. The HTTP/MCP adapter cannot wait and reports error -221.</p>
+
+<h2 id="ov-status"><span class="num">2.6</span>Error Queue and Status</h2>
+<p>Errors are queued and read with <code>:SYSTem:ERRor?</code>, oldest first. Each read removes one entry; <code>0,"No error"</code> means the queue is empty. The queue holds 20 entries; when it overflows the last entry is replaced by -350. Read the queue after each block of configuration commands.</p>
+<p>The standard event status register (<code>*ESR?</code>) implements these bits: 0 operation complete, 2 query error, 3 device-dependent error, 4 execution error, 5 command error. Reading it clears it. The service request (SRQ) and status-byte subsystems are not implemented. Appendix E lists the error codes.</p>
+<p>Some setters of the channel, timebase, trigger and acquisition subsystems report an invalid parameter value as -113 (undefined header) rather than -224. Treat any non-zero code as a failure of the preceding command.</p>
+
+<h2 id="ov-blocks"><span class="num">2.7</span>Binary Data Blocks</h2>
+<p>Waveform data, screenshots and logic-analyzer data are returned as IEEE 488.2 definite-length blocks:</p>
+<pre>#&lt;N&gt;&lt;length: N decimal digits&gt;&lt;payload: length bytes&gt;\n</pre>
+<p>Example: <code>#9000001200</code> followed by 1200 bytes and a line feed. Read the length announced in the header and then exactly that many bytes. Never split a binary reply at line feeds; payload bytes can have the value 10.</p>
+
+<h2 id="ov-waveform"><span class="num">2.8</span>Waveform Data</h2>
+<p><code>:WAVeform:PREamble?</code> returns ten comma-separated values that describe the data returned by <code>:WAVeform:DATA?</code>:</p>
+<pre>format,type,points,count,xincrement,xorigin,xreference,yincrement,yorigin,yreference</pre>
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>format</td><td>0 BYTE, 1 WORD, 2 ASCii</td></tr>
+<tr><td>type</td><td>0 NORMal, 1 MAXimum, 2 RAW</td></tr>
+<tr><td>points</td><td>Number of points in the transferred page</td></tr>
+<tr><td>count</td><td>Always 1</td></tr>
+<tr><td>xincrement</td><td>Time between points, s</td></tr>
+<tr><td>xorigin</td><td>Time of the first point of the page, s</td></tr>
+<tr><td>xreference</td><td>Index of the point at xorigin</td></tr>
+<tr><td>yincrement</td><td>Volts per code step</td></tr>
+<tr><td>yorigin, yreference</td><td>Code offsets</td></tr>
+</tbody></table>
+<p>Integer data converts to time and voltage as:</p>
+<pre>time[k]  = (k - xreference) * xincrement + xorigin
+volts[k] = (code[k] - yorigin - yreference) * yincrement</pre>
+<ul>
+<li><b>BYTE</b>: one unsigned byte per point.</li>
+<li><b>WORD</b>: unsigned 16-bit integers, <b>little-endian</b> (least significant byte first). Scripts written for big-endian data must be changed.</li>
+<li><b>ASCii</b>: comma-separated voltages in scientific notation, inside a block. No conversion is needed.</li>
+</ul>
+<p>For long records, transfer pages with <code>:WAVeform:STARt</code> and <code>:WAVeform:STOP</code> (one-based, inclusive). A page whose reply would exceed 64 MiB is refused with error -223. Stop the acquisition before reading when the preamble and the data must come from the same capture.</p>
+
+<h2 id="ov-references"><span class="num">2.9</span>References and Simulation</h2>
+<p>OOS Plus can load waveform files into ten reference slots, <code>R1</code> to <code>R10</code>. A reference keeps its native sample rate and timing. It can be read, measured, triggered on (software search through the stored record), decoded and used in Math like a channel, but it is stored data, not an input: it does not acquire new samples. Read a reference's sample rate from its preamble, not from <code>:ACQuire:SRATe?</code>.</p>
+<p>The simulator (<code>:SIM</code> subsystem) generates test signals into a reference slot, for use without hardware.</p>
+
+<h2 id="ov-rigol"><span class="num">2.10</span>Differences from the Rigol DHO Command Set</h2>
+<ul>
+<li><code>*IDN?</code> returns <code>OOS,&lt;model&gt;,&lt;serial&gt;,oos-ui &lt;version&gt;</code>.</li>
+<li>WORD waveform data is little-endian.</li>
+<li><code>:WAVeform:MODE RAW</code> is allowed while running. Stop first when preamble and data must match.</li>
+<li>References can be trigger, measurement, Math and decoder sources.</li>
+<li>Relative headers after <code>;</code> are not supported.</li>
+<li>Only the trigger, bus and status subtrees listed in this manual exist. Check the error queue after configuration.</li>
+<li>Rigol setup files and the full status/SRQ system are not supported. Settings without a dedicated command are reachable through <code>:SYSTem:SET</code> and <code>:SYSTem:GET?</code> (section 3, System).</li>
+</ul>
+
+<!-- COMMANDS -->
+
+<h1 id="ch-examples"><span class="num">4</span>Programming Examples</h1>
+<p>The examples use Python 3 and its standard library only. They were run against the OOS desktop application.</p>
+
+<h2 id="ex-client"><span class="num">4.1</span>A Minimal Client</h2>
+<p>Save this as <code>oos.py</code>. The later examples import it.</p>
+<pre>import socket
+
+class Scope:
+    def __init__(self, host='127.0.0.1', port=5555, timeout=10):
+        self.s = socket.create_connection((host, port), timeout=timeout)
+
+    def write(self, cmd):
+        self.s.sendall((cmd + '\n').encode('ascii'))
+
+    def _exact(self, n):
+        buf = bytearray()
+        while len(buf) &lt; n:
+            part = self.s.recv(min(65536, n - len(buf)))
+            if not part:
+                raise EOFError('instrument disconnected')
+            buf += part
+        return bytes(buf)
+
+    def query(self, cmd):
+        self.write(cmd)
+        line = bytearray()
+        while (ch := self._exact(1)) != b'\n':
+            line += ch
+        return line.decode('ascii').strip()
+
+    def query_block(self, cmd):
+        """IEEE 488.2 definite-length block."""
+        self.write(cmd)
+        assert self._exact(1) == b'#', 'not a block reply'
+        n = int(self._exact(1))
+        payload = self._exact(int(self._exact(n)))
+        self._exact(1)                       # trailing line feed
+        return payload
+
+    def errors(self):
+        """Drains the error queue; an empty list means no error."""
+        out = []
+        while not (e := self.query(':SYST:ERR?')).startswith('0,'):
+            out.append(e)
+        return out
+
+    def close(self):
+        self.s.close()</pre>
+
+<h2 id="ex-setup"><span class="num">4.2</span>Set Up, Capture and Measure</h2>
+<pre>from oos import Scope
+
+scope = Scope('127.0.0.1')
+print(scope.query('*IDN?'))
+scope.write('*CLS')
+for cmd in (':CHAN1:DISP ON', ':CHAN1:SCAL 0.5', ':TIM:SCAL 1e-6', ':MEAS:GAT NONE',
+            ':TRIG:MODE EDGE', ':TRIG:EDGE:SOUR CHAN1', ':TRIG:SWE NORM', ':RUN'):
+    scope.write(cmd)
+assert not scope.errors(), 'setup failed'
+
+# trigger halfway between the signal's extremes
+vmax = float(scope.query(':MEAS:ITEM? VMAX,CHAN1'))
+vmin = float(scope.query(':MEAS:ITEM? VMIN,CHAN1'))
+assert vmax &lt; 1e37 and vmin &lt; 1e37, 'no signal on CHAN1'
+scope.write(f':TRIG:EDGE:LEV {(vmax + vmin) / 2:.4e}')
+
+scope.s.settimeout(30)                 # *OPC? waits until the single capture is done
+scope.write(':SING')
+scope.query('*OPC?')
+print('Vpp ', scope.query(':MEAS:ITEM? VPP,CHAN1'))
+print('Freq', scope.query(':MEAS:ITEM? FREQUENCY,CHAN1'))
+print('errors:', scope.errors())
+scope.close()</pre>
+
+<h2 id="ex-wait"><span class="num">4.3</span>Waiting for a Trigger with a Time Limit</h2>
+<pre>import time
+scope.write(':SING')
+deadline = time.time() + 5
+while scope.query(':TRIG:STAT?') != 'STOP':
+    if time.time() &gt; deadline:
+        scope.write(':TFOR')           # no trigger event: capture anyway
+    time.sleep(0.05)</pre>
+
+<h2 id="ex-waveform"><span class="num">4.4</span>Reading a Waveform</h2>
+<pre>import struct
+from oos import Scope
+
+scope = Scope()
+scope.write(':STOP')                   # preamble and data from the same capture
+scope.write(':WAV:SOUR CHAN1')
+scope.write(':WAV:MODE RAW')           # whole acquisition memory
+scope.write(':WAV:FORM WORD')
+fmt, typ, points, count, xinc, xorg, xref, yinc, yorg, yref = \
+    [float(x) for x in scope.query(':WAV:PRE?').split(',')]
+data = scope.query_block(':WAV:DATA?')
+codes = struct.unpack(f'&lt;{int(points)}H', data)     # little-endian unsigned 16-bit
+volts = [(c - yorg - yref) * yinc for c in codes]
+times = [(k - xref) * xinc + xorg for k in range(int(points))]
+print(int(points), 'points,', xinc, 's/point')</pre>
+<p>For records of many millions of points, read pages of, for example, 1,000,000 points with <code>:WAV:STAR</code> and <code>:WAV:STOP</code>.</p>
+
+<h2 id="ex-screenshot"><span class="num">4.5</span>Saving a Screenshot</h2>
+<pre>png = scope.query_block(':DISP:DATA? PNG')    # without a parameter: 24-bit BMP
+open('screen.png', 'wb').write(png)</pre>
+
+<h2 id="ex-ddr"><span class="num">4.6</span>DDR Write Timing on Stored Captures</h2>
+<p>DQS captured into R1 and DQ into R2 (loaded from files). Setup and hold are measured for every strobe edge of the whole record, latching on both strobe edges, and the eye diagram is folded on the strobe.</p>
+<pre>scope.write(':MEAS:GAT NONE')                      # whole record
+print('setup', scope.query(':MEAS:ITEM? DSETUP,R1,R2'))   # A = strobe, B = data
+print('hold ', scope.query(':MEAS:ITEM? DHOLD,R1,R2'))
+# count edges that break 150 ps setup / 150 ps hold
+scope.write(':MEAS:TSET 150e-12')
+scope.write(':MEAS:THOL 150e-12')
+print('violations', scope.query(':MEAS:ITEM? DSETHOLD,R1,R2'))
+# eye of R2 folded on the R1 strobe, whole record
+scope.write(':SYST:SET eye = R2 0 1')
+scope.write(':SYST:SET eye_more = 0.000000000001 1000 1000000 0 - 0 R1 1')
+scope.write(':VIEW EYE')
+print('eye width', scope.query(':EYE:ITEM? WIDTH'))</pre>
+<p>A whole-record eye of a long reference is calculated in the background. Until it is finished, <code>:EYE:ITEM?</code> returns the previous result; check that <code>:EYE:ITEM? EDGES</code> and <code>UI</code> belong to the new source before using the figures.</p>

@@ -95,7 +95,8 @@ impl Ui {
     pub(super) fn md_about(&mut self, key: MeasKey) {
         if let Some(c) = cat_of_key(key) {
             // the card's Add / Remove speaks of the source of the row
-            if let MeasKey::One(_, id) | MeasKey::Pair(_, id, _) | MeasKey::Cat(_, id, ..) = key { self.meas_src = id; }
+            let (MeasKey::One(_, id) | MeasKey::Pair(_, id, _) | MeasKey::Cat(_, id, ..)) = key;
+            self.meas_src = id;
             self.studio.md.info = Some(c);
         } else { self.toast("No description for this measurement"); }
     }

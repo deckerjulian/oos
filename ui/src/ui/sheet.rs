@@ -88,7 +88,9 @@ pub(super) struct SheetRowGeo {
 
 pub(super) struct SheetGeo {
     pub r: Rect,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub back: Option<Rect>,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub close: Rect,
     pub tabs: Vec<Rect>,
     pub rows: Vec<SheetRowGeo>,
@@ -99,12 +101,14 @@ pub(super) struct SheetGeo {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum PanelKind {
     Measurements,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     Decode,
     Spectrum,
     Eye,
     Histogram,
     Trend,
     Cursor,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     Sim,
 }
 
@@ -1190,6 +1194,7 @@ impl Ui {
     }
 
     /// Opens a panel docked, with the pages that already exist; the sheet closes so the panel is seen.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_add_panel(&mut self, k: PanelKind) {
         self.close_menu();
         self.studio_apply_panel(k);
@@ -1233,9 +1238,13 @@ pub(super) struct AddGeo {
     pub groups: Vec<Rect>,
     pub find: Rect,
     pub rows: Vec<(usize, Rect)>,
+    #[allow(dead_code)] // the page geometry is complete; touches use only `pages` so far
     pub page: usize,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub pages: usize,
+    #[allow(dead_code)] // the page geometry is complete; touches use only `pages` so far
     pub prev: Rect,
+    #[allow(dead_code)] // the page geometry is complete; touches use only `pages` so far
     pub next: Rect,
 }
 

@@ -17,8 +17,10 @@ pub struct Services {
 }
 
 impl Services {
-    /// `acl`: the address list of the window's session (`Ui::acl`), which Remote services > Allowed changes.
+    /// This PC only by default (no firewall question); `--lan` opens the services to the network. `acl`: the address
+    /// list of the window's session (`Ui::acl`), which Remote services > Allowed changes.
     pub fn open(args: &[String], acl: &crate::netacl::Shared) -> Self {
+        crate::set_loopback_only(!args.iter().any(|a| a == "--lan"));
         let (web, scpi, vxi, hislip, announce) = crate::lan(false, args, acl);
         Self { web, scpi, vxi, hislip, announce, next_status: Instant::now() }
     }
@@ -33,6 +35,16 @@ impl Services {
         self.announce.poll();
         if Instant::now() < self.next_status { return; }
         self.next_status = Instant::now() + Duration::from_secs(1);
+        ui.lan_web_port = self.web.port();
+        let bound = |port: Option<u16>| port.map_or_else(|| "unavailable".into(), |p| p.to_string());
+        if crate::loopback_only() {
+            ui.net = Ipv4Addr::LOCALHOST.to_string();
+            ui.net_if = "lo".into();
+            ui.eth_link = false;
+            ui.net_ifs = vec![("lo".into(), ui.net.clone())];
+            ui.lan_status = format!("SCPI {} / HiSLIP {} on this PC only (start with --lan for the network)", bound(self.scpi.port()), bound(self.hislip.port()));
+            return;
+        }
         let addresses = self.announce.local_addresses();
         // A UDP connect selects the default route without transmitting any packet.
         let routed = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok().and_then(|socket| {
@@ -45,8 +57,6 @@ impl Services {
         ui.eth_link = primary.is_some();
         ui.net_ifs = primary.into_iter().map(|ip| ("eth0".into(), Ipv4Addr::from(ip).to_string()))
             .chain(addresses.iter().copied().filter(|a| Some(*a) != primary).enumerate().map(|(i, ip)| (format!("LAN{}", i + 2), Ipv4Addr::from(ip).to_string()))).collect();
-        ui.lan_web_port = self.web.port();
-        let bound = |port: Option<u16>| port.map_or_else(|| "unavailable".into(), |p| p.to_string());
         ui.lan_status = format!("SCPI {} / HiSLIP {} / mDNS {}", bound(self.scpi.port()), bound(self.hislip.port()), if self.announce.available() { "on" } else { "unavailable" });
     }
 }

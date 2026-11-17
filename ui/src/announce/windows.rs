@@ -70,7 +70,7 @@ pub(super) fn mcast_socket() -> Option<UdpSocket> {
         }
         let one = 1i32;
         ws::setsockopt(raw, ws::SOL_SOCKET, ws::SO_REUSEADDR, (&one as *const i32).cast(), 4);
-        let addr = ws::SOCKADDR_IN { sin_family: ws::AF_INET, sin_port: MDNS_PORT.to_be(), ..Default::default() };
+        let addr = ws::SOCKADDR_IN { sin_family: ws::AF_INET, sin_port: MDNS_PORT.to_be(), ..std::mem::zeroed() };
         if ws::bind(raw, (&addr as *const ws::SOCKADDR_IN).cast(), std::mem::size_of_val(&addr) as i32) != 0 {
             ws::closesocket(raw);
             return None;

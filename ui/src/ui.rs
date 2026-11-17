@@ -59,6 +59,7 @@ mod addmenu;
 mod zoomtab;
 mod studioctx;
 mod scpiext;
+mod scpi_layout;
 mod scpiext_a;
 mod scpiext_b;
 mod scpiext_c;
@@ -400,6 +401,7 @@ pub fn pair_short_name(k: usize) -> &'static str {
     tools::PAIRS[k.min(PAIRS_N - 1)].0
 }
 /// The unit of a two-source variant: degrees for phase, none for the setup/hold violation count, else seconds.
+#[cfg_attr(not(test), allow(dead_code))] // only the tests use it
 pub fn pair_unit(k: usize) -> &'static str {
     match tools::PAIRS[k.min(PAIRS_N - 1)].1 {
         tools::PairKind::Phase => "\u{b0}",
@@ -518,6 +520,7 @@ pub enum MenuId {
     /// Studio: the panels that can be added next to the plot (ui/sheet.rs)
     AddPanel,
     /// Full legacy measurement and pair catalog, including Selected.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     MeasLegacy,
     /// Studio: the settings of the Edge search added from the Add panel (ui/addrail.rs)
     Search,
@@ -11537,6 +11540,7 @@ fn nice_step_below(x: f64) -> f64 {
 
 /// The labelled times of the time axis, as (whole steps from the trigger, seconds): the window is `delay` +- 5 divisions
 /// of `tdiv`; a step is `every` divisions. Whole steps, so a window put anywhere has round labels.
+#[cfg_attr(not(test), allow(dead_code))] // only the tests use it
 fn studio_time_ticks(tdiv: f32, delay: f32, every: i32) -> Vec<(i64, f64)> {
     studio_time_ticks_at(tdiv, delay, tdiv as f64 * every as f64)
 }
@@ -14507,13 +14511,6 @@ mod tests {
         // 1 us/div at a delay of 1 s
         assert_eq!(axis_label(1.000002, 1e-6, 1.0, 1.000005, "s"), "1.000002 s");
     }
-}
-
-/// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn ladder_step(x: f32, d: i32) -> f32 {
-    let l = time_ladder();
-    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[(i as i32 + d).clamp(0, l.len() as i32 - 1) as usize]
 }
 
 /// Menu text of a hardware segment interval.
