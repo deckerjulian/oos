@@ -28,6 +28,19 @@ jobs:
             fi
           done
           exit $bad
+      # reported, not yet enforced: a finding is a warning on the pull request
+      - name: Nothing of a person or a unit in the new lines and messages (tools/privacy-scan.py)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! python3 -I tools/privacy-scan.py "$BASE..$HEAD" > /tmp/privacy; then
+            sed 's/^/::warning::privacy: /' /tmp/privacy
+            exit 1
+          fi
+          cat /tmp/privacy
       - run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup target add aarch64-unknown-linux-musl

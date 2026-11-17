@@ -1,0 +1,7 @@
+# Values tools/privacy-scan.py may find and that are meant to be in the tree: `rule value`, one a line, with a
+# comment that says why. A line here is reviewed like code: it publishes the value.
+
+# made-up values that the tests and the documents use as examples
+address 10.1.2.3
+address 10.0.0.2
+serial DHO9A000123456
