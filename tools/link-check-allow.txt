@@ -1,0 +1,5 @@
+# Names tools/link-check.py takes for a path of the tree and that are none, or that are meant although nothing is
+# there. One a line.
+
+# the method of the MCP adapter (docs/scpi.md), not a file
+tools/call

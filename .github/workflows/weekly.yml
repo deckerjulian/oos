@@ -1,0 +1,104 @@
+# What is too slow or too rare for every pull request, once a week (issue 68):
+#
+#   macos      tools/check.sh on macOS: most of the development happens there, CI runs Linux, and a test can pass on
+#              one and fail on the other
+#   stress     every test five times next to busy processes (tools/stress-tests.sh): a test that depends on how fast
+#              the computer is shows here, not in somebody's pull request
+#   coverage   how much of each crate the tests run, as a table in the summary of the run; a number to watch, no gate
+#   image      the image build, and after it the simulations (tools/check.sh sim), through the workflow Image
+#
+# When one of them fails, the last job opens an issue or adds to the one that is open, so it is seen. It also runs
+# for a pull request that changes this file or the script, as a test of the workflow itself.
+name: Weekly
+on:
+  schedule:
+    - cron: '23 3 * * 6' # Saturday
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/weekly.yml
+      - tools/stress-tests.sh
+permissions:
+  contents: read
+concurrency:
+  group: weekly-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup target add aarch64-unknown-linux-musl
+      - name: Every enforced layer on macOS (tools/check.sh)
+        run: tools/check.sh
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - name: Every test five times next to busy processes (tools/stress-tests.sh)
+        run: tools/stress-tests.sh 5
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview
+          cargo install cargo-llvm-cov --locked
+      - name: Lines of each crate that the tests run
+        run: |
+          {
+            echo "### Lines the tests run"
+            echo
+            echo "| Crate | Lines | Run by the tests |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for c in hal dsp ui fpgad; do
+            (cd "$c" && cargo llvm-cov --locked --summary-only --json > "$RUNNER_TEMP/$c.json")
+            jq -r --arg c "$c" '.data[0].totals.lines | "| \($c) | \(.count) | \(.percent * 10 | round / 10) % |"' \
+              "$RUNNER_TEMP/$c.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+  image:
+    # not for a pull request: the workflow Image runs by itself when its file changes
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/image.yml
+    with:
+      sims: true
+  report:
+    needs: [macos, stress, coverage, image]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: An issue for the failed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS: ${{ needs.macos.result }}
+          STRESS: ${{ needs.stress.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          IMAGE: ${{ needs.image.result }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="The weekly run of $(date -u +%Y-%m-%d) failed: macos $MACOS, stress $STRESS, coverage $COVERAGE, image $IMAGE.
+
+          $RUN"
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"Weekly run failed\"" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Weekly run failed" --label type/ci --body "$body"
+          fi

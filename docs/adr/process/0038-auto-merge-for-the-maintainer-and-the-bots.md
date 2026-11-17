@@ -37,6 +37,10 @@ does not see timing, calibrated values, or what the hardware does.
 
     The wait was there so others see a change coming. For these two a machine has checked what a person would look
     for in the wait; what they change shows in the list of merged pull requests.
+    **And no wait for the maintainer's own pull requests** (decided on 2026-11-17, later that day): from a branch
+    of this repository and not an agent's. ADR 0031 gave the maintainer the same wait as everyone so that a
+    contributor could plan against main; the maintainer takes that back. The wait stays for everybody else, for
+    agents and for Dependabot.
   - `owner`: it is the maintainer's own; or it is Dependabot's and changes nothing but the commits of actions in
     the workflow files; or the maintainer has approved its newest commit. A pull request from a fork always needs
     that approval. An agent's pull request (a `copilot/` branch of this repository) is opened in the name of the
