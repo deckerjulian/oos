@@ -50,12 +50,12 @@ Bandwidth codes: 5 = 70, 6 = 100, 7 = 125, 10 = 250 MHz (`protocols/afe-settings
 4 = 50 and 9 = 200. HDO1000/2000/4000 models are other boards, which OOS does not support (see section 6).
 
 How OOS fills the three right-hand columns: LA = series 900, generator = name ends in "S", EXT trigger = 2 channels.
-These come from the model line-up. Not yet verified on hardware: whether the EDU variants have the LA port.
+These come from Rigol's model line-up. Not yet verified on hardware: whether the EDU variants have the LA port.
 
 OOS takes "DHO914S" as DHO914 plus generator.
 
-The bandwidth code is the rated (licence) bandwidth. OOS does not limit to it. "Full" opens the AFE filter on every
-model. Whether the DHO800 front end gets as far as the DHO900's is not yet measured.
+The bandwidth code is the rated bandwidth of the model. Whether the DHO800 front end has the bandwidth of the
+DHO900's is not yet measured.
 
 ### 2.1 Hardware variants
 
@@ -167,6 +167,31 @@ A start with `adc.clock_hz` that does not reach its end sets the file aside at t
 Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the
 segment cap (`hal::dho::hz::MEM_BURSTS`).
 
+### 4.2 Unit defaults: `/etc/oos/limits.conf`
+
+`/oos/limits.conf` only exists after the first start. A unit whose `vendor.bin` names other hardware than it has (e.g.
+no generator board, no LA connector) would start once as the model the file names: OOS
+opens the generator's relay and supply lines and looks for `cal_afg.hex`. An image built for such a unit carries
+`/etc/oos/limits.conf` (`model::UNIT_CONF`) with the capability keys of that unit:
+
+```
+afg = no
+la = no
+```
+
+- Only `channels`, `la`, `afg` and `ext_trig`. Other keys are warnings: limits and `adc.clock_hz` stay in `/oos/limits.conf`,
+  where the start-up fallback of rcS sees them.
+- Order: vendor.bin, then this file, then `/oos/limits.conf`, then `model =` / `--model`. A forced model keeps the unit
+  defaults; `/oos/limits.conf` can switch a capability on again (`afg = yes` after a generator board is fitted).
+- Facts of the unit, not experimental: no toast, the identity (model name, serial, rated bandwidth, `*IDN?`) stays what
+  `vendor.bin` says. `oos-fpgad model` prints them as `unit`, System > System info as "Unit defaults".
+- Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/`. Without `OOS_UNIT`
+  the image has no `/etc/oos` and behaves as before.
+
+Without a generator (model table or `afg = no`) nothing opens the generator lines (`afg_in1..5`, `FG_M2C_GPIO`):
+`afg::Io::open` refuses (`afg::line_allowed`), the acquisition thread never asks, `oos-fpgad afg` and
+`oos-fpgad gpio <generator line>` refuse without `--force`. Verified on the host (`hal` tests), not yet on hardware.
+
 ## 5. Where OOS uses it
 
 - `oos_hal::model::platform()` is set once at start (oos-ui `main`, oos-fpgad `main`). Until then, and in host tests,
@@ -193,7 +218,7 @@ Still open for models other than the DHO924S:
 - DHO800: a DHO804 runs OOS (user report); front panel, LEDs and display have not been checked in detail.
 - Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
-## 6. Related findings (other series)
+## 6. Related findings (other Rigol series)
 
 Series configurations:
 

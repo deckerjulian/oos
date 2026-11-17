@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (C) 2026 OOS contributors
+ *
+ * Rigol DHO800/DHO900 main board with the boot card in UHS-I (SDR104, SDR50) instead of 3.3 V high speed. Opt-in:
+ * the image takes it with OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb (docs/boot.md, docs/fork/unit-dho804.md).
+ * Everything else is rk3399-rigol-dho900.dts.
+ *
+ * Seen on one DHO804 under the stock 4.4 kernel with the same settings in its device tree: SDR104 at 150 MHz,
+ * tuning ok, 62-64 MB/s raw read, warm starts and two cold starts with the settling time below without card errors
+ * (more cold starts outstanding). Not yet verified under the OOS kernel.
+ *
+ * - vqmmc is vccio_sd (RK808 LDO_REG4), which also powers the sdmmc IO domain (&io_domains sdmmc-supply): the
+ *   io-domain driver switches the pads with the rail, no extra pin state is needed. Pins and pulls as the stock
+ *   device tree (sdmmc_clk pull-none, cmd/data/cd pull-up), card detect on the native sdmmc_cd pin.
+ * - No regulator-init-microvolt on vccio_sd: with it, Rockchip's early_min_uV holds the rail at that voltage until
+ *   regulator_init_complete and the switch to 1.8 V fails on a card that is already at 1.8 V after a warm reset.
+ * - regulator-settling-time-down-us: LDO_REG4 has almost no load and no active discharge. On the stock kernel a cold
+ *   start wedged the card (CMD11, then a clock update timed out with DAT0 held low) when the clock came back 10 ms
+ *   after the regulator write while the rail was still above 1.8 V. With 30 ms the 3.0 -> 1.8 V gap measured
+ *   30-52 ms and the switch worked.
+ */
+
+#include "rk3399-rigol-dho900.dts"
+
+&sdmmc {
+	sd-uhs-sdr50;
+	sd-uhs-sdr104;
+	max-frequency = <150000000>;
+};
+
+&vccio_sd {
+	/delete-property/ regulator-init-microvolt;
+	regulator-settling-time-down-us = <30000>;
+};

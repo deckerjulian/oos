@@ -13,7 +13,7 @@ Part of the [SCPI reference](README.md).
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:SYSTem:SETup` | Set / Query | Query: the whole setup (the file Save setup writes) as an IEEE block. Set: apply a setup block (or the plain text); the acquisition state stays as it is. The short form `:SYST:SET` is the key = value command. | - | Storage > Recall setup | OOS extension |
-| `:SYSTem:LOCK` | Set / Query | Touch lock on/off | `0` | System > Touch | name not verified against the DHO guide |
+| `:SYSTem:LOCK` | Set / Query | Touch lock on/off | `0` | - | name not verified against the DHO guide |
 | `:SESSion` | Set / Query | `LIVE`, `SIM` or `REF`; setting `LIVE` leaves SIM and offline sessions. | `LIVE` | System > Live | OOS extension |
 | `:SYSTem:INFO` | Query | The System info page as text: `label,value` lines, `# heading` lines | - | System > System info | OOS extension |
 | `:SYSTem:GRAPhics` | Set / Query | `CPU` or `GPU` drawing; the query answers what is in use (whether the GPU really draws is the `gpu` part of `:SYSTem:STATe?`). | `GPU` | System > Graphics | OOS extension |

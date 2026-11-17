@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """frame-check.py: quick look at frames read by `oos-fpgad run --execute` (raw little-endian u16 words, one channel).
 

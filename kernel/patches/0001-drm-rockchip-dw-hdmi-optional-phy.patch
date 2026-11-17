@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: drm/rockchip: dw_hdmi: handle a missing PHY in late_register
 
 hdmi->phy comes from devm_phy_optional_get(), so it is NULL on SoCs that

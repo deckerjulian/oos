@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Storage: setup files (`key = value` text of the Model), waveform CSV, PNG screenshots (own encoder: one fixed-Huffman
@@ -24,26 +24,20 @@ pub enum StoreDest {
     Auto,
     /// USB stick (`/mnt/usb/OOS`)
     Stick,
-    /// Desktop folder of the logged-in user
-    Desk,
+    /// The local storage directory, also when a stick is mounted (on the unit `/tmp/oos`, in RAM)
+    Local,
 }
 
 impl StoreDest {
-    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Desk];
+    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Local];
 
     pub fn name(self) -> &'static str {
         match self {
             StoreDest::Auto => "Auto",
             StoreDest::Stick => "USB",
-            StoreDest::Desk => "Desktop",
+            StoreDest::Local => "Local",
         }
     }
-}
-
-/// Desktop save folder (`$HOME/Desktop/OOS`, else `/root/Desktop/OOS`).
-pub fn desktop_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join("Desktop").join("OOS")
 }
 
 /// A stick is mounted, by the text of /proc/mounts.
@@ -152,6 +146,20 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
     kv("trig_bus", m.trig_bus.name().to_string());
     kv("trig_bus_val", m.trig_bus_val.to_string());
+    let s = &m.ser;
+    kv("ser.rel", name(s.rel));
+    kv("ser.max", s.max.to_string());
+    kv("ser.mask", s.mask.to_string());
+    kv("ser.uart_inv", s.uart_inv.to_string());
+    kv("ser.uart_stop", name(s.uart_stop));
+    kv("ser.uart_err", name(s.uart_err));
+    kv("ser.spi_cs_high", s.spi_cs_high.to_string());
+    kv("ser.spi_timeout", s.spi_timeout.to_string());
+    kv("ser.addr_rel", name(s.addr_rel));
+    kv("ser.addr_max", s.addr_max.to_string());
+    kv("ser.dir", name(s.dir));
+    kv("ser.ten_bit", s.ten_bit.to_string());
+    kv("ser.bytes", s.bytes.to_string());
     kv("dec_thr", m.dec_thr.to_string());
     kv("dec_ascii", m.dec_ascii.to_string());
     kv("dec_proto", m.dec_proto.key());
@@ -230,6 +238,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
     kv("trig_nrej", m.trig_nrej.to_string());
+    kv("auto_nrej", m.auto_nrej.to_string());
     kv("trig_coup", name(m.trig_coup));
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
@@ -249,8 +258,12 @@ pub fn setup_text(m: &Model) -> String {
     kv("setup", m.setup.to_string());
     kv("hold", m.hold.to_string());
     kv("acq", name(m.acq));
+    kv("cores", m.cores.to_string());
     kv("avg_count", m.avg_count.to_string());
+    kv("avg_hw", m.avg_hw.to_string());
     kv("segments", m.segments.to_string());
+    kv("seg_hw", m.seg_hw.to_string());
+    kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
     kv("persist", m.persist.to_string());
     kv("intensity", m.intensity.to_string());
@@ -288,6 +301,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("cur_c", m.cur_c.to_string());
     kv("cur_d", m.cur_d.to_string());
     kv("touch_lock", m.touch_lock.to_string());
+    kv("aux_out", name(m.aux_out));
     kv("fine_v", m.fine_v.to_string());
     kv("fine_t", m.fine_t.to_string());
     if m.tfine != 1.0 {
@@ -347,7 +361,10 @@ pub fn setup_text(m: &Model) -> String {
     if m.studio_overlay { kv("studio_traces", "overlay".to_string()); }
     if !m.studio_zoom_tab { kv("studio_zoom_controls", "titlebar".to_string()); }
     if m.studio_classic { kv("studio_badges", "classic".to_string()); }
+    kv("bar", if m.bar_compact { "compact" } else { "cards" }.to_string());
+    kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
     kv("hdmi", name(m.hdmi));
+    kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
     kv("views", format!("{} {}", m.views, m.view_cur + 1));
@@ -575,6 +592,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "holdoff" => m.holdoff = p_f32(v)?,
         "trig_type" => m.trig_type = p_enum(v, &TRIG_TYPES)?,
         "trig_nrej" => m.trig_nrej = p_bool(v)?,
+        "auto_nrej" => m.auto_nrej = p_bool(v)?,
         "trig_coup" => m.trig_coup = p_enum(v, &TRIG_COUPS)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
@@ -601,8 +619,12 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "setup" => m.setup = p_f32(v)?,
         "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
+        "cores" => m.cores = p_bool(v)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
-        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_MAX),
+        "avg_hw" => m.avg_hw = p_bool(v)?,
+        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
+        "seg_hw" => m.seg_hw = p_bool(v)?,
+        "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "persist" => m.persist = p_idx(v, PERSIST.len())?,
         "intensity" => m.intensity = p_u32(v)?.clamp(10, 100),
@@ -699,6 +721,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "cur_c" => m.cur_c = p_f32(v)?,
         "cur_d" => m.cur_d = p_f32(v)?,
         "touch_lock" => m.touch_lock = p_bool(v)?,
+        "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
         "fine_v" => m.fine_v = p_bool(v)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
@@ -740,6 +763,19 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_diff" => m.dec_diff = p_decode_optional_one_based(v)?,
         "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
+        "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,
+        "ser.max" => m.ser.max = v.trim().parse().map_err(|e| format!("ser.max: {}", e))?,
+        "ser.mask" => m.ser.mask = v.trim().parse().map_err(|e| format!("ser.mask: {}", e))?,
+        "ser.uart_inv" => m.ser.uart_inv = p_bool(v)?,
+        "ser.uart_stop" => m.ser.uart_stop = p_enum(v, &STOP_BITS)?,
+        "ser.uart_err" => m.ser.uart_err = p_enum(v, &UART_ERRS)?,
+        "ser.spi_cs_high" => m.ser.spi_cs_high = p_bool(v)?,
+        "ser.spi_timeout" => m.ser.spi_timeout = p_f32(v)?.max(0.0),
+        "ser.addr_rel" => m.ser.addr_rel = p_enum(v, &RELS)?,
+        "ser.addr_max" => m.ser.addr_max = p_u32(v)?.min(0x3ff),
+        "ser.dir" => m.ser.dir = p_enum(v, &I2C_DIRS)?,
+        "ser.ten_bit" => m.ser.ten_bit = p_bool(v)?,
+        "ser.bytes" => m.ser.bytes = p_u32(v)?.min(5) as u8,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
         "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
@@ -774,7 +810,28 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "studio_meas_view" => m.studio_detail = match v { "detailed" => true, "list" => false, _ => return Err(format!("bad studio_meas_view {v}")) },
         "studio_badges" => m.studio_classic = match v { "classic" => true, "studio" => false, _ => return Err(format!("bad studio_badges {v}")) },
         "studio_ov" => m.studio_ov = v.parse::<i32>().ok().filter(|h| (0..=2000).contains(h)).ok_or_else(|| format!("bad studio_ov {v}"))?,
+        "draw_path" => {
+            m.draw_batch = match v.trim() {
+                "batch" => true,
+                "standard" => false,
+                _ => return Err(format!("{:?}: standard or batch", v)),
+            }
+        }
+        "bar" => {
+            m.bar_compact = match v.trim() {
+                "compact" => true,
+                "cards" => false,
+                _ => return Err(format!("{:?}: cards or compact", v)),
+            }
+        }
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
+        "hdmi_view" => {
+            let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;
+            if n > crate::ui::VIEWS_MAX {
+                return Err(format!("{:?}: 0 (the panel's) to {}", v, crate::ui::VIEWS_MAX));
+            }
+            m.hdmi_view = n;
+        }
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;
             if !(1..=crate::ui::VIEWS_MAX).contains(&n[0]) || !(1..=n[0]).contains(&n[1]) {
@@ -788,7 +845,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         // setups before the Layout mode: true = Waveform, false = Mirror
         "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
-        "view" => m.view = p_enum(v, &[AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Magnetic, AView::Inverter, AView::Dpt])?,
+        "view" => m.view = p_enum(v, &crate::ui::stored_views())?,
         "bode" => {
             // the address is the rest of the line: it may be empty
             let w: Vec<&str> = v.trim().splitn(8, char::is_whitespace).collect();
@@ -1077,18 +1134,54 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
 /// line and the key; unknown keys are ignored.
+#[cfg_attr(not(test), allow(dead_code))] // the strict form, for the tests
 pub fn parse_setup(text: &str) -> Result<Model, String> {
+    let (m, bad) = parse_setup_lenient(text);
+    match bad.into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok(m),
+    }
+}
+
+/// `parse_setup` that loads what it can: a line it cannot take (a key of a newer or another build, a protocol not in
+/// this one, a value out of range) is left out and named in the list, the rest of the setup stands. A decoder whose
+/// protocol is not in this build is switched off, its other settings kept. For recalling a setup and the restart.
+pub fn parse_setup_lenient(text: &str) -> (Model, Vec<String>) {
+    let mut bad = Vec::new();
+    let m = parse_lines(text, &mut bad);
+    (m, bad)
+}
+
+fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
     let mut m = Model::default();
     // a setup from before the gate setting measured the visible window; keep it that way
     m.meas_full_record = false;
+    let mut proto_missing = false;
     for (ln, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (k, v) = line.split_once('=').ok_or_else(|| format!("line {}: no '='", ln + 1))?;
+        let Some((k, v)) = line.split_once('=') else {
+            bad.push(format!("line {}: no '='", ln + 1));
+            continue;
+        };
         let k = k.trim();
-        set(&mut m, k, v.trim()).map_err(|e| format!("line {}: {}: {}", ln + 1, k, e))?;
+        if let Err(e) = set(&mut m, k, v.trim()) {
+            proto_missing |= k == "dec_proto";
+            bad.push(format!("line {}: {}: {}", ln + 1, k, e));
+        }
+    }
+    if proto_missing {
+        m.dec_on = false;
+    }
+    // a protocol that became a module since the setup was written: its options from the shared decoder rows
+    if let (Proto::Module(i), false) = (m.dec_proto, text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "dec_opt"))) {
+        let old = crate::protocols::Legacy { baud: m.dec_baud, bits: m.dec_bits, parity: m.dec_parity, canrate: m.dec_canrate, canh: m.dec_canh, fdrate: m.dec_fdrate, arate: m.dec_arate, tick: m.dec_tick, nibbles: m.dec_nibbles, uspeed: m.dec_uspeed };
+        if let Some(o) = crate::protocols::get(i).legacy(&old) {
+            m.dec_opt = o.map(|x| x as u8);
+            m.dec_opt = crate::protocols::opt_fit(i, m.dec_opt).map(|x| x as u8);
+        }
     }
     // a setup from before the density row: the windows and the pane already say which of the four it was
     if !text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "density")) {
@@ -1105,7 +1198,7 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
     if m.zscale > m.tscale {
         m.zscale = m.tscale;
     }
-    Ok(m)
+    m
 }
 
 /// Display state of a ref slot, kept in a setup file as `ref<N>.<key>` lines. The samples are not part of a setup:
@@ -1248,6 +1341,39 @@ pub struct WaveTrace {
 pub const MAX_WAVEFORM_BYTES: usize = 128 << 20;
 pub const MAX_WAVEFORM_SAMPLES: usize = 32_000_000;
 
+/// File systems of the kernel: their files can be regular and still endless (`/proc/kmsg`), or a device.
+const NOT_STORAGE: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+/// The bytes of a waveform file named by a remote client (SCPI `:REFerence:LOAD`, also over VXI-11 and MCP) or found
+/// beside the setups, read on the frame loop. Refused: a file of `NOT_STORAGE` (by the path it resolves to), and one
+/// larger than the import limit, from its size before anything is read; the read stops one byte past the limit should
+/// the file grow meanwhile. A path that is not there or not a regular file is `missing <name>`.
+pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let name = file_name(p);
+    let missing = || format!("missing {name}");
+    let real = p.canonicalize().map_err(|_| missing())?;
+    if NOT_STORAGE.iter().any(|d| real.starts_with(d)) {
+        return Err(format!("{name}: files under /proc, /sys and /dev are not read"));
+    }
+    let too_large = || format!("{name} exceeds the {} MiB import limit", MAX_WAVEFORM_BYTES >> 20);
+    // before the open: opening a FIFO would wait for a writer
+    let meta = std::fs::metadata(&real).map_err(|_| missing())?;
+    if !meta.is_file() {
+        return Err(missing());
+    }
+    if meta.len() > MAX_WAVEFORM_BYTES as u64 {
+        return Err(too_large());
+    }
+    let file = std::fs::File::open(&real).map_err(|_| missing())?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(MAX_WAVEFORM_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("{name}: {e}"))?;
+    if bytes.len() > MAX_WAVEFORM_BYTES {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
@@ -1324,30 +1450,49 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     Ok(out)
 }
 
+/// A time column, then one trace per further column. The columns are kept as the samples they become, and a line wider
+/// than the reference slots ends the parse: a single line of many columns no longer makes as many traces.
 fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
-    let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+    let mut columns: Vec<Vec<f32>> = Vec::new();
+    let mut times: [f64; 2] = [f64::NAN; 2];
+    let mut rows = 0usize;
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
-        let rest: Vec<f64> = cols.map(|x| x.unwrap_or(f64::NAN)).collect();
-        if rest.is_empty() {
+        let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
+        if rest.peek().is_none() {
             continue;
         }
-        if rows.len() >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
-        rows.push((t, rest));
+        if rows >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
+        let mut k = 0;
+        for x in rest {
+            if k >= NREF {
+                return Err("The file has more traces than the remaining reference slots".into());
+            }
+            if k == columns.len() {
+                // a column that starts on a later line: the lines before it have no sample there
+                columns.push(vec![f32::NAN; rows]);
+            }
+            columns[k].push(x as f32);
+            k += 1;
+        }
+        for c in &mut columns[k..] {
+            c.push(f32::NAN);
+        }
+        if rows < 2 {
+            times[rows] = t;
+        }
+        rows += 1;
     }
-    let dt = match rows.as_slice() {
-        [a, b, ..] if b.0 > a.0 => b.0 - a.0,
+    let dt = match times {
+        [a, b] if rows >= 2 && b > a => b - a,
         _ => return Err("that file holds no waveform".into()),
     };
-    let ntrace = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(1);
-    let mut traces = Vec::with_capacity(ntrace);
-    for k in 0..ntrace {
-        let v: Vec<f32> = rows.iter().map(|r| r.1.get(k).copied().unwrap_or(f64::NAN) as f32).collect();
+    let ntrace = columns.len();
+    Ok(columns.into_iter().enumerate().map(|(k, v)| {
         let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
-        traces.push(WaveTrace { t0: rows[0].0, dt, v, label });
-    }
-    Ok(traces)
+        WaveTrace { t0: times[0], dt, v, label }
+    }).collect())
 }
 
 /// Tek reference waveform version 001/002/003, YT vector, first frame.
@@ -2208,21 +2353,26 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         return Err(format!("waveform version {}", ver));
     }
     let nch = u32_le(b, 8).unwrap_or(0) as usize;
-    let n = u64_le(b, 12).unwrap_or(0) as usize;
+    // the sample count comes from the file: bounded before it sizes anything, so a damaged or hostile count is an
+    // error and not an overflow or an allocation the size of the count
+    let n = usize::try_from(u64_le(b, 12).unwrap_or(0)).unwrap_or(usize::MAX);
     let dt = f64_le(b, 20).unwrap_or(0.0);
     let t0 = f64_le(b, 28).unwrap_or(0.0);
     if nch == 0 || nch > NCH || dt <= 0.0 {
         return Err("waveform header".into());
     }
+    if n > MAX_WAVEFORM_SAMPLES {
+        return Err("waveform exceeds the 32-million-sample import limit".into());
+    }
     let mut off = 36;
-    let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+    let mut rec = Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
     for _ in 0..nch {
         let c = u32_le(b, off).ok_or("truncated waveform")? as usize;
         off += 4;
         if c < 1 || c > NCH {
             return Err(format!("channel {}", c));
         }
-        if b.len() < off + 4 * n {
+        if b.len().saturating_sub(off) < 4 * n {
             return Err("truncated waveform".into());
         }
         let mut v = vec![0f32; n];
@@ -2259,6 +2409,11 @@ pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
         return Err(format!("fast-frame version {}", ver));
     }
     let n = u32_le(b, 8).unwrap_or(0) as usize;
+    // every frame is at least a header and one channel number: a count the bytes cannot hold is refused before it
+    // sizes the list
+    if n > (b.len() - 12) / 40 {
+        return Err("truncated fast-frame file".into());
+    }
     let mut off = 12;
     let mut recs = Vec::with_capacity(n);
     for _ in 0..n {
@@ -2682,6 +2837,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    // Break it catches: the hardware average switch lost in a setup or on by default, the count not stored with it.
+    #[test]
+    fn average_settings_round_trip() {
+        let mut m = Model::default();
+        assert!(!m.avg_hw);
+        (m.acq, m.avg_count, m.avg_hw) = (AcqMode::Average, 64, true);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.acq, back.avg_count, back.avg_hw), (AcqMode::Average, 64, true));
+        // older setups without the key: software average
+        assert!(!parse_setup("acq = Average\navg_count = 8\n").unwrap().avg_hw);
+        assert!(parse_setup("avg_hw = maybe\n").is_err());
+    }
+
+    // Break it catches: hardware segment settings lost in a setup, a count clamped to the software limit, a negative
+    // or absurd interval reaching 0x4068.
+    #[test]
+    fn segment_settings_round_trip() {
+        let mut m = Model::default();
+        (m.segments, m.seg_hw, m.seg_ivl) = (20_000, true, 1e-3);
+        let back = parse_setup(&setup_text(&m)).unwrap();
+        assert_eq!((back.segments, back.seg_hw, back.seg_ivl), (20_000, true, 1e-3));
+        let d = parse_setup("segments = 900000\nseg_interval = -1\n").unwrap();
+        assert_eq!((d.segments, d.seg_hw, d.seg_ivl), (crate::ui::SEG_HW_MAX, false, 0.0));
+        assert_eq!(parse_setup("seg_interval = 1e9\n").unwrap().seg_ivl, crate::ui::SEG_IVL_MAX);
+    }
+
     #[test]
     fn tdiv_by_value_and_legacy_index() {
         let m = parse_setup("tdiv = 1e-9\nzoom_tdiv = 1e-9\n").unwrap();
@@ -2752,6 +2933,9 @@ mod tests {
         m.cur_a = 0.125;
         m.cur_b = 0.875;
         m.touch_lock = true;
+        m.aux_out = AuxOut::Off;
+        m.ser = SerialTrig { rel: Rel::Out, max: 0x1_2345_6789, mask: 0xf0f0, uart_inv: true, uart_stop: StopBits::Two, uart_err: UartErr::Parity, spi_cs_high: true, spi_timeout: 2e-6, addr_rel: Rel::In, addr_max: 0x3a0, dir: I2cDir::Read, ten_bit: true, bytes: 4 };
+        m.trig_bus_val = 0xab_cdef_0123;
         m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
         m.math_bw = 777.0;
         m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
@@ -2773,7 +2957,7 @@ mod tests {
         m.dec_baud = 3;
         m.dec_thr = 0.8;
         m.dec_ascii = false;
-        m.dec_proto = Proto::Spi;
+        m.dec_proto = Proto::SPI;
         (m.dec_arate, m.dec_tick, m.dec_nibbles, m.dec_uspeed) = (2, 3, 4, 2);
         m.dec_src2 = 0;
         m.dec_cs = None;
@@ -2897,6 +3081,16 @@ mod tests {
         assert!(parse_setup("delay").is_err());
     }
 
+    /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
+    #[test]
+    fn setup_aux_out() {
+        assert_eq!(parse_setup("ch2.on = true").unwrap().aux_out, AuxOut::TrigOut);
+        assert!(setup_text(&Model::default()).contains("aux_out = TrigOut\n"));
+        assert_eq!(parse_setup("aux_out = Off").unwrap().aux_out, AuxOut::Off);
+        assert!(parse_setup("aux_out = Blink").is_err());
+        assert_eq!(parse_setup("aux_out = PassFail").unwrap().aux_out, AuxOut::PassFail);
+    }
+
     /// The Quick key action: written by name, read back, unknown names rejected, missing key = Screenshot.
     #[test]
     fn setup_quick_key() {
@@ -2914,6 +3108,7 @@ mod tests {
 
     /// Every protocol is stored by name; the USB decoder with its D- source and speed.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn setup_protocols_by_name() {
         for &p in PROTOS.iter() {
             let mut m = Model::default();
@@ -2935,7 +3130,7 @@ mod tests {
         assert_eq!(parse_setup(&text).unwrap(), m);
         assert!(parse_setup("dec_proto = NoSuchBus").is_err());
         let mut m = Model::default();
-        (m.dec_proto, m.dec_src, m.dec_cs, m.dec_uspeed) = (Proto::Usb, 2, Some(3), 1);
+        (m.dec_proto, m.dec_src, m.dec_cs, m.dec_uspeed) = (Proto::from_key("Usb").unwrap(), 2, Some(3), 1);
         let text = setup_text(&m);
         assert!(text.contains("dec_proto = Usb\n") && text.contains("dec_uspeed = 1\n"));
         assert_eq!(parse_setup(&text).unwrap(), m);
@@ -2946,7 +3141,7 @@ mod tests {
     fn csv_of_a_record() {
         let mut m = Model::default();
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
         rec.ch[0] = vec![0.5, 1.25, f32::NAN];
         rec.ch[2] = vec![-1.0, 0.0, 3.3];
         let csv = wave_csv(&rec, &m);
@@ -2962,11 +3157,29 @@ mod tests {
         assert_eq!(back[1].v[2], 3.3);
     }
 
+    /// A line wider than the reference slots ends the parse: before, one line of a million columns made a million
+    /// traces (40 MB of text took 1.9 GB) before the slots refused them.
+    #[test]
+    fn csv_wider_than_the_reference_slots_is_refused_while_parsing() {
+        let wide = format!("0{}\n1,0\n", ",0".repeat(NREF + 1));
+        assert!(parse_wave(wide.as_bytes(), "wide.csv").unwrap_err().contains("more traces"));
+        let full = format!("0{}\n1{}\n", ",1".repeat(NREF), ",2".repeat(NREF));
+        assert_eq!(parse_wave(full.as_bytes(), "full.csv").unwrap().len(), NREF);
+        // ragged lines: a column missing on a line, or starting late, is NaN there
+        let back = parse_wave(b"Time,A\n0,1\n1,2,7\n2,,8\n3\n", "r.csv").unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!((back[0].t0, back[0].dt, back[0].label.as_str()), (0.0, 1.0, "CH1"));
+        assert_eq!(&back[0].v[..2], [1.0, 2.0]);
+        assert!(back[0].v[2].is_nan() && back[0].v.len() == 3);
+        assert!(back[1].v[0].is_nan());
+        assert_eq!(&back[1].v[1..], [7.0, 8.0]);
+    }
+
     #[test]
     fn oos_bin_and_wfm_round_trip() {
         let mut m = Model::default();
         m.ch[0].on = true;
-        let rec = Record { t0: -2e-6, dt: 5e-9, ch: { let mut c: [Vec<f32>; NCH] = Default::default(); c[0] = vec![0.1, 0.2, -0.3, 0.4]; c }, triggered: true, partial: false, raw: None, la: None };
+        let rec = Record { t0: -2e-6, dt: 5e-9, ch: { let mut c: [Vec<f32>; NCH] = Default::default(); c[0] = vec![0.1, 0.2, -0.3, 0.4]; c }, triggered: true, partial: false, raw: None, la: None, pairs: false };
         let bin = wave_bin(&rec, &m);
         let t = &parse_wave(&bin, "wave.bin").unwrap()[0];
         assert_eq!(t.v, rec.ch[0]);
@@ -3063,7 +3276,7 @@ mod tests {
         let mut m = Model::default();
         m.ch[0].on = true;
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None };
+        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
         rec.ch[0] = vec![0.5, 1.25];
         rec.ch[2] = vec![-1.0, 0.0];
         let b = wave_bin(&rec, &m);
@@ -3083,6 +3296,38 @@ mod tests {
         let old = parse_mask("1.0\n2.0\n").unwrap();
         assert_eq!(old.v, vec![1.0, 2.0]);
         assert!(old.src.is_none());
+    }
+
+    /// Counts in a frame file come from the file. One that does not fit the bytes is an error: before, a sample count
+    /// near 2^62 overflowed the offset (a panic, and with panic=abort the end of oos-ui) and a frame count of 2^32 - 1
+    /// asked for a list of that many records.
+    #[test]
+    fn frame_file_counts_beyond_the_bytes_are_refused() {
+        let mut huge = b"OOSW".to_vec();
+        for x in [1u32, 1] {
+            huge.extend_from_slice(&x.to_le_bytes());
+        }
+        huge.extend_from_slice(&((1u64 << 62) + 1).to_le_bytes());
+        huge.extend_from_slice(&1e-9f64.to_le_bytes());
+        huge.extend_from_slice(&0f64.to_le_bytes());
+        huge.extend_from_slice(&1u32.to_le_bytes());
+        huge.extend_from_slice(&[0u8; 16]);
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("limit"));
+        let over = (MAX_WAVEFORM_SAMPLES as u64 + 1).to_le_bytes();
+        huge[12..20].copy_from_slice(&over);
+        assert!(parse_ff(&huge).err().unwrap().contains("limit"));
+        huge[12..20].copy_from_slice(&5u64.to_le_bytes());
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("truncated"));
+        huge[12..20].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(parse_wave_bin(&huge).unwrap().1, huge.len());
+
+        let mut ff = b"OOSF".to_vec();
+        ff.extend_from_slice(&1u32.to_le_bytes());
+        ff.extend_from_slice(&u32::MAX.to_le_bytes());
+        ff.extend_from_slice(&huge);
+        assert!(parse_ff(&ff).err().unwrap().contains("truncated"));
+        ff[8..12].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(parse_ff(&ff).unwrap().len(), 1);
     }
 
     #[test]
@@ -3730,6 +3975,23 @@ mod header_import_tests {
         b
     }
 
+
+    // Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
+    // build, failing to load as a whole
+    #[test]
+    fn a_setup_loads_what_it_can() {
+        let mut m = Model::default();
+        m.dec_on = true;
+        m.tscale = 5;
+        // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
+        let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
+        assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");
+        let (back, bad) = parse_setup_lenient(&text);
+        assert_eq!(back.tscale, 5, "the rest of the setup stands");
+        assert!(!back.dec_on, "the decoder without its protocol is off");
+        assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
+        assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
+    }
 }
 
 /// The setup the desktop build keeps between runs, as the unit keeps it in /tmp/oos-ui.setup: the same text

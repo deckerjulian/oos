@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Display > Views: up to four independent workspaces of the one scope to switch between. There is one scope, one
@@ -62,6 +62,16 @@ pub(super) fn studio_box_w(views: usize) -> i32 {
 
 /// The keys of a view that are not a key of the model: they come from the Ui.
 const UI_KEYS: [&str; 7] = ["xy", "full", "studio_view", "studio_dock", "studio_state", "lanes", "math_def"];
+
+/// Whether `k` is a key of a view's model part (not `xy` and `full`).
+pub(super) fn is_view_key(k: &str) -> bool {
+    KEYS.contains(&k)
+}
+
+/// A view not set up yet: the plot alone.
+pub(super) fn plot_alone() -> String {
+    snapshot_of(&Model::default(), false, false, &[])
+}
 
 fn known(k: &str) -> bool {
     KEYS.contains(&k) || UI_KEYS.contains(&k)
@@ -532,8 +542,7 @@ impl Ui {
         let Some(r) = self.view_box() else { return };
         let f = self.fonts();
         let nw = self.num_w();
-        cv.round(r, 5, BTN_BORDER, 255);
-        cv.round(r.inset(1), 4, BTN, 255);
+        cv.framed(r, 5, 1, BTN_BORDER, 4, BTN);
         for i in 0..self.m.views {
             let c = Rect::new(r.x + 1 + nw * i as i32, r.y + 1, nw, r.h - 2);
             let on = i == self.m.view_cur;

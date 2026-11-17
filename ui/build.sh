@@ -1,17 +1,19 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build.sh: oos-ui for the scope (static aarch64 musl) and for the host (off-screen test runner).
 #   ./build.sh            both
 #   ./build.sh test       host build + render the test scripts in tests/ to target/test-shots/*.png (needs Pillow)
+#   OOS_DECODERS="usb dcc" / OOS_DECODERS_OFF="avionics" ./build.sh    fewer decoders (tools/decoder-features.sh)
 set -e
 cd "$(dirname "$0")"
 export PATH="$HOME/.cargo/bin:$PATH"
 [ -f assets/font.bin ] || python3 tools/mkfont.py assets/font.bin normal
 [ -f assets/font-large.bin ] || python3 tools/mkfont.py assets/font-large.bin large
 [ -f assets/font-larger.bin ] || python3 tools/mkfont.py assets/font-larger.bin larger
-cargo build --release --target aarch64-unknown-linux-musl
-cargo build --release
+feat=$(tools/decoder-features.sh)
+cargo build --release --target aarch64-unknown-linux-musl $feat
+cargo build --release $feat
 ls -l target/aarch64-unknown-linux-musl/release/oos-ui
 if [ "$1" = test ]; then
 	out=target/test-shots; mkdir -p $out

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Independent bounded search oracles and an opt-in host CPU timing fixture.
 use super::*;
 
@@ -47,20 +49,26 @@ fn smooth_oracle(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
         let sum = v[i - half..i - half + length].iter().map(|&x| if x.is_finite() { x as f64 } else { level as f64 }).sum::<f64>();
         (i, (sum / length as f64) as f32)
     }).collect();
-    let rails: Vec<_> = means.iter().enumerate().filter_map(|(i, &(_, value))| {
-        if value > level + hyst / 2.0 { Some((i, true)) }
-        else if value < level - hyst / 2.0 { Some((i, false)) } else { None }
-    }).collect();
+    // the hardware's comparators (PR #7, `oos_dsp::edges::trigger_edges`): a rising edge arms below level - hyst and
+    // fires where the mean reaches the level, a falling one arms above level + hyst and fires at or below it
     let mut candidates = Vec::new();
-    for pair in rails.windows(2) {
-        let ((from, old), (to, new)) = (pair[0], pair[1]);
-        if old == new { continue; }
-        let crossing = (from + 1..=to).rev().find_map(|i| {
-            let ((j, p), (k, value)) = (means[i - 1], means[i]);
-            ((p < level) != (value < level)).then(|| j as f64 +
-                (level as f64 - p as f64) / (value as f64 - p as f64) * (k - j) as f64)
-        }).unwrap_or(means[to].0 as f64);
-        if fits(crossing) { candidates.push((crossing, new)); }
+    let (mut up, mut down) = (false, false);
+    let mut prev: Option<(usize, f32)> = None;
+    for &(i, value) in &means {
+        let crossing = |(j, p): (usize, f32)| j as f64 + (level as f64 - p as f64) / (value as f64 - p as f64) * (i - j) as f64;
+        if up && value >= level {
+            up = false;
+            let t = prev.map_or(i as f64, crossing);
+            if fits(t) { candidates.push((t, true)); }
+        }
+        if down && value <= level {
+            down = false;
+            let t = prev.map_or(i as f64, crossing);
+            if fits(t) { candidates.push((t, false)); }
+        }
+        if value < level - hyst { up = true; }
+        if value > level + hyst { down = true; }
+        prev = Some((i, value));
     }
     let want = closest(candidates.iter().filter(|(_, up)| either || *up == rising).map(|(t, _)| *t), pre);
     let any = closest(candidates.iter().map(|(t, _)| *t), pre).and_then(|at| candidates.into_iter().find(|(t, _)| *t == at));

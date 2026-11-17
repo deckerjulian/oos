@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SWD, JTAG, Quad-SPI, I3C, S/PDIF and USB PD decoders against generated signals with known content.

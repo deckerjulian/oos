@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! First install from the running stock system, without opening the scope (docs/install-usb.md): an update file
@@ -88,7 +88,7 @@ fn refusal(why: &str) -> String {
          again, and the only way back is to open the scope and put its SD card into a computer (docs/install-usb.md 4).\n\
          To install anyway: put an empty file {} into the top folder of the USB stick, next to the .GEL\n\
          file, and run the update again (oos-update gel-install: {}). A dry run first (oos-dry-run.txt) is wise.\n\
-         Please report how it went, so the model can be listed as verified: https://github.com/deckerjulian/oos/issues",
+         Please report how it went, so the model can be listed as verified: https://github.com/dekajoule/oos/issues",
         why,
         verified_models().join(", "),
         ANY_MODEL_FILE,

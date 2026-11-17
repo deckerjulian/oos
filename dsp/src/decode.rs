@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Serial protocol decoders on analog channels (threshold + hysteresis): UART, I2C, SPI, CAN, LIN, I2S,

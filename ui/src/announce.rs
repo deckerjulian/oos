@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! LAN announcement (mDNS, RFC 6762, and DNS-SD, RFC 6763) so a controller can find the instrument
@@ -443,15 +443,20 @@ fn prefer_primary(addresses: Vec<[u8; 4]>, primary: Option<[u8; 4]>) -> Vec<[u8;
 #[cfg(unix)]
 fn mcast_socket() -> Option<UdpSocket> {
     unsafe {
-        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
         if fd < 0 {
             return None;
         }
+        // close-on-exec as SOCK_CLOEXEC would set it (Linux only; the host build runs on macOS too)
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
         let one: libc::c_int = 1;
         for opt in [libc::SO_REUSEADDR, libc::SO_REUSEPORT] {
             libc::setsockopt(fd, libc::SOL_SOCKET, opt, &one as *const _ as *const _, 4);
         }
-        let addr = libc::sockaddr_in { sin_family: libc::AF_INET as libc::sa_family_t, sin_port: MDNS_PORT.to_be(), sin_addr: libc::in_addr { s_addr: 0 }, sin_zero: [0; 8] };
+        // zeroed first: macOS has a `sin_len` field Linux lacks
+        let mut addr: libc::sockaddr_in = std::mem::zeroed();
+        addr.sin_family = libc::AF_INET as libc::sa_family_t;
+        addr.sin_port = MDNS_PORT.to_be();
         if libc::bind(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of_val(&addr) as libc::socklen_t) != 0 {
             libc::close(fd);
             return None;
@@ -500,6 +505,7 @@ pub struct Announcer {
     interfaces_next: Instant,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Announcer {
     pub fn open(services: &[Svc]) -> Announcer {
         let sock = mcast_socket();
@@ -512,11 +518,13 @@ impl Announcer {
     }
 
     /// The responder owns a socket and has real listeners to announce.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn available(&self) -> bool {
         self.sock.is_some() && !self.services.is_empty()
     }
 
     /// Addresses in the most recent announcement, excluding down and loopback interfaces.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn local_addresses(&self) -> &[[u8; 4]] {
         &self.last
     }

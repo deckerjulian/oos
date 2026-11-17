@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Explicit real-file acceptance. These tests open no native window or service.
 use super::*;
 use std::{path::Path, sync::Arc, time::{Duration, Instant}};
@@ -84,7 +86,7 @@ fn actual_cphy_reference_trio_decode_backend() {
     }
     ui.set_offline(true);
     ui.m.run = RunState::Stop;
-    ui.m.dec_proto = Proto::Cphy;
+    ui.m.dec_proto = Proto::CPHY;
     ui.m.dec_on = true;
     ui.m.dec_src = DEC_REF_BASE;
     ui.m.dec_src2 = DEC_REF_BASE + 1;
@@ -100,7 +102,7 @@ fn actual_cphy_reference_trio_decode_backend() {
     ui.m.trig_type = TrigType::Bus;
     ui.m.trig_bus = BusWhat::Frame;
     ui.set_trigger_source(WaveId::Ref(0), false);
-    let expected_hit = packets.iter().any(|p| crate::trig::matches(&ui.m, p));
+    let expected_hit = !crate::trig::points(&ui.m, &packets).is_empty();
     ui.key(key::SINGLE);
     for _ in 0..3 { ui.step(0.02); }
     assert_eq!(ui.replay.captures, u64::from(expected_hit));

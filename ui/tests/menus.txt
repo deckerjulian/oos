@@ -7,18 +7,20 @@ tap 396 404
 frames 5
 shot $S/10-ch1menu.ppm
 tap 323 563
+# the measurement page from the start menu (Analysis > Measure), three tiles tapped
 tap 37 563
-tap 192 398
-tap 512 404
-tap 749 306
-tap 433 352
+frames 1
+do Measure
+do Amplitude
+do Period
+do Fall Time
 frames 2
 shot $S/11-measadd.ppm
-tap 737 78
-tap 638 448
+menu Measure settings
+set Statistics = On
+close
 frames 20
 shot $S/12-stats.ppm
-tap 694 316
 key cursor
 frames 10
 shot $S/13-cursor.ppm
@@ -31,18 +33,13 @@ frames 1
 shot $S/15-drag-level.ppm
 release
 key default
-tap 769 20
-tap 568 114
-tap 568 114
-tap 568 114
-tap 568 114
-tap 568 114
-tap 568 114
+menu Display
+set Persistence = Infinite
 key ch2
 key ch4
 frames 60
 shot $S/16-persist.ppm
-tap 850 20
-tap 806 246
+menu System
+do About OOS
 frames 2
 shot $S/17-about.ppm

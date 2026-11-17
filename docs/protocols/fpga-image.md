@@ -25,11 +25,11 @@ runs no own image, so everything else here has not been verified on hardware.
    /10, /9, /8) (section 3.2). Level shifters are enabled, FCLK resets released. The ADC data clocks come in from the LMX2582 on
    PL pins (`pll.md`).
 4. **Bitstream:** plain full XC7Z015 bitstream, not encrypted, not compressed, CRC checked, no PL multiboot (WBSTAR 0, TIMER 0),
-   STARTUP on CCLK with the toolchain defaults (section 4).
+   STARTUP on CCLK with Vivado defaults (section 4).
 
 ## 2. SPI boot monitor
 
-A standalone BSP application on the PS, the third partition of the boot image. It runs completely from OCM.
+A standalone Xilinx BSP application on the PS, the third partition of the boot image. It runs completely from OCM.
 
 ### 2.1 Peripherals used
 
@@ -163,6 +163,9 @@ MIO GPIO. **SPI0 (MIO16-21) is the slave link to the RK3399 SPI1.**
 - Address map 0xF800603C/40/44 = 0x777 / 0xfff00000 / 0x0ff66666: 14 row, 10 column, 8 banks. Together with 32 bit this gives
   **512 MiB** (2 x 16-bit 2 Gbit). The register set equals the ZedBoard DDR3 preset except for timings (assumed).
 - Clock 533.3 MHz (DDR3-1066). Last steps: poll DCI done (0xF8000B74 bit 13), start DDRC, poll operating mode (0xF8006054).
+- Another project reports "DDR3 at 600 MHz with timings generated for 533 MHz". That does not fit this PS memory (533.3 MHz
+  from the PLL above) and may concern the acquisition memory behind the MIG in the PL (`cold-boot.md` step 10), whose
+  clock is not known here. Open.
 
 ### 3.5 Peripherals / post config
 
@@ -188,7 +191,7 @@ properties, and a design for this board can use the same:
 | PL multiboot | none: TIMER = 0, WBSTAR = 0, no IPROG. Multiboot is done by the PS (2.3) |
 | COR0 | 0x02003fe5: GWE_CYCLE 6, GTS_CYCLE 5, LOCK/MATCH NoWait, DONE_CYCLE 4, **StartupClk = CCLK**, ConfigRate 0, DONE_PIPE = 1, DRIVE_DONE 0 |
 | COR1 | 0: no readback CRC, defaults |
-| CTL0 | MASK 0x401, CTL0 0x501: GTS_USR_B = 1, ConfigFallback = 1 (the toolchain default; irrelevant for PCAP), GLUTMASK_B |
+| CTL0 | MASK 0x401, CTL0 0x501: GTS_USR_B = 1, ConfigFallback = 1 (Vivado default; irrelevant for PCAP), GLUTMASK_B |
 | CTL1 | MASK 0, CTL1 0 |
 | other | no BSPI, no AXSS/USR_ACCESS |
 
@@ -199,7 +202,7 @@ the `.bit` header.
 
 All of this is assumed, nothing has been run.
 
-- An own `BOOT.bin` = an FSBL with the same PS7 preset (all values above) + own bitstream + own monitor. The monitor must keep
+- An own `BOOT.bin` = Vivado FSBL with the same PS7 preset (all values above) + own bitstream + own monitor. The monitor must keep
   the `\rBOOT\r` + BE32 address frame. It may add a RAM-load command (SPI at 10 MHz is about 1.2 MB/s, so ~3 s per full 3.5 MB
   bitstream; PCAP takes chunks from OCM or DDR, 512 MiB DDR3 is available).
 - The own PL must at least provide the PCIe endpoint (hard PCIE_2_1 + GTP, Gen2 x2, BAR layout as in `fpga-boot.md`), or OOS loses

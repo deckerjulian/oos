@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode_ext3::dcc` and a
@@ -231,7 +231,7 @@ mod tests {
         let d = Dcc.demo().unwrap();
         let dt = x3::DCC_ONE_HALF / 10.0;
         let v: Vec<f32> = (0..(1.2 * d.period / dt) as usize).map(|k| d.lines[0].as_ref().unwrap()(k as f64 * dt) as f32).collect();
-        let p = Dcc.decode(&Lines { lines: [Some(&v), None, None, None], dt, thr: 0.0, hy: 0.3, opt: [0; OPTS] }).unwrap();
+        let p = Dcc.decode(&Lines { lines: [Some(&v), None, None, None], dt, thr: 0.0, hy: 0.3, opt: [0; OPTS], sh: Shared::default(), chans: [None; 4], src: [None; 4] }).unwrap();
         let mut mem = None;
         let view = Dcc.view(&p, &[0; OPTS], &mut mem).unwrap();
         assert_eq!(view.status.as_ref().unwrap().1, Tone::Good, "{:?}", view);

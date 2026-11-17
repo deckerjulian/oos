@@ -31,8 +31,8 @@ Part of the [SCPI reference](README.md).
 | --- | --- | --- | --- | --- | --- |
 | `:MEASure:GATing` | Set / Query | `SCREEN` follows the viewport; `NONE` means Full record. This gate is an OOS extension. | `NONE` | Measure > Gate | OOS extension |
 | `:MEASure:REFS` | Set / Query | `10/90\|20/80` edge thresholds. | `10/90` | Measure levels > Preset | OOS extension |
-| `:MEASure:TSETup` | Set / Query | Seconds, nonnegative; used by the setup/hold counting results. | `0.000000E+00` | Measure > Tsetup | Rigol-compatible |
-| `:MEASure:THOLd` | Set / Query | Seconds, nonnegative; used by the setup/hold counting results. | `0.000000E+00` | Measure > Thold | Rigol-compatible |
+| `:MEASure:TSETup` | Set / Query | Seconds, nonnegative: `SETHOLD` counts the clock edges whose setup or hold is shorter. | `0.000000E+00` | Measure > Tsetup | Rigol-compatible |
+| `:MEASure:THOLd` | Set / Query | Seconds, nonnegative: `SETHOLD` counts the clock edges whose setup or hold is shorter. | `0.000000E+00` | Measure > Thold | Rigol-compatible |
 | `:MEASure:SETup:MIN` | Set / Query | Global default low threshold in percent. Per-row overrides remain a separate UI feature. | `10` | Measurements > Low level | Rigol-style (command family of the DHO guide) |
 | `:MEASure:SETup:MAX` | Set / Query | Global default high threshold in percent. | `90` | Measurements > High level | Rigol-style (command family of the DHO guide) |
 | `:MEASure:SETup:PSA` | Set / Query | Phase source A or B, `CHANn\|Rn`; stock digital/Math roles are not implied. | `CHAN1` | Measurements > Source A / B (phase) | Rigol-style (command family of the DHO guide) |
@@ -87,7 +87,7 @@ The canonical long spellings are accepted case-insensitively, as is the short fo
 
 `RRDELAY`, `FFDELAY`, `RFDELAY`, `FRDELAY`, `RRPHASE`, `FFPHASE`, `RFPHASE`, `FRPHASE`, `RRSKEW`, `FFSKEW`, `RFSKEW`, `FRSKEW`, `SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD`, `DSETUP`, `DHOLD`, `DSETHOLD`.
 
-Setup and hold take source A as the clock and B as the data. `SETUP`/`HOLD` latch on rising clock edges, `FSETUP`/`FHOLD` on falling ones, and the `D` items on both, as a DDR strobe (DQS) does. A clock edge counts only when the data changed inside its own cycle: after the previous latching edge and within one typical edge spacing. Data that holds steady between strobe bursts adds no setup or hold. `SETHOLD`/`DSETHOLD` count the edges that break `:MEASure:TSETup`/`:MEASure:THOLd`.
+Setup and hold take source A as the data and B as the clock, as on the measurement page (the order of the stock setup/hold trigger, which names the data source `:TRIGger:SHOLd:DSRC` before the clock `CSRC`; the stock `:MEASure:ITEM` has no setup or hold item). `SETUP`/`HOLD` latch on rising clock edges, `FSETUP`/`FHOLD` on falling ones, and the `D` items on both, as a DDR strobe (DQS) does. A clock edge counts only when the data changed inside its own cycle: after the previous latching edge and within one typical edge spacing. Data that holds steady between strobe bursts adds no setup or hold. `SETHOLD`/`DSETHOLD` count the edges that break `:MEASure:TSETup`/`:MEASure:THOLd`.
 
 ### Catalogue rows
 

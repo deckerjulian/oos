@@ -6,6 +6,7 @@ use super::*;
 
 fn fresh() -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = crate::model::Layout::Minimal; // these tests check the Minimal bars
     u.relayout();
     for _ in 0..4 { u.step(0.05); }
     u

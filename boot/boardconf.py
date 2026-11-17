@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The values of a board for the scripts in boot/: rootfs/board/<OOS_BOARD>/etc/oos-board, plain KEY=value lines."""
 import os

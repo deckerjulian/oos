@@ -177,7 +177,7 @@ mod tests {
         ui.offline = false; ui.m.ch[0].on = true;
         let record = Record { t0: 10e-9, dt: 1e-9,
             ch: [(0..64).map(|i| i as f32).collect(), Vec::new(), Vec::new(), Vec::new()],
-            raw: None, la: None, partial: false, triggered: true };
+            raw: None, la: None, partial: false, triggered: true, pairs: false };
         ui.last[0] = Some(record);
         ui.m.meas_full_record = true; ui.m.deskew_ch[0] = 2e-9;
         let (_, origin) = ui.meas_analysis(WaveId::Ch(0)).unwrap();
@@ -195,7 +195,7 @@ mod tests {
         let a = reference(-250e-9, true).v;
         let b: Vec<f32> = (0..a.len()).map(|i| a[i.saturating_sub(3)]).collect();
         ui.last[0] = Some(Record { t0: -250e-9, dt: 1e-9, ch: [a.as_ref().clone(), b, Vec::new(), Vec::new()],
-            raw: None, la: None, partial: false, triggered: true });
+            raw: None, la: None, partial: false, triggered: true, pairs: false });
         ui.m.deskew_ch[2] = 9e-9;
         ui.select_workspace_source(WaveId::Ch(0));
         ui.auto_deskew();

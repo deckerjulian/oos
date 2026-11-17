@@ -175,6 +175,12 @@ So 0x10d0 bit15 selects "decimate the full-rate stream by N" (N = 1, 2, 4, 8, 10
 counts in a 62.5 MHz domain.
 Examples: 1 ch 1.25 G -> 0x8001; 2 ch 625 M -> 0x8001; 1 ch 312.5 M -> 0x8004; 1 ch 12.5 M -> 0x10d0 = 0, 0x10d8 = 5.
 
+The divider keeps one sample in N and filters nothing before (measured 2026-11-14): at 31.25 MSa/s a 20.3 MHz sine of
+1 Vpp shows as a 10.95 MHz sine of the full amplitude, and 0x1004 bit 2, bit 12 and 0x10dc (0, 1, 2, 0xffff) change
+neither the samples nor their spread. A signal above half the rate folds down at full size; only Peak (min/max over
+every sample of the full rate) shows what lies between the kept samples. OOS notes it in Acquire while the rate
+is below the ADC's.
+
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
 
 ### 2.1 Mask, ratio, lanes
@@ -185,6 +191,8 @@ Examples: 1 ch 1.25 G -> 0x8001; 2 ch 625 M -> 0x8001; 1 ch 312.5 M -> 0x8004; 1
 - The SPU has 4 lanes. The per-lane bit fields in 0x1004 (invert [19:16], BW filter [23:20]) and the sample delays use
   this assignment: ratio 1: the channel's bit in all 4 lanes; ratio 2: lanes 0,1 = lower channel, lanes 2,3 = higher
   channel (pairs 12, 13, 14, 23, 24, 34 for masks 3, 5, 9, 6, A, C); ratio 4: lane n = CH n+1.
+- The read-path gain and offset of the WPU (0x14c8.., `wpu.rs`) use another order with two channels: lanes 0, 2 =
+  lower channel, 1, 3 = higher (as the stock firmware writes them), the order of the interleaved words. Ratio 1 and 4 as above.
 
 ### 2.2 Multi-channel frame layout
 
@@ -232,7 +240,7 @@ Acquire mode numbers: 0 normal, 1 peak detect, 2 average, 3 high resolution (ass
 |---|---|---|
 | normal (0) | 0x1004 bits 0,1,3,12 cleared | |
 | peak (1) | 0x1004 bit1 = 1 | use normal (0) when rate == max rate: there is no decimation to detect over. Verified on the unit 2026-11-07: a 2.4 us pulse at 50 kSa/s shows in full, in normal mode not at all |
-| average (2) | 0x1004 bit3 = 1; 0x10b0 = count-1 (1 for count 1 or 2); 0x1148 = 640/ratio + 32; 0x404c = 10 instead of 5; segment size uses the average layout (1.4); 0x1110/0x1114 = average offset; 0x10b4 = 1, then 0 (average clear) on STOP/SINGLE | averaging runs in the FPGA memory (assumed, from the register set) |
+| average (2) | 0x1004 bit3 = 1; 0x10b0 = count-1 (1 for count 1 or 2); 0x1148 = 640/ratio + 32; 0x404c = 10 instead of 5; segment size uses the average layout (1.4); 0x1110/0x1114 = average offset; 0x10b4 = 1, then 0 (average clear) on STOP/SINGLE | averaging runs in the FPGA memory (assumed, from the register set; another project reports a read-modify-write in DDR tied to the frame read-out, not checked) |
 | high res (3) | no SPU mode bit | OOS does it in software: each screen point is the mean of the record's samples behind it, so it gains only where the record has more samples than the screen has points |
 | ultra (7) | own frame count, 524,288,000 / (memsel*ratio) | not analysed, not used by OOS |
 | average/sinc select | 0x1004 bit2 = (rate < maxrate/8) | set in all modes |

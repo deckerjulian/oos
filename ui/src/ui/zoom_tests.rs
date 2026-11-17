@@ -4,11 +4,14 @@ use super::*;
 
 fn mixed() -> Ui {
     let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    ui.m.layout = crate::model::Layout::Minimal; // the workspace gestures of the Minimal bars
     ui.m.run = RunState::Stop;
     ui.m.tscale = tscales().iter().position(|&s| s >= 1e-6).unwrap();
     ui.m.tfine = 1.0;
     ui.m.meas.clear();
     ui.m.meas2.clear();
+    // the workspace gestures of the compact bottom bar (Display > Bottom bar = Compact)
+    ui.m.bar_compact = true;
     ui.refs[0] = Some(RefWave { src: 0, color: 1, label: "Known record".into(),
         t0: -40e-6, dt: 20e-9, v: ((0..4000).map(|k| (k as f32 * 0.1).sin() * 0.4).collect::<Vec<_>>()).into(),
         vpd: 0.2, offset: 0.1, on: true });
@@ -31,6 +34,9 @@ fn control(ui: &mut Ui, name: &str) {
     tap(ui,rect);
 }
 fn stacked(ui: &mut Ui) {
+    // Overlay/Stacked sit in the compact bottom bar (Display > Bottom bar = Compact)
+    ui.m.bar_compact = true;
+    ui.relayout();
     let time = ui.card_layout().time;
     tap(ui,Rect::new(time.x-62,BOTTOM.y+3,58,30));
     assert!(ui.stacked());
@@ -176,7 +182,7 @@ fn vertical_detail_phosphor_and_reference_pixels_follow_the_same_transform_as_ma
     let area=ui.wave_area();let (scale,delay)=ui.view();let span=scale*HDIV;
     let values=vec![0.1;21];let t0=(delay-span*0.5) as f64;let dt=span as f64/20.0;
     let model=ui.zoom_display_model();let mut ph=Phosphor::new(area.w as usize,area.h as usize);
-    ph.draw_ex(0,&model,(scale,delay),t0,dt,&values,24,None);
+    ph.draw_ex(0,&model,(scale,delay),t0,dt,&values,24,None,false);
     let channel_y=ui.y_of_volts(0,0.1)-area.y;
     assert!(ph.map[0][channel_y as usize*ph.w..(channel_y as usize+1)*ph.w].iter().any(|&p|p>0));
     let reference=ui.refs[0].as_mut().unwrap();reference.t0=t0;reference.dt=dt;reference.v=values.into();
@@ -201,7 +207,9 @@ fn ac_source_has_no_absolute_trigger_marker_and_dc_drag_draws_thin_guide() {
         if coupling==Coupling::Dc {
             assert!(ui.touch.drag==Drag::Level);assert_ne!(ui.m.trig_level,0.0);
             let y=ui.trigger_level_y(ui.m.trig_level,false).unwrap();
-            assert!((200..W-200).all(|x|cv.px[(y*W+x) as usize]==ACCENT));
+            // a thin dashed line (6 on, 4 off, as after every level change)
+            let on=(200..W-200).filter(|&x|cv.px[(y*W+x) as usize]==ACCENT).count() as i32;
+            assert!(on>=(W-400)*5/10,"dashed guide: {on} of {} pixels",W-400);
             assert!((200..W-200).all(|x|cv.px[((y+1)*W+x) as usize]!=ACCENT),"guide is exactly one pixel thick");
         } else {
             assert!(ui.touch.drag!=Drag::Level);assert_eq!(ui.m.trig_level,0.0);
@@ -237,7 +245,7 @@ fn desktop_modifier_events_pan_and_control_zoom_time_without_vertical_changes() 
 
 #[test]
 fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
-    let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=0;
+    let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.layout=crate::model::Layout::Minimal;ui.m.mdepth=0;
     ui.m.ch[0].on=true;ui.m.ch[1].on=true;ui.m.ch[0].offset=-1.25;ui.m.ch[1].offset=-1.25;
     ui.m.tscale=tscales().iter().position(|&s|(s-200e-9).abs()<1e-14).unwrap();ui.m.delay=819.2e-9;
     ui.m.hist=Hist::Horizontal;
@@ -395,4 +403,18 @@ fn shift_wheel_and_vertical_controls_remain_vertical_while_ctrl_takes_time_zoom(
     ui.handle(Ev::Wheel{x,y,steps:1,ctrl:true,shift:true,alt:false});
     assert!(ui.view().0<time.0);assert_eq!((ui.zoom_vfactor,ui.zoom_vcenter),vertical);
     let time=ui.view();control(&mut ui,"V+");assert_eq!(ui.view(),time);assert!(ui.zoom_vfactor>vertical.0);
+}
+
+/// The zoom window drawn in the overview with the delay far beyond the record (SCPI :TIMebase:OFFSet takes any
+/// number): the edges were cast to i32 and offset by the overview's x, which overflowed (a panic in a debug build).
+#[test]
+fn zoom_window_far_off_the_overview_is_drawn_without_overflow() {
+    let mut ui=mixed();ui.set_zoom(true);
+    let mut cv=Canvas::new(W,H);
+    for delay in [1e30f32,-1e30,f32::MAX,f32::MIN] {
+        ui.m.delay=delay;ui.m.zdelay=0.0;
+        ui.render(&mut cv);
+        ui.m.delay=0.0;ui.m.zdelay=delay;
+        ui.render(&mut cv);
+    }
 }

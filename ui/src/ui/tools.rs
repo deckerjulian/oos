@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Measurement rows (single channel and channel pairs), the DVM and the counter, tracking cursors, saved masks and channel
@@ -114,6 +114,7 @@ impl MeasRow {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn measurement_count(&self) -> usize { self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() }
 
@@ -125,7 +126,7 @@ impl Ui {
         if let Some(&(kind, source)) = self.m.meas.get(index) { return format!("{} {}", self.wave_name(source), super::meascatalog::meas_display_name(kind)); }
         let index = index.saturating_sub(self.m.meas.len());
         if let Some(&(kind, a, b)) = self.m.meas2.get(index) {
-            return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), PAIRS[kind.min(PAIRS.len()-1)].0);
+            return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), meascatalog::pair_long_name(kind));
         }
         let Some(&(id, a, b, c, d)) = self.m.cat.get(index.saturating_sub(self.m.meas2.len())) else { return String::new() };
         self.catalog_source_label(id, [a,b,c,d])
@@ -151,16 +152,48 @@ impl Ui {
         self.mstat[index].push(value, current);
     }
 
+    /// While a large record of channel `c` is measured in the background with the settings of the last one: the value
+    /// of that one (`measure_channel_sources` keeps it), so a deep record measured raw once a second does not show "not
+    /// available" for the time the worker takes (unit 2026-11-15). NaN when nothing is computing or the settings
+    /// changed (`computing_like_last`).
+    fn meas_while_computing(&self, c: usize, k: Meas) -> f64 {
+        if !self.m.ch[c].on || !self.computing_like_last(c) || matches!(k, Meas::TVmax | Meas::TVmin) {
+            return f64::NAN;
+        }
+        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+            return f64::NAN;
+        }
+        self.meas_of(&self.ana[c], k)
+    }
+
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
     pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
         if let WaveId::Ch(channel) = id {
-            if Self::channel_basic_kind(k) { return self.channel_basic_reading(channel, k).unwrap_or(f64::NAN); }
+            // min/max pairs (Peak, a compressed deep record, roll and scan) hold no samples: Max, Min and Pk-pk come
+            // from them, the mean-type measurements are not available (PR #7)
+            if self.last[0].as_ref().is_some_and(|r| self.meas_on_pairs(r, channel)) {
+                // raw reads of a deep or compressed record (`meas.deep_raw`, `acq.compress`): the measurement stays
+                // that of the last raw record (`measure_rec` in the step's hold) between the pair records
+                let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+                if crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown) {
+                    // before the first raw record Max, Min and Pk-pk still come from the pairs
+                    let held = self.ana_get(channel, k);
+                    if held.is_finite() || crate::framestats::needs_samples(k) {
+                        return held;
+                    }
+                }
+                if crate::framestats::needs_samples(k) {
+                    return f64::NAN;
+                }
+            }
+            if Self::channel_basic_kind(k) { return self.channel_basic_reading(channel, k).unwrap_or_else(|| self.meas_while_computing(channel, k)); }
         }
         match self.meas_analysis(id) {
             Some((a, t0)) => {
                 let value = self.cached_measurement_reading(id, k, &a).unwrap_or_else(|| self.meas_of(&a, k));
                 if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
             }
+            None if matches!(id, WaveId::Ch(_)) => self.meas_while_computing(id.ch().unwrap_or(0), k),
             None => f64::NAN,
         }
     }
@@ -246,6 +279,7 @@ impl Ui {
 
     /// Extremum times use the physical waveform coordinate, including the gate's
     /// start. Keep DSP timestamps relative so durations and edge pairing do not change.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn meas_of_at(&self, a: &Analysis, k: Meas, t0: f64) -> f64 {
         let value = self.meas_of(a, k);
         if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
@@ -669,6 +703,7 @@ impl Ui {
     }
 
     /// Clear counter, from SCPI :COUNter:TOTalize:CLEar.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn counter_reset(&mut self) {
         self.counter_clear();
     }
@@ -680,13 +715,31 @@ impl Ui {
         self.cnt_hw = None;
     }
 
-    /// DVM reading of its source, volts. Offline mode reads the reference on the card.
-    pub fn dvm_value(&self) -> f64 {
+    /// The FPGA's DVM block (on the unit with `dvm.hw = on`, docs/fork/dvm.md): the channel it should measure, and its
+    /// latest reading.
+    pub(super) fn dvm_poll(&mut self) {
+        let m = &self.m;
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
+        if let Some(r) = self.src.hw_dvm(want) {
+            self.dvm_hw = r;
+        }
+    }
+
+    /// The DVM block's value of the source in the current mode, volts; None without a reading of this channel that the
+    /// decode took.
+    pub(super) fn dvm_hw_value(&self) -> Option<f64> {
+        let r = self.dvm_hw.filter(|r| r.ch == self.m.dvm_src && self.m.ch[r.ch].on)?;
+        Some(r.volts?[self.m.dvm_mode.min(2)])
+    }
+
+    /// The software DVM: the measurement of the records.
+    pub(super) fn dvm_sw_value(&self) -> f64 {
         let mode = match self.m.dvm_mode {
             0 => Meas::Vavg,
             1 => Meas::VrmsAc,
             _ => Meas::Vrms,
         };
+        // offline: the reference on the card
         if let Some(i) = self.offline_meter() {
             return self.meas_at(WaveId::Ref(i), mode);
         }
@@ -700,6 +753,50 @@ impl Ui {
     /// Counter reading: frequency, period, or the totalised edge count. NaN when that mode has nothing to show.
     pub fn counter_value(&self) -> f64 {
         self.counter_reading().unwrap_or(f64::NAN)
+    }
+
+    /// DVM reading of its source, volts: the DVM block's when it has one, else the software DVM (offline: the
+    /// reference on the card).
+    pub fn dvm_value(&self) -> f64 {
+        if self.offline_meter().is_some() {
+            return self.dvm_sw_value();
+        }
+        self.dvm_hw_value().unwrap_or_else(|| self.dvm_sw_value())
+    }
+
+    /// `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` (fork, unit debug): the DVM block reads lane n with one channel acquired.
+    pub fn dvm_lane_set(&mut self, lane: Option<u32>) {
+        self.dvm_lane = lane.map(|l| l & 3);
+    }
+
+    /// The forced lane, `AUTO` without one.
+    pub fn dvm_lane_text(&self) -> String {
+        self.dvm_lane.map_or("AUTO".into(), |l| l.to_string())
+    }
+
+    /// `:SYSTem:DEBug:DVM?` (fork): the DVM block's latest reading, raw, for the unit session (docs/fork/dvm.md), next to
+    /// the software DVM of the same source and mode. `off` without a reading.
+    pub fn dvm_debug_text(&self) -> String {
+        let sw = self.dvm_sw_value();
+        let Some(r) = self.dvm_hw else {
+            return format!("off,sw={:.6e}", sw);
+        };
+        let v = r.volts.map_or("none".to_string(), |v| format!("{:.6e};{:.6e};{:.6e}", v[0], v[1], v[2]));
+        format!(
+            "ch={},lane={},exp={},n={},cfg={:#010x},sum_lo={:#010x},sum_hi={:#010x},sq_lo={:#010x},sq_hi={:#010x},hw={},mode={},sw={:.6e}",
+            r.ch + 1,
+            r.lane,
+            r.exp,
+            r.n,
+            r.raw[0],
+            r.raw[1],
+            r.raw[2],
+            r.raw[3],
+            r.raw[4],
+            v,
+            self.m.dvm_mode.min(2),
+            sw
+        )
     }
 
     /// The strip row of DVM and counter: (label, value) pairs.
@@ -768,11 +865,13 @@ impl Ui {
         value.is_finite().then_some(value)
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn wave_at_ch(&self, c: usize, t: f64) -> Option<f32> {
         self.wave_at_source(WaveId::Ch(c), t)
     }
 
     /// Cursor A follows the selected workspace source.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
         self.wave_at_source(self.cursor_wave()?, t)
     }
@@ -983,15 +1082,6 @@ impl Ui {
         true
     }
 
-    pub(crate) fn mask_counts(&self) -> (u64, u64) {
-        (self.mask_pass, self.mask_fail)
-    }
-
-    pub(crate) fn mask_counts_reset(&mut self) {
-        self.mask_pass = 0;
-        self.mask_fail = 0;
-    }
-
     /// The channel the histogram reads: the measurement source when that channel is on, otherwise the first channel on.
     pub(crate) fn hist_source(&self) -> Option<usize> {
         self.hist_src()
@@ -1140,8 +1230,7 @@ impl Ui {
         self.mask_ref = Some(mf.v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_counts_reset();
         self.toast(&format!("Mask loaded from {}", crate::store::file_name(&p)));
     }
 
@@ -1247,6 +1336,15 @@ impl Ui {
         }
     }
 
+    /// Reference > Load file: a waveform file into the Slot row's reference. The desktop build asks with its file
+    /// dialog; the scope has none and takes the file from storage, as Import slot does.
+    pub(super) fn ref_load(&mut self) {
+        #[cfg(windows)]
+        self.request_waveform_into(self.ref_sel);
+        #[cfg(not(windows))]
+        self.ref_import();
+    }
+
     pub(super) fn ref_load_path(&mut self, path: &std::path::Path) {
         match self.ref_load_file(path) {
             Ok(()) => self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(path))),
@@ -1268,6 +1366,7 @@ impl Ui {
     }
 
     /// Whether the selected slot is drawn. None when it is empty.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn ref_shown(&self) -> Option<bool> {
         self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).map(|r| r.on)
     }
@@ -1388,6 +1487,18 @@ impl Ui {
 
     pub(crate) fn ref_clear_all(&mut self) {
         self.refs = std::array::from_fn(|_| None);
+        // readouts of the cleared slots go with them: an import adds Vpp, Freq, RMS and Rise of its first slot, and those
+        // rows stayed as "----" after the clear (unit 2026-11-16)
+        let is_ref = |w: &WaveId| matches!(w, WaveId::Ref(_));
+        self.m.meas.retain(|(_, w)| !is_ref(w));
+        self.m.meas2.retain(|(_, a, b)| !is_ref(a) && !is_ref(b));
+        if is_ref(&self.meas_src) {
+            self.meas_src = WaveId::Ch(0);
+        }
+        if is_ref(&self.meas_src_b) {
+            self.meas_src_b = WaveId::Ch(0);
+        }
+        self.ensure_meas_own();
         self.measure_refs();
         self.analyzer_update();
     }
@@ -1453,10 +1564,7 @@ impl Ui {
     }
 
     fn ref_load_file(&mut self, p: &std::path::Path) -> Result<(), String> {
-        if !p.is_file() {
-            return Err(format!("missing {}", crate::store::file_name(p)));
-        }
-        let bytes = std::fs::read(p).map_err(|_| format!("missing {}", crate::store::file_name(p)))?;
+        let bytes = crate::store::read_waveform_file(p)?;
         self.load_waveform_bytes(&bytes, &crate::store::file_name(p))
     }
     /// Name of a channel on its card: its label, or CHn.
@@ -1465,8 +1573,29 @@ impl Ui {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 fn nearest_ref_vdiv(want: f32) -> f32 {
     VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
+}
+
+#[cfg(test)]
+mod ref_clear_tests {
+    use super::*;
+
+    // Break it catches: the readouts an import adds for its slot staying as empty rows after Reference > Clear.
+    #[test]
+    fn clearing_the_references_takes_their_readouts_along() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let csv: String = (0..2000).map(|i| format!("{:e},{}\n", i as f64 * 1e-6, if (i / 100) % 2 == 0 { 1.0 } else { -1.0 })).collect();
+        ui.load_waveform_bytes_at(csv.as_bytes(), "r.csv", 1).unwrap();
+        assert!(ui.m.meas.iter().any(|(_, w)| *w == WaveId::Ref(1)), "the import adds readouts of its slot");
+        ui.m.meas2.push((0, WaveId::Ch(0), WaveId::Ref(1)));
+        let own: Vec<(Meas, WaveId)> = ui.m.meas.iter().filter(|(_, w)| !matches!(w, WaveId::Ref(_))).cloned().collect();
+        ui.ref_clear_all();
+        assert_eq!(ui.m.meas, own, "the channel readouts stay, the reference ones go");
+        assert!(ui.m.meas2.is_empty());
+        assert!(!matches!(ui.meas_src, WaveId::Ref(_)));
+    }
 }
 
 #[cfg(test)]

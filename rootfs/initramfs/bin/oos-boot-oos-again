@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Select OOS for the next boot. oos-update checks that recovery holds an image the loader takes and that no install or
 # rollback runs; a half-written recovery after a cut job stays unselected, so the next start is stock.

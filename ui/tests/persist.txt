@@ -1,11 +1,10 @@
 key ch4
+# CH1 off: with several channels on, the first press selects, the second opens its menu, the third switches off
 key ch1
 key ch1
-tap 769 20
-tap 568 114
-tap 568 114
-tap 568 114
-tap 568 114
-tap 988 70
+key ch1
+menu Display
+set Persistence = 1 s
+close
 frames 90
 shot $S/20-persist.ppm

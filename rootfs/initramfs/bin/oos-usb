@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # USB stick in the front port: mounted at /mnt/usb, every 2 s a look for a new or a pulled one. oos-ui saves screenshots
 # and CSV files to it while it is there (System > Storage) and syncs after each file, so a stick can be pulled when the

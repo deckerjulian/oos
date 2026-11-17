@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SIM generates fresh serial captures through one bounded worker. Immutable
@@ -119,6 +119,7 @@ const SIM_MEAS: [Meas; 12] = [
     Meas::PEdges,
 ];
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn sim_meas(slot: usize) -> Vec<(Meas, WaveId)> {
         SIM_MEAS.into_iter().map(|k| (k, WaveId::Ref(slot))).collect()
@@ -410,6 +411,7 @@ impl Ui {
     }
 
     /// Sample rate and length of the loaded SIM slot, when it is shown.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn sim_rate_depth(&self) -> Option<(f64, u64)> {
         let r = self.refs[self.m.sim_slot].as_ref()?;
         if !r.on || r.dt <= 0.0 {
@@ -1203,7 +1205,7 @@ mod tests {
         assert_eq!(n, 65_536);
         let rows = u.meas_rows();
         assert_eq!(rows.len(), 12);
-        for want in ["Vpp", "Freq", "Period", "Rise time", "Fall time", "+Duty", "Vamp", "Overshoot", "+Width", "-Width", "+Rate", "+Edges"] {
+        for want in ["Pk-pk", "Freq", "Period", "Rise", "Fall", "+Duty", "Amp", "Overshoot", "+Width", "-Width", "+Slew", "+Edges"] {
             let shown = super::meascatalog::display_of_key(want).unwrap_or(want);
             let row = rows.iter().find(|r| r.name == shown).unwrap_or_else(|| panic!("missing {want}"));
             assert!(!row.v.is_infinite(), "{want} {}", row.v);
@@ -1489,7 +1491,7 @@ mod tests {
                 u.m.set_trigger_wave(WaveId::Ref(1), true);
             } else if change == 6 {
                 u.m.trig_type = TrigType::Bus;
-                u.m.dec_proto = Proto::Uart;
+                u.m.dec_proto = Proto::UART;
                 u.m.trig_bus = BusWhat::Data;
                 u.m.trig_bus_val = 0x55;
             }
@@ -1576,28 +1578,5 @@ mod tests {
         let mut cv = crate::gfx::Canvas::new(W, H);
         u.render(&mut cv);
         cv
-    }
-
-    /// Left edge of the level that starts furthest right: the step in the record.
-    fn high_edge(cv: &crate::gfx::Canvas) -> i32 {
-        let col = super::super::REF_COLORS[0].1;
-        let mut best = -1;
-        for y in 0..cv.h {
-            let mut n = 0i32;
-            let mut minx = cv.w;
-            for x in 0..cv.w {
-                if cv.px[(y * cv.w + x) as usize] == col {
-                    n += 1;
-                    if x < minx {
-                        minx = x;
-                    }
-                }
-            }
-            if n > 80 && minx > best {
-                best = minx;
-            }
-        }
-        assert!(best >= 0, "no reference trace");
-        best
     }
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # OOS's own data partition (own calibration, setups, pictures) at /oos: the last 16 MiB of the stock `backup`
 # partition (where exactly: /etc/oos-board). Android does not use

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Bode plot with the built-in generator (S models, `Board::gen`) or an external generator on the LAN or the USB-A port
@@ -917,6 +917,35 @@ impl Ui {
     }
 }
 
+/// The Bode page: a frequency sweep of the generator (it runs on its own, not from a record).
+pub(super) struct BodePage;
+
+impl super::analysers::Analyser for BodePage {
+    fn view(&self) -> AView {
+        AView::Bode
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("bode", "Bode")
+    }
+
+    fn name(&self) -> &'static str {
+        "Bode plot"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Bode
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("BODE")
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_bode(cv);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,7 +985,7 @@ mod tests {
             })
             .collect();
         let sync: Vec<f32> = (0..n).map(|k| if (0.0..1e-3).contains(&(t0 + k as f64 * dt)) { 3.3 } else { 0.0 }).collect();
-        ui.last[0] = Some(Record { t0, dt, ch: [x, out, Vec::new(), sync], triggered: true, partial: false, raw: None, la: None });
+        ui.last[0] = Some(Record { t0, dt, ch: [x, out, Vec::new(), sync], triggered: true, partial: false, raw: None, la: None, pairs: false });
         ui.m.run = RunState::Stop;
         ui.bode_update();
         assert!(!ui.bode.running && !ui.bode.free);

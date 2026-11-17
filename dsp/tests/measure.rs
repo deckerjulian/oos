@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Measurements against signals with known values.
@@ -102,6 +102,23 @@ fn high_low_burst_outside_and_n_periods() {
 }
 
 #[test]
+fn high_and_low_time_ignore_noise_on_slow_edges() {
+    // trapezoid: 200-sample edges, 300-sample plateaus, 2 % noise. Above 90 %: 20 + 300 + 20 samples, below 10 % the same
+    let one: Vec<f32> = (0..200)
+        .map(|i| i as f32 / 200.0)
+        .chain(std::iter::repeat_n(1.0, 300))
+        .chain((0..200).map(|i| 1.0 - i as f32 / 200.0))
+        .chain(std::iter::repeat_n(0.0, 300))
+        .collect();
+    let mut v: Vec<f32> = one.iter().copied().cycle().take(20 * one.len()).collect();
+    add_noise(&mut v, 0.01, 5);
+    let a = analyze(&v, 1.0);
+    assert!(close(a.get(Meas::HighTime), 340.0, 0.03), "{}", a.get(Meas::HighTime));
+    assert!(close(a.get(Meas::LowTime), 340.0, 0.03), "{}", a.get(Meas::LowTime));
+    assert!(close(a.get(Meas::Outside), 340.0, 0.03), "{}", a.get(Meas::Outside));
+}
+
+#[test]
 fn cycle_levels_of_a_sine() {
     let dt = 1e-6;
     let v = sample(|t| 1.5 * (2.0 * std::f64::consts::PI * 1e3 * t).sin() + 0.5, 0.0, dt, 20_000);
@@ -156,6 +173,28 @@ fn est_ui_median_mode_and_linreg() {
     assert!(a.get(Meas::UiWtd).is_finite());
     assert!(a.get(Meas::PllUi).is_finite());
     assert!(a.get(Meas::PamSep).is_finite() || a.get(Meas::Pam0).is_finite());
+}
+
+#[test]
+fn ones_count_bits_not_samples() {
+    // NRZ, 10 samples per bit: alternating, and a pseudo-random pattern with runs of one to four bits
+    let nrz = |bits: &[bool]| -> Vec<f32> {
+        bits.iter().flat_map(|&b| std::iter::repeat_n(if b { 1.0 } else { 0.0 }, 10)).collect()
+    };
+    let alt: Vec<bool> = (0..100).map(|i| i % 2 == 0).collect();
+    assert_eq!(analyze(&nrz(&alt), 1e-9).get(Meas::Bits), 50.0);
+    let mut x = 11u32;
+    let mut bits = Vec::new();
+    while bits.len() < 500 {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        let run = 1 + (x >> 28) as usize % 4;
+        let level = bits.last().is_none_or(|&b: &bool| !b);
+        bits.extend(std::iter::repeat_n(level, run));
+    }
+    let mut v = nrz(&bits);
+    add_noise(&mut v, 0.02, 9);
+    let a = analyze(&v, 1e-9);
+    assert_eq!(a.get(Meas::Bits), bits.iter().filter(|&&b| b).count() as f64, "UI {}", a.get(Meas::EstUi));
 }
 
 #[test]

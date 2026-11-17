@@ -3,7 +3,8 @@ name: Problem report
 about: Something does not work on a scope or on the host
 ---
 
-**Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`.**
+**Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`, and no code, listings
+or files from the stock or a modified firmware. Describe what the scope does.**
 
 **Model:** (e.g. DHO924S)
 

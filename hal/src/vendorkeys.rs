@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The keys of `vendor.bin`, found at run time in the stock software of the unit itself: this source holds none. A
 //! candidate counts only if the unit's own file decodes with it: checksum for the outer key, a known model name for the

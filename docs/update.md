@@ -145,10 +145,11 @@ starts with the UTC build time; an older build than the installed one is refused
   key) is added as another line; a key is retired by an update that no longer lists it.
 - Ed25519 and SHA-2 are implemented in the tree (no crates beyond libc): RFC 8032 test vectors, FIPS examples, and a
   cross-check against Python `cryptography` in both directions (Rust signs / Python verifies and the reverse).
-- The signature guards the install path only. The root shell requires a provisioned SSH key ([ssh.md](ssh.md)); SCPI
-  and the web remote retain their existing unauthenticated bench-LAN interfaces. With the community key trusted, anyone on the LAN can also sign and
-  install a package. What the signature buys then: a damaged package, or one not made for OOS, is never installed by
-  the web page or the GUI. Keeping foreign packages out takes a build without the community key.
+- The signature guards the install path only. The root shell over SSH takes the scope's password or a trusted key
+  ([network.md](network.md) 7); SCPI and the web remote retain their existing unauthenticated bench-LAN interfaces.
+  With the community key trusted, anyone on the LAN can also sign and install a package. What the signature buys then:
+  a damaged package, or one not made for OOS, is never installed by the web page or the GUI. Keeping foreign packages
+  out takes a build without the community key.
 
 ## Use
 
@@ -231,9 +232,12 @@ the image on trial is the one running. Images whose load addresses or sizes are 
 
 ## Web upload limits (ui/src/http.rs)
 
-At most 8 connections; bodies up to 70 MiB only for `POST /update` (1 MiB elsewhere), an announced larger
-`Content-Length` gets 413 at once; 10 s idle and 120 s per request. The page runs `oos-update status --quick`
-(headers only, no hashing of 2 x 31 MB).
+At most 8 connections; bodies up to 70 MiB only for `POST /update` (128 MiB for `POST /waveform`, 1 MiB elsewhere),
+an announced larger `Content-Length` gets 413 at once; 10 s idle and 120 s per request. A body over 1 MiB is taken one
+at a time: while one is being read, the next gets 503 when its head is in. `POST /update` and `/mcp` from outside
+`net.allow` get 403 when the head is in, before the body is read. A `POST /waveform` is parsed on a thread of its own
+and put into its slot by the frame loop, which answers then; while one is parsed, another gets 503. The page runs
+`oos-update status --quick` (headers only, no hashing of 2 x 31 MB).
 
 ## To check on the unit
 

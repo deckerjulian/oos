@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The retained acquisition is independent of the screen's interpolated points.
@@ -30,7 +30,7 @@ impl DemoWorker {
                     let frame = Arc::new(crate::board::Frame { seq: job.seed, dt: rec.dt,
                         pre: ti.round().clamp(0.0, points.saturating_sub(1) as f64) as usize,
                         ch: std::mem::take(&mut rec.ch), roll: false, envelope: false, scan: false, partial: false,
-                        acq: (1.0 / rec.dt, points), stamp: job.model.hw_stamp, basic, la: rec.la.take() });
+                        acq: (1.0 / rec.dt, points), stamp: job.model.hw_stamp, basic, la: rec.la.take(), fixed_ti: None, hw_avg: false });
                     let window = job.model.time_per_div() as f64 * HDIV as f64;
                     crate::board::resample_record(&frame, &job.model, 3600, window,
                         job.model.delay as f64 - window * 0.5, ti, rec.triggered)
@@ -43,6 +43,7 @@ impl DemoWorker {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn cancel_demo_acquisition(&mut self) {
         if let Some(worker) = self.capture_views.borrow_mut().demo.as_mut() {
@@ -77,15 +78,18 @@ impl Ui {
         }
         None
     }
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn is_basic_frame_row(&self, row: usize) -> bool {
         self.m.meas.get(row).is_some_and(|(kind, source)| matches!(source, WaveId::Ch(_))
             && matches!(kind, Meas::Vmax | Meas::Vmin | Meas::Vpp | Meas::Vavg | Meas::Vrms | Meas::StdDev))
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn accumulate_basic_values(&mut self, channel: usize, values: &[f32]) {
         self.accumulate_basic_summary(channel, crate::board::BasicStats::of(values));
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn accumulate_basic_summary(&mut self, channel: usize, values: crate::board::BasicStats) {
         if !values.valid { return; }
         self.mstat.resize(self.measurement_count(), MStat::default());
@@ -99,6 +103,7 @@ impl Ui {
         }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn accumulate_record_basic(&mut self, record: &Record) {
         for c in 0..NCH {
             if !self.m.ch[c].on || !self.m.meas.iter().any(|&(k, s)| s == WaveId::Ch(c)
@@ -112,6 +117,7 @@ impl Ui {
         }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn accumulate_fast_basic(&mut self, frame: &crate::board::Frame, trigger: f64) {
         let origin = -trigger * frame.dt;
         for c in 0..NCH {
@@ -180,7 +186,7 @@ mod tests {
         data[1234] = 0.25;
         data[88_888] = 0.75;
         let frame = Arc::new(crate::board::Frame { seq: 3, dt: 1e-9, pre: 50_000, ch: [data, Vec::new(), Vec::new(), Vec::new()],
-            roll: false, scan: false, partial: false, envelope: false, acq: (0.0, 0), stamp: 0, basic: Default::default(), la: None });
+            roll: false, scan: false, partial: false, envelope: false, acq: (0.0, 0), stamp: 0, basic: Default::default(), la: None, fixed_ti: None, hw_avg: false });
         ui.last[0] = Some(crate::board::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6));
         ui
     }

@@ -10,7 +10,7 @@ Part of the [SCPI reference](README.md).
 
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `:SAVE:DESTination` | Set / Query | `AUTO`, `USB`, `DESKtop` | `AUTO` | Storage > Save to | OOS extension |
+| `:SAVE:DESTination` | Set / Query | `AUTO`, `USB`, `DESKtop` (the local storage directory) | `AUTO` | Storage > Save to | OOS extension |
 | `:SAVE:SLOT` | Set / Query | Setup slot 1 to 9 | `1` | Storage > Setup slot | OOS extension |
 | `:SAVE:SETup` | Action | `["path"]` Save the current slot, or `"path"`. | - | Storage > Save setup | Rigol-compatible |
 | `:LOAD:SETup` | Action | `["path"]` Recall the current slot, or `"path"`. | - | Storage > Recall setup | Rigol-compatible |

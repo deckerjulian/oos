@@ -28,9 +28,9 @@ fn p(header: &'static str, item: Item, group: &'static str, pre: fn(&mut Ui)) ->
 fn trig(t: TrigType, u: &mut Ui) { u.set_trig_type(t); }
 fn spectrum_on(u: &mut Ui) { u.m.view = AView::Spectrum; }
 fn eye_on(u: &mut Ui) { u.m.view = AView::Eye; }
-fn uart(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::Uart; }
-fn spi(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::Spi; }
-fn can(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::Can; }
+fn uart(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::UART; }
+fn spi(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::SPI; }
+fn can(u: &mut Ui) { u.m.dec_on = true; u.m.dec_proto = Proto::CAN; }
 fn ch2(u: &mut Ui) { u.m.ch[1].on = true; }
 fn fast_timebase(u: &mut Ui) {
     for i in 0..tscales().len() {
@@ -312,7 +312,6 @@ pub(super) fn map() -> Vec<Row> {
         r(":SAVE:DESTination", Item::StoreDest, "Storage"),
         r(":SAVE:SLOT", Item::StoreSlot, "Storage"),
         // ---- system
-        r(":SYSTem:LOCK", Item::TouchLock, "System"),
         r(":SYSTem:GRAPhics", Item::Graphics, "System"),
         r(":SYSTem:QUICk", Item::QuickAct, "System"),
         r(":SYSTem:TZONe", Item::TimeZone, "Date and time"),

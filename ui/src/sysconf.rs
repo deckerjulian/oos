@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Settings of the scope itself, not of a measurement: `/oos/system.conf`, `key = value` lines. A saved or recalled
@@ -7,13 +7,16 @@
 //! ```text
 //! ntp = off                 # System > Date and time > Time from NTP
 //! ntp.server = dhcp        # dhcp: the server of the DHCP lease (option 42), else pool.ntp.org
-//! tz = CET-1CEST,M3.5.0,M10.5.0/3
+//! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
+//! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet,
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
 //!                           # remote.mdns)
-//! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
+//! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
+//! net.name = dho924s-123456 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
+//! net.allow = 192.168.1.0/24 # System > Network > Remote services > Allowed (netacl.rs; rcS reads it, docs/network.md 6)
 //! ```
 
 use crate::clock::Tz;
@@ -22,6 +25,9 @@ use std::path::{Path, PathBuf};
 
 /// On OOS's own data partition.
 pub const PATH: &str = "/oos/system.conf";
+/// The defaults of an image built for one unit (boot/build-dev-image.sh `OOS_UNIT`, docs/network.md 6); rcS reads
+/// it too (`oos-conf`).
+pub const IMAGE_PATH: &str = "/etc/oos/system.conf";
 /// Without the data partition: in RAM, lost at power-off.
 pub const TMP_PATH: &str = "/tmp/oos-system.conf";
 /// `ntp.server = dhcp`: the NTP server the DHCP lease names (option 42, RFC 2132), else `FALLBACK_SERVER`.
@@ -34,6 +40,8 @@ pub const DHCP_NTP_FILE: &str = "/tmp/oos-dhcp-ntp.";
 /// The interfaces whose lease counts, in this order.
 pub const DHCP_IFACES: [&str; 2] = ["eth0", "wlan0"];
 pub const DEFAULT_TZ: &str = "UTC0";
+/// The POSIX zone strings of a lease (DHCP option 100, RFC 4833; `udhcpc.script`): `<this><interface>`.
+pub const DHCP_TZ_FILE: &str = "/tmp/oos-dhcp-tz.";
 /// Longest server name taken.
 pub const SERVER_MAX: usize = 63;
 
@@ -42,16 +50,22 @@ pub struct SysConf {
     /// set the clock from an NTP server once a network link is up (off: OOS sends nothing to the outside)
     pub ntp: bool,
     pub ntp_server: String,
-    /// POSIX time zone string (clock.rs)
+    /// POSIX time zone string (clock.rs), or `dhcp`: the lease's (`tz_of`)
     pub tz: String,
+    /// with `tz = dhcp`: the zone while no lease names a valid one
+    pub tz_fallback: String,
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
     /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
-    /// VXI-11 (111 and its core port), the telnet shell (23, read by rcS too)
+    /// VXI-11 (111 and its core port), SSH (22, `/bin/oos-ssh` reads it too; off by default, docs/network.md 7)
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
+    /// the telnet shell (23, read by rcS too): on by default as before, a shell without password
     pub remote_telnet: bool,
+    pub remote_ssh: bool,
+    /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
+    pub ssh_password: bool,
     /// the mDNS responder (mdns.rs): `<net_name>.local` and the services for computers that browse
     pub remote_mdns: bool,
     /// the scope's name on the network (`mdns::name_ok`): host name, sent to DHCP, `<name>.local`. Empty: not set yet,
@@ -62,7 +76,14 @@ pub struct SysConf {
     pub gpu: bool,
     /// Display > Backlight, percent (ui/backlight.rs)
     pub backlight: u32,
-    /// lines this version does not know
+    /// System > Features: what is left out of the menus and pages (ids of `ui::features::features()`, `features.off`), and
+    /// the decoders left out (protocol keys, `decoders.off`); nothing is left out by default
+    pub features_off: Vec<String>,
+    pub decoders_off: Vec<String>,
+    /// `net.allow` of the image defaults (`IMAGE_PATH`): in force while the settings file has no line of its own; never
+    /// written to the settings file (`net_allow`)
+    image_net_allow: Option<String>,
+    /// lines this version does not know, and the `net.allow` line (kept as it was written, `set_net_allow`)
     extra: Vec<String>,
 }
 
@@ -72,15 +93,21 @@ impl Default for SysConf {
             ntp: false,
             ntp_server: DEFAULT_SERVER.into(),
             tz: DEFAULT_TZ.into(),
+            tz_fallback: DEFAULT_TZ.into(),
             eth_retry_10m: true,
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
             remote_telnet: true,
+            remote_ssh: false,
+            ssh_password: true,
             remote_mdns: true,
             net_name: String::new(),
             gpu: true,
             backlight: 100,
+            features_off: Vec::new(),
+            decoders_off: Vec::new(),
+            image_net_allow: None,
             extra: Vec::new(),
         }
     }
@@ -91,7 +118,7 @@ pub fn server_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= SERVER_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c)) && !s.starts_with(['-', '.'])
 }
 
-/// Where the server asked came from.
+/// Where the server asked (or the zone in use) came from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NtpOrigin {
     /// the setting names it
@@ -117,6 +144,21 @@ pub fn ntp_server(setting: &str, lease: impl Fn(&str) -> Option<String>) -> (Str
     (FALLBACK_SERVER.to_string(), NtpOrigin::NoDhcp)
 }
 
+/// The zone for the settings `tz` and `tz.fallback`: the setting itself, or with `dhcp` the first string of the lease on
+/// eth0, else on wlan0, that is a valid POSIX zone (`Tz::parse`: the string comes from the network), else the fallback.
+/// `lease` gives the text of an interface's file (`DHCP_TZ_FILE`), None without one.
+pub fn tz_of(setting: &str, fallback: &str, lease: impl Fn(&str) -> Option<String>) -> (String, NtpOrigin) {
+    if setting != DHCP {
+        return (setting.to_string(), NtpOrigin::Set);
+    }
+    for i in DHCP_IFACES {
+        if let Some(s) = lease(i).map(|t| t.trim().to_string()).filter(|s| Tz::parse(s).is_ok()) {
+            return (s, NtpOrigin::Dhcp(i));
+        }
+    }
+    (fallback.to_string(), NtpOrigin::NoDhcp)
+}
+
 fn on_off(v: &str) -> Option<bool> {
     match v {
         "on" | "true" | "1" => Some(true),
@@ -136,7 +178,12 @@ fn word(b: bool) -> &'static str {
 impl SysConf {
     /// The settings of a file's text, and what was wrong in it (those keys keep their defaults).
     pub fn parse(text: &str) -> (SysConf, Vec<String>) {
-        let mut c = SysConf::default();
+        SysConf::parse_over(SysConf::default(), text)
+    }
+
+    /// `parse` with the defaults of `base` instead of the built-in ones (the image defaults, `IMAGE_PATH`).
+    pub fn parse_over(base: SysConf, text: &str) -> (SysConf, Vec<String>) {
+        let mut c = base;
         let mut bad = Vec::new();
         for line in text.lines() {
             let l = line.trim();
@@ -155,12 +202,19 @@ impl SysConf {
                     true
                 }
                 "ntp.server" => server_ok(v).then(|| c.ntp_server = v.into()).is_some(),
+                "tz" if v.eq_ignore_ascii_case(DHCP) => {
+                    c.tz = DHCP.into();
+                    true
+                }
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
+                "tz.fallback" => Tz::parse(v).is_ok().then(|| c.tz_fallback = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
                 "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
+                "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
                 "net.name" => {
                     let n = v.to_ascii_lowercase();
@@ -174,6 +228,14 @@ impl SysConf {
                     _ => false,
                 },
                 "backlight" => v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some(),
+                "features.off" => {
+                    c.features_off = v.split_whitespace().map(str::to_string).collect();
+                    true
+                }
+                "decoders.off" => {
+                    c.decoders_off = v.split_whitespace().map(str::to_string).collect();
+                    true
+                }
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -191,17 +253,28 @@ impl SysConf {
         s.push_str(&format!("ntp = {}\n", word(self.ntp)));
         s.push_str(&format!("ntp.server = {}\n", self.ntp_server));
         s.push_str(&format!("tz = {}\n", self.tz));
+        if self.tz_fallback != DEFAULT_TZ {
+            s.push_str(&format!("tz.fallback = {}\n", self.tz_fallback));
+        }
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
         s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
+        s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
+        s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
         if !self.net_name.is_empty() {
             s.push_str(&format!("net.name = {}\n", self.net_name));
         }
         s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
         s.push_str(&format!("backlight = {}\n", self.backlight));
+        if !self.features_off.is_empty() {
+            s.push_str(&format!("features.off = {}\n", self.features_off.join(" ")));
+        }
+        if !self.decoders_off.is_empty() {
+            s.push_str(&format!("decoders.off = {}\n", self.decoders_off.join(" ")));
+        }
         for l in &self.extra {
             s.push_str(l);
             s.push('\n');
@@ -209,16 +282,58 @@ impl SysConf {
         s
     }
 
-    /// The time zone (UTC if the string is not one).
+    /// The time zone without a lease: the setting, with `dhcp` the fallback (UTC if the string is not one).
     pub fn zone(&self) -> Tz {
-        Tz::parse(&self.tz).unwrap_or_else(|_| Tz::utc())
+        let s = if self.tz == DHCP { &self.tz_fallback } else { &self.tz };
+        Tz::parse(s).unwrap_or_else(|_| Tz::utc())
     }
 
-    /// From a file; a missing one gives the defaults. Problems go to the log.
+    /// The defaults of an image built for one unit: the known keys of `image` (`IMAGE_PATH`); its other lines
+    /// (`net.allow`, `eth.mac`: rcS and `netacl` read them there) are not copied into the settings file.
+    pub fn image_defaults(image: &str) -> (SysConf, Vec<String>) {
+        let (mut c, bad) = SysConf::parse(image);
+        c.extra.clear();
+        c.image_net_allow = crate::netacl::value(image, "net.allow").map(str::to_string);
+        (c, bad)
+    }
+
+    /// `net.allow` as rcS and `netacl` read it: the settings file's line (the last one, also an empty one), else the
+    /// image default, else empty (no list).
+    pub fn net_allow(&self) -> String {
+        let own = self.extra.iter().filter_map(|l| crate::netacl::value(l, "net.allow")).last();
+        own.or(self.image_net_allow.as_deref()).unwrap_or("").to_string()
+    }
+
+    /// Sets the settings file's `net.allow` line (a value `netacl::canonical` took); None removes it, so the image
+    /// default applies again.
+    pub fn set_net_allow(&mut self, v: Option<&str>) {
+        self.extra.retain(|l| crate::netacl::value(l, "net.allow").is_none());
+        if let Some(v) = v {
+            self.extra.push(format!("net.allow = {}", v));
+        }
+    }
+
+    /// From a file over the image defaults (`IMAGE_PATH`, none on most images); a missing file gives the defaults.
+    /// Problems go to the log.
     pub fn load(path: &Path) -> SysConf {
+        let base = match std::fs::read_to_string(IMAGE_PATH) {
+            Ok(t) => {
+                let (c, bad) = SysConf::image_defaults(&t);
+                for e in bad {
+                    eprintln!("oos-ui: {}: {}", IMAGE_PATH, e);
+                }
+                c
+            }
+            Err(_) => SysConf::default(),
+        };
+        SysConf::load_over(base, path)
+    }
+
+    /// `load` with the given defaults.
+    pub fn load_over(base: SysConf, path: &Path) -> SysConf {
         match std::fs::read(path) {
             Ok(b) => {
-                let (c, bad) = SysConf::parse(&String::from_utf8_lossy(&b));
+                let (c, bad) = SysConf::parse_over(base, &String::from_utf8_lossy(&b));
                 for e in bad {
                     eprintln!("oos-ui: {}: {}", path.display(), e);
                 }
@@ -228,7 +343,7 @@ impl SysConf {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     eprintln!("oos-ui: {}: {}", path.display(), e);
                 }
-                SysConf::default()
+                base
             }
         }
     }
@@ -251,6 +366,18 @@ impl SysConf {
     }
 }
 
+/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
+/// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
+/// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
+pub fn fork_text() -> String {
+    fork_text_of(&std::fs::read_to_string(default_path()).unwrap_or_default(), &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default())
+}
+
+/// `fork_text` from the two files' text.
+pub fn fork_text_of(settings: &str, image: &str) -> String {
+    format!("{}\n{}", settings, image)
+}
+
 /// `/oos/system.conf` when the data partition is there (it has `/oos/setups`), else the file in RAM.
 pub fn default_path() -> PathBuf {
     if Path::new("/oos/setups").is_dir() {
@@ -262,6 +389,18 @@ pub fn default_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    // Break it catches: a fork key (acq.pipeline, perf.place, acq.prearm) that only /oos/system.conf can set, so the
+    // unit image's defaults (/etc/oos/system.conf) do nothing; or an image default that beats the user's setting
+    #[test]
+    fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
+        let image = "acq.pipeline = batch\nperf.place = on\n";
+        let v = |settings: &str, k: &str| crate::drawpipe::conf_value(None, &super::fork_text_of(settings, image), k);
+        assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
+        assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
+        assert_eq!(v("acq.pipeline =\n", "acq.pipeline").as_deref(), Some(""), "an empty value in the settings wins too");
+        assert_eq!(v("", "acq.prearm"), None);
+    }
     use super::*;
 
     #[test]
@@ -271,6 +410,8 @@ mod tests {
         assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
+        // no shell on the network unless an image or the user switches SSH on
+        assert!(!c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
     }
 
@@ -281,7 +422,7 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
-        (c.remote_web, c.remote_telnet, c.remote_mdns) = (false, false, false);
+        (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, false, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -351,6 +492,36 @@ mod tests {
         assert_eq!(ntp_server(DHCP, skip).0, "172.16.0.9");
     }
 
+    // option 100 comes from the network: only a valid POSIX zone of at most 60 characters is taken
+    #[test]
+    fn dhcp_zone_from_the_lease_or_the_fallback() {
+        let (c, bad) = SysConf::parse("tz = DHCP\ntz.fallback = CET-1CEST,M3.5.0,M10.5.0/3\n");
+        assert!(bad.is_empty(), "{:?}", bad);
+        assert_eq!((c.tz.as_str(), c.tz_fallback.as_str()), (DHCP, "CET-1CEST,M3.5.0,M10.5.0/3"));
+        assert!(c.text().contains("\ntz = dhcp\ntz.fallback = CET-1CEST,M3.5.0,M10.5.0/3\n"));
+        assert_eq!(SysConf::parse(&c.text()).0, c);
+        // without a lease the fallback is the zone, also for `zone()`
+        assert_eq!(c.zone(), Tz::parse("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
+        assert!(!SysConf::default().text().contains("tz.fallback"), "the default is not written");
+        let (_, bad) = SysConf::parse("tz.fallback = dhcp\n");
+        assert_eq!(bad.len(), 1, "the fallback is a zone, not dhcp");
+        let fb = "CET-1CEST,M3.5.0,M10.5.0/3";
+        let none = |_: &str| None;
+        assert_eq!(tz_of("JST-9", fb, |_| Some("EST5".into())), ("JST-9".into(), NtpOrigin::Set));
+        assert_eq!(tz_of(DHCP, fb, none), (fb.into(), NtpOrigin::NoDhcp));
+        let eth = |i: &str| (i == "eth0").then(|| "EST5EDT,M3.2.0,M11.1.0\n".to_string());
+        assert_eq!(tz_of(DHCP, fb, eth), ("EST5EDT,M3.2.0,M11.1.0".into(), NtpOrigin::Dhcp("eth0")));
+        let wlan = |i: &str| (i == "wlan0").then(|| "JST-9".to_string());
+        assert_eq!(tz_of(DHCP, fb, wlan), ("JST-9".into(), NtpOrigin::Dhcp("wlan0")));
+        // what a server must not get through: junk, shell text, a name of the tz database, too long; eth0's bad string
+        // falls through to wlan0
+        for junk in ["", "Europe/Amsterdam", "CET-1;reboot", "CET-1\nntp = off", "$(reboot)", &format!("<{}>-1", "A".repeat(60)), "CET-1CEST,M13.5.0,M10.5.0/3", "\u{e9}T-1"] {
+            assert_eq!(tz_of(DHCP, fb, |_| Some(junk.to_string())), (fb.into(), NtpOrigin::NoDhcp), "{:?}", junk);
+        }
+        let both = |i: &str| Some(if i == "eth0" { "nonsense" } else { "JST-9" }.to_string());
+        assert_eq!(tz_of(DHCP, fb, both), ("JST-9".into(), NtpOrigin::Dhcp("wlan0")));
+    }
+
     #[test]
     fn saved_and_loaded() {
         let dir = std::env::temp_dir().join(format!("oos-sysconf-{}", std::process::id()));
@@ -365,5 +536,62 @@ mod tests {
         assert_eq!(SysConf::load(&p), c);
         assert!(!dir.join("system.conf.new").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // an image built for one unit (`OOS_UNIT`, /etc/oos/system.conf): clock from NTP, server and zone of the DHCP
+    // lease (CET without one) unless the settings name them
+    #[test]
+    fn unit_image_takes_the_time_from_the_dhcp_server() {
+        let (base, bad) = SysConf::image_defaults("net.allow = 192.0.2.0/24\nremote.ssh = on\nntp = on\ntz = dhcp\ntz.fallback = CET-1CEST,M3.5.0,M10.5.0/3\n");
+        assert!(bad.is_empty(), "{:?}", bad);
+        assert!(base.ntp && base.tz == DHCP && base.tz_fallback == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP);
+        assert_eq!(base.zone(), Tz::parse("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
+        let lease = |i: &str| (i == "eth0").then(|| "192.0.2.1".to_string());
+        let (fresh, _) = SysConf::parse_over(base.clone(), "");
+        assert_eq!(ntp_server(&fresh.ntp_server, lease), ("192.0.2.1".into(), NtpOrigin::Dhcp("eth0")));
+        let (user, _) = SysConf::parse_over(base, "ntp.server = pool.ntp.org\nremote.telnet = on\n");
+        assert_eq!(ntp_server(&user.ntp_server, lease), ("pool.ntp.org".into(), NtpOrigin::Set));
+    }
+
+    #[test]
+    fn image_defaults_under_the_settings() {
+        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.ssh = on\neth.mac = 02:00:00:00:00:01\n";
+        let (base, bad) = SysConf::image_defaults(image);
+        assert!(bad.is_empty() && base.remote_ssh && base.ssh_password && base.remote_web);
+        // the unit's own keys stay in the image file, not in the settings written later
+        assert!(!base.text().contains("net.allow") && !base.text().contains("eth.mac"));
+        let (c, _) = SysConf::parse_over(base.clone(), "ntp = on\n");
+        assert!(c.ntp && c.remote_ssh);
+        let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
+        assert!(!c.remote_ssh && !c.ssh_password);
+        // telnet and SSH are separate switches: telnet stays on by default, SSH off
+        let (c, bad) = SysConf::parse("remote.telnet = off\n");
+        assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
+        assert!(SysConf::default().remote_telnet);
+    }
+
+    // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's
+    // copied into the settings, an empty line not winning, a second line left behind)
+    #[test]
+    fn net_allow_from_the_settings_or_the_image() {
+        assert_eq!(SysConf::default().net_allow(), "");
+        let (base, _) = SysConf::image_defaults("net.allow = 192.0.2.0/24\n");
+        assert_eq!(base.net_allow(), "192.0.2.0/24");
+        assert!(!base.text().contains("net.allow"), "the image's list stays in the image");
+        let (mut c, bad) = SysConf::parse_over(base.clone(), "ntp = on\nnet.allow = 10.0.0.0/8 # lab\n");
+        assert!(bad.is_empty());
+        assert_eq!(c.net_allow(), "10.0.0.0/8");
+        assert!(c.text().contains("\nnet.allow = 10.0.0.0/8 # lab\n"), "a line by hand stays as it was");
+        c.set_net_allow(Some("192.168.1.0/24"));
+        assert_eq!(c.net_allow(), "192.168.1.0/24");
+        assert_eq!(c.text().matches("net.allow").count(), 1);
+        let (back, _) = SysConf::parse_over(base.clone(), &c.text());
+        assert_eq!(back.net_allow(), "192.168.1.0/24");
+        assert_eq!(crate::netacl::value(&c.text(), "net.allow"), Some("192.168.1.0/24"));
+        c.set_net_allow(Some(""));
+        assert_eq!(c.net_allow(), "", "an empty line wins over the image, as in oos-conf");
+        c.set_net_allow(None);
+        assert_eq!(c.net_allow(), "192.0.2.0/24");
+        assert!(!c.text().contains("net.allow"));
     }
 }

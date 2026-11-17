@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: drm/rockchip: logo: do not read modes for a route without a clock
 
 setup_initial_state() fills the connector's mode list to find the mode the

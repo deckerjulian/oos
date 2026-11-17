@@ -1,6 +1,6 @@
 //! Batch 18: the UX review of Studio. One test per item that can be tested. OOS_SHOTS=<dir> writes pictures (b18-*).
 use super::dock::VKind;
-use super::meascatalog::Cat;
+#[allow(unused_imports)] use super::meascatalog::Cat;
 use super::studio::StudioView;
 use super::*;
 
@@ -157,11 +157,11 @@ fn view_add_panel_always_opens_the_hub() {
 
 #[test]
 fn the_info_card_has_a_line_of_its_own_for_maximum() {
-    let max = super::meascatalog::cat_info(Cat::Maximum).how;
-    let min = super::meascatalog::cat_info(Cat::Minimum).how;
+    let max = super::meascatalog::cat_info(super::meascatalog::cat_from(super::meascatalog::cat::Maximum).unwrap()).how;
+    let min = super::meascatalog::cat_info(super::meascatalog::cat_from(super::meascatalog::cat::Minimum).unwrap()).how;
     assert!(max.contains("highest sample") && !max.contains("Takes the top and base levels"), "{max}");
     assert_ne!(max, min);
-    for c in [Cat::Amplitude, Cat::Rise, Cat::Period, Cat::PosWidth, Cat::PosOvershoot, Cat::Delay, Cat::Phase] {
+    for c in [super::meascatalog::cat_from(super::meascatalog::cat::Amplitude).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::Rise).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::Period).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::PosWidth).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::PosOvershoot).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::Delay).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::Phase).unwrap()] {
         assert!(super::meascatalog::cat_info(c).how.len() > 40);
     }
 }

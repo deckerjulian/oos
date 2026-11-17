@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Self-calibration page (System > Self-cal): channels, AFE zero on/off, start (pressed twice: disconnect all inputs
@@ -203,7 +203,7 @@ impl Ui {
         let f = self.fonts();
         let txt = format!("Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)", 100.0 * d as f64 / t.max(1) as f64, s);
         let r = Rect::new(a.x + 20, a.y + a.h / 2 - 20, a.w - 40, 40);
-        cv.round(r, 6, rgb(0x30, 0x22, 0x08), 240);
+        cv.round(r, 6, CAL_BANNER, 240);
         let bar = Rect::new(r.x, r.y + r.h - 4, (r.w as f64 * d as f64 / t.max(1) as f64) as i32, 4);
         cv.fill(bar, ACCENT);
         cv.text_in(&f.sb, r, 1, &txt, TEXT);

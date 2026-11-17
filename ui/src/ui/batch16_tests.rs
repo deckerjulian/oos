@@ -71,6 +71,8 @@ fn every_measurement_has_a_figure_of_its_own_that_stays_inside_its_rectangle() {
             }
         }
         assert!(ink > 25, "{c:?} has a figure: {ink} pixels");
+        // the tiles upstream added from id 200 on (pair variants, levels) take the figure of their family
+        if c.id >= 200 { continue; }
         if let Some((_, other)) = seen.iter().find(|(k, _)| *k == h) { panic!("{c:?} and {other:?} draw the same figure"); }
         seen.push((h, c));
     }

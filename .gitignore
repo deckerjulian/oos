@@ -5,6 +5,10 @@ __pycache__/
 kernel/out/
 *.img
 .DS_Store
+# personal settings of coding agents (AGENTS.md is the shared one, docs/adr/process/0018)
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
 # internal notes
 docs-internal/
 PLAN.md

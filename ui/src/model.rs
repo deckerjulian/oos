@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Scope state (what the user has set), value ladders and number formatting.
@@ -69,8 +69,7 @@ pub const MEAS_SELECTION_MAX: usize = 1024;
 
 /// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
 pub fn catalog_id_valid(id: u16) -> bool {
-    matches!(id, 15..=16 | 40..=51 | 60..=66 | 70..=76 | 80..=82 | 90..=93
-        | 100..=118 | 130..=137 | 150..=153 | 170..=186)
+    crate::measures::persisted(id)
 }
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
@@ -257,6 +256,41 @@ pub enum TrigCoup {
 
 pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
 
+/// What the rear AUX OUT BNC carries (System > AUX out, `:SYSTem:AOUTput`, docs/fork/auxout.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuxOut {
+    /// a pulse per trigger: the FPGA's power-up state, so the default
+    TrigOut,
+    /// constant low
+    Off,
+    /// a pulse per failed acquisition of the hardware mask test (`mask.hw = on`, docs/fork/hwmask.md); without it the
+    /// output stays low
+    PassFail,
+}
+
+pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
+
+impl AuxOut {
+    /// what the menu and SCPI take: pass/fail only where the mask test or the zone trigger can run in hardware
+    /// (`Board::mask_hw`, `Board::zone_hw`); a setup file takes every value
+    pub fn offered(self, hw_mask: bool) -> bool {
+        self != AuxOut::PassFail || hw_mask
+    }
+
+    /// the offered choices in menu order
+    pub fn choices(hw_mask: bool) -> Vec<AuxOut> {
+        AUX_OUTS.iter().copied().filter(|a| a.offered(hw_mask)).collect()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AuxOut::TrigOut => "Trigger out",
+            AuxOut::Off => "Off",
+            AuxOut::PassFail => "Pass/fail",
+        }
+    }
+}
+
 impl TrigCoup {
     pub fn name(self) -> &'static str {
         match self {
@@ -295,6 +329,12 @@ pub enum AView {
     Magnetic,
     Inverter,
     Dpt,
+}
+
+impl AView {
+    /// Every view (the tests check each analyser page against it).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub const ALL: [AView; 9] = [AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt];
 }
 
 /// Where the eye is drawn. The full page is the default. Side and Under are extra panes and leave that page available.
@@ -398,67 +438,35 @@ pub use oos_dsp::measure::{Meas, ALL as ALL_MEAS};
 pub use oos_dsp::sim::VideoStd;
 pub use oos_dsp::trigger::{Bit, Pol};
 
-/// Serial protocol of the decoder.
+/// Protocol of the decoder: a protocol module (`protocols::MODULES[i]`). The core decoders stand first at fixed places
+/// (`Proto::UART` ...), the code that knows them by name uses those.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Proto {
-    Uart,
-    I2c,
-    Spi,
-    Can,
-    Lin,
-    I2s,
-    Mil1553,
-    Parallel,
-    CanFd,
-    FlexRay,
-    ModbusRtu,
-    ModbusAscii,
-    OneWire,
-    Ds2482,
-    Uart9,
-    Swd,
-    Jtag,
-    Qspi,
-    I3c,
-    Arinc429,
-    Sent,
-    /// USB 1.x / 2.0 low / full speed
-    Usb,
-    Manchester,
-    Mlt3,
-    /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
-    Cphy,
-    /// a protocol module (`protocols::MODULES[i]`)
     Module(u8),
 }
 
-/// The protocols wired by hand; the modules come after them in [`PROTOS`].
-pub const BUILTIN_PROTOS: [Proto; 25] = [
-    Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
-    Proto::FlexRay, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
-    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Arinc429, Proto::Sent, Proto::Usb,
-    Proto::Manchester, Proto::Mlt3, Proto::Cphy,
-];
-
-/// Every protocol of the Decode menu: the built-in ones, then the modules.
-pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
-    std::sync::LazyLock::new(|| BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect());
+/// Every protocol of the Decode menu, in the order of `protocols::MODULES`.
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> = std::sync::LazyLock::new(|| (0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
 
 impl Proto {
-    /// The module behind a module protocol.
+    pub const UART: Proto = Proto::Module(0);
+    pub const I2C: Proto = Proto::Module(1);
+    pub const SPI: Proto = Proto::Module(2);
+    pub const CAN: Proto = Proto::Module(3);
+    pub const LIN: Proto = Proto::Module(4);
+    pub const PARALLEL: Proto = Proto::Module(5);
+    pub const CPHY: Proto = Proto::Module(6);
+
+    /// The module behind the protocol.
     pub fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
-        match self {
-            Proto::Module(i) => Some(crate::protocols::get(i)),
-            _ => None,
-        }
+        let Proto::Module(i) = self;
+        Some(crate::protocols::get(i))
     }
 
-    /// Name in saved setups: the variant name, or the module's key.
+    /// Name in saved setups: the module's key.
     pub fn key(self) -> String {
-        match self.module() {
-            Some(p) => p.key().to_string(),
-            None => format!("{:?}", self),
-        }
+        let Proto::Module(i) = self;
+        crate::protocols::get(i).key().to_string()
     }
 
     pub fn from_key(k: &str) -> Option<Proto> {
@@ -466,58 +474,20 @@ impl Proto {
     }
 
     pub fn name(self) -> &'static str {
-        match self {
-            Proto::Module(i) => crate::protocols::get(i).name(),
-            Proto::Uart => "UART",
-            Proto::I2c => "I2C",
-            Proto::Spi => "SPI",
-            Proto::Can => "CAN",
-            Proto::Lin => "LIN",
-            Proto::I2s => "I2S",
-            Proto::Mil1553 => "1553",
-            Proto::Parallel => "Parallel",
-            Proto::CanFd => "CAN-FD",
-            Proto::FlexRay => "FlexRay",
-            Proto::ModbusRtu => "Modbus RTU",
-            Proto::ModbusAscii => "Modbus ASCII",
-            Proto::OneWire => "1-Wire",
-            Proto::Ds2482 => "DS2482",
-            Proto::Uart9 => "UART 9-bit",
-            Proto::Swd => "SWD",
-            Proto::Jtag => "JTAG",
-            Proto::Qspi => "Quad-SPI",
-            Proto::I3c => "I3C",
-            Proto::Arinc429 => "ARINC 429",
-            Proto::Sent => "SENT",
-            Proto::Usb => "USB",
-            Proto::Manchester => "Manchester",
-            Proto::Mlt3 => "MLT-3",
-            Proto::Cphy => "C-PHY",
-        }
+        let Proto::Module(i) = self;
+        crate::protocols::get(i).name()
     }
+
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
-        match self {
-            Proto::Module(i) => crate::protocols::get(i).roles(),
-            Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
-            Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
-            Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
-            Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],
-            Proto::Parallel => [Some("D0"), None, Some("Clock"), None],
-            Proto::Swd => [Some("SWDIO"), Some("SWCLK"), None, None],
-            Proto::Jtag => [Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")],
-            Proto::Qspi => [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")],
-            // D- optional: D+ alone decodes without SE0
-            Proto::Usb => [Some("D+"), None, Some("D-"), None],
-            _ =>[Some("Source"), None, None, None],
-        }
+        let Proto::Module(i) = self;
+        crate::protocols::get(i).roles()
     }
+
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
-        if let Some(p) = self.module() {
-            return p.diff_ok();
-        }
-        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
+        let Proto::Module(i) = self;
+        crate::protocols::get(i).diff_ok()
     }
 }
 
@@ -559,6 +529,127 @@ pub enum BusWhat {
     Error,
 }
 pub const BUS_WHATS: [BusWhat; 4] = [BusWhat::Frame, BusWhat::Id, BusWhat::Data, BusWhat::Error];
+
+/// How a protocol value compares (`SerialTrig`): with the value (`trig_bus_val`) as min, `max` as the upper limit, all
+/// after the mask. The relations of the TPU's serial receivers (docs/fork/serial-ui.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rel {
+    Eq,
+    Ne,
+    /// greater than the value
+    Gt,
+    /// less than max
+    Lt,
+    /// value <= x <= max
+    In,
+    /// x < value or x > max
+    Out,
+}
+pub const RELS: [Rel; 6] = [Rel::Eq, Rel::Ne, Rel::Gt, Rel::Lt, Rel::In, Rel::Out];
+impl Rel {
+    pub fn name(self) -> &'static str {
+        match self {
+            Rel::Eq => "=",
+            Rel::Ne => "\u{2260}",
+            Rel::Gt => ">",
+            Rel::Lt => "<",
+            Rel::In => "In range",
+            Rel::Out => "Out of range",
+        }
+    }
+
+    /// The relation needs the upper limit.
+    pub fn uses_max(self) -> bool {
+        matches!(self, Rel::Lt | Rel::In | Rel::Out)
+    }
+
+    /// `x` against `min`/`max` after `mask`.
+    pub fn test(self, x: u64, min: u64, max: u64, mask: u64) -> bool {
+        let (x, a, b) = (x & mask, min & mask, max & mask);
+        match self {
+            Rel::Eq => x == a,
+            Rel::Ne => x != a,
+            Rel::Gt => x > a,
+            Rel::Lt => x < b,
+            Rel::In => a <= x && x <= b,
+            Rel::Out => x < a || x > b,
+        }
+    }
+}
+
+/// UART stop bits of the trigger.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopBits {
+    One,
+    OneHalf,
+    Two,
+}
+pub const STOP_BITS: [StopBits; 3] = [StopBits::One, StopBits::OneHalf, StopBits::Two];
+
+/// Which UART error the Error condition looks for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UartErr {
+    Either,
+    Parity,
+    Framing,
+}
+pub const UART_ERRS: [UartErr; 3] = [UartErr::Either, UartErr::Parity, UartErr::Framing];
+
+/// I2C transfer direction of the address condition.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum I2cDir {
+    Either,
+    Write,
+    Read,
+}
+pub const I2C_DIRS: [I2cDir; 3] = [I2cDir::Either, I2cDir::Write, I2cDir::Read];
+
+/// The protocol trigger's settings beyond condition and value (Trigger > Protocol, `:TRIGger:RS232|SPI|IIC:*`); the
+/// TPU's receivers take them all (`trig.serial_hw = on`), the software trigger as far as the decoders show it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct SerialTrig {
+    pub rel: Rel,
+    /// upper limit of `rel` (Lt, In, Out)
+    pub max: u64,
+    /// bits of the value that count (SPI, I2C data)
+    pub mask: u64,
+    /// UART: idle low (the line inverted)
+    pub uart_inv: bool,
+    pub uart_stop: StopBits,
+    pub uart_err: UartErr,
+    /// SPI: chip select active high
+    pub spi_cs_high: bool,
+    /// SPI without chip select: a clock pause longer than this starts a frame, s (0 = the decoder's default)
+    pub spi_timeout: f32,
+    /// I2C address condition: relation and upper limit, direction, 10-bit addresses
+    pub addr_rel: Rel,
+    pub addr_max: u32,
+    pub dir: I2cDir,
+    pub ten_bit: bool,
+    /// I2C data condition: 0 = any data byte of a frame (the software trigger), 1..5 = the first `bytes` data bytes
+    /// after the address, the first the most significant (also the TPU's receiver)
+    pub bytes: u8,
+}
+
+impl Default for SerialTrig {
+    fn default() -> SerialTrig {
+        SerialTrig {
+            rel: Rel::Eq,
+            max: 0xff,
+            mask: u64::MAX,
+            uart_inv: false,
+            uart_stop: StopBits::One,
+            uart_err: UartErr::Either,
+            spi_cs_high: false,
+            spi_timeout: 0.0,
+            addr_rel: Rel::Eq,
+            addr_max: 0x7f,
+            dir: I2cDir::Either,
+            ten_bit: false,
+            bytes: 0,
+        }
+    }
+}
 impl BusWhat {
     pub fn name(self) -> &'static str {
         match self {
@@ -587,6 +678,11 @@ impl TrigType {
             TrigType::NthEdge => "Nth edge",
             TrigType::Bus => "Bus",
         }
+    }
+
+    /// The types with an upper (`trig_level`) and a lower level (`trig_level2`).
+    pub fn two_level(self) -> bool {
+        matches!(self, TrigType::Slope | TrigType::Runt | TrigType::Window)
     }
 }
 
@@ -1094,6 +1190,8 @@ pub struct Model {
     pub trig_level2: f32,
     /// noise reject: wider comparator hysteresis (0.7 instead of 0.3 div)
     pub trig_nrej: bool,
+    /// the auto set-up sets noise reject from the noise on the trigger signal's flat levels (opt-in, off by default)
+    pub auto_nrej: bool,
     /// coupling of the edge trigger on a channel (`trig_coupling` gives the one in effect)
     pub trig_coup: TrigCoup,
     /// second source: B (delay), clock (setup/hold)
@@ -1118,9 +1216,19 @@ pub struct Model {
     pub run: RunState,
     pub status: TrigStatus,
     pub acq: AcqMode,
+    /// the offsets of the interleaved ADC cores taken off in software (`board::dho::cores`; Acquire > ADC cores)
+    pub cores: bool,
     pub avg_count: u32,
+    /// Average mode: the FPGA averages where the board can (`Board::avg_hw`), else
+    /// the software average; experimental, not verified on the unit
+    pub avg_hw: bool,
     /// segmented recording: records per RUN/SINGLE (0 = off), browsed with the history afterwards
     pub segments: usize,
+    /// segments recorded by the FPGA (one arm, hardware re-arm and trigger stamps) instead of the software history;
+    /// experimental, not verified on the unit
+    pub seg_hw: bool,
+    /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
+    pub seg_ivl: f32,
     pub mdepth: usize, // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
@@ -1161,7 +1269,9 @@ pub struct Model {
     pub cur_c: f32,
     pub cur_d: f32,
     pub touch_lock: bool,
-    #[allow(dead_code)] // fine V/div steps: not implemented yet
+    pub aux_out: AuxOut,
+    /// fine V/div: the scale knob walks the rows of the calibration table (`Board::vscale_steps_nv`), SCPI
+    /// `:CHANnel<n>:SCALe` takes any value; one switch for all channels
     pub fine_v: bool,
     /// fine time base on the knob
     pub fine_t: bool,
@@ -1232,7 +1342,9 @@ pub struct Model {
     pub dec_diff: Option<usize>,
     /// protocol trigger condition and value
     pub trig_bus: BusWhat,
-    pub trig_bus_val: u32,
+    /// the value (or lower limit) of the condition: up to 40 bits (I2C, 5 bytes)
+    pub trig_bus_val: u64,
+    pub ser: SerialTrig,
     pub dec_thr: f32,
     pub dec_ascii: bool,
     pub dec_proto: Proto,
@@ -1277,6 +1389,15 @@ pub struct Model {
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
+    /// Acquire > Draw path: the batch pipeline of PR #7 (`drawpipe`: the deposit workers draw every frame of a batch
+    /// from the read-out words) instead of the fast path (the default)
+    pub draw_batch: bool,
+    /// Display > Bottom bar: the compact bar of PR #8 (Menu, Sources, the active source, Overlay/Stacked, time,
+    /// trigger) instead of the cards (the default)
+    pub bar_compact: bool,
+    /// Display > Monitor view: the view (1-based) an HDMI monitor in Layout shows instead of the panel's (0: the panel's;
+    /// ui/monitor.rs)
+    pub hdmi_view: usize,
     /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
     pub views: usize,
     /// the one shown (0-based)
@@ -1436,6 +1557,10 @@ pub struct Model {
     pub bode_ref: f64,
     /// hardware source: bumped with settings a measurement must wait for (`board::Shared::stamp`); not stored
     pub hw_stamp: u64,
+    /// hardware source: bumped when the hardware average has to start over (CLEAR, RUN, SINGLE); not stored
+    pub hw_avg_clear: u64,
+    /// AUTO sweep with the shortest auto-trigger time, set by the auto set-up while it reads levels; not stored
+    pub auto_fast: bool,
     /// built-in generator: output on, frequency (Hz), amplitude (Vpp), offset (V); sine
     /// bandwidth test (Analysers > Bandwidth): source, signal frequency hint (0 = Auto), bins per period
     pub bw_src: usize,
@@ -1607,6 +1732,7 @@ impl Default for Model {
             trig_type: TrigType::Edge,
             trig_level2: 0.5,
             trig_nrej: false,
+            auto_nrej: false,
             trig_coup: TrigCoup::Dc,
             trig_src2: 3,
             trig_ref2: None,
@@ -1628,8 +1754,12 @@ impl Default for Model {
             run: RunState::Run,
             status: TrigStatus::Wait,
             acq: AcqMode::Normal,
+            cores: true,
             avg_count: 16,
+            avg_hw: false,
             segments: 0,
+            seg_hw: false,
+            seg_ivl: 0.0,
             mdepth: 0,
             persist: 0,
             intensity: 60,
@@ -1652,6 +1782,7 @@ impl Default for Model {
             cur_c: 0.3,
             cur_d: 0.7,
             touch_lock: false,
+            aux_out: AuxOut::TrigOut,
             fine_v: false,
             fine_t: false,
             tfine: 1.0,
@@ -1695,9 +1826,10 @@ impl Default for Model {
             dec_diff: None,
             trig_bus: BusWhat::Id,
             trig_bus_val: 0x123,
+            ser: SerialTrig::default(),
             dec_thr: 1.65,
             dec_ascii: true,
-            dec_proto: Proto::Uart,
+            dec_proto: Proto::UART,
             dec_src2: 3,
             dec_cs: Some(1),
             dec_mode: 0,
@@ -1712,7 +1844,7 @@ impl Default for Model {
             color_grade: false,
             // samples joined as lines by default
             dots: false,
-            layout: Layout::Minimal,
+            layout: Layout::Default,
             studio_view: "waveform".into(),
             studio_dock: String::new(),
             studio_ov: 0,
@@ -1721,6 +1853,9 @@ impl Default for Model {
             studio_zoom_tab: true,
             studio_classic: false,
             hdmi: HdmiMode::Waveform,
+            bar_compact: false,
+            draw_batch: false,
+            hdmi_view: 0,
             views: 1,
             view_cur: 0,
             view_slots: Default::default(),
@@ -1771,6 +1906,8 @@ impl Default for Model {
             bode_out: WaveId::Ch(1),
             bode_gen: 0,
             hw_stamp: 0,
+            hw_avg_clear: 0,
+            auto_fast: false,
             bode_addr: "192.168.1.100:5555".into(),
             bode_mode: oos_dsp::bode::Mode::Loop,
             // the reference scope's defaults: 50 us burst idle, time outside above the upper level, N = 6 periods,
@@ -1904,7 +2041,7 @@ impl Default for Model {
 impl Model {
     /// The compact bars (Minimal and Studio) instead of the stock ones.
     pub fn compact(&self) -> bool {
-        self.layout != Layout::Default
+        self.layout != Layout::Default || self.bar_compact
     }
 
     /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
@@ -2018,6 +2155,14 @@ impl Model {
             WaveId::Ref(i) => { *reference = Some(i.min(NREF - 1)); }
         }
         if !secondary { self.trig_la = None; }
+    }
+
+    /// Keeps the lower level of a two-level type at or below the upper one. The lower level gives way: the upper is
+    /// the level every type shares, the lower one is also Delay's level B and Setup/Hold's clock level.
+    pub fn order_trigger_levels(&mut self) {
+        if self.trig_type.two_level() && self.trig_level2 > self.trig_level {
+            self.trig_level2 = self.trig_level;
+        }
     }
 
     /// The configured trigger for the software trigger engine.
@@ -2136,55 +2281,32 @@ impl Model {
             },
             TrigType::Timeout | TrigType::Duration => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 6e-3,
             TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
-            // room for a whole frame of the protocol before the trigger point (ARINC 429 auto rate: a low-speed word;
-            // USB auto: low-speed packets)
-            TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => 200.0 / crate::decode::ARINC_RATES[1],
-            TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => 200.0 / oos_dsp::decode_ext3::USB_LOW,
-            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span(&self.dec_opts())).unwrap_or(200.0 * self.bus_bit()),
+            // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
+            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))).unwrap_or(200.0 * self.bus_bit()),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
         }
     }
 
-    /// The option settings of the decoder's protocol module, in range (zeros for a built-in protocol).
-    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
-        match self.dec_proto {
-            Proto::Module(i) => crate::protocols::opt_fit(i, self.dec_opt),
-            _ => [0; crate::protocols::OPTS],
+    /// Switches the decoder's protocol and nothing else (SCPI configures an instrument, not the demo's sources); a
+    /// module that is newly chosen starts from its default options.
+    pub fn set_dec_proto_only(&mut self, p: Proto) {
+        if let (Proto::Module(i), true) = (p, self.dec_proto != p) {
+            self.dec_opt = crate::protocols::opt_default(i);
         }
+        self.dec_proto = p;
+    }
+
+    /// The option settings of the decoder's protocol module, in range.
+    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
+        let Proto::Module(i) = self.dec_proto;
+        crate::protocols::opt_fit(i, self.dec_opt)
     }
 
     /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
     pub fn bus_bit(&self) -> f64 {
-        match self.dec_proto {
-            Proto::Uart | Proto::Lin | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii => 1.0 / crate::decode::BAUDS[self.dec_baud],
-            Proto::Can | Proto::CanFd => 1.0 / crate::decode::CAN_RATES[self.dec_canrate],
-            Proto::I2c | Proto::Ds2482 => 2.5e-6,
-            Proto::I3c => 0.1e-6,
-            Proto::Spi | Proto::Qspi | Proto::Swd | Proto::Jtag | Proto::Parallel => 0.5e-6,
-            Proto::I2s => 0.6e-6,
-            Proto::Mil1553 => 1e-6,
-            Proto::FlexRay => 0.1e-6,
-            Proto::OneWire => 15e-6,
-            Proto::Module(i) => crate::protocols::get(i).bit_time(&self.dec_opts()),
-            // auto: high speed (the finer sampling)
-            Proto::Arinc429 => {
-                let r = crate::decode::ARINC_RATES[self.dec_arate];
-                1.0 / if r > 0.0 { r } else { crate::decode::ARINC_RATES[2] }
-            }
-            // about 4 ticks per data bit; auto: the shortest tick
-            Proto::Sent => {
-                let t = crate::decode::SENT_TICKS[self.dec_tick];
-                4.0 * if t > 0.0 { t } else { crate::decode::SENT_TICKS[0] }
-            }
-            // auto: full speed
-            Proto::Usb => {
-                use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};
-                1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
-            }
-            Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
-            Proto::Cphy => if self.dec_cphy_rate > 0.0 { 1.0 / self.dec_cphy_rate } else { 1e-9 },
-        }
+        let Proto::Module(i) = self.dec_proto;
+        crate::protocols::get(i).bit_time_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))
     }
 
     pub fn time_per_div(&self) -> f32 {
@@ -2452,9 +2574,11 @@ impl Model {
         }
     }
     /// The logic analyser is on (and the model has it).
-    /// Comparator hysteresis of the trigger in divisions (trigger.md 2.3): 0.3, 0.7 with noise reject.
+    /// Comparator hysteresis of the trigger in divisions, as the hardware gets it (trigger.md 2.3): 0.3, 0.7 with
+    /// noise reject, more at 2 mV/div and below (the table of the trigger source's scale at the BNC).
     pub fn trig_hyst_div(&self) -> f32 {
-        if self.trig_nrej { 0.7 } else { 0.3 }
+        let c = &self.ch[self.trig_src.min(NCH - 1)];
+        crate::board::board().trig_hyst_div(c.volts_per_div() as f64 / c.probe as f64, self.trig_nrej) as f32
     }
 
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
@@ -2488,7 +2612,7 @@ impl Model {
     }
     /// The decoder reads logic analyser lines (the choice only counts while the LA is on).
     pub fn dec_on_la(&self) -> bool {
-        self.dec_la_in && self.la_on() && self.dec_proto != Proto::Cphy
+        self.dec_la_in && self.la_on() && self.dec_proto != Proto::CPHY
     }
     pub fn max_mem(&self) -> u64 {
         // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap

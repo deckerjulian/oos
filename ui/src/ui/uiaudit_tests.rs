@@ -28,7 +28,7 @@ fn shot_to(u: &mut Ui, path: &std::path::Path) {
 
 #[test]
 fn repro_add_measurements() {
-    use super::meascatalog::{cat_from, Cat};
+    use super::meascatalog::{cat as Cat, cat_from};
     let out = std::env::var("OOS_SHOTS").unwrap_or("/tmp".into());
     for (n, ts) in [TextSize::Normal, TextSize::Large, TextSize::Larger].into_iter().enumerate() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
@@ -37,7 +37,7 @@ fn repro_add_measurements() {
         u.key(key::MEASURE);
         note(&format!("ts={n} menu={:?} count={}", u.menu, u.measurement_count()));
         shot_to(&mut u, &std::path::Path::new(&out).join(format!("audit-repro-ts{n}.png")));
-        u.cat_sel = Cat::Area as u16;
+        u.cat_sel = Cat::Area;
         for k in 1..8 { if let Some(c) = cat_from(k) { u.catalog_add(c); } }
         note(&format!("count={}", u.measurement_count()));
         shot_to(&mut u, &std::path::Path::new(&out).join(format!("audit-repro-ts{n}-b.png")));
@@ -73,7 +73,7 @@ fn repro_add_measurements_open_groups() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     for _ in 0..10 { u.step(0.05); }
     u.key(key::MEASURE);
-    u.cat_open = [u16::MAX; 6];
+    u.cat_open = [u16::MAX; crate::measures::CATEGORIES.len()];
     shot_to(&mut u, &std::path::Path::new(&out).join("audit-repro-open.png"));
     for _ in 0..2 { tap_at(&mut u, 985, 530); }
     note(&format!("open groups scroll={}", u.cat_scroll));

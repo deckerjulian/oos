@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: drm/bridge: dw-hdmi: check for a CEC adapter in the HPD work
 
 repo_hpd_event() looked at hdmi->cec_adap->devnode without a test. The

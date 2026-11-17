@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! System information page (System > System info): the unit (model, serial, capabilities, `oos_hal::model`),
@@ -140,7 +140,7 @@ impl Ui {
 
         // ---- column 1: unit and software
         let mut a = vec![Row::Head("Unit".into())];
-        a.push(kv("Model", c.name.clone()));
+        a.push(kv("Model", format!("Rigol {}", c.name)));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
         a.push(kv("MAC", p.mac.clone().unwrap_or("-".into())));
         a.push(kv("Series", c.series));
@@ -154,6 +154,10 @@ impl Ui {
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
             oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
         });
+        if !p.unit.is_empty() {
+            // capabilities of this unit from the image (/etc/oos/limits.conf), not experimental
+            a.push(kv("Unit defaults", p.unit.join(", ")));
+        }
         a.push(Row::Head("Software".into()));
         a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
         if let Some(g) = option_env!("OOS_GIT") { a.push(kv("Commit", g.to_string())); }
@@ -240,11 +244,20 @@ impl Ui {
         }
         d.push(Row::Head("Acquisition now".into()));
         d.push(kv("Channels on", format!("{} of {}", self.m.n_on(), n_ch())));
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = self.src.rate_depth(&self.m);
         d.push(kv("Sample rate", si_short(sr, "Sa/s")));
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
         d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
+        let (acq, used, dropped) = crate::drawpipe::counters().read();
+        if acq > 0 {
+            d.push(kv("Frames used", format!("{} of {} ({} dropped, {:?} pipeline)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64), crate::drawpipe::mode())));
+            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+            if crate::drawpipe::mode() == crate::drawpipe::Mode::Batch {
+                // short time bases measure the interpolated record: those frames stay out of the statistics
+                d.push(kv("Frames in statistics", format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64))));
+            }
+        }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         if p.experimental() {
             d.push(Row::Head("Experimental limits".into()));
@@ -263,8 +276,7 @@ impl Ui {
         let scr = self.scr.rect();
         cv.blend(scr, rgb(0, 0, 0), 140);
         let r = scr.inset(10);
-        cv.round(r, 8, ACCENT, 255);
-        cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
         let top = Rect::new(r.x + 16, r.y + 8, r.w - 32, 30);
         cv.text_in(&f.lb, top, 0, "System information", ACCENT);
         cv.text_in(&f.s, top, 2, "updated every second \u{b7} tap to close", DIM);

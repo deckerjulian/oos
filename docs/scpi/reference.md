@@ -13,8 +13,8 @@ Part of the [SCPI reference](README.md).
 | Command | Set/Query | Parameters and range | Default | Menu equivalent | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `:REFerence:SLOT` | Set / Query | `R1..R10` Choose the destination/working slot. | `R1` | Reference > Slot | OOS extension |
-| `:REFerence:LOAD` | Action | `"path"` Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. | - | Reference > Import (load file) | OOS extension |
-| `:REFerence:IMPort` | Action | `["path"]` Load named file, or the selected `refN` file beside setups. | - | Reference > Import (load file) | OOS extension |
+| `:REFerence:LOAD` | Action | `"path"` Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. A file under `/proc`, `/sys` or `/dev` (where the path resolves to) and a file over 128 MiB are refused (-224) before it is read. | - | Reference > Import (load file) | OOS extension |
+| `:REFerence:IMPort` | Action | `["path"]` Load named file (as LOAD), or the selected `refN` file beside setups. | - | Reference > Import (load file) | OOS extension |
 | `:REFerence:SAVE` | Action | Copy the selected acquired channel record into the selected reference slot. Does not write a waveform file. | - | Reference > Save to slot | OOS extension |
 | `:REFerence:CURRent` | Set / Query | `1..10` Working slot, returned as a number; SLOT returns `Rn`. | `1` | Reference > Slot select | OOS extension |
 | `:REFerence:SOURce` | Set / Query | `[<slot>,]CHANn` Acquired-channel source used when saving a reference. | `CHAN1` | Reference > Save from (source) | OOS extension |
@@ -44,7 +44,7 @@ Part of the [SCPI reference](README.md).
 
 ## Loading a file
 
-A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots. Protocol roles may mix references and acquired records, but their native intervals and origins must overlap. Decoder events, Search and Bus qualification share the decoded timing. Load paths are not file uploads: the path is read on the server PC or scope, and it is not valid on a Linux scope unless that file exists there.
+A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots; a CSV line with more data columns than there are reference slots (10) ends the import while the file is read. Protocol roles may mix references and acquired records, but their native intervals and origins must overlap. Decoder events, Search and Bus qualification share the decoded timing. Load paths are not file uploads: the path is read on the server PC or scope, and it is not valid on a Linux scope unless that file exists there.
 
 ## Examples
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The boot card as the update sees it: the stock PARM layout, the two image regions and the boot magic. The numbers come
@@ -273,7 +273,7 @@ impl Card {
 
     /// Select stock for the next power-on (`OOSK` -> `KRNL`, like `oos-oneshot`). Ok(false) when it already was `KRNL`.
     /// Before `recovery` is written: a power cut in the write then starts the intact stock image in `boot`. With `OOSK`
-    /// the loader would refuse the half-written `recovery` and go on to `backup`, which may be empty (USB download mode).
+    /// the loader would refuse the half-written `recovery` and go on to `backup`, which may be empty (Rockusb).
     pub fn disarm_oos(&mut self) -> Result<bool, String> {
         self.set_magic(b"KRNL", b"OOSK")
     }

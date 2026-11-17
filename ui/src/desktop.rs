@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The scope screen in a desktop window (Windows host build), with the demo signal or a replayed frame.
@@ -140,7 +140,7 @@ impl PointerState {
 pub fn run(mut ui: Ui, args: &[String]) {
     ui.desktop_panel = Some(true);
     let opts = WindowOptions { resize: true, scale: Scale::X1, scale_mode: ScaleMode::AspectRatioStretch, ..WindowOptions::default() };
-    let mut win = match Window::new("OOS Plus — F6: Hardware controls", ui::W as usize, ui::H as usize, opts) {
+    let mut win = match Window::new("OOS — F6: Hardware controls", ui::W as usize, ui::H as usize, opts) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("oos-ui: window: {}", e);
@@ -153,7 +153,6 @@ pub fn run(mut ui: Ui, args: &[String]) {
     if !input.mouse_captured() { eprintln!("oos-ui: native mouse event capture unavailable; using polling"); }
     let mut cv = Canvas::new(ui::W, ui::H);
     let mut front_window: Option<front_window::FrontWindow> = None;
-    let mut services = lan::Services::open(args);
     // the layout and the Studio view come back after a restart: the setup of the unit, in the storage folder
     let mut setup = crate::store::SetupFile::new(&ui.store_dir);
     match setup.restore(&mut ui) {
@@ -161,6 +160,7 @@ pub fn run(mut ui: Ui, args: &[String]) {
         Ok(false) => {}
         Err(e) => eprintln!("oos-ui: {}", e),
     }
+    let mut services = lan::Services::open(args, &ui.acl());
     let mut loader = picker::Loader::new();
     let mut last = Instant::now();
     let mut wheel = 0.0f32;
