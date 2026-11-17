@@ -11165,6 +11165,7 @@ impl Ui {
         if (self.view_on() || self.view_tile_rect().is_some()) && self.view_btn().contains(x, y) {
             return self.toggle_menu(MenuId::ViewMore);
         }
+        if self.view_fix_tap(x, y) { return; }
         if !self.menu_open && self.m.view == AView::Eye && !self.xy_over() && (self.eye_tap(x, y) || self.eye_column_tap(x, y)) {
             return;
         }

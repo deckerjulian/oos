@@ -22,7 +22,7 @@ const PEAK_W: i32 = 212;
 /// Height of the fixed header row of the peaks list.
 pub(super) const PEAK_HEAD: i32 = 18;
 /// Below this width the spectrum has no column of peaks beside the plot.
-pub(super) const SPEC_NARROW_W: i32 = 420;
+pub(super) const SPEC_NARROW_W: i32 = 480;
 const AXIS_W: i32 = 34;
 const TITLE_H: i32 = 20;
 const XLABEL_H: i32 = 16;

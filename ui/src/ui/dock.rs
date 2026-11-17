@@ -1591,7 +1591,7 @@ impl Ui {
             }
             VKind::Pane => { self.pane_tap(x, y); }
             VKind::Table => { self.table_tap(x, y); }
-            VKind::Xy | VKind::View => { if self.view_btn().contains(x, y) { self.toggle_menu(MenuId::ViewMore); } }
+            VKind::Xy | VKind::View => { if self.view_btn().contains(x, y) { self.toggle_menu(MenuId::ViewMore); } else { self.view_fix_tap(x, y); } }
             _ => {}
         }
         true

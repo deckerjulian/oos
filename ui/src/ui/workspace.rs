@@ -768,8 +768,16 @@ impl Ui {
         }
         if let Some((n, rect)) = self.source_overflow() { draw(cv, rect, &format!("+{n}"), false); }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
-        draw(cv, overlay, "Overlay", !self.workspace.stacked);
-        draw(cv, stacked, "Stacked", self.workspace.stacked);
+        if self.view_on() || self.m.view == AView::Eye {
+            // an analyser has the plot: the two trace modes have nothing to arrange, so they are shown as unavailable
+            for (r, label) in [(overlay, "Overlay"), (stacked, "Stacked")] {
+                btn(cv, r, BAR, LINE);
+                cv.text_in(&self.fonts().s, r, 1, label, DIM);
+            }
+        } else {
+            draw(cv, overlay, "Overlay", !self.workspace.stacked);
+            draw(cv, stacked, "Stacked", self.workspace.stacked);
+        }
         let (scale, _) = self.view();
         draw(cv, time, &format!("Time {}/div", si_short(scale as f64, "s")), false);
         self.draw_compact_trigger(cv, trigger);
@@ -794,7 +802,10 @@ impl Ui {
         }
         if let Some((_, rect)) = self.source_overflow() { if rect.contains(x, y) { self.open_sources(rect.x, BOTTOM.y); return true; } }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
-        if overlay.contains(x, y) { self.trace_mode(false); }
+        if (overlay.contains(x, y) || stacked.contains(x, y)) && (self.view_on() || self.m.view == AView::Eye) {
+            self.toast("Overlay and Stacked arrange the waveform view");
+        }
+        else if overlay.contains(x, y) { self.trace_mode(false); }
         else if stacked.contains(x, y) { self.trace_mode(true); }
         else if time.contains(x, y) { self.toggle_menu(MenuId::Horizontal); }
         else if live.is_some_and(|r| r.contains(x, y)) { self.return_to_live(); }

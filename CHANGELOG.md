@@ -16,6 +16,9 @@ Added:
   - a tap on a measurement badge draws what it measures on its lane (Area and Cycle area shaded, levels as lines,
     spans as arrows); the next tap opens its menu;
   - plot menu > **Fit all lanes** sets V/div and position of every shown channel, reference and math channel;
+  - an analyser view whose source is off shows a **Turn on CHn** button in its middle, and an empty Bode plot a
+    **Start sweep** button; the spectrum beside the waveform keeps its width for the plot (the peak list is behind
+    its menu button); Minimal greys Overlay and Stacked out while an analyser has the plot;
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it

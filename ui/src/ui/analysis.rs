@@ -1177,7 +1177,7 @@ impl Ui {
         let taken = match taken {
             Ok(t) => t,
             Err(id) => {
-                self.azr.power = vec![format!("{}: Switch on source in the menu", missing_wave(id))];
+                self.azr.power = vec![missing_wave(id)];
                 return;
             }
         };
