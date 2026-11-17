@@ -37,8 +37,8 @@ The checks are named by layer. Each layer says what it can show and what not:
 
 - `tools/check.sh` with no argument runs every host layer that is enforced, in the order above, and stops at the first
   that fails. CI calls the same script, layer by layer, so "passes here" and "passes in CI" mean the same.
-- `fmt` and `clippy` can be run now but join the default set with the rollout of ADR 0016 and ADR 0017; until then
-  `tools/check.sh` names them as not yet enforced. `sim` is run by name (corrected 2026-11-16: the simulations
+- `fmt` and `clippy` joined the default set with the rollout of ADR 0016 and ADR 0017, `ratchet` with ADR 0037
+  (2026-11-17). `sim` is run by name (corrected 2026-11-16: the simulations
   existed as scripts of `tools/` and `gpu/` and were missing from the table).
 - `pixels` and `registers` compare against the commit before a change and need a baseline; they are run for every
   change that is not meant to change the screen or the analog path, and the pull request says that they were.

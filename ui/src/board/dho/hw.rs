@@ -10,7 +10,7 @@ use crate::board::{Frame, Slow};
 use crate::board::{HwShared, Shared, QUEUE_MAX, QUEUE_SAMPLES};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, serialtrig, tpu, uarttrig};
+use oos_hal::dho::{afe, auxout, hz, roll, serialtrig, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -111,7 +111,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     let max_mem = oos_hal::model::platform().limits.mem(mask.count_ones() as usize, m.la_on());
     let depth = if depth > 0 { depth.min(max_mem as i128) } else { depth };
     // roll faster than 50 ms/div: no more than the roll stream's rate
-    let df = oos_hal::dho::roll::depth_for(oos_hal::dho::seq::tdiv_fs(tdiv));
+    let df = roll::depth_for(oos_hal::dho::seq::tdiv_fs(tdiv));
     let depth = if slow_mode(m) == Slow::Roll && df > 0 {
         if depth == 0 {
             df
@@ -1620,7 +1620,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut current: Option<(Settings, hz::Params)> = None;
         let mut n = 0u64;
         // roll/scan mode: streaming state (parameters, ring of volts per channel, last publish)
-        let mut rolling: Option<oos_hal::dho::roll::Params> = None;
+        let mut rolling: Option<roll::Params> = None;
         let mut ring: [std::collections::VecDeque<f32>; NCH] = Default::default();
         // the same for the LA words: ring, sweep picture (as f32 for `scan_write`; a word is exact in it)
         let mut ring_la: std::collections::VecDeque<u16> = Default::default();
@@ -1629,7 +1629,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // scan: the sweep picture per channel (one screen), write position, last 0x1204, SINGLE sweep complete
         let mut sweep: [Vec<f32>; NCH] = Default::default();
         let mut cursor = 0usize;
-        let mut last_info = oos_hal::dho::roll::ScanInfo::default();
+        let mut last_info = roll::ScanInfo::default();
         let mut halted = false;
         // 0x40d0 reported done; the last chunks of the sweep are read once more before the stop
         let mut done_seen: Option<std::time::Instant> = None;
@@ -1710,7 +1710,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                    bar.apply(&roll::stop(&mut state.sh));
                 }
                 let res = match (afe_bus.as_mut(), cal.as_ref()) {
                     (Some(afe), Some(c)) => {
@@ -1942,13 +1942,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 _ => replayed = None,
             }
-            if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
+            if current.as_ref().is_none_or(|c| c.0 != want) || mode != want_mode {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 mode = want_mode;
                 last_batch = None;
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                    bar.apply(&roll::stop(&mut state.sh));
                 }
                 match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
@@ -2069,24 +2069,23 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 };
                 // LA on: its words come in chunks of their own in the same stream (la.md 4.4)
                 let la_t = s.la.is_some().then(|| oos_hal::dho::la::timing(&p, s.mask));
-                let sweep_start =
-                    |state: &mut seq::State, bar: &mut oos_hal::dho::bus::Bar1, rp: &oos_hal::dho::roll::Params| {
-                        match scan {
-                            Some((delay_fs, _)) => {
-                                let pos = oos_hal::dho::roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
-                                bar.apply(&oos_hal::dho::roll::config_scan(&mut state.sh, rp, p.memsel, pos));
-                            }
-                            None => bar.apply(&oos_hal::dho::roll::config(&mut state.sh, rp, p.memsel)),
+                let sweep_start = |state: &mut seq::State, bar: &mut oos_hal::dho::bus::Bar1, rp: &roll::Params| {
+                    match scan {
+                        Some((delay_fs, _)) => {
+                            let pos = roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
+                            bar.apply(&roll::config_scan(&mut state.sh, rp, p.memsel, pos));
                         }
-                        if let Some(t) = &la_t {
-                            bar.apply(&oos_hal::dho::roll::la_config(rp, t));
-                        }
-                        bar.apply(&oos_hal::dho::roll::start(&mut state.sh, s.mask));
-                    };
+                        None => bar.apply(&roll::config(&mut state.sh, rp, p.memsel)),
+                    }
+                    if let Some(t) = &la_t {
+                        bar.apply(&roll::la_config(rp, t));
+                    }
+                    bar.apply(&roll::start(&mut state.sh, s.mask));
+                };
                 let rp = match rolling {
                     Some(rp) => rp,
                     None => {
-                        let rp = oos_hal::dho::roll::params(s.mask, tdiv_fs, s.depth, &p);
+                        let rp = roll::params(s.mask, tdiv_fs, s.depth, &p);
                         sweep_start(&mut state, &mut bar, &rp);
                         ring.iter_mut().for_each(|r| r.clear());
                         sweep.iter_mut().for_each(|v| v.clear());
@@ -2118,43 +2117,41 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 let dt = rp.spacing_fs as f64 / 1e15;
                 let keep = ((10.0 * s.tdiv / dt).round() as usize).max(2);
-                let la_dt = if la_t.is_some() { oos_hal::dho::roll::la_spacing_fs(&rp) as f64 / 1e15 } else { dt };
+                let la_dt = if la_t.is_some() { roll::la_spacing_fs(&rp) as f64 / 1e15 } else { dt };
                 let keep_la = ((10.0 * s.tdiv / la_dt).round() as usize).max(2);
-                bar.apply(&oos_hal::dho::roll::fill_pulse(&state.sh));
-                let c = oos_hal::dho::roll::chunks(bar.rd(0x11e8));
-                let c = if la_t.is_some() { oos_hal::dho::roll::la_chunks(c) } else { c };
+                bar.apply(&roll::fill_pulse(&state.sh));
+                let c = roll::chunks(bar.rd(0x11e8));
+                let c = if la_t.is_some() { roll::la_chunks(c) } else { c };
                 if c == 0 {
                     std::thread::sleep(std::time::Duration::from_millis(9));
                 } else {
-                    let buf =
-                        match oos_hal::dho::bus::read_dma(&mut c2h, c * oos_hal::dho::roll::CHUNK_BYTES, |_, _| {}) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                status(format!(
-                                    "{} read of {} chunks: {}",
-                                    if scan.is_some() { "scan" } else { "roll" },
-                                    c,
-                                    e
-                                ));
-                                rolling = None;
-                                current = None;
-                                continue;
-                            }
-                        };
+                    let buf = match oos_hal::dho::bus::read_dma(&mut c2h, c * roll::CHUNK_BYTES, |_, _| {}) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            status(format!(
+                                "{} read of {} chunks: {}",
+                                if scan.is_some() { "scan" } else { "roll" },
+                                c,
+                                e
+                            ));
+                            rolling = None;
+                            current = None;
+                            continue;
+                        }
+                    };
                     let (w, lw) = if la_t.is_some() {
-                        oos_hal::dho::roll::split_la(&buf, s.mask)
+                        roll::split_la(&buf, s.mask)
                     } else {
-                        (oos_hal::dho::roll::split(&buf, s.mask), Vec::new())
+                        (roll::split(&buf, s.mask), Vec::new())
                     };
                     if scan.is_some() {
                         // the chunk counter restarts with every sweep: its column is the write position of the first
                         // analog chunk
-                        let per = oos_hal::dho::roll::points_per_chunk(s.mask);
-                        let first = buf
-                            .chunks_exact(oos_hal::dho::roll::CHUNK_BYTES)
-                            .find(|c| !oos_hal::dho::roll::is_la_chunk(c))
-                            .unwrap_or(&buf[..oos_hal::dho::roll::CHUNK_BYTES]);
-                        let col = oos_hal::dho::roll::scan_column(oos_hal::dho::roll::counter(first), la_t.is_some());
+                        let per = roll::points_per_chunk(s.mask);
+                        let chunks = buf.as_chunks::<{ roll::CHUNK_BYTES }>().0;
+                        let first = chunks.iter().map(|c| &c[..]).find(|c| !roll::is_la_chunk(c));
+                        let first = first.unwrap_or(&buf[..roll::CHUNK_BYTES]);
+                        let col = roll::scan_column(roll::counter(first), la_t.is_some());
                         cursor = (col * per) % keep;
                         if !lw.is_empty() {
                             let v: Vec<f32> = lw.iter().map(|&x| x as f32).collect();
@@ -2195,8 +2192,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let mut done = false;
                 if let Some((_, single)) = scan {
                     if done_seen.is_none() {
-                        let r = oos_hal::dho::roll::SCAN_INFO_REGS.map(|a| bar.rd(a));
-                        let info = oos_hal::dho::roll::scan_info(r[0], r[1]);
+                        let r = roll::SCAN_INFO_REGS.map(|a| bar.rd(a));
+                        let info = roll::scan_info(r[0], r[1]);
                         if info.triggered != last_info.triggered || info.done {
                             status(format!(
                                 "scan: 0x1204 = {:#010x}, 0x40d0 = {:#x}, cursor {} of {}",
@@ -2221,7 +2218,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         done = true;
                         // stock state 8 (RUN): stop, clear the average, configure again, next sweep after 500 ms; state 9
                         // (SINGLE): stop
-                        bar.apply(&oos_hal::dho::roll::scan_done(&mut state.sh));
+                        bar.apply(&roll::scan_done(&mut state.sh));
                         halted = single;
                     }
                 }
@@ -2285,7 +2282,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     };
                     let mut g = out.lock().unwrap();
                     // a complete sweep must not be dropped by the next partial picture
-                    if g.queue.back().map_or(true, |b| b.partial) {
+                    if g.queue.back().is_none_or(|b| b.partial) {
                         g.queue.clear();
                     }
                     g.queue.push_back(f.clone());
@@ -2300,7 +2297,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 continue;
             }
             if rolling.take().is_some() {
-                bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                bar.apply(&roll::stop(&mut state.sh));
             }
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -2539,7 +2536,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             *logged += 1;
                             // the newest frame's first words (every recorded frame was played)
                             let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
-                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
+                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().as_chunks::<2>().0.iter().take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
                             eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
                         }
                         a
@@ -2563,7 +2560,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         Some(a) if !a.show => 0,
                         _ => count,
                     };
-                    let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
+                    let avail = dma.data().len().checked_div(fb).map_or(0, |n| (shown as usize).min(n));
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back

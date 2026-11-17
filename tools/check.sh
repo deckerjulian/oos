@@ -24,9 +24,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
 layers="fmt clippy text syntax test target decoders ratchet sim"
-# clippy joins with the rollout of ADR 0017, ratchet with ADR 0037; sim needs Docker and builds
-# that CI's check job lacks
-enforced="fmt text syntax test target decoders"
+# sim needs Docker and builds that CI's check job lacks: it is run by name
+enforced="fmt clippy text syntax test target decoders ratchet"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -64,6 +63,14 @@ layer_clippy() {
     for c in $crates; do
         (cd "$c" && strict cargo clippy --locked --all-targets -- -D warnings) || fail "clippy: $c"
     done
+    # the code only Linux compiles (the scope's board, its buses) is not seen on another host: there, Clippy also
+    # reads the crates as built for the scope, as CI on Linux does
+    if [ "$(uname -s)" != Linux ]; then
+        for c in hal ui fpgad; do
+            (cd "$c" && strict cargo clippy --locked --all-targets --target aarch64-unknown-linux-musl \
+                -- -D warnings) || fail "clippy: $c for the scope"
+        done
+    fi
 }
 
 # ADR 0019. Taken from elsewhere, so left out: the licence texts, the XDMA driver, kernel patches, firmware licences,

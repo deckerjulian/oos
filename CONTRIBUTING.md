@@ -68,8 +68,9 @@ printed.
 tools/check.sh
 ```
 
-It runs every host check CI runs, layer by layer: files, script syntax, the tests of all four crates, the scope's
-build, the decoder builds ([ADR 0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)). A compiler
+It runs every host check CI runs, layer by layer: the layout of the code, Clippy, files, script syntax, the tests of
+all four crates, the scope's build, the decoder builds, and the numbers that only go down (`tools/ratchet.txt`, ADR
+0037) ([ADR 0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)). A compiler
 warning fails it like an error. `tools/check.sh test` runs one layer, `tools/check.sh list` names them. Tests that
 need the calibration files of a real unit skip themselves without them. See the Development section of the
 [README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
@@ -146,9 +147,10 @@ The same way for everyone, the maintainer included
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml), and Clippy clean except for the allowed lints in
   `Cargo.toml` ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md),
-  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). The layout is enforced: `tools/check.sh`
-  fails on code that `cargo fmt` would change. A branch from before 2026-11-17 runs `cargo fmt` on itself first and
-  rebases then.
+  [ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)). Both are enforced: `tools/check.sh`
+  fails on code that `cargo fmt` would change and on a Clippy warning (on a host that is not Linux also for the code
+  only the scope's build compiles). A branch from before 2026-11-17 runs `cargo fmt` on itself first and rebases
+  then.
 - Commits: `Area: what changed, as a statement`, one topic each, the body says why and how it was tested; formatting
   and lint fixes in commits of their own. A change people would notice on the scope gets a `CHANGELOG.md` entry
   ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
