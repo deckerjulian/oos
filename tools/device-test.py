@@ -69,8 +69,9 @@ class Scope:
             raise Gone(str(e))
 
     def line(self, timeout=15):
+        # a reply may be several lines (`:DEC:EVEN?`): all of them, as before the shared transport
         try:
-            return self.s.reply(timeout).decode(errors="replace").strip()
+            return self.s.text_reply(timeout).strip()
         except LinkError as e:
             raise Gone(str(e))
 
