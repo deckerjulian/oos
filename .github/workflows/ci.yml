@@ -28,8 +28,9 @@ jobs:
           # the sign-off check reads every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
+      # Dependabot cannot sign off: the person who merges its pull request signs off the squashed commit
       - name: Every commit is signed off (ADR 0026)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
