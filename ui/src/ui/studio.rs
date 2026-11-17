@@ -338,6 +338,9 @@ impl Ui {
         let is = self.m.layout == Layout::Studio;
         if is && !self.studio.was { self.studio.enter = true; }
         self.studio.was = is;
+        // Default has no Overlay / Stacked control: it always draws upstream's one graticule, also when Studio or a
+        // recalled setup left the lanes stacked
+        if self.m.layout == Layout::Default && self.workspace.stacked { self.trace_mode(false); }
         // the view is kept with the setup like the layout; a record view is not (it needs its session)
         let token = self.studio.view.token();
         if self.m.studio_view != token { self.m.studio_view = token.to_string(); }
