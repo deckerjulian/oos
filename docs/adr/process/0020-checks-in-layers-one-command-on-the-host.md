@@ -37,6 +37,8 @@ The checks are named by layer. Each layer says what it can show and what not:
 
 - `tools/check.sh` with no argument runs every host layer that is enforced, in the order above, and stops at the first
   that fails. CI calls the same script, layer by layer, so "passes here" and "passes in CI" mean the same.
+- A check that has to read the Rust source, which a shell script cannot do reliably, may be a Rust program in
+  `xtask/` that its layer runs (`cargo run -- <check>` there), so `tools/check.sh` stays the one command.
 - `fmt` and `clippy` can be run now but join the default set with the rollout of ADR 0016 and ADR 0017; until then
   `tools/check.sh` names them as not yet enforced. `sim` is run by name (corrected 2026-11-16: the simulations
   existed as scripts of `tools/` and `gpu/` and were missing from the table).
