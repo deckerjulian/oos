@@ -1375,10 +1375,10 @@ pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
-pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
+pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx", "pwwf", "tkwf"];
 
 /// A stored waveform, recognized by its header:
-/// `OOSW`; `:WFM#001`, `:WFM#002` or `:WFM#003`; `:WFMPRE:`; `WAVEDESC`; cookie `AG`;
+/// `OOSW`; `PWWF0001` or `TKWF0001`; `:WFM#001`, `:WFM#002` or `:WFM#003`; `:WFMPRE:`; `WAVEDESC`; cookie `AG`;
 /// a `$&%#` block (`9601`, `9007`, or `2001`) or a `Title:` / `Plotname:` transient (`Binary:` or `Values:`);
 /// XML `WaveformInternal` or `WaveformPatternInternal`; or a CSV time column.
 /// Anything else is refused.
@@ -1386,6 +1386,9 @@ pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
     if bytes.len() > MAX_WAVEFORM_BYTES { return Err("waveform exceeds the 128 MiB import limit".into()); }
     if bytes.starts_with(b"OOSW") {
         return parse_oosw(bytes);
+    }
+    if looks_pwwf(bytes) {
+        return parse_pwwf(bytes).map(|t| vec![t]);
     }
     if looks_wfm(bytes) {
         return parse_wfm(bytes).map(|t| vec![t]);
@@ -1409,6 +1412,130 @@ pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
         return parse_wave_csv(text, name);
     }
     Err("that file is not a waveform".into())
+}
+
+/// A waveform record (`.pwwf`, and the same layout under its older `.tkwf` name): one channel of a capture.
+fn looks_pwwf(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && (bytes.starts_with(b"PWWF0001") || bytes.starts_with(b"TKWF0001"))
+}
+
+/// The record: the 8-byte magic, a little-endian u32 header length, a JSON header, then little-endian samples.
+/// The header gives `sampleType` (`int8`, `int16`, `uint16` or `float32`), `nPoints`, the vertical scaling
+/// `volts = (raw - yoff) * ymult + yzero`, and the time base `t[i] = xzero + xincr * (i - ptOff)`.
+fn parse_pwwf(b: &[u8]) -> Result<WaveTrace, String> {
+    let unreadable = || "the waveform record header is not readable".to_string();
+    let length = u32::from_le_bytes(b[8..12].try_into().unwrap()) as usize;
+    let end = 12usize.checked_add(length).filter(|&end| end <= b.len()).ok_or("truncated waveform record")?;
+    let members = std::str::from_utf8(&b[12..end]).ok().and_then(json_members).ok_or_else(unreadable)?;
+    let get = |key: &str| members.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let number = |key: &str, default: f64| match get(key) {
+        None | Some("null") => Ok(default),
+        Some(v) => v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(unreadable),
+    };
+    let n = get("nPoints").and_then(|v| v.parse::<usize>().ok()).ok_or_else(unreadable)?;
+    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
+    let dt = number("xincr", 0.0)?;
+    let t0 = number("xzero", 0.0)? - number("ptOff", 0.0)? * dt;
+    if n < 2 || dt <= 0.0 || !t0.is_finite() {
+        return Err("that file holds no waveform".into());
+    }
+    let (yoff, ymult, yzero) = (number("yoff", 0.0)? as f32, number("ymult", 1.0)? as f32, number("yzero", 0.0)? as f32);
+    let kind = get("sampleType").unwrap_or("");
+    let width = match kind {
+        "int8" => 1,
+        "int16" | "uint16" => 2,
+        "float32" => 4,
+        _ => return Err(format!("waveform record sample type {kind:?} is not read")),
+    };
+    let data = &b[end..];
+    if data.len() / width < n {
+        return Err("truncated waveform record".into());
+    }
+    let scale = |raw: f32| (raw - yoff) * ymult + yzero;
+    let v: Vec<f32> = match kind {
+        "int8" => data[..n].iter().map(|&x| scale(x as i8 as f32)).collect(),
+        "int16" => data[..2 * n].chunks_exact(2).map(|c| scale(i16::from_le_bytes([c[0], c[1]]) as f32)).collect(),
+        "uint16" => data[..2 * n].chunks_exact(2).map(|c| scale(u16::from_le_bytes([c[0], c[1]]) as f32)).collect(),
+        _ => data[..4 * n].chunks_exact(4).map(|c| scale(f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect(),
+    };
+    if v.iter().any(|x| !x.is_finite()) {
+        return Err("the waveform record holds samples that are not numbers".into());
+    }
+    let label = get("channel").map(str::trim).filter(|s| !s.is_empty()).unwrap_or("Record").chars().take(10).collect();
+    Ok(WaveTrace { t0, dt, v, label })
+}
+
+/// The members of a JSON object, in order: each key with its value as text. A string value is unescaped; a
+/// number, `true`, `false` or `null` is as written; a nested object or array is kept verbatim, so a key inside it
+/// is never taken for a member. `None` when the text is not one object.
+fn json_members(text: &str) -> Option<Vec<(String, String)>> {
+    let b = text.as_bytes();
+    let space = |mut i: usize| { while b.get(i).is_some_and(|c| c.is_ascii_whitespace()) { i += 1; } i };
+    let mut i = space(0);
+    if b.get(i) != Some(&b'{') { return None; }
+    i += 1;
+    let mut out = Vec::new();
+    loop {
+        i = space(i);
+        match *b.get(i)? {
+            b'}' => return space(i + 1).eq(&b.len()).then_some(out),
+            b',' if !out.is_empty() => { i += 1; continue; }
+            b'"' => {}
+            _ => return None,
+        }
+        let (key, after) = json_string(text, i)?;
+        i = space(after);
+        if b.get(i) != Some(&b':') { return None; }
+        i = space(i + 1);
+        let value = if b.get(i) == Some(&b'"') {
+            let (s, after) = json_string(text, i)?;
+            i = after;
+            s
+        } else {
+            let (start, mut depth) = (i, 0usize);
+            loop {
+                match *b.get(i)? {
+                    b'"' => { i = json_string(text, i)?.1; continue; }
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' if depth > 0 => depth -= 1,
+                    b'}' | b',' if depth == 0 => break,
+                    b']' if depth == 0 => return None,
+                    _ => {}
+                }
+                i += 1;
+            }
+            let raw = text[start..i].trim();
+            if raw.is_empty() { return None; }
+            raw.to_string()
+        };
+        out.push((key, value));
+    }
+}
+
+/// A JSON string starting at the quote at `at`: its text and the index after its closing quote.
+fn json_string(text: &str, at: usize) -> Option<(String, usize)> {
+    let mut out = String::new();
+    let mut chars = text.get(at + 1..)?.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => return Some((out, at + 1 + i + 1)),
+            '\\' => match chars.next()?.1 {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                'b' => out.push(char::from(8u8)),
+                'f' => out.push(char::from(12u8)),
+                'u' => {
+                    let hex: String = (0..4).map(|_| chars.next().map(|(_, h)| h)).collect::<Option<String>>()?;
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?).unwrap_or(char::REPLACEMENT_CHARACTER));
+                }
+                other @ ('"' | '\\' | '/') => out.push(other),
+                _ => return None,
+            },
+            c => out.push(c),
+        }
+    }
+    None
 }
 
 fn looks_wfm(bytes: &[u8]) -> bool {
@@ -4146,5 +4273,86 @@ impl SetupFile {
         if let Some(dir) = self.path.parent() { let _ = std::fs::create_dir_all(dir); }
         let tmp = self.path.with_extension("setup.new");
         if std::fs::write(&tmp, &text).and_then(|_| std::fs::rename(&tmp, &self.path)).is_ok() { self.last = text; }
+    }
+}
+
+#[cfg(test)]
+mod waveform_record_tests {
+    use super::*;
+
+    fn record(magic: &[u8; 8], header: &str, samples: &[u8]) -> Vec<u8> {
+        let mut b = magic.to_vec();
+        b.extend_from_slice(&(header.len() as u32).to_le_bytes());
+        b.extend_from_slice(header.as_bytes());
+        b.extend_from_slice(samples);
+        b
+    }
+
+    fn words(counts: &[u16]) -> Vec<u8> {
+        counts.iter().flat_map(|c| c.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn a_word_record_scales_counts_and_places_the_trigger() {
+        // the nested preamble repeats the scaling keys with other values: only the members of the header count
+        let header = r#"{"version":1,"sampleType":"uint16","nPoints":4,"xincr":2e-9,"xzero":-1e-6,"ptOff":10,"yoff":32768,"ymult":0.001,"yzero":0.5,"yunit":"V","channel":"CH3","preamble":{"xincr":9,"nPoints":99,"yoff":[1,2,{"ymult":7}],"note":"a } and a , in \"text\""},"nativeByteOrder":"little"}"#;
+        let bytes = record(b"PWWF0001", header, &words(&[32768, 33768, 31768, 32769, 7]));
+        let traces = parse_wave(&bytes, "ch3.pwwf").unwrap();
+        assert_eq!(traces.len(), 1);
+        let t = &traces[0];
+        assert_eq!(t.label, "CH3");
+        assert_eq!(t.v.len(), 4, "samples past nPoints are not read");
+        for (got, want) in t.v.iter().zip([0.5_f32, 1.5, -0.5, 0.501]) {
+            assert!((got - want).abs() < 1e-6, "{got} vs {want}");
+        }
+        assert!((t.dt - 2e-9).abs() < 1e-21);
+        assert!((t.t0 - (-1e-6 - 10.0 * 2e-9)).abs() < 1e-18);
+    }
+
+    #[test]
+    fn every_sample_type_and_the_older_magic_are_read() {
+        let int8 = record(b"TKWF0001", r#"{"sampleType":"int8","nPoints":3,"xincr":1e-6,"ymult":0.5}"#, &[0xfe, 0, 4]);
+        assert_eq!(parse_wave(&int8, "a.tkwf").unwrap()[0].v, [-1.0, 0.0, 2.0]);
+        let int16 = record(b"PWWF0001", r#"{"sampleType":"int16","nPoints":2,"xincr":1e-6,"ymult":2}"#, &words(&[0xffff, 3]));
+        assert_eq!(parse_wave(&int16, "a.pwwf").unwrap()[0].v, [-2.0, 6.0]);
+        let floats: Vec<u8> = [0.25_f32, -1.5].iter().flat_map(|x| x.to_le_bytes()).collect();
+        let float32 = record(b"PWWF0001", r#"{ "sampleType" : "float32" , "nPoints" : 2 , "xincr" : 1e-3 , "ptOff" : null }"#, &floats);
+        let t = &parse_wave(&float32, "a.pwwf").unwrap()[0];
+        assert_eq!(t.v, [0.25, -1.5]);
+        assert_eq!((t.t0, t.label.as_str()), (0.0, "Record"));
+    }
+
+    #[test]
+    fn a_damaged_record_is_refused_with_its_reason() {
+        let good = r#"{"sampleType":"uint16","nPoints":3,"xincr":1e-6}"#;
+        let refused = |bytes: Vec<u8>| parse_wave(&bytes, "x.pwwf").map(|_| ()).unwrap_err();
+        assert_eq!(refused(record(b"PWWF0001", good, &words(&[1, 2]))), "truncated waveform record");
+        let mut cut = record(b"PWWF0001", good, &[]);
+        cut.truncate(20);
+        assert_eq!(refused(cut), "truncated waveform record");
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"uint16","nPoints":3"#, &words(&[1, 2, 3]))), "the waveform record header is not readable");
+        assert_eq!(refused(record(b"PWWF0001", r#"["sampleType","uint16"]"#, &words(&[1, 2, 3]))), "the waveform record header is not readable");
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"uint16","xincr":1e-6}"#, &words(&[1, 2, 3]))), "the waveform record header is not readable");
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"uint16","nPoints":3,"xincr":0}"#, &words(&[1, 2, 3]))), "that file holds no waveform");
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"uint16","nPoints":1,"xincr":1e-6}"#, &words(&[1]))), "that file holds no waveform");
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"float64","nPoints":3,"xincr":1e-6}"#, &[0; 24])), "waveform record sample type \"float64\" is not read");
+        let big = format!(r#"{{"sampleType":"int8","nPoints":{},"xincr":1e-6}}"#, MAX_WAVEFORM_SAMPLES + 1);
+        assert_eq!(refused(record(b"PWWF0001", &big, &[0; 8])), "waveform exceeds the 32-million-sample import limit");
+        let nan: Vec<u8> = [f32::NAN, 0.0].iter().flat_map(|x| x.to_le_bytes()).collect();
+        assert_eq!(refused(record(b"PWWF0001", r#"{"sampleType":"float32","nPoints":2,"xincr":1e-6}"#, &nan)), "the waveform record holds samples that are not numbers");
+    }
+
+    #[test]
+    fn json_members_keeps_nested_values_whole_and_unescapes_strings() {
+        let members = json_members(r#" { "a" : "x\n\"y\" é" , "b" : -1.5e3 , "c" : { "a" : [ 1 , "}" ] } , "d" : [ ] , "e" : true } "#).unwrap();
+        let get = |key: &str| members.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap();
+        assert_eq!(get("a"), "x\n\"y\" \u{e9}");
+        assert_eq!(get("b"), "-1.5e3");
+        assert_eq!(get("c"), r#"{ "a" : [ 1 , "}" ] }"#);
+        assert_eq!((get("d"), get("e")), ("[ ]", "true"));
+        assert_eq!(json_members("{}").unwrap().len(), 0);
+        for bad in ["", "[]", "{", r#"{"a"}"#, r#"{"a":}"#, r#"{,"a":1}"#, r#"{"a":1} x"#, r#"{"a":"unterminated}"#, r#"{"a":1]}"#] {
+            assert!(json_members(bad).is_none(), "{bad}");
+        }
     }
 }

@@ -288,7 +288,9 @@ On Windows, with Rust installed, build and open the desktop window from PowerShe
 The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
 Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
 F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
-with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
+with the analog channels off for stored waveforms. `--open FILE` starts that way with the file already loaded:
+repeat it to load several, each into the next empty reference slot, or drop one file on `oos-ui.exe`. A file
+that cannot be read ends the program with the reason. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
 
 For development, run the checkout and automatically restart after saving source changes:
 
@@ -297,7 +299,7 @@ For development, run the checkout and automatically restart after saving source 
 ```
 
 Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
-Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
+Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, WFM, or waveform record (`.pwwf`) files; the web remote at `http://localhost:18080`
 also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
 **SIM** (start menu, Analysis) starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
 **Live** restores the live session. Measurements follow each captured window and recompute when a stopped
