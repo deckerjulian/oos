@@ -26,6 +26,7 @@ Part of the [SCPI reference](README.md).
 | `:MATH<n>:AUTO` | Action | Fit scale and offset to the result | - | Math > Auto scale | OOS extension |
 | `:MATH<n>:LINear:A` | Set / Query | A of the linear `A x + B`. | `1.000000E+00` | Math > A | OOS extension |
 | `:MATH<n>:LINear:B` | Set / Query | B of the linear `A x + B`. | `0.000000E+00` | Math > B | OOS extension |
+| `:MATH<n>:RESet` | Action | Auto scale of the math trace; refused while the math is off | - | Math > Auto scale | fork command; name not verified against the DHO guide |
 
 ## Examples
 

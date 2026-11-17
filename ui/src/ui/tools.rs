@@ -1055,6 +1055,22 @@ impl Ui {
         (st.n, current, st.min, st.max, mean, dev)
     }
 
+    /// The trigger-type knob. Repeating the current type leaves its levels and times alone.
+    pub(crate) fn trig_type_set(&mut self, t: TrigType) {
+        if self.m.trig_type != t {
+            self.set_trig_type(t);
+        }
+    }
+
+    /// A protocol trigger, the same pair the Bus type uses: the decoder, then the type.
+    pub(crate) fn trig_bus_set(&mut self, p: Proto) {
+        if self.m.trig_type == TrigType::Bus && self.m.dec_proto == p {
+            return;
+        }
+        self.set_dec_proto(p);
+        self.set_trig_type(TrigType::Bus);
+    }
+
     pub(crate) fn zoom_set_remote(&mut self, on: bool) {
         self.set_zoom(on);
     }
@@ -1232,6 +1248,16 @@ impl Ui {
         self.m.mask_on = true;
         self.mask_counts_reset();
         self.toast(&format!("Mask loaded from {}", crate::store::file_name(&p)));
+    }
+
+    /// Fold the mean of the last record into the channel's zero correction. False when that channel has no samples.
+    pub(crate) fn zero_channel(&mut self, c: usize) -> bool {
+        let ready = self.last[0].as_ref().is_some_and(|r| c < r.ch.len() && r.ch[c].iter().any(|x| x.is_finite()));
+        if !ready {
+            return false;
+        }
+        self.zero_input(c);
+        true
     }
 
     /// The mean of the last record of channel `c` becomes part of its zero correction: for an input shorted or
@@ -1456,9 +1482,12 @@ impl Ui {
         }
         let Some(src) = self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src) else { return false };
         let vpd = self.m.ch[src.min(n_ch() - 1)].volts_per_div();
-        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
-        r.offset = 0.0;
-        r.vpd = vpd.max(1e-9);
+        {
+            let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
+            r.offset = 0.0;
+            r.vpd = vpd.max(1e-9);
+        }
+        self.measure_refs();
         true
     }
 
@@ -1571,6 +1600,7 @@ impl Ui {
     pub(super) fn ch_name(&self, c: usize) -> String {
         if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
     }
+
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests

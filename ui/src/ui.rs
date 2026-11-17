@@ -1238,6 +1238,32 @@ impl Ui {
         self.toast(match action { PowerAction::Off => "Powering off ...", PowerAction::Restart => "Restarting ..." });
         true
     }
+
+    /// How many stored frames can be shown. Frame 1 is the oldest.
+    pub(crate) fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    /// The frame on screen, 1-based. Live is the newest stored frame.
+    pub(crate) fn history_frame(&self) -> usize {
+        self.hist_pos.map(|i| i + 1).unwrap_or(self.history.len())
+    }
+
+    /// Shows frame `frame` (1-based) and stops. Frame 1 is the oldest.
+    pub(crate) fn history_show(&mut self, frame: usize) -> bool {
+        let n = self.history.len();
+        if frame == 0 || frame > n {
+            return false;
+        }
+        self.m.run = RunState::Stop;
+        let i = frame - 1;
+        self.hist_pos = Some(i);
+        self.last[0] = Some(self.history[i].clone());
+        self.measure_last();
+        self.toast(&format!("History {}/{}", frame, n));
+        true
+    }
+
 }
 
 /// Samples of one channel for the measurements in the background: a window of the hardware frame (shared, not
@@ -1379,7 +1405,7 @@ pub struct Ui {
     /// position in `history` while viewing it (None = live)
     hist_pos: Option<usize>,
     /// mark all trigger events in the record (search)
-    search_on: bool,
+    pub(crate) search_on: bool,
     /// measurements per channel (oos-dsp) of the last record
     ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NCH],
     /// measurements of each ref slot, from the stored samples (no front-end bandwidth)
@@ -4769,7 +4795,7 @@ impl Ui {
         self.relayout();
     }
 
-    fn math_autoscale(&mut self) {
+    pub(crate) fn math_autoscale(&mut self) {
         self.math_fit(self.m.math_sel);
     }
 
@@ -6936,17 +6962,19 @@ impl Ui {
     }
 
     /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
-    fn history_step(&mut self, d: i32) {
+    pub(crate) fn history_step(&mut self, d: i32) -> bool {
         // hardware segments: any of them, played on demand
         if let Some(v) = self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0) {
             let n = v.recorded as i32;
             let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
-            return self.seg_show(i as usize);
+            self.seg_show(i as usize);
+            return true;
         }
         let n = self.history.len();
         if n == 0 {
-            return self.toast("History empty");
+            self.toast("History empty");
+            return false;
         }
         self.m.run = RunState::Stop;
         let cur = self.hist_pos.unwrap_or(n - 1) as i32;
@@ -6955,6 +6983,7 @@ impl Ui {
         self.last[0] = Some(self.history[i].clone());
         self.measure_last();
         self.toast(&format!("History {}/{}", i + 1, n));
+        true
     }
 
     /// Recomputes the measurements of the record shown, and of every loaded ref, at once (a result from the
@@ -7099,7 +7128,7 @@ impl Ui {
     }
 
     /// Search: times (s, relative to the trigger) of all events of the trigger condition in the record shown.
-    fn search_events(&self) -> std::sync::Arc<Vec<f64>> {
+    pub(crate) fn search_events(&self) -> std::sync::Arc<Vec<f64>> {
         if let Some(marks) = self.studio_search_marks() { return marks; }
         if self.m.trig_type == TrigType::Bus && (Self::decoder_uses_refs(&self.m)
             || self.m.deskew_ch.iter().any(|&shift| shift != 0.0)) {
@@ -9181,12 +9210,31 @@ impl Ui {
         }
     }
 
-    /// File of the current setup slot: a setup is small and has to survive a power cycle, so the default storage directory
-    /// in RAM is not used for it when OOS's data partition is there.
-    fn setup_path(&self) -> std::path::PathBuf {
-        let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() { keep } else { self.store_dir.as_path() };
-        dir.join(format!("setup{}.txt", self.store_slot))
+    /// The setup file the Storage menu uses. An empty name is the current slot (`setupN.txt`). A number 1 to 9 selects
+    /// that slot. A `.stp` or `.txt` name is that file, beside the setups when the path is relative. `slot` and `suffix`
+    /// are the refusals.
+    fn setup_file(&mut self, path: &str) -> Result<std::path::PathBuf, String> {
+        let raw = path.trim().trim_matches('"');
+        if raw.is_empty() {
+            return Ok(self.setup_path());
+        }
+        if let Ok(slot) = raw.parse::<u32>() {
+            if !(1..=9).contains(&slot) {
+                return Err("slot".into());
+            }
+            self.store_slot = slot;
+            return Ok(self.setup_path());
+        }
+        let named = std::path::Path::new(raw);
+        let ext = named.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+        if ext != "stp" && ext != "txt" {
+            return Err("suffix".into());
+        }
+        Ok(if named.is_absolute() {
+            named.to_path_buf()
+        } else {
+            self.setup_path().parent().map(|d| d.join(named)).unwrap_or_else(|| named.to_path_buf())
+        })
     }
 
     /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
@@ -9265,6 +9313,14 @@ impl Ui {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// File of the current setup slot: a setup is small and has to survive a power cycle, so the default storage directory
+    /// in RAM is not used for it when OOS's data partition is there.
+    fn setup_path(&self) -> std::path::PathBuf {
+        let keep = std::path::Path::new("/oos/setups");
+        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() { keep } else { self.store_dir.as_path() };
+        dir.join(format!("setup{}.txt", self.store_slot))
     }
 
     fn level_50(&mut self) {
@@ -10253,8 +10309,12 @@ impl Ui {
             key::REF => self.toggle_menu(MenuId::Ref),
             key::ANALYSE => self.toggle_menu(MenuId::Decode),
             // history: back / forward step through the stored records (stops the acquisition), play-stop = live
-            0x08 => self.history_step(-1),
-            0x06 => self.history_step(1),
+            0x08 => {
+                self.history_step(-1);
+            }
+            0x06 => {
+                self.history_step(1);
+            }
             0x07 | key::NAVIGATE => {
                 if self.hist_pos.is_some() {
                     self.hist_pos = None;

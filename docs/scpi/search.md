@@ -23,6 +23,7 @@ Part of the [SCPI reference](README.md).
 | `:SEARch:DATA` | Query | Rows `time,source #n,type,ok`, one per line, like `:DECode:EVENts?` | - | Decode and bus > Event list | name not verified against the DHO guide |
 | `:SEARch:SAVE` | Action | Save the events as CSV (`events-*.csv` in the save folder) | - | Decode and bus > Save events | name not verified against the DHO guide |
 | `:SEARch:REMove` | Action | Remove Search 1 | - | Decode and bus > Remove | name not verified against the DHO guide |
+| `:SEARch:VALue` | Query | Time of event `n` in seconds (`n` empty: the event last gone to) | - | - | fork command; name not verified against the DHO guide |
 
 ## Examples
 

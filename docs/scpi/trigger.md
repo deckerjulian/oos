@@ -26,6 +26,21 @@ These apply whatever the type.
 | `:TRIGger:COUPling` | Set / Query | Coupling of the edge trigger on a channel: `DC`, `AC`, `LFR` (low-frequency reject), `HFR`. | `DC` | Trigger > Coupling | Rigol-style (command family of the DHO guide) |
 | `:TRIGger:FORCe` | Action | Same as `:TFORce`. | - | Run control > Force trigger | Rigol-compatible |
 | `:TRIGger:TYPe` | Set / Query | `<type>` `EDGE`, `PULSE`, `SLOPE`, `VIDEO`, `PATTERN`, `DURATION`, `TIMEOUT`, `RUNT`, `WINDOW`, `DELAY`, `SETUPHOLD`, `NTHEDGE`, `BUS`. The query answers the UI's descriptive type name. | `Edge` | Trigger > Type | Rigol-compatible. Same handler as `:TRIGger:MODE`, which answers short tokens. |
+| `:TRIGger:DELay:SA`, `:SB` | Set / Query | First and second source, `CHAN1`..`CHAN4` | `CHAN1`, `CHAN4` | Trigger > Delay > sources | fork command; name not verified against the DHO guide |
+| `:TRIGger:DELay:ASLop`, `:BSLop` | Set / Query | `POSitive`, `NEGative` | `POS` | Trigger > Delay > slopes | fork command; name not verified against the DHO guide |
+| `:TRIGger:DELay:TYPE` | Set / Query | `GREater`, `LESS`, `GLESs`, `GOUT` | `LESS` | Trigger > Delay > when | fork command; name not verified against the DHO guide |
+| `:TRIGger:DURation:TYPE` | Set / Query | One of `H`, `L`, `X` per channel, comma separated | - | Trigger > Duration > pattern | fork command; name not verified against the DHO guide |
+| `:TRIGger:SLOPe:POLarity` | Set / Query | `POSitive`, `NEGative`, `RFALl` | `POS` | Trigger > Slope > slope | fork command; name not verified against the DHO guide |
+| `:TRIGger:SLOPe:WINDow` | Query | `TAB`: both levels are used | `TAB` | - | fork command; name not verified against the DHO guide |
+| `:TRIGger:VIDeo:POLarity` | Query | `POSitive`; a set of another value is refused | `POS` | - | fork command; name not verified against the DHO guide |
+| `:TRIGger:SHOLd:DSRC`, `:CSRC` (also `:TRIGger:SETup:`) | Set / Query | Data and clock source, `CHAN1`..`CHAN4` | - | Trigger > Setup/hold > sources | fork command; name not verified against the DHO guide |
+| `:TRIGger:SHOLd:TYPE` | Query | `SETHold`: setup and hold are both active | `SETH` | - | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:STATe` | Set / Query | Zone 1 or 2 on or off | `0` | Trigger > Zone | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:SOURce` | Set / Query | `CHAN1`..`CHAN4` | - | Trigger > Zone > source | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:MODE` | Set / Query | `INTersect`, `NOTintersect` | `INT` | Trigger > Zone > must / must not | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:PLACement` | Set / Query | A box: `t1,v1,t2,v2` in seconds and volts | - | drawn on the screen | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:POINts` | Set / Query | An outline: `t,v` pairs, at least three | - | drawn on the screen | fork command; name not verified against the DHO guide |
+| `:TRIGger:ZONE<n>:CLEar` | Action | Remove the zone | - | Trigger > Zone > clear | fork command; name not verified against the DHO guide |
 
 ### Edge
 

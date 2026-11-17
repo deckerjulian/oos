@@ -32,6 +32,7 @@ Part of the [SCPI reference](README.md).
 | `:CURSor:XY:BY` | Set / Query | `number` Independent X/Y coordinate on one selected waveform, not independent input sources. Setting both time and voltage positions promotes the UI to XY cursors. | `9.9E37` | Cursors > XY | Rigol-compatible |
 | `:CURSor:{MANual\|TRACk\|XY}:{AXValue\|BXValue\|AYValue\|BYValue\|XDELta\|IXDelta\|YDELta}` | Query | Cursor values and deltas. IXDelta is 1/abs(time delta). A missing value is `9.9E37`. | `9.9E37` | Cursor readout | Rigol-compatible. One row for the 21 query headers. |
 | `:CURSor:MEASure:INDicator` | Set / Query | Alias of `:MEASure:INDicator`. | `0` | Measure > Labels on trace | OOS extension |
+| `:CURSor:TRACk:MODE` | Set / Query | `X` only: track cursors follow a time | `X` | - | fork command; name not verified against the DHO guide |
 
 ### DVM
 

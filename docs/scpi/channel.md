@@ -28,6 +28,7 @@ Part of the [SCPI reference](README.md).
 | `:CHANnel<n>:LABel:CONTent` | Set / Query | Label text. | empty | Channels > Name (label) | Rigol-style (command family of the DHO guide) |
 | `:CHANnel<n>:BIAS:ZERO` | Action | The mean of the last record becomes part of the zero bias | - | Channels > Zero this input | OOS extension |
 | `:CHANnel:ACTive` | Set / Query | The selected channel, 1 to the number of channels | `1` | Channels > active channel | OOS extension |
+| `:CHANnel<n>:ZERO` | Action | The mean of the record shown becomes the zero correction of the channel; refused without a waveform | - | Channel > Zero | fork command; name not verified against the DHO guide |
 
 ## Examples
 

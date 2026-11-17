@@ -18,6 +18,9 @@ Part of the [SCPI reference](README.md).
 | `:TFORce` | Action | Accept a capture without a trigger match (software force on stored/SIM acquisition, one hardware pulse live). | - | Run control > Force trigger | Rigol-compatible. Alias of `:TRIGger:FORCe`. |
 | `:AUToscale` | Set / Query | Start ADC Autoset; the query answers `1` while it runs, else `0`. Autoset does not fit a reference. | `0` | Run control > Autoset | Rigol-compatible |
 | `:CLEar` | Action | Clear display persistence and measurement statistics (the Clear action). | - | Run control > Clear display / stats | Rigol-compatible |
+| `:RECord:CURRent`, `:RECord:WREPlay:FCURrent` | Set / Query | History frame on screen, `1` (oldest) to the count; a set stops the acquisition | newest | Acquire > History | fork command; name not verified against the DHO guide |
+| `:RECord:WREPlay:FMAX` | Query | Number of stored frames | - | - | fork command; name not verified against the DHO guide |
+| `:NAVigate:FRAMe:NEXT`, `:BACK`, `:STARt`, `:END` | Action | Step through the stored frames | - | Acquire > History | fork command; name not verified against the DHO guide |
 
 ### Acquisition
 

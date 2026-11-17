@@ -7,6 +7,11 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- Remote commands (host-tested, not yet verified on hardware): the zone triggers (`:TRIGger:ZONE<n>:...`), the delay,
+  setup/hold, duration, slope and video trigger rows that had no command, history frames (`:RECord:CURRent`,
+  `:NAVigate:FRAMe:...`), `:SEARch:VALue?`, `:MATH<n>:RESet`, `:CHANnel<n>:ZERO`, `:MEASure:STRip:DOCK`,
+  `:MEASure:COUNter:...` and the fixed answers of `:MEASure:AMP`, `:MEASure:THReshold`, `:MEASure:AREA`,
+  `:MEASure:SETup:MID` and `:CURSor:TRACk:MODE`. Where 0.1.13 already had a command of the same name, that one stays.
 - Minimal and Studio (host-tested, not yet verified on hardware):
   - a tap on a measurement badge draws what it measures on its lane (Area and Cycle area shaded, levels as lines,
     spans as arrows); the next tap opens its menu;

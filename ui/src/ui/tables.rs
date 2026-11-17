@@ -267,7 +267,7 @@ impl Ui {
     }
 
     /// The view centred on a time of the record.
-    pub(super) fn go_to_time(&mut self, t: f64) {
+    pub(crate) fn go_to_time(&mut self, t: f64) {
         // Studio stops the scope and jumps; the others ask for it
         let mut stopped = false;
         if self.m.run == RunState::Run {

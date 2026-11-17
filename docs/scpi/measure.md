@@ -24,6 +24,14 @@ Part of the [SCPI reference](README.md).
 | `:MEASure:CATalog:SOURceC` | Set / Query | Source C or D of the Add page. | `CH3` | Measure > Source C | OOS extension |
 | `:MEASure:CATalog:SOURceD` | Set / Query | Source C or D of the Add page. | `CH4` | Measure > Source D | OOS extension |
 | `:MEASure:ITEM` | Set / Query | `<item>[,<A>[,<B>]]` Set: add a standard or pair readout (duplicates keep statistics and Single). Query `:MEASure:ITEM? <item>[,<source>]` answers a standard scalar, `:MEASure:ITEM? <pair>,<A>,<B>` a pair scalar with physical-time alignment; the default source is the Measure selection. Items: see [Measure](measure.md#items). | - | Measurements > Add standard measurement | Rigol-compatible. `9.9E37` when no value exists. |
+| `:MEASure:SETup:MID` | Set / Query | `50` only: edges are timed at half the amplitude | `50` | - | fork command; name not verified against the DHO guide |
+| `:MEASure:THReshold:TYPE` | Set / Query | `PERCent` only | `PERC` | - | fork command; name not verified against the DHO guide |
+| `:MEASure:THReshold:DEFault` | Action | Thresholds back to 10 % and 90 % | - | - | fork command; name not verified against the DHO guide |
+| `:MEASure:AREA` | Set / Query | `MAIN` only: measurements read the main record | `MAIN` | - | fork command; name not verified against the DHO guide |
+| `:MEASure:AMP:TYPE` | Set / Query | `MANual` only (top and base from the histogram) | `MAN` | - | fork command; name not verified against the DHO guide |
+| `:MEASure:AMP:MANual:TOP`, `:BASE` | Set / Query | `HISTogram` only | `HIST` | - | fork command; name not verified against the DHO guide |
+| `:MEASure:STRip:DOCK` | Set / Query | `UNDer`, `LEFT`, `RIGHt`, `ABOVe`, `HIDDen` | `UNDER` | Measure > Results strip | fork command; name not verified against the DHO guide |
+| `:MEASure:COUNter:ENABle`, `:SOURce`, `:VALue?` | Set / Query | The same counter as `:COUNter` | - | Measure > Counter | fork command; name not verified against the DHO guide |
 
 ### Gate and edge settings
 
