@@ -1,0 +1,4 @@
+# Layout of all Rust code in the tree, for every crate (docs/adr/process/0016). Stable options only.
+edition = "2021"
+max_width = 120
+use_small_heuristics = "Max"

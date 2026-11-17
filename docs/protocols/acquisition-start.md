@@ -313,6 +313,45 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
 - So one batch costs ~10 ms plus the time the triggers need: about 800 records/s with the probe-comp signal instead
   of ~30 with single frames. `frames` is capped by `max_frames` = 7 340 032 / segment size.
 
+## Frames 0 and 1 of a batch (issue #5)
+
+Verified on the unit (DHO924S, 2026-11-16): the built-in generator gives a 1 kHz square of 2 Vpp on CH1, at 10 us/div
+and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal sweep. The headers were logged with
+`OOS_FRAME_HEADER=off`, which logs only the frames without an edge within 20 samples of `pre`, plus a count every
+10,000 frames. Word 4 of the frame header is the frame's number in its batch.
+
+- **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
+  every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
+  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers.
+  - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
+- **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
+  - Without frame 0, every frame found off the trigger was frame 1: 27 of 330,000 frames (about 12,700 batches). With
+    the trigger point 60 us to the right (pre 125 instead of 500), it was 61 of 350,000.
+  - Such a frame 1 has its rising edge about 90 samples before the trigger point (at both pre values), or none at
+    all.
+  - The cause is not known. It is not the pre-trigger fill: a shorter pre gave more of them, not fewer.
+- oos-ui checks frame 1 when the trigger is an edge on a channel with DC or HF reject coupling: frame 1 is left out
+  when it has no crossing of the level in the trigger's direction within 32 samples of `pre`, with a hysteresis of
+  0.2 div (`hw::frame1_off_trigger`).
+  - In batch mode frame 1 is decoded once more for this check, for records up to 100 k points.
+  - Other trigger types keep their frame 1, since they cannot be checked this way.
+  - The log line `frame 1 of a batch without its edge at the trigger point, left out` counts these (logged at 1, 2,
+    4, 8, ... frames).
+  - On the unit, every frame found was frame 1, and each was left out:
+    - standard path: 22 in 270,000 frames;
+    - batch path: 85 in 300,000 frames, none of them reaching a deposit worker.
+
+## Reading a stored frame again (STOP)
+
+After a batch has been read, any frame of it can be played and read again with the same type-4 read-out, as long as
+nothing is armed in between: 0x4010 = 0x4014 = frame, 0x4018 = frame, with any read-out window or compression. OOS
+does this in STOP for every new view (time base, delay): the newest frame of the last batch, as a window of every
+sample when the view with a quarter screen on each side fits 625 k points (also far from the trigger), else the whole
+record through the compression. Verified on the unit 2026-11-13: CH1, 10 M points at 1.25 GSa/s (8 ms), a 100 kHz
+square; stopped at 100 ns/div, then 10 us/div, 1 ms/div (the whole record, -4..4 ms), 1 us/div and 1 us/div at a
+delay of 3 ms (the edge at 3 ms at every sample). Any arm overwrites the ring from frame `first` on, so the stored
+record is only good until the next RUN.
+
 ## Memory depth beyond 50 M on the unit
 
 `oos-fpgad run --depth D --tdiv 1e-2 --at A` (CH1, probe comp 1 kHz), 4000-point windows at the start, around the
@@ -346,7 +385,8 @@ So the live path gives a min/max envelope at large depths. For OOS: read huge re
 that ceil(memsel / k) stays near 625 k points (2.5 M at k = 4 gives this value), draw the points as a polyline
 (min-max pairs become vertical spans), and read uncompressed windows only for zoom / measurements on raw samples.
 Not checked yet: the exact block size of one min/max pair (2k samples?) and the extra + k term in 0x1100 of the live set-up (OOS
-writes memsel + 0x248, which works).
+writes memsel + 0x248, which works). Another project reports 2N samples per pair, the minimum and maximum taken over all
+eight ADC cores together; not checked on the unit here.
 
 ### Time axis of compressed reads by depth
 
@@ -386,8 +426,8 @@ path (`max_frames`) keeps the 16 777 216-burst memory size.
    8 bytes).
 2. **The read buffer must not share cache lines with other heap data.** The RK3399's PCIe is not cache coherent and
    the XDMA driver maps the user pages for every read. With 2500-byte reads into a plain `Vec` at <= 100 ns/div the heap gets
-   corrupted within seconds. `bus::read_dma` reads into a 4 KiB aligned, page-padded region and moves the data to the front; every
-   C2H read in OOS goes through it.
+   corrupted within seconds. `bus::DmaBuf` reads into a 4 KiB aligned region of whole pages of its own; the batch
+   path keeps one across batches, `bus::read_dma` is a one-off of it. Every C2H read in OOS goes through it.
 3. Remaining at <= 100 ns/div: the record is exactly one screen (memsel = 10 divisions), so after the software trigger
    moves the record by a few samples the last few points of the screen have no data (amplitude of the last eighth 4 %
    low at 100 ns/div). Fix (host-tested, not yet verified on hardware): at Auto depth below the live depth oos-ui

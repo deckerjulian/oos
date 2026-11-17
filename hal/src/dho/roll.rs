@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Roll mode (slow time bases): the FPGA streams the acquisition continuously as chunks of a 16-byte header plus 100

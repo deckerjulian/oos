@@ -1,97 +1,119 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Local console key management. New imports are bare OpenSSH Ed25519 public keys.
-# Existing authorized_keys content and per-device host identity are preserved.
-set -eu
-umask 077
-state=/oos/ssh
-seed=/etc/oos-ssh/authorized_keys
-pidfile=/run/oos-ssh.pid
-fail() { echo "oos-ssh: $*" >&2; exit 1; }
-mounted() { grep -q ' /oos ' /proc/mounts; }
+# oos-ssh: the SSH server of the image (Dropbear, docs/network.md 7). Root logs in with a key from the trusted keys or
+# with the password the scope made for itself at the first start. Both live in the SSH folder: /oos/ssh on the data
+# partition (kept over updates and power-offs), /tmp/oos-ssh without one (lost at power-off).
+#
+#   oos-ssh start     rcS, in the background: make what is missing (password, host keys), then listen on port 22
+#   oos-ssh restart   oos-ui after a change of `remote.ssh` or `ssh.password`: a new listener, sessions stay
+#   oos-ssh stop      oos-ui when SSH is switched off: the listener and every session end
+#
+# Keys (oos-conf): `remote.ssh` (off by default), `ssh.password` (on by default). It only listens when `net.allow` names
+# who may connect and the firewall (oos-firewall) is loaded: port 22 never opens to anyone else. Password login is
+# only switched off while at least one trusted key is there, so a key file emptied by hand cannot lock root out.
+# One line of state for System > Network > Remote services > SSH settings in /tmp/oos-ssh.state.
+bin=$(dirname "$0")
+conf() { "$bin/oos-conf" "$@"; }
+if [ -n "${OOS_SSH_DIR:-}" ]; then dir=$OOS_SSH_DIR
+elif [ -d /oos/setups ]; then dir=/oos/ssh
+else dir=/tmp/oos-ssh; fi
+state_file=${OOS_SSH_STATE:-/tmp/oos-ssh.state}
+pidfile=/run/dropbear.pid
+log() { echo "oos-ssh: $*" >&2; }
+state() { echo "$*" > "$state_file"; log "$*"; }
+
+# the listener of the pid file, if it is still the one
+listener() {
+	[ -f $pidfile ] || return 1
+	p=$(cat $pidfile)
+	[ "$(cat /proc/"$p"/comm 2>/dev/null)" = dropbear ] && echo "$p"
+}
+
+stop_listener() {
+	p=$(listener) && kill "$p"
+	rm -f $pidfile 2>/dev/null
+}
+
+# 16 characters from 31 that cannot be mixed up on the screen (no i l o 0 1): 79 bits, read as four groups of four.
+# /dev/random waits until the kernel's generator is seeded, at a start that is a moment at most.
+new_password() {
+	p=$(tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' < /dev/random | head -c 16)
+	[ ${#p} = 16 ] || return 1
+	echo "$p" | sed 's/..../&-/g; s/-$//'
+}
+
+# what the first start makes, kept in $dir; each file appears whole (written beside it, then renamed)
 prepare() {
-	mounted || fail '/oos is not mounted: SSH stays off (no temporary host identity)'
-	[ ! -L "$state" ] || fail 'refusing symlink state directory'
-	mkdir -p "$state"; chmod 700 "$state"
-	[ ! -L "$state/authorized_keys" ] || fail 'refusing symlink authorized_keys'
-	if [ ! -e "$state/authorized_keys" ]; then
-		if [ -s "$seed" ]; then cp "$seed" "$state/authorized_keys"; else : > "$state/authorized_keys"; fi
+	umask 077
+	mkdir -p "$dir" && chmod 700 "$dir" || return 1
+	if [ ! -s "$dir/password" ]; then
+		new_password > "$dir/password.new" && [ -s "$dir/password.new" ] || { rm -f "$dir/password.new"; log "no password made"; return 1; }
+		mv "$dir/password.new" "$dir/password"
+		log "a new password for root (System > Network > Remote services > SSH settings > Show password)"
 	fi
-	chmod 600 "$state/authorized_keys"
-	# Offline provisioning can create files with the computer user's numeric UID.
-	# The daemon authenticates root and requires root-owned key paths.
-	chown 0:0 "$state" "$state/authorized_keys"
+	for t in ed25519 ecdsa; do
+		k="$dir/dropbear_${t}_host_key"
+		if [ ! -s "$k" ]; then
+			rm -f "$k.new" "$k.pub"
+			"$bin/dropbearkey" -t $t -f "$k.new" > /dev/null 2>&1 && mv "$k.new" "$k" || { rm -f "$k.new"; log "no $t host key made"; return 1; }
+		fi
+		[ -s "$k.pub" ] || "$bin/dropbearkey" -y -f "$k" 2>/dev/null | grep -E '^(ssh-|ecdsa-)' > "$k.pub"
+	done
+	# a new folder takes the keys built into the image (OOS_SSH_AUTHORIZED_KEYS, tools/ssh-keys.py validate); an image
+	# update never replaces the keys there, and a key deleted from the folder does not come back
+	if [ ! -f "$dir/authorized_keys" ]; then
+		if [ -s /etc/oos-ssh/authorized_keys ]; then cp /etc/oos-ssh/authorized_keys "$dir/authorized_keys"; else : > "$dir/authorized_keys"; fi
+	fi
+	chmod 600 "$dir/authorized_keys"
+	sync
+	# root only, in RAM: the image has no user database of its own. The serial console's shell asks for nothing.
+	hash=$(mkpasswd -m sha512 -P 0 < "$dir/password") && [ -n "$hash" ] || { log "no password hash"; return 1; }
+	umask 022
+	echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+	echo "root:x:0:" > /etc/group
+	echo "/bin/sh" > /etc/shells
+	(umask 077; echo "root:$hash::0:99999:7:::" > /etc/shadow)
+	# `ssh-copy-id` writes ~/.ssh/authorized_keys: the same file Dropbear reads (-D)
+	mkdir -p /root
+	[ -L /root/.ssh ] || [ ! -e /root/.ssh ] && ln -sfn "$dir" /root/.ssh
+	return 0
 }
-valid_blob() {
-	[ "${#1}" = 68 ] || return 1
-	case "$1" in *[!A-Za-z0-9+/]*) return 1;; esac
-	printf '%s' "$1" | base64 -d > "$tmp/blob" 2>/dev/null || return 1
-	[ "$(wc -c < "$tmp/blob" | tr -d ' ')" = 51 ] || return 1
-	[ "$(od -An -tx1 -N19 "$tmp/blob" | tr -d ' \n')" = 0000000b7373682d6564323535313900000020 ]
-}
-has_key() {
-	while read -r type blob rest || [ -n "$type$blob$rest" ]; do
-		if [ "$type" = ssh-ed25519 ] && valid_blob "$blob"; then return 0; fi
-	done < "$state/authorized_keys"
-	return 1
-}
-running() {
-	[ -r "$pidfile" ] || return 1
-	read -r pid < "$pidfile"
-	case "$pid" in ''|*[!0-9]*) return 1;; esac
-	[ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = /bin/dropbear ] && kill -0 "$pid" 2>/dev/null
-}
-stop() { if running; then kill "$pid"; fi; rm -f "$pidfile"; }
+
 start() {
-	[ ! -e "$state/disabled" ] || { echo 'SSH disabled locally'; return; }
-	has_key || { echo 'SSH off: provision an Ed25519 public key (oos-ssh add FILE)'; return; }
-	[ -x /bin/dropbear ] && [ -x /bin/dropbearkey ] || fail 'Dropbear was not included in this image'
-	running && { echo 'SSH already running'; return; }
-	host="$state/dropbear_ed25519_host_key"
-	[ ! -L "$host" ] || fail 'refusing symlink host key'
-	if [ ! -e "$host" ]; then
-		/bin/dropbearkey -t ed25519 -f "$tmp/host" >/dev/null
-		mv "$tmp/host" "$host"; sync
-	fi
-	chmod 600 "$host"
-	chown 0:0 "$host"
-	/bin/dropbear -s -j -k -E -p 22 -r "$host" -D "$state" -P "$pidfile" >>/tmp/oos-ssh.log 2>&1
-	echo 'SSH key-only on port 22; oos-ssh fingerprint shows this device identity'
+	listener > /dev/null && { log "already listening"; return 0; }
+	case "$(conf remote.ssh off)" in
+	on|true|1) ;;
+	*) state "off"; return 0;;
+	esac
+	[ -n "$(conf net.allow)" ] || { state "off: needs net.allow"; return 0; }
+	"$bin/nft" list table inet oos_fw > /dev/null 2>&1 || { state "off: firewall not loaded"; return 1; }
+	prepare || { state "off: failed, see /tmp/oos-ssh.log"; return 1; }
+	set -- -F -E -p 22 -P $pidfile -D "$dir" -r "$dir/dropbear_ed25519_host_key" -r "$dir/dropbear_ecdsa_host_key"
+	# lines that carry a key of a type Dropbear takes (a comment or a stray line is no way in)
+	keys=$(grep -cE '^([^#].*[[:space:]])?(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+AAAA' "$dir/authorized_keys")
+	how="password and keys"
+	case "$(conf ssh.password on)" in
+	off|false|0)
+		if [ "$keys" -gt 0 ]; then set -- "$@" -s; how="keys only"
+		else how="password kept, no key"; fi;;
+	esac
+	setsid "$bin/dropbear" "$@" < /dev/null >> /tmp/oos-ssh.log 2>&1 &
+	n=0
+	until listener > /dev/null; do
+		n=$((n + 1))
+		[ $n -le 20 ] || { log "dropbear did not start"; state "off: failed, see /tmp/oos-ssh.log"; return 1; }
+		sleep 0.2
+	done
+	state "on: $how"
 }
-action=${1:-status}
-case "$action" in start|add|remove|enable|disable|list|status|fingerprint|stop) ;; *) fail 'use: start | stop | status | fingerprint | list | add FILE | remove BASE64 | enable | disable';; esac
-prepare
-# Serialize local key changes and host-key creation. An interrupted operation never
-# truncates authorized_keys, and a removed build-seed key is not re-added next boot.
-mkdir "$state/.lock" 2>/dev/null || fail 'another key operation is active (remove stale /oos/ssh/.lock at the console)'
-tmp=$(mktemp -d "$state/.work.XXXXXX")
-trap 'rm -rf "$tmp"; rmdir "$state/.lock"' EXIT HUP INT TERM
-case "$action" in
-	start) start;;
-	stop) stop;;
-	status) if running; then echo 'SSH running, key-only, port 22'; else echo 'SSH stopped'; fi;;
-	list) cat "$state/authorized_keys";;
-	fingerprint) [ -f "$state/dropbear_ed25519_host_key" ] || fail 'no host identity yet'; /bin/dropbearkey -y -f "$state/dropbear_ed25519_host_key";;
-	disable) : > "$state/disabled"; stop; sync; echo 'SSH disabled; keys preserved';;
-	enable) rm -f "$state/disabled"; start;;
-	add)
-		[ "$#" = 2 ] && [ -f "$2" ] || fail 'use: oos-ssh add PUBLIC_KEY_FILE'
-		# Reject multiple lines/options/private keys rather than interpreting them.
-		tr -d '\r' < "$2" > "$tmp/input"
-		[ "$(awk 'END {print NR}' "$tmp/input")" = 1 ] || fail 'one public key per import'
-		read -r type blob comment < "$tmp/input" || true
-		[ "${type:-}" = ssh-ed25519 ] && valid_blob "${blob:-}" || fail 'invalid bare OpenSSH Ed25519 public key'
-		if awk -v key="$blob" '$1=="ssh-ed25519" && $2==key {found=1} END {exit !found}' "$state/authorized_keys"; then echo 'Key already present'; exit 0; fi
-		cp "$state/authorized_keys" "$tmp/keys"
-		# A legacy file need not end in a newline; never concatenate two keys.
-		printf '\nssh-ed25519 %s %s\n' "$blob" "$(printf '%s' "${comment:-}" | tr -cd '[:print:]')" >> "$tmp/keys"
-		chmod 600 "$tmp/keys"; mv "$tmp/keys" "$state/authorized_keys"; sync
-		echo 'Public key added; use oos-ssh start to open SSH';;
-	remove)
-		[ "$#" = 2 ] && valid_blob "$2" || fail 'use: oos-ssh remove BASE64_KEY_FROM_LIST'
-		awk -v key="$2" '!($1=="ssh-ed25519" && $2==key)' "$state/authorized_keys" > "$tmp/keys"
-		chmod 600 "$tmp/keys"; mv "$tmp/keys" "$state/authorized_keys"; sync
-		if ! has_key; then stop; fi
-		echo 'Public key removed; existing authenticated sessions may remain';;
+
+case "${1:-}" in
+start) start;;
+restart) stop_listener; start;;
+stop)
+	stop_listener
+	for p in $(pidof dropbear); do kill "$p"; done
+	state "off";;
+*) echo "usage: oos-ssh start|restart|stop" >&2; exit 2;;
 esac

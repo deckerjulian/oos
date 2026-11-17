@@ -1,9 +1,9 @@
 [package]
 name = "oos-hal"
-version = "0.1.12"
-repository = "https://github.com/deckerjulian/oos"
+version = "0.1.13"
+repository = "https://github.com/dekajoule/oos"
 edition = "2021"
-description = "OOS hardware layer for the DHO800/DHO900: FPGA register sequences (SCU, SPU, TPU), front panel"
+description = "OOS hardware layer for the Rigol DHO800/DHO900: FPGA register sequences (SCU, SPU, TPU), front panel"
 license = "GPL-2.0-or-later"
 
 [lib]
@@ -11,3 +11,12 @@ name = "oos_hal"
 
 [dependencies]
 libc = "0.2"
+
+# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same list in every crate.
+[lints.clippy]
+# `!(dt > 0.0)` is meant: it is also true for NaN, and the signal paths rely on that
+neg_cmp_op_on_partial_ord = "allow"
+# index loops over several buffers of the same length read better than zipped iterators
+needless_range_loop = "allow"
+# step builders take the fields of one register; a struct for each would only move the list
+too_many_arguments = "allow"

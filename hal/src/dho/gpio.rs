@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Linux GPIO character device (v1 ABI), lines found by their device-tree names (e.g. `spi_afe_sclk`). Only libc.

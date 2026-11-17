@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: regulator: rk808: list the rk808-regulator cell
 
 The RK808 MFD adds a cell named "rk808-regulator", and the probe handles

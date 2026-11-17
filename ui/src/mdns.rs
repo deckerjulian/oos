@@ -1,8 +1,8 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The scope by name on the local network: a Multicast DNS responder (RFC 6762) with DNS service discovery (RFC 6763).
-//! `http://dho924s-204527.local:8080` reaches the web remote, also when the scope only has a link-local address
+//! `http://dho924s-123456.local:8080` reaches the web remote, also when the scope only has a link-local address
 //! (169.254.x.y, rcS without DHCP), and a computer that browses for web pages, SCPI or VXI-11 instruments lists it.
 //!
 //! - Answers: A of `<name>.local` (no AAAA: the services listen on IPv4 only) with the address of the interface the question came in on, the reverse
@@ -59,7 +59,7 @@ pub fn name_ok(s: &str) -> bool {
 }
 
 /// The digits that tell this unit from others of its model: the last six of the serial number's final run of digits
-/// (`DHO9A264204527` gives `204527`), else its last six letters and digits.
+/// (`DHO9A000123456` gives `123456`), else its last six letters and digits.
 fn serial_tag(serial: Option<&str>) -> Option<String> {
     let s: Vec<char> = serial?.trim().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let digits = s.iter().rev().take_while(|c| c.is_ascii_digit()).count();
@@ -68,7 +68,7 @@ fn serial_tag(serial: Option<&str>) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
-/// The name of a unit from its model and serial number: `dho924s-204527`; `oos` without either.
+/// The name of a unit from its model and serial number: `dho924s-123456`; `oos` without either.
 pub fn default_name(model: &str, serial: Option<&str>) -> String {
     let m: String = model.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>().to_ascii_lowercase();
     let mut n = match (m.is_empty(), serial_tag(serial)) {
@@ -86,7 +86,7 @@ pub fn default_name(model: &str, serial: Option<&str>) -> String {
     }
 }
 
-/// The instance name a computer lists for the services: `Rigol DHO924S OOS (204527)` with the default name, else with
+/// The instance name a computer lists for the services: `Rigol DHO924S OOS (123456)` with the default name, else with
 /// the name in brackets. One DNS label (63 bytes) at most.
 pub fn instance_name(model: &str, serial: Option<&str>, name: &str) -> String {
     let tag = match serial_tag(serial) {
@@ -172,6 +172,8 @@ fn txt_bytes(t: &[String]) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
     A(Ipv4Addr),
+    /// not sent while the services listen on IPv4 only (`Responder::records`), kept for when they do
+    #[allow(dead_code)]
     Aaaa(Ipv6Addr),
     Ptr(Name),
     Srv { port: u16, target: Name },
@@ -546,11 +548,13 @@ pub struct Service {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Config {
     pub on: bool,
-    /// the host label, `dho924s-204527` (`name_ok`)
+    /// the host label, `dho924s-123456` (`name_ok`)
     pub name: String,
-    /// the instance label of the services, `Rigol DHO924S OOS (204527)`
+    /// the instance label of the services, `Rigol DHO924S OOS (123456)`
     pub instance: String,
     pub services: Vec<Service>,
+    /// the services listen on IPv6 too (`net6::enabled`): AAAA records for the interface's IPv6 addresses
+    pub v6: bool,
 }
 
 /// An interface with its addresses (only those that are up, running and take multicast).
@@ -698,8 +702,12 @@ impl Responder {
             v.push(Rec::new(host.clone(), Data::A(a), TTL_HOST, true));
             v.push(Rec::new(reverse4(a), Data::Ptr(host.clone()), TTL_HOST, true));
         }
-        // no AAAA: the web remote, SCPI and VXI-11 listen on IPv4 only, and a computer that gets an IPv6 address tries
-        // it first (curl took seconds on a Mac before it fell back); questions over IPv6 get the A record and an NSEC
+        // AAAA only when the services listen on IPv6 (`Config::v6`): a computer that gets an IPv6 address tries it
+        // first (curl took seconds on a Mac before it fell back to IPv4); without, questions over IPv6 get the A
+        // record and an NSEC
+        if self.cfg.v6 {
+            v.extend(ifc.v6.iter().map(|&a| Rec::new(host.clone(), Data::Aaaa(a), TTL_HOST, true)));
+        }
         for s in &self.cfg.services {
             let ty = Self::service_type(&s.kind);
             let inst = self.instance(&s.kind);
@@ -1100,6 +1108,19 @@ pub struct Status {
 
 static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status { state: State::Off, name: String::new() });
 
+/// Every IPv4 address with its netmask of the interfaces that are up (not loopback), in the order the kernel lists
+/// them; an interface can have several (a DHCP or set address and a link-local one).
+pub fn ipv4_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    #[cfg(unix)]
+    {
+        net::ipv4_all()
+    }
+    #[cfg(not(unix))]
+    {
+        Vec::new()
+    }
+}
+
 /// The responder's state, for the page (Off until it runs).
 pub fn status() -> Status {
     STATUS.lock().map(|s| s.clone()).unwrap_or_default()
@@ -1222,6 +1243,34 @@ mod net {
         }
         out.retain(|i| i.v4.is_some() || !i.v6.is_empty());
         out.sort_by_key(|i| i.index);
+        out
+    }
+
+    /// `ipv4_networks`: every IPv4 address of the interfaces that are up, with its netmask.
+    pub fn ipv4_all() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+        let mut out = Vec::new();
+        // SAFETY: the list from getifaddrs is read while it is alive and freed once
+        unsafe {
+            let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut ifa) != 0 {
+                return out;
+            }
+            let mut p = ifa;
+            while !p.is_null() {
+                let a = &*p;
+                p = a.ifa_next;
+                let f = a.ifa_flags;
+                if f & (libc::IFF_LOOPBACK as u32) != 0 || f & (libc::IFF_UP as u32) == 0 || a.ifa_addr.is_null() || a.ifa_netmask.is_null() {
+                    continue;
+                }
+                if (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
+                    let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
+                    let mask = u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr);
+                    out.push((Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), Ipv4Addr::from(mask)));
+                }
+            }
+            libc::freeifaddrs(ifa);
+        }
         out
     }
 
@@ -1547,13 +1596,14 @@ mod tests {
     fn cfg() -> Config {
         Config {
             on: true,
-            name: "dho924s-204527".into(),
-            instance: "Rigol DHO924S OOS (204527)".into(),
+            name: "dho924s-123456".into(),
+            instance: "Rigol DHO924S OOS (123456)".into(),
             services: vec![
                 Service { kind: "_http._tcp".into(), port: 8080, txt: vec!["path=/".into()] },
                 Service { kind: "_scpi-raw._tcp".into(), port: 5555, txt: Vec::new() },
                 Service { kind: "_vxi-11._tcp".into(), port: 111, txt: Vec::new() },
             ],
+            v6: false,
         }
     }
 
@@ -1595,21 +1645,21 @@ mod tests {
 
     #[test]
     fn names_of_the_scope() {
-        for s in ["dho924s-204527", "a", "lab-3", &"x".repeat(63)] {
+        for s in ["dho924s-123456", "a", "lab-3", &"x".repeat(63)] {
             assert!(name_ok(s), "{}", s);
         }
         for s in ["", "-a", "a-", "a b", "a.b", "ä", &"x".repeat(64), "a_b"] {
             assert!(!name_ok(s), "{}", s);
         }
-        assert_eq!(default_name("DHO924S", Some("DHO9A264204527")), "dho924s-204527");
+        assert_eq!(default_name("DHO924S", Some("DHO9A000123456")), "dho924s-123456");
         assert_eq!(default_name("DHO804", Some("DHO8A000000001")), "dho804-000001");
         assert_eq!(default_name("DHO924S", None), "dho924s");
         assert_eq!(default_name("DHO924S", Some("ABCDEFGH")), "dho924s-cdefgh");
         assert_eq!(default_name("", None), "oos");
         assert_eq!(default_name("DHO 924/S", Some(" 12 ")), "dho924s-12");
         assert!(name_ok(&default_name(&"M".repeat(80), Some("1234567"))));
-        assert_eq!(instance_name("DHO924S", Some("DHO9A264204527"), "dho924s-204527"), "Rigol DHO924S OOS (204527)");
-        assert_eq!(instance_name("DHO924S", Some("DHO9A264204527"), "lab-scope-3"), "Rigol DHO924S OOS (lab-scope-3)");
+        assert_eq!(instance_name("DHO924S", Some("DHO9A000123456"), "dho924s-123456"), "Rigol DHO924S OOS (123456)");
+        assert_eq!(instance_name("DHO924S", Some("DHO9A000123456"), "lab-scope-3"), "Rigol DHO924S OOS (lab-scope-3)");
         assert_eq!(instance_name("DHO924S", None, "dho924s"), "Rigol DHO924S OOS (dho924s)");
         assert!(instance_name("DHO924S", None, &"x".repeat(63)).len() <= NAME_MAX);
     }
@@ -1701,7 +1751,7 @@ mod tests {
         assert_eq!(r.state(), State::NoNetwork);
         r.set_ifaces(0.0, vec![eth([169, 254, 7, 9])]);
         assert_eq!(r.state(), State::Probing);
-        let q = query(0, &[(&["dho924s-204527", "local"], T_A, false)]);
+        let q = query(0, &[(&["dho924s-123456", "local"], T_A, false)]);
         let (mut probes, mut ann) = (Vec::new(), Vec::new());
         let mut t = 0.0;
         while r.phase != Phase::Run {
@@ -1724,9 +1774,9 @@ mod tests {
         let p = &probes[0].1;
         assert!(!p.is_response());
         assert!(p.qs.iter().all(|q| q.qtype == T_ANY && q.qu));
-        assert!(p.qs.iter().any(|q| q.name == dname(&["dho924s-204527", "local"])));
-        assert!(p.qs.iter().any(|q| q.name.join(".") == "Rigol DHO924S OOS (204527)._http._tcp.local"));
-        assert!(has(&p.ns, "dho924s-204527.local", T_A) && has(&p.ns, "Rigol DHO924S OOS (204527)._scpi-raw._tcp.local", T_SRV));
+        assert!(p.qs.iter().any(|q| q.name == dname(&["dho924s-123456", "local"])));
+        assert!(p.qs.iter().any(|q| q.name.join(".") == "Rigol DHO924S OOS (123456)._http._tcp.local"));
+        assert!(has(&p.ns, "dho924s-123456.local", T_A) && has(&p.ns, "Rigol DHO924S OOS (123456)._scpi-raw._tcp.local", T_SRV));
         // announcements: two, a second apart, every record with cache flush on the unique ones
         assert_eq!(ann.len(), 2);
         assert!(ann[0].0 - probes[2].0 >= 0.25 - 1e-9);
@@ -1738,7 +1788,7 @@ mod tests {
         assert!(a.an.iter().any(|r| r.rtype == T_PTR && !r.flush && r.name.join(".") == "_services._dns-sd._udp.local"));
         assert!(has(&a.an, "9.7.254.169.in-addr.arpa", T_PTR));
         assert_eq!(r.log.len(), 1, "{:?}", r.log);
-        assert!(r.log[0].contains("dho924s-204527.local on eth0"));
+        assert!(r.log[0].contains("dho924s-123456.local on eth0"));
         // now it answers
         assert!(!r.receive(t, &q, peer(PORT), ETH, true).is_empty());
         assert_eq!(r.next_wake(), None);
@@ -1748,38 +1798,38 @@ mod tests {
     fn answers_a_ptr_srv_txt() {
         let mut r = running();
         // A, multicast, with the cache-flush bit and an NSEC for the missing AAAA
-        let m = one(&r.receive(10.0, &query(0, &[(&["DHO924S-204527", "local"], T_A, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(10.0, &query(0, &[(&["DHO924S-123456", "local"], T_A, false)]), peer(PORT), ETH, true));
         assert_eq!((m.id, m.qs.len()), (0, 0));
         assert_eq!(m.an.len(), 1);
         assert!(m.an[0].flush && m.an[0].canon == vec![192, 168, 1, 20]);
         assert!(m.ar.iter().any(|r| r.rtype == T_NSEC));
         // the same again within a second: not multicast twice
-        assert!(r.receive(10.5, &query(0, &[(&["dho924s-204527", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r.receive(10.5, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
         // browsing: the PTR with SRV, TXT and the address in the additional section
         let m = one(&r.receive(11.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an.len(), 1);
-        let want = Rec::new(dname(&["_http", "_tcp", "local"]), Data::Ptr(dname(&["Rigol DHO924S OOS (204527)", "_http", "_tcp", "local"])), 4500, false);
+        let want = Rec::new(dname(&["_http", "_tcp", "local"]), Data::Ptr(dname(&["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"])), 4500, false);
         assert!(want.matches(&m.an[0]) && !m.an[0].flush);
-        let inst = "Rigol DHO924S OOS (204527)._http._tcp.local";
-        assert!(has(&m.ar, inst, T_SRV) && has(&m.ar, inst, T_TXT) && has(&m.ar, "dho924s-204527.local", T_A));
+        let inst = "Rigol DHO924S OOS (123456)._http._tcp.local";
+        assert!(has(&m.ar, inst, T_SRV) && has(&m.ar, inst, T_TXT) && has(&m.ar, "dho924s-123456.local", T_A));
         let srv = m.ar.iter().find(|r| r.rtype == T_SRV).unwrap();
         let mut c = vec![0, 0, 0, 0, 0x1f, 0x90];
-        canon_name(&dname(&["dho924s-204527", "local"]), &mut c);
+        canon_name(&dname(&["dho924s-123456", "local"]), &mut c);
         assert_eq!(srv.canon, c, "port 8080, the host as target");
         let txt = m.ar.iter().find(|r| r.rtype == T_TXT).unwrap();
         assert_eq!(txt.canon, b"\x06path=/".to_vec());
         // SRV and TXT asked directly; an empty TXT is one empty string
-        let m = one(&r.receive(12.0, &query(0, &[(&["Rigol DHO924S OOS (204527)", "_scpi-raw", "_tcp", "local"], T_ANY, false)]), peer(PORT), ETH, true));
-        assert!(has(&m.an, "Rigol DHO924S OOS (204527)._scpi-raw._tcp.local", T_SRV));
+        let m = one(&r.receive(12.0, &query(0, &[(&["Rigol DHO924S OOS (123456)", "_scpi-raw", "_tcp", "local"], T_ANY, false)]), peer(PORT), ETH, true));
+        assert!(has(&m.an, "Rigol DHO924S OOS (123456)._scpi-raw._tcp.local", T_SRV));
         assert_eq!(m.an.iter().find(|r| r.rtype == T_TXT).unwrap().canon, vec![0]);
         // the service types
         let m = one(&r.receive(13.0, &query(0, &[(&["_services", "_dns-sd", "_udp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an.len(), 3);
         // the reverse name
         let m = one(&r.receive(14.0, &query(0, &[(&["20", "1", "168", "192", "in-addr", "arpa"], T_PTR, false)]), peer(PORT), ETH, true));
-        assert_eq!(m.an[0].canon[1..15].to_vec(), b"dho924s-204527".to_vec());
+        assert_eq!(m.an[0].canon[1..15].to_vec(), b"dho924s-123456".to_vec());
         // AAAA of a host without IPv6: NSEC that lists A only
-        let m = one(&r.receive(15.0, &query(0, &[(&["dho924s-204527", "local"], T_AAAA, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(15.0, &query(0, &[(&["dho924s-123456", "local"], T_AAAA, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an[0].rtype, T_NSEC);
         assert_eq!(m.an[0].canon[m.an[0].canon.len() - 3..].to_vec(), vec![0, 1, 0x40]);
         // other names and other hosts' services: nothing
@@ -1787,7 +1837,7 @@ mod tests {
         assert!(r.receive(16.0, &query(0, &[(&["_ipp", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true).is_empty());
         // an interface the responder does not know: by the sender's network (the host's own query on loopback), else
         // nothing
-        let q = query(9, &[(&["dho924s-204527", "local"], T_A, false)]);
+        let q = query(9, &[(&["dho924s-123456", "local"], T_A, false)]);
         assert!(r.receive(17.0, &q, SocketAddr::from(([10, 9, 9, 9], 40000)), 99, true).is_empty());
         let out = r.receive(17.0, &q, SocketAddr::from(([192, 168, 1, 20], 40000)), 1, true);
         assert_eq!(one(&out).an[0].canon, vec![192, 168, 1, 20]);
@@ -1798,7 +1848,7 @@ mod tests {
     fn qu_and_legacy_unicast() {
         let mut r = running();
         // QU: to the asker, port 5353
-        let out = r.receive(10.0, &query(0, &[(&["dho924s-204527", "local"], T_A, true)]), peer(PORT), ETH, true);
+        let out = r.receive(10.0, &query(0, &[(&["dho924s-123456", "local"], T_A, true)]), peer(PORT), ETH, true);
         assert_eq!(out[0].dest, Dest::To(peer(PORT)));
         assert!(parse(&out[0].pkt).unwrap().an[0].flush);
         // a plain resolver (dig): its id, its question, TTL 10 at most, no cache flush, to its port
@@ -1810,9 +1860,9 @@ mod tests {
         assert_eq!(m.qs[0].name, dname(&["_http", "_tcp", "local"]));
         assert!(m.an.iter().chain(&m.ar).all(|r| r.ttl <= 10 && !r.flush));
         // again at once: a legacy query is always answered
-        assert_eq!(r.receive(10.2, &query(0x4243, &[(&["dho924s-204527", "local"], T_A, false)]), peer(53000), ETH, true).len(), 1);
+        assert_eq!(r.receive(10.2, &query(0x4243, &[(&["dho924s-123456", "local"], T_A, false)]), peer(53000), ETH, true).len(), 1);
         // sent to the scope's own address: only from the same link
-        let q = query(1, &[(&["dho924s-204527", "local"], T_A, false)]);
+        let q = query(1, &[(&["dho924s-123456", "local"], T_A, false)]);
         assert_eq!(r.receive(11.0, &q, peer(PORT), ETH, false)[0].dest, Dest::To(peer(PORT)));
         assert!(r.receive(11.0, &q, SocketAddr::from(([8, 8, 8, 8], PORT)), ETH, false).is_empty());
         assert!(!r.receive(11.0, &q, SocketAddr::from(([169, 254, 3, 4], 40000)), ETH, false).is_empty());
@@ -1851,35 +1901,35 @@ mod tests {
         for o in r.tick(0.6) {
             r.receive(0.6, &o.pkt, own, ETH, true);
         }
-        let same = response_from(&["dho924s-204527", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 20)));
+        let same = response_from(&["dho924s-123456", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 20)));
         r.receive(0.6, &same, peer(PORT), ETH, true);
-        assert_eq!(r.host_label(), "dho924s-204527");
+        assert_eq!(r.host_label(), "dho924s-123456");
         // a response from another host on port 40000 does not count
-        let other = response_from(&["dho924s-204527", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 77)));
+        let other = response_from(&["dho924s-123456", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 77)));
         r.receive(0.7, &other, peer(40000), ETH, true);
-        assert_eq!(r.host_label(), "dho924s-204527");
+        assert_eq!(r.host_label(), "dho924s-123456");
         // another host answers the probe: -2, and probing again
         r.receive(0.7, &other, peer(PORT), ETH, true);
-        assert_eq!(r.host_label(), "dho924s-204527-2");
+        assert_eq!(r.host_label(), "dho924s-123456-2");
         assert!(matches!(r.phase, Phase::Probe { sent: 0, .. }));
-        assert!(r.log.last().unwrap().contains("dho924s-204527.local is taken"), "{:?}", r.log);
-        let other2 = response_from(&["DHO924S-204527-2", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 78)));
+        assert!(r.log.last().unwrap().contains("dho924s-123456.local is taken"), "{:?}", r.log);
+        let other2 = response_from(&["DHO924S-123456-2", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 78)));
         r.tick(1.0);
         r.receive(1.0, &other2, peer(PORT), ETH, true);
-        assert_eq!(r.host_label(), "dho924s-204527-3");
+        assert_eq!(r.host_label(), "dho924s-123456-3");
         // an instance name: (2)
-        let srv = response_from(&["Rigol DHO924S OOS (204527)", "_http", "_tcp", "local"], Data::Srv { port: 80, target: dname(&["x", "local"]) });
+        let srv = response_from(&["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"], Data::Srv { port: 80, target: dname(&["x", "local"]) });
         r.receive(1.1, &srv, peer(PORT), ETH, true);
-        assert_eq!(r.inst_label(), "Rigol DHO924S OOS (204527) (2)");
+        assert_eq!(r.inst_label(), "Rigol DHO924S OOS (123456) (2)");
         // probes and announcements under the new names
         let mut t = 1.1;
         while r.phase != Phase::Run {
             t += 0.05;
             r.tick(t);
         }
-        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-204527-3", "local"], T_A, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-123456-3", "local"], T_A, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an[0].canon, vec![192, 168, 1, 20]);
-        assert!(r.receive(t + 2.0, &query(0, &[(&["dho924s-204527", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r.receive(t + 2.0, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
         // a new name set by hand starts without a number
         let mut c = cfg();
         c.name = "lab-3".into();
@@ -1890,15 +1940,15 @@ mod tests {
     #[test]
     fn a_conflict_after_announcing_probes_again() {
         let mut r = running();
-        let other = response_from(&["dho924s-204527", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 77)));
+        let other = response_from(&["dho924s-123456", "local"], Data::A(Ipv4Addr::new(192, 168, 1, 77)));
         r.receive(20.0, &other, peer(PORT), ETH, true);
         // not renamed yet: the probe finds out whether the other host still holds the name
-        assert_eq!(r.host_label(), "dho924s-204527");
+        assert_eq!(r.host_label(), "dho924s-123456");
         assert_eq!(r.state(), State::Probing);
         // a goodbye of another host for the name is no conflict
         let mut r = running();
         let mut w = Wr::new(0, RESPONSE);
-        w.rec(&Rec::new(dname(&["dho924s-204527", "local"]), Data::A(Ipv4Addr::new(192, 168, 1, 77)), 120, true), 0, true);
+        w.rec(&Rec::new(dname(&["dho924s-123456", "local"]), Data::A(Ipv4Addr::new(192, 168, 1, 77)), 120, true), 0, true);
         w.counts([0, 1, 0, 0]);
         r.receive(20.0, &w.b, peer(PORT), ETH, true);
         assert_eq!(r.state(), State::Running);
@@ -1908,8 +1958,8 @@ mod tests {
     fn simultaneous_probes_are_broken_by_the_data() {
         let probe_with = |a: [u8; 4]| {
             let mut w = Wr::new(0, 0);
-            w.question(&dname(&["dho924s-204527", "local"]), T_ANY, CLASS_IN | TOP);
-            w.rec(&Rec::new(dname(&["dho924s-204527", "local"]), Data::A(Ipv4Addr::from(a)), 120, true), 120, false);
+            w.question(&dname(&["dho924s-123456", "local"]), T_ANY, CLASS_IN | TOP);
+            w.rec(&Rec::new(dname(&["dho924s-123456", "local"]), Data::A(Ipv4Addr::from(a)), 120, true), 120, false);
             w.counts([1, 0, 1, 0]);
             w.b
         };
@@ -1923,7 +1973,7 @@ mod tests {
         // higher: the scope loses, waits a second and probes again
         r.receive(0.4, &probe_with([192, 168, 1, 30]), peer(PORT), ETH, true);
         assert!(matches!(r.phase, Phase::Probe { sent: 0, at } if (at - 1.4).abs() < 1e-9));
-        assert_eq!(r.host_label(), "dho924s-204527");
+        assert_eq!(r.host_label(), "dho924s-123456");
     }
 
     #[test]
@@ -1935,7 +1985,7 @@ mod tests {
         let m = one(&out);
         assert!(m.an.iter().all(|a| a.ttl == 0));
         assert!(has(&m.an, "_services._dns-sd._udp.local", T_PTR) && has(&m.an, "_vxi-11._tcp.local", T_PTR));
-        assert!(!has(&m.an, "_http._tcp.local", T_PTR) && !has(&m.an, "dho924s-204527.local", T_A));
+        assert!(!has(&m.an, "_http._tcp.local", T_PTR) && !has(&m.an, "dho924s-123456.local", T_A));
         assert_eq!(r.state(), State::Probing);
         // switched off: every record with TTL 0, then nothing more
         let mut t = 30.0;
@@ -1945,10 +1995,10 @@ mod tests {
         }
         c.on = false;
         let m = one(&r.set_config(t, c));
-        assert!(has(&m.an, "dho924s-204527.local", T_A) && m.an.iter().all(|a| a.ttl == 0));
+        assert!(has(&m.an, "dho924s-123456.local", T_A) && m.an.iter().all(|a| a.ttl == 0));
         assert_eq!(r.state(), State::Off);
         assert!(r.tick(t + 10.0).is_empty());
-        assert!(r.receive(t, &query(0, &[(&["dho924s-204527", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r.receive(t, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
     }
 
     #[test]
@@ -1982,13 +2032,37 @@ mod tests {
             assert!(outs.iter().any(|o| o.iface == i && o.dest == d), "{} {:?}", i, d);
         }
         assert!(!outs.iter().any(|o| o.iface == ETH && o.dest == Dest::Group6), "eth0 has no IPv6 address");
-        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-204527", "local"], T_ANY, false)]), SocketAddr::from(([10, 0, 0, 9], PORT)), 5, true));
+        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-123456", "local"], T_ANY, false)]), SocketAddr::from(([10, 0, 0, 9], PORT)), 5, true));
         assert!(m.an.iter().any(|a| a.rtype == T_A && a.canon == vec![10, 0, 0, 5]));
         assert!(!m.an.iter().any(|a| a.rtype == T_AAAA), "the services have no IPv6");
         assert!(!m.an.iter().any(|a| a.canon == vec![192, 168, 1, 20]), "only the address of the interface asked on");
         // all interfaces gone: waiting for one
         r.set_ifaces(t + 3.0, Vec::new());
         assert_eq!(r.state(), State::NoNetwork);
+    }
+
+    // net.ipv6 = on: AAAA for every IPv6 address of the interface asked on, no NSEC for it, a SRV brings both families
+    #[test]
+    fn aaaa_when_the_services_listen_on_ipv6() {
+        let mut r = Responder::new(7);
+        r.set_config(0.0, Config { v6: true, ..cfg() });
+        let mut e = eth([192, 168, 1, 20]);
+        let (ll, global): (Ipv6Addr, Ipv6Addr) = ("fe80::0:ff:fe00:1".parse().unwrap(), "2001:db8:5:7:1d2e:3f4a:5b6c:7d8e".parse().unwrap());
+        e.v6 = vec![ll, global];
+        r.set_ifaces(0.0, vec![e]);
+        let mut t = 0.0;
+        while r.phase != Phase::Run {
+            t += 0.05;
+            r.tick(t);
+        }
+        let from6 = SocketAddr::from((Ipv6Addr::from(0xfe80_0000_0000_0000_0000_0000_0000_0099u128), PORT));
+        let m = one(&r.receive(t + 1.0, &query(0, &[(&["dho924s-123456", "local"], T_AAAA, false)]), from6, ETH, true));
+        let got: Vec<Vec<u8>> = m.an.iter().filter(|a| a.rtype == T_AAAA).map(|a| a.canon.clone()).collect();
+        assert_eq!(got, vec![ll.octets().to_vec(), global.octets().to_vec()]);
+        assert!(m.an.iter().all(|a| a.flush) && !m.ar.iter().any(|r| r.rtype == T_NSEC));
+        assert!(has(&m.ar, "dho924s-123456.local", T_A), "the other family as additional");
+        let m = one(&r.receive(t + 2.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
+        assert!(has(&m.ar, "dho924s-123456.local", T_A) && has(&m.ar, "dho924s-123456.local", T_AAAA));
     }
 
     #[test]

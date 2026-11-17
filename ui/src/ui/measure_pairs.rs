@@ -31,6 +31,7 @@ fn shifted(a: &Analysis, t0: f64) -> Analysis {
     Analysis { valid:a.valid, rises:a.rises.iter().map(|time|time+t0).collect(),
         falls:a.falls.iter().map(|time|time+t0).collect(), ..Default::default() }
 }
+// Setup and hold: A is the data, B the clock (the tiles and SCPI say so); the dsp functions take the clock first.
 fn compute(job: &Job) -> f64 {
     let (_,kind,_,_)=PAIRS[job.key.kind];
     let (a,b)=(shifted(&job.a,job.ta),shifted(&job.b,job.tb));
@@ -38,9 +39,9 @@ fn compute(job: &Job) -> f64 {
     match kind {
         PairKind::Delay=>delay_opts(&a,&b,o), PairKind::Phase=>phase_opts(&a,&b,o),
         PairKind::Skew=>skew_opts(&a,&b,o),
-        PairKind::Setup|PairKind::SetupBoth=>setup_time_opts(&a,&b,o),
-        PairKind::Hold|PairKind::HoldBoth=>hold_time_opts(&a,&b,o),
-        PairKind::SetupAndHold|PairKind::SetupAndHoldBoth=>setup_hold_violations_opts(&a,&b,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),o),
+        PairKind::Setup|PairKind::SetupBoth=>setup_time_opts(&b,&a,o),
+        PairKind::Hold|PairKind::HoldBoth=>hold_time_opts(&b,&a,o),
+        PairKind::SetupAndHold|PairKind::SetupAndHoldBoth=>setup_hold_violations_opts(&b,&a,f64::from_bits(job.key.setup),f64::from_bits(job.key.hold),o),
     }
 }
 /// The edge choice of a pair row as a number for a cache key.
@@ -179,5 +180,18 @@ mod tests {
         ui.refs[1].as_mut().unwrap().t0+=5e-9;
         let value=wait(&mut ui,0);assert!((value-8e-9).abs()<1e-15,"{value}");
         assert!(ui.azr.measure_pairs.borrow().cache.len()<=MEAS_MAX);
+    }
+    #[test]
+    fn setup_and_hold_take_the_data_from_a_and_the_clock_from_b() {
+        // as the tiles say: B (the clock) moves 3 ns after each edge of A (the data), which holds for 20 ns
+        let mut ui=fixture();
+        // the 17 ns hold is outside the fork's default setup/hold range (SETUP_HOLD_WINDOW, 10 ns): setup only
+        for (kind,want) in [(12,3e-9),(15,3e-9)] {
+            let value=wait(&mut ui,kind);assert!((value-want).abs()<1e-12,"{} {value}",PAIRS[kind].0);
+        }
+        ui.m.meas_tsetup=2e-9;ui.m.meas_thold=16e-9;
+        assert_eq!(wait(&mut ui,14),0.0);
+        ui.m.meas_tsetup=4e-9;
+        assert!(wait(&mut ui,14)>0.0);
     }
 }

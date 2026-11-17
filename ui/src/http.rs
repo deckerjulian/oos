@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Web remote (HTTP, port 8080): live screen in the browser, clicks act as touch taps, buttons for keys and knobs.
@@ -7,7 +7,8 @@
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /screen.jpg   the live picture as JPEG from the VPU (`vpu.rs`; PNG where there is none), as /screen.png
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
-//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written)
+//!   POST /waveform?name=...&slot=1   load a waveform into a chosen reference (no file written; parsed on a thread of
+//!                     its own and put into the slot by the frame loop, see `WaveJob`)
 //!   GET /ui-state     source, acquisition state and capture count for the remote controls
 //!   GET /cmd?c=...    one key, knob or touch command (cmd.rs syntax: "key runstop", "knob vscale +1", "tap 100 200");
 //!                     other commands are refused (`cmd::remote_ok`)
@@ -17,6 +18,7 @@
 //!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it
 //!                     (ui/update.rs: the signature is checked before anything is written)
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
+//! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
 use crate::ui::Ui;
@@ -31,6 +33,9 @@ const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
+/// A body above this (an update package, a waveform) is taken one at a time: a second one is answered 503 when its
+/// head is in, so the requests waiting hold at most one large body and `MAX_PENDING` small ones.
+const LARGE_BODY: usize = MAX_OTHER;
 /// Idle time and whole time a request may take (the upload of a package over 10 Mbit/s takes ~30 s).
 const IDLE_S: u64 = 10;
 const DEADLINE_S: u64 = 120;
@@ -92,23 +97,27 @@ const WEB_NICE: i32 = 10;
 /// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC
 /// (RK3399: the four A53; the frame loop keeps the two A72 for itself). Nice 10 where that fails.
 fn lower_priority() {
+    // not in the tests: with every core busy with tests in parallel (CI), a thread at SCHED_IDLE got no time for
+    // seconds, and a viewer waiting for a picture got 304 or 503 instead
     #[cfg(target_os = "linux")]
-    // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
-    unsafe {
-        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-        // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
-        let p: libc::sched_param = std::mem::zeroed();
-        // the system call itself: musl's sched_setscheduler() is a stub that always fails
-        if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
-            libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
-        }
-        let little = little_cores();
-        if !little.is_empty() {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in little {
-                libc::CPU_SET(c, &mut set);
+    if !cfg!(test) {
+        // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
+        unsafe {
+            let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
+            // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
+            let p: libc::sched_param = std::mem::zeroed();
+            // the system call itself: musl's sched_setscheduler() is a stub that always fails
+            if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
+                libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
             }
-            libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            let little = little_cores();
+            if !little.is_empty() {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                for c in little {
+                    libc::CPU_SET(c, &mut set);
+                }
+                libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            }
         }
     }
 }
@@ -126,6 +135,31 @@ fn little_cores() -> Vec<usize> {
         cap.iter().filter(|x| x.1 < max).map(|x| x.0).collect()
     })
     .clone()
+}
+
+/// The slower cores of a big.LITTLE SoC (RK3399: 0-3), empty where the cores are all alike.
+pub fn little_core_list() -> Vec<usize> {
+    #[cfg(target_os = "linux")]
+    return little_cores();
+    #[cfg(not(target_os = "linux"))]
+    Vec::new()
+}
+
+/// The calling thread onto `cores` (nothing when it is empty).
+pub fn pin_to(cores: &[usize]) {
+    #[cfg(target_os = "linux")]
+    if !cores.is_empty() {
+        // SAFETY: a local CPU set for the calling thread
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            for &c in cores {
+                libc::CPU_SET(c, &mut set);
+            }
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cores;
 }
 
 /// The calling thread onto the slower cores of a big.LITTLE SoC (RK3399: the four A53), at normal priority: the
@@ -234,6 +268,9 @@ struct ShotState {
     no_jpeg: bool,
     /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
     no_jpeg_at: Option<Instant>,
+    /// tests: a long poll other than `LONG_POLL`
+    #[cfg(test)]
+    long_poll: Option<Duration>,
     /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
     frames: bool,
     thread: bool,
@@ -294,7 +331,11 @@ impl Shots {
             return;
         }
         let now = Instant::now();
-        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= LONG_POLL);
+        #[cfg(test)]
+        let long_poll = st.long_poll.unwrap_or(LONG_POLL);
+        #[cfg(not(test))]
+        let long_poll = LONG_POLL;
+        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
@@ -473,11 +514,86 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
     }
 }
 
+/// A request being read.
+struct Pending {
+    s: TcpStream,
+    /// the request so far
+    req: Vec<u8>,
+    /// last data, accepted
+    t: Instant,
+    t_acc: Instant,
+    /// the length of the whole request, once its head is in and the body is taken
+    need: Option<usize>,
+    /// its body is over `LARGE_BODY`: the one large body being read
+    large: bool,
+}
+
+/// A waveform upload (`POST /waveform`) parsed on a thread of its own, as the desktop build's file picker does: a file
+/// near the 128 MiB limit takes seconds to parse, which on the frame loop stopped the scope's screen and keys. The
+/// frame loop puts the traces into the slot (`Ui::commit_waveform_traces_at`) and answers the client, which waits.
+struct WaveJob {
+    s: TcpStream,
+    name: String,
+    /// R1 is 0
+    slot: usize,
+    /// `Ui::waveform_epoch` at the upload: a session changed meanwhile does not get the late file
+    epoch: u64,
+    parsed: std::sync::mpsc::Receiver<Result<Vec<crate::store::WaveTrace>, String>>,
+}
+
+impl WaveJob {
+    /// Starts parsing `req[body..]`; None when no thread could be started.
+    fn start(s: TcpStream, req: Vec<u8>, body: usize, name: String, slot: usize, epoch: u64) -> Option<WaveJob> {
+        let (tx, parsed) = std::sync::mpsc::channel();
+        let file = name.clone();
+        std::thread::Builder::new()
+            .name("web-wave".into())
+            .spawn(move || {
+                lower_priority();
+                let _ = tx.send(crate::store::parse_wave(&req[body..], &file));
+            })
+            .ok()?;
+        Some(WaveJob { s, name, slot, epoch, parsed })
+    }
+
+    /// The answer once the parse is done: the traces in the slot, or why not. None while it runs.
+    fn finish(&self, ui: &mut Ui) -> Option<(bool, String)> {
+        let parsed = match self.parsed.try_recv() {
+            Ok(parsed) => parsed,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The waveform reader stopped; try again.".into()),
+        };
+        let previous = ui.ref_slot();
+        let result = if ui.waveform_epoch() != self.epoch {
+            Err("The session changed while the file was read; load it again.".to_string())
+        } else {
+            parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, &self.name, self.slot))
+        };
+        Some(match result {
+            Ok(()) => {
+                let hint = if ui.record_mode() {
+                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
+                } else {
+                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
+                };
+                (true, format!("Loaded {} into R{}. {}", self.name, ui.ref_slot() + 1, hint))
+            }
+            Err(error) => {
+                ui.ref_slot_set(previous);
+                (false, error)
+            }
+        })
+    }
+}
+
 pub struct Http {
     l: Option<TcpListener>,
-    /// connection, request so far, last data, accepted
-    pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
+    pending: Vec<Pending>,
+    /// the waveform upload being parsed
+    wave: Option<WaveJob>,
     shots: Arc<Shots>,
+    /// who may install an update or use MCP (empty: everyone); checked per request, so a change counts at once
+    pub acl: crate::netacl::Shared,
     /// the addresses the identification page names
     offer: Offer,
 }
@@ -573,7 +689,7 @@ function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause pi
 function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*(s.naturalWidth||1024)/r.width),Math.round((p.clientY-r.top)*(s.naturalHeight||600)/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])askFile();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
+function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
 let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);
@@ -626,15 +742,22 @@ fn waveform_name(query: &str) -> String {
 
 impl Http {
     pub fn open(port: u16) -> Http {
-        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), offer: Offer::default() }
+        Http {
+            l: Self::bind(port),
+            pending: Vec::new(),
+            wave: None,
+            shots: Shots::new(),
+            acl: crate::netacl::Shared::default(),
+            offer: Offer::default(),
+        }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = TcpListener::bind(("0.0.0.0", port)).ok();
+        let l = crate::net6::tcp(port);
         match &l {
             Some(l) => {
                 let _ = l.set_nonblocking(true);
-                eprintln!("oos-ui: web remote on port {}", port);
+                eprintln!("oos-ui: web remote on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
@@ -699,6 +822,15 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
+        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
+            let mut job = self.wave.take().unwrap();
+            let status = if ok { "200 OK" } else { "409 Conflict" };
+            let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n", text.len());
+            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
+            let _ = job.s.write_all(head.as_bytes());
+            let _ = job.s.write_all(text.as_bytes());
+        }
         if let Some(l) = &self.l {
             while let Ok((s, _)) = l.accept() {
                 if self.pending.len() >= MAX_PENDING {
@@ -706,18 +838,25 @@ impl Http {
                 }
                 let _ = s.set_nonblocking(false);
                 let now = Instant::now();
-                self.pending.push((s, Vec::new(), now, now));
+                self.pending.push(Pending { s, req: Vec::new(), t: now, t_acc: now, need: None, large: false });
             }
         }
         let mut i = 0;
         while i < self.pending.len() {
             let mut buf = [0u8; 65536];
-            let (s, req, t, t_acc) = &mut self.pending[i];
+            // a waveform being parsed holds its body too
+            let large_taken = self.pending.iter().any(|p| p.large) || self.wave.is_some();
+            let Pending { s, req, t, t_acc, need, large } = &mut self.pending[i];
             let mut dead = false;
-            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s)
+            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s), and once
+            // the length is known not beyond the request: the buffer reserved for it is not outgrown
             let mut got = 0;
             while got < 2 << 20 {
-                match crate::net::read_now(s, &mut buf) {
+                let room = need.map_or(buf.len(), |n| n.saturating_sub(req.len()).min(buf.len()));
+                if room == 0 {
+                    break;
+                }
+                match crate::net::read_now(s, &mut buf[..room]) {
                     Ok(0) => {
                         dead = true;
                         break;
@@ -740,6 +879,8 @@ impl Http {
                 dead = true; // no header end in 16 KiB
             }
             let mut too_big = false;
+            // answered when the head is in, before any of the body is kept: 403 refused, 503 busy
+            let mut early = None;
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
                 let n = h.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
@@ -747,9 +888,32 @@ impl Http {
                 let upload_path = first.split_whitespace().nth(1).unwrap_or("").split('?').next().unwrap_or("");
                 let limit = if first.starts_with("post ") && upload_path == "/update" { MAX_UPDATE } else if first.starts_with("post ") && upload_path == "/waveform" { MAX_WAVEFORM } else { MAX_OTHER };
                 too_big = n > limit || req.len() > limit + e;
+                if !too_big && need.is_none() {
+                    // what only `net.allow` may send is refused before its body is read, not after
+                    let guarded = upload_path == "/mcp" || (first.starts_with("post ") && upload_path == "/update");
+                    if guarded && !self.acl.permits_peer(s.peer_addr()) {
+                        early = Some("403 Forbidden");
+                        return false;
+                    }
+                    if n > LARGE_BODY && large_taken {
+                        early = Some("503 Service Unavailable");
+                        return false;
+                    }
+                    // the whole request in one allocation, not a doubling past it
+                    req.reserve_exact((e + n).saturating_sub(req.len()));
+                    *need = Some(e + n);
+                    *large = n > LARGE_BODY;
+                }
                 too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
             });
-            if too_big {
+            if let Some(status) = early {
+                let msg = if status.starts_with("403") { "refused" } else { "busy, try again" };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}", msg.len());
+                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+                let _ = s.write_all(head.as_bytes());
+                dead = true;
+            } else if too_big {
                 let msg = b"request too large";
                 let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", msg.len());
                 let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
@@ -763,6 +927,8 @@ impl Http {
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
                 let req_body = &req[hdr_end.unwrap_or(req.len())..];
                 let post = text.starts_with("POST ");
+                // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
+                let peer_ok = self.acl.permits_peer(s.peer_addr());
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
                 let mut csv = |r: Result<String, String>| match r {
@@ -774,26 +940,31 @@ impl Http {
                 };
                 let (ctype, body): (&str, Vec<u8>) = match route {
                     _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+                    "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                     "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                     "/waveform" if post => {
                         let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
-                        let name = waveform_name(query);
-                        let previous = ui.ref_slot();
-                        let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
-                            ui.load_waveform_bytes_at(req_body, &name, slot - 1)
-                        } else { Err("Choose a reference slot from R1 to R10.".into()) };
-                        match result {
-                            Ok(()) => {
-                                let hint = if ui.record_mode() { "Use Run/Stop or Single to acquire from this record; Return to live restores the live source." }
-                                    else { "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition." };
-                                ("text/plain; charset=utf-8", format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes())
-                            }
-                            Err(error) => {
-                                ui.ref_slot_set(previous);
+                        match slot.filter(|s| (1..=10).contains(s)) {
+                            None => {
                                 failed = true;
-                                ("text/plain; charset=utf-8", error.into_bytes())
+                                ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
+                            }
+                            Some(_) if self.wave.is_some() => {
+                                busy_answer(s);
+                                self.pending.remove(i);
+                                continue;
+                            }
+                            Some(slot) => {
+                                // the request goes to the parser whole, its body is not copied out
+                                let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
+                                let Pending { s, req, .. } = self.pending.remove(i);
+                                match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
+                                    Some(job) => self.wave = Some(job),
+                                    None => eprintln!("oos-ui: no thread for a waveform upload"),
+                                }
+                                continue;
                             }
                         }
                     },
@@ -931,7 +1102,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 ("protocolVersion", J::Str(ver)),
                 ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
                 ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("DHO924S running OOS. Use the scpi tool with stock-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
+                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
             ])
         }
         "ping" => J::obj(&[]),
@@ -1006,6 +1177,15 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    /// The tests that fetch large answers one after the other: `SENDERS` is shared by the whole process and lets
+    /// `MAX_SENDERS` through, and under load (tests in parallel, CI) a sender at `SCHED_IDLE` holds its place long
+    /// enough that another test is answered 503 busy
+    static SENDS: Mutex<()> = Mutex::new(());
+
+    fn sends() -> MutexGuard<'static, ()> {
+        SENDS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn a_foreign_site_gets_nowhere() {
         let f = |h: &str, route: &str, post: bool| foreign(&format!("GET {} HTTP/1.1\r\n{}\r\n\r\n", route, h), route, post);
@@ -1014,6 +1194,12 @@ mod tests {
         assert!(!f("Host: x", "/cmd", false));
         assert!(!f("Host: dho924.local:8080", "/cmd", false));
         assert!(!f("Host: [fe80::1]:8080", "/cmd", false));
+        // the scope by its global IPv6 address (net.ipv6 = on), with and without the port, and the page's own requests
+        assert!(!f("Host: [2001:db8:5:7:1d2e:3f4a:5b6c:7d8e]:8080", "/cmd", false));
+        assert!(!f("Host: [2001:db8:5:7::7d8e]", "/cmd", false));
+        assert!(!f("Host: [2001:DB8:5:7::7D8E]:8080\r\nOrigin: http://[2001:db8:5:7::7d8e]:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
+        assert!(f("Host: [2001:db8:5:7::7d8e]:8080\r\nOrigin: http://[2001:db8:5:7::1]:8080", "/update", true));
+        assert!(f("Host: [2001:db8::1].evil.example:8080", "/cmd", false));
         assert!(!f("", "/cmd", false));
         assert!(!f("Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
         // a page elsewhere
@@ -1163,6 +1349,54 @@ mod tests {
         assert_eq!(parsed.get("mode").and_then(crate::json::J::str), Some("live"));
     }
 
+    /// A waveform upload is parsed off the frame loop: the poll that takes the request only starts the parse, and a
+    /// later poll puts the traces into the slot and answers. Before, the poll parsed it (a CSV near 128 MiB took
+    /// seconds, with the scope's screen and keys stopped). A session changed meanwhile does not get the late file.
+    #[test]
+    fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let port = h.port().unwrap();
+        let csv = "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n";
+        let upload = |slot: usize| {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            let head = format!("POST /waveform?name=lane.csv&slot={slot} HTTP/1.1\r\nHost: x\r\n\
+                Content-Length: {}\r\n\r\n", csv.len());
+            c.write_all(head.as_bytes()).unwrap();
+            c.write_all(csv.as_bytes()).unwrap();
+            c
+        };
+        for (slot, change) in [(3, false), (5, true)] {
+            let mut c = upload(slot);
+            let until = Instant::now() + Duration::from_secs(60);
+            while h.wave.is_none() {
+                assert!(Instant::now() < until, "the upload was not taken");
+                h.poll(&mut ui, &cv, &mut scpi);
+                assert!(ui.ref_shown_slot(slot - 1).is_none(), "the poll that takes the upload does not parse it");
+            }
+            if change {
+                ui.return_to_live();
+            }
+            while h.wave.is_some() {
+                assert!(Instant::now() < until, "the parse did not end");
+                h.poll(&mut ui, &cv, &mut scpi);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let mut reply = String::new();
+            c.read_to_string(&mut reply).unwrap();
+            if change {
+                assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("session changed"), "{reply}");
+                assert!(ui.ref_shown_slot(slot - 1).is_none());
+            } else {
+                assert!(reply.starts_with("HTTP/1.1 200") && reply.contains("Loaded lane.csv into R3"), "{reply}");
+                assert_eq!(ui.ref_shown_slot(slot - 1), Some(true));
+            }
+        }
+    }
+
     #[test]
     fn waveform_upload_has_its_own_limit_and_origin_protection() {
         assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
@@ -1273,6 +1507,7 @@ setTimeout(() => {
 
     #[test]
     fn pages_and_downloads() {
+        let _sends = sends();
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -1296,15 +1531,18 @@ setTimeout(() => {
         assert_eq!(body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp")), "");
         ui.clock_known = true;
         ui.sys.tz = "JST-9".into();
+        let before = ui.local_now().stamp();
         let st = body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp"));
-        let want = ui.local_now().stamp();
-        // the second may have turned between the two readings
-        assert!(st.len() == 15 && st[..13] == want[..13], "{} {}", st, want);
+        let after = ui.local_now().stamp();
+        // the clock goes on during the request (over a minute or a day too): the stamp lies between the readings
+        // around it, and the fixed-width form sorts as text
+        assert!(st.len() == 15 && before <= st && st <= after, "{} {} {}", before, st, after);
     }
 
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
     #[test]
     fn large_answers_go_through_a_thread() {
+        let _sends = sends();
         use std::sync::atomic::Ordering::SeqCst;
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
@@ -1336,52 +1574,99 @@ setTimeout(() => {
                 assert_eq!(&out[e..e + 4], b"\x89PNG");
             }
         }
-        for _ in 0..200 {
-            if SENDERS.load(SeqCst) == 0 {
-                return;
-            }
+        // the client has every byte, the sender only lets go of its place: a minute is a guard against a hang only
+        let until = Instant::now() + Duration::from_secs(60);
+        while SENDERS.load(SeqCst) != 0 {
+            assert!(Instant::now() < until, "a sender did not finish");
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("a sender did not finish");
     }
 
     /// With a frame loop that hands its screens over before each render, the picture is the screen that was shown,
-    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into.
+    /// taken without a copy, and the loop's canvas gets a buffer of the right size to draw into. The hand-over is told
+    /// by the buffer, not its content: a blank canvas swapped for a zeroed spare has equal pixels.
+    ///
+    /// Break it catches as well: the test's own race. A request in before the first frame is answered with a copy of
+    /// the screen (`Shots::request` -> `tick`: the loop has not yet said that it renders whole frames), and frames
+    /// handed over afterwards are pictures made ahead. Run in one order or the other by the client's timing, that
+    /// failed about 1 in 7 under load; both orders now run on purpose.
     #[test]
     fn live_picture_from_the_frame_loop_without_a_copy() {
+        let _sends = sends();
+        for frames_first in [true, false] {
+            live_picture_hand_over(frames_first);
+        }
+    }
+
+    /// The long poll as a hang guard, a minute instead of the tests' second: a debug PNG takes most of a second, more
+    /// on a busy computer, and a request that waited out the long poll before the first picture was made got an empty
+    /// 200. The clients of these tests wait as long (`PICTURE_WAIT`).
+    fn slow_encoder_guard(h: &Http) {
+        h.shots.lock().long_poll = Some(PICTURE_WAIT);
+    }
+
+    /// How long a test's client waits for its picture: a hang guard, not a time the test depends on.
+    const PICTURE_WAIT: Duration = Duration::from_secs(60);
+
+    fn live_picture_hand_over(frames_first: bool) {
         let mut h = Http::open(0);
+        // the request waits for its picture however long the encoder takes (`slow_encoder_guard`)
+        slow_encoder_guard(&h);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let mut frame = 0u32;
+        // the first screen handed over (the canvas got another buffer): the one before the render
+        let mut shown: Option<Vec<u32>> = None;
+        let mut one_frame = |h: &mut Http, cv: &mut Canvas, shown: &mut Option<Vec<u32>>| {
+            let (before, buf) = (cv.px.clone(), cv.px.as_ptr());
+            h.before_render(cv, true);
+            if cv.px.as_ptr() != buf && shown.is_none() {
+                *shown = Some(before);
+            }
+            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
+            frame += 1;
+            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+        };
+        if frames_first {
+            for _ in 0..3 {
+                h.poll(&mut ui, &cv, &mut scpi);
+                one_frame(&mut h, &mut cv, &mut shown);
+            }
+            assert!(shown.is_none(), "nothing handed over before a request");
+        }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(PICTURE_WAIT)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
             out
         });
-        let mut shown = None;
-        let mut frame = 0u32;
-        while !t.is_finished() {
+        // the request is in before the next frame, whatever the load; the screen at that moment
+        while h.shots.lock().waiting.is_empty() && !t.is_finished() {
             h.poll(&mut ui, &cv, &mut scpi);
-            // a frame: hand over, then render a screen of its own (each frame another colour)
-            let before = cv.px.clone();
-            h.before_render(&mut cv, true);
-            if cv.px != before && shown.is_none() {
-                shown = Some(before);
-            }
-            assert_eq!(cv.px.len(), (cv.w * cv.h) as usize);
-            frame += 1;
-            cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let at_request = cv.px.clone();
+        while !t.is_finished() {
+            one_frame(&mut h, &mut cv, &mut shown);
+            h.poll(&mut ui, &cv, &mut scpi);
             std::thread::sleep(Duration::from_millis(5));
         }
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-        let shown = shown.expect("a screen was handed over");
-        assert!(out[e..] == crate::store::png(cv.w as u32, cv.h as u32, &shown), "the PNG of the screen that was shown");
+        let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+        if frames_first {
+            // the frame loop runs: the next screen goes over by a buffer swap, and it is the picture
+            let shown = shown.expect("a screen was handed over");
+            assert!(out[e..] == png(&shown), "the PNG of the screen that was shown");
+        } else {
+            // before the first frame: the screen of that moment, copied
+            assert!(out[e..] == png(&at_request), "the PNG of the screen at the request");
+        }
     }
 
     /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
@@ -1398,14 +1683,16 @@ setTimeout(() => {
     /// and forth between the new and an older screen), and the picture is one that came back.
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
+        let _sends = sends();
         let mut h = Http::open(0);
+        slow_encoder_guard(&h);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(PICTURE_WAIT)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1436,6 +1723,7 @@ setTimeout(() => {
     /// nothing changes, or the new picture as soon as the screen changes; a viewer without it gets it at once.
     #[test]
     fn live_picture_once_per_screen_and_long_poll() {
+        let _sends = sends();
         // the comparison of two screens, at every length and a difference at every place
         for n in [0usize, 1, 7, 8, 9, 63, 64, 65] {
             let a: Vec<u32> = (0..n as u32).map(|i| i.wrapping_mul(2654435761)).collect();
@@ -1460,7 +1748,7 @@ setTimeout(() => {
             let t0 = Instant::now();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
                 let _ = c.write_all(&req);
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);
@@ -1483,22 +1771,29 @@ setTimeout(() => {
         };
         let encodes = |h: &Http| h.shots.lock().encodes;
         let png_of = |cv: &Canvas| crate::store::png(cv.w as u32, cv.h as u32, &cv.px);
+        // the long poll is a minute but where it is waited out: a debug PNG takes most of a second, and the encoder
+        // waits twice its last encode before the next copy (`SHOT_DUTY`), so the test's one second could end before a
+        // picture is made on a slow or busy computer (a viewer without a picture then got an empty one)
+        let long_poll = |h: &Http, d: Duration| h.shots.lock().long_poll = Some(d);
+        long_poll(&h, Duration::from_secs(60));
         let (head, tag1, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: image/png"), "{}", head);
         assert!(tag1.starts_with('"') && tag1.ends_with('"') && tag1.len() > 2, "{}", head);
         assert!(body == png_of(&cv), "the PNG of the screen");
         // the screen unchanged, the viewer has it: it waits the long poll out, then 304 without a body, no encode
+        long_poll(&h, LONG_POLL);
         let (head, tag, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
         assert!(head.starts_with("HTTP/1.1 304") && body.is_empty() && tag == tag1, "{}", head);
         assert!(took >= LONG_POLL, "answered after {:?}", took);
+        long_poll(&h, Duration::from_secs(60));
         // a viewer without it gets the same picture, without a new encode
         let (head, tag, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && tag == tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 1);
-        // the screen changes while the viewer waits: the new picture comes before the long poll ends
-        let (head, tag2, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
+        // the screen changes while the viewer waits: the new picture comes before the long poll ends (a 304 would come
+        // after a minute)
+        let (head, tag2, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
         assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
-        assert!(took < LONG_POLL, "answered after {:?}", took);
         assert_eq!(encodes(&h), 2);
         // a foreign page still gets nowhere
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /screen.png HTTP/1.1\r\nHost: x\r\nSec-Fetch-Site: cross-site\r\n\r\n".to_vec());
@@ -1532,6 +1827,77 @@ setTimeout(() => {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("<Manufacturer>OOS"), "{}", r);
         assert!(r.contains("TCPIP::INSTR") && r.contains("TCPIP::5555::SOCKET"), "{}", r);
+    }
+
+    /// The requests waiting hold at most one large body: before, eight connections could each buffer up to 128 MiB
+    /// (the Vec doubling to 256 MiB), and `POST /update` or `/mcp` from outside `net.allow` was refused only after
+    /// its whole body was in. Both are now decided when the head is in; only a head is sent here, so the answer must
+    /// not wait for a body.
+    #[test]
+    fn a_large_body_at_a_time_and_net_allow_before_the_body() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let head = |path: &str, n: usize| format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {n}\r\n\r\n");
+        // a large upload in progress: its head and a part of its body
+        let port = h.port().unwrap();
+        let mut first = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        first.write_all(head("/update", 8 << 20).as_bytes()).unwrap();
+        first.write_all(&vec![0u8; 64 << 10]).unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        while !h.pending.iter().any(|p| p.req.len() >= head("/update", 8 << 20).len() + (64 << 10)) {
+            assert!(Instant::now() < until, "the first upload was not taken");
+            h.poll(&mut ui, &cv, &mut scpi);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let taken = h.pending.iter().find(|p| p.large).expect("the first upload is the large body");
+        assert_eq!(taken.need, Some(head("/update", 8 << 20).len() + (8 << 20)));
+        assert!(taken.req.capacity() <= taken.need.unwrap(), "reserved for the request, not doubled past it");
+        for path in ["/waveform?slot=1", "/update"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 2 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 503"), "{path}: {r}");
+        }
+        // a small body still goes through beside it
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        drop(first);
+        // outside net.allow: refused at the head, the body never asked for
+        h.acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        h.acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        for path in ["/update", "/mcp"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 1 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "{path}: {r}");
+        }
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    }
+
+    // Break it catches: the web server keeping the net.allow of its start, so a list changed on the screen
+    // (Remote services > Allowed) refused or let in an update only after a restart of oos-ui
+    #[test]
+    fn net_allow_follows_a_change_without_a_restart() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        // the list the screen sets, shared with the server; the test's connections come from 198.51.100.7
+        let acl = crate::netacl::Shared::default();
+        h.acl = acl.clone();
+        acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        let update = b"POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\njunk".to_vec();
+        let taken = |r: &str| r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package");
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "no list: everyone: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "outside the new list: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "inside the next one: {r}");
+        acl.set(crate::netacl::Acl::from_value("").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update);
+        assert!(taken(&r), "the list removed: {r}");
     }
 
     #[test]
@@ -1649,7 +2015,7 @@ setTimeout(() => {
         q(":BODE:GEN \"10.0.0.9:5025\"");
         assert_eq!(q(":BODE:GEN?"), "10.0.0.9:5025");
         assert_eq!(q(":BODE:DATA?"), "");
-        // built-in generator, stock forms
+        // built-in generator, Rigol forms
         q(":SOUR:FREQ 12345.6");
         q(":SOURce1:VOLTage:LEVel:IMMediate:AMPLitude 0.5");
         q(":SOUR:VOLT:OFFS 0.25");

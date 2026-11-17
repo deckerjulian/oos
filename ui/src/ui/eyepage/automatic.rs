@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Selected-source Eye setup and bounded immutable-reference analysis.
 use super::*;
 use std::sync::mpsc;
@@ -590,7 +592,7 @@ mod performance_and_timing_tests {
         let origin = -2.5e-6;
         let record = Record { t0: -2e-9, dt: 1e-12,
             ch: [vec![0.0; 3600], Vec::new(), Vec::new(), Vec::new()], triggered: true, partial: false, la: None,
-            raw: Some(crate::wave::Raw { frame: frame.clone(), i0: 1000, i1: 1004, t0: origin + 1000.0 * frame.dt, conditioned: true }) };
+            raw: Some(crate::wave::Raw { frame: frame.clone(), i0: 1000, i1: 1004, t0: origin + 1000.0 * frame.dt, conditioned: true }), pairs: false };
         ui.last[0] = Some(record); ui.records = 17; ui.wfm_total = 17;
         ui.select_workspace_source(WaveId::Ch(0)); ui.m.eye_src = WaveId::Ch(0);
         let sampled = ui.eye_samples(ui.last[0].as_ref().unwrap(), WaveId::Ch(0)).unwrap();

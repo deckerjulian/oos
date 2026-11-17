@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The unit's side of the boot outside BAR1: the FPGA boot monitor on `/dev/spidev1.0` (BOOT only), the LMX2582 lines,
@@ -73,7 +73,7 @@ impl super::PllPins for GpioPll {
     }
 }
 
-/// Seconds the boot monitor gets before PCIe is probed (the stock scripts: fixed `sleep 10`). 3 s brought PCIe up at the
+/// Seconds the boot monitor gets before PCIe is probed (Rigol's scripts: fixed `sleep 10`). 3 s brought PCIe up at the
 /// first try on the unit, and the bring-up tries again if not.
 pub const FPGA_BOOT_WAIT_S: u64 = 3;
 

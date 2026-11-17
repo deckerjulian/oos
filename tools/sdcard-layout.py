@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""sdcard-layout.py: describe the boot SD card of a DHO800/DHO900 (RK3399 legacy layout).
+"""sdcard-layout.py: describe the boot SD card of a Rigol DHO800/DHO900 (Rockchip RK3399 legacy layout).
 
 Read-only. Input is a card image (sd-original.img), a raw device (/dev/rdiskN, needs sudo) or a partial dump.
 
 Reports
   - LBA 0-63         MBR/GPT signatures
-  - LBA 64           IDB (TPL/SPL loader) present?
-  - LBA 7168-7679    vendor storage (4 copies of 64 KiB): items, serial/MAC
-  - LBA 8192         'parameter' (PARM) block: CMDLINE mtdparts -> partition table
+  - LBA 64           Rockchip IDB (TPL/SPL loader) present?
+  - LBA 7168-7679    Rockchip vendor storage (4 copies of 64 KiB): items, serial/MAC
+  - LBA 8192         Rockchip 'parameter' (PARM) block: CMDLINE mtdparts -> partition table
   - Android 'misc'   bootloader control block (BCB) command
   - each partition   first bytes / format guess (KRNL, RSCE, ANDROID!, ext4, zero)
 
@@ -19,7 +19,7 @@ Options
   --compare DIR      compare partitions with existing dumps DIR/<name>.bin (md5)
 
 Partition sizes and offsets in the PARM block are in 512-byte sectors and RELATIVE to LBA 0x2000 (8192),
-as the stock U-Boot interprets them.
+as Rockchip's U-Boot interprets them.
 """
 import argparse, hashlib, os, re, struct, sys, zlib
 
@@ -58,7 +58,10 @@ class Disk:
 def show_head(d):
     mbr = d.read(0, 2)
     print("== LBA 0/1")
-    print(f"   MBR signature 55AA: {'yes' if mbr[510:512] == b'\x55\xaa' else 'no'};  GPT header: {'yes' if mbr[512:520] == b'EFI PART' else 'no'}")
+    # no backslash inside the f-string: that needs Python 3.12, and macOS ships 3.9
+    sig = "yes" if mbr[510:512] == b"\x55\xaa" else "no"
+    gpt = "yes" if mbr[512:520] == b"EFI PART" else "no"
+    print(f"   MBR signature 55AA: {sig};  GPT header: {gpt}")
     idb = d.read(64, 4)
     print("== LBA 64 (IDB: TPL/SPL loader)")
     if not idb:
@@ -127,7 +130,8 @@ def parse_parm(d):
         size = None if mm.group(1) == "-" else int(mm.group(1), 16)
         off = int(mm.group(2), 16)
         parts.append((mm.group(3), PARM_LBA + off, size))
-    print(f"   CMDLINE (other than mtdparts): {re.sub(r'mtdparts=\S+', '', txt.split('CMDLINE:', 1)[-1]).strip()[:200]}")
+    rest = re.sub(r"mtdparts=\S+", "", txt.split("CMDLINE:", 1)[-1]).strip()[:200]
+    print(f"   CMDLINE (other than mtdparts): {rest}")
     return parts
 
 
@@ -140,15 +144,16 @@ def guess(b):
         what = "gzip ramdisk" if inner[:2] == b"\x1f\x8b" else ("arm64 Image" if b[8 + 0x38:8 + 0x3c] == b"ARMd" else inner.hex())
         return f"KRNL image, payload {n} bytes, {what}"
     if b[:6] == b"LOADER":
-        return "U-Boot (LOADER image)"
+        return "Rockchip U-Boot (LOADER image)"
     if b[:4] == b"BL3X":
-        return "trust image (TF-A BL31 / OP-TEE)"
+        return "Rockchip trust image (TF-A BL31 / OP-TEE)"
     if b[:4] == b"RSCE":
         return "RSCE resource (dtb + logos)"
     if b[:8] == b"ANDROID!":
         return "Android boot image"
     if b[:13] == b"boot-recovery" or b[:11] == b"boot-normal":
-        return f"BCB command {b.split(b'\0')[0].decode()!r}"
+        cmd = b.split(b"\0")[0].decode()
+        return f"BCB command {cmd!r}"
     if len(b) > 0x43a and b[0x438:0x43a] == b"\x53\xef":
         return "ext4 filesystem"
     if b.count(0) == len(b):

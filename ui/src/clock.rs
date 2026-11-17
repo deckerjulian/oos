@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Wall-clock time for the screen and for file names: POSIX time zone strings (`CET-1CEST,M3.5.0,M10.5.0/3`, with

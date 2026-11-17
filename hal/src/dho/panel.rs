@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Front-panel MCU protocol (UART0, frames `FA cmd data crc7 AF`, see docs/protocols/frontpanel.md), platform independent

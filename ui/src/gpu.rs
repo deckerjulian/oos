@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! System > Graphics = GPU: the picture put together on the Mali by `oos-gpu` (gpu/oos-gpu.c).

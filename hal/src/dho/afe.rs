@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! AFE (RT1642, one per channel) settings: V/div, offset, coupling, bandwidth limit.
@@ -676,7 +676,7 @@ impl Afe {
     }
 }
 
-/// The bit-banged AFE bus of the unit (protocol of the stock spi2afe_gpio.ko: SPI mode 0, MSB first, ~5 us half period,
+/// The bit-banged AFE bus of the unit (protocol of Rigol's spi2afe_gpio.ko: SPI mode 0, MSB first, ~5 us half period,
 /// chip selects idle high), GPIO lines `spi_afe_sclk/mosi/miso`, `spi_afe_cs_0..3` from the device tree.
 #[cfg(target_os = "linux")]
 pub struct GpioAfe {

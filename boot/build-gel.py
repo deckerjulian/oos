@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """build-gel.py: the update file that installs OOS from the running stock system, without opening the scope
 (docs/install-usb.md).

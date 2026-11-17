@@ -219,11 +219,11 @@ fn a_sparse_zoom_joins_the_samples_with_lines_and_marks_each_one_and_dots_mode_s
 // ------------------------------------------------------------------------------------------------ the table in other panels
 
 fn eye_rows(u: &mut Ui) {
-    use super::meascatalog::Cat;
+    #[allow(unused_imports)] use super::meascatalog::Cat;
     u.m.cat.clear();
-    for c in [Cat::EyeHeight, Cat::EyeHeightBer, Cat::EyeWidth, Cat::EyeHeightBer] {
+    for c in [super::meascatalog::cat_from(super::meascatalog::cat::EyeHeight).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::EyeHeightBer).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::EyeWidth).unwrap(), super::meascatalog::cat_from(super::meascatalog::cat::EyeHeightBer).unwrap()] {
         let id = if u.m.cat.len() == 3 { WaveId::Ref(0) } else { WaveId::Ch(0) };
-        u.m.cat.push((c as u16, id, id, id, id));
+        u.m.cat.push((c.id, id, id, id, id));
     }
     u.ensure_meas_own();
     for _ in 0..6 { frame(u); }

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! One bus on the waveform plot. It is on or off, has a label and a vertical position, and the only
@@ -15,6 +15,8 @@ use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 
 /// The bus trace. Kept off the channel palette so the line stays its own colour.
 pub(super) const BUS: Rgb = rgb(0xc4, 0x8a, 0x2a);
+/// The fill of a packet with an error: a dark red, so the white text on it stays readable.
+const BUS_ERR_FILL: Rgb = rgb(0x70, 0x18, 0x18);
 
 /// One cached display window and at most one in-flight decode. Exact full-record
 /// decode/trigger results use reference_decode, independently of this plot limit.
@@ -58,6 +60,7 @@ struct Src<'a> {
     hyst: f32,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn bus_items(&self) -> Vec<Item> {
         vec![
@@ -229,7 +232,7 @@ impl Ui {
             let fill = if p.ok {
                 scale(BUS, 70)
             } else {
-                rgb(0x70, 0x18, 0x18)
+                BUS_ERR_FILL
             };
             cv.fill(Rect::new(x0 + 3, top, (x1 - x0 - 6).max(1), h), fill);
             cv.line(x0, top + h / 2, x0 + 3, top, base);
@@ -382,6 +385,7 @@ impl Ui {
     }
 
     /// Hex words the plot draws for the bus, in time order.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn bus_words(&self) -> Vec<String> {
         self.bus_packets()
             .iter()
@@ -530,7 +534,7 @@ mod tests {
             triggered: true,
             partial: false,
             raw: None,
-            la: None,
+            la: None, pairs: false
         });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
@@ -571,7 +575,7 @@ mod tests {
             triggered: true,
             partial: false,
             raw: None,
-            la: None,
+            la: None, pairs: false
         });
         let slow: Vec<f32> = sda.iter().step_by(2).copied().collect();
         u.refs[2] = Some(super::super::RefWave {

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
@@ -362,7 +362,7 @@ impl Ui {
         let m = &self.m;
         let bit = |line: u8| la.words.iter().map(|w| w >> line & 1 == 1).collect::<Vec<_>>();
         let shaft = if m.inv_ang == InvAngle::Hall {
-            motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0)
+            motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
         } else {
             let ix = m.inv_qi.map(|q| bit(q));
             motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
@@ -423,7 +423,7 @@ impl Ui {
         };
         let col = |line: u8| (0..n).map(|i| at(line, i)).collect::<Vec<_>>();
         let shaft = if m.inv_ang == InvAngle::Hall {
-            motor::shaft_hall(&col(m.inv_ha), &col(m.inv_hb), &col(m.inv_hc), dt, t0)
+            motor::shaft_hall(&col(m.inv_ha), &col(m.inv_hb), &col(m.inv_hc), dt, t0, m.inv_poles.max(1))
         } else {
             let ix = m.inv_qi.map(|q| col(q));
             motor::shaft_quad(&col(m.inv_qa), &col(m.inv_qb), ix.as_deref(), dt, t0, m.inv_cpr, m.inv_swap)
@@ -605,4 +605,41 @@ fn pad(lo: f64, hi: f64) -> (f64, f64) {
     }
     let p = (hi - lo) * 0.08;
     (lo - p, hi + p)
+}
+
+/// The inverter page (motor drive: phases, DQ0, shaft).
+pub(super) struct InverterPage;
+
+impl super::analysers::Analyser for InverterPage {
+    fn view(&self) -> AView {
+        AView::Inverter
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("inverter", "Inverter")
+    }
+
+    fn name(&self) -> &'static str {
+        "Inverter"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Inverter
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("INVerter")
+    }
+
+    fn without_record(&self, _ui: &Ui) -> bool {
+        true
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.inverter_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_inverter(cv);
+    }
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Nominal high-speed serial records for the SIM menu. A preset is a public rate, a PRBS, rails, a tanh edge,

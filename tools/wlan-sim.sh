@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # wlan-sim.sh - tests the WLAN path without a stick: a virtual machine with simulated radios (mac80211_hwsim) and access
 # points (hostapd), running the image's wpa_supplicant, /bin/oos-wlan, /etc/udhcpc.script and the join code of oos-ui

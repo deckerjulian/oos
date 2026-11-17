@@ -1,11 +1,13 @@
 key ch3
+# CH1 off: with several channels on, the first press selects, the second opens its menu, the third switches off
+key ch1
 key ch1
 key ch1
 knob hscale +2
 key analyse
-tap 430 360
+set Decoder = On
 frames 10
 shot $S/70-uart-menu.ppm
-tap 902 316
+close
 frames 10
 shot $S/71-uart.ppm

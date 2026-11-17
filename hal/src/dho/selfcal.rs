@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! User self-calibration (docs/protocols/self-cal.md): AFE zero trims with the AFE's own comparators (section 3) and
@@ -129,10 +129,10 @@ pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::dho::adc:
 
 /// Writes the results to OOS's own files (the current OOS file, else the factory file, as the base for the rows and
 /// channels not calibrated). Returns the files written.
-pub fn save(r: &Results, stock_dir: &str) -> Result<Vec<String>, String> {
+pub fn save(r: &Results, rigol_dir: &str) -> Result<Vec<String>, String> {
     use crate::dho::calfile::{self, OOS_CAL_DIR};
     let base = |n: &str| -> Result<Vec<u8>, String> {
-        let (b, _) = calfile::load_first(n, &[OOS_CAL_DIR, stock_dir]).ok_or(format!("no valid {}", n))?;
+        let (b, _) = calfile::load_first(n, &[OOS_CAL_DIR, rigol_dir]).ok_or(format!("no valid {}", n))?;
         Ok(calfile::parse(&b).map_err(|e| format!("{}: {:?}", n, e))?.to_vec())
     };
     let mut out = Vec::new();

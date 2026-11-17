@@ -3,7 +3,8 @@ name: Report from another model
 about: OOS has run on one DHO924S so far. Results from any other scope help a lot
 ---
 
-**Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`.**
+**Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`, and no code, listings
+or files from the stock or a modified firmware. Describe what the scope does.**
 
 **Model and hardware revision:**
 

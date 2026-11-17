@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # layout-check.sh: the guard of a layout change. Renders every script in tests/ at the three text sizes on the host and
 # compares the pictures with a saved set, pixel by pixel.

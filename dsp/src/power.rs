@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Power analysis: power quality from a voltage and a current channel, current harmonics against IEC 61000-3-2
@@ -307,7 +307,8 @@ pub fn switching(vds: &[f32], id: &[f32], dt: f64, thr_pct: f64) -> Switching {
 }
 
 /// Least-squares slope of the samples between the 10 % and 90 % crossings of one edge direction.
-/// The search stays between the neighbouring mid crossings.
+/// The search stays between the neighbouring mid crossings, found by bisection in the sorted list of all of them (a
+/// scan of the list per edge took 1.2 s for 20 000 edges).
 fn edge_slope(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) -> f64 {
     let amp = a.top - a.base;
     if !a.valid || !(amp > 0.0) || !(dt > 0.0) {
@@ -321,8 +322,11 @@ fn edge_slope(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) ->
     let mut slopes = Vec::new();
     for &te in edges {
         let i = (te / dt) as usize + 1;
-        let prev = all.iter().rev().find(|&&t| t < te).map(|t| (t / dt) as usize).unwrap_or(0);
-        let next = all.iter().find(|&&t| t > te).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
+        // the last mid crossing before this edge and the first after it
+        let before = all.partition_point(|&t| t < te);
+        let after = all.partition_point(|&t| t <= te);
+        let prev = before.checked_sub(1).map(|k| (all[k] / dt) as usize).unwrap_or(0);
+        let next = all.get(after).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
         let (t0, t1) = if rising {
             (crossing(x, prev.max(1), i, lo, true), crossing(x, i.saturating_sub(1), next, hi, true))
         } else {
@@ -514,13 +518,22 @@ pub struct Tone {
     pub rms: f64,
 }
 
-/// One DFT line of `v` at `f` hertz. Empty when `f` is not a positive frequency the record can hold.
+/// One DFT line of `v` at `f` hertz over the largest whole number of cycles from the record start, with the mean of
+/// that range taken off first, so the DC level of a rail does not leak into the line. Empty when `f` is not a positive
+/// frequency the record can hold.
 pub fn tone_ripple(v: &[f32], dt: f64, f: f64) -> Tone {
     let empty = Tone { pp: f64::NAN, rms: f64::NAN };
     if v.len() < 4 || !(dt > 0.0) || !(f > 0.0) || f >= 0.5 / dt {
         return empty;
     }
-    let (re, im) = dft(v, dt, 0, v.len(), f);
+    let (a, b, _) = whole_cycles(v.len(), dt, f);
+    let fin: Vec<f64> = v[a..b].iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
+    if fin.is_empty() {
+        return empty;
+    }
+    let mean = fin.iter().sum::<f64>() / fin.len() as f64;
+    let ac: Vec<f32> = v[a..b].iter().map(|&x| (x as f64 - mean) as f32).collect();
+    let (re, im) = dft(&ac, dt, 0, ac.len(), f);
     let amp = (re * re + im * im).sqrt();
     Tone { pp: 2.0 * amp, rms: amp / std::f64::consts::SQRT_2 }
 }
@@ -605,7 +618,8 @@ pub struct Rail {
 }
 
 /// `reference` None uses the histogram top. `clock` splits overshoot, undershoot and the DC mean into cycles
-/// (rising mid crossings) and reports the mean of those. `vin` None takes the turn-on maximum over the whole record.
+/// (rising mid crossings) that lie inside `v` and reports the mean of those; with none, the whole record counts.
+/// `vin` None takes the turn-on maximum over the whole record.
 pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clock: Option<&[f32]>) -> Rail {
     let mut r = Rail { overshoot: f64::NAN, undershoot: f64::NAN, dc: f64::NAN, turn_on: f64::NAN };
     if v.len() < 2 || !(dt > 0.0) {
@@ -621,10 +635,11 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
         Some(c) if c.len() >= 4 => {
             let ck = analyze(c, dt);
             if ck.rises.len() >= 2 {
+                // only the cycles inside the rail: a longer clock goes on past its end
                 ck.rises.windows(2).filter_map(|w| {
                     let s = (w[0] / dt).ceil() as usize;
                     let e = (w[1] / dt).floor() as usize;
-                    (e > s).then_some((s, e.min(v.len() - 1)))
+                    (e > s && e < v.len()).then_some((s, e))
                 }).collect()
             } else {
                 Vec::new()
@@ -673,4 +688,57 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
         r.turn_on = f64::NAN;
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bisection finds the neighbours the scan of the whole list found: the same slopes on a noisy record.
+    #[test]
+    fn edge_slope_matches_the_scan() {
+        fn scan(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) -> f64 {
+            let amp = a.top - a.base;
+            let mut all = a.rises.clone();
+            all.extend_from_slice(&a.falls);
+            all.sort_by(f64::total_cmp);
+            let edges = if rising { &a.rises } else { &a.falls };
+            let (lo, hi) = (a.base + 0.1 * amp, a.base + 0.9 * amp);
+            let mut slopes = Vec::new();
+            for &te in edges {
+                let i = (te / dt) as usize + 1;
+                let prev = all.iter().rev().find(|&&t| t < te).map(|t| (t / dt) as usize).unwrap_or(0);
+                let next = all.iter().find(|&&t| t > te).map(|t| (t / dt) as usize + 1).unwrap_or(x.len());
+                let (t0, t1) = if rising {
+                    (crossing(x, prev.max(1), i, lo, true), crossing(x, i.saturating_sub(1), next, hi, true))
+                } else {
+                    (crossing(x, prev.max(1), i, hi, false), crossing(x, i.saturating_sub(1), next, lo, false))
+                };
+                let (Some(t0), Some(t1)) = (t0, t1) else { continue };
+                if let Some(s) = ls_slope(x, dt, t0, t1) {
+                    slopes.push(s);
+                }
+            }
+            if slopes.is_empty() { f64::NAN } else { slopes.iter().sum::<f64>() / slopes.len() as f64 }
+        }
+        // trapezoids with uneven plateaus and some noise; a few runts that miss a level
+        let mut s = 9u32;
+        let mut v = Vec::new();
+        for k in 0..200 {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            let top = if k % 17 == 0 { 0.6 } else { 1.0 };
+            let (on, off) = (20 + (s >> 26) as usize, 20 + (s >> 20 & 31) as usize);
+            v.extend((0..8).map(|i| top * i as f32 / 8.0));
+            v.extend(std::iter::repeat_n(top, on));
+            v.extend((0..8).map(|i| top * (1.0 - i as f32 / 8.0)));
+            v.extend(std::iter::repeat_n(0.0, off));
+        }
+        crate::sim::add_noise(&mut v, 0.02, 4);
+        let a = analyze(&v, 1e-9);
+        assert!(a.rises.len() > 150, "{}", a.rises.len());
+        for rising in [true, false] {
+            let (got, want) = (edge_slope(&v, 1e-9, &a, rising), scan(&v, 1e-9, &a, rising));
+            assert!(got.is_finite() && got == want, "{rising}: {got} {want}");
+        }
+    }
 }

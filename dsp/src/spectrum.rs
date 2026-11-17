@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Spectrum analyser mode: RBW-controlled FFT (decimation, Welch segments and zero padding on top of `math::fft`), trace

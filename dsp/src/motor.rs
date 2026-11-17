@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Inverter and motor measurements. DQ0 is the amplitude-invariant Clarke transform followed by Park.
@@ -310,8 +310,9 @@ pub fn shaft_quad(a: &[bool], b: &[bool], index: Option<&[bool]>, dt: f64, t0: f
 }
 
 /// Three Hall lines. The order 100, 110, 010, 011, 001, 101 (A is the high bit) is forward.
-/// Codes 000 and 111 hold the last direction and count a fault.
-pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64) -> Shaft {
+/// Codes 000 and 111 hold the last direction and count a fault. A Hall step is 60 electrical degrees; `poles` (pole
+/// pairs) turns that into the mechanical angle and speed of `Shaft`.
+pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u32) -> Shaft {
     let n = a.len().min(b.len()).min(c.len());
     if n < 2 || !(dt > 0.0) {
         return Shaft { note: "no hall", ..Shaft::default() };
@@ -344,6 +345,14 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64) -> Shaft
             continue;
         }
         in_fault = false;
+        if !have {
+            // the record started on a fault code: the first valid code is where counting starts
+            prev = cur;
+            acc = hall_deg(cur).map_or(0.0, f64::to_radians);
+            have = true;
+            rad[k] = acc;
+            continue;
+        }
         if let Some(dir) = hall_step(prev, cur) {
             if dir != 0 {
                 edges += 1;
@@ -363,7 +372,15 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64) -> Shaft
         }
         rad[k] = if have { acc } else { f64::NAN };
     }
-    let rpm = steps as f64 * 10.0 / ((n - 1) as f64 * dt);
+    // electrical to mechanical
+    let poles = poles.max(1) as f64;
+    for r in rad.iter_mut() {
+        *r /= poles;
+    }
+    for x in trend.iter_mut() {
+        x.1 /= poles;
+    }
+    let rpm = steps as f64 * 10.0 / ((n - 1) as f64 * dt) / poles;
     let mut s = from_unwrapped(&rad, dt, t0, Some(edges));
     s.rpm = if edges == 0 { None } else { Some(rpm) };
     s.direction = direction_of(s.rpm.unwrap_or(0.0));

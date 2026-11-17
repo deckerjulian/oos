@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! SHA-1 (only for the image id the stock loader checks), SHA-256 and SHA-512 (FIPS 180-4), streaming, no dependencies. The round constants and initial values were generated

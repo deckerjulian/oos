@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 """mkfont.py: render a UI font atlas from Roboto (tools/fonts, Apache License 2.0, see tools/fonts/LICENSE-Roboto.txt).
 Glyphs: ASCII 32..126 plus a few symbols, each an 8-bit alpha bitmap with metrics relative to the baseline.
@@ -19,7 +19,7 @@ BASE = [("s", "Regular", 12), ("sb", "Medium", 12), ("m", "Regular", 14), ("mb",
 GROW = {"normal": 0, "large": 2, "larger": 4}
 SET = sys.argv[2] if len(sys.argv) > 2 else "normal"
 FONTS = [(name, face, size + GROW[SET]) for name, face, size in BASE]
-EXTRA = ["µ", "±", "°", "Ω", "×", "Δ", "²", "·", "σ", "…"]  # µ ± ° Ω × Δ ² · σ …
+EXTRA = ["µ", "±", "°", "Ω", "×", "Δ", "²", "·", "σ", "…", "ψ", "—", "≠", "θ", "α", "β", "μ"]  # µ ± ° Ω × Δ ² · σ … ψ — ≠ θ α β μ
 CHARS = [chr(c) for c in range(32, 127)] + EXTRA
 blob = bytearray(b"OOSF") + struct.pack("<H", len(FONTS))
 for name, face, size in FONTS:

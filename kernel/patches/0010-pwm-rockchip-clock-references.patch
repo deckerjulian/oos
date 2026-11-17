@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: pwm: rockchip: enable each clock role once in probe
 
 With a single clock in the device tree, as on RK3288 and RK3399, pc->pclk

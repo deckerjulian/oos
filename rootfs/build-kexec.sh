@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-kexec.sh - a static kexec (kexec-tools) for the image, in Docker, into rootfs/out/. boot/build-dev-image.sh runs
 # it when it is missing. oos-update starts an update whose device tree differs from the running one with it: the

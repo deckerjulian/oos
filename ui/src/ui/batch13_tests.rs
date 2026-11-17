@@ -1,7 +1,7 @@
 //! Batch 13: the Studio measurements panel in two modes (list with an optional line of statistics, and a detailed
 //! table that collapses when narrow), and rows that have no value say why. OOS_SHOTS=<dir> writes pictures (b13-*).
 use super::dock::{Dir, VKind};
-use super::meascatalog::Cat;
+use super::meascatalog::cat as Cat;
 use super::measview::{DETAIL_COLS, STATS_LINE};
 use super::studio::StudioView;
 use super::*;

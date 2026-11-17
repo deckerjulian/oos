@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use super::*;
 
 impl Ui {
@@ -49,16 +51,21 @@ impl Ui {
         true
     }
 
-    /// Enable a physical input without discarding imported overlays or their settings.
+    /// Enable a physical input without discarding imported overlays or their settings. From a reference, Take over or
+    /// SIM session the live set-up comes back first, as with Live (`leave_session`), then the input acquires.
     pub(super) fn activate_live_channel(&mut self, channel: usize) {
         if channel >= n_ch() { return; }
-        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
-        self.sim_cancel_generation();
-        self.offline = false;
-        self.offline_hold = None;
-        self.session_is_sim = false;
-        self.sim_play = false;
-        self.sim_refs.clear();
+        if self.record_mode() {
+            self.leave_session();
+        } else {
+            self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
+            self.sim_cancel_generation();
+            self.offline = false;
+            self.offline_hold = None;
+            self.session_is_sim = false;
+            self.sim_play = false;
+            self.sim_refs.clear();
+        }
         self.m.ch[channel].on = true;
         self.select_workspace_source(WaveId::Ch(channel));
         self.m.set_trigger_wave(WaveId::Ch(channel), false);
@@ -115,6 +122,7 @@ impl Ui {
         }
         if kind == TrigType::Runt { self.m.trig_when = WhenKind::Off; }
         else if self.m.trig_when == WhenKind::Off { self.m.trig_when = WhenKind::Gt; }
+        self.m.order_trigger_levels();
         self.replay.reset_search();
         true
     }

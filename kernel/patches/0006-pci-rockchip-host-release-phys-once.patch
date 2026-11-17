@@ -1,4 +1,4 @@
-From: Julian Decker <git@deckerjulian.com>
+From: dekajoule <10848788+dekajoule@users.noreply.github.com>
 Subject: PCI: rockchip-host: give the PHYs back exactly once on failure
 
 rockchip_pcie_host_init_port() releases the PHYs itself when the port

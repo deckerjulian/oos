@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 """Offline SSH provisioning tests. No sockets, listeners or hardware access."""
 import base64
 import importlib.util
@@ -31,6 +33,8 @@ def public(byte=1, comment="offline test"):
 
 class HostKeys(unittest.TestCase):
     def setUp(self):
+        # local/ is ignored by git: a fresh checkout (CI) does not have it
+        (ROOT / "local").mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "local")
         self.root = Path(self.tmp.name)
         self.file = self.root / "public.pub"
@@ -90,7 +94,7 @@ class HostKeys(unittest.TestCase):
         scope = object.__new__(device_test.Scope)
         scope.host, scope.sim = "example.invalid", False
         result = subprocess.CompletedProcess([], 0, "read-only result\n", "")
-        with mock.patch.dict(os.environ, {"OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
+        with mock.patch.dict(os.environ, {"OOS_SHELL": "ssh", "OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
             with mock.patch.object(subprocess, "run", return_value=result) as run:
                 self.assertEqual(scope.shell("uname -r"), "read-only result")
                 args = run.call_args.args[0]
@@ -109,91 +113,9 @@ def posix(path):
     return "/" + path.drive[0].lower() + path.as_posix()[2:] if path.drive else str(path)
 
 
-class DeviceScript(unittest.TestCase):
-    """Run the actual shell manager with paths redirected and daemon/keygen mocked."""
-    def setUp(self):
-        self.shell = shutil.which("sh")
-        if not self.shell and Path("C:/msys64/usr/bin/sh.exe").exists():
-            self.shell = "C:/msys64/usr/bin/sh.exe"
-        if not self.shell:
-            self.skipTest("POSIX shell unavailable")
-        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "local")
-        self.root = Path(self.tmp.name)
-        self.state = self.root / "ssh"
-        self.seed = self.root / "seed"
-        self.seed.write_text(public() + "\n")
-        self.public = self.root / "import.pub"
-        self.public.write_text(public(2) + "\n")
-        self.bin = self.root / "bin"
-        self.bin.mkdir()
-        log = posix(self.root / "daemon.args")
-        (self.bin / "dropbear").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}'\n")
-        (self.bin / "dropbearkey").write_text("#!/bin/sh\nif [ \"$1\" = -t ]; then printf 'fixture host identity' > \"$4\"; else echo 'fixture fingerprint'; fi\n")
-        (self.bin / "sync").write_text("#!/bin/sh\nexit 0\n")
-        (self.bin / "chown").write_text("#!/bin/sh\nexit 0\n")
-        for path in self.bin.iterdir():
-            path.chmod(0o755)
-        script = (ROOT / "rootfs/initramfs/bin/oos-ssh").read_text()
-        script = script.replace("state=/oos/ssh", f"state='{posix(self.state)}'")
-        script = script.replace("seed=/etc/oos-ssh/authorized_keys", f"seed='{posix(self.seed)}'")
-        script = script.replace("pidfile=/run/oos-ssh.pid", f"pidfile='{posix(self.root / 'pid')}'")
-        script = script.replace("mounted() { grep -q ' /oos ' /proc/mounts; }", "mounted() { return 0; }")
-        script = script.replace("/bin/dropbear", posix(self.bin / "dropbear"))
-        script = script.replace("/tmp/oos-ssh.log", posix(self.root / "log"))
-        script = script.replace("set -eu", f"set -eu\nexport PATH='{posix(self.bin)}:/usr/bin:/bin'")
-        self.script = self.root / "oos-ssh"
-        self.script.write_text(script, newline="\n")
-
-    def tearDown(self):
-        if hasattr(self, "tmp"):
-            self.tmp.cleanup()
-
-    def run_script(self, *args, check=True):
-        result = subprocess.run([self.shell, posix(self.script), *args], capture_output=True, text=True)
-        if check:
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return result
-
-    def test_boot_without_a_valid_key_never_invokes_daemon(self):
-        self.seed.write_text("ssh-ed25519 invalid\n")
-        result = self.run_script("start")
-        self.assertIn("SSH off", result.stdout)
-        self.assertFalse((self.root / "daemon.args").exists())
-        self.assertFalse((self.state / "dropbear_ed25519_host_key").exists())
-
-    def test_valid_provision_starts_key_only_and_preserves_host_identity(self):
-        self.run_script("start")
-        args = (self.root / "daemon.args").read_text().splitlines()
-        for required in ["-s", "-j", "-k", "-D", "-r"]:
-            self.assertIn(required, args)
-        host = self.state / "dropbear_ed25519_host_key"
-        host.write_bytes(b"existing unique host key")
-        self.run_script("start")
-        self.assertEqual(host.read_bytes(), b"existing unique host key")
-
-    def test_add_remove_preserve_existing_lines_and_removed_seed_is_not_resurrected(self):
-        self.run_script("list")
-        path = self.state / "authorized_keys"
-        with path.open("a") as stream:
-            stream.write("no-pty ssh-rsa AAAA legacy\n")
-        self.run_script("add", posix(self.public))
-        self.run_script("add", posix(self.public))
-        self.assertEqual(path.read_text().count(public(2).split()[1]), 1)
-        self.run_script("remove", public().split()[1])
-        self.run_script("list")
-        self.assertNotIn(public().split()[1], path.read_text())
-        self.assertIn("no-pty ssh-rsa AAAA legacy", path.read_text())
-
-    def test_disable_survives_start_and_invalid_import_is_atomic(self):
-        self.run_script("disable")
-        self.run_script("start")
-        self.assertFalse((self.root / "daemon.args").exists())
-        path = self.state / "authorized_keys"
-        before = path.read_bytes()
-        self.public.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
-        self.assertNotEqual(self.run_script("add", posix(self.public), check=False).returncode, 0)
-        self.assertEqual(path.read_bytes(), before)
-
+# The server script itself (rootfs/initramfs/bin/oos-ssh, Dropbear with password and keys, docs/network.md 7) is
+# tested by tools/ssh-sim.sh with the image's busybox; the DeviceScript tests here were written for PR #8's own
+# key-only oos-ssh, which the merge did not keep.
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The Windows page, as in oos-next: Layout (One, Side by side, Stacked, Four), Full screen and Strip. Under them the
@@ -37,11 +37,14 @@ impl Ui {
     /// Expand button and the Full density: Scope goes to Full, Full goes back to Scope, Split and Four go to Full.
     pub(super) fn toggle_expand(&mut self) {
         self.m.density = if self.m.density == Density::Full { Density::Scope } else { Density::Full };
+        // a tap asks for the panel itself, also while the external display shows the waveform
+        self.full_asked = self.m.density == Density::Full;
         self.apply_density();
     }
 
     /// Makes the windows, the lower pane and the panel bars follow the density.
-    /// Waveform on the external display keeps the bars: the density changes the plot, the panel stays the controls.
+    /// Waveform on the external display keeps the bars: the density changes the plot, the panel stays the controls
+    /// (the expand button overrides that, `sync_full`).
     pub(super) fn apply_density(&mut self) {
         let prev = self.m.win_layout;
         match self.m.density {
@@ -88,6 +91,7 @@ impl Ui {
             }
             WinLayout::Quad => self.m.density = Density::Four,
         }
+        self.full_asked = false;
         self.apply_density();
         // the two windows are spread already; across or one above the other is the choice made here
         if matches!(l, WinLayout::Cols | WinLayout::Rows) && self.m.win_layout != WinLayout::One {
@@ -95,16 +99,25 @@ impl Ui {
         }
     }
 
-    /// Panel bars hide only for Full while the external display copies the panel.
+    /// Panel bars hide for Full while the external display copies the panel, or when the expand button asked for it.
     pub(crate) fn sync_full(&mut self) {
-        // waveform on an external display keeps the panel's bars; with no display attached Full enlarges the panel
-        self.full = self.m.density == Density::Full && !(self.m.hdmi != HdmiMode::Mirror && self.hdmi_present);
+        if self.m.density != Density::Full {
+            self.full_asked = false;
+        }
+        // waveform on an external display keeps the panel's bars unless the button asked; with no display attached
+        // Full enlarges the panel
+        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi_present;
+        self.full = self.m.density == Density::Full && (!external || self.full_asked);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
     pub(crate) fn set_hdmi_present(&mut self, present: bool) {
         if self.hdmi_present != present {
             self.hdmi_present = present;
+            // a display plugged in takes the waveform; the panel keeps its bars until the button is tapped again
+            if present {
+                self.full_asked = false;
+            }
             self.sync_full();
         }
     }
@@ -162,7 +175,11 @@ impl Ui {
                 let i = all.iter().position(|&l| l == self.m.win_layout).unwrap_or(0);
                 self.set_layout(all[cyc(i, all.len())]);
             }
-            Item::FullScreen => self.toggle_expand(),
+            // the menu row is the density; only the expand button asks for the panel itself (`full_asked`)
+            Item::FullScreen => {
+                self.m.density = if self.m.density == Density::Full { Density::Scope } else { Density::Full };
+                self.apply_density();
+            }
             Item::StripPos => {
                 let all = StripDock::ALL;
                 let i = all.iter().position(|&p| p == self.m.strip_dock).unwrap_or(0);
@@ -339,6 +356,39 @@ mod tests {
     }
 
     #[test]
+    fn the_expand_button_enlarges_the_panel_while_the_external_display_shows_the_waveform() {
+        // forum report: with HDMI on Waveform or Layout the button did nothing on the panel
+        for mode in ["Waveform", "Layout"] {
+            let mut u = ui();
+            u.set_hdmi_present(true);
+            u.select_option(Item::Hdmi, mode);
+            render(&mut u);
+            let normal = u.grid;
+            let tap = |u: &mut Ui| {
+                let (_, hit) = u.full_btn();
+                u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
+                render(u);
+            };
+            tap(&mut u);
+            assert!(u.full && u.grid.h > normal.h, "{mode}: the tap must enlarge the panel: {:?} {:?}", u.grid, normal);
+            tap(&mut u);
+            assert_eq!((u.m.density, u.full, u.grid), (Density::Scope, false, normal), "{mode}");
+            // Full screen chosen in the menu keeps the panel's bars: the external display has the waveform
+            u.select_option(Item::FullScreen, "On");
+            render(&mut u);
+            assert!(u.m.density == Density::Full && !u.full && u.grid == normal, "{mode}");
+            // and a display plugged in after a tap takes the waveform back
+            u.select_option(Item::FullScreen, "Off");
+            tap(&mut u);
+            assert!(u.full, "{mode}");
+            u.set_hdmi_present(false);
+            u.set_hdmi_present(true);
+            render(&mut u);
+            assert!(!u.full && u.grid == normal, "{mode}");
+        }
+    }
+
+    #[test]
     fn a_loaded_reference_gets_a_window_row_and_draws_there() {
         let mut u = ui();
         u.refs[0] = Some(RefWave { src: 0, color: 0, label: String::new(), t0: 0.0, dt: 1e-9, v: vec![0.0f32; 400].into(), vpd: 1.0, offset: 0.0, on: true });
@@ -468,7 +518,7 @@ mod tests {
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
-        assert_eq!(u.hdmi_snap.len(), (W * (BOTTOM.y - TOP.h)) as usize);
+        assert_eq!(u.hdmi_snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
         assert_ne!(u.hdmi_snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
         u.select_option(Item::FullScreen, "Off");
         u.render(&mut cv);
@@ -476,14 +526,14 @@ mod tests {
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
         assert_eq!(u.wins.len(), 4);
-        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= BOTTOM.y));
+        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
         assert!(!u.full);
         u.select_option(Item::WinLayout, "Stacked");
         u.select_option(Item::PaneSel, "Results");
         u.render(&mut cv);
         assert!(u.pane_h() > 0 && u.wins.len() == 1 && !u.full);
         let pane = u.pane_rect();
-        assert!(pane.y >= TOP.h && pane.y + pane.h <= BOTTOM.y);
+        assert!(pane.y >= TOP.h && pane.y + pane.h <= u.frame().bottom.y);
     }
 
     #[test]

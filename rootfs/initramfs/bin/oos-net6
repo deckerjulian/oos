@@ -1,0 +1,48 @@
+#!/bin/sh
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-net6: IPv6 addresses for `net.ipv6 = on` (docs/network.md 8), run by rcS before eth0 comes up. The kernel makes
+# the addresses itself from the router's advertisements (SLAAC). This sets how: stable-privacy interface identifiers
+# (RFC 7217, addr_gen_mode 2) from a secret made once and kept in /oos/net, so an address stays the same for a prefix
+# across starts (it can go into DNS) without carrying the MAC; no temporary addresses (use_tempaddr 0); sockets on
+# [::] take IPv4 too (bindv6only 0, net6.rs). Without the data partition the secret lives in /tmp, new each start.
+#   oos-net6              apply
+#   oos-net6 --secret F   print the secret in F, making it first (host tests)
+log() { echo "oos-net6: $*" >&2; [ ! -w /dev/kmsg ] || echo "oos-net6: $*" > /dev/kmsg; }
+# eight groups of four hex digits, as the kernel takes stable_secret
+ok() { echo "$1" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}'; }
+# The secret is written once and synced at once: /oos is ext2 without a journal, and a reboot before the kernel's
+# writeback left an empty file, so every start made a new secret and new addresses (unit 2026-11-13, round 7).
+secret() {
+	f=$1
+	s=$(cat "$f" 2>/dev/null)
+	if ok "$s"; then
+		log "secret kept ($f)"
+	else
+		s=$(od -An -tx2 -N16 /dev/urandom | tr -s ' \n' '  ' | sed 's/^ *//; s/ *$//; s/ /:/g')
+		ok "$s" || { log "no secret made"; return 1; }
+		mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")"
+		if (umask 077; echo "$s" > "$f.new") && mv "$f.new" "$f" && sync; then
+			log "secret made ($f)"
+		else
+			log "secret not kept in $f"
+		fi
+	fi
+	echo "$s"
+}
+if [ "${1:-}" = --secret ]; then secret "$2"; exit; fi
+dir=/tmp/oos-net
+[ -d /oos/setups ] && dir=/oos/net
+s=$(secret "$dir/ipv6.secret") || exit 1
+P=/proc/sys/net/ipv6
+[ -d $P ] || { log "no IPv6 in this kernel"; exit 1; }
+echo 0 > $P/bindv6only
+# default first (interfaces that come later, a WLAN stick), then eth0, which exists already and is still down
+for c in default eth0; do
+	[ -d $P/conf/$c ] || continue
+	echo 0 > $P/conf/$c/disable_ipv6
+	echo 0 > $P/conf/$c/use_tempaddr
+	echo "$s" > $P/conf/$c/stable_secret || log "$c: stable_secret not taken"
+	echo 2 > $P/conf/$c/addr_gen_mode
+done
+log "on: stable-privacy SLAAC addresses, secret in $dir"

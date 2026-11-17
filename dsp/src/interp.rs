@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Interpolation between samples for the screen: linear, and windowed sinc (Lanczos) for sparse views where only a
@@ -71,6 +71,33 @@ fn table() -> &'static [f32] {
     })
 }
 
+/// The kernel of `table` divided by the sum of its phase's weights: the inner part of `lanczos8` needs no
+/// renormalisation per point.
+fn table_norm() -> &'static [f32] {
+    static T: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        table()
+            .chunks_exact(2 * A)
+            .flat_map(|w| {
+                let s: f64 = w.iter().map(|&x| x as f64).sum();
+                w.iter().map(move |&x| (x as f64 / s) as f32)
+            })
+            .collect()
+    })
+}
+
+/// The 16-term dot product of `lanczos8`, in four partial sums (vector registers; one long chain otherwise).
+#[inline(always)]
+fn dot16(s: &[f32; 2 * A], w: &[f32; 2 * A]) -> f32 {
+    let mut acc = [0.0f32; 4];
+    for j in 0..2 * A / 4 {
+        for l in 0..4 {
+            acc[l] += s[4 * j + l] * w[4 * j + l];
+        }
+    }
+    (acc[0] + acc[1]) + (acc[2] + acc[3])
+}
+
 /// `lanczos(v, x, 8)` with a precomputed kernel (1024 phases): no trigonometry per point, for drawing thousands of
 /// screen points per record. Same edge handling (missing neighbours left out, weights renormalised).
 pub fn lanczos8(v: &[f32], x: f64) -> Option<f32> {
@@ -79,39 +106,70 @@ pub fn lanczos8(v: &[f32], x: f64) -> Option<f32> {
     }
     let i0 = x.floor() as i64;
     let p = (((x - i0 as f64) * PHASES as f64).round() as usize).min(PHASES);
-    let w = &table()[p * 2 * A..(p + 1) * 2 * A];
     let first = i0 - A as i64 + 1;
-    let (mut sum, mut wsum) = (0.0f32, 0.0f32);
     if first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
-        // inner part: all neighbours present
-        let s = &v[first as usize..first as usize + 2 * A];
-        for (a, b) in s.iter().zip(w) {
-            sum += a * b;
-            wsum += b;
+        // inner part: all neighbours present, the weights of the phase sum to 1
+        let s: &[f32; 2 * A] = v[first as usize..first as usize + 2 * A].try_into().unwrap();
+        let w: &[f32; 2 * A] = table_norm()[p * 2 * A..(p + 1) * 2 * A].try_into().unwrap();
+        let y = dot16(s, w);
+        return if y.is_finite() { Some(y) } else { linear(v, x) };
+    }
+    let w = &table()[p * 2 * A..(p + 1) * 2 * A];
+    let (mut sum, mut wsum) = (0.0f32, 0.0f32);
+    for (j, &wj) in w.iter().enumerate() {
+        let i = first + j as i64;
+        if i < 0 || i >= v.len() as i64 {
+            continue;
         }
-        if !sum.is_finite() {
+        let s = v[i as usize];
+        if !s.is_finite() {
             return linear(v, x);
         }
-    } else {
-        for (j, &wj) in w.iter().enumerate() {
-            let i = first + j as i64;
-            if i < 0 || i >= v.len() as i64 {
-                continue;
-            }
-            let s = v[i as usize];
-            if !s.is_finite() {
-                return linear(v, x);
-            }
-            sum += s * wj;
-            wsum += wj;
-        }
+        sum += s * wj;
+        wsum += wj;
     }
     (wsum.abs() > 1e-6).then(|| sum / wsum)
+}
+
+/// `lanczos8(v, x0 + k * step)` for k in 0..n onto `out` (NaN where it gives None): a screen record's points in one
+/// pass, without the per-point checks where all neighbours are there.
+pub fn lanczos8_grid(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>) {
+    out.reserve(n);
+    let tn = table_norm();
+    for k in 0..n {
+        let x = x0 + k as f64 * step;
+        let i0 = x.floor();
+        let first = i0 as i64 - A as i64 + 1;
+        if x >= 0.0 && first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
+            let p = (((x - i0) * PHASES as f64).round() as usize).min(PHASES);
+            let s: &[f32; 2 * A] = v[first as usize..first as usize + 2 * A].try_into().unwrap();
+            let w: &[f32; 2 * A] = tn[p * 2 * A..(p + 1) * 2 * A].try_into().unwrap();
+            let y = dot16(s, w);
+            out.push(if y.is_finite() { y } else { linear(v, x).unwrap_or(f32::NAN) });
+        } else {
+            out.push(lanczos8(v, x).unwrap_or(f32::NAN));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The grid gives exactly what `lanczos8` gives point by point, inside, at both ends, past them and over a gap.
+    #[test]
+    fn grid_equals_point_by_point() {
+        let mut v: Vec<f32> = (0..300).map(|k| (k as f32 * 0.37).sin() + 0.1 * (k as f32 * 2.9).cos()).collect();
+        v[150] = f32::NAN;
+        let (x0, step, n) = (-5.3, 0.0917, 3600);
+        let mut g = Vec::new();
+        lanczos8_grid(&v, x0, step, n, &mut g);
+        assert_eq!(g.len(), n);
+        for (k, &y) in g.iter().enumerate() {
+            let want = lanczos8(&v, x0 + k as f64 * step).unwrap_or(f32::NAN);
+            assert!(y == want || (y.is_nan() && want.is_nan()), "k {}: {} vs {}", k, y, want);
+        }
+    }
 
     #[test]
     fn sinc_reconstructs_a_sparse_sine_much_better_than_linear() {

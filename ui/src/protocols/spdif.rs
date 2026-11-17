@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! S/PDIF (IEC 60958): biphase-mark coded audio frames, preambles B / M / W, 24-bit samples, channel status.

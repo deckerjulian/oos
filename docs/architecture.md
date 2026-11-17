@@ -10,10 +10,10 @@ SD card (stock layout, boot.md)
  ├─ boot       stock Android kernel; magic "KRNL" -> stock boots, "OOSK" -> the loader falls back to recovery
  ├─ recovery   OOS image (kernel 6.12 + DTB + initramfs), built by boot/build-dev-image.sh
  ├─ backup     copy of the stock boot image (fallback), rollback slot, /oos data partition (update.md)
- └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-stock)
+ └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-rigol)
 
 initramfs /etc/rcS:  oos-oneshot (KRNL back, next power-on = stock) + start count -> oos-board early (FPGA BOOT command) ->
-                     network in the background -> provisioned key-only SSH -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
+                     network in the background -> SSH (when on: password or key) -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
                      oos-ui (start-up screen) -> in the background oos-mount-stock (read only) +
                      oos-board bring-up (oos-fpgad cold-boot --execute --power-on) (order and status: boot.md)
 FPGA:                cold boot by OOS (default); the warm hand-over from the stock system still works
@@ -40,7 +40,8 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
                                      /dev/ttyS0 (panel MCU), /sys/class/thermal, /sys/class/pwm
 ```
 
-Rule for all crates: no vendor code is in the tree. Only dependency: `libc`.
+Rule for all crates: no vendor code is in the tree. Only dependency of what runs on the scope: `libc`; the Windows
+desktop build of `oos-ui` adds its platform's crates (ADR 0021, [fork/deps.md](fork/deps.md)).
 
 ### oos-hal: hardware layer
 
@@ -78,6 +79,10 @@ One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layou
 
 Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](protocol-modules.md)) bring their
 menu rows, trigger rules, labels, demo traffic and an optional view of their own through one trait, `Protocol`.
+Measurements come the same way (`ui/src/measures`, [measurement-modules.md](measurement-modules.md)): a
+`MeasModule` gives its tiles on the measurement page and computes its values on the catalog worker thread.
+Analyser pages implement `Analyser` (`ui/src/ui/analysers.rs`, [analyser-modules.md](analyser-modules.md)): the start
+menu, System > Features, the view bar, SCPI `:VIEW`, setups, the record and the drawing ask that registry.
 
 Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
 acquisition thread is to apply, the generator, the front-end steps, the front panel, the board readings. The UI speaks
@@ -100,7 +105,9 @@ Threads:
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
-selected type, the software trigger finds the point again in the data).
+selected type, the software trigger finds the point again in the data). Only `Demo` gives a trigger type starting
+values when it is chosen, values that trigger on its signals; with every other source a new type keeps what the user
+set (width, pattern, levels), and the lower level of Slope, Runt and Window stays at or below the upper one.
 
 ### oos-fpgad: bring-up and service tool
 

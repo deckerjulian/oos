@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Frequency response (Bode plot) helpers: sine fit at a known frequency, gain and phase of a DUT output against its

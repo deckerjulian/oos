@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Generated bus data must qualify before replacing the accepted SIM record.
 //! The controlled worker keeps the pending phase deterministic: no timing sleeps,
 //! random PRBS payloads, native GUI, or live SCPI endpoint are involved.
@@ -53,7 +55,7 @@ fn fixture() -> (Ui, Vec<f32>, Vec<f32>) {
     serial::sample_count(&ui.sim_lane()).expect("the controlled low-rate lane must pass the real Play preflight");
     ui.m.dec_on = true;
     ui.m.dec_la_in = false;
-    ui.m.dec_proto = Proto::I2c;
+    ui.m.dec_proto = Proto::I2C;
     ui.m.dec_src = DEC_REF_BASE;
     ui.m.dec_src2 = DEC_REF_BASE + 1;
     ui.m.dec_diff = None;

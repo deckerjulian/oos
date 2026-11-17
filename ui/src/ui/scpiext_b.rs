@@ -261,7 +261,7 @@ impl Ui {
                 match self.apply_setup_text(&text) { Ok(()) => { self.mark_changed(); DONE } Err(e) => Err(bad(&e)) }
             }
             "SAVE:DESTination" => {
-                const D: [(crate::store::StoreDest, &str); 3] = [(crate::store::StoreDest::Auto, "AUTO"), (crate::store::StoreDest::Stick, "USB"), (crate::store::StoreDest::Desk, "DESKtop")];
+                const D: [(crate::store::StoreDest, &str); 3] = [(crate::store::StoreDest::Auto, "AUTO"), (crate::store::StoreDest::Stick, "USB"), (crate::store::StoreDest::Local, "DESKtop")];
                 pick(q, arg, &mut self.store_dest, &D)
             }
             "SAVE:SLOT" => intf(q, arg, &mut self.store_slot, 1, 9),

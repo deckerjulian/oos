@@ -298,3 +298,34 @@ assignment, whether the sleeps can be replaced by polling 0x1038. The meaning of
 Not yet verified on hardware: a mode switch against a known signal. Check: with a known signal on CH1 and CH2, switch
 1 -> 3 -> F, read frames and compare the per-core offset spread (the 8-core comb visible with `oos-hw adc-meas`) with
 the same settings under the stock system.
+
+## 6. Core offsets in the sample stream (measured 2026-11-14)
+
+The 8 interleaved cores take turns on the samples, so a difference in their offsets is a fixed pattern that repeats
+with the cores a channel uses. Measured on a DHO924S with the stored calibration, inputs open or a 1 MHz sine from the
+generator, over `:WAV:MODE RAW` (16-bit words, 7500 a division):
+
+| channels | rate per channel | period in samples | pattern (codes, one turn) | spur next to a 1 Vpp sine at 0.2 V/div |
+|---|---|---|---|---|
+| CH1 | 1.25 GSa/s | 8 | +90 +14 +3 -18 -37 -20 -45 +9 | -52 dBc at 156.25 MHz (and 312.5, 468.75 MHz) |
+| CH1, CH2 | 625 MSa/s | 4 | CH1 +84 +27 -67 -45, CH2 +85 +4 +37 -124 | -47.5 dBc |
+| CH1..CH4 | 312.5 MSa/s | 2 | CH1 +-90, CH2 +-5, CH3 +-35, CH4 +-75 | -41 dBc |
+
+- The pattern is the same in codes from 0.05 to 5 V/div, with and without a signal: an offset of each core in front of
+  the scaling. A gain difference of the cores is about +-0.06 % (+-11 codes at a 38 000-code signal).
+- Its turn changes from frame to frame: the first sample of a frame is not tied to one core. Neither the trigger
+  position nor the low bits of the frame header's time stamp give it in a simple way.
+- When the hardware keeps every n-th sample, cores fall together: CH1 at 625 MSa/s has period 4, at 62.5 MSa/s
+  period 2. CH2 alone runs in the two-channel mode (625 MSa/s, period 4).
+- Bit 27 with a core number in bits 30:28 of 0x1004 ("one core") changes nothing in the stream.
+
+The ADC has a trim register per core (`self-cal.md` 14.6). A pattern of +-90 codes is the stored calibration drifted
+(about 150 codes spread, as noted in `self-cal.md` 14.14); the self-calibration of the cores is meant to bring it to +-24
+codes (section 15 of `self-cal.md`; not yet run on a unit).
+
+OOS matches the cores in software as well (`ui/src/board/dho/cores.rs`, Acquire > ADC cores, `:ACQuire:CORes`): per
+channel set, channel and rate it learns the 8 offsets from the frames, finds each frame's turn from a Hann-weighted
+mean of its 8 phases and takes the pattern off the words before they become volts. Frames that do not fit (a short
+frame, a signal on a core frequency) are left as they are. On the unit the spurs went from -52 to -77..-80 dBc with
+one channel, from -47.5 to -74 dBc with two and from -41 to -71 dBc with four, at about 3 % of the frames the
+acquisition thread delivers at 1 us/div. Min/max data (Peak, FPGA compression) is not touched.

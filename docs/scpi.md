@@ -1,4 +1,4 @@
-# OOS Plus SCPI reference
+# OOS SCPI reference
 
 The SCPI reference is a folder of pages, one per command group: **[docs/scpi/README.md](scpi/README.md)** is the index (connection, syntax, conventions, how to read the tables, quick start, error codes).
 

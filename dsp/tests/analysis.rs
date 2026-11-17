@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Julian Decker
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Spectrum analyser, eye/jitter, power and identify against synthetic signals with known answers.
@@ -311,6 +311,8 @@ fn eye_folds_data_on_a_strobe_clock() {
     assert!(m.width > 0.5 * ui, "{:?}", m);
     let idle = eye::gate_around_clock(&dq, dt, &clk, 1.5);
     assert_eq!(idle.iter().filter(|x| x.is_finite()).count(), dq.len());
+    // an empty record against a clock is an empty result, not a panic
+    assert!(eye::gate_around_clock(&[], dt, &clk, 1.5).is_empty());
 }
 
 #[test]
@@ -816,6 +818,47 @@ fn motor_quadrature_speed_and_swapped_direction() {
     assert!(close(swapped.rpm.unwrap(), -rpm, 1e-6), "{}", swapped.rpm.unwrap());
 }
 
+/// Forward Hall sequence: 100 samples per state, so 600 per electrical revolution; `first` replaces sample 0.
+fn hall_lines(first: Option<u8>) -> (Vec<bool>, Vec<bool>, Vec<bool>) {
+    let seq = [0b100u8, 0b110, 0b010, 0b011, 0b001, 0b101];
+    let mut codes: Vec<u8> = (0..60).flat_map(|_| seq.iter().flat_map(|&s| std::iter::repeat_n(s, 100))).collect();
+    if let Some(c) = first {
+        codes[0] = c;
+    }
+    let line = |bit: u8| codes.iter().map(|x| x & bit != 0).collect::<Vec<_>>();
+    (line(4), line(2), line(1))
+}
+
+#[test]
+fn motor_hall_counts_steps_after_a_fault_code_at_the_start() {
+    let dt = 1e-5;
+    let (a, b, c) = hall_lines(None);
+    let clean = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
+    // 359 steps of 60 electrical degrees over 35 999 sample intervals
+    let rpm = 359.0 * 10.0 / (35_999.0 * dt);
+    assert!(close(clean.rpm.unwrap(), rpm, 1e-6), "{:?}", clean.rpm);
+    for fault in [0b000, 0b111] {
+        let (a, b, c) = hall_lines(Some(fault));
+        let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
+        assert!(close(s.rpm.unwrap_or(0.0), rpm, 1e-6), "{fault:03b}: {:?} {}", s.rpm, s.note);
+        assert_eq!(s.direction, oos_dsp::motor::Direction::Forward);
+    }
+}
+
+#[test]
+fn motor_hall_speed_and_angle_are_mechanical() {
+    // the Hall sensors see the rotor poles: with 4 pole pairs the shaft turns a quarter of the electrical angle
+    let dt = 1e-5;
+    let (a, b, c) = hall_lines(None);
+    let elec = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 1);
+    let s = oos_dsp::motor::shaft_hall(&a, &b, &c, dt, 0.0, 4);
+    assert!(close(s.rpm.unwrap(), elec.rpm.unwrap() / 4.0, 1e-9), "{:?} {:?}", s.rpm, elec.rpm);
+    assert!(close(s.trend[0].1, elec.trend[0].1 / 4.0, 1e-9), "{:?}", s.trend[0]);
+    let span = |r: &[f64]| r[r.len() - 1] - r[0];
+    assert!(close(span(&elec.rad), (359.0 * 60.0f64).to_radians(), 1e-9), "{}", span(&elec.rad));
+    assert!(close(span(&s.rad), span(&elec.rad) / 4.0, 1e-9), "{}", span(&s.rad));
+}
+
 #[test]
 fn motor_torque_and_bus_give_mechanical_power_and_efficiency() {
     let (rpm, dt, n) = (600.0, 1e-4, 4000);
@@ -900,6 +943,28 @@ fn double_pulse_one_pulse_no_dead_time_and_inverted_current() {
     assert!(close(neg.tf.unwrap(), pos.tf.unwrap(), 2e-9));
     assert!(close(neg.toff.unwrap(), pos.toff.unwrap(), 2e-9));
     assert!(neg.td_on.is_none());
+}
+
+#[test]
+fn double_pulse_load_current_is_the_current_at_turn_off_while_it_ramps() {
+    // an inductive load: Id ramps 0 -> 20 A over the first pulse, freewheels, and the second pulse switches 20 A
+    let dt = 1e-9;
+    let n = 13_000;
+    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0), (10e-6, 0.0), (10.02e-6, 10.0), (12e-6, 10.0), (12.02e-6, 0.0)];
+    let id = [(0.0, 0.0), (1.1e-6, 0.0), (6.05e-6, 20.0), (6.15e-6, 0.0), (10.05e-6, 0.0), (10.15e-6, 20.0), (12e-6, 22.0), (12.1e-6, 0.0)];
+    let vds = [(0.0, 400.0), (1.05e-6, 400.0), (1.15e-6, 1.0), (6.1e-6, 1.0), (6.2e-6, 400.0), (10.05e-6, 400.0), (10.15e-6, 1.0), (12e-6, 1.0)];
+    let g = sample(|t| pwl(&gate, t), 0.0, dt, n);
+    let i = sample(|t| pwl(&id, t), 0.0, dt, n);
+    let v = sample(|t| pwl(&vds, t), 0.0, dt, n);
+    let p = oos_dsp::dpt::measure(&v, &i, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    // the gate leaves 90 % at 6.002 µs, where the ramp is at 19.8 A
+    assert!(close(p.il.unwrap(), 19.8, 0.1), "il {:?}", p.il);
+    // both current edges run 0 <-> 20 A in 100 ns: 10-90 % of the switched current is 80 ns
+    assert!(close(p.tr.unwrap(), 80e-9, 2e-9), "tr {:?}", p.tr);
+    assert!(close(p.tf.unwrap(), 80e-9, 2e-9), "tf {:?}", p.tf);
+    // the current falls from 20 A at 6.05 µs and passes 90 % of I_L at 6.061 µs, 59 ns after the gate's 90 %
+    assert!(close(p.td_off.unwrap(), 59e-9, 2e-9), "td off {:?}", p.td_off);
+    assert!(close(p.i_over.unwrap(), 22.0 - 19.8, 0.1), "Ipeak - I_L {:?}", p.i_over);
 }
 
 // ------------------------------------------------------------------------------------------------ identify
@@ -1444,4 +1509,55 @@ fn eye_ber_subrate_common_mode_and_ssc() {
     assert!(eye::is_clock(&clock));
     let data = Clock { edges: (0..32).map(|k| k as f64 * 3e-6).collect(), ..clock };
     assert!(!eye::is_clock(&data));
+}
+
+/// The sliding window of `phase_noise` gives what a window summed afresh for every bin gave (O(N²): 1.7 s for 131k
+/// unit intervals), on a trend with tones (lines left out), noise and a slow wander.
+#[test]
+fn phase_noise_window_matches_the_direct_sum() {
+    fn direct(trend: &[f32], period: f64, f_lo: f64, f_hi: f64) -> f64 {
+        let (df, spec) = eye::tie_spectrum(trend, period);
+        let lines = eye::pj_lines(df, &spec, spec.len());
+        let marked: Vec<usize> = lines.into_iter().map(|(f, _)| (f / df).round() as usize).collect();
+        let (lo, hi) = (f_lo.min(f_hi), f_lo.max(f_hi));
+        let (mut acc, mut any) = (0.0, false);
+        for k in 1..spec.len() {
+            let f = k as f64 * df;
+            if f < lo || f > hi || marked.contains(&k) {
+                continue;
+            }
+            let lf = f.log10();
+            let (mut s, mut c) = (0.0, 0usize);
+            let k0 = ((k as f64) / 10f64.powf(0.05)).floor() as usize;
+            let k1 = ((k as f64) * 10f64.powf(0.05)).ceil() as usize;
+            for j in k0.max(1)..=k1.min(spec.len() - 1) {
+                if ((j as f64 * df).log10() - lf).abs() <= 0.05 {
+                    s += spec[j];
+                    c += 1;
+                }
+            }
+            let v = if c == 0 { spec[k] } else { s / c as f64 };
+            acc += v * v;
+            any = true;
+        }
+        if any { acc.sqrt() } else { f64::NAN }
+    }
+    let period = 1e-9;
+    let mut x = 3u32;
+    for n in [64usize, 1000, 4096, 10_000] {
+        let trend: Vec<f32> = (0..n)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                let noise = ((x >> 8) as f64 / (1u32 << 24) as f64 - 0.5) * 1e-12;
+                let t = k as f64;
+                let tones = 3e-12 * (2.0 * PI * t / 37.0).sin() + 1e-12 * (2.0 * PI * t / 5.3).sin();
+                (noise + tones + 2e-12 * (t / n as f64)) as f32
+            })
+            .collect();
+        for (lo, hi) in [(1.0, 1.0 / period), (1.0 / (period * n as f64 / 4.0), 1.0 / (period * 8.0)), (2e6, 3e6)] {
+            let (got, want) = (eye::phase_noise(&trend, period, lo, hi), direct(&trend, period, lo, hi));
+            let same = got.is_nan() && want.is_nan() || (got - want).abs() <= 1e-9 * want.abs();
+            assert!(same, "n {n} {lo}..{hi}: {got} {want}");
+        }
+    }
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2026 Julian Decker
+# Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build.sh - the GPU part of the image (System > Graphics = GPU, gpu/README.md), in Docker, into rootfs/out/gpu/:
 #   bin/oos-gpu                       the helper (gpu/oos-gpu.c)
