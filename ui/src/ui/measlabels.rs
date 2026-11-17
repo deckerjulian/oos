@@ -25,6 +25,8 @@ pub(super) enum Mark {
     Vertical(f64, f64),
     /// between two times from the start of the measured record
     Span(f64, f64),
+    /// what the trace encloses with 0 V, shaded: over the whole screen, or between two times of the record
+    Area(Option<(f64, f64)>),
 }
 
 /// First index of `v` above `after`.
@@ -57,6 +59,22 @@ pub(super) fn mark(k: Meas, a: &Analysis, t0: f64) -> Option<Mark> {
         Meas::NWidth => {
             let f = first_fall?;
             Mark::Span(f, next_after(&a.rises, f)?)
+        }
+        Meas::Vrms => Mark::Level(a.rms),
+        Meas::Overshoot => Mark::Vertical(a.top, a.vmax),
+        Meas::Preshoot => Mark::Vertical(a.vmin, a.base),
+        Meas::PDuty => {
+            let r = first_rise?;
+            Mark::Span(r, next_after(&a.falls, r)?)
+        }
+        Meas::NDuty => {
+            let f = first_fall?;
+            Mark::Span(f, next_after(&a.rises, f)?)
+        }
+        Meas::Area => Mark::Area(None),
+        Meas::AreaCyc => {
+            let r = first_rise?;
+            Mark::Area(Some((r, next_after(&a.rises, r)?)))
         }
         Meas::Median => Mark::Level(a.median),
         Meas::Mode => Mark::Level(a.mode),
@@ -142,6 +160,21 @@ impl Ui {
         }
     }
 
+    /// Whether measurement `k` of `id` has something to draw on the trace now.
+    pub(super) fn meas_mark_exists(&self, k: Meas, id: WaveId) -> bool {
+        let Some((ana, t0)) = self.meas_number_analysis(id, k) else { return false };
+        let (tdiv, delay) = self.view();
+        ana.valid && mark(k, &ana, delay as f64 - 5.0 * tdiv as f64 - t0).is_some()
+    }
+
+    /// Every frame: the mark of a badge ends when its menu closes, or when its measurement is gone.
+    pub(super) fn meas_mark_tick(&mut self) {
+        let Some(key) = self.studio.mark else { return };
+        let gone = !self.studio_keys().contains(&key);
+        let closed = self.studio.mark_menu && self.studio.popup.is_none() && !self.menu_open;
+        if gone || closed { self.studio.mark = None; self.studio.mark_menu = false; }
+    }
+
     fn label_col(&self, id: WaveId) -> Rgb {
         match id {
             WaveId::Ch(c) => CH_COLORS[c.min(CH_COLORS.len() - 1)],
@@ -163,6 +196,14 @@ impl Ui {
         }
     }
 
+    /// The lane or window being drawn shows this source (in lanes a reference has a lane of its own).
+    fn label_shows_lane(&self, id: WaveId) -> bool {
+        match id {
+            WaveId::Ref(_) if self.stacked() => self.workspace_source_visible_here(id),
+            _ => self.label_shows(id),
+        }
+    }
+
     fn label_shows(&self, id: WaveId) -> bool {
         match id {
             WaveId::Ch(c) => self.m.ch.get(c).is_some_and(|ch| ch.on) && self.shows(c),
@@ -171,7 +212,9 @@ impl Ui {
     }
 
     pub(super) fn draw_meas_labels(&self, cv: &mut Canvas) {
-        if !self.m.meas_labels {
+        // Labels on trace shows the first few; a tap on a badge shows that one measurement whatever the switch says
+        let chosen = match self.studio.mark { Some(super::studio::MeasKey::One(k, id)) if self.m.layout == super::Layout::Studio => Some((k, id)), _ => None };
+        if !self.m.meas_labels && chosen.is_none() {
             return;
         }
         let a = self.area;
@@ -182,8 +225,10 @@ impl Ui {
         let (tdiv, delay) = self.view();
         let t_lo = delay as f64 - 5.0 * tdiv as f64;
         let t_hi = delay as f64 + 5.0 * tdiv as f64;
-        for &(k, id) in self.m.meas.iter().take(MAX_LABELS) {
-            if !self.label_shows(id) {
+        let listed: Vec<(Meas, WaveId)> = self.m.meas.iter().copied().enumerate()
+            .filter(|&(i, e)| (self.m.meas_labels && i < MAX_LABELS) || chosen == Some(e)).map(|(_, e)| e).collect();
+        for (k, id) in listed {
+            if !self.label_shows_lane(id) {
                 continue;
             }
             let Some((samp, wave_t0, dt)) = self.label_wave(id) else { continue };
@@ -218,6 +263,31 @@ impl Ui {
                     }
                     pending.push((x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), text.clone(), col));
                     verts += 1;
+                }
+                Some(Mark::Area(span)) => {
+                    // every column of the screen (or of the cycle): from the 0 V line to the trace, in the source's colour
+                    let (xa, xb) = match span {
+                        Some((t0, t1)) => (self.x_of_time((analysis_t0 + t0) as f32).max(a.x), self.x_of_time((analysis_t0 + t1) as f32).min(a.x + a.w - 1)),
+                        None => (a.x, a.x + a.w - 1),
+                    };
+                    let y0 = self.y_of_id(id, 0.0);
+                    let outer = cv.save_clip();
+                    cv.clip_within(a);
+                    let ppd = a.w as f64 / super::HDIV as f64;
+                    for x in xa..=xb {
+                        let t = delay as f64 + ((x - a.x) as f64 - a.w as f64 / 2.0) / ppd * tdiv as f64;
+                        let i = ((t - wave_t0) / dt).round();
+                        if i < 0.0 || i as usize >= samp.len() { continue; }
+                        let v = samp[i as usize];
+                        if !v.is_finite() { continue; }
+                        let y = self.y_of_id(id, v);
+                        let (top, h) = (y.min(y0), (y - y0).abs());
+                        if h > 0 { cv.blend(Rect::new(x, top, 1, h), col, 70); }
+                    }
+                    cv.dashed_hline(xa, xb, y0, 4, 4, col);
+                    if span.is_some() { for x in [xa, xb] { cv.vline(x, a.y, a.y + a.h - 1, super::mix(super::BG, col, 140)); } }
+                    cv.restore_clip(outer);
+                    pending.push(((xa + xb) / 2, y0 - label_h(self) - 6, text.clone(), col));
                 }
                 Some(Mark::Span(t0, t1)) => {
                     let (x0, x1) = (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
@@ -270,7 +340,10 @@ mod tests {
         assert_eq!(mark(Meas::Freq, &a, 0.0), Some(Mark::Span(1e-3, 3e-3)));
         assert_eq!(mark(Meas::PWidth, &a, 0.0), Some(Mark::Span(1e-3, 2e-3)));
         assert_eq!(mark(Meas::NWidth, &a, 0.0), Some(Mark::Span(2e-3, 3e-3)));
-        assert_eq!(mark(Meas::Vrms, &a, 0.0), None);
+        assert_eq!(mark(Meas::Vrms, &a, 0.0), Some(Mark::Level(0.0)));
+        assert_eq!(mark(Meas::Area, &a, 0.0), Some(Mark::Area(None)));
+        assert_eq!(mark(Meas::AreaCyc, &a, 0.0), Some(Mark::Area(Some((1e-3, 3e-3)))));
+        assert_eq!(mark(Meas::PEdges, &a, 0.0), None);
     }
 
     #[test]

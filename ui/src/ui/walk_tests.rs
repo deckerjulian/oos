@@ -493,3 +493,83 @@ fn walk_table_pictures() {
     for _ in 0..100 { u.step(0.04); }
     shot(&mut u, "t7-detail-wide");
 }
+
+#[test]
+#[ignore]
+fn walk_lane_pictures() {
+    let Ok(dir) = std::env::var("OOS_WALK_SHOTS") else { return };
+    let shot = |u: &mut Ui, name: &str| {
+        for _ in 0..30 { u.step(0.04); }
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    };
+    let studio = || {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        u.m.ch[1].on = true;
+        u.relayout();
+        for _ in 0..12 { u.step(0.04); }
+        u
+    };
+    // four sources in lanes under a docked measurements panel
+    let mut u = studio();
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    u.studio_set_view(super::studio::StudioView::Docked);
+    u.m.studio_detail = true;
+    u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+    u.relayout();
+    shot(&mut u, "L1-four-lanes-short");
+    // the same lanes with the whole body
+    let mut u = studio();
+    u.activate(Item::RefSave);
+    u.m.math_select(0);
+    u.m.math = crate::math::MathOp::Sub;
+    u.relayout();
+    shot(&mut u, "L2-four-lanes");
+    // a tap on the Area badge, then on Peak-to-Peak
+    let mut u = studio();
+    u.m.meas = vec![(Meas::Area, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(1)), (Meas::Period, WaveId::Ch(0)), (Meas::AreaCyc, WaveId::Ch(1))];
+    u.relayout();
+    for _ in 0..30 { u.step(0.04); }
+    let badges = u.studio_badges();
+    let b = badges[0].1;
+    tap(&mut u, b.x + b.w / 2, b.y + b.h / 2);
+    shot(&mut u, "L3-area-mark");
+    let b = badges[3].1;
+    tap(&mut u, b.x + b.w / 2, b.y + b.h / 2);
+    shot(&mut u, "L4-cycle-area-mark");
+    let b = badges[1].1;
+    tap(&mut u, b.x + b.w / 2, b.y + b.h / 2);
+    shot(&mut u, "L5-pkpk-mark");
+}
+
+/// A tap on a badge shows its measurement on the waveform (Area shades what the trace encloses), the next tap on
+/// it opens its menu, and closing the menu takes the mark away. A tap on another badge moves the mark.
+#[test]
+fn a_badge_tap_marks_its_measurement_on_the_waveform() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = Layout::Studio;
+    u.m.meas = vec![(Meas::Area, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0)), (Meas::PEdges, WaveId::Ch(0))];
+    u.relayout();
+    for _ in 0..30 { u.step(0.04); }
+    let badges = u.studio_badges();
+    let (area, vpp, edges) = (badges[0], badges[1], badges[2]);
+    let plain = sig(&mut u).0;
+    tap(&mut u, area.1.x + area.1.w / 2, area.1.y + area.1.h / 2);
+    assert_eq!(u.studio.mark, Some(area.0));
+    assert!(u.studio.popup.is_none(), "no menu on the first tap");
+    assert_ne!(sig(&mut u).0, plain, "the area is drawn");
+    tap(&mut u, vpp.1.x + vpp.1.w / 2, vpp.1.y + vpp.1.h / 2);
+    assert_eq!(u.studio.mark, Some(vpp.0), "another badge takes the mark");
+    tap(&mut u, vpp.1.x + vpp.1.w / 2, vpp.1.y + vpp.1.h / 2);
+    assert_eq!(u.studio.popup, Some(vpp.0), "the second tap opens the menu");
+    u.studio.popup = None;
+    u.step(0.04);
+    assert!(u.studio.mark.is_none(), "closing the menu ends the mark");
+    // a count has nothing to draw: its badge opens the menu at once
+    tap(&mut u, edges.1.x + edges.1.w / 2, edges.1.y + edges.1.h / 2);
+    assert_eq!(u.studio.popup, Some(edges.0));
+}
