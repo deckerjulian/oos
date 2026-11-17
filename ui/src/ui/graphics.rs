@@ -54,7 +54,9 @@ mod tests {
     fn the_choice_is_a_setting_of_the_scope() {
         let mut u = crate::ui::testkit::demo_ui();
         assert!(u.sys.gpu, "the GPU by default");
-        assert!(u.items(MenuId::Utility).contains(&Item::Graphics) && !u.items(MenuId::Display).contains(&Item::Graphics));
+        assert!(
+            u.items(MenuId::Utility).contains(&Item::Graphics) && !u.items(MenuId::Display).contains(&Item::Graphics)
+        );
         u.select_option(Item::Graphics, "CPU");
         assert!(!u.sys.gpu && u.value(Item::Graphics) == "CPU");
         assert!(!crate::sysconf::SysConf::parse(&u.sys.text()).0.gpu);

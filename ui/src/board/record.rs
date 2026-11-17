@@ -17,7 +17,11 @@ pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
         TrigCoup::Ac | TrigCoup::LfReject => {
             let v = &f.ch[m.trig_src.min(NCH - 1)];
             let step = (v.len() / 4096).max(1);
-            let (sum, n) = v.iter().step_by(step).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
+            let (sum, n) = v
+                .iter()
+                .step_by(step)
+                .filter(|y| y.is_finite())
+                .fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
             m.trig_level + if n > 0 { (sum / n as f64) as f32 } else { 0.0 }
         }
         TrigCoup::Dc | TrigCoup::HfReject => m.trig_level,
@@ -41,7 +45,8 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         (f.pre.saturating_sub(near + span), (f.pre + near).min(len))
     };
     let e: [f32; 0] = [];
-    let refs: [&[f32]; NCH] = std::array::from_fn(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
+    let refs: [&[f32]; NCH] =
+        std::array::from_fn(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
     // the hysteresis of the hardware comparators (0.3 div, trigger.md 2.3): with less, noise on an edge of the other
     // direction counts as an edge, and a slow noisy sine is drawn now on one, now on the other edge
     let hyst: [f32; NCH] = std::array::from_fn(|c| m.trig_hyst_div() * m.ch[c].volts_per_div());
@@ -49,14 +54,30 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
     let usable = m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !refs[c].is_empty());
     // plain edge trigger on a channel: the edge of the set direction nearest the hardware point, on the signal smoothed to
     // one screen point (fastdraw::edge_smooth; the hardware point is not always on the right edge, trigger.md 8)
-    let smooth = (m.trig_type == TrigType::Edge && m.trig_line().is_none() && !f.roll && !f.scan && f.fixed_ti.is_none() && f.ch[m.trig_src].len() > 1)
+    let smooth = (m.trig_type == TrigType::Edge
+        && m.trig_line().is_none()
+        && !f.roll
+        && !f.scan
+        && f.fixed_ti.is_none()
+        && f.ch[m.trig_src].len() > 1)
         .then(|| {
             let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
             let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
             // the screen window stays inside the frame where it can
             let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
             let fits = |t: f64| first > last || (first..=last).contains(&t);
-            let found = crate::trignear::edge_smooth_near(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
+            let found = crate::trignear::edge_smooth_near(
+                &f.ch[m.trig_src],
+                f.pre,
+                sw_trig_level(m, f),
+                hyst[m.trig_src],
+                rising,
+                either,
+                screen / 2,
+                col,
+                fits,
+            )
+            .0;
             // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
             // hardware point stands
             found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
@@ -77,7 +98,10 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         // the matching field nearest the hardware trigger: the record moves to it, as with the channels
         f.la.as_ref().and_then(|l| {
             let p = crate::trig::decode_la(m, &l.words, l.dt).ok()?;
-            let t = crate::trig::points(m, &p).into_iter().map(|t1| l.t0 + t1 * l.dt).min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
+            let t = crate::trig::points(m, &p)
+                .into_iter()
+                .map(|t1| l.t0 + t1 * l.dt)
+                .min_by(|a, b| a.abs().total_cmp(&b.abs()))?;
             Some(f.pre as f64 + t / f.dt)
         })
     } else if m.pat_on_la() {
@@ -97,10 +121,15 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
                 return all.first().map(|_| f.pre as f64);
             }
             let (lo2, hi2) = (f.pre.saturating_sub(screen / 2), (f.pre + screen / 2).min(len));
-            let refs2: [&[f32]; NCH] = std::array::from_fn(|c| if f.ch[c].len() < hi2 || lo2 >= hi2 { &e[..] } else { &f.ch[c][lo2..hi2] });
+            let refs2: [&[f32]; NCH] =
+                std::array::from_fn(|c| if f.ch[c].len() < hi2 || lo2 >= hi2 { &e[..] } else { &f.ch[c][lo2..hi2] });
             let inp2 = oos_dsp::trigger::Input { ch: refs2, dt: f.dt, hyst };
             let wide: Vec<f64> = crate::trig::find_all(m, &inp2).into_iter().map(|t| t + lo2 as f64).collect();
-            wide.iter().copied().filter(fits).min_by(nearest).or_else(|| (!all.is_empty() || !wide.is_empty()).then_some(f.pre as f64))
+            wide.iter()
+                .copied()
+                .filter(fits)
+                .min_by(nearest)
+                .or_else(|| (!all.is_empty() || !wide.is_empty()).then_some(f.pre as f64))
         })
     } else {
         None
@@ -127,7 +156,15 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
 
 /// Rebuild a display window from the retained acquisition without retriggering.
 /// `ti` is the original accepted trigger's fractional sample index.
-pub fn resample(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64, ti: f64, triggered: bool) -> crate::wave::Record {
+pub fn resample(
+    f: &Arc<Frame>,
+    m: &Model,
+    n: usize,
+    window: f64,
+    t_first: f64,
+    ti: f64,
+    triggered: bool,
+) -> crate::wave::Record {
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let dt = window / n.max(1) as f64;
     // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
@@ -150,7 +187,11 @@ pub fn resample(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64, 
                     let b = ((x + per / 2.0).ceil().max(0.0) as usize).min(v.len());
                     let s = v[a.min(b)..b].iter().filter(|y| y.is_finite());
                     let (sum, cnt) = s.fold((0.0f64, 0u32), |(t, n), &y| (t + y as f64, n + 1));
-                    if cnt > 0 { (sum / cnt as f64) as f32 } else { f32::NAN }
+                    if cnt > 0 {
+                        (sum / cnt as f64) as f32
+                    } else {
+                        f32::NAN
+                    }
                 })
                 .collect();
             continue;
@@ -202,7 +243,13 @@ pub fn resample(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64, 
     let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);
     let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
     // Keep the acquisition even for a window outside it: navigation can return.
-    let raw = (len > 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1: i1.max(i0), t0: (i0 as f64 - ti) * f.dt, conditioned: true });
+    let raw = (len > 1).then(|| crate::wave::Raw {
+        frame: f.clone(),
+        i0,
+        i1: i1.max(i0),
+        t0: (i0 as f64 - ti) * f.dt,
+        conditioned: true,
+    });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
     crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs }
@@ -223,7 +270,22 @@ mod tests {
             })
             .collect();
         let window = 100_000e-9;
-        let frame = Arc::new(Frame { seq: 1, dt: 1e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() });
+        let frame = Arc::new(Frame {
+            seq: 1,
+            dt: 1e-9,
+            pre: 50_000,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (0.0, 0),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+            basic: Default::default(),
+        });
         let rms = |v: &[f32]| (v.iter().map(|y| (y - 1.0) * (y - 1.0)).sum::<f32>() / v.len() as f32).sqrt();
         let mut m = Model::default();
         m.trig_level = 5.0; // nothing to trigger on: the window stays at the hardware point
@@ -232,7 +294,12 @@ mod tests {
         let hires = to_record(&frame, &m, 3600, window, -window / 2.0);
         assert!(hires.ch[0].iter().all(|y| y.is_finite()));
         // uniform noise of 0.115 V rms over 28 samples gives 0.022 V
-        assert!(rms(&hires.ch[0]) < 0.03 && rms(&hires.ch[0]) < 0.25 * rms(&normal.ch[0]), "{} {}", rms(&hires.ch[0]), rms(&normal.ch[0]));
+        assert!(
+            rms(&hires.ch[0]) < 0.03 && rms(&hires.ch[0]) < 0.25 * rms(&normal.ch[0]),
+            "{} {}",
+            rms(&hires.ch[0]),
+            rms(&normal.ch[0])
+        );
         let mean = hires.ch[0].iter().sum::<f32>() / 3600.0;
         assert!((mean - 1.0).abs() < 0.01, "{}", mean);
     }
@@ -240,11 +307,27 @@ mod tests {
     #[test]
     fn the_trigger_keeps_the_screen_window_inside_the_frame() {
         // rising edges at 4600 and 5600; 5600 is nearer the hardware point, but the window would run off the frame
-        let v: Vec<f32> = (0..10_000).map(|i| if (4600..5000).contains(&i) || i >= 5600 { 2.0 } else { -2.0 }).collect();
+        let v: Vec<f32> =
+            (0..10_000).map(|i| if (4600..5000).contains(&i) || i >= 5600 { 2.0 } else { -2.0 }).collect();
         let mut m = Model::default();
         m.trig_level = 0.0;
         let window = 9000e-9;
-        let f = Frame { seq: 1, dt: 1e-9, pre: 5400, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() };
+        let f = Frame {
+            seq: 1,
+            dt: 1e-9,
+            pre: 5400,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (0.0, 0),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+            basic: Default::default(),
+        };
         let r = to_record(&Arc::new(f), &m, 3600, window, -window / 2.0);
         assert!(r.triggered);
         assert!(r.ch[0].iter().all(|y| y.is_finite()), "{} gaps", r.ch[0].iter().filter(|y| !y.is_finite()).count());
@@ -260,7 +343,22 @@ mod peak_detect {
         let m = Model { slope: Slope::Fall, ..Model::default() };
         let mut v: Vec<f32> = (0..100_000).map(|k| if (k / 25_000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
         v[12_345] = 2.0; // one-sample glitch on the low level
-        let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() });
+        let f = Arc::new(Frame {
+            seq: 1,
+            dt: 20e-9,
+            pre: 50_000,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (0.0, 0),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+            basic: Default::default(),
+        });
         let window = m.time_per_div() as f64 * 10.0; // 2 ms > record: whole record on screen
         let t = std::time::Instant::now();
         let mut r = to_record(&f, &m, 3600, window, -window / 2.0);
@@ -294,10 +392,25 @@ mod dots {
         // 3 us edges, the trigger at the middle on a rising one
         let sig = |t: f64| {
             let ph = (t + 1.0).rem_euclid(1e-3);
-            (if ph < 3e-6 { ph / 3e-6 } else if ph < 0.5e-3 { 1.0 } else if ph < 0.5e-3 + 3e-6 { 1.0 - (ph - 0.5e-3) / 3e-6 } else { 0.0 }) as f32 * 0.3
+            (if ph < 3e-6 {
+                ph / 3e-6
+            } else if ph < 0.5e-3 {
+                1.0
+            } else if ph < 0.5e-3 + 3e-6 {
+                1.0 - (ph - 0.5e-3) / 3e-6
+            } else {
+                0.0
+            }) as f32
+                * 0.3
         };
         let v: Vec<f32> = (0..n).map(|k| sig((k as f64 - (n / 2) as f64) * dt)).collect();
-        let f = Arc::new(Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
+        let f = Arc::new(Frame {
+            seq: 1,
+            dt,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        });
         let mut rec = to_record(&f, &m, 3600, window, -window / 2.0);
         assert!(rec.pairs);
         rec.pairs = pairs;
@@ -359,7 +472,22 @@ mod bench {
             let dt = 0.8e-9 * (tdiv / 1e-7).max(1.0) * 1408.0 / pts as f64 * if pts == 1408 { 1.0 } else { 1.0 };
             let f = 3.0 / (tdiv * 10.0);
             let v: Vec<f32> = (0..pts).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
-            let fr = Arc::new(Frame { seq: 1, dt, pre: pts / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, pts), stamp: 0, la: None, fixed_ti: None, hw_avg: false, basic: Default::default() });
+            let fr = Arc::new(Frame {
+                seq: 1,
+                dt,
+                pre: pts / 2,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                roll: false,
+                envelope: false,
+                scan: false,
+                partial: false,
+                acq: (1.0 / dt, pts),
+                stamp: 0,
+                la: None,
+                fixed_ti: None,
+                hw_avg: false,
+                basic: Default::default(),
+            });
             let window = tdiv * 10.0;
             let mut ph = crate::wave::Phosphor::new(970, 448);
             let n = 400;
@@ -381,13 +509,28 @@ mod bench {
             let mut map = vec![0u16; 970 * 448];
             for _ in 0..n {
                 let t0 = std::time::Instant::now();
-                let ti = crate::fastdraw::edge_near(&fr.ch[0], fr.pre, 0.0, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
-                let xm = crate::fastdraw::Map { ti, x_per_sample: dt / window * 970.0, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
+                let ti =
+                    crate::fastdraw::edge_near(&fr.ch[0], fr.pre, 0.0, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
+                let xm = crate::fastdraw::Map {
+                    ti,
+                    x_per_sample: dt / window * 970.0,
+                    x0: 485.0,
+                    y_per_volt: -56.0,
+                    y0: 224.0,
+                };
                 crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
                 t_fast += t0.elapsed().as_secs_f64();
             }
             let us = |t: f64| t / n as f64 * 1e6;
-            eprintln!("bench {:>6} pts {:>8.0e} s/div: to_record {:7.1} us, draw {:6.1} us, clone {:5.1} us | fast {:6.1} us", pts, tdiv, us(t_rec), us(t_draw), us(t_clone), us(t_fast));
+            eprintln!(
+                "bench {:>6} pts {:>8.0e} s/div: to_record {:7.1} us, draw {:6.1} us, clone {:5.1} us | fast {:6.1} us",
+                pts,
+                tdiv,
+                us(t_rec),
+                us(t_draw),
+                us(t_clone),
+                us(t_fast)
+            );
         }
     }
 }

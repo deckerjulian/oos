@@ -129,7 +129,12 @@ fn little_cores() -> Vec<usize> {
     static L: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
     L.get_or_init(|| {
         let cap: Vec<(usize, u32)> = (0..64)
-            .filter_map(|c| std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).ok().and_then(|v| v.trim().parse().ok()).map(|v| (c, v)))
+            .filter_map(|c| {
+                std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c))
+                    .ok()
+                    .and_then(|v| v.trim().parse().ok())
+                    .map(|v| (c, v))
+            })
             .collect();
         let max = cap.iter().map(|x| x.1).max().unwrap_or(0);
         cap.iter().filter(|x| x.1 < max).map(|x| x.0).collect()
@@ -188,7 +193,9 @@ pub fn to_little_cores() {
 #[cfg(target_os = "linux")]
 pub fn pin_to_big_cores() {
     let little = little_cores();
-    let all: Vec<usize> = (0..64).filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists()).collect();
+    let all: Vec<usize> = (0..64)
+        .filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists())
+        .collect();
     let big: Vec<usize> = all.into_iter().filter(|c| !little.contains(c)).collect();
     if big.is_empty() || little.is_empty() {
         return;
@@ -296,8 +303,13 @@ impl Shots {
         st.jpeg = jpeg && !st.no_jpeg;
         // an older picture or none: the newest at once, when it is fresh (a screenshot must not be an old one) and in
         // the format asked for
-        let fresh = st.at.is_some_and(|t| t.elapsed() < SHOT_FRESH) && !st.busy && st.next.is_none() && st.pic_jpeg == st.jpeg;
-        if let Some(png) = st.png.clone().filter(|_| fresh && have.as_deref() != Some(st.tag.as_str()) && st.size == (cv.w as u32, cv.h as u32)) {
+        let fresh =
+            st.at.is_some_and(|t| t.elapsed() < SHOT_FRESH) && !st.busy && st.next.is_none() && st.pic_jpeg == st.jpeg;
+        if let Some(png) = st
+            .png
+            .clone()
+            .filter(|_| fresh && have.as_deref() != Some(st.tag.as_str()) && st.size == (cv.w as u32, cv.h as u32))
+        {
             let tag = st.tag.clone();
             drop(st);
             return answer_shot(s, have.as_deref(), png, &tag);
@@ -335,7 +347,8 @@ impl Shots {
         let long_poll = st.long_poll.unwrap_or(LONG_POLL);
         #[cfg(not(test))]
         let long_poll = LONG_POLL;
-        let (old, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
+        let (old, keep): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
@@ -375,7 +388,10 @@ impl Shots {
 
     /// Whether the encoder should get the screen now.
     fn wanted(st: &ShotState, now: Instant, watched: bool) -> bool {
-        (!st.waiting.is_empty() || watched) && !st.busy && st.next.is_none() && st.at.map_or(true, |t| now - t >= st.gap)
+        (!st.waiting.is_empty() || watched)
+            && !st.busy
+            && st.next.is_none()
+            && st.at.map_or(true, |t| now - t >= st.gap)
     }
 
     /// Right before the frame loop renders the next screen (which clears and draws all of it): the shown screen goes to
@@ -402,7 +418,9 @@ impl Shots {
         lower_priority();
         let mut vpu: Option<crate::vpu::JpegEnc> = None;
         let mut vpu_size = (0, 0);
-        let boot = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64 & 0xffff_ffff);
+        let boot = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64 & 0xffff_ffff);
         loop {
             let mut st = self.lock();
             while st.next.is_none() && !st.quit {
@@ -457,7 +475,9 @@ impl Shots {
                 st.spare = px;
                 let tag = st.tag.clone();
                 let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
-                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| w.1.as_deref() != Some(tag.as_str()) && Self::fits(w.3, pj, nj));
+                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting)
+                    .into_iter()
+                    .partition(|w| w.1.as_deref() != Some(tag.as_str()) && Self::fits(w.3, pj, nj));
                 st.waiting = keep;
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
@@ -476,7 +496,8 @@ impl Shots {
             st.spare = last;
             // who asked for the other format waits for the next picture, made in that format
             let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
-            let (waiting, other): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting).into_iter().partition(|w| Self::fits(w.3, pj, nj));
+            let (waiting, other): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut st.waiting).into_iter().partition(|w| Self::fits(w.3, pj, nj));
             st.waiting = other;
             let tag = st.tag.clone();
             drop(st);
@@ -504,7 +525,10 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
     let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
     if !tag.is_empty() && have == Some(tag) {
         let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-        let _ = (&*s).write_all(format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag).as_bytes());
+        let _ = (&*s).write_all(
+            format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag)
+                .as_bytes(),
+        );
         return;
     }
     let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
@@ -737,7 +761,11 @@ fn waveform_name(query: &str) -> String {
     let decoded = query.split('&').find_map(|part| part.strip_prefix("name=")).map(unescape).unwrap_or_default();
     let leaf = decoded.rsplit(['/', '\\']).next().unwrap_or("");
     let name: String = leaf.chars().filter(|c| !c.is_control()).take(128).collect();
-    if name.trim().is_empty() { "waveform.csv".into() } else { name }
+    if name.trim().is_empty() {
+        "waveform.csv".into()
+    } else {
+        name
+    }
 }
 
 impl Http {
@@ -757,7 +785,11 @@ impl Http {
         match &l {
             Some(l) => {
                 let _ = l.set_nonblocking(true);
-                eprintln!("oos-ui: web remote on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
+                eprintln!(
+                    "oos-ui: web remote on port {}{}",
+                    port,
+                    if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
+                );
             }
             None => eprintln!("oos-ui: web port {} not available", port),
         }
@@ -825,8 +857,11 @@ impl Http {
         if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
             let mut job = self.wave.take().unwrap();
             let status = if ok { "200 OK" } else { "409 Conflict" };
-            let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
-                Cache-Control: no-store\r\nConnection: close\r\n\r\n", text.len());
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                text.len()
+            );
             let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
             let _ = job.s.write_all(head.as_bytes());
             let _ = job.s.write_all(text.as_bytes());
@@ -883,10 +918,20 @@ impl Http {
             let mut early = None;
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
-                let n = h.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                let n = h
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
                 let first = h.lines().next().unwrap_or("");
                 let upload_path = first.split_whitespace().nth(1).unwrap_or("").split('?').next().unwrap_or("");
-                let limit = if first.starts_with("post ") && upload_path == "/update" { MAX_UPDATE } else if first.starts_with("post ") && upload_path == "/waveform" { MAX_WAVEFORM } else { MAX_OTHER };
+                let limit = if first.starts_with("post ") && upload_path == "/update" {
+                    MAX_UPDATE
+                } else if first.starts_with("post ") && upload_path == "/waveform" {
+                    MAX_WAVEFORM
+                } else {
+                    MAX_OTHER
+                };
                 too_big = n > limit || req.len() > limit + e;
                 if !too_big && need.is_none() {
                     // what only `net.allow` may send is refused before its body is read, not after
@@ -908,8 +953,11 @@ impl Http {
             });
             if let Some(status) = early {
                 let msg = if status.starts_with("403") { "refused" } else { "busy, try again" };
-                let head = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
-                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}", msg.len());
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}",
+                    msg.len()
+                );
                 let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
                 let _ = s.write_all(head.as_bytes());
                 dead = true;
@@ -945,7 +993,10 @@ impl Http {
                     "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
                     "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                     "/waveform" if post => {
-                        let slot = query.split('&').find_map(|part| part.strip_prefix("slot=")).and_then(|value| value.parse::<usize>().ok());
+                        let slot = query
+                            .split('&')
+                            .find_map(|part| part.strip_prefix("slot="))
+                            .and_then(|value| value.parse::<usize>().ok());
                         match slot.filter(|s| (1..=10).contains(s)) {
                             None => {
                                 failed = true;
@@ -967,7 +1018,7 @@ impl Http {
                                 continue;
                             }
                         }
-                    },
+                    }
                     "/screen.png" | "/screen.jpg" => {
                         let have = header(&text, "if-none-match").map(str::to_string);
                         self.shots.request(s, have, cv, route == "/screen.jpg");
@@ -1012,7 +1063,17 @@ impl Http {
                     }
                     _ => ("text/plain", b"not found".to_vec()),
                 };
-                let status = if failed { "409 Conflict" } else if body == b"not found" { "404 Not Found" } else if body == b"refused" { "403 Forbidden" } else if ctype.is_empty() { "202 Accepted" } else { "200 OK" };
+                let status = if failed {
+                    "409 Conflict"
+                } else if body == b"not found" {
+                    "404 Not Found"
+                } else if body == b"refused" {
+                    "403 Forbidden"
+                } else if ctype.is_empty() {
+                    "202 Accepted"
+                } else {
+                    "200 OK"
+                };
                 let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
                 if body.len() > SEND_INLINE {
                     if !send_in_background(s, head, body) {
@@ -1089,7 +1150,14 @@ pub fn base64(d: &[u8]) -> String {
 /// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
 pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Option<String> {
     use crate::json::{parse, J};
-    let err = |id: J, code: f64, msg: &str| J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("error", J::obj(&[("code", J::Num(code)), ("message", J::s(msg))]))]).to_string();
+    let err = |id: J, code: f64, msg: &str| {
+        J::obj(&[
+            ("jsonrpc", J::s("2.0")),
+            ("id", id),
+            ("error", J::obj(&[("code", J::Num(code)), ("message", J::s(msg))])),
+        ])
+        .to_string()
+    };
     let Some(req) = parse(body) else { return Some(err(J::Null, -32700.0, "parse error")) };
     let id = req.get("id").cloned()?;
     let method = req.get("method").and_then(J::str).unwrap_or("");
@@ -1107,7 +1175,9 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
         }
         "ping" => J::obj(&[]),
         "tools/list" => {
-            let schema = |props: J, req: Vec<J>| J::obj(&[("type", J::s("object")), ("properties", props), ("required", J::Arr(req))]);
+            let schema = |props: J, req: Vec<J>| {
+                J::obj(&[("type", J::s("object")), ("properties", props), ("required", J::Arr(req))])
+            };
             J::obj(&[(
                 "tools",
                 J::Arr(vec![
@@ -1128,11 +1198,25 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
             Some("scpi") => {
                 let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
                 match scpi.exec_message_checked(ui, cv, c) {
-                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply { "ok" } else { std::str::from_utf8(&r).unwrap_or("(binary response)") }),
-                    Err(error) => J::obj(&[("isError", J::Bool(true)), ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])]))]),
+                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply {
+                        "ok"
+                    } else {
+                        std::str::from_utf8(&r).unwrap_or("(binary response)")
+                    }),
+                    Err(error) => J::obj(&[
+                        ("isError", J::Bool(true)),
+                        ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])])),
+                    ]),
                 }
             }
-            Some("screenshot") => J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("image")), ("mimeType", J::s("image/png")), ("data", J::Str(base64(&crate::store::png_of(cv))))])]))]),
+            Some("screenshot") => J::obj(&[(
+                "content",
+                J::Arr(vec![J::obj(&[
+                    ("type", J::s("image")),
+                    ("mimeType", J::s("image/png")),
+                    ("data", J::Str(base64(&crate::store::png_of(cv)))),
+                ])]),
+            )]),
             _ => return Some(err(id, -32602.0, "unknown tool")),
         },
         _ => return Some(err(id, -32601.0, "method not found")),
@@ -1152,12 +1236,17 @@ fn foreign(head: &str, route: &str, post: bool) -> bool {
             k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_ascii_lowercase())
         })
     };
-    let name_of = |h: &str| h.rsplit_once(':').filter(|(n, p)| !n.ends_with(':') && p.bytes().all(|b| b.is_ascii_digit())).map_or(h.to_string(), |(n, _)| n.to_string());
+    let name_of = |h: &str| {
+        h.rsplit_once(':')
+            .filter(|(n, p)| !n.ends_with(':') && p.bytes().all(|b| b.is_ascii_digit()))
+            .map_or(h.to_string(), |(n, _)| n.to_string())
+    };
     let host = header("host");
     if let Some(h) = &host {
         let n = name_of(h);
         let n = n.trim_matches(['[', ']']);
-        let local = n.parse::<std::net::IpAddr>().is_ok() || n == "localhost" || !n.contains('.') || n.ends_with(".local");
+        let local =
+            n.parse::<std::net::IpAddr>().is_ok() || n == "localhost" || !n.contains('.') || n.ends_with(".local");
         if !local {
             return true;
         }
@@ -1188,7 +1277,9 @@ mod tests {
 
     #[test]
     fn a_foreign_site_gets_nowhere() {
-        let f = |h: &str, route: &str, post: bool| foreign(&format!("GET {} HTTP/1.1\r\n{}\r\n\r\n", route, h), route, post);
+        let f = |h: &str, route: &str, post: bool| {
+            foreign(&format!("GET {} HTTP/1.1\r\n{}\r\n\r\n", route, h), route, post)
+        };
         // tools and the page of the scope itself
         assert!(!f("Host: 192.168.177.64:8080", "/cmd", false));
         assert!(!f("Host: x", "/cmd", false));
@@ -1201,7 +1292,11 @@ mod tests {
         assert!(f("Host: [2001:db8:5:7::7d8e]:8080\r\nOrigin: http://[2001:db8:5:7::1]:8080", "/update", true));
         assert!(f("Host: [2001:db8::1].evil.example:8080", "/cmd", false));
         assert!(!f("", "/cmd", false));
-        assert!(!f("Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin", "/update", true));
+        assert!(!f(
+            "Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin",
+            "/update",
+            true
+        ));
         // a page elsewhere
         assert!(f("Host: 192.168.177.64:8080\r\nOrigin: https://evil.example", "/update", true));
         assert!(f("Host: 192.168.177.64:8080\r\nOrigin: null", "/mcp", true));
@@ -1276,7 +1371,8 @@ mod tests {
         assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
         let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
-        ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR").map(std::path::PathBuf::from)
+        ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR")
+            .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
         let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
         let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
@@ -1284,7 +1380,9 @@ mod tests {
             ui.step(0.04);
             ui.render(&mut cv);
             scpi.poll(&mut ui, &cv);
-            for command in h.poll(&mut ui, &cv, &mut scpi) { crate::cmd::run(&mut ui, &command); }
+            for command in h.poll(&mut ui, &cv, &mut scpi) {
+                crate::cmd::run(&mut ui, &command);
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -1302,7 +1400,11 @@ mod tests {
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0);
         let post = |path: &str, body: &[u8]| {
-            let mut data = format!("POST {path} HTTP/1.1\r\nHost: x\r\nOrigin: http://x\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+            let mut data = format!(
+                "POST {path} HTTP/1.1\r\nHost: x\r\nOrigin: http://x\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
             data.extend_from_slice(body);
             data
         };
@@ -1319,7 +1421,8 @@ mod tests {
         assert_eq!(ui.ref_slot(), 2, "an omitted destination must not replace R1");
         assert_eq!(ui.ref_shown(), Some(true));
         assert!(!store.exists(), "an upload is read into memory, not written to a server-selected path");
-        let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.csv&slot=4", b"not a waveform"));
+        let reply =
+            request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=broken.csv&slot=4", b"not a waveform"));
         assert!(reply.starts_with("HTTP/1.1 409"), "{reply}");
         assert_eq!(ui.ref_slot(), 2, "failed upload keeps the previous selection");
         assert_eq!(ui.ref_shown(), Some(true));
@@ -1338,7 +1441,8 @@ mod tests {
         assert!(ui.meas_at(crate::model::WaveId::Ref(0), oos_dsp::measure::Meas::Vpp).is_nan());
         assert!(ui.meas_at(crate::model::WaveId::Ref(2), oos_dsp::measure::Meas::Vpp).is_finite());
         for slot in ["0", "11", "nope", ""] {
-            let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
+            let reply =
+                request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
             assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
         }
         let state = get(&mut h, &mut ui, &cv, &mut scpi, "/ui-state");
@@ -1359,8 +1463,11 @@ mod tests {
         let upload = |slot: usize| {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-            let head = format!("POST /waveform?name=lane.csv&slot={slot} HTTP/1.1\r\nHost: x\r\n\
-                Content-Length: {}\r\n\r\n", csv.len());
+            let head = format!(
+                "POST /waveform?name=lane.csv&slot={slot} HTTP/1.1\r\nHost: x\r\n\
+                Content-Length: {}\r\n\r\n",
+                csv.len()
+            );
             c.write_all(head.as_bytes()).unwrap();
             c.write_all(csv.as_bytes()).unwrap();
             c
@@ -1399,9 +1506,21 @@ mod tests {
         assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
         let mut h = Http::open(0);
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
-        let reply = request(&mut h, &mut ui, &cv, &mut scpi, format!("POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_WAVEFORM + 1).into_bytes());
+        let reply = request(
+            &mut h,
+            &mut ui,
+            &cv,
+            &mut scpi,
+            format!("POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_WAVEFORM + 1).into_bytes(),
+        );
         assert!(reply.starts_with("HTTP/1.1 413"), "{reply}");
-        let reply = request(&mut h, &mut ui, &cv, &mut scpi, b"POST /waveform HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 0\r\n\r\n".to_vec());
+        let reply = request(
+            &mut h,
+            &mut ui,
+            &cv,
+            &mut scpi,
+            b"POST /waveform HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        );
         assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
         assert!(!ui.record_mode());
         assert!(crate::cmd::remote_ok("workflow live"));
@@ -1451,7 +1570,11 @@ setTimeout(() => {
   }, 500);
 }, 400);
 "#;
-        let dir = std::env::temp_dir().join(format!("oos-ui-page-{}-{}", std::process::id(), preset.len() + storage_throws as usize));
+        let dir = std::env::temp_dir().join(format!(
+            "oos-ui-page-{}-{}",
+            std::process::id(),
+            preset.len() + storage_throws as usize
+        ));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("page.js"), script).unwrap();
         std::fs::write(dir.join("run.cjs"), HARNESS).unwrap();
@@ -1471,9 +1594,13 @@ setTimeout(() => {
         let mut h = Http::open(0);
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
-        let script = page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
+        let script =
+            page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
         // the picture the browser loads before the script runs is the small one, too
-        assert!(page.contains(r#"id="s" width="1024" height="600" alt="scope screen" src="/screen.png""#), "first picture");
+        assert!(
+            page.contains(r#"id="s" width="1024" height="600" alt="scope screen" src="/screen.png""#),
+            "first picture"
+        );
         assert!(page.contains("setfmt('png')") && page.contains("setfmt('bmp')"), "buttons for both formats");
         let Some(r) = run_page_script(script, "", false) else { return };
         // default: PNG, then BMP after the switch, and the choice is kept
@@ -1514,7 +1641,11 @@ setTimeout(() => {
             ui.step(0.02);
         }
         let r = get(&mut h, &mut ui, &cv, &mut scpi, "/wave.csv");
-        assert!(r.starts_with("HTTP/1.1 200") && r.contains("text/csv") && r.contains("Time (s),CH1 (V)"), "{}", &r[..300.min(r.len())]);
+        assert!(
+            r.starts_with("HTTP/1.1 200") && r.contains("text/csv") && r.contains("Time (s),CH1 (V)"),
+            "{}",
+            &r[..300.min(r.len())]
+        );
         // download names: nothing while the clock is not set (the page takes the browser's time), then the scope's
         // local time in its own zone
         let body = |r: &str| r.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
@@ -1557,7 +1688,8 @@ setTimeout(() => {
             let out = t.join().unwrap();
             let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
             let head = String::from_utf8_lossy(&out[..e]).to_string();
-            let n: usize = head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).unwrap().trim().parse().unwrap();
+            let n: usize =
+                head.lines().find_map(|l| l.strip_prefix("Content-Length: ")).unwrap().trim().parse().unwrap();
             assert!(n > SEND_INLINE, "{}", path);
             assert_eq!(out.len() - e, n, "{}", path);
             if path.ends_with("png") {
@@ -1755,7 +1887,12 @@ setTimeout(() => {
         let mut scpi = crate::scpi::Scpi::open(0);
         let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
         // a viewer in a thread; the server is polled meanwhile, and `change` alters the screen after 100 ms
-        let shot = |h: &mut Http, ui: &mut Ui, scpi: &mut crate::scpi::Scpi, cv: &mut Canvas, have: Option<&str>, change: bool| {
+        let shot = |h: &mut Http,
+                    ui: &mut Ui,
+                    scpi: &mut crate::scpi::Scpi,
+                    cv: &mut Canvas,
+                    have: Option<&str>,
+                    change: bool| {
             let inm = have.map_or(String::new(), |t| format!("If-None-Match: {}\r\n", t));
             let req = format!("GET /screen.png?t=1 HTTP/1.1\r\nHost: x\r\n{}\r\n", inm).into_bytes();
             let t0 = Instant::now();
@@ -1809,7 +1946,13 @@ setTimeout(() => {
         assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 2);
         // a foreign page still gets nowhere
-        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /screen.png HTTP/1.1\r\nHost: x\r\nSec-Fetch-Site: cross-site\r\n\r\n".to_vec());
+        let r = request(
+            &mut h,
+            &mut ui,
+            &cv,
+            &mut scpi,
+            b"GET /screen.png HTTP/1.1\r\nHost: x\r\nSec-Fetch-Site: cross-site\r\n\r\n".to_vec(),
+        );
         assert!(r.starts_with("HTTP/1.1 403"), "{}", r);
     }
 
@@ -1818,21 +1961,38 @@ setTimeout(() => {
         let mut h = Http::open(0);
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let post = |path: &str, body: &[u8]| {
-            let mut r = format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
+            let mut r =
+                format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
             r.extend_from_slice(body);
             r
         };
         // a 5 MB body is taken on /update (and refused for its content, nothing installed) ...
         let big = vec![0xffu8; 5 << 20];
         let r = request(&mut h, &mut ui, &cv, &mut scpi, post("/update", &big));
-        assert!(r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package"), "{}", &r[..r.len().min(300)]);
+        assert!(
+            r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package"),
+            "{}",
+            &r[..r.len().min(300)]
+        );
         // ... but not elsewhere
         let r = request(&mut h, &mut ui, &cv, &mut scpi, post("/mcp", &big));
         assert!(r.starts_with("HTTP/1.1 413"), "{}", &r[..r.len().min(200)]);
         // an announced length beyond the limit is answered at once, without waiting for the body
-        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"POST /update HTTP/1.1\r\nContent-Length: 999999999999\r\n\r\n".to_vec());
+        let r = request(
+            &mut h,
+            &mut ui,
+            &cv,
+            &mut scpi,
+            b"POST /update HTTP/1.1\r\nContent-Length: 999999999999\r\n\r\n".to_vec(),
+        );
         assert!(r.starts_with("HTTP/1.1 413"), "{}", r);
-        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"POST /update HTTP/1.1\r\nContent-Length: 18446744073709551615\r\n\r\n".to_vec());
+        let r = request(
+            &mut h,
+            &mut ui,
+            &cv,
+            &mut scpi,
+            b"POST /update HTTP/1.1\r\nContent-Length: 18446744073709551615\r\n\r\n".to_vec(),
+        );
         assert!(r.starts_with("HTTP/1.1 413"), "{}", r);
         // ordinary requests still work
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
@@ -1933,7 +2093,8 @@ setTimeout(() => {
         let mut h = Http::open(0);
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let get = |c: &str| format!("GET /cmd?c={} HTTP/1.1\r\n\r\n", c).into_bytes();
-        for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""] {
+        for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""]
+        {
             let r = request(&mut h, &mut ui, &cv, &mut scpi, get(c));
             assert!(r.starts_with("HTTP/1.1 403"), "{}: {}", c, r);
         }
@@ -1955,13 +2116,24 @@ setTimeout(() => {
 
     #[test]
     fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
-        let mut ui=crate::ui::Ui::new(crate::wave::Source::Demo{t:0.0});ui.set_offline(true);
-        let mut csv=String::from("Time (s),Volts\n");for i in 0..4000 {csv.push_str(&format!("{},{}\n",i as f64*1e-9,if i%40<20 {-0.5}else{0.5}));}
-        ui.load_waveform_bytes(csv.as_bytes(),"opc.csv").unwrap();ui.m.trig_level=10.0;
-        let cv=crate::gfx::Canvas::new(crate::ui::W,crate::ui::H);let mut scpi=crate::scpi::Scpi::open(0);
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        ui.set_offline(true);
+        let mut csv = String::from("Time (s),Volts\n");
+        for i in 0..4000 {
+            csv.push_str(&format!("{},{}\n", i as f64 * 1e-9, if i % 40 < 20 { -0.5 } else { 0.5 }));
+        }
+        ui.load_waveform_bytes(csv.as_bytes(), "opc.csv").unwrap();
+        ui.m.trig_level = 10.0;
+        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
+        let mut scpi = crate::scpi::Scpi::open(0);
         let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
-        let reply=crate::json::parse(&reply).unwrap();assert_eq!(reply.get("result").unwrap().get("isError"),Some(&crate::json::J::Bool(true)));
-        assert_eq!(ui.m.trig_mode,crate::model::TrigMode::Single,"commands after an unsupported immediate barrier must not execute");
+        let reply = crate::json::parse(&reply).unwrap();
+        assert_eq!(reply.get("result").unwrap().get("isError"), Some(&crate::json::J::Bool(true)));
+        assert_eq!(
+            ui.m.trig_mode,
+            crate::model::TrigMode::Single,
+            "commands after an unsupported immediate barrier must not execute"
+        );
     }
 
     #[test]
@@ -1984,14 +2156,16 @@ setTimeout(() => {
         use crate::json::{parse, J};
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut call = |b: &str| mcp(b, &mut ui, &cv, &mut scpi).map(|r| parse(&r).unwrap());
-        let r = call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap();
+        let r = call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)
+            .unwrap();
         assert_eq!(r.get("result").and_then(|x| x.get("protocolVersion")).and_then(J::str), Some("2025-06-18"));
         assert!(call(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
         let r = call(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap();
         assert!(r.to_string().contains("\"screenshot\""));
         let r = call(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":TIM:SCAL 0.001;*IDN?"}}}"#).unwrap();
         assert!(r.to_string().contains("OOS,DHO924S"), "{}", r.to_string());
-        let r = call(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"screenshot","arguments":{}}}"#).unwrap();
+        let r = call(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"screenshot","arguments":{}}}"#)
+            .unwrap();
         assert!(r.to_string().contains("iVBORw0KGgo")); // PNG signature in base64
         assert!(call(r#"{"jsonrpc":"2.0","id":5,"method":"nope"}"#).unwrap().get("error").is_some());
         drop(call);
@@ -2017,12 +2191,18 @@ setTimeout(() => {
         q(":SOURce1:VOLTage:LEVel:IMMediate:AMPLitude 0.5");
         q(":SOUR:VOLT:OFFS 0.25");
         q(":SOUR:OUTP:STAT ON");
-        assert_eq!((q(":SOUR:FREQ?"), q(":SOUR:VOLT?"), q(":SOUR:VOLT:OFFS?"), q(":SOUR:OUTP?"), q(":SOUR:FUNC?")), ("1.234560E+04".into(), "5.000000E-01".into(), "2.500000E-01".into(), "1".into(), "SIN".into()));
+        assert_eq!(
+            (q(":SOUR:FREQ?"), q(":SOUR:VOLT?"), q(":SOUR:VOLT:OFFS?"), q(":SOUR:OUTP?"), q(":SOUR:FUNC?")),
+            ("1.234560E+04".into(), "5.000000E-01".into(), "2.500000E-01".into(), "1".into(), "SIN".into())
+        );
         // other wave shapes: a ramp caps the frequency at 5 MHz; square duty, ramp symmetry
         q(":SOUR:FREQ 1e7");
         q(":SOUR:FUNC RAMP");
         q(":SOUR:FUNC:RAMP:SYMM 20");
-        assert_eq!((q(":SOUR:FUNC?"), q(":SOUR:FREQ?"), q(":SOUR:FUNC:RAMP:SYMM?")), ("RAMP".into(), "5.000000E+06".into(), "2.000000E+01".into()));
+        assert_eq!(
+            (q(":SOUR:FUNC?"), q(":SOUR:FREQ?"), q(":SOUR:FUNC:RAMP:SYMM?")),
+            ("RAMP".into(), "5.000000E+06".into(), "2.000000E+01".into())
+        );
         q(":SOUR:FUNC SQU");
         q(":SOUR:FUNC:SQU:DUTY 25");
         assert_eq!((q(":SOUR:FUNC?"), q(":SOUR:FUNC:SQU:DUTY?")), ("SQU".into(), "2.500000E+01".into()));
@@ -2034,7 +2214,16 @@ setTimeout(() => {
         q(":SOUR:MOD:FM:INT:FREQ 1000");
         q(":SOUR:MOD:FM:INT:FUNC SQU");
         // the deviation stays below the carrier
-        assert_eq!((q(":SOUR:MOD:TYP?"), q(":SOUR:MOD:FM:DEV?"), q(":SOUR:MOD:FM:INT:FREQ?"), q(":SOUR:MOD:FM:INT:FUNC?"), q(":SOUR:MOD?")), ("FM".into(), "1.000000E+06".into(), "1.000000E+03".into(), "SQU".into(), "1".into()));
+        assert_eq!(
+            (
+                q(":SOUR:MOD:TYP?"),
+                q(":SOUR:MOD:FM:DEV?"),
+                q(":SOUR:MOD:FM:INT:FREQ?"),
+                q(":SOUR:MOD:FM:INT:FUNC?"),
+                q(":SOUR:MOD?")
+            ),
+            ("FM".into(), "1.000000E+06".into(), "1.000000E+03".into(), "SQU".into(), "1".into())
+        );
         q(":SOUR:MOD OFF");
         assert_eq!(q(":SOUR:MOD:TYP?"), "NONE");
         q(":SOUR:FREQ 1e9");
@@ -2045,7 +2234,18 @@ setTimeout(() => {
     fn scpi_refuses_what_is_not_a_number() {
         let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
         let (delay, offset, probe) = (ui.m.delay, ui.m.ch[0].offset, ui.m.ch[0].probe);
-        for c in [":TIM:OFFS nan", ":TIM:OFFS inf", ":TIM:OFFS 1e39", ":CHAN1:OFFS NaN", ":CHAN1:PROB -inf", ":CHAN1:PROB 0", ":CHAN1:PROB -10", ":TRIG:EDGE:LEV nan", ":SOUR:FREQ nan", ":SOUR:VOLT inf"] {
+        for c in [
+            ":TIM:OFFS nan",
+            ":TIM:OFFS inf",
+            ":TIM:OFFS 1e39",
+            ":CHAN1:OFFS NaN",
+            ":CHAN1:PROB -inf",
+            ":CHAN1:PROB 0",
+            ":CHAN1:PROB -10",
+            ":TRIG:EDGE:LEV nan",
+            ":SOUR:FREQ nan",
+            ":SOUR:VOLT inf",
+        ] {
             scpi.exec_line(&mut ui, &cv, c);
         }
         assert_eq!((ui.m.delay, ui.m.ch[0].offset, ui.m.ch[0].probe), (delay, offset, probe));

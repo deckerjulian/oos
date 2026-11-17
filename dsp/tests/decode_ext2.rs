@@ -125,12 +125,18 @@ fn jtag_ir_dr_scans_and_states() {
         ]
     );
     let sh = jtag_shifts(&w[0], &w[1], &w[2], Some(&w[3]), Some(TapState::TestLogicReset), 1.65, 0.3);
-    assert_eq!(sh.iter().map(|s| (s.ir, s.tdi.len(), s.tdo.len())).collect::<Vec<_>>(), vec![(true, 4, 4), (false, 32, 32), (false, 40, 40)]);
+    assert_eq!(
+        sh.iter().map(|s| (s.ir, s.tdi.len(), s.tdo.len())).collect::<Vec<_>>(),
+        vec![(true, 4, 4), (false, 32, 32), (false, 40, 40)]
+    );
     // the paused scan passes Pause-DR and Exit2-DR
     let st = jtag_states(&w[0], &w[1], Some(TapState::TestLogicReset), 1.65, 0.3);
     let names: Vec<TapState> = st.iter().map(|x| x.1).collect();
     use TapState::*;
-    assert_eq!(&names[..8], &[TestLogicReset, RunTestIdle, SelectDrScan, SelectIrScan, CaptureIr, ShiftIr, Exit1Ir, UpdateIr]);
+    assert_eq!(
+        &names[..8],
+        &[TestLogicReset, RunTestIdle, SelectDrScan, SelectIrScan, CaptureIr, ShiftIr, Exit1Ir, UpdateIr]
+    );
     assert!(names.windows(4).any(|w| w == [Exit1Dr, PauseDr, Exit2Dr, ShiftDr]));
     assert_eq!(names.last(), Some(&RunTestIdle));
     assert!(st.windows(2).all(|w| w[0].0 <= w[1].0));
@@ -225,10 +231,20 @@ fn qspi_fixed_layout_and_truncated_frame() {
     let p = qspi(&w[0], &w[1], &io, &cfg, false, 1.65, 0.3);
     // the short frame has 8 cycles after the command: enough for the 6 address cycles, not for the 6 dummy cycles
     let got: Vec<(Kind, u32)> = p.iter().map(|x| (x.kind, x.value)).collect();
-    assert_eq!(got[..6], [(F("CMD"), 0xeb), (F("ADDR"), 0xab_cdef), (F("DUMMY"), 6), (Kind::Data, 0x11), (Kind::Data, 0x22), (F("CMD"), 0xeb)]);
+    assert_eq!(
+        got[..6],
+        [
+            (F("CMD"), 0xeb),
+            (F("ADDR"), 0xab_cdef),
+            (F("DUMMY"), 6),
+            (Kind::Data, 0x11),
+            (Kind::Data, 0x22),
+            (F("CMD"), 0xeb)
+        ]
+    );
     assert_eq!(got.len(), 7, "{:?}", got);
     assert_eq!(got[6], (F("ADDR"), 0x00_0100)); // 0x12 on IO0 only: 0,0,0,1,0,0 as 4-line nibbles
-    // a wrong layout gives wrong data
+                                                // a wrong layout gives wrong data
     let p1 = qspi(&w[0], &w[1], &io, &QspiCfg::new(1, 1, 1, 3, 0, false), false, 1.65, 0.3);
     assert!(!p1.iter().any(|x| x.kind == Kind::Data && x.value == 0x11));
 }
@@ -377,7 +393,10 @@ fn spdif_samples_blocks_and_channel_status() {
     for inv in [false, true] {
         let v: Vec<f32> = if inv { w[0].iter().map(|x| 0.5 - x).collect() } else { w[0].clone() };
         let p = spdif(&v, 0.25, 0.1);
-        let s: Vec<(bool, u32)> = p.iter().filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None }).collect();
+        let s: Vec<(bool, u32)> = p
+            .iter()
+            .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
+            .collect();
         let want: Vec<(bool, u32)> = frames.iter().flat_map(|&(a, b)| [(false, a), (true, b)]).collect();
         assert_eq!(s, want, "inverted {}", inv);
         assert!(p.iter().filter(|x| matches!(x.kind, Kind::Sample { .. })).all(|x| x.ok));
@@ -441,7 +460,8 @@ fn usbpd_source_caps_goodcrc_and_hard_reset() {
         pre, (F("!HRST"), 0, true),
         pre, (F("SOP"), 0, true), (F("HDR"), pd_hdr(2, 1, 3) as u32, true), (F("PDO"), 0x1304_b12c, true), (Kind::Crc, 0, false), (F("!EOP"), 0, true),
     ];
-    let got: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, if x.kind == Kind::Crc { 0 } else { x.value }, x.ok)).collect();
+    let got: Vec<(Kind, u32, bool)> =
+        p.iter().map(|x| (x.kind, if x.kind == Kind::Crc { 0 } else { x.value }, x.ok)).collect();
     assert_eq!(got, want);
     assert_eq!(usbpd_msg_name(pd_hdr(1, 3, 2)), "Source_Capabilities");
     assert_eq!(usbpd_msg_name(0x0041), "GoodCRC");
@@ -449,7 +469,9 @@ fn usbpd_source_caps_goodcrc_and_hard_reset() {
     assert_eq!(usbpd_msg_name(pd_hdr(2, 1, 0)), "Request");
     assert_eq!(usbpd_pdo(pdo9), Pdo::Fixed { volts: 9.0, amps: 3.0 });
     match usbpd_pdo(pps) {
-        Pdo::Pps { min_v, max_v, amps } => assert!((min_v - 3.3).abs() < 1e-9 && (max_v - 21.0).abs() < 1e-9 && (amps - 3.0).abs() < 1e-9),
+        Pdo::Pps { min_v, max_v, amps } => {
+            assert!((min_v - 3.3).abs() < 1e-9 && (max_v - 21.0).abs() < 1e-9 && (amps - 3.0).abs() < 1e-9)
+        }
         x => panic!("{:?}", x),
     }
     assert_eq!(usbpd_crc32(b"123456789"), 0xcbf4_3926);

@@ -387,17 +387,28 @@ impl Fields {
         }
         let order = self.mash_order.min(4) as usize;
         if self.pll_n < N_MIN[order] {
-            n.push(format!("PLL_N {} below the minimum {} for MASH order {} (Table 7-2)", self.pll_n, N_MIN[order], self.mash_order));
+            n.push(format!(
+                "PLL_N {} below the minimum {} for MASH order {} (Table 7-2)",
+                self.pll_n, N_MIN[order], self.mash_order
+            ));
         }
         if self.pfd_dly != PFD_DLY_REC[order] {
-            n.push(format!("PFD_DLY {} differs from the recommended {} for MASH order {}", self.pfd_dly, PFD_DLY_REC[order], self.mash_order));
+            n.push(format!(
+                "PFD_DLY {} differs from the recommended {} for MASH order {}",
+                self.pfd_dly, PFD_DLY_REC[order], self.mash_order
+            ));
         }
         if self.pll_num >= self.pll_den.max(1) {
             n.push(format!("PLL_NUM {} >= PLL_DEN {}", self.pll_num, self.pll_den));
         }
         let want_vtune = if vco >= VTUNE_ADJ_FROM_HZ as f64 { 3 } else { 0 };
         if self.vtune_adj != want_vtune {
-            n.push(format!("VTUNE_ADJ {} but {} for VCO {:.0} MHz (Table 7-25)", self.vtune_adj, want_vtune, vco / 1e6));
+            n.push(format!(
+                "VTUNE_ADJ {} but {} for VCO {:.0} MHz (Table 7-25)",
+                self.vtune_adj,
+                want_vtune,
+                vco / 1e6
+            ));
         }
         if !self.fcal_en {
             n.push("FCAL_EN = 0: R0 does not start the VCO calibration".into());
@@ -407,7 +418,14 @@ impl Fields {
 
     /// Human-readable decode, one field group per line (for `oos-fpgad pll --dry`).
     pub fn lines(&self) -> Vec<String> {
-        let cp_ma = |c: u32| [0.156, 0.312, 0.625, 2.5, 1.25].iter().enumerate().filter(|(i, _)| c >> i & 1 != 0).map(|(_, m)| m).sum::<f64>();
+        let cp_ma = |c: u32| {
+            [0.156, 0.312, 0.625, 2.5, 1.25]
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| c >> i & 1 != 0)
+                .map(|(_, m)| m)
+                .sum::<f64>()
+        };
         let coarse = [1.0, 2.0, 1.5, 2.5][self.cp_icoarse as usize & 3];
         let chdiv = self.chdiv().map_or("PD".into(), |c| c.to_string());
         let out = |hz: f64| if hz.is_nan() { "-".to_string() } else { format!("{:.6} MHz", hz / 1e6) };
@@ -488,7 +506,10 @@ impl Fields {
 
 /// A table as in pll.md: `R70=0000 R69=0000 ...`, ten words per line.
 pub fn format_table(t: &Table) -> String {
-    t.chunks(10).map(|c| c.iter().map(|w| format!("R{}={:02x}{:02x}", w[0], w[1], w[2])).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\n")
+    t.chunks(10)
+        .map(|c| c.iter().map(|w| format!("R{}={:02x}{:02x}", w[0], w[1], w[2])).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Table for `f_out_hz` at output B: `PLL_TABLE` with only PLL_N, PLL_NUM, PLL_DEN, the channel divider segments
@@ -579,7 +600,10 @@ mod tests {
         let f = Fields::decode(&PLL_TABLE).unwrap();
         assert_eq!((f.osc_2x, f.pll_r_pre, f.mult, f.pll_r), (false, 1, 1, 1));
         assert_eq!((f.pll_n_pre, f.pll_n, f.pll_num, f.pll_den, f.mash_order, f.pfd_dly), (2, 25, 0, 4, 3, 2));
-        assert_eq!((f.chdiv(), f.chdiv_seg, f.chdiv_seg_en, f.chdiv_seg_sel), (Some(4), [2, 2, 2], [true, true, false], 2));
+        assert_eq!(
+            (f.chdiv(), f.chdiv_seg, f.chdiv_seg_en, f.chdiv_seg_sel),
+            (Some(4), [2, 2, 2], [true, true, false], 2)
+        );
         assert_eq!((f.outb_pd, f.outb_mux, f.outb_pow, f.outa_pd), (false, 0, 31, true));
         assert_eq!((f.cp_iup, f.cp_idn, f.cp_icoarse, f.pfd_ctl), (8, 8, 0, 0));
         assert!(f.fcal_en && f.acal_en && !f.vco_capctrl_ovr && !f.vco_idac_ovr);

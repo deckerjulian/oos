@@ -3,9 +3,9 @@
 
 //! What many tests set up the same way: a demo screen, an SCPI session on it, a scratch directory.
 
+use super::Ui;
 use crate::gfx::Canvas;
 use crate::scpi::Scpi;
-use super::Ui;
 use crate::wave::Source;
 use std::path::{Path, PathBuf};
 

@@ -152,7 +152,9 @@ impl Beeper {
             .flatten()
             .map(|e| e.path())
             .find(|p| fs::read_link(p.join("device")).is_ok_and(|l| l.to_string_lossy().ends_with("pwm-gpio")))
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no pwm-gpio pwmchip (modprobe pwm-gpio)"))?;
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "no pwm-gpio pwmchip (modprobe pwm-gpio)")
+            })?;
         let pwm = chip.join("pwm0");
         if !pwm.exists() {
             fs::write(chip.join("export"), "0")?;
@@ -237,7 +239,10 @@ mod tests {
         fs::create_dir_all(d.join("cooling_device0")).unwrap();
         let z = thermal_zones(&d);
         fs::remove_dir_all(&d).unwrap();
-        assert_eq!(z, vec![Zone { name: "cpu-thermal".into(), temp: 45.0 }, Zone { name: "gpu-thermal".into(), temp: 41.25 }]);
+        assert_eq!(
+            z,
+            vec![Zone { name: "cpu-thermal".into(), temp: 45.0 }, Zone { name: "gpu-thermal".into(), temp: 41.25 }]
+        );
     }
 
     #[test]

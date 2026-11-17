@@ -291,7 +291,10 @@ impl Display {
             // the panel: its preferred mode (type bit 3), else the first; a monitor: at most 1920 x 1080
             let mode = if want == Some(CONNECTOR_HDMIA) {
                 // DRM_MODE_FLAG_INTERLACE = 0x10
-                let list: Vec<_> = modes.iter().map(|m| (m.hdisplay, m.vdisplay, m.vrefresh, m.typ & 8 != 0, m.flags & 0x10 != 0)).collect();
+                let list: Vec<_> = modes
+                    .iter()
+                    .map(|m| (m.hdisplay, m.vdisplay, m.vrefresh, m.typ & 8 != 0, m.flags & 0x10 != 0))
+                    .collect();
                 match crate::gfx::pick_mode(&list, (1920, 1080)) {
                     Some(i) => modes[i],
                     None => {
@@ -336,7 +339,22 @@ impl Display {
         let saved = if ioc(fd, GETCRTC, &mut saved).is_ok() { Some(saved) } else { None };
 
         let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
-        let mut d = Display { fd, width: w as i32, height: h as i32, crtc_id, conn_id, mode, saved, bufs: Vec::new(), front: 0, prev: 0, flips_out: 0, flips_late: 0, use_flip: true, fit: None };
+        let mut d = Display {
+            fd,
+            width: w as i32,
+            height: h as i32,
+            crtc_id,
+            conn_id,
+            mode,
+            saved,
+            bufs: Vec::new(),
+            front: 0,
+            prev: 0,
+            flips_out: 0,
+            flips_late: 0,
+            use_flip: true,
+            fit: None,
+        };
         // on any error the buffers made so far are freed again (the HDMI search retries)
         match d.alloc().and_then(|_| d.set_crtc(0)) {
             Ok(()) => Ok(d),
@@ -362,23 +380,56 @@ impl Display {
                 let _ = ioc(fd, DESTROY_DUMB, &mut h);
                 e
             };
-            let mut fb = FbCmd { width: w, height: h, pitch: cd.pitch, bpp: 32, depth: 24, handle: cd.handle, ..Default::default() };
+            let mut fb = FbCmd {
+                width: w,
+                height: h,
+                pitch: cd.pitch,
+                bpp: 32,
+                depth: 24,
+                handle: cd.handle,
+                ..Default::default()
+            };
             ioc(fd, ADDFB, &mut fb).map_err(|e| undo(None, e))?;
             let mut md = MapDumb { handle: cd.handle, ..Default::default() };
             ioc(fd, MAP_DUMB, &mut md).map_err(|e| undo(Some(fb.fb_id), e))?;
-            let map = unsafe { libc::mmap(std::ptr::null_mut(), cd.size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, md.offset as libc::off_t) };
+            let map = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    cd.size as usize,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    fd,
+                    md.offset as libc::off_t,
+                )
+            };
             if map == libc::MAP_FAILED {
                 return Err(undo(Some(fb.fb_id), io::Error::last_os_error()));
             }
             unsafe { std::ptr::write_bytes(map as *mut u8, 0, cd.size as usize) };
-            self.bufs.push(Buf { handle: cd.handle, fb: fb.fb_id, pitch: cd.pitch, size: cd.size as usize, map: map as *mut u32 });
+            self.bufs.push(Buf {
+                handle: cd.handle,
+                fb: fb.fb_id,
+                pitch: cd.pitch,
+                size: cd.size as usize,
+                map: map as *mut u32,
+            });
         }
         Ok(())
     }
 
     fn set_crtc(&mut self, i: usize) -> io::Result<()> {
         let mut conn = self.conn_id;
-        let mut c = Crtc { set_connectors_ptr: &mut conn as *mut u32 as u64, count_connectors: 1, crtc_id: self.crtc_id, fb_id: self.bufs[i].fb, x: 0, y: 0, gamma_size: 0, mode_valid: 1, mode: self.mode };
+        let mut c = Crtc {
+            set_connectors_ptr: &mut conn as *mut u32 as u64,
+            count_connectors: 1,
+            crtc_id: self.crtc_id,
+            fb_id: self.bufs[i].fb,
+            x: 0,
+            y: 0,
+            gamma_size: 0,
+            mode_valid: 1,
+            mode: self.mode,
+        };
         ioc(self.fd, SETCRTC, &mut c)
     }
 
@@ -448,7 +499,8 @@ impl Display {
         self.wait_flip();
         let b = &self.bufs[back];
         if self.use_flip {
-            let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
+            let mut pf =
+                PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
             match ioc(self.fd, PAGE_FLIP, &mut pf) {
                 Ok(()) => {
                     self.flips_out += 1;
@@ -519,7 +571,17 @@ impl Display {
 
     /// Turns the output off and frees it (HDMI unplugged or oos-ui ending).
     pub fn close(mut self) {
-        let mut c = Crtc { set_connectors_ptr: 0, count_connectors: 0, crtc_id: self.crtc_id, fb_id: 0, x: 0, y: 0, gamma_size: 0, mode_valid: 0, mode: self.mode };
+        let mut c = Crtc {
+            set_connectors_ptr: 0,
+            count_connectors: 0,
+            crtc_id: self.crtc_id,
+            fb_id: 0,
+            x: 0,
+            y: 0,
+            gamma_size: 0,
+            mode_valid: 0,
+            mode: self.mode,
+        };
         let _ = ioc(self.fd, SETCRTC, &mut c);
         self.saved = None;
         self.restore();

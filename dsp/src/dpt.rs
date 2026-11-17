@@ -342,7 +342,11 @@ fn median(x: &[f32]) -> f64 {
     }
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) }
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
 }
 
 fn at(x: &[f32], t: f64) -> f64 {
@@ -351,7 +355,11 @@ fn at(x: &[f32], t: f64) -> f64 {
     }
     let k = (t.floor() as usize).min(x.len() - 2);
     let (p, q) = (x[k] as f64, x[k + 1] as f64);
-    if p.is_finite() && q.is_finite() { p + (q - p) * (t - k as f64) } else { f64::NAN }
+    if p.is_finite() && q.is_finite() {
+        p + (q - p) * (t - k as f64)
+    } else {
+        f64::NAN
+    }
 }
 
 fn max_in(x: &[f32], t0: f64, t1: f64) -> Option<(f64, f64)> {
@@ -419,7 +427,18 @@ fn fourth_v<'a>(f: &'a Fourth<'a>, n: usize) -> Option<&'a [f32]> {
 }
 
 /// Recovery on the turn-on edge. Without a diode current, i_rev = Id − I_L (positive above the plateau).
-fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Option<&[f32]>, il: f64, vbus: f64, t0w: f64, t1w: f64, dt: f64) {
+fn diode(
+    out: &mut Pulse,
+    id: &[f32],
+    vds: &[f32],
+    idi: Option<&[f32]>,
+    vdi: Option<&[f32]>,
+    il: f64,
+    vbus: f64,
+    t0w: f64,
+    t1w: f64,
+    dt: f64,
+) {
     let (a, b) = (bound(t0w), bound(t1w) + 1);
     let from_id = idi.is_none();
     out.diode_from_id = from_id;
@@ -481,7 +500,11 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
     let prod: Vec<f64> = (0..n)
         .map(|k| {
             let i = rev[k];
-            if i.is_finite() { vd[k] * i } else { 0.0 }
+            if i.is_finite() {
+                vd[k] * i
+            } else {
+                0.0
+            }
         })
         .collect();
     out.err = Some(integrate(&prod, t0, tend, dt));

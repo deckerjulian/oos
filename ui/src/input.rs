@@ -128,20 +128,34 @@ impl Inputs {
                 let mut info = [0i32; 6];
                 let req = ((2u32 << 30) | (24u32 << 16) | ((b'E' as u32) << 8) | (0x40 + code)) as libc::c_ulong;
                 let r = unsafe { libc::ioctl(fd, req as _, info.as_mut_ptr()) };
-                if r == 0 { info[2] } else { 0 }
+                if r == 0 {
+                    info[2]
+                } else {
+                    0
+                }
             };
             let max_x = absmax(0x35);
             let max_y = absmax(0x36);
             eprintln!("oos-ui: touch range {} x {}", max_x, max_y);
             let idle = Slot { id: -1, ..Default::default() };
-            Some(Touch { fd, slot: 0, s: [idle, idle], swap: has("--touch-swap"), inv_x: has("--touch-invx"), inv_y: has("--touch-invy"), max_x, max_y })
+            Some(Touch {
+                fd,
+                slot: 0,
+                s: [idle, idle],
+                swap: has("--touch-swap"),
+                inv_x: has("--touch-invx"),
+                inv_y: has("--touch-invy"),
+                max_x,
+                max_y,
+            })
         });
         // the board's panel port (frontpanel.md on the DHO800/DHO900); --panel overrides the device
         let (port, baud) = {
             use crate::board::Board;
             crate::board::board().panel_port()
         };
-        let panel = if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| port.into()), baud) };
+        let panel =
+            if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| port.into()), baud) };
         if panel < 0 {
             eprintln!("oos-ui: no front panel");
         }

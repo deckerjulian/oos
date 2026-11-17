@@ -212,7 +212,15 @@ pub fn shaft_phase(a: &[f32], b: &[f32], c: &[f32], dt: f64, t0: f64, poles: u32
 }
 
 /// Analog angle. `electrical` means the volts are an electrical angle and pole pairs convert it to the shaft.
-pub fn shaft_analog(v: &[f32], dt: f64, t0: f64, deg_per_volt: f64, offset_deg: f64, electrical: bool, poles: u32) -> Shaft {
+pub fn shaft_analog(
+    v: &[f32],
+    dt: f64,
+    t0: f64,
+    deg_per_volt: f64,
+    offset_deg: f64,
+    electrical: bool,
+    poles: u32,
+) -> Shaft {
     if v.len() < 2 || !(dt > 0.0) || !deg_per_volt.is_finite() {
         return Shaft { note: "no angle", ..Shaft::default() };
     }
@@ -251,7 +259,15 @@ pub fn shaft_analog(v: &[f32], dt: f64, t0: f64, deg_per_volt: f64, offset_deg: 
 }
 
 /// Quadrature decoder. A leading B is forward; `swap` reverses that. Index, once seen, zeros the angle.
-pub fn shaft_quad(a: &[bool], b: &[bool], index: Option<&[bool]>, dt: f64, t0: f64, counts_per_rev: f64, swap: bool) -> Shaft {
+pub fn shaft_quad(
+    a: &[bool],
+    b: &[bool],
+    index: Option<&[bool]>,
+    dt: f64,
+    t0: f64,
+    counts_per_rev: f64,
+    swap: bool,
+) -> Shaft {
     let n = a.len().min(b.len());
     if n < 2 || !(dt > 0.0) || !(counts_per_rev > 0.0) {
         return Shaft { note: "no encoder", ..Shaft::default() };
@@ -415,7 +431,13 @@ pub fn mechanical(shaft: Shaft, torque: Option<&[f32]>, scale: f64, vin: Option<
 }
 
 fn direction_of(rpm: f64) -> Direction {
-    if !rpm.is_finite() || rpm.abs() < 1.0 { Direction::Stopped } else if rpm > 0.0 { Direction::Forward } else { Direction::Reverse }
+    if !rpm.is_finite() || rpm.abs() < 1.0 {
+        Direction::Stopped
+    } else if rpm > 0.0 {
+        Direction::Forward
+    } else {
+        Direction::Reverse
+    }
 }
 
 /// Mechanical radians, NaN splits the unwrap. `edges` set means acceleration also needs two edges (encoder, Hall).
@@ -444,15 +466,7 @@ fn from_unwrapped(rad: &[f64], dt: f64, t0: f64, edges: Option<u32>) -> Shaft {
     let travel_deg = travel(rad).map(|r| r.to_degrees());
     let trend = revolution_trend(rad, dt);
     let accel = if edges.is_some_and(|e| e < 2) || trend.len() < 2 { None } else { slope_of(&trend) };
-    Shaft {
-        rpm,
-        accel,
-        direction: direction_of(rpm.unwrap_or(0.0)),
-        angle_deg,
-        travel_deg,
-        trend,
-        ..Shaft::default()
-    }
+    Shaft { rpm, accel, direction: direction_of(rpm.unwrap_or(0.0)), angle_deg, travel_deg, trend, ..Shaft::default() }
 }
 
 fn nearest_finite(x: &[f64], k: usize) -> Option<f64> {
@@ -558,8 +572,14 @@ fn slope_of(trend: &[(f64, f64)]) -> Option<f64> {
 fn quad_step(a0: bool, b0: bool, a1: bool, b1: bool, swap: bool) -> i32 {
     let (a0, b0, a1, b1) = if swap { (b0, a0, b1, a1) } else { (a0, b0, a1, b1) };
     match (a0, b0, a1, b1) {
-        (false, false, true, false) | (true, false, true, true) | (true, true, false, true) | (false, true, false, false) => 1,
-        (false, false, false, true) | (false, true, true, true) | (true, true, true, false) | (true, false, false, false) => -1,
+        (false, false, true, false)
+        | (true, false, true, true)
+        | (true, true, false, true)
+        | (false, true, false, false) => 1,
+        (false, false, false, true)
+        | (false, true, true, true)
+        | (true, true, true, false)
+        | (true, false, false, false) => -1,
         _ => 0,
     }
 }

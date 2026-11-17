@@ -48,7 +48,7 @@ pub mod regs;
 pub mod sim;
 pub mod wnd;
 
-pub use cal::{DdrCal, CalFiles};
+pub use cal::{CalFiles, DdrCal};
 use regs::*;
 
 use crate::dho::adc;
@@ -176,7 +176,12 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Options {
-        Options { fpga_version: crate::dho::bus::FPGA_VERSION, adc_init_pre_us: ADC_INIT_PRE_US_STOCK, idelay_fallback: sim::UNIT_IDELAY, ignore_clock: false }
+        Options {
+            fpga_version: crate::dho::bus::FPGA_VERSION,
+            adc_init_pre_us: ADC_INIT_PRE_US_STOCK,
+            idelay_fallback: sim::UNIT_IDELAY,
+            ignore_clock: false,
+        }
     }
 }
 
@@ -289,7 +294,12 @@ pub struct Early {
 }
 
 /// Steps 2 and 3 ahead of the others, for the wait after the BOOT command.
-pub fn early_start(pll: &mut dyn PllPins, afe_bus: &mut dyn AfeBus, clock: &mut dyn Clock, progress: &mut dyn FnMut(u32)) -> Result<Early, String> {
+pub fn early_start(
+    pll: &mut dyn PllPins,
+    afe_bus: &mut dyn AfeBus,
+    clock: &mut dyn Clock,
+    progress: &mut dyn FnMut(u32),
+) -> Result<Early, String> {
     progress(2);
     // the 50 ms of the stock system between words are not needed by the chip; the last word (R0) starts its calibration
     for w in pll_table()? {
@@ -309,7 +319,13 @@ fn afe_init(cb: &mut AfeCount) -> ([afe::Afe; 4], Vec<String>) {
     let a = std::array::from_fn(|ch| {
         let (w0, r0) = (cb.w, cb.r);
         let (a, e) = afe::Afe::init(cb, ch);
-        notes.push(format!("AFE CH{}: {} writes, {} reads, efuse 57/60..64 = {:04x?}", ch + 1, cb.w - w0, cb.r - r0, e));
+        notes.push(format!(
+            "AFE CH{}: {} writes, {} reads, efuse 57/60..64 = {:04x?}",
+            ch + 1,
+            cb.w - w0,
+            cb.r - r0,
+            e
+        ));
         a
     });
     (a, notes)
@@ -528,7 +544,10 @@ impl<B: Bus> Ctx<'_, B> {
                     break;
                 }
                 if self.clk.now_us() - t0 > ADC_TRIM_TIMEOUT_US {
-                    self.warn(format!("ADC trim: core {} not done after 2 s (0x1038 bit 6), trim left on for cores {}..7", n, n));
+                    self.warn(format!(
+                        "ADC trim: core {} not done after 2 s (0x1038 bit 6), trim left on for cores {}..7",
+                        n, n
+                    ));
                     return false;
                 }
             }
@@ -537,11 +556,21 @@ impl<B: Bus> Ctx<'_, B> {
         true
     }
 
-    fn run(&mut self, pll: Option<&mut dyn PllPins>, mut afe_bus: Option<&mut dyn AfeBus>, early: Option<Early>, cal: &CalFiles, opt: &Options) -> Result<Outcome, String> {
+    fn run(
+        &mut self,
+        pll: Option<&mut dyn PllPins>,
+        mut afe_bus: Option<&mut dyn AfeBus>,
+        early: Option<Early>,
+        cal: &CalFiles,
+        opt: &Options,
+    ) -> Result<Outcome, String> {
         self.step(1, "FPGA image running, PCIe up: version register", "[U]");
         let v = self.rd(0x4000);
         if v != opt.fpga_version {
-            return Err(format!("0x4000 = {:#010x}, expected {:#010x}: wrong or no FPGA image, nothing written", v, opt.fpga_version));
+            return Err(format!(
+                "0x4000 = {:#010x}, expected {:#010x}: wrong or no FPGA image, nothing written",
+                v, opt.fpga_version
+            ));
         }
 
         let mut afes: [afe::Afe; 4] = if let Some(e) = early {
@@ -575,7 +604,9 @@ impl<B: Bus> Ctx<'_, B> {
                     a
                 }
                 None => {
-                    self.note("skipped (no AFE handle: already initialised); shadows = state after the AFE init".into());
+                    self.note(
+                        "skipped (no AFE handle: already initialised); shadows = state after the AFE init".into(),
+                    );
                     [0, 1, 2, 3].map(afe::Afe::new)
                 }
             }
@@ -603,14 +634,22 @@ impl<B: Bus> Ctx<'_, B> {
 
         self.step(8, "health checks: 0x1008 bit 29 (DDR init pass) stops on failure; 0x1210 logged", "[N][U]");
         let ddr = self.poll_ddr(DDR_POLLS, DDR_POLL_US).map_err(|v| {
-            format!("DDR init not passed: 0x1008 = {:#010x} after {} x {} ms; stopped (no BRAM fallback)", v, DDR_POLLS, DDR_POLL_US / 1000)
+            format!(
+                "DDR init not passed: 0x1008 = {:#010x} after {} x {} ms; stopped (no BRAM fallback)",
+                v,
+                DDR_POLLS,
+                DDR_POLL_US / 1000
+            )
         })?;
         // This is log only: in a cold start 0x1210 is 0 until the ADC sync (step 11) and
         // the eye scan (step 12) bring the ADC data clock up (unit, 2026-11-03). The real check is after step 12.
         let clk = self.rd(0x1210);
         let (cmin, cmax) = adc_clk_window();
         if !(cmin..=cmax).contains(&clk) {
-            self.note(format!("0x1210 = {} before the ADC sync (normal in a cold start; checked again after the eye scan)", clk));
+            self.note(format!(
+                "0x1210 = {} before the ADC sync (normal in a cold start; checked again after the eye scan)",
+                clk
+            ));
         }
         self.note(format!("0x1008 = {:#010x}, 0x1210 = {}", ddr, clk));
 
@@ -633,7 +672,10 @@ impl<B: Bus> Ctx<'_, B> {
                 let w = ddr_taps(&mut self.sh, &d.taps);
                 self.apply(&w);
                 ddr_status = self.poll_ddr(DDR_REPOLLS, DDR_REPOLL_US).map_err(|v| {
-                    format!("DDR init not passed after the tap reload: 0x1008 = {:#010x} after {} x 500 ms; stopped", v, DDR_REPOLLS)
+                    format!(
+                        "DDR init not passed after the tap reload: 0x1008 = {:#010x} after {} x 500 ms; stopped",
+                        v, DDR_REPOLLS
+                    )
                 })?;
             }
             None => self.note("no cal_ddr.hex: skipped".into()),
@@ -647,10 +689,19 @@ impl<B: Bus> Ctx<'_, B> {
         // moving, seen on the unit) stock stays at 7, where the sweep ended, so this start goes on too; the checks after the
         // eye scan decide. Only a register that never changes at all is no ADC answering.
         if d.is_none() && reg7.iter().all(|&x| x == reg7[0]) {
-            return Err(format!("ADC0 Sync DO:{}: ADC register 7 never changes ({:#06x}); stopped", b.join(","), reg7[0]));
+            return Err(format!(
+                "ADC0 Sync DO:{}: ADC register 7 never changes ({:#06x}); stopped",
+                b.join(","),
+                reg7[0]
+            ));
         }
         let sync_delay = d.unwrap_or(7);
-        self.note(format!("ADC0 Sync DO:{} -> delay {}{} (unit: 1,0,1,1,1,0,0,1 -> 0)", b.join(","), sync_delay, if d.is_none() { ", no 1 -> 0 edge, stays as swept" } else { "" }));
+        self.note(format!(
+            "ADC0 Sync DO:{} -> delay {}{} (unit: 1,0,1,1,1,0,0,1 -> 0)",
+            b.join(","),
+            sync_delay,
+            if d.is_none() { ", no 1 -> 0 edge, stays as swept" } else { "" }
+        ));
 
         self.clock_probe(opt);
         self.step(12, "28-lane IDELAY eye scan, window search, load", "[N][O], fallback [A]");
@@ -676,7 +727,10 @@ impl<B: Bus> Ctx<'_, B> {
         let clk = self.rd(0x1210);
         let (cmin, cmax) = adc_clk_window();
         if !(cmin..=cmax).contains(&clk) {
-            let msg = format!("ADC clock counter 0x1210 = {} outside {}..{} after the ADC sync and eye scan: no sample clock", clk, cmin, cmax);
+            let msg = format!(
+                "ADC clock counter 0x1210 = {} outside {}..{} after the ADC sync and eye scan: no sample clock",
+                clk, cmin, cmax
+            );
             if !opt.ignore_clock {
                 return Err(msg + "; stopped");
             }
@@ -736,13 +790,32 @@ impl<B: Bus> Ctx<'_, B> {
         // tpu::edge rewrites the registers from them) [A]; ADC mode unknown so that the first configure writes the input
         // mode + ADC parameters of the mode (cold-boot.md 2, "first ADC configuration") [A].
         let state = seq::State {
-            sh: scu::Shadows { s4004: self.sh.s4004, s4008: self.sh.s4008, s400c: 0, s1000: self.sh.s1000, s1010: self.sh.s1010, s4080: 0, s1004: 0, s4020: 0, s1080: 0, s1084: 0, s40b8: 0 },
+            sh: scu::Shadows {
+                s4004: self.sh.s4004,
+                s4008: self.sh.s4008,
+                s400c: 0,
+                s1000: self.sh.s1000,
+                s1010: self.sh.s1010,
+                s4080: 0,
+                s1004: 0,
+                s4020: 0,
+                s1080: 0,
+                s1084: 0,
+                s40b8: 0,
+            },
             ts: tpu::Shadows::APP,
             afe: afes,
             adc: a,
             mode: usize::MAX,
             gain: [1.0; 4],
-            la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0, zone_tabs: [None, None], zone_run: None,
+            la_was_on: false,
+            holdoff_set: false,
+            aux: None,
+            mask_cols: None,
+            mask_run: None,
+            s1190: 0,
+            zone_tabs: [None, None],
+            zone_run: None,
         };
         Ok(Outcome {
             state,
@@ -790,7 +863,11 @@ pub fn dry_run(cal: &CalFiles, opt: &Options) -> String {
     let mut clk = sim::SimClock::default();
     let mut pll = sim::PllRec::default();
     let mut afe = sim::AfeStub::default();
-    let r = cold_boot(Hw { bus: &mut unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None }, cal, opt);
+    let r = cold_boot(
+        Hw { bus: &mut unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None },
+        cal,
+        opt,
+    );
     let mut s = String::from(
         "OOS cold boot, DRY RUN: no hardware. Reads are answered by sim::Unit with the unit's values of 2026-11-02 \
          (0x4000 = 0xe2072115, 0x1008 = 0x24000201, 0x1210 = 62500, ADC0 Sync DO 1,0,1,1,1,0,0,1, the logcat eye scan, \

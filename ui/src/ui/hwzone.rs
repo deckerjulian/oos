@@ -13,7 +13,11 @@ impl Ui {
     /// The zone trigger runs in the hardware: enabled on this board, live hardware frames, at least one usable zone,
     /// all of them on one acquired channel, and the mask unit not taken by the hardware mask test.
     pub(super) fn zone_hw_active(&self) -> bool {
-        board().zone_hw() && self.src.is_hw() && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on) && !self.mask_hw_active() && self.unit_blocked.is_none()
+        board().zone_hw()
+            && self.src.is_hw()
+            && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on)
+            && !self.mask_hw_active()
+            && self.unit_blocked.is_none()
     }
 
     /// The one source channel of the usable zones; None without usable zones or with zones on different channels.
@@ -88,8 +92,18 @@ mod tests {
         // the demo source is no hardware
         assert!(!ui.zone_hw_active());
         assert!(ui.zone_debug_text().starts_with("off,enabled=0,active=0,sw_drops=0,"));
-        ui.zone_hw = Some(crate::board::ZoneRead { ch: 1, slot: 1, armed: true, pass: true, frames: 5, n: 2, ..Default::default() });
+        ui.zone_hw = Some(crate::board::ZoneRead {
+            ch: 1,
+            slot: 1,
+            armed: true,
+            pass: true,
+            frames: 5,
+            n: 2,
+            ..Default::default()
+        });
         assert!(ui.zone_debug_text().starts_with("ch=2,slot=1,ctrl=0x00000000,"), "{}", ui.zone_debug_text());
-        assert!(ui.zone_debug_text().contains(",armed=1,pass=1,cycle=0,state=0,frames=5,n=2,batch=0/0,batch_ms=0.0,sw_drops=0,"));
+        assert!(ui
+            .zone_debug_text()
+            .contains(",armed=1,pass=1,cycle=0,state=0,frames=5,n=2,batch=0/0,batch_ms=0.0,sw_drops=0,"));
     }
 }

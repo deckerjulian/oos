@@ -31,7 +31,11 @@ pub(super) fn switch_on() -> bool {
 /// Text of a clock step; every step above the standard clock loses samples at the full rate (docs/models.md 4.1).
 pub(super) fn label(hz: f64) -> String {
     let ghz = format!("{} GHz", hz / 1e9);
-    if hz != board().clock_steps()[0] { format!("{} (test)", ghz) } else { ghz }
+    if hz != board().clock_steps()[0] {
+        format!("{} (test)", ghz)
+    } else {
+        ghz
+    }
 }
 
 /// Replaces limits.conf in one step, the scope is switched off at the mains. No lines left: no file.
@@ -49,7 +53,11 @@ fn store(path: &str, hz: f64) -> std::io::Result<()> {
             _ => oos_hal::fsutil::sync_dir(path.as_ref()),
         };
     }
-    oos_hal::fsutil::write_atomic(path.as_ref(), new.as_bytes(), &Opts { dir_sync: DirSync::Required, ..Default::default() })
+    oos_hal::fsutil::write_atomic(
+        path.as_ref(),
+        new.as_bytes(),
+        &Opts { dir_sync: DirSync::Required, ..Default::default() },
+    )
 }
 
 impl Ui {

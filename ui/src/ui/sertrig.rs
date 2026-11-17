@@ -9,7 +9,9 @@
 use super::*;
 
 /// SPI timeout steps (s): off, then 1-2-5 from 100 ns to 10 ms.
-const TIMEOUTS: [f32; 17] = [0.0, 100e-9, 200e-9, 500e-9, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3];
+const TIMEOUTS: [f32; 17] = [
+    0.0, 100e-9, 200e-9, 500e-9, 1e-6, 2e-6, 5e-6, 10e-6, 20e-6, 50e-6, 100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3,
+];
 
 impl Ui {
     /// The settings items of the protocol trigger for the current protocol and condition.
@@ -70,7 +72,13 @@ impl Ui {
         match it {
             Item::SerRel => (if i2c_addr { s.addr_rel } else { s.rel }).name().into(),
             Item::SerMax | Item::SerMask => format!("0x{:X}", self.hex_value(it)),
-            Item::UartPol => if s.uart_inv { "Inverted".into() } else { "Normal".into() },
+            Item::UartPol => {
+                if s.uart_inv {
+                    "Inverted".into()
+                } else {
+                    "Normal".into()
+                }
+            }
             Item::UartStop => match s.uart_stop {
                 StopBits::One => "1".into(),
                 StopBits::OneHalf => "1.5".into(),
@@ -81,11 +89,35 @@ impl Ui {
                 UartErr::Parity => "Parity".into(),
                 UartErr::Framing => "Framing".into(),
             },
-            Item::SpiCs => if s.spi_cs_high { "Active high".into() } else { "Active low".into() },
-            Item::SpiTimeout => if s.spi_timeout > 0.0 { si_short(s.spi_timeout as f64, "s") } else { "Off".into() },
+            Item::SpiCs => {
+                if s.spi_cs_high {
+                    "Active high".into()
+                } else {
+                    "Active low".into()
+                }
+            }
+            Item::SpiTimeout => {
+                if s.spi_timeout > 0.0 {
+                    si_short(s.spi_timeout as f64, "s")
+                } else {
+                    "Off".into()
+                }
+            }
             Item::I2cDir => format!("{:?}", s.dir),
-            Item::I2cAddrBits => if s.ten_bit { "10-bit".into() } else { "7-bit".into() },
-            Item::I2cBytes => if s.bytes == 0 { "Any".into() } else { s.bytes.to_string() },
+            Item::I2cAddrBits => {
+                if s.ten_bit {
+                    "10-bit".into()
+                } else {
+                    "7-bit".into()
+                }
+            }
+            Item::I2cBytes => {
+                if s.bytes == 0 {
+                    "Any".into()
+                } else {
+                    s.bytes.to_string()
+                }
+            }
             _ => String::new(),
         }
     }

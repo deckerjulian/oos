@@ -188,7 +188,8 @@ fn worker(jobs: Receiver<Job>, out: Sender<Report>) {
 impl Ui {
     /// From `step`: the worker's reports; the worker itself starts with the first look at the menu.
     pub(super) fn wlan_poll(&mut self) {
-        let in_menu = self.menu_open && (self.menu == MenuId::Network || self.pick.is_some_and(|p| p.menu == MenuId::Network));
+        let in_menu =
+            self.menu_open && (self.menu == MenuId::Network || self.pick.is_some_and(|p| p.menu == MenuId::Network));
         if in_menu && self.wlan.tx.is_none() && !cfg!(test) {
             let (tx, jobs) = channel();
             let (out, rx) = channel();
@@ -373,7 +374,11 @@ impl Ui {
             if let Some(s) = l.signal {
                 d.push(format!("Signal {} dBm, {} MHz", s, l.status.freq));
             }
-            d.push(if l.status.ip.is_empty() { "Waiting for an address".to_string() } else { format!("Address {}", l.status.ip) });
+            d.push(if l.status.ip.is_empty() {
+                "Waiting for an address".to_string()
+            } else {
+                format!("Address {}", l.status.ip)
+            });
         } else {
             d.push(format!("Not connected ({})", l.status.state.to_lowercase()));
         }
@@ -568,13 +573,29 @@ impl Osk {
         r3.extend(chars(rows[3]));
         r3.push((Key::Del, 2));
         row(&mut v, y(3), &r3);
-        row(&mut v, y(4), &[(Key::Symbols, 1), (Key::Left, 1), (Key::Ch(' '), 3), (Key::Right, 1), (Key::Show, 1), (Key::Cancel, 1), (Key::Ok, 2)]);
+        row(
+            &mut v,
+            y(4),
+            &[
+                (Key::Symbols, 1),
+                (Key::Left, 1),
+                (Key::Ch(' '), 3),
+                (Key::Right, 1),
+                (Key::Show, 1),
+                (Key::Cancel, 1),
+                (Key::Ok, 2),
+            ],
+        );
         v
     }
 
     /// Password, or the name of the network, as it stands on the screen.
     fn shown(&self) -> String {
-        if self.show { self.text.clone() } else { "*".repeat(self.text.chars().count()) }
+        if self.show {
+            self.text.clone()
+        } else {
+            "*".repeat(self.text.chars().count())
+        }
     }
 
     fn cur(&self) -> usize {
@@ -611,12 +632,30 @@ impl Osk {
         match k {
             Key::Ch(' ') => "Space".into(),
             Key::Ch(c) => c.to_string(),
-            Key::Shift => if self.layer == Layer::Upper { "abc".into() } else { "Shift".into() },
-            Key::Symbols => if self.layer == Layer::Symbols { "abc".into() } else { "#+=".into() },
+            Key::Shift => {
+                if self.layer == Layer::Upper {
+                    "abc".into()
+                } else {
+                    "Shift".into()
+                }
+            }
+            Key::Symbols => {
+                if self.layer == Layer::Symbols {
+                    "abc".into()
+                } else {
+                    "#+=".into()
+                }
+            }
             Key::Del => "Delete".into(),
             // drawn as arrows: the font has none
             Key::Left | Key::Right => String::new(),
-            Key::Show => if self.show { "Hide".into() } else { "Show".into() },
+            Key::Show => {
+                if self.show {
+                    "Hide".into()
+                } else {
+                    "Show".into()
+                }
+            }
             Key::Cancel => "Back".into(),
             Key::Ok => "OK".into(),
         }
@@ -801,7 +840,9 @@ impl Ui {
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
             OskFor::BusLabel => "Name of the bus (empty: I2C)".to_string(),
-            OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),
+            OskFor::MathExpr(k) => {
+                format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1)
+            }
             OskFor::NtpServer => "NTP server: a name or an address".to_string(),
             OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),
             OskFor::DateTime => "Local date and time: 2026-11-11 14:30".to_string(),
@@ -822,11 +863,22 @@ impl Ui {
         let cx = tr.x + f.lb.width(&s[a..o.cur().clamp(a, b)].iter().collect::<String>());
         let hh = f.lb.size * 60 / 100;
         cv.fill(Rect::new(cx, tr.y + tr.h / 2 - hh, 2, 2 * hh), ACCENT);
-        cv.text_in(&f.s, on(Rect::new(12, 138, OSK_W - 24, 24), blk), 2, &format!("{} / {}", o.text.chars().count(), o.max_len()), DIM);
+        cv.text_in(
+            &f.s,
+            on(Rect::new(12, 138, OSK_W - 24, 24), blk),
+            2,
+            &format!("{} / {}", o.text.chars().count(), o.max_len()),
+            DIM,
+        );
         for (i, (r, k)) in o.keys().into_iter().enumerate() {
             let r = on(r, blk);
             let c = if k == Key::Ok { ACCENT } else { TEXT };
-            btn(cv, r, if i == o.focus { mix(DLG_BG, ACCENT, 60) } else { mix(DLG_BG, c, 24) }, if i == o.focus { ACCENT } else { BTN_BORDER });
+            btn(
+                cv,
+                r,
+                if i == o.focus { mix(DLG_BG, ACCENT, 60) } else { mix(DLG_BG, c, 24) },
+                if i == o.focus { ACCENT } else { BTN_BORDER },
+            );
             cv.text_in(&f.lb, r, 1, &o.label(k), c);
             if matches!(k, Key::Left | Key::Right) {
                 let (mx, my, d) = (r.x + r.w / 2, r.y + r.h / 2, if k == Key::Left { -1 } else { 1 });
@@ -845,7 +897,16 @@ mod tests {
     }
 
     fn tap_key(ui: &mut Ui, want: Key) {
-        let r = ui.wlan.osk.as_ref().unwrap().keys().into_iter().find(|(_, k)| *k == want).unwrap_or_else(|| panic!("no key {:?}", want)).0;
+        let r = ui
+            .wlan
+            .osk
+            .as_ref()
+            .unwrap()
+            .keys()
+            .into_iter()
+            .find(|(_, k)| *k == want)
+            .unwrap_or_else(|| panic!("no key {:?}", want))
+            .0;
         ui.tap(r.x + 5, r.y + 5);
     }
 
@@ -1019,12 +1080,19 @@ mod tests {
         ui.open_menu(MenuId::Network);
         ui.wlan.link.stick = true;
         ui.wlan.link.saved = vec![Saved { id: 7, ssid: b"Bekannt".to_vec(), temp_disabled: false, disabled: false }];
-        let list = vec![net("Labor", Security::Psk), net("Gast", Security::Open), net("Neu", Security::Other("WPA3")), net("Bekannt", Security::Psk)];
+        let list = vec![
+            net("Labor", Security::Psk),
+            net("Gast", Security::Open),
+            net("Neu", Security::Other("WPA3")),
+            net("Bekannt", Security::Psk),
+        ];
         ui.wlan_report(Report::Scan(Ok(list)));
         assert_eq!(ui.menu, MenuId::Pick);
         let o = ui.options(Item::WlanNet);
         assert_eq!(o.len(), 5);
-        assert!(o[1].ends_with("open") && o[2].ends_with("WPA3") && o[3].ends_with("saved") && o[4].starts_with("Other"));
+        assert!(
+            o[1].ends_with("open") && o[2].ends_with("WPA3") && o[3].ends_with("saved") && o[4].starts_with("Other")
+        );
         // password network: the keyboard, and the menu is back underneath
         ui.activate(Item::PickOpt(0));
         assert_eq!(ui.menu, MenuId::Network);
@@ -1070,7 +1138,9 @@ mod tests {
         assert_eq!(ui.value(Item::NetWeb), "http://192.168.177.64:8080");
         assert!(ui.net_value(Item::NetEth).starts_with("192.168.177.64"));
         ui.wlan.link = Link { stick: true, ctrl: true, ..Link::default() };
-        ui.wlan.link.status = wlan::parse_status("wpa_state=COMPLETED\nssid=Ein sehr langer Netzname mit 32 Z\nip_address=192.168.100.200\n");
+        ui.wlan.link.status = wlan::parse_status(
+            "wpa_state=COMPLETED\nssid=Ein sehr langer Netzname mit 32 Z\nip_address=192.168.100.200\n",
+        );
         // the longest line fits its row
         let d = ui.dlg_layout().unwrap();
         let row = d.rows.iter().find(|r| r.it == Item::NetWlan).unwrap();
@@ -1093,7 +1163,9 @@ mod tests {
         let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.wlan_lines()[1].starts_with("No stick"));
         ui.wlan.link = Link { stick: true, ctrl: true, signal: Some(-55), ..Link::default() };
-        ui.wlan.link.status = wlan::parse_status("wpa_state=COMPLETED\nssid=Labor\nip_address=10.0.0.7\nfreq=2437\naddress=00:11:22:33:44:55\n");
+        ui.wlan.link.status = wlan::parse_status(
+            "wpa_state=COMPLETED\nssid=Labor\nip_address=10.0.0.7\nfreq=2437\naddress=00:11:22:33:44:55\n",
+        );
         let l = ui.wlan_lines();
         assert_eq!(l[1], "Connected to Labor");
         assert!(l.iter().any(|x| x.contains("10.0.0.7")) && l.iter().any(|x| x.contains("-55 dBm")));
@@ -1114,7 +1186,12 @@ mod tests {
         ui.wlan.link.stick = true;
         let mut names = vec![net("Küche 🏠", Security::Psk), net("Gast", Security::Open)];
         names.push(Net { ssid: vec![0xff; 32], signal: -90, freq: 2412, security: Security::Psk });
-        names.push(Net { ssid: b"\n\t\x1b[2J%s%n".to_vec(), signal: -91, freq: 2412, security: Security::Other("WEP") });
+        names.push(Net {
+            ssid: b"\n\t\x1b[2J%s%n".to_vec(),
+            signal: -91,
+            freq: 2412,
+            security: Security::Other("WEP"),
+        });
         for i in 0..40_000 {
             if ui.wlan.osk.is_none() {
                 ui.open_menu(MenuId::Network);
@@ -1153,7 +1230,9 @@ mod tests {
 
         let nets = scan().unwrap();
         println!("scan: {:?}", nets);
-        let find = |n: &str| nets.iter().find(|x| x.ssid == n.as_bytes()).unwrap_or_else(|| panic!("{} not in the scan", n)).clone();
+        let find = |n: &str| {
+            nets.iter().find(|x| x.ssid == n.as_bytes()).unwrap_or_else(|| panic!("{} not in the scan", n)).clone()
+        };
         assert_eq!(find("OOS-Test").security, Security::Psk);
         assert_eq!(find("OOS-Open").security, Security::Open);
         assert!(!nets.iter().any(|x| x.ssid == b"OOS-Hidden"));
@@ -1223,7 +1302,12 @@ mod tests {
         shot(&mut ui, "wlan-0-system.png");
         ui.open_menu(MenuId::Network);
         shot(&mut ui, "wlan-1-menu.png");
-        let list = vec![net("Labor", Security::Psk), net("Gast", Security::Open), net("Ein sehr langer Netzname mit 32 Zeichen", Security::Psk), net("Neu", Security::Other("WPA3"))];
+        let list = vec![
+            net("Labor", Security::Psk),
+            net("Gast", Security::Open),
+            net("Ein sehr langer Netzname mit 32 Zeichen", Security::Psk),
+            net("Neu", Security::Other("WPA3")),
+        ];
         let mut many = list.clone();
         for i in 0..30 {
             many.push(net(&format!("Nachbar {}", i), Security::Psk));
@@ -1231,7 +1315,11 @@ mod tests {
         ui.wlan_report(Report::Scan(Ok(many)));
         assert_eq!(ui.options(Item::WlanNet).len(), LIST_MAX);
         let d = ui.dlg_layout().unwrap();
-        assert!(d.r.y >= 0 && d.r.y + d.r.h <= PANEL_H && d.rows.iter().all(|r| r.ctrl.y + r.ctrl.h <= d.r.y + d.r.h), "{:?}", d.r);
+        assert!(
+            d.r.y >= 0 && d.r.y + d.r.h <= PANEL_H && d.rows.iter().all(|r| r.ctrl.y + r.ctrl.h <= d.r.y + d.r.h),
+            "{:?}",
+            d.r
+        );
         shot(&mut ui, "wlan-2-many.png");
         ui.close_picker();
         ui.wlan_report(Report::Scan(Ok(list)));

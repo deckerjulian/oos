@@ -80,7 +80,13 @@ pub fn build(seed: &[u8; 32], build: &str, kernel: &str, image: &[u8]) -> Result
 }
 
 /// `build` with further signed `name value` lines (e.g. `trial kexec`, `kexec::LINE`).
-pub fn build_with(seed: &[u8; 32], build: &str, kernel: &str, image: &[u8], extra: &[(&str, &str)]) -> Result<Vec<u8>, String> {
+pub fn build_with(
+    seed: &[u8; 32],
+    build: &str,
+    kernel: &str,
+    image: &[u8],
+    extra: &[(&str, &str)],
+) -> Result<Vec<u8>, String> {
     for (n, v) in [("build", build), ("kernel", kernel)] {
         if v.is_empty() || v.contains('\n') {
             return Err(format!("{} must be one non-empty line", n));
@@ -138,9 +144,8 @@ pub fn verify_header(pkg: &[u8], keys: &[[u8; 32]]) -> Result<Header, String> {
     if sig_line.contains('\n') {
         return Err("signature line is not the last header line".into());
     }
-    let sig: [u8; 64] = unhex(&sig_line[4..])
-        .and_then(|v| v.try_into().ok())
-        .ok_or("signature line is not 64 hex bytes")?;
+    let sig: [u8; 64] =
+        unhex(&sig_line[4..]).and_then(|v| v.try_into().ok()).ok_or("signature line is not 64 hex bytes")?;
     let mut m = Manifest {
         target: String::new(),
         build: String::new(),
@@ -241,7 +246,9 @@ mod tests {
         assert_eq!(data, &img[..]);
         assert_eq!(h.manifest.build_key(), "20261105-170000");
         assert_eq!(h.manifest.size, 5000);
-        assert!(std::str::from_utf8(&pkg[..h.data_offset]).unwrap().starts_with("OOS-UPDATE 1\ntarget dho900-recovery\n"));
+        assert!(std::str::from_utf8(&pkg[..h.data_offset])
+            .unwrap()
+            .starts_with("OOS-UPDATE 1\ntarget dho900-recovery\n"));
 
         // unknown key
         let other = ed25519::public_key(&[1; 32]);

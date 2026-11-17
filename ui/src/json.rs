@@ -216,7 +216,11 @@ fn string(b: &[u8], p: &mut usize) -> Option<J> {
                         if (0xd800..0xdc00).contains(&cp) && b.get(*p..*p + 2) == Some(b"\\u") {
                             let lo = u32::from_str_radix(std::str::from_utf8(b.get(*p + 2..*p + 6)?).ok()?, 16).ok()?;
                             *p += 6;
-                            cp = if (0xdc00..0xe000).contains(&lo) { 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00) } else { 0xfffd };
+                            cp = if (0xdc00..0xe000).contains(&lo) {
+                                0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00)
+                            } else {
+                                0xfffd
+                            };
                         }
                         let ch = char::from_u32(cp).unwrap_or('\u{fffd}');
                         let mut buf = [0u8; 4];
@@ -239,7 +243,10 @@ mod tests {
         let t = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":TIM:SCAL 1e-3"}},"x":[true,null,-1.5e3,"a\"é"]}"#;
         let v = parse(t).unwrap();
         assert_eq!(v.get("id").and_then(J::num), Some(3.0));
-        assert_eq!(v.get("params").and_then(|p| p.get("arguments")).and_then(|a| a.get("command")).and_then(J::str), Some(":TIM:SCAL 1e-3"));
+        assert_eq!(
+            v.get("params").and_then(|p| p.get("arguments")).and_then(|a| a.get("command")).and_then(J::str),
+            Some(":TIM:SCAL 1e-3")
+        );
         assert_eq!(parse(&v.to_string()), Some(v.clone()));
         assert!(parse("{\"a\":}").is_none() && parse("[1,2").is_none());
     }

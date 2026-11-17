@@ -25,6 +25,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `scpi_validate.py --web-port 18080` | no; `oos-ui --serve` on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `sim_validate.py --web-port 18080` | no; `oos-ui --serve` on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `link-check.py` | no | every relative link, wiki link and file named in backticks in the documents exists; part of the layer `text` of `check.sh`; `link-check-allow.txt` lists the names that are meant although nothing is there |
+| `code-size.py [BASE] [TREE]` | no | the lines of code of the four crates, without tests, comments and empty lines; with two trees the difference as a table, which CI puts into the summary of the `compare` job |
 | `tests/` | no | the tests of the Python host tools, run by `check.sh test` |
 | `oosclient.py` | no (a library) | the SCPI transport of `device-test.py`, `scpi_validate.py` and `sim_validate.py`: lines and definite blocks, read exactly |
 | `fw-sim.sh` | no; Docker | oos-firewall's IPv6 part, `udhcpc.script` and `oos-net6` in an arm64 container with the image's busybox and nft |

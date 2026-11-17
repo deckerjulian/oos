@@ -11,7 +11,9 @@ fn fresh() -> Ui {
 fn shot(u: &mut Ui, name: &str) -> Canvas {
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    for _ in 0..6 { u.step(0.05); }
+    for _ in 0..6 {
+        u.step(0.05);
+    }
     u.render(&mut cv);
     if let Some(dir) = std::env::var_os("OOS_SHOTS") {
         std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), crate::store::png_of(&cv)).unwrap();

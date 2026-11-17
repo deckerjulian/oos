@@ -3,8 +3,8 @@
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
 use super::{si, Canvas, Rect, Ui, CH_COLORS, REF_COLORS};
-use crate::model::WaveId;
 use crate::gfx::Rgb;
+use crate::model::WaveId;
 use oos_dsp::measure::{Analysis, Meas};
 
 /// Labels at most, the rest stays in the measurement strip: more only hides the trace.
@@ -29,7 +29,9 @@ pub(super) enum Mark {
 
 /// First index of `v` above `after`.
 fn next_after(v: &[f64], after: f64) -> Option<f64> {
-    if after.is_nan() { return None; }
+    if after.is_nan() {
+        return None;
+    }
     v.get(v.partition_point(|&time| time <= after)).copied()
 }
 
@@ -130,7 +132,12 @@ impl Ui {
     fn label_col(&self, id: WaveId) -> Rgb {
         match id {
             WaveId::Ch(c) => CH_COLORS[c.min(CH_COLORS.len() - 1)],
-            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).map(|r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1).unwrap_or(CH_COLORS[0]),
+            WaveId::Ref(i) => self
+                .refs
+                .get(i)
+                .and_then(|r| r.as_ref())
+                .map(|r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1)
+                .unwrap_or(CH_COLORS[0]),
         }
     }
 
@@ -199,11 +206,18 @@ impl Ui {
                         cv.line(x, y, x - 4, y + 7 * d, col);
                         cv.line(x, y, x + 4, y + 7 * d, col);
                     }
-                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), &text, col);
+                    self.meas_label(
+                        cv,
+                        x + 8 + label_half(self, &text),
+                        (y0 + y1) / 2 + verts * (label_h(self) + 2),
+                        &text,
+                        col,
+                    );
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
-                    let (x0, x1) = (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
+                    let (x0, x1) =
+                        (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
                     if x1 <= x0 + 1 || x1 < a.x || x0 > a.x + a.w {
                         continue;
                     }
@@ -235,7 +249,18 @@ mod tests {
 
     fn square() -> Analysis {
         // rises at 1, 3, 5 ms, falls at 2, 4, 6 ms, 0..1 V
-        Analysis { valid: true, vmin: -0.1, vmax: 1.1, top: 1.0, base: 0.0, rises: vec![1e-3, 3e-3, 5e-3], falls: vec![2e-3, 4e-3, 6e-3], rise_time: 1e-5, fall_time: 2e-5, ..Default::default() }
+        Analysis {
+            valid: true,
+            vmin: -0.1,
+            vmax: 1.1,
+            top: 1.0,
+            base: 0.0,
+            rises: vec![1e-3, 3e-3, 5e-3],
+            falls: vec![2e-3, 4e-3, 6e-3],
+            rise_time: 1e-5,
+            fall_time: 2e-5,
+            ..Default::default()
+        }
     }
 
     #[test]
