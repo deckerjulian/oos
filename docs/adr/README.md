@@ -50,11 +50,12 @@ A decision that touches two categories goes where its consequences are largest a
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted |
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | accepted |
+| [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | proposed |
 
 ## Reading order for agents
 
-An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
-touch the change: ADR 0009, 0010, 0013, 0015 and 0021 for anything near the hardware or the dependencies, ADR 0014 and
+An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that touch
+the change: ADR 0009, 0010, 0013, 0015, 0021 and 0030 for anything near the hardware or the dependencies, ADR 0014 and
 0020 for how to show that a change is safe, ADR 0016 to 0019 for how code and text look, ADR 0022 to 0025 for SCPI,
 VXI-11, HiSLIP and the other network services. The records are short on purpose; reading the ones that apply costs
 minutes and saves a review round.

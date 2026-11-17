@@ -34,6 +34,8 @@ there. These instructions are the same for every agent and every person; the rea
 
 - State how a hardware fact is known: **verified on the unit**, **assumed**, or **not yet verified on hardware**
   (ADR 0015). Reports of your own work say the same: what ran on a unit, what only on the host, what not at all.
+- Write hardware code from `docs/`: a fact the code needs and `docs/` lacks goes into `docs/` first, as behaviour at
+  the scope's interfaces, in the same pull request (ADR 0030).
 - A change that is not meant to change behaviour proves it: `ui/tools/layout-check.sh record` before and `check`
   after (same pixels), `tools/plan-matrix.sh` before and after (same register writes) (ADR 0014).
 - A remote command goes into the one SCPI interpreter (`ui/src/scpi.rs`), never into a transport; it takes the stock

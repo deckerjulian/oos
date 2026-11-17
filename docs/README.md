@@ -3,6 +3,10 @@
 How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on the unit" means seen on a running scope;
 "assumed" or "not yet verified on hardware" means it was never run.
 
+These pages are black-box descriptions: they say what goes in and comes out at the scope's interfaces, as behaviour
+and in our own words. The code of OOS is written to them
+([ADR 0030](adr/process/0030-independent-reimplementation-from-black-box-descriptions.md)).
+
 ## System
 
 - [architecture.md](architecture.md): how the SD card, kernel, Rust crates and GUI fit together.

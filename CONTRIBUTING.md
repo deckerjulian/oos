@@ -6,6 +6,12 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 
 ## Ground rules
 
+- **Independent reimplementation.** The tree holds only black-box descriptions of the scope and code written to them.
+  A description says what goes in and comes out at the scope's interfaces (registers, buses, signals, the stock SCPI,
+  the vendor's published documents), as behaviour, in your own words. A hardware fact your code needs and `docs/`
+  lacks goes into `docs/` first, in the same pull request. Names a running unit shows (loaded modules, device nodes,
+  programs and scripts of its start-up) may be used; names from inside the firmware's programs may not
+  ([ADR 0030](docs/adr/process/0030-independent-reimplementation-from-black-box-descriptions.md)).
 - **No vendor code or vendor data.** No firmware images, no code or binaries from any stock or modified firmware, no
   calibration files, no `vendor.bin`. What runs on the scope only depends on `libc`, and it stays that way unless
   there is a strong reason; a desktop-only build may use its platform's crates

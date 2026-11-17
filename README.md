@@ -42,6 +42,7 @@ Sources and licences of the kernel parts are listed in [kernel/README.md](kernel
 ## Contents
 
 - [Disclaimer](#disclaimer)
+- [How OOS is made](#how-oos-is-made)
 - [Supported models](#supported-models)
 - [Features](#features)
 - [Gallery](#gallery)
@@ -94,9 +95,27 @@ Installing OOS means that you accept in particular the following risks:
 
 OOS is an independent project. It is not affiliated with, endorsed by or supported by RIGOL TECHNOLOGIES CO., LTD.
 Rigol and all other names are trademarks of their respective owners and are used here only to identify the hardware.
-Do not contact Rigol for support with OOS. The repository contains no Rigol code. At run time OOS uses the FPGA image
-already in the scope's flash, the calibration files on its own card and the stock software on that card, which it needs to
-read the scope's identity. It only reads them.
+Do not contact Rigol for support with OOS. The repository contains no Rigol code ([how OOS is made](#how-oos-is-made)).
+At run time OOS uses the FPGA image already in the scope's flash, the calibration files on its own card and the stock
+software on that card, which it needs to read the scope's identity. It only reads them.
+
+## How OOS is made
+
+OOS is an **independent reimplementation**. The tree holds only descriptions of the scope's behaviour in our own
+words, and code written to them. The descriptions in [docs/](docs/README.md) are **black-box**: they say what goes in
+and what comes out at the scope's interfaces, that is the values its registers take and return, the words on the buses
+to the front ends, ADC, PLL and panel as they appear on a running unit, the signals at its inputs and outputs, the
+answers of the stock SCPI, and what Rigol publishes for users (the programming guide, the manuals) together with the
+data sheets of the parts. Each fact says how it is known (verified on the unit, assumed, or not yet verified on
+hardware). The tree holds no vendor code or data, and since
+[ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) (2026-11-16) the same
+rule holds for every text around the code: commit messages, pull requests and issues.
+
+The decision records say this in detail:
+[ADR 0030](docs/adr/process/0030-independent-reimplementation-from-black-box-descriptions.md) (this rule),
+[ADR 0013](docs/adr/process/0013-no-vendor-code-only-libc.md) (no vendor code or data),
+[ADR 0015](docs/adr/process/0015-say-how-you-know.md) (how a fact is known) and
+[ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) (contributions).
 
 ## Supported models
 
