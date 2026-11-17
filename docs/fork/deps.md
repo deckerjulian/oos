@@ -5,7 +5,8 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 
 - The fork's own builds read it: `rootfs/build-dropbear.sh` (Dropbear), `rootfs/build-sftp-server.sh` (OpenSSH,
   `sftp-server` only), `rootfs/build-nft.sh` (libmnl, libnftnl, nftables). They source `rootfs/deps.sh`, which
-  downloads once into `rootfs/out/`, refuses a file whose SHA-256 differs, and stamps each binary with the manifest
+  downloads once into `rootfs/out/` (a file of Alpine's aports that its GitLab refuses to serve is taken from the
+  project's GitHub mirror), refuses a file whose SHA-256 differs, and stamps each binary with the manifest
   lines and the build script it came from (`<binary>.stamp`). `boot/unit-hook.sh` builds a binary again when it is
   missing or its stamp no longer matches, so a version bump or a changed build option takes effect at the next image
   build without deleting anything by hand.

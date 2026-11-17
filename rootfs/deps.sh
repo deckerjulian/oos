@@ -17,7 +17,11 @@ dep_fetch() {
 	sum=$(echo "$l" | awk '{ print $4 }'); url=$(echo "$l" | awk '{ print $5 }')
 	t="$2/$(basename "$url")"
 	mkdir -p "$2"
-	[ -f "$t" ] || curl -fsSL -o "$t" "$url" || { echo "download failed: $url" >&2; rm -f "$t"; return 1; }
+	# Alpine's GitLab refuses some build hosts (HTTP 418 on a CI runner, 2026-11-17): its aports files are tried at
+	# the project's GitHub mirror next. The SHA-256 below decides what is accepted, whichever host answered.
+	alt=$(echo "$url" | sed -n 's#^https://gitlab\.alpinelinux\.org/alpine/aports/-/raw/#https://raw.githubusercontent.com/alpinelinux/aports/#p')
+	[ -f "$t" ] || curl -fsSL --retry 2 -o "$t" "$url" || { [ -n "$alt" ] && { echo "trying $alt" >&2; curl -fsSL --retry 2 -o "$t" "$alt"; }; } \
+		|| { echo "download failed: $url" >&2; rm -f "$t"; return 1; }
 	[ "$(dep_sha256 "$t")" = "$sum" ] || { echo "wrong checksum: $t (deps.lock $1)" >&2; rm -f "$t"; return 1; }
 	echo "$t"
 }
