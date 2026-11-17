@@ -61,6 +61,7 @@ there. These instructions are the same for every agent and every person; the rea
 | `gpu/` | GPU helper process (C, Mesa), ADR 0003 |
 | `boot/`, `kernel/`, `rootfs/` | image, kernel 6.12, initramfs scripts |
 | `tools/` | host tools; [tools/README.md](tools/README.md) says which ones touch a scope |
+| `xtask/` | host checks that read the Rust source, run by `tools/check.sh` (ADR 0020) |
 | `docs/` | public documentation; `docs/adr/` the decisions |
 
 What `.gitignore` leaves out (`local/` with calibration files and surveys, `log/`, `device-test/`, backups, notes) is
@@ -70,7 +71,7 @@ private to the person who made it; never move its content into the tree.
 
 ```sh
 tools/check.sh                # every enforced host check, as CI runs them (ADR 0020)
-tools/check.sh test           # one layer: fmt clippy text syntax test target decoders (list: tools/check.sh list)
+tools/check.sh test           # one layer: fmt clippy text syntax time test target decoders (list: tools/check.sh list)
 (cd ui && cargo run -- --serve)   # no display, no hardware: demo signals behind SCPI :5555 and the web page :8080
 ```
 
@@ -79,7 +80,8 @@ layout of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016). Unti
 do not run `cargo fmt` over existing files, so a pull request does not reformat whole files; keep the layout of the
 file you edit. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR 0017). Tests
 that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
-fast the computer is: one that fails only under load is fixed, not run again (ADR 0020).
+fast the computer is: one that fails only under load is fixed, not run again (ADR 0020). It waits for the event it
+needs, supplies the time it wants to see, and gives up only after a minute; `tools/check.sh time` finds the rest.
 
 ## Style
 

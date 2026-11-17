@@ -1,0 +1,16 @@
+# Reviewed exceptions of the test-time check (tools/check.sh time, docs/adr/process/0020).
+# One line each: <file> <function> <kind> <reason>. An entry that matches nothing fails the check, so it is removed
+# with the code it was about. A new entry needs a reason a review accepts; most findings are fixed instead.
+
+# The sleep gives a second thread time to reach the lock; the assertion does not depend on it.
+hal/src/update/tests.rs mode_and_lock sleep the thread may run late, the test then shows less but still holds
+# The helper under test leaves out a slow round; the sleep is that round. perf-guard measures time by design.
+ui/src/perfguard.rs tests::the_fastest_round_of_each_side sleep the slow round the helper must leave out
+
+# Time stands in for an event the code does not offer yet. Each is to be replaced by a count or a state of the code
+# (work done on the event thread, a long poll waiting), then its line goes.
+ui/src/http.rs tests::live_picture_once_per_screen_and_long_poll short-limit changes the screen 100 ms into a long poll
+ui/src/ui/channel_measurement_tests.rs native_full_basic_values_are_inline_and_do_not_start_edge_analysis short-limit the event thread only queues the work
+ui/src/ui/channel_measurement_tests.rs native_full_edge_job_is_nonblocking_shared_and_reused_after_pan short-limit the event thread only queues the work, cached reads are cheap
+ui/src/ui/measure_own.rs tests::large_distinct_row_levels_share_one_worker_without_cache_thrash short-limit the render reader does not block
+ui/src/ui/measure_pairs.rs tests::large_pair_is_background_cached_in_physical_time_and_full_pan_does_not_resubmit short-limit the event thread only queues the work

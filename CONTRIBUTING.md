@@ -44,10 +44,10 @@ walks through it. An analyser page registers the same way ([docs/analyser-module
 tools/check.sh
 ```
 
-It runs every host check CI runs, layer by layer: files, script syntax, the tests of all four crates, the scope's
-build, the decoder builds ([ADR 0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)). A compiler
-warning fails it like an error. `tools/check.sh test` runs one layer, `tools/check.sh list` names them. Tests that
-need the calibration files of a real unit skip themselves without them. See the Development section of the
+It runs every host check CI runs, layer by layer: files, script syntax, test timing, the tests of all crates, the
+scope's build, the decoder builds ([ADR 0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)). A
+compiler warning fails it like an error. `tools/check.sh test` runs one layer, `tools/check.sh list` names them.
+Tests that need the calibration files of a real unit skip themselves without them. See the Development section of the
 [README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.

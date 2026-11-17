@@ -10,17 +10,17 @@
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
 # ui/tools/layout-check.sh, tools/plan-matrix.sh, tools/perf-guard.sh, tools/device-test.py.
 #
-# Layers: fmt clippy text syntax test target decoders sim. A compiler warning fails a layer like an error (ADR 0017).
-# Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim
-# also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
+# Layers: fmt clippy text syntax time test target decoders sim. A compiler warning fails a layer like an error
+# (ADR 0017). Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The
+# layer sim also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
 set -e
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
-crates="hal dsp ui fpgad"
-layers="fmt clippy text syntax test target decoders sim"
+crates="hal dsp ui fpgad xtask"
+layers="fmt clippy text syntax time test target decoders sim"
 # fmt and clippy join with the rollout of ADR 0016 and ADR 0017; sim needs Docker and builds that CI's check job lacks
-enforced="text syntax test target decoders"
+enforced="text syntax time test target decoders"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -146,6 +146,12 @@ layer_syntax() {
         $sh -n "$f" || fail "syntax: $f"
     done <"$tmp/sh"
     echo "$(wc -l <"$tmp/py" | tr -d ' ') Python files, $(wc -l <"$tmp/sh" | tr -d ' ') shell scripts"
+}
+
+# ADR 0020: a test does not depend on the speed of the computer. The check reads the Rust source (xtask/src/test_time.rs);
+# its reviewed exceptions are in xtask/test-time-exceptions.txt.
+layer_time() {
+    (cd xtask && strict cargo run --locked --quiet -- test-time) || fail "time: see docs/adr/process/0020"
 }
 
 layer_test() {

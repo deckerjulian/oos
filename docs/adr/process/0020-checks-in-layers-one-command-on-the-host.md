@@ -26,6 +26,7 @@ The checks are named by layer. Each layer says what it can show and what not:
 | lint | `tools/check.sh clippy` | Clippy clean (ADR 0017) | whether the code is right |
 | text | `tools/check.sh text` | file rules of ADR 0019: licence line, line ends, trailing spaces | the content |
 | syntax | `tools/check.sh syntax` | shell and Python scripts parse | that they work |
+| time | `tools/check.sh time` | no test sleeps for an event, asserts a real duration, or gives up before a minute (`xtask/`) | a dependence on time the source does not show |
 | test | `tools/check.sh test` | the unit tests, the interplay tests and the menu geometry of all four crates; the tests of the Python host tools | the hardware |
 | target | `tools/check.sh target` | the scope's build (`aarch64-unknown-linux-musl`) compiles and depends on `libc` only (ADR 0021) | that it runs |
 | decoders | `tools/check.sh decoders` | the core-only build and every optional decoder alone | |

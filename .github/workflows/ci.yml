@@ -38,6 +38,7 @@ jobs:
             dsp -> target
             ui -> target
             fpgad -> target
+            xtask -> target
       - name: Host checks (tools/check.sh, every enforced layer)
         run: tools/check.sh
       - name: Format (ADR 0016, not yet enforced)
