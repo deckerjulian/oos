@@ -19,6 +19,7 @@ and in our own words. The code of OOS is written to them
 - [wlan.md](wlan.md): WLAN through a USB stick.
 - [network.md](network.md): Ethernet and a link at 10 Mbit/s, date and time from NTP, time zones, `/oos/system.conf`.
 - [ssh.md](ssh.md): SSH access, trusted keys and how to provision them.
+- [device-testing.md](device-testing.md): testing on a unit: only the tests a change reaches, retries, known failures.
 - [models.md](models.md): model identity, capabilities, limits, overclocking, `/oos/limits.conf` and unit profiles.
 - [scpi.md](scpi.md): the SCPI reference: transports, syntax, every command OOS answers.
 - [reference-analysis.md](reference-analysis.md): loaded waveforms, zoom, the measurement page and automatic analysis

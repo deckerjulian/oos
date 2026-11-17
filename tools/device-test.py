@@ -10,6 +10,15 @@
   tools/device-test.py --tier la --pico /dev/cu.usbmodem101    (needs pyserial)
   tools/device-test.py --tier rf --rf /dev/cu.wchusbserial110
   tools/device-test.py --sim                       against `oos-ui --serve` on this computer (no scope)
+  tools/device-test.py --host <ip> --changed origin/main --list    which tests this tree's change needs, and why
+  tools/device-test.py --host <ip> --changed origin/main           only those (and the smoke tests)
+  tools/device-test.py --host <ip> --save-known    a run of main: its failures are known from here on
+
+Focused, and judged without repeating by hand (tools/device_select.py, docs/device-testing.md):
+  --changed BASE  runs the tests of the areas the changed files reach; documents and CI only the smoke tests
+  --retries N     a test that fails runs again, up to N times (default 1); one that passes then is FLAKY
+  --known FILE    a failure that the known run (default device-test/known.json) has too is KNOWN
+FLAKY and KNOWN are listed in the report and do not fail the run.
 
 Tiers, in this order:
   a0  no signal: identity, record lengths, time bases, zero of every scale, network, limits
@@ -30,6 +39,7 @@ import argparse, base64, json, math, os, random, re, signal, socket, statistics,
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oosclient import Link, LinkError, NoBlock  # noqa: E402
+import device_select  # noqa: E402
 
 CH = (1, 2, 3, 4)
 VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
@@ -322,9 +332,11 @@ def plan_matches_this_build(s, o):
     """The same register sequences on the unit as on this computer."""
     if s.sim or not o.plan:
         raise Skip("needs --plan with the host's plan-matrix output and plan-matrix.sh on the unit")
-    t = s.shell("F=/tmp/oos-fpgad.new; [ -x $F ] || F=/bin/oos-fpgad; OOS_CAL_DIR=/rigol/data sh /tmp/plan-matrix.sh $F | md5sum", wait=60)
-    want = subprocess.run(["md5"], input=open(o.plan, "rb").read(), capture_output=True).stdout.decode().strip()
-    assert want in t, f"unit {t}, host {want}"
+    unit = s.shell("F=/tmp/oos-fpgad.new; [ -x $F ] || F=/bin/oos-fpgad; OOS_CAL_DIR=/rigol/data sh /tmp/plan-matrix.sh $F", wait=90)
+    diff, skipped = device_select.plan_compare(open(o.plan).read(), unit)
+    assert not diff, f"{len(diff)} sections differ: " + "; ".join(diff[:3])
+    if skipped:
+        raise Info(f"equal; {len(skipped)} sections left out, a calibration file on one side only: {skipped[:3]}")
 
 
 @test("a0")
@@ -2359,7 +2371,26 @@ def main():
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from ui/target/debug, generator on CH1 and CH2")
     ap.add_argument("--out")
+    ap.add_argument("--changed", metavar="BASE", help="only the tests the changes since BASE reach (git), and the smoke tests")
+    ap.add_argument("--list", action="store_true", help="name the tests that would run, and why, then stop")
+    ap.add_argument("--retries", type=int, default=1, help="runs of a failed test again (default 1)")
+    ap.add_argument("--known", default=os.path.join("device-test", "known.json"), help="results.json of a run of main")
+    ap.add_argument("--save-known", action="store_true", help="this run becomes the known run (run it on main)")
     o = ap.parse_args()
+    selected = None
+    if o.changed:
+        paths = device_select.changed_files(o.changed)
+        areas, why = device_select.areas_for(paths)
+        selected = set(device_select.select([t[1] for t in TESTS], areas))
+        print(f"{len(paths)} files changed since {o.changed}: areas {', '.join(sorted(areas)) or '(none: smoke tests)'}")
+        if o.list:
+            for p, a in sorted(why.items()):
+                print(f"  {p}: {', '.join(a) or '-'}")
+    if o.list:
+        names = [t[1] for t in TESTS if (selected is None or t[1] in selected) and (not o.tier or t[0] == o.tier)]
+        print(f"{len(names)} of {len(TESTS)} tests: " + " ".join(names))
+        return
+    known = device_select.load_known(o.known)
     o.out = o.out or os.path.join("device-test", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(o.out, exist_ok=True)
     proc = None
@@ -2392,31 +2423,40 @@ def main():
                 continue
             if o.only and o.only not in name and not always:
                 continue
+            if selected is not None and name not in selected:
+                continue
             t0 = time.time()
-            try:
-                if need and len(s.loop) < need[0]:
-                    raise Skip(f"generator on {need[0]} channel(s) needed, found {len(s.loop)}")
-                s.base()
-                time.sleep(0.2)
-                detail = f(s, o)
-                res = "PASS"
-                left = s.errors()
-                if left:
-                    res, detail = "FAIL", f"SCPI errors: {left[:3]}"
-            except Skip as e:
-                res, detail = "SKIP", str(e)
-            except Info as e:
-                res, detail = "INFO", str(e)
-            except Gone as e:
-                res, detail = "GONE", str(e)
-                gone = name
-            except AssertionError as e:
-                res, detail = "FAIL", str(e) or traceback.format_exc(limit=2)
-            except Exception:
-                res, detail = "ERROR", traceback.format_exc(limit=3)
+            attempts = []
+            while True:
+                try:
+                    if need and len(s.loop) < need[0]:
+                        raise Skip(f"generator on {need[0]} channel(s) needed, found {len(s.loop)}")
+                    s.base()
+                    time.sleep(0.2)
+                    detail = f(s, o)
+                    res = "PASS"
+                    left = s.errors()
+                    if left:
+                        res, detail = "FAIL", f"SCPI errors: {left[:3]}"
+                except Skip as e:
+                    res, detail = "SKIP", str(e)
+                except Info as e:
+                    res, detail = "INFO", str(e)
+                except Gone as e:
+                    res, detail = "GONE", str(e)
+                    gone = name
+                except AssertionError as e:
+                    res, detail = "FAIL", str(e) or traceback.format_exc(limit=2)
+                except Exception:
+                    res, detail = "ERROR", traceback.format_exc(limit=3)
+                attempts.append((res, str(detail or "")))
+                if res not in device_select.BAD or len(attempts) > o.retries:
+                    break
+                log(f"again {tier} {name}: {str(detail or '')[:120]}")
+            res, detail = device_select.judge(name, attempts, known)
             results.append({"tier": tier, "test": name, "result": res, "s": round(time.time() - t0, 1), "detail": str(detail or "")})
             log(f"{res:5} {tier} {name} ({time.time() - t0:.0f} s) {str(detail or '')[:160]}")
-            if res in ("FAIL", "ERROR"):
+            if res in device_select.BAD:
                 try:
                     s.shot(f"fail-{name}", o.out)
                 except Exception:
@@ -2444,12 +2484,16 @@ def main():
     finally:
         if proc:
             proc.terminate()
-    count = {k: sum(1 for r in results if r["result"] == k) for k in ("PASS", "FAIL", "ERROR", "INFO", "SKIP", "GONE")}
+    count = {k: sum(1 for r in results if r["result"] == k) for k in ("PASS", "FLAKY", "KNOWN", "FAIL", "ERROR", "INFO", "SKIP", "GONE")}
     with open(os.path.join(o.out, "report.md"), "w") as f:
         f.write(f"# OOS device test {os.path.basename(o.out)}\n\n{count}\n\n| Result | Tier | Test | s | Detail |\n|---|---|---|---|---|\n")
         for r in results:
             f.write(f"| {r['result']} | {r['tier']} | {r['test']} | {r['s']} | {r['detail'][:300].replace('|', '/').replace(chr(10), ' ')} |\n")
     log(f"done: {count}, report in {o.out}")
+    if o.save_known and not gone:
+        with open(o.known, "w") as fh:
+            json.dump(results, fh, indent=1)
+        log(f"known run: {o.known}")
     sys.exit(1 if count["FAIL"] or count["ERROR"] or count["GONE"] or gone else 0)
 
 
