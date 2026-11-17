@@ -70,8 +70,11 @@ pub fn announced(m: &super::pkg::Manifest) -> bool {
     m.extra.iter().any(|(k, v)| k == LINE.0 && v == LINE.1)
 }
 
+/// Kernel, ramdisk and second of an image.
+pub type Parts<'a> = (&'a [u8], &'a [u8], &'a [u8]);
+
 /// The sections of a checked image: kernel, ramdisk, second.
-pub fn parts(img: &[u8]) -> Result<(&[u8], &[u8], &[u8]), String> {
+pub fn parts(img: &[u8]) -> Result<Parts<'_>, String> {
     let info = check_image(img)?;
     let le = |at: usize| u32::from_le_bytes([img[at], img[at + 1], img[at + 2], img[at + 3]]) as usize;
     let (ks, rs, ss) = (le(8), le(16), le(24));
@@ -105,11 +108,11 @@ pub fn newc(files: &[(&str, u32, &[u8])]) -> Vec<u8> {
         }
         out.extend_from_slice(name.as_bytes());
         out.push(0);
-        while out.len() % 4 != 0 {
+        while !out.len().is_multiple_of(4) {
             out.push(0);
         }
         out.extend_from_slice(data);
-        while out.len() % 4 != 0 {
+        while !out.len().is_multiple_of(4) {
             out.push(0);
         }
     };

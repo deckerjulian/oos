@@ -156,7 +156,7 @@ pub fn stop_sequence(w: &mut Vec<Write>, sh: &mut Shadows) {
 /// Read-out window: channel processing on, LA processing off, window 0x1100/0x1108, TX length 0x11f0,
 /// no frame header (0x1010 bit31), record sequence off (0x400c bit25); 7 writes.
 fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
-    let r4 = (win.n + 3) / 4 * 4;
+    let r4 = win.n.div_ceil(4) * 4;
     sh.s4008 |= 1 << 23;
     w.push((0x4008, sh.s4008));
     sh.s4008 &= !(1 << 24);

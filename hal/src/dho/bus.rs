@@ -293,7 +293,7 @@ mod tests {
         let mut b = super::DmaBuf::new();
         let mut ptr = None;
         for (i, &n) in [9000usize, 2500, 9000, 8192, 1, 4096].iter().enumerate() {
-            let data: Vec<u8> = (0..n as u32).map(|x| (x.wrapping_mul(31) ^ i as u32 * 77) as u8).collect();
+            let data: Vec<u8> = (0..n as u32).map(|x| (x.wrapping_mul(31) ^ (i as u32 * 77)) as u8).collect();
             let mut shorts = 0;
             let mut r = Ragged { data: data.clone(), at: 0, seed: i as u32, max: 1500 };
             let got = b.read(&mut r, n, |_, _| shorts += 1).unwrap().to_vec();
@@ -303,7 +303,7 @@ mod tests {
             let p = b.data().as_ptr() as usize;
             assert_eq!(p % 4096, 0, "aligned start");
             // whole pages from the aligned start, all inside the one allocation
-            assert!(b.cap % 4096 == 0 && b.cap >= n && b.off + b.cap <= b.raw.len());
+            assert!(b.cap.is_multiple_of(4096) && b.cap >= n && b.off + b.cap <= b.raw.len());
             if i > 0 {
                 assert_eq!(Some(p), ptr, "no new allocation for a read that fits");
             }

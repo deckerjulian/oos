@@ -174,11 +174,10 @@ impl Sha256 {
             Self::block(&mut self.h, &b);
             self.n = 0;
         }
-        let mut chunks = data.chunks_exact(64);
-        for c in &mut chunks {
+        let (blocks, r) = data.as_chunks::<64>();
+        for c in blocks {
             Self::block(&mut self.h, c);
         }
-        let r = chunks.remainder();
         self.buf[..r.len()].copy_from_slice(r);
         self.n = r.len();
     }
@@ -276,11 +275,10 @@ impl Sha512 {
             Self::block(&mut self.h, &b);
             self.n = 0;
         }
-        let mut chunks = data.chunks_exact(128);
-        for c in &mut chunks {
+        let (blocks, r) = data.as_chunks::<128>();
+        for c in blocks {
             Self::block(&mut self.h, c);
         }
-        let r = chunks.remainder();
         self.buf[..r.len()].copy_from_slice(r);
         self.n = r.len();
     }
@@ -382,7 +380,7 @@ pub fn hex(b: &[u8]) -> String {
 /// Bytes from hex (even length, no separators); None on anything else.
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect()

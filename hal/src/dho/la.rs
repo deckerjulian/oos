@@ -263,7 +263,7 @@ pub fn window(t: &Timing) -> (u32, u32) {
 
 /// LA words of a raw read (little-endian, bit n = Dn), the read padding dropped.
 pub fn words(bytes: &[u8], n: usize) -> Vec<u16> {
-    bytes.chunks_exact(2).take(n).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
+    bytes.as_chunks::<2>().0.iter().take(n).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
 }
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(thresholds(&c, 0.0, 0.0).1, 0x2184_21a1);
         assert_eq!((code(15e9, 8609), code(-15e9, 8609), code(99e9, 8609)), (13260, 3957, 13260));
         assert_eq!(code(2.5e9, 8580), 9355);
-        assert_eq!(lines(0x8001)[0] && lines(0x8001)[15] && !lines(0x8001)[1], true);
+        assert!(lines(0x8001)[0] && lines(0x8001)[15] && !lines(0x8001)[1]);
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full");
         if let Some(f) = Cal::load(dir) {
             assert_eq!(f, Cal::default());

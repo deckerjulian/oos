@@ -56,7 +56,7 @@ impl Fe {
     }
 
     /// Canonical 32-byte encoding (fully reduced mod p).
-    fn to_bytes(&self) -> [u8; 32] {
+    fn to_bytes(self) -> [u8; 32] {
         let mut h = Fe::carry(self.0).0;
         // q = 1 exactly when h >= p
         let mut q = (h[0] + 19) >> 51;

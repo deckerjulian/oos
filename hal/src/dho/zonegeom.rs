@@ -38,7 +38,8 @@ mod tests {
     fn extent_of_box_and_triangle() {
         let bx = [(0.0, 1.0), (10.0, 1.0), (10.0, 2.0), (0.0, 2.0)];
         // (strip) -> extent
-        let cases: [((f64, f64), Option<(f64, f64)>); 5] = [
+        type Case = ((f64, f64), Option<(f64, f64)>);
+        let cases: [Case; 5] = [
             ((2.0, 3.0), Some((1.0, 2.0))),
             ((-5.0, -1.0), None),
             ((9.0, 12.0), Some((1.0, 2.0))),

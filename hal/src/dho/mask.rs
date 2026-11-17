@@ -503,7 +503,8 @@ mod tests {
     #[test]
     fn layouts() {
         // (layout, points, channel set) -> (columns, strobe count, samples per column)
-        let cases: [(Layout, u32, u32, (usize, u32, f64)); 11] = [
+        type Case = (Layout, u32, u32, (usize, u32, f64));
+        let cases: [Case; 11] = [
             // 2.5 Mpts would need 2500: kept to 1023, the columns cover the first 1.02 M samples
             (Layout::Record, 2_500_000, 1, (1000, 1023, 1023.0)),
             (Layout::Record, 10_000, 1, (1000, 10, 10.0)),

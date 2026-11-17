@@ -764,7 +764,7 @@ impl<B: Bus> Ctx<'_, B> {
         self.step(19, "sinc coefficient RAM", "[A] not needed for the raw read-out");
         self.note("skipped (TODO only if the FPGA display-trace sinc path is used)".into());
         self.step(20, "AFE Hz enable x4", "[N]");
-        match afe_bus.as_deref_mut() {
+        match afe_bus {
             Some(b) => {
                 let mut n = 0;
                 for a in afes.iter_mut() {
