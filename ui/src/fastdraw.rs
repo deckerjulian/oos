@@ -221,11 +221,6 @@ pub struct Map {
     pub y0: f32,
 }
 
-/// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
-/// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
-/// (`x_per_sample <= 1`). The fast path draws the same through `spans` and `add_spans`, band by band; this is the
-/// whole map at once (tests, benchmark).
-
 /// One channel of a frame as `deposit` puts it on the screen: for each column from `c0` on, the first and last row its
 /// samples cover (first > last: nothing in that column). Worked out once per frame; the rows are then added band by
 /// band (`add_spans`), so even one channel is drawn on several cores.
@@ -422,9 +417,6 @@ pub fn span_rows(s: &Spans) -> (usize, usize) {
         .filter(|r| r.0 <= r.1)
         .fold((usize::MAX, 0), |(a, b), r| (a.min(r.0 as usize), b.max(r.1 as usize + 1)))
 }
-
-/// Dots display (`Model::dots`): every sample as one pixel, no spans and no joins; the brightness of a column follows
-/// where its samples dwell. Same mapping and column walk as `deposit`.
 
 #[cfg(test)]
 /// `deposit_dots` for the rows `r_lo` .. `r_lo + band.len() / w` of a map `w` x `h`, held in `band`.
@@ -672,13 +664,12 @@ pub mod whole {
     #[inline]
     fn code_extremes<const G: usize>(b: &[u8], k: usize) -> (u16, u16) {
         let (mut lo, mut hi) = (u16::MAX, u16::MIN);
-        let mut it = b.chunks_exact(G);
-        for g in &mut it {
+        let (groups, r) = b.as_chunks::<G>();
+        for g in groups {
             let x = u16::from_le_bytes([g[2 * k], g[2 * k + 1]]);
             lo = lo.min(x);
             hi = hi.max(x);
         }
-        let r = it.remainder();
         if r.len() >= 2 * k + 2 {
             let x = u16::from_le_bytes([r[2 * k], r[2 * k + 1]]);
             lo = lo.min(x);
@@ -864,7 +855,7 @@ pub mod whole {
     #[inline]
     unsafe fn min_max_neon(s: &[f32]) -> (f32, f32) {
         use core::arch::aarch64::*;
-        let mut it = s.chunks_exact(16);
+        let (blocks, rest) = s.as_chunks::<16>();
         let (mut n0, mut n1, mut n2, mut n3) = (
             vdupq_n_f32(f32::INFINITY),
             vdupq_n_f32(f32::INFINITY),
@@ -877,7 +868,7 @@ pub mod whole {
             vdupq_n_f32(f32::NEG_INFINITY),
             vdupq_n_f32(f32::NEG_INFINITY),
         );
-        for c in &mut it {
+        for c in blocks {
             let p = c.as_ptr();
             let (a, b, d, e) = (vld1q_f32(p), vld1q_f32(p.add(4)), vld1q_f32(p.add(8)), vld1q_f32(p.add(12)));
             n0 = vminnmq_f32(n0, a);
@@ -891,7 +882,7 @@ pub mod whole {
         }
         let mut a = vminnmvq_f32(vminnmq_f32(vminnmq_f32(n0, n1), vminnmq_f32(n2, n3)));
         let mut b = vmaxnmvq_f32(vmaxnmq_f32(vmaxnmq_f32(x0, x1), vmaxnmq_f32(x2, x3)));
-        for &x in it.remainder() {
+        for &x in rest {
             a = a.min(x);
             b = b.max(x);
         }

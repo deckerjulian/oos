@@ -86,10 +86,13 @@ impl J {
             }
         }
     }
-    pub fn to_string(&self) -> String {
+}
+
+impl std::fmt::Display for J {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();
         self.write(&mut s);
-        s
+        f.write_str(&s)
     }
 }
 

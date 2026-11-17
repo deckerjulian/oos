@@ -236,9 +236,13 @@ struct Question {
     unicast: bool,
 }
 
+/// What `read_questions` finds in a query: its questions, the names of its known answers, its id, where its
+/// questions end.
+type Query = (Vec<Question>, Vec<(String, u16)>, usize, usize);
+
 /// The questions of a standard query, the names of its known answers (RFC 6762 §7.1), its id and where its questions
 /// end; None for a response, another opcode or anything malformed (`mdns::parse`, the reader of the scope's responder).
-fn read_questions(msg: &[u8]) -> Option<(Vec<Question>, Vec<(String, u16)>, usize, usize)> {
+fn read_questions(msg: &[u8]) -> Option<Query> {
     let (m, question_end, _) = crate::mdns::parse_ends(msg)?;
     if m.is_response() || !m.standard() {
         return None;

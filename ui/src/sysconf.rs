@@ -501,11 +501,13 @@ mod tests {
 
     #[test]
     fn round_trip_keeps_unknown_lines() {
-        let mut c = SysConf::default();
-        c.ntp = true;
-        c.ntp_server = "ptbtime1.ptb.de".into();
-        c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
-        c.eth_retry_10m = false;
+        let mut c = SysConf {
+            ntp: true,
+            ntp_server: "ptbtime1.ptb.de".into(),
+            tz: "CET-1CEST,M3.5.0,M10.5.0/3".into(),
+            eth_retry_10m: false,
+            ..Default::default()
+        };
         (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
             (false, false, true, false, false);
         c.net_name = "lab-scope-3".into();
@@ -548,8 +550,7 @@ mod tests {
 
     #[test]
     fn dhcp_server_round_trip() {
-        let mut c = SysConf::default();
-        c.ntp = true;
+        let c = SysConf { ntp: true, ..Default::default() };
         assert!(c.text().contains("\nntp.server = dhcp\n"));
         assert_eq!(SysConf::parse(&c.text()).0, c);
         // a file of an older version keeps its server; DHCP by hand in any case
@@ -626,9 +627,7 @@ mod tests {
         let p = dir.join("system.conf");
         let _ = std::fs::remove_file(&p);
         assert_eq!(SysConf::load(&p), SysConf::default());
-        let mut c = SysConf::default();
-        c.ntp = true;
-        c.tz = "JST-9".into();
+        let c = SysConf { ntp: true, tz: "JST-9".into(), ..Default::default() };
         c.save(&p).unwrap();
         assert_eq!(SysConf::load(&p), c);
         assert!(!dir.join("system.conf.new").exists());

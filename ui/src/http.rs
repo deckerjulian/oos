@@ -511,10 +511,9 @@ pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
-    let (ra, rb) = (ca.remainder(), cb.remainder());
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
     // 32 bytes at a time with an OR of the differences: no early exit per word, which lets the compiler use vectors
-    ca.zip(cb).all(|(x, y)| x.iter().zip(y).fold(0u32, |d, (p, q)| d | (p ^ q)) == 0) && ra == rb
+    ca.iter().zip(cb).all(|(x, y)| x.iter().zip(y).fold(0u32, |d, (p, q)| d | (p ^ q)) == 0) && ra == rb
 }
 
 /// 304 when the viewer has this picture, else the PNG through a sender thread (503 when all are busy).

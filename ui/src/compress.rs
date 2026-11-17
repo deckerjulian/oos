@@ -421,8 +421,10 @@ mod tests {
         };
         let k = k_for(p.rate, 10e-6, p.memsel) as usize;
         assert_eq!(k, 15);
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap(),
+            ..Default::default()
+        };
         (m.trig_level, m.ch[0].on, m.ch[0].offset) = (0.0, true, 0.0);
         let vpd = m.ch[0].volts_per_div() as f64;
         let mut x = 7u32;
