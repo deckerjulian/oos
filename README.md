@@ -828,6 +828,11 @@ tools/check.sh
 
 Coding agents, and people new to the tree, start with [AGENTS.md](AGENTS.md).
 
+Every change enters main through a pull request with a green CI, the maintainer's too, and decision records are
+discussed there before they are accepted
+([ADR 0031](docs/adr/process/0031-every-change-enters-main-through-a-pull-request.md),
+[CONTRIBUTING.md](CONTRIBUTING.md)).
+
 Tests that need the calibration files of a real unit are skipped without them. To run them, copy `/rigol/data` of your
 scope to `local/cal-full` and `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of
 them.

@@ -13,4 +13,5 @@ Please confirm (CONTRIBUTING.md, ADR 0026):
       from the stock or a modified firmware. The hardware is described as behaviour, with how it is known.
 - [ ] No serial numbers, MAC addresses, licence keys or addresses of a scope.
 - [ ] Every hardware fact the code uses is in `docs/` as behaviour, with how it is known (ADR 0030).
+- [ ] A new or superseding decision record has the status `proposed` (ADR 0031).
 - [ ] Code or text from another project is named here with its source and licence.

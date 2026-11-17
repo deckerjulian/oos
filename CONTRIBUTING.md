@@ -62,6 +62,32 @@ A pull request from a fork enters main squashed, one commit per topic, made from
 name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when
 its history matters (ADR 0026).
 
+## How a change gets into main
+
+The same way for everyone, the maintainer included
+([ADR 0031](docs/adr/process/0031-every-change-enters-main-through-a-pull-request.md)):
+
+- Nobody pushes to main. Every change is a pull request, merged squashed once CI is green.
+- A pull request that changes behaviour, a rule or many files stays open at least 24 hours, so others see it coming.
+  Fixes for a red main, security fixes and documentation corrections can go in as soon as CI is green.
+- A decision record comes in as `proposed` and stays open at least 72 hours for discussion before it is merged as
+  `accepted` or `rejected`.
+- The pull request opened first is merged first when two touch the same code; the later one is rebased. Allow edits by
+  maintainers on your pull request and the rebase is done for you.
+- Large changes that do not change behaviour (formatting, moves) are announced in an issue with their day, and wait
+  for the open pull requests.
+
+## Coordinating work
+
+- **Before you start something larger, open an issue** (or comment on an existing one) and say what you take. One issue
+  per piece of work avoids two people building the same thing.
+- **Issues are the to-do list.** Reports from the forum or elsewhere become issues, so they are found and closed in one
+  place; the label says what kind they are (bug, hardware report, feature, process).
+- **Draft pull requests are welcome early.** A draft shows where you are going before it is done and lets others plan
+  around it.
+- **Say which area you work on** in the pull request title (`Trigger:`, `SCPI:`, `Docs:`), as in the commit subjects;
+  it makes overlaps visible in the list of open pull requests.
+
 ## Style
 
 - Text and code comments are in English. Changes to the hardware knowledge go into `docs/`, in the same pull request.

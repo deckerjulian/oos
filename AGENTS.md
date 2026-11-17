@@ -29,6 +29,8 @@ there. These instructions are the same for every agent and every person; the rea
 - **Put personal data** (serial numbers, MAC addresses, licence keys, a scope's address) into code, docs or commits.
 - **Put vendor material into a text around the code**: commit messages, pull request descriptions and issues follow
   the same rule as the tree, and every commit is signed off by the person who submits it (ADR 0026).
+- **Push to main.** Work on a branch and open a pull request; it is merged squashed when CI is green, after the waiting
+  time of ADR 0031. A new decision record comes in as `proposed`.
 
 ## Always
 
