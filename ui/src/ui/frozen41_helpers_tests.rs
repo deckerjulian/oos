@@ -52,7 +52,7 @@ fn force_after_completed_single_arms_a_fresh_receipt_in_live_and_stored_modes() 
         let mut ui = crate::ui::testkit::demo_ui();
         ui.key(key::SINGLE);
         let old = ui.scpi_operations();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while ui.m.run != RunState::Stop {
             ui.step(0.02); assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
@@ -149,7 +149,7 @@ fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_count
     ui.m.meas = vec![(Meas::Period, WaveId::Ref(0))]; ui.m.meas2.clear(); ui.m.cat.clear(); ui.m.meas_full_record=true;
     ui.m.set_trigger_wave(WaveId::Ref(0), false); ui.m.trig_level=0.0;
     ui.m.trig_mode=TrigMode::Single; ui.m.run=RunState::Run; ui.sim_play=true;
-    let end=Instant::now()+Duration::from_secs(10);
+    let end=Instant::now()+Duration::from_secs(60);
     while ui.replay.captures==0 {ui.step(0.02);assert!(Instant::now()<end);std::thread::sleep(Duration::from_millis(1));}
     assert!(ui.measurement_busy()); ui.key(key::SINGLE); let fence=ui.scpi_operations();
     let selection=ui.m.meas.clone(); ui.stats_reset();

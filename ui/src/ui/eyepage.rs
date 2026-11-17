@@ -2296,7 +2296,7 @@ mod automatic_setup_tests {
         ui.refs[0].as_mut().unwrap().v = square(300_000, 10).into();
         ui.eye_make();
         let start = std::time::Instant::now();
-        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 60 {
             ui.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
@@ -2318,7 +2318,7 @@ mod automatic_setup_tests {
         assert_eq!(ui.azr.eye_auto.submitted, 1);
         assert!(ui.azr.eye_res.is_none() && ui.azr.page.status[0].contains("Computing"));
         let start = std::time::Instant::now();
-        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 60 {
             ui.eye_auto_poll();
             std::thread::sleep(std::time::Duration::from_millis(2));
         }

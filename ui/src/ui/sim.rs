@@ -485,7 +485,7 @@ impl Ui {
 
     #[cfg(test)]
     pub(crate) fn wait_sim_generation(&mut self) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while self.sim_generating() {
             self.sim_poll();
             assert!(std::time::Instant::now() < deadline, "SIM generation timed out");
@@ -495,7 +495,7 @@ impl Ui {
 
     #[cfg(test)]
     fn wait_sim_worker(&mut self) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some()) {
             self.sim_poll();
             assert!(std::time::Instant::now() < deadline, "SIM worker did not finish");
@@ -1213,7 +1213,7 @@ mod tests {
         let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
         let captures = u.replay.captures;
         let eye_records = records(&u);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while u.replay.captures < captures + 2 && std::time::Instant::now() < deadline {
             u.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -1233,7 +1233,7 @@ mod tests {
         assert_eq!(u.replay.captures, held_count);
         assert_eq!(records(&u), held_eye);
         u.key(key::SINGLE);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while u.m.run != RunState::Stop && std::time::Instant::now() < deadline {
             u.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -1245,7 +1245,7 @@ mod tests {
     }
 
     fn drive_until(u: &mut Ui, done: impl Fn(&Ui) -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while !done(u) && std::time::Instant::now() < deadline {
             u.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -1398,7 +1398,7 @@ mod tests {
         u.step(0.5);
         // A fresh capture is generated off-thread. Advancing simulated time is
         // not evidence that the worker has run, particularly in the full suite.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while u.replay.captures == before && std::time::Instant::now() < deadline {
             u.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(1));

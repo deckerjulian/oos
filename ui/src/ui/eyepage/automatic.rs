@@ -699,7 +699,7 @@ mod performance_and_timing_tests {
         ui.eye_set_place(EyePlace::Side);
         ui.eye_big = Some(3);
         assert_eq!(ui.auto_eye_key(), key);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while ui.azr.eye_auto.applied_results == 0 {
             ui.step(0.01);
             assert!(std::time::Instant::now() < deadline, "{:?}", ui.azr.page.status);

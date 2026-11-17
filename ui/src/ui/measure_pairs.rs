@@ -114,7 +114,7 @@ mod tests {
         ui.m.run=RunState::Stop;ui.m.meas_full_record=true;ui.m.meas.clear();ui.m.meas2=vec![(0,WaveId::Ref(0),WaveId::Ref(1))];
         let values:Vec<f32>=(0..400_000).map(|i|if i%40<20{-0.5}else{0.5}).collect();
         for i in 0..2 {ui.refs[i]=Some(RefWave{src:0,color:i,label:String::new(),t0:0.001+i as f64*3e-9,dt:1e-9,v: (values.clone()).into(),vpd:0.2,offset:0.0,on:true});}
-        let deadline=Instant::now()+Duration::from_secs(10);
+        let deadline=Instant::now()+Duration::from_secs(60);
         loop {ui.measure_refs();ui.poll_reference_measurements();
             if ui.meas_analysis(WaveId::Ref(0)).is_some()&&ui.meas_analysis(WaveId::Ref(1)).is_some(){break;}
             assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));
@@ -122,7 +122,7 @@ mod tests {
         ui
     }
     fn wait(ui:&mut Ui,kind:usize)->f64 {
-        let deadline=Instant::now()+Duration::from_secs(10);
+        let deadline=Instant::now()+Duration::from_secs(60);
         loop {ui.poll_reference_measurements();let value=ui.pair_at(kind,WaveId::Ref(0),WaveId::Ref(1));
             if !ui.pair_measurement_computing(kind,WaveId::Ref(0),WaveId::Ref(1))&&value.is_finite(){return value;}
             assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));

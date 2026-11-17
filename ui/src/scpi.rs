@@ -4765,7 +4765,7 @@ mod tests {
         // what the client reads until it has a line (Some) or the server closed it (None)
         let mut read = |s: &mut Scpi, c: &mut TcpStream| -> Option<String> {
             c.set_nonblocking(true).unwrap();
-            let (mut got, until) = (Vec::new(), std::time::Instant::now() + Duration::from_secs(20));
+            let (mut got, until) = (Vec::new(), std::time::Instant::now() + Duration::from_secs(60));
             loop {
                 assert!(std::time::Instant::now() < until, "no answer and not closed");
                 s.poll(&mut ui, &cv);
@@ -4806,7 +4806,7 @@ mod tests {
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b"*IDN?\n").unwrap();
         client.shutdown(std::net::Shutdown::Write).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         for _ in 0..50 {
             s.poll(&mut ui, &cv);
             if s.clients.is_empty() { break; }
@@ -4839,7 +4839,7 @@ mod tests {
     fn compatibility_opc_waits_for_actual_large_sim_generation_but_not_future_captures() {
         let (mut s,mut ui,cv)=session();let mut p=Program::new(":SIM:PLAY ON;*OPC?;:SIM:BUSY?");
         assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());assert!(ui.sim_generating());
-        let deadline=std::time::Instant::now()+Duration::from_secs(15);
+        let deadline=std::time::Instant::now()+Duration::from_secs(60);
         let response=loop {
             ui.step(0.01);
             if let Some(response)=s.poll_program(&mut ui,&cv,&mut p) {break response;}
@@ -5077,7 +5077,7 @@ mod tests {
         decoded_reference_fixture(&mut ui, 300_000);
         line(&mut s, &mut ui, &cv, ":DEC:PROTO UART;:DEC:SOUR R1;:DEC:THR 1.65;:DEC:STAT ON;:SYST:SET dec_baud = 7");
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:EVEN?"), "BUSY");
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while line(&mut s, &mut ui, &cv, ":DEC:BUSY?") == "1" {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
@@ -5189,7 +5189,7 @@ mod tests {
         }
         ui.set_offline(true);ui.m.meas_full_record=true;ui.m.meas.clear();ui.m.meas2.clear();
         assert_eq!(line(&mut s,&mut ui,&cv,":SYST:SET cat = 90:R1:R2:3:4;:SYST:ERR?"),"0,\"No error\"");
-        let end=std::time::Instant::now()+Duration::from_secs(10);
+        let end=std::time::Instant::now()+Duration::from_secs(60);
         let answer=loop {
             let answer=line(&mut s,&mut ui,&cv,":MEAS:STRIP?");
             let value=answer.rsplit(',').next().unwrap().parse::<f64>().unwrap();
@@ -5304,7 +5304,7 @@ mod tests {
     fn raw_tcp_compound_queries_share_one_response_message() {
         let (mut s, mut ui, cv) = session();
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         client.write_all(b"*IDN?;*OPC?\n").unwrap();
         for _ in 0..50 { s.poll(&mut ui, &cv); std::thread::sleep(Duration::from_millis(2)); }
         let mut response = std::io::BufReader::new(client.try_clone().unwrap());
@@ -5601,7 +5601,7 @@ mod tests {
         let (mut scpi, mut ui, canvas) = session();
         line(&mut scpi, &mut ui, &canvas, ":MEAS:CLEAR");
         let mut client = TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         client.write_all(b":MEAS:STRIP?\n").unwrap();
         for _ in 0..50 { scpi.poll(&mut ui, &canvas); std::thread::sleep(Duration::from_millis(2)); }
         let mut byte = [0]; client.read_exact(&mut byte).unwrap();

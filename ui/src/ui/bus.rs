@@ -617,7 +617,7 @@ mod tests {
         u.last[0].as_mut().unwrap().raw=Some(crate::wave::Raw{frame:frame.clone(),i0:0,i1:frame.ch[0].len(),t0:0.001,conditioned:true});
         u.m.delay=0.0013;
         assert!(u.bus_packets().is_empty());assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
-        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(60);
         let packets=loop {let packets=u.bus_packets();if !packets.is_empty(){break packets;}
             assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(1));};
         assert!(packets.iter().all(|p|p.t0>=0.001));

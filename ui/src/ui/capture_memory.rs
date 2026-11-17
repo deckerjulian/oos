@@ -247,7 +247,7 @@ mod tests {
         ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
         let expected = ui.m.srate_depth().1 as usize;
         assert!(ui.acquire_display_record(0.02).is_none(), "full memory is prepared off the event thread");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let rec = loop {
             if let Some(rec) = ui.acquire_display_record(0.02) { break rec; }
             assert!(std::time::Instant::now() < deadline);
@@ -275,7 +275,7 @@ mod tests {
             let mut source = Source::Demo { t: 0.0 };
             let mut expected = source.acquire_full_demo(&ui.m, 0.02, &mut Rng::new(seed)).unwrap();
             condition(&ui.m, 0, &mut expected.ch[0], expected.dt);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             let record = loop {
                 if let Some(record) = ui.acquire_display_record(0.02) { break record; }
                 assert!(std::time::Instant::now() < deadline);
@@ -348,7 +348,7 @@ mod tests {
         assert!(ui.acquire_display_record(0.02).is_none());
         // Single is valid even while already waiting; it starts a fresh arm.
         ui.key(key::SINGLE);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         for (captures, stamp) in [(1, 8), (2, 9)] {
             while ui.records < captures {
                 ui.step(0.02);

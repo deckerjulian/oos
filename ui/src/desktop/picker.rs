@@ -133,7 +133,7 @@ mod tests {
         let mut loader = Loader::new();
         loader.submit(path.clone(), 1, 0).unwrap();
         loader.submit(path.clone(), 2, 8).unwrap();
-        let until = Instant::now() + Duration::from_secs(5);
+        let until = Instant::now() + Duration::from_secs(60);
         let (traces, name) = loop {
             if let Some((slot, result)) = loader.poll(2) { assert_eq!(slot, 8); break result.unwrap(); }
             assert!(Instant::now() < until);

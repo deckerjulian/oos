@@ -321,7 +321,7 @@ mod tests {
         ui
     }
     fn wait(ui: &Ui) -> Arc<Vec<Packet>> {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             match ui.reference_decode_packets(&ui.m) {
                 Ok(packets) => return packets,

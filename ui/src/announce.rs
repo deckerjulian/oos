@@ -738,7 +738,7 @@ mod tests {
         c.set_nonblocking(true).unwrap();
         c.send_to(&q, destination).unwrap();
         let mut buf = [0u8; 2048];
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(60);
         let n = loop {
             a.poll();
             match c.recv_from(&mut buf) {

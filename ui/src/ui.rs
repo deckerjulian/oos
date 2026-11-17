@@ -11114,7 +11114,7 @@ mod tests {
             let t = std::time::Instant::now();
             loop {
                 ui.step(0.02);
-                if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+                if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 60 {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));

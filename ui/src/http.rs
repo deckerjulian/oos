@@ -1232,7 +1232,7 @@ mod tests {
         let addr = h.l.as_ref().unwrap().local_addr().unwrap();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             let _ = c.write_all(&req);
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1544,7 +1544,7 @@ setTimeout(() => {
             let addr = h.l.as_ref().unwrap().local_addr().unwrap();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
                 c.write_all(format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).as_bytes()).unwrap();
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);

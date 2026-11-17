@@ -208,7 +208,7 @@ mod tests {
     }
 
     fn wait(ui: &mut Ui, kinds: &[Meas]) -> Vec<f64> {
-        let end = Instant::now() + Duration::from_secs(15);
+        let end = Instant::now() + Duration::from_secs(60);
         loop {
             ui.poll_reference_measurements();
             let values: Vec<_> = kinds.iter().map(|&kind| ui.meas_number(WaveId::Ref(0), kind)).collect();

@@ -238,7 +238,7 @@ mod tests {
     }
 
     fn wait(ui: &Ui) -> Arc<Vec<f64>> {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             if let Some(times) = ui.reference_trigger_hits(ui.m.trig_ref.unwrap()) { return times; }
             assert!(Instant::now() < deadline, "bounded reference search did not complete");

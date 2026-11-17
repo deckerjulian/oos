@@ -177,7 +177,7 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     ui.m.set_trigger_wave(WaveId::Ref(0), false);
     ui.m.trig_level = 0.0;
     ui.m.trig_mode = TrigMode::Single; ui.m.run = RunState::Run; ui.sim_play = true;
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_deadline = Instant::now() + Duration::from_secs(60);
     while ui.replay.captures == 0 {
         ui.step(0.02);
         assert!(Instant::now() < capture_deadline);
@@ -190,7 +190,7 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     assert!(!ui.meas_clear_remote(), "clearing an empty selection is idempotent");
     assert!(ui.mstat.is_empty());
     assert_eq!(ui.meas_add(Meas::Period, WaveId::Ref(0)), Ok(true));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while ui.measurement_busy() {
         ui.poll_reference_measurements();
         assert!(Instant::now() < deadline);

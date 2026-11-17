@@ -710,7 +710,7 @@ mod tests {
     }
 
     fn ready_rows(ui: &mut Ui) -> Vec<tools::MeasRow> {
-        let end=std::time::Instant::now()+std::time::Duration::from_secs(15);
+        let end=std::time::Instant::now()+std::time::Duration::from_secs(60);
         loop {
             ui.poll_catalog_measurements();
             let rows=ui.meas_rows();

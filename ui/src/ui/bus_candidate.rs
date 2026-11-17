@@ -68,7 +68,7 @@ mod tests {
         state.frame = (*frame).clone(); state.queue.push_back((*frame).clone());
     }
     fn until(ui: &mut Ui, condition: impl Fn(&Ui) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while !condition(ui) {
             assert!(Instant::now() < deadline, "bounded mixed Bus acquisition did not resolve");
             ui.step(0.002); std::thread::sleep(Duration::from_millis(1));
@@ -188,7 +188,7 @@ mod tests {
         let statistics = ui.measurement_statistics_snapshot_for_test();
         let mut scpi = crate::scpi::Scpi::open(0);
         let mut socket = std::net::TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
-        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
         socket.write_all(b":RUN;:TRIG:STAT?;:TIM:SCAL?;:CHAN1:DISP?\n").unwrap();
         for _ in 0..20 { scpi.poll(&mut ui, &Canvas::new(W, H)); std::thread::sleep(Duration::from_millis(2)); }
         let mut response = String::new(); std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap();

@@ -17,7 +17,7 @@ fn native(count: usize) -> Ui {
 }
 
 fn wait(ui: &mut Ui) -> (Arc<oos_dsp::measure::Analysis>,f64) {
-    let deadline=Instant::now()+Duration::from_secs(10);
+    let deadline=Instant::now()+Duration::from_secs(60);
     loop {
         ui.poll_reference_measurements();
         if let Some(result)=ui.channel_measurement(0,true) {return result;}

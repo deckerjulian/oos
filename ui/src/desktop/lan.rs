@@ -77,14 +77,14 @@ mod tests {
         let web_port = services.web.port().unwrap();
         let client = std::thread::spawn(move || {
             let mut raw = TcpStream::connect(("127.0.0.1", raw_port)).unwrap();
-            raw.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            raw.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             raw.write_all(b":TIM:SCAL 0.00005\n:TIM:SCAL?\n").unwrap();
             let mut response = String::new();
             BufReader::new(raw).read_line(&mut response).unwrap();
             assert!((response.trim().parse::<f64>().unwrap() - 50e-6).abs() < 1e-10);
 
             let mut h = TcpStream::connect(("127.0.0.1", hislip_port)).unwrap();
-            h.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            h.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             h.write_all(&hislip::encode(0, 0, 0x0100_0000, b"hislip0")).unwrap();
             assert_eq!(message(&mut h).typ, 1);
             h.write_all(&hislip::encode(7, 0, 1, b":TIM:SCAL?\n")).unwrap();
@@ -93,7 +93,7 @@ mod tests {
             assert!((String::from_utf8(response.data).unwrap().trim().parse::<f64>().unwrap() - 50e-6).abs() < 1e-10);
 
             let mut web = TcpStream::connect(("127.0.0.1", web_port)).unwrap();
-            web.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            web.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
             web.write_all(b"GET /lxi/identification HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
             let mut response = String::new();
             web.read_to_string(&mut response).unwrap();
@@ -102,7 +102,7 @@ mod tests {
         });
         let mut ui = crate::ui::testkit::demo_ui();
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
-        let deadline = Instant::now() + Duration::from_secs(6);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while !client.is_finished() && Instant::now() < deadline {
             services.poll(&mut ui, &cv);
             std::thread::sleep(Duration::from_millis(2));

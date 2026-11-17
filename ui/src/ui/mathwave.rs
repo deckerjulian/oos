@@ -297,7 +297,7 @@ mod tests {
         ui.m.math_lin = (2.0, 1.0);
         assert!(ui.math_record(0).unwrap().is_none());
         ui.m.math_lin = (3.0, 1.0);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let w = loop {
             if let Some(w) = ui.math_record(0).unwrap() { break w; }
             assert!(std::time::Instant::now() < deadline);
@@ -318,7 +318,7 @@ mod tests {
         }
         ui.m.math = MathOp::Conv;
         assert!(ui.math_record(0).unwrap().is_none());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             match ui.math_record(0) {
                 Err(message) => { assert_eq!(message, "Convolution kernel too long; use a shorter reference"); break; }

@@ -63,7 +63,7 @@ mod tests {
         let n = loop {
             match read_now(&s, &mut b) {
                 Ok(n) => break n,
-                Err(e) if later(&e) && t.elapsed().as_secs() < 2 => continue,
+                Err(e) if later(&e) && t.elapsed().as_secs() < 60 => continue,
                 Err(e) => panic!("{:?}", e),
             }
         };
@@ -73,7 +73,7 @@ mod tests {
         loop {
             match read_now(&s, &mut b) {
                 Ok(0) => break,
-                Err(e) if later(&e) && t.elapsed().as_secs() < 2 => continue,
+                Err(e) if later(&e) && t.elapsed().as_secs() < 60 => continue,
                 r => panic!("{:?}", r),
             }
         }

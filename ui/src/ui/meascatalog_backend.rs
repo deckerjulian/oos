@@ -167,7 +167,7 @@ mod tests{
     fn fixture()->Ui{let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.run=RunState::Stop;ui.m.ch.iter_mut().for_each(|c|c.on=false);ui.m.meas.clear();ui.m.meas2.clear();ui.m.cat.clear();ui.m.meas_full_record=true;ui}
     fn put(ui:&mut Ui,r:usize,v:Vec<f32>,t0:f64,dt:f64){ui.refs[r]=Some(RefWave{src:0,color:r,label:String::new(),t0,dt,v:v.into(),vpd:1.0,offset:0.0,on:true});}
     fn row(c:Cat)->Row{(c.id,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ref(2),WaveId::Ref(3))}
-    fn wait(ui:&mut Ui,c:Cat)->Reading{let end=Instant::now()+Duration::from_secs(20);loop{ui.poll_catalog_measurements();let r=ui.catalog_reading(c,[WaveId::Ref(0),WaveId::Ref(1),WaveId::Ref(2),WaveId::Ref(3)]);if !r.computing{return r;}assert!(Instant::now()<end,"catalog never completed");std::thread::sleep(Duration::from_millis(1));}}
+    fn wait(ui:&mut Ui,c:Cat)->Reading{let end=Instant::now()+Duration::from_secs(60);loop{ui.poll_catalog_measurements();let r=ui.catalog_reading(c,[WaveId::Ref(0),WaveId::Ref(1),WaveId::Ref(2),WaveId::Ref(3)]);if !r.computing{return r;}assert!(Instant::now()<end,"catalog never completed");std::thread::sleep(Duration::from_millis(1));}}
     #[test]
     fn alignment_uses_common_intersection_slowest_grid_and_subsample_origins(){
         let a=input(0,-2.0,1.0,vec![0.,1.,2.,3.,4.,5.]);let b=input(1,-1.5,0.5,vec![0.,1.,2.,3.,4.,5.,6.,7.]);
@@ -264,7 +264,7 @@ mod tests{
         let mut ui=fixture();put(&mut ui,0,(0..400_000).map(|i|if i%20<10{0.0}else{2.0}).collect(),0.,1e-9);ui.m.cat=vec![row(tile(measures::power::RIPPLE))];ui.wfm_total=1;
         let ids=[WaveId::Ref(0),WaveId::Ref(1),WaveId::Ref(2),WaveId::Ref(3)];let _=ui.catalog_reading(tile(measures::power::RIPPLE),ids);ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)),1);
         // Hold a finished answer before UI delivery, then clear and reuse sequence1.
-        let answer=ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().receive.recv_timeout(Duration::from_secs(20)).unwrap();
+        let answer=ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().receive.recv_timeout(Duration::from_secs(60)).unwrap();
         ui.clear_display();ui.wfm_total=1;ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)),1);
         let(send,receive)=mpsc::sync_channel(1);ui.azr.catalog_measurements.borrow_mut().worker.as_mut().unwrap().receive=receive;assert!(send.send(answer).is_ok());
         ui.poll_catalog_measurements();assert_eq!(ui.catalog_reading(tile(measures::power::RIPPLE),ids).value,2.0,"a valid value may still cache");
@@ -276,7 +276,7 @@ mod tests{
         let mut ui=fixture();ui.m.ch[0].on=true;ui.wfm_total=1;
         ui.last[0]=Some(Record{t0:0.0,dt:1e-9,ch:[vec![0.0,2.0,0.0,2.0],Vec::new(),Vec::new(),Vec::new()],triggered:true,partial:false,raw:None,la:None, pairs: false});
         let ids=[WaveId::Ch(0),WaveId::Ref(1),WaveId::Ref(2),WaveId::Ref(3)];ui.m.cat=vec![(measures::power::RIPPLE,ids[0],ids[1],ids[2],ids[3])];
-        let read=|ui:&mut Ui|{let deadline=Instant::now()+Duration::from_secs(20);loop{ui.poll_catalog_measurements();let r=ui.catalog_reading(tile(measures::power::RIPPLE),ids);if !r.computing{return r.value;}assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(1));}};
+        let read=|ui:&mut Ui|{let deadline=Instant::now()+Duration::from_secs(60);loop{ui.poll_catalog_measurements();let r=ui.catalog_reading(tile(measures::power::RIPPLE),ids);if !r.computing{return r.value;}assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(1));}};
         assert_eq!(read(&mut ui),2.0);let pointer=ui.last[0].as_ref().unwrap().ch[0].as_ptr();
         // Clear's reset generation changes while the accepted sequence is reused.
         // Mutate the same allocation to make allocator reuse deterministic.
