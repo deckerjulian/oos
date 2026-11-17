@@ -23,10 +23,10 @@ the change against them. It is advice: the maintainer decides, and a comment tha
 - **A refactoring that is more than one.** A change described as leaving behaviour as it was (ADR 0014) that changes
   what the comparison of pictures and register sequences does not see: timing, replies to remote commands, the format
   of stored files, stored identifiers (protocol keys, measurement numbers, feature ids, ADR 0002).
-- **Structure.** More than one topic in a pull request. A remote command outside `ui/src/scpi.rs` (ADR 0022). Hardware
-  access outside `oos-hal`, or hardware in `oos-dsp` (ADR 0001). A new dependency of what runs on the scope
-  (ADR 0013, ADR 0021). A decision record that is edited where it should be superseded, or a new one that is not
-  `proposed` (ADR 0031).
+- **Structure.** More than one topic in a pull request. A remote command outside `ui/src/scpi.rs` and `ui/src/scpi/`
+  (ADR 0022). Hardware access outside `oos-hal`, or hardware in `oos-dsp` (ADR 0001). A new dependency of what runs on
+  the scope (ADR 0013, ADR 0021). A decision record that is edited where it should be superseded, or a new one that is
+  not `proposed` (ADR 0031).
 - **What is missing.** Documentation that the change makes wrong. A `CHANGELOG.md` entry for a change a user sees. A
   test, where the change can be tested on the host. A test that depends on how fast the computer is (ADR 0020).
 - **Plain errors**: wrong arithmetic, a wrong unit, an index out of range, a lock held across a blocking call, an
