@@ -1,6 +1,6 @@
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""tools/pr-gate.sh and tools/pr-labels.sh against a stand-in for `gh` that answers from files: the three statuses and
+"""tools/pr-gate.sh and tools/pr-labels.sh against a stand-in for `gh` that answers from files: the four statuses and
 the labels for pull requests made up here. No network; needs sh and jq, and skips itself without jq."""
 import datetime
 import json
@@ -64,14 +64,14 @@ class PullRequests(unittest.TestCase):
             [{"user": {"login": who}, "state": state, "commit_id": sha} for who, state, sha in reviews]))
         self.copilot(None)
 
-    def copilot(self, body, open_threads=0, effort="lite"):
+    def copilot(self, body, open_threads=0, effort="lite", commit="abc"):
         """Copilot's review of pull request 7: its overview text (None: no review yet) and its unresolved threads."""
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
         reviews = json.loads(name("repos/owner/oos/pulls/7/reviews").read_text())
         reviews = [r for r in reviews if not r.get("is_copilot_code_review")]
         if body is not None:
             reviews.append({"user": {"login": "copilot-pull-request-reviewer[bot]"}, "state": "COMMENTED",
-                            "commit_id": "abc", "is_copilot_code_review": True, "copilot_code_review_effort": effort,
+                            "commit_id": commit, "is_copilot_code_review": True, "copilot_code_review_effort": effort,
                             "body": body})
         name("repos/owner/oos/pulls/7/reviews").write_text(json.dumps(reviews))
         threads = [{"isResolved": i >= open_threads, "comments": {"nodes": [{"author": {"login": "Copilot"}}]}}
@@ -163,6 +163,8 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["review"], "pending", "open comments")
         self.copilot("### Needs a closer look\n\n**2 open issues**\n", open_threads=0)
         self.assertEqual(self.gate()["review"], "success", "every comment of Copilot's resolved; others' do not count")
+        self.copilot("### Looks good\n\n**No open issues** 🎉\n", commit="older")
+        self.assertEqual(self.gate()["review"], "success", "one review per pull request, of whichever commit")
 
     def test_hold(self):
         self.pull(["ui/src/ui.rs"], labels=["hold"])

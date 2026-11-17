@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-# pr-gate.sh - three answers about a pull request that decide whether it may be merged without a person pressing the
+# pr-gate.sh - four answers about a pull request that decide whether it may be merged without a person pressing the
 # button (docs/adr/process/0038), written to its newest commit as statuses:
 #
 #   waited   it has been open as long as ADR 0031 asks: 72 hours with a decision record, else 24. No wait at all for
@@ -14,13 +14,14 @@
 #            is the maintainer's own or the development agent's, or Dependabot's and changes nothing but the
 #            commits of actions, or the maintainer has approved its newest commit.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
-#   review   GitHub Copilot has reviewed it (the ruleset asks for one review per pull request, once it is ready) and
-#            left no open issue, or every thread it opened is resolved; pending until then, and for a draft.
+#   review   GitHub Copilot has reviewed it, once per pull request (ADR 0039), and left no open issue, or every
+#            thread it opened is resolved; pending until then, and for a draft. When the review was of an earlier
+#            commit, the status says so: what came after it was not read by Copilot.
 #            Dependabot's pull requests that only move the commits of actions get no review and need none.
 #
 #   tools/pr-gate.sh NUMBER        one pull request
 #   tools/pr-gate.sh --all         every open one (the waits run out without an event)
-#   tools/pr-gate.sh --dry NUMBER  print the three answers, write nothing
+#   tools/pr-gate.sh --dry NUMBER  print the four answers, write nothing
 #
 # Reads the pull request through GitHub's API and never its code. Needs gh (GH_TOKEN) and jq. OOS_REPO,
 # OOS_MAINTAINER and OOS_AGENT name another repository, maintainer and agent (defaults: $GITHUB_REPOSITORY, its owner
@@ -125,7 +126,7 @@ one() {
 		status "$sha" owner pending "needs the maintainer's approving review of this commit"
 	fi
 
-	# review: the newest review by Copilot; "No open issues" in its overview, or every thread of its resolved
+	# review: Copilot's newest review; "No open issues" in its overview, or every thread of its resolved
 	review=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
 		jq -s 'add | [.[] | select(.is_copilot_code_review == true)] | last // empty')
 	if [ "$draft" = true ]; then
@@ -141,6 +142,7 @@ one() {
 			| select(.isResolved == false) | select(.comments.nodes[0].author.login | test("copilot"; "i"))]
 			| length' 2>/dev/null || echo 0)
 		effort=$(printf '%s' "$review" | jq -r '.copilot_code_review_effort // "?"')
+		[ "$(printf '%s' "$review" | jq -r .commit_id)" = "$sha" ] || effort="$effort, of an earlier commit"
 		if printf '%s' "$review" | jq -r .body | grep -q 'No open issues'; then
 			status "$sha" review success "Copilot: no open issues ($effort)"
 		elif [ "$open_threads" = 0 ]; then

@@ -23,7 +23,8 @@ b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
 token() {
 	now=$(date +%s)
-	made=$(stat -f %m "$dir/token" 2>/dev/null || stat -c %Y "$dir/token" 2>/dev/null || echo 0)
+	# GNU's form first: GNU stat takes -f for a file system and would print that
+	made=$(stat -c %Y "$dir/token" 2>/dev/null || stat -f %m "$dir/token" 2>/dev/null || echo 0)
 	if [ $((now - made)) -lt 3000 ]; then
 		cat "$dir/token"
 		return

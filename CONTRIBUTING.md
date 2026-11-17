@@ -98,10 +98,12 @@ The same way for everyone, the maintainer included
   Fixes for a red main, security fixes and documentation corrections can go in as soon as CI is green.
 - A decision record comes in as `proposed` and stays open at least 72 hours for discussion before it is merged as
   `accepted` or `rejected`.
-- A pull request can be merged when five checks have passed
-  ([ADR 0038](docs/adr/process/0038-auto-merge-for-the-maintainer-and-the-bots.md)): `test` and `compare` from CI,
-  and three statuses: `waited` (the waiting time is over), `owner` (it is the maintainer's, or the maintainer approved
-  its newest commit) and `unit` (it changes nothing that is only proven on a scope, or it was tried on one). A pull
+- A pull request can be merged when six checks have passed
+  ([ADR 0038](docs/adr/process/0038-auto-merge-for-the-maintainer-and-the-bots.md),
+  [ADR 0039](docs/adr/process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md)): `test` and
+  `compare` from CI, and four statuses: `waited` (the waiting time is over), `owner` (it is the maintainer's or the
+  development agent's, or the maintainer approved its newest commit), `unit` (it changes nothing that is only proven
+  on a scope, or it was tried on one) and `review` (GitHub Copilot reviewed it and its comments are answered). A pull
   request from a fork needs the maintainer's approval and is merged by the maintainer.
 - No waiting time for a pull request that only corrects documents, or that says `Behaviour: unchanged` and whose
   comparison with the base found nothing, outside the hardware paths, the pipeline, the tools and the rules. The
