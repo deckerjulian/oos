@@ -13,6 +13,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |
 | `pr-labels.sh NUMBER` | no; GitHub only (labels) | sets the labels a pull request gets by itself: areas by path, type by title, `agent`, `risk/hardware`; `--dry` only prints |
 | `ratchet.sh [--lower]` | no | the numbers that only go down (`tools/ratchet.txt`: lines of the files over 2000 lines, switched-off lints, `unsafe`) against the tree; layer `ratchet` of `check.sh` (ADR 0037) |
+| `privacy-scan.py [RANGE]` | no | reads the commits of a range (default `origin/main..HEAD`), added lines and messages, for MAC addresses, serial numbers, private keys, tokens, home directories, private network addresses and e-mail addresses; `privacy-allow.txt` lists the values that are meant to be public; CI runs it for every pull request |
 | `scpi_validate.py --web-port 18080` | no; a desktop build on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `sim_validate.py --web-port 18080` | no; a desktop build on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `tests/` | no | the tests of the Python host tools, run by `check.sh test` |
