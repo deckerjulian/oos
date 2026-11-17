@@ -12,6 +12,11 @@ Added:
 - `tools/device-deploy.sh` deploys over SSH too (`OOS_SHELL=ssh`) and checks every uploaded file with SHA-256
   (unit, over telnet); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
+- `tools/device-test.py --changed BASE` runs only the device tests a change reaches (documents and CI: the six smoke
+  tests). A failed test runs again (`--retries`); one that passes then is reported as FLAKY. A failure that a known
+  run of main has too (`--known`, `--save-known`) is reported as KNOWN. Neither fails the run. The register
+  sequences are compared section by section, without the differences of the setup
+  ([device-testing.md](docs/device-testing.md)).
 - CI: every commit of a pull request needs a Signed-off-by line (ADR 0026); CI runs `tools/check.sh` itself.
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
