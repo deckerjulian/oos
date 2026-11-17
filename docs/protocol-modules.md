@@ -41,8 +41,8 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
    menu of every protocol goes through the layout lints. Add the module's own tests next to it, and add it to the
    list in `extended_decoders_decode_their_demo` (`ui/src/ui.rs`) with a time base that shows a whole frame and a field
    that must appear.
-5. **Try it** on the host: `cargo run` in `ui/` (see the README), Decode > Protocol, decoder on. With demo traffic the
-   signals come up on their channels by themselves.
+5. **Try it** on the host: `cargo run` in `ui/` ([wiki/Building.md](../wiki/Building.md#try-it-without-a-scope)),
+   Decode > Protocol, decoder on. With demo traffic the signals come up on their channels by themselves.
 
 ## Leaving decoders out of a build
 
