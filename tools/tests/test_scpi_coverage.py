@@ -91,10 +91,11 @@ class Coverage(unittest.TestCase):
         self.assertEqual(self.result()["words-docs"], (["SOURce", "SECRet"], 8))
 
     def test_words_missing_from_tests(self):
-        # the short form `:CHAN1:SCAL?` names neither CHANnel nor SCALe; `:timebase:main:scale?` names SCALe
+        # the short form `:CHAN1:SCAL?` names neither CHANnel nor SCALe; `:CHANnel1:OFFSet` names CHANnel with its
+        # number; `:timebase:main:scale?` names SCALe
         missing, total = self.result()["words-tests"]
         self.assertEqual(total, 8)
-        self.assertEqual(missing, ["CHANnel", "POSition", "SOURce", "CAX", "SECRet"])
+        self.assertEqual(missing, ["POSition", "SOURce", "CAX", "SECRet"])
 
     def test_numbered_forms_and_sequences(self):
         # a number after the word names it (`:CHANnel1`, `:MATH2`); not a longer word
@@ -131,7 +132,7 @@ class Coverage(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cov.main([str(self.root)]), 0)
-        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 5/8, queries-tests 2/6, "
+        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 4/8, queries-tests 2/6, "
                                          "fields-scpi 2/4 missing (--list names them)\n")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
