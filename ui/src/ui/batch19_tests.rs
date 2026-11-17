@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Batch 19: reference sheet, ref badge, peaks header, histogram header. One test per item that can be tested. OOS_SHOTS=<dir> writes pictures (b19-*).
-use super::dock::VKind;
-use super::meascatalog::Cat;
 use super::studio::StudioView;
 use super::*;
 

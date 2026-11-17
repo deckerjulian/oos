@@ -904,10 +904,12 @@ impl Ui {
     }
 
     fn studio_search_copy_from_trigger(&mut self) {
-        let Some(sp) = self.studio.search else { return };
+        if self.studio.search.is_none() {
+            return;
+        }
         let src = match self.m.trigger_wave() { w @ WaveId::Ch(_) => w, _ => WaveId::Ch(self.m.trig_src.min(n_ch() - 1)) };
         let slope = match self.m.slope { Slope::Rise => 0, Slope::Fall => 1, _ => 2 };
-        self.studio.search = Some(SearchSpec { src, level: self.m.trig_level, slope, ..sp });
+        self.studio.search = Some(SearchSpec { src, level: self.m.trig_level, slope });
     }
 
     fn studio_search_copy_to_trigger(&mut self) {

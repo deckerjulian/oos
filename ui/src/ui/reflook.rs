@@ -423,6 +423,7 @@ impl Ui {
         else {format!("{used} / {total} qualified")}
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(crate) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
         if index >= self.m.meas.len() {
             return;

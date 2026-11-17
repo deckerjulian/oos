@@ -269,8 +269,6 @@ pub(super) const GROUP_BAND: i32 = 14;
 const CHIP_H: i32 = 30;
 /// The two text lines of a pill need both fonts to fit the 30 px: at the Larger text size a pill keeps one line.
 const TWO_LINE_MAX: i32 = 30;
-/// A chip is drawn this high; its touch target is at least 40 px (`hit40`).
-pub(super) const TARGET: i32 = 40;
 const CHIP_Y: i32 = 5;
 
 /// A play triangle, 12 px high, left edge at `x`.
@@ -293,13 +291,6 @@ fn icon_bars(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
 pub(super) fn icon_cursors(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
     cv.fill(Rect::new(x, cy - 6, 2, 13), c);
     cv.fill(Rect::new(x + 7, cy - 6, 2, 13), c);
-}
-
-/// A screen on a foot.
-fn icon_view(cv: &mut Canvas, x: i32, cy: i32, c: Rgb) {
-    cv.round_outline(Rect::new(x, cy - 6, 15, 10), 1, c);
-    cv.hline(x + 4, x + 10, cy + 6, c);
-    cv.vline(x + 7, cy + 4, cy + 6, c);
 }
 
 /// A ring with teeth.
@@ -367,6 +358,7 @@ impl Ui {
     }
 
     /// What the badge at the left of the top bar says about the source of the waveforms.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_source(&self) -> (&'static str, Rgb) {
         if self.record_mode() { return (if self.sim_mode() { "SIM" } else { "REF" }, ACCENT); }
         match self.src {
@@ -381,6 +373,7 @@ impl Ui {
         self.m.layout == Layout::Studio && self.studio.view == StudioView::Offline && self.record_mode()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_badge_label(&self) -> &'static str {
         if self.studio_back_badge() { "Live" } else { self.studio_source().0 }
     }
@@ -568,7 +561,7 @@ impl Ui {
         let (y, h) = (bottom.y + 3, CHIP_H);
         let ph = h;
         let n = n_ch();
-        let mut right = bottom.right() - 4;
+        let right = bottom.right() - 4;
         // the hardware Panel button is gone from this bar: F6 (and the desktop window) still toggle the panel
         let panel: Option<Rect> = None;
         // the room the Panel button had goes to the time base and the trigger
@@ -923,6 +916,7 @@ impl Ui {
     }
 
     /// The picker over the "+ CH" chip: one row per channel that is off.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_ch_picker(&self) -> Option<Vec<(usize, Rect)>> {
         let (chans, _) = self.studio_picker_rows()?;
         (!chans.is_empty()).then_some(chans)
@@ -1482,12 +1476,14 @@ impl Ui {
     }
 
     /// What the cursors read, as one chip after the badges: the differences only.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_cursor_chip(&self, after: i32) -> Option<(Rect, String)> {
         let row = self.studio_row();
         self.studio_cursor_chip_at(after, row.y + (row.h - self.studio_chip_h()) / 2, self.studio_chip_h())
     }
 
     /// The same at a place: its top and its height.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(super) fn studio_cursor_chip_at(&self, after: i32, y: i32, h: i32) -> Option<(Rect, String)> {
         if self.m.cursor == CursorMode::Off { return None; }
         let badge = self.studio.cur_badge;
@@ -1929,6 +1925,7 @@ impl Ui {
 }
 
 /// Below this width the footer of the panel stacks its two buttons narrower, with shorter labels.
+#[cfg_attr(not(test), allow(dead_code))] // only the tests use it
 pub(super) const NARROW_PANEL_W: i32 = 250;
 /// Width of the measurement panel, docked or floating, and the height of a row in it.
 const MEAS_PANEL_W_FULL: i32 = 270;
@@ -1966,12 +1963,16 @@ pub(super) struct PanelGeo {
     pub collapse: Rect,
     pub list: Rect,
     pub page: usize,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub up: Rect,
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub down: Rect,
     pub add: Rect,
     /// the statistics button
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub stats: Rect,
     /// a short panel: a header and a footer of one row each
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub short: bool,
 }
 

@@ -325,6 +325,13 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
             t.rsv.push(x);
         }
     }
+    // the loader's random KASLR seed: kexec-tools refuses a tree whose /chosen/kaslr-seed is not 0 ("kaslr-seed is not
+    // wiped to 0", seen on the unit) and puts a new random one into a 0. The new kernel gets a fresh seed either way.
+    if let Some(c) = t.root.kid_mut("chosen") {
+        if c.prop("kaslr-seed").is_some() {
+            c.set("kaslr-seed", &[0; 8]);
+        }
+    }
     t.boot_cpu = r.boot_cpu;
     Ok((t.to_bytes(), n + rsv_n))
 }
@@ -370,6 +377,16 @@ mod tests {
         assert!(m.root.kid("memory").is_some() && m.root.kid("gone").is_none() && m.root.kid("gpu").is_some());
         assert_eq!(m.rsv, vec![(0x460_0000, 0x17000)], "nor its reservation");
         assert_eq!(n, 6);
+    }
+
+    #[test]
+    fn the_loaders_kaslr_seed_goes_in_as_zero() {
+        // kexec-tools refuses a tree with a seed that is not 0 and puts in a new random one
+        let old = node("", &[], vec![node("chosen", &[], vec![])]);
+        let run = node("", &[], vec![node("chosen", &[("kaslr-seed", &[1, 2, 3, 4, 5, 6, 7, 8])], vec![])]);
+        let (m, _) = with_loader_changes(&tree(old.clone(), vec![]), &tree(old, vec![]), &tree(run, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]));
     }
 
     #[test]

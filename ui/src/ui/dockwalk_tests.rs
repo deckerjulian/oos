@@ -91,10 +91,6 @@ fn open(u: &mut Ui, k: VKind) {
 /// The views of the walk.
 const WALK: [VKind; 7] = [VKind::Wave, VKind::Measure, VKind::Eye, VKind::Pane, VKind::Hist, VKind::Xy, VKind::Table];
 
-fn name_of(k: VKind) -> &'static str {
-    match k { VKind::Wave => "Waveform", VKind::Measure => "Measurements", VKind::Eye => "Eye", VKind::Pane => "Spectrum", VKind::Hist => "Histogram", VKind::Xy => "XY", VKind::Table => "Search", _ => "?" }
-}
-
 // ------------------------------------------------------------------------------------------------ the invariants
 
 /// Everything that must hold after every step.

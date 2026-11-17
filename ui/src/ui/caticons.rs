@@ -75,6 +75,7 @@ impl Ic<'_> {
         let c = self.acc;
         self.cv.circle(p.0, p.1, 2, c);
     }
+    #[allow(dead_code)] // part of the icon pen; no icon draws dots yet
     fn dots(&mut self, pts: &[P]) { for &(x, y) in pts { self.dot(x, y); } }
     fn tick(&mut self, x: f32, y0: f32, y1: f32) { self.dash_v(x, y0, y1); }
     fn mark(&mut self, a: P, b: P) { let c = self.acc; self.seg(a, b, c); }
@@ -93,6 +94,7 @@ impl Ic<'_> {
         let c = self.acc;
         self.cv.text(&self.f.s, x, y, s, c);
     }
+    #[allow(dead_code)] // part of the icon pen; no icon has a left tag yet
     fn tag_l(&mut self, s: &str) {
         if self.f.s.width(s) > self.r.w - 2 { return; }
         let y = self.r.y + self.f.s.size * 3 / 4;

@@ -109,6 +109,7 @@ impl Ui{
         Reading{value:f64::NAN,computing:true,reason:None,quality}
     }
     /// How many catalogue analyses have been started: browsing the Add list must not start any.
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests use it
     pub(in crate::ui) fn catalog_jobs_submitted(&self)->usize{self.azr.catalog_measurements.borrow().worker.as_ref().map_or(0,|w|w.submitted)}
     pub(in crate::ui) fn catalog_measurement_busy(&self)->bool{let pending=self.azr.catalog_measurements.borrow().pending.iter().map(|(_,r)|*r).collect::<Vec<_>>();
         pending.iter().any(|&(id,a,b,c,d)|cat_from(id).is_some_and(|cat|self.catalog_snapshot(cat,[a,b,c,d]).is_ok()))}

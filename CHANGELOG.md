@@ -90,6 +90,10 @@ Changed:
 
 Fixed:
 
+- An update with another device tree starts by kexec again (unit). The update copied the loader's random
+  `/chosen/kaslr-seed` into the new tree, and kexec-tools refuses a seed that is not 0, so the update stopped at its
+  kexec start with nothing installed. The seed now goes in as 0, and kexec-tools puts in a new random one. A scope
+  whose running build still has the old updater runs the fixed `oos-update` from `/tmp` once to take such an update.
 - Two fingers never open the long-press menu: a pinch that rested for half a second opened it mid-gesture.
 - Stacked lanes: the logic analyser keeps its own strip instead of drawing over the first lane.
 - The measurement band has no row of its own for page controls, and its names no longer run into the source.

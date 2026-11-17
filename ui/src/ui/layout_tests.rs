@@ -423,8 +423,6 @@ fn studio_docked_panel_lists_pages_pins_and_hands_back_the_width() {
     assert_eq!(u.studio.view, StudioView::Only);
 }
 
-const PANEL_ROW_TEST: i32 = 46;
-
 #[test]
 fn studio_list_scrolls_with_the_finger() {
     let mut u = twelve();

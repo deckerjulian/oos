@@ -34,18 +34,6 @@ fn shot(u: &mut Ui, name: &str) {
     }
 }
 
-fn touch(u: &mut Ui, phase: Phase, x: i32, y: i32) {
-    u.handle(Ev::Touch { id: 0, phase, x, y });
-    u.step(0.01);
-}
-
-fn tap(u: &mut Ui, r: Rect) {
-    let (x, y) = (r.x + r.w / 2, r.y + r.h / 2);
-    touch(u, Phase::Down, x, y);
-    touch(u, Phase::Up, x, y);
-    frame(u);
-}
-
 fn all_cats() -> Vec<Cat> { (0..512u16).filter_map(cat_from).collect() }
 
 #[test]
