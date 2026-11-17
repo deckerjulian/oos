@@ -66,8 +66,10 @@ const BOXES_MIN_H: i32 = 300;
 /// How long the right column takes to slide in or out.
 const SLIDE: f64 = 0.22;
 /// The tab that slides the column: wide enough for a finger, tall enough to see.
-const TAB_W: i32 = 40;
-const TAB_H: i32 = 52;
+const TAB_W: i32 = 14;
+const TAB_H: i32 = 44;
+/// The handle is drawn slim; a finger gets this much extra on each side.
+const TAB_REACH: i32 = 13;
 
 /// The rectangles of the page. They tile the area down to its bottom edge: the plots take what the text leaves.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -921,6 +923,12 @@ impl Ui {
         eye_tab_at(self.eye_page_rect(), &placed(self.eye_page_rect(), self.eye_column_open()))
     }
 
+    /// Where a finger can take the slim handle: 40 px wide, centred on it.
+    pub(super) fn eye_tab_hit(&self) -> Rect {
+        let t = self.eye_tab();
+        Rect::new(t.x - TAB_REACH, t.y, t.w + 2 * TAB_REACH, t.h)
+    }
+
     /// Slide the column the other way. A tap in the middle of a move reverses it.
     fn eye_slide(&mut self) {
         self.eye_from = self.eye_column_open();
@@ -934,7 +942,7 @@ impl Ui {
         if self.full_on() || !area.contains(x, y) || layout(area, false).charts[0].w == 0 {
             return false;
         }
-        if self.eye_tab().contains(x, y) {
+        if self.eye_tab_hit().contains(x, y) {
             self.eye_slide();
             return true;
         }
@@ -1184,9 +1192,9 @@ impl Ui {
             return;
         }
         let r = self.eye_tab();
-        cv.round(r, 6, PANEL_BG, 235);
-        cv.round_outline(r, 6, BTN_BORDER);
-        chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_to > 0.5 { 1 } else { -1 }, TEXT);
+        // a slim handle: three dots on a faint pill, no arrow box
+        cv.round(r, 7, PANEL_BG, 160);
+        for k in -1..=1 { cv.circle(r.x + r.w / 2, r.y + r.h / 2 + 7 * k, 2, DIM); }
     }
 
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
@@ -2093,9 +2101,11 @@ mod tests {
             ui.eye_from = open;
             ui.eye_to = open;
             ui.eye_t = ui.now;
-            let tab = ui.eye_tab();
+            let tab = ui.eye_tab_hit();
             assert!(!overlaps(tab, ui.view_btn()), "open {} tab {:?} btn {:?}", open, tab, ui.view_btn());
             assert!(tab.w >= 40 && tab.h >= 40, "{:?}", tab);
+            let tab = ui.eye_tab();
+            assert!(tab.w <= 16, "the handle stays slim: {:?}", tab);
             assert!(ui.eye_page_rect().contains(tab.x + 1, tab.y + 1) && ui.eye_page_rect().contains(tab.x + tab.w - 2, tab.y + tab.h - 2), "{:?}", tab);
         }
     }
