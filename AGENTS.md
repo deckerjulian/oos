@@ -76,8 +76,9 @@ work on its own (ADR 0039). Everything above holds for it, and:
   `tools/privacy-scan.py` before every push, and the maintainer's private check (a local hook). A change that is not
   meant to change behaviour says `Behaviour: unchanged`; one that is says what changes.
 - At most five of its pull requests are open at once, and no two change the same file.
-- It reads Copilot's review of each pull request, fixes what is right, answers what is not, and resolves the
-  threads; `review` passes only then. It never makes a check pass by weakening it.
+- It asks for Copilot's review of each pull request under the maintainer's account (`gh pr edit N --add-reviewer
+  @copilot`, not through the App: GitHub asks Copilot by itself only for a person's pull request), reads it, fixes
+  what is right, answers what is not, and resolves the threads; `review` passes only then. It never makes a check pass by weakening it.
 - A change in the hardware paths (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`, `fpgad/`, `boot/`, `kernel/`,
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull

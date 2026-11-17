@@ -31,7 +31,7 @@ and ADR 0038 let the maintainer's own pull requests merge themselves. After the 
   commits carry the maintainer's sign-off: the maintainer answers for them (ADR 0026).
 - **Its pull requests need no waiting time** (`waited` passes for them as for the maintainer's own) and **merge by
   themselves** once the required checks pass: `test`, `compare`, `owner`, `unit` and now **`review`**: Copilot has
-  reviewed the newest commit (it reviews on every push) and every comment it left is answered and resolved. The label `hold` stops any of them.
+  reviewed it (once per pull request) and every comment it left is answered and resolved. The label `hold` stops any of them.
 - **A change in the hardware paths is tried on the unit first.** When the maintainer has put the scope on the bench
   for it in that session (AGENTS.md, "Never"), the agent tries the change there (deploy to RAM,
   `tools/device-test.py`, restore what was installed) and then sets `unit-tested`, saying in the pull request what
@@ -53,7 +53,10 @@ and ADR 0038 let the maintainer's own pull requests merge themselves. After the 
 - The checks are the whole brake: what `compare`, the tests, Clippy, the ratchet and Copilot do not see goes in.
   Timing and calibrated values are not compared (ADR 0032); a hardware path is only as good as the run on the unit.
 - Copilot's review becomes a gate: when it does not come (credits used up, an outage), the agent's pull requests
-  wait. Dependabot's pull requests that only move the commits of actions get no review and need none.
+  wait. GitHub does not ask Copilot by itself for a pull request opened by an App (the review is counted against
+  the licence of the person who asks for it), so the agent asks with `gh pr edit N --add-reviewer @copilot` under
+  the maintainer's account. One review per pull request keeps the credits low; what is pushed after it is read by
+  the checks only. Dependabot's pull requests that only move the commits of actions get no review and need none.
 - The App's private key lives with the maintainer (outside the tree) and as a secret of the repository; whoever has
   it can open and merge pull requests that pass the checks.
 - Worth a second look when a merged change of the agent has to be reverted, or when the agent works without the

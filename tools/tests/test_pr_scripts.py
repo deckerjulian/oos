@@ -164,7 +164,7 @@ class PullRequests(unittest.TestCase):
         self.copilot("### Needs a closer look\n\n**2 open issues**\n", open_threads=0)
         self.assertEqual(self.gate()["review"], "success", "every comment of Copilot's resolved; others' do not count")
         self.copilot("### Looks good\n\n**No open issues** 🎉\n", commit="older")
-        self.assertEqual(self.gate()["review"], "pending", "a review of an older commit")
+        self.assertEqual(self.gate()["review"], "success", "one review per pull request, of whichever commit")
 
     def test_hold(self):
         self.pull(["ui/src/ui.rs"], labels=["hold"])
