@@ -1,6 +1,6 @@
 name: Problem report
 description: Something does not work on a scope or on the host
-labels: [bug]
+labels: [type/fix]
 body:
   - type: markdown
     attributes:

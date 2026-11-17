@@ -1,6 +1,6 @@
 name: Wish
 description: Something OOS should do, or do differently
-labels: [enhancement]
+labels: [type/feat]
 body:
   - type: textarea
     id: problem

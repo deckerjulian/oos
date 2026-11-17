@@ -92,8 +92,8 @@ The same way for everyone, the maintainer included
 - **Before you start something larger, open an issue** (or comment on an existing one) and say what you take. One issue
   per piece of work avoids two people building the same thing.
 - **Issues are the to-do list.** Reports from the forum or elsewhere become issues, so they are found and closed in one
-  place; the label says what kind they are (bug, hardware, enhancement, documentation, process). Three more say what
-  an issue needs: `agent-ready` (a task with a goal, a "done when" and limits, small enough for one pull request, for
+  place; the label says what kind they are (`type/fix`, `type/feat`, `type/docs`, `type/process`, and `hardware` for
+  a report from a scope). Three more say what an issue needs: `agent-ready` (a task with a goal, a "done when" and limits, small enough for one pull request, for
   a person or a coding agent), `needs-unit` (it has to be tried on a scope before it is merged or closed), and `flaky`
   (a test that fails now and then; it is fixed, not run again). The issue forms ask for what each kind needs.
 - **Draft pull requests are welcome early.** A draft shows where you are going before it is done and lets others plan
