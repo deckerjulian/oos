@@ -19,8 +19,10 @@ two folders they differ: Cargo puts the absolute path of each crate into the nam
 ## Decision
 
 - **`unit` also passes when the programs for the scope are byte-identical to the base's.** CI's job `scope`
-  (`tools/scope-binaries.sh`) builds oos-ui and oos-fpgad for `aarch64-unknown-linux-musl` from the pull request and
-  from its base, one after the other in the same folder, with the folder's path replaced, and compares them. When
+  (`tools/scope-binaries.sh`) builds the programs the image holds from the crates (oos-ui, oos-fpgad, oos-update) as
+  `boot/build-dev-image.sh` builds them (release with its link-time optimisation, the crates' target flags, the
+  default decoders) from the pull request and from its base, one after the other in the same folder, with the
+  folder's path replaced, and compares them. When
   they differ it keeps the artifact `scope-binaries-differ`; `tools/pr-gate.sh` reads both.
 - It runs only for a pull request that touches a path of a crate a unit proves and nothing of the image (`boot/`,
   `kernel/`, `rootfs/`): what the image holds besides the two programs is not compared.
@@ -39,7 +41,7 @@ two folders they differ: Cargo puts the absolute path of each crate into the nam
 - Tests, comments, renames that the compiler leaves without trace, and changes of the host's build settings in the
   hardware paths go in without a unit. A change of a register sequence or of the code that drives the scope still
   needs one.
-- The job takes two release builds without link-time optimisation (a few minutes) and runs next to the others.
+- The job takes two release builds as the image's (several minutes) and runs next to the others.
 - Two programs that differ only in something that never runs still ask for a unit: the comparison is byte for byte.
 - The GPU helper (`gpu/`) is not compared; it is not a path of `unit` either.
 
