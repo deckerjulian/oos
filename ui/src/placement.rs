@@ -48,7 +48,14 @@ impl Plan {
 
 /// (cpu, capacity) of every CPU under `root` (`/sys/devices/system/cpu`) that has a `cpu_capacity` file.
 pub fn capacities(root: &Path) -> Vec<(usize, u32)> {
-    (0..64).filter_map(|c| std::fs::read_to_string(root.join(format!("cpu{}/cpu_capacity", c))).ok().and_then(|v| v.trim().parse().ok()).map(|v| (c, v))).collect()
+    (0..64)
+        .filter_map(|c| {
+            std::fs::read_to_string(root.join(format!("cpu{}/cpu_capacity", c)))
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .map(|v| (c, v))
+        })
+        .collect()
 }
 
 /// The number of little cores (None on a SoC whose cores are all alike, or without `cpu_capacity`): the deposit
@@ -79,7 +86,10 @@ pub fn place(r: Role) {
     #[cfg(target_os = "linux")]
     {
         static PLAN: std::sync::OnceLock<Option<Plan>> = std::sync::OnceLock::new();
-        let Some(plan) = PLAN.get_or_init(|| Plan::from_capacities(&capacities(Path::new("/sys/devices/system/cpu")))) else { return };
+        let Some(plan) = PLAN.get_or_init(|| Plan::from_capacities(&capacities(Path::new("/sys/devices/system/cpu"))))
+        else {
+            return;
+        };
         let cpus = plan.cpus(r);
         // SAFETY: a local CPU set for the calling thread
         let rc = unsafe {
@@ -108,7 +118,11 @@ mod tests {
 
     fn fake_sysfs(cap: &[(usize, u32)]) -> std::path::PathBuf {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!("oos-place-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let root = std::env::temp_dir().join(format!(
+            "oos-place-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         for &(c, v) in cap {
             let d = root.join(format!("cpu{}", c));
             std::fs::create_dir_all(&d).unwrap();

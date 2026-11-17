@@ -105,17 +105,41 @@ pub struct Def {
 }
 
 /// A measurement the module computes.
-pub const fn module(id: u16, name: &'static str, unit: &'static str, mark: Mark, roles: &'static [usize], places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn module(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    roles: &'static [usize],
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Module, roles, places }
 }
 
 /// A standard measurement of the scope on source A.
-pub const fn standard(id: u16, name: &'static str, unit: &'static str, mark: Mark, k: Meas, places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn standard(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    k: Meas,
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Standard(k), roles: &[0], places }
 }
 
 /// A two-source variant of the scope from source A to source B.
-pub const fn pair(id: u16, name: &'static str, unit: &'static str, mark: Mark, k: usize, places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn pair(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    k: usize,
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Pair(k), roles: &[0, 1], places }
 }
 
@@ -144,20 +168,71 @@ pub const DPT: u8 = 7;
 const AB: [&str; 4] = ["Source A", "Source B", "Source C", "Source D"];
 
 pub const CATEGORIES: [Category; 8] = [
-    Category { name: "Basic", slots: AB, one: "Source", min: 1, groups: &["AMPLITUDE", "AVERAGE & STATISTICS", "TIMING", "EDGES & COUNTS", "PER CYCLE"] },
-    Category { name: "Two sources", slots: AB, one: "Source", min: 2, groups: &["DELAY", "PHASE", "SKEW", "SETUP & HOLD"] },
-    Category { name: "Serial & PAM", slots: AB, one: "Source", min: 1, groups: &["CLOCK & UNIT INTERVAL", "PAM LEVELS"] },
-    Category { name: "Jitter & eye", slots: AB, one: "Source", min: 1, groups: &["JITTER", "EYE", "AMPLITUDE", "TIMING"] },
+    Category {
+        name: "Basic",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["AMPLITUDE", "AVERAGE & STATISTICS", "TIMING", "EDGES & COUNTS", "PER CYCLE"],
+    },
+    Category {
+        name: "Two sources",
+        slots: AB,
+        one: "Source",
+        min: 2,
+        groups: &["DELAY", "PHASE", "SKEW", "SETUP & HOLD"],
+    },
+    Category {
+        name: "Serial & PAM",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["CLOCK & UNIT INTERVAL", "PAM LEVELS"],
+    },
+    Category {
+        name: "Jitter & eye",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["JITTER", "EYE", "AMPLITUDE", "TIMING"],
+    },
     Category {
         name: "Power",
         slots: ["Voltage source", "Current source", "Source C", "Source D"],
         one: "Voltage source",
         min: 2,
-        groups: &["INPUT", "AMPLITUDE", "TIMING", "SWITCHING", "MAGNETICS", "OUTPUT", "PSRR & IMPEDANCE", "POWER FACTOR"],
+        groups: &[
+            "INPUT",
+            "AMPLITUDE",
+            "TIMING",
+            "SWITCHING",
+            "MAGNETICS",
+            "OUTPUT",
+            "PSRR & IMPEDANCE",
+            "POWER FACTOR",
+        ],
     },
-    Category { name: "Motor drive", slots: ["Phase A", "Phase B", "Phase C", "Torque"], one: "Phase A", min: 3, groups: &["DQ0 TRANSFORM", "SHAFT & EFFICIENCY"] },
-    Category { name: "Power rails", slots: ["Rail", "Input", "Source C", "Source D"], one: "Rail", min: 2, groups: &["RAIL SEQUENCING"] },
-    Category { name: "Double pulse", slots: ["Voltage", "Current", "Gate", "Source D"], one: "Voltage", min: 3, groups: &["SWITCHING", "DIODE RECOVERY"] },
+    Category {
+        name: "Motor drive",
+        slots: ["Phase A", "Phase B", "Phase C", "Torque"],
+        one: "Phase A",
+        min: 3,
+        groups: &["DQ0 TRANSFORM", "SHAFT & EFFICIENCY"],
+    },
+    Category {
+        name: "Power rails",
+        slots: ["Rail", "Input", "Source C", "Source D"],
+        one: "Rail",
+        min: 2,
+        groups: &["RAIL SEQUENCING"],
+    },
+    Category {
+        name: "Double pulse",
+        slots: ["Voltage", "Current", "Gate", "Source D"],
+        one: "Voltage",
+        min: 3,
+        groups: &["SWITCHING", "DIODE RECOVERY"],
+    },
 ];
 
 /// The sources of one computation, on one common time grid (the slowest source's sample spacing over the time all of
@@ -324,13 +399,21 @@ mod tests {
     fn modules_are_well_formed() {
         let (mut ids, mut names, mut keys) = (HashSet::new(), HashSet::new(), HashSet::new());
         for m in MODULES {
-            assert!(!m.key().is_empty() && m.key().chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "key {:?}", m.key());
+            assert!(
+                !m.key().is_empty() && m.key().chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "key {:?}",
+                m.key()
+            );
             assert!(keys.insert(m.key()), "key {} twice", m.key());
             assert!(!m.defs().is_empty(), "{}: no measurements", m.key());
             for d in m.defs() {
                 assert!(ids.insert(d.id), "{}: id {} twice", m.key(), d.id);
                 assert!(names.insert(d.name), "{}: name {} twice", m.key(), d.name);
-                assert!(!d.places.is_empty() && d.places.iter().all(|p| (p.0 as usize) < CATEGORIES.len()), "{}: place", d.name);
+                assert!(
+                    !d.places.is_empty() && d.places.iter().all(|p| (p.0 as usize) < CATEGORIES.len()),
+                    "{}: place",
+                    d.name
+                );
                 assert!(!d.roles.is_empty() && d.roles.iter().all(|&r| r < 4), "{}: roles", d.name);
                 assert!(d.blurb.ends_with('.'), "{}: description", d.name);
             }
@@ -384,7 +467,12 @@ mod tests {
                 continue;
             }
             let v = md.compute(&x, &ids);
-            assert_eq!(v.values.iter().map(|x| x.0).collect::<Vec<_>>(), ids, "{}: one value per id, in order", md.key());
+            assert_eq!(
+                v.values.iter().map(|x| x.0).collect::<Vec<_>>(),
+                ids,
+                "{}: one value per id, in order",
+                md.key()
+            );
         }
     }
 }

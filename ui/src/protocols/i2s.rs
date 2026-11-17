@@ -45,14 +45,31 @@ impl Protocol for I2s {
     }
     /// The demo: WS on CH1, SD on CH2, SCK on CH3, all three shown; 16-bit words; the trigger on WS falling.
     fn setup(&self) -> Setup {
-        Setup { src: [Some(1), Some(2), Some(0), None], show: true, rows: &[(Row::Bits, 16)], trig: Some(DemoTrig { role: 2, slope: Slope::Fall, idle: 0.0, level: 1.65 }), ..Setup::default() }
+        Setup {
+            src: [Some(1), Some(2), Some(0), None],
+            show: true,
+            rows: &[(Row::Bits, 16)],
+            trig: Some(DemoTrig { role: 2, slope: Slope::Fall, idle: 0.0, level: 1.65 }),
+            ..Setup::default()
+        }
     }
     fn demo(&self) -> Option<Demo> {
         // `i2s_logic` gives (SCK, WS, SD)
-        let (sck, ws, sd) = oos_dsp::sim::i2s_logic(&[(0x1234, -0x1234), (0x4000, -0x4000), (0x7fff, 0x0001), (0, -1)], 16, 48e3, 0.0, 3.3);
+        let (sck, ws, sd) = oos_dsp::sim::i2s_logic(
+            &[(0x1234, -0x1234), (0x4000, -0x4000), (0x7fff, 0x0001), (0, -1)],
+            16,
+            48e3,
+            0.0,
+            3.3,
+        );
         Some(Demo {
             period: PERIOD,
-            lines: [Some(Box::new(move |t| sd.v(T0 + t))), Some(Box::new(move |t| sck.v(T0 + t))), Some(Box::new(move |t| ws.v(T0 + t))), None],
+            lines: [
+                Some(Box::new(move |t| sd.v(T0 + t))),
+                Some(Box::new(move |t| sck.v(T0 + t))),
+                Some(Box::new(move |t| ws.v(T0 + t))),
+                None,
+            ],
         })
     }
 }

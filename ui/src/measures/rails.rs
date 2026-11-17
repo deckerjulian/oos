@@ -13,9 +13,33 @@ pub const RAIL_TURN: u16 = 152;
 pub const DC_RAIL: u16 = 153;
 
 static DEFS: [Def; 4] = [
-    module(RAIL_OVER, "Overshoot", "V", Pulse, &[0], &[(RAILS, "RAIL SEQUENCING")], "How far the rail rises above its reference."),
-    module(RAIL_UNDER, "Undershoot", "V", Pulse, &[0], &[(RAILS, "RAIL SEQUENCING")], "How far the rail falls below its reference."),
-    module(RAIL_TURN, "Turn-on Overshoot", "V", Pulse, &[0, 1], &[(RAILS, "RAIL SEQUENCING")], "Highest rail voltage after the input rises through mid-level."),
+    module(
+        RAIL_OVER,
+        "Overshoot",
+        "V",
+        Pulse,
+        &[0],
+        &[(RAILS, "RAIL SEQUENCING")],
+        "How far the rail rises above its reference.",
+    ),
+    module(
+        RAIL_UNDER,
+        "Undershoot",
+        "V",
+        Pulse,
+        &[0],
+        &[(RAILS, "RAIL SEQUENCING")],
+        "How far the rail falls below its reference.",
+    ),
+    module(
+        RAIL_TURN,
+        "Turn-on Overshoot",
+        "V",
+        Pulse,
+        &[0, 1],
+        &[(RAILS, "RAIL SEQUENCING")],
+        "Highest rail voltage after the input rises through mid-level.",
+    ),
     module(DC_RAIL, "DC Rail", "V", Pulse, &[0], &[(RAILS, "RAIL SEQUENCING")], "Mean voltage of the rail."),
 ];
 

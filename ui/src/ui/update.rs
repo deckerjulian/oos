@@ -41,7 +41,9 @@ impl Ui {
         match state() {
             None => d.push("No update installed yet".into()),
             Some(st) => {
-                let b = |e: &Option<update::Entry>| e.as_ref().map_or("-".to_string(), |e| update::short(&e.build).to_string());
+                let b = |e: &Option<update::Entry>| {
+                    e.as_ref().map_or("-".to_string(), |e| update::short(&e.build).to_string())
+                };
                 d.push(format!("Recovery {}{}", b(&st.current), if st.trial.is_some() { " (on trial)" } else { "" }));
                 d.push(format!("Rollback image {}", b(&st.previous)));
                 d.push(format!("Boot mode {}", if st.persist { "persist" } else { "one-shot" }));
@@ -69,7 +71,11 @@ impl Ui {
 
     /// System > Boot mode.
     pub(super) fn boot_mode(&self) -> &'static str {
-        if state().is_some_and(|s| s.persist) { "Persist" } else { "One-shot" }
+        if state().is_some_and(|s| s.persist) {
+            "Persist"
+        } else {
+            "One-shot"
+        }
     }
 
     /// Persist keeps OOS as the system from now on, One-shot makes the next power-on start stock.
@@ -182,7 +188,9 @@ impl Ui {
             }
         }
         // (not in unit tests: a notice file on the build machine must not open dialogs there)
-        if let Ok(n) = std::fs::read_to_string(NOTICE).map_err(|_| ()).and_then(|n| if cfg!(test) { Err(()) } else { Ok(n) }) {
+        if let Ok(n) =
+            std::fs::read_to_string(NOTICE).map_err(|_| ()).and_then(|n| if cfg!(test) { Err(()) } else { Ok(n) })
+        {
             let n = n.trim().to_string();
             if !n.is_empty() && n != self.upd.notice_shown && self.dialog.is_none() && !self.start_up_active() {
                 self.upd.notice_shown = n.clone();
@@ -250,9 +258,13 @@ mod tests {
 
     #[test]
     fn wraps_at_words() {
-        let l = wrap_lines("Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored.", 30);
+        let l =
+            wrap_lines("Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored.", 30);
         assert!(l.iter().all(|s| s.chars().count() <= 30), "{:?}", l);
-        assert_eq!(l.join(" "), "Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored.");
+        assert_eq!(
+            l.join(" "),
+            "Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored."
+        );
     }
 
     #[test]

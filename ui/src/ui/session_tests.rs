@@ -17,7 +17,9 @@ fn live_setup(u: &Ui) -> (Vec<bool>, usize, Vec<(Meas, WaveId)>) {
 #[test]
 fn trigger_source_back_on_a_channel_brings_back_the_live_setup() {
     let mut u = crate::ui::testkit::demo_ui();
-    for c in 0..3 { u.m.ch[c].on = true; }
+    for c in 0..3 {
+        u.m.ch[c].on = true;
+    }
     u.m.tscale = 10;
     u.m.meas = vec![(Meas::Freq, WaveId::Ch(1)), (Meas::Rise, WaveId::Ch(2))];
     u.step(0.05);
@@ -81,7 +83,11 @@ fn take_over_and_live_bring_back_the_live_setup() {
         u.adjust(Item::Offline, 1);
         u.step(0.05);
         assert!(u.record_mode());
-        if with_live { u.adjust(Item::Offline, -1); } else { u.return_to_live(); }
+        if with_live {
+            u.adjust(Item::Offline, -1);
+        } else {
+            u.return_to_live();
+        }
         u.step(0.05);
         assert!(!u.record_mode() && u.workflow_hold.is_none());
         assert_eq!((live_setup(&u), u.m.view), before, "with live: {with_live}");

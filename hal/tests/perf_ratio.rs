@@ -145,7 +145,8 @@ const RUNS: usize = 5;
 const CAL: [(f64, f64); 4] = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
 
 /// (mask, frame bytes, frames) of one ~4 MB batch per live set-up.
-const CASES: [(u32, usize, usize); 5] = [(1, 2816, 1420), (1, 2500, 1600), (1, 200_000, 20), (3, 4000, 1000), (0xf, 8000, 500)];
+const CASES: [(u32, usize, usize); 5] =
+    [(1, 2816, 1420), (1, 2500, 1600), (1, 200_000, 20), (3, 4000, 1000), (0xf, 8000, 500)];
 
 /// One 4 MB batch, read + decode: upstream's path against the fork's. Fails when the fork's decode is less than 2x
 /// faster (a merge that brought back deinterleave + volts in the batch loop, or slowed the fused decode; measured
@@ -186,7 +187,10 @@ fn bench_batch_decode() {
             },
         );
         let ratio = dec_old / dec_new;
-        eprintln!("mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms ({:.2}x)", mask, frames, frame, read_old, read_new, dec_old, dec_new, ratio);
+        eprintln!(
+            "mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms ({:.2}x)",
+            mask, frames, frame, read_old, read_new, dec_old, dec_new, ratio
+        );
         assert!(ratio >= 2.0, "mask {:#x}: fused decode only {:.2}x the two-pass one", mask, ratio);
         assert!(read_old / read_new >= 1.0, "mask {:#x}: the kept DMA buffer reads slower than a new vector", mask);
     }

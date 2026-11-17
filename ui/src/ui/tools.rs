@@ -7,11 +7,11 @@
 use super::*;
 
 #[cfg(test)]
-#[path = "scpi_helpers_tests.rs"]
-mod scpi_helpers_tests;
-#[cfg(test)]
 #[path = "frozen41_helpers_tests.rs"]
 mod frozen41_helpers_tests;
+#[cfg(test)]
+#[path = "scpi_helpers_tests.rs"]
+mod scpi_helpers_tests;
 use oos_dsp::measure::{burst_width, duration_n, time_outside, Analysis};
 /// Statistics of the on-screen histogram, in the source channel's units.
 pub(crate) struct HistStat {
@@ -25,7 +25,6 @@ pub(crate) struct HistStat {
     pub bin: f64,
     pub sigma: f64,
 }
-
 
 /// A bounded selection can hold the complete catalog for every analog channel and reference slot.
 pub(super) const MEAS_MAX: usize = MEAS_SELECTION_MAX;
@@ -94,8 +93,9 @@ impl MeasRow {
     }
 
     fn fmt_digits(&self, v: f64, digits: usize) -> String {
-        if self.computing { "Computing".into() }
-        else if !v.is_finite() {
+        if self.computing {
+            "Computing".into()
+        } else if !v.is_finite() {
             "----".into()
         } else if self.unit == "\u{b0}" {
             format!("{:.1}\u{b0}", v)
@@ -106,42 +106,70 @@ impl MeasRow {
 }
 
 impl Ui {
-    pub(super) fn measurement_count(&self) -> usize { self.m.meas.len() + self.m.meas2.len() + self.m.cat.len() }
+    pub(super) fn measurement_count(&self) -> usize {
+        self.m.meas.len() + self.m.meas2.len() + self.m.cat.len()
+    }
 
-    pub(crate) fn catalog_export_values(&self) -> Vec<(u16,[WaveId;4],f64)> {
-        self.m.cat.iter().filter_map(|&(id,a,b,c,d)| self.cat_row(id,a,b,c,d).map(|row| (id,[a,b,c,d],row.v))).collect()
+    pub(crate) fn catalog_export_values(&self) -> Vec<(u16, [WaveId; 4], f64)> {
+        self.m
+            .cat
+            .iter()
+            .filter_map(|&(id, a, b, c, d)| self.cat_row(id, a, b, c, d).map(|row| (id, [a, b, c, d], row.v)))
+            .collect()
     }
 
     pub(super) fn selected_measurement_label(&self, index: usize) -> String {
-        if let Some(&(kind, source)) = self.m.meas.get(index) { return format!("{} {}", self.wave_name(source), meascatalog::meas_long_name(kind)); }
+        if let Some(&(kind, source)) = self.m.meas.get(index) {
+            return format!("{} {}", self.wave_name(source), meascatalog::meas_long_name(kind));
+        }
         let index = index.saturating_sub(self.m.meas.len());
         if let Some(&(kind, a, b)) = self.m.meas2.get(index) {
             return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), meascatalog::pair_long_name(kind));
         }
-        let Some(&(id, a, b, c, d)) = self.m.cat.get(index.saturating_sub(self.m.meas2.len())) else { return String::new() };
-        self.catalog_source_label(id, [a,b,c,d])
+        let Some(&(id, a, b, c, d)) = self.m.cat.get(index.saturating_sub(self.m.meas2.len())) else {
+            return String::new();
+        };
+        self.catalog_source_label(id, [a, b, c, d])
     }
 
     pub(super) fn remove_measurement(&mut self, index: usize) {
         if index < self.m.meas.len() {
-            let entry = self.m.meas.remove(index); self.meas_own.remove(&entry);
+            let entry = self.m.meas.remove(index);
+            self.meas_own.remove(&entry);
         } else if index < self.m.meas.len() + self.m.meas2.len() {
             self.m.meas2.remove(index - self.m.meas.len());
         } else if index < self.measurement_count() {
             self.m.cat.remove(index - self.m.meas.len() - self.m.meas2.len());
-        } else { return; }
-        self.meas_cfg = None; self.clear_measurement_statistics(); self.relayout();
+        } else {
+            return;
+        }
+        self.meas_cfg = None;
+        self.clear_measurement_statistics();
+        self.relayout();
     }
 
-    pub(super) fn accept_catalog_stat(&mut self, entry: (u16,WaveId,WaveId,WaveId,WaveId), value: f64, capture: u64) {
-        if capture == 0 || capture != self.wfm_total || self.record_mode() || !value.is_finite() { return; }
+    pub(super) fn accept_catalog_stat(
+        &mut self,
+        entry: (u16, WaveId, WaveId, WaveId, WaveId),
+        value: f64,
+        capture: u64,
+    ) {
+        if capture == 0 || capture != self.wfm_total || self.record_mode() || !value.is_finite() {
+            return;
+        }
         let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };
         let index = self.m.meas.len() + self.m.meas2.len() + index;
         self.mstat.resize(self.measurement_count(), MStat::default());
         let stat = &mut self.mstat[index];
-        if stat.n == 0 { stat.min = value; stat.max = value; }
-        stat.n += 1; stat.sum += value; stat.sumsq += value * value;
-        stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+        if stat.n == 0 {
+            stat.min = value;
+            stat.max = value;
+        }
+        stat.n += 1;
+        stat.sum += value;
+        stat.sumsq += value * value;
+        stat.min = stat.min.min(value);
+        stat.max = stat.max.max(value);
     }
 
     /// While a large record of channel `c` is measured in the background with the settings of the last one: the value
@@ -178,12 +206,18 @@ impl Ui {
                     return f64::NAN;
                 }
             }
-            if Self::channel_basic_kind(k) { return self.channel_basic_reading(channel, k).unwrap_or_else(|| self.meas_while_computing(channel, k)); }
+            if Self::channel_basic_kind(k) {
+                return self.channel_basic_reading(channel, k).unwrap_or_else(|| self.meas_while_computing(channel, k));
+            }
         }
         match self.meas_analysis(id) {
             Some((a, t0)) => {
                 let value = self.cached_measurement_reading(id, k, &a).unwrap_or_else(|| self.meas_of(&a, k));
-                if matches!(k, Meas::TVmax | Meas::TVmin) { t0 + value } else { value }
+                if matches!(k, Meas::TVmax | Meas::TVmin) {
+                    t0 + value
+                } else {
+                    value
+                }
             }
             None if matches!(id, WaveId::Ch(_)) => self.meas_while_computing(id.ch().unwrap_or(0), k),
             None => f64::NAN,
@@ -203,7 +237,13 @@ impl Ui {
             .iter()
             .map(|&(k, id)| {
                 let val = self.meas_number(id, k);
-                MeasRow { name: k.name().to_string(), src: id, v: val, unit: self.meas_unit(id, k), computing: !val.is_finite() && self.meas_number_computing(id, k) }
+                MeasRow {
+                    name: k.name().to_string(),
+                    src: id,
+                    v: val,
+                    unit: self.meas_unit(id, k),
+                    computing: !val.is_finite() && self.meas_number_computing(id, k),
+                }
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
@@ -214,8 +254,15 @@ impl Ui {
                 WaveId::Ref(i) => format!("R{}", i + 1),
             };
             let unit = pair_unit(k);
-            v.push(MeasRow { name: format!("{} {}-{}", name, tag(a), tag(b)), src: a, v: val, unit,
-                computing: self.measurement_computing(a) || self.measurement_computing(b) || self.pair_measurement_computing(k, a, b) });
+            v.push(MeasRow {
+                name: format!("{} {}-{}", name, tag(a), tag(b)),
+                src: a,
+                v: val,
+                unit,
+                computing: self.measurement_computing(a)
+                    || self.measurement_computing(b)
+                    || self.pair_measurement_computing(k, a, b),
+            });
         }
         for &(id, a, b, c, d) in &self.m.cat {
             if let Some(row) = self.cat_row(id, a, b, c, d) {
@@ -243,9 +290,7 @@ impl Ui {
                 }
                 self.channel_measurement(c, true)
             }
-            WaveId::Ref(i) => {
-                self.reference_measurement(i)
-            }
+            WaveId::Ref(i) => self.reference_measurement(i),
         }
     }
 
@@ -284,10 +329,22 @@ impl Ui {
     pub(super) fn meas_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::MeasIdle => if m.meas_idle > 0.0 { si_short(m.meas_idle, "s") } else { "period".into() },
+            Item::MeasIdle => {
+                if m.meas_idle > 0.0 {
+                    si_short(m.meas_idle, "s")
+                } else {
+                    "period".into()
+                }
+            }
             Item::MeasOutside => format!("{:?}", m.meas_out),
             Item::MeasN => m.meas_n.to_string(),
-            Item::MeasEdges => if m.meas_data { "Data".into() } else { "Clock".into() },
+            Item::MeasEdges => {
+                if m.meas_data {
+                    "Data".into()
+                } else {
+                    "Clock".into()
+                }
+            }
             Item::MeasRefs => format!("{:.0}/{:.0}", m.meas_lpct * 100.0, m.meas_hpct * 100.0),
             Item::MeasGate => self.measurement_gate_label().into(),
             Item::MeasTsetup => si_short(m.meas_tsetup, "s"),
@@ -309,7 +366,9 @@ impl Ui {
     pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
             Item::MeasGate => {
-                if d.rem_euclid(2) != 0 { self.set_measurement_full_record(!self.m.meas_full_record); }
+                if d.rem_euclid(2) != 0 {
+                    self.set_measurement_full_record(!self.m.meas_full_record);
+                }
             }
             Item::MeasIdle => {
                 let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };
@@ -325,7 +384,11 @@ impl Ui {
                 }
             }
             Item::MeasOutside => {
-                let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
+                let all = [
+                    oos_dsp::measure::Outside::Above,
+                    oos_dsp::measure::Outside::Below,
+                    oos_dsp::measure::Outside::Both,
+                ];
                 let i = all.iter().position(|&x| x == self.m.meas_out).unwrap_or(2);
                 self.m.meas_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
             }
@@ -364,7 +427,9 @@ impl Ui {
         if let Some(i) = self.m.meas2.iter().position(|x| *x == e) {
             self.m.meas2.remove(i);
         } else {
-            if !self.meas_make_room() { return; }
+            if !self.meas_make_room() {
+                return;
+            }
             self.m.meas2.push(e);
         }
         self.clear_measurement_statistics();
@@ -374,7 +439,12 @@ impl Ui {
     /// Off the hardware the counter is worked out from the records (`counter_update`).
     pub(super) fn counter_poll(&mut self) {
         let m = &self.m;
-        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant { ch: m.cnt_src, mode: m.cnt_mode.min(2), digits: m.cnt_digits, clear: self.cnt_clear });
+        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant {
+            ch: m.cnt_src,
+            mode: m.cnt_mode.min(2),
+            digits: m.cnt_digits,
+            clear: self.cnt_clear,
+        });
         let Some(r) = self.src.hw_counter(want) else { return };
         match r {
             Some(r) if Some(r.n) != self.cnt_hw.map(|x| x.n) => {
@@ -466,7 +536,8 @@ impl Ui {
     /// latest reading.
     pub(super) fn dvm_poll(&mut self) {
         let m = &self.m;
-        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw())
+            .then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
         if let Some(r) = self.src.hw_dvm(want) {
             self.dvm_hw = r;
         }
@@ -591,7 +662,10 @@ impl Ui {
                 v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
                 let st = self.cnt_stat;
                 if self.m.cnt_mode == 0 && st.n > 1 {
-                    v.push(("min / max".into(), format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits))));
+                    v.push((
+                        "min / max".into(),
+                        format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits)),
+                    ));
                 }
             }
         }
@@ -600,11 +674,17 @@ impl Ui {
 
     /// A source at physical time, using original native samples and deskew.
     pub(crate) fn wave_at_source(&self, source: WaveId, t: f64) -> Option<f32> {
-        if matches!(source, WaveId::Ch(c) if c >= n_ch() || !self.m.ch[c].on) { return None; }
+        if matches!(source, WaveId::Ch(c) if c >= n_ch() || !self.m.ch[c].on) {
+            return None;
+        }
         let (w, dt, t0) = self.deskew_samples(source)?;
-        if w.is_empty() || !dt.is_finite() || dt <= 0.0 { return None; }
+        if w.is_empty() || !dt.is_finite() || dt <= 0.0 {
+            return None;
+        }
         let index = (t - t0) / dt;
-        if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 { return None; }
+        if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 {
+            return None;
+        }
         let i = index.floor() as usize;
         let a = *w.get(i)?;
         let b = w.get(i + 1).copied().unwrap_or(a);
@@ -618,16 +698,26 @@ impl Ui {
         self.wave_at_source(self.selected_workspace_source()?, t)
     }
 
-    pub(crate) fn cursor_b_source(&self) -> WaveId { self.m.cur_b_source.unwrap_or_else(|| self.cursor_source()) }
+    pub(crate) fn cursor_b_source(&self) -> WaveId {
+        self.m.cur_b_source.unwrap_or_else(|| self.cursor_source())
+    }
 
     pub(crate) fn set_cursor_b_source(&mut self, source: WaveId) -> bool {
-        let valid = match source { WaveId::Ch(c) => c < n_ch(), WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some) };
-        if valid { self.m.cur_b_source = Some(source); }
+        let valid = match source {
+            WaveId::Ch(c) => c < n_ch(),
+            WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
+        };
+        if valid {
+            self.m.cur_b_source = Some(source);
+        }
         valid
     }
 
     pub(crate) fn cursor_source_unit(&self, source: WaveId) -> &'static str {
-        match source { WaveId::Ch(c) if c < n_ch() => self.m.unit(c), _ => "V" }
+        match source {
+            WaveId::Ch(c) if c < n_ch() => self.m.unit(c),
+            _ => "V",
+        }
     }
 
     /// Times of the two cursors.
@@ -661,7 +751,9 @@ impl Ui {
             WaveId::Ch(c) => c < n_ch(),
             WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
         };
-        if !available { return false; }
+        if !available {
+            return false;
+        }
         self.select_workspace_source(source);
         self.relayout();
         true
@@ -669,18 +761,24 @@ impl Ui {
 
     /// Physical volts at the selected lane's screen fraction, including vertical zoom.
     pub(crate) fn cursor_volt_at(&self, frac: f32) -> f64 {
-        let Some((source, scale, offset, _)) = self.cursor_source_context() else { return f64::NAN; };
+        let Some((source, scale, offset, _)) = self.cursor_source_context() else {
+            return f64::NAN;
+        };
         let area = self.source_area(source).unwrap_or(self.area);
         self.zoom_divs_at(area, frac) as f64 * scale as f64 - offset as f64
     }
 
     pub(crate) fn cursor_frac_volt(&self, v: f64) -> f32 {
-        let Some((source, scale, offset, _)) = self.cursor_source_context() else { return 0.5; };
+        let Some((source, scale, offset, _)) = self.cursor_source_context() else {
+            return 0.5;
+        };
         let area = self.source_area(source).unwrap_or(self.area);
         let (factor, center) = self.zoom_vertical_transform(area);
-        if !v.is_finite() || !scale.is_finite() || scale <= 0.0 { return 0.5; }
-        (0.5 - ((v + offset as f64) / scale as f64 - center as f64)
-            * factor as f64 / VDIV as f64).clamp(0.0, 1.0) as f32
+        if !v.is_finite() || !scale.is_finite() || scale <= 0.0 {
+            return 0.5;
+        }
+        (0.5 - ((v + offset as f64) / scale as f64 - center as f64) * factor as f64 / VDIV as f64).clamp(0.0, 1.0)
+            as f32
     }
 
     /// The source `:MEASure:ITEM` uses when the command names none, and the second source of a pair.
@@ -734,7 +832,9 @@ impl Ui {
 
     /// `:MEASure:CLEar`: the strip, the pair rows, and the catalog rows.
     pub(crate) fn meas_clear_remote(&mut self) -> bool {
-        if self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty() { return false; }
+        if self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty() {
+            return false;
+        }
         self.m.meas.clear();
         self.m.meas2.clear();
         self.m.cat.clear();
@@ -767,7 +867,8 @@ impl Ui {
 
     pub(crate) fn pair_remote_stat(&self, k: usize, a: WaveId, b: WaveId) -> (u64, f64, f64, f64, f64, f64) {
         let current = self.pair_at(k, a, b);
-        let idx = self.m.meas2.iter().position(|&(kk, aa, bb)| kk == k && aa == a && bb == b).map(|i| self.m.meas.len() + i);
+        let idx =
+            self.m.meas2.iter().position(|&(kk, aa, bb)| kk == k && aa == a && bb == b).map(|i| self.m.meas.len() + i);
         self.stat_at(idx, current)
     }
 
@@ -832,10 +933,24 @@ impl Ui {
             (spp, w / 2.0, delay as f64, false)
         };
         let axis = |pix: f64| {
-            if high_is_low_index { (mid - pix) * scale + origin } else { (pix - mid) * scale + origin }
+            if high_is_low_index {
+                (mid - pix) * scale + origin
+            } else {
+                (pix - mid) * scale + origin
+            }
         };
         if n == 0 {
-            return Some(HistStat { sum: 0, peaks: 0, max: f64::NAN, min: f64::NAN, mean: f64::NAN, median: f64::NAN, mode: f64::NAN, bin: scale, sigma: f64::NAN });
+            return Some(HistStat {
+                sum: 0,
+                peaks: 0,
+                max: f64::NAN,
+                min: f64::NAN,
+                mean: f64::NAN,
+                median: f64::NAN,
+                mode: f64::NAN,
+                bin: scale,
+                sigma: f64::NAN,
+            });
         }
         let first = bins.iter().position(|&b| b > 0).unwrap() as f64;
         let last = bins.iter().rposition(|&b| b > 0).unwrap() as f64;
@@ -877,7 +992,9 @@ impl Ui {
 
     /// Horizontal tolerance is 0 to 2 div. Vertical is 0.04 to 4 div. A mask already on screen is rebuilt.
     pub(crate) fn mask_tolerance(&mut self, x: Option<f32>, y: Option<f32>) -> bool {
-        if x.is_some_and(|v| !(0.0..=2.0).contains(&v)) || y.is_some_and(|v| !(0.04..=4.0).contains(&v)) { return false; }
+        if x.is_some_and(|v| !(0.0..=2.0).contains(&v)) || y.is_some_and(|v| !(0.04..=4.0).contains(&v)) {
+            return false;
+        }
         if let Some(v) = x {
             if !(0.0..=2.0).contains(&v) {
                 return false;
@@ -922,7 +1039,9 @@ impl Ui {
         } else {
             return self.toast("No mask file in the slot or save folder");
         };
-        let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
+        let Ok(t) = std::fs::read_to_string(&p) else {
+            return self.toast(&format!("No {}", crate::store::file_name(&p)));
+        };
         let mf = match crate::store::parse_mask(&t) {
             Ok(m) if m.v.len() >= 2 => m,
             Ok(_) => return self.toast("That file holds no mask"),
@@ -1077,7 +1196,11 @@ impl Ui {
 
     /// Channel a `:REFerence:SAVE` of this slot copies. A saved slot remembers its own source.
     pub(crate) fn ref_source_of(&self, slot: usize) -> usize {
-        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel { self.ref_src } else { 0 })
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel {
+            self.ref_src
+        } else {
+            0
+        })
     }
 
     pub(crate) fn ref_source_set(&mut self, slot: usize, ch: usize) -> bool {
@@ -1246,7 +1369,11 @@ impl Ui {
     }
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
-        if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
+        if self.m.ch_label[c].is_empty() {
+            format!("CH{}", c + 1)
+        } else {
+            self.m.ch_label[c].clone()
+        }
     }
 }
 
@@ -1296,11 +1423,14 @@ mod ref_clear_tests {
     #[test]
     fn clearing_the_references_takes_their_readouts_along() {
         let mut ui = crate::ui::testkit::demo_ui();
-        let csv: String = (0..2000).map(|i| format!("{:e},{}\n", i as f64 * 1e-6, if (i / 100) % 2 == 0 { 1.0 } else { -1.0 })).collect();
+        let csv: String = (0..2000)
+            .map(|i| format!("{:e},{}\n", i as f64 * 1e-6, if (i / 100) % 2 == 0 { 1.0 } else { -1.0 }))
+            .collect();
         ui.load_waveform_bytes_at(csv.as_bytes(), "r.csv", 1).unwrap();
         assert!(ui.m.meas.iter().any(|(_, w)| *w == WaveId::Ref(1)), "the import adds readouts of its slot");
         ui.m.meas2.push((0, WaveId::Ch(0), WaveId::Ref(1)));
-        let own: Vec<(Meas, WaveId)> = ui.m.meas.iter().filter(|(_, w)| !matches!(w, WaveId::Ref(_))).cloned().collect();
+        let own: Vec<(Meas, WaveId)> =
+            ui.m.meas.iter().filter(|(_, w)| !matches!(w, WaveId::Ref(_))).cloned().collect();
         ui.ref_clear_all();
         assert_eq!(ui.m.meas, own, "the channel readouts stay, the reference ones go");
         assert!(ui.m.meas2.is_empty());
@@ -1358,7 +1488,11 @@ mod physical_extremum_time_tests {
     fn first_reference_maximum_reports_its_record_origin() {
         let mut ui = crate::ui::testkit::demo_ui();
         let origin = -9.99990584751956e-7;
-        ui.refs[0] = Some(RefWave { label: "clock origin".into(), vpd: 0.5, ..RefWave::test(vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0], 20e-12, origin) });
+        ui.refs[0] = Some(RefWave {
+            label: "clock origin".into(),
+            vpd: 0.5,
+            ..RefWave::test(vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0, 0.0], 20e-12, origin)
+        });
         ui.set_measurement_full_record(true);
         close(ui.meas_at(WaveId::Ref(0), Meas::TVmax), origin);
         close(ui.fact_meas(Meas::TVmax, WaveId::Ref(0)), origin);

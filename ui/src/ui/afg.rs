@@ -16,11 +16,28 @@ impl Ui {
 
     pub(super) fn afg_items(&self) -> Vec<Item> {
         // the selector only where there is a choice
-        let mut v = if gen_count() > 1 { vec![Item::AfgSel, Item::AfgOn, Item::AfgWave] } else { vec![Item::AfgOn, Item::AfgWave] };
+        let mut v = if gen_count() > 1 {
+            vec![Item::AfgSel, Item::AfgOn, Item::AfgWave]
+        } else {
+            vec![Item::AfgOn, Item::AfgWave]
+        };
         match self.m.afg_wave {
             // DC: the level is the offset
             5 => return [v, vec![Item::AfgOffset]].concat(),
-            6 => return [v, vec![Item::AfgFreq, Item::AfgAmpl, Item::AfgOffset, Item::AfgArbSrc, Item::AfgArbGrab, Item::AfgArbFile]].concat(),
+            6 => {
+                return [
+                    v,
+                    vec![
+                        Item::AfgFreq,
+                        Item::AfgAmpl,
+                        Item::AfgOffset,
+                        Item::AfgArbSrc,
+                        Item::AfgArbGrab,
+                        Item::AfgArbFile,
+                    ],
+                ]
+                .concat()
+            }
             4 => v.extend([Item::AfgAmpl, Item::AfgOffset]),
             _ => v.extend([Item::AfgFreq, Item::AfgAmpl, Item::AfgOffset]),
         }
@@ -41,9 +58,21 @@ impl Ui {
 
     pub(super) fn afg_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::AfgSel | Item::AfgOn | Item::AfgWave | Item::AfgMod | Item::AfgModShape | Item::AfgArbSrc | Item::AfgFreqEntry => Kind::Choice,
+            Item::AfgSel
+            | Item::AfgOn
+            | Item::AfgWave
+            | Item::AfgMod
+            | Item::AfgModShape
+            | Item::AfgArbSrc
+            | Item::AfgFreqEntry => Kind::Choice,
             Item::AfgArbGrab | Item::AfgArbFile => Kind::Action,
-            Item::AfgFreq | Item::AfgAmpl | Item::AfgOffset | Item::AfgDuty | Item::AfgSym | Item::AfgModRate | Item::AfgModDepth => Kind::Value,
+            Item::AfgFreq
+            | Item::AfgAmpl
+            | Item::AfgOffset
+            | Item::AfgDuty
+            | Item::AfgSym
+            | Item::AfgModRate
+            | Item::AfgModDepth => Kind::Value,
             _ => return None,
         })
     }
@@ -76,7 +105,13 @@ impl Ui {
         let m = &self.m;
         Some(match it {
             Item::AfgSel => format!("Gen {}", m.gen_sel + 1),
-            Item::AfgOn => if m.afg_on { "On".into() } else { "Off".into() },
+            Item::AfgOn => {
+                if m.afg_on {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::AfgFreq => si_short(m.afg_freq, "Hz"),
             Item::AfgFreqEntry => "Keypad".into(),
             Item::AfgAmpl => si_short(m.afg_ampl, "Vpp"),
@@ -135,7 +170,9 @@ impl Ui {
             Item::AfgDuty => m.afg_duty = (m.afg_duty + 5.0 * d as f64).clamp(5.0, 95.0),
             Item::AfgSym => m.afg_symmetry = (m.afg_symmetry + 5.0 * d as f64).clamp(0.0, 100.0),
             Item::AfgMod => m.afg_mod = (m.afg_mod as i32 + d).rem_euclid(AFG_MODS.len() as i32) as usize,
-            Item::AfgModShape => m.afg_mod_shape = (m.afg_mod_shape as i32 + d).rem_euclid(AFG_MOD_SHAPES.len() as i32) as usize,
+            Item::AfgModShape => {
+                m.afg_mod_shape = (m.afg_mod_shape as i32 + d).rem_euclid(AFG_MOD_SHAPES.len() as i32) as usize
+            }
             // stock limits: rate 2 mHz .. 1 MHz
             Item::AfgModRate => m.afg_mod_rate = ladder(m.afg_mod_rate, d, 0.01, 1e6),
             Item::AfgModDepth => match m.afg_mod {
@@ -326,7 +363,9 @@ mod arb_tests {
         let n = ui.afg_arb_capture(0).unwrap();
         assert!(n > 100);
         assert_eq!(ui.m.afg_wave, 6);
-        assert!(matches!(crate::board::dho::wave(&ui.m.gen_read()), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb));
+        assert!(
+            matches!(crate::board::dho::wave(&ui.m.gen_read()), oos_hal::dho::afg::Wave::Arb { id } if id == ui.m.afg_arb)
+        );
         let t = crate::board::dho::wave(&ui.m.gen_read()).table(1e3);
         assert!(t.iter().any(|&v| v > 30000) && t.iter().any(|&v| v < -30000));
         assert!(ui.afg_items().contains(&Item::AfgArbGrab));

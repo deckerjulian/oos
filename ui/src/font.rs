@@ -35,7 +35,11 @@ pub struct Fonts {
 }
 
 /// The atlases by text size: normal, large, larger.
-static BLOBS: [&[u8]; 3] = [include_bytes!("../assets/font.bin"), include_bytes!("../assets/font-large.bin"), include_bytes!("../assets/font-larger.bin")];
+static BLOBS: [&[u8]; 3] = [
+    include_bytes!("../assets/font.bin"),
+    include_bytes!("../assets/font-large.bin"),
+    include_bytes!("../assets/font-larger.bin"),
+];
 
 fn u16le(b: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([b[o], b[o + 1]])
@@ -63,7 +67,8 @@ impl Font {
 impl Fonts {
     /// The set of text size `k` (0 normal, 1 large, 2 larger), loaded on first use.
     pub fn get(k: usize) -> &'static Fonts {
-        static SETS: [std::sync::OnceLock<Fonts>; 3] = [std::sync::OnceLock::new(), std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+        static SETS: [std::sync::OnceLock<Fonts>; 3] =
+            [std::sync::OnceLock::new(), std::sync::OnceLock::new(), std::sync::OnceLock::new()];
         let k = k.min(SETS.len() - 1);
         SETS[k].get_or_init(|| Fonts::load(BLOBS[k]))
     }

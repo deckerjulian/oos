@@ -82,7 +82,8 @@ impl Protocol for Example {
         let total: &mut usize = memory(mem);
         *total += bytes.len();
         let bad = p.iter().any(|x| !x.ok);
-        let status = if bad { ("Framing error".to_string(), Tone::Bad) } else { (format!("{} bytes", total), Tone::Good) };
+        let status =
+            if bad { ("Framing error".to_string(), Tone::Bad) } else { (format!("{} bytes", total), Tone::Good) };
         let last = bytes.iter().rev().take(4).map(|x| self.text(x, opt).unwrap_or_default()).collect();
         Some(View { status: Some(status), sections: vec![Section { title: "Last bytes".into(), rows: last }] })
     }

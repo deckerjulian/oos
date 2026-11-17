@@ -19,9 +19,20 @@ fn ui() -> Ui {
 
 /// The keys whose values differ between two setups.
 fn changed(a: &str, b: &str) -> Vec<String> {
-    let map = |t: &str| t.lines().filter_map(|l| l.split_once(" = ")).map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::BTreeMap<_, _>>();
+    let map = |t: &str| {
+        t.lines()
+            .filter_map(|l| l.split_once(" = "))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
     let (a, b) = (map(a), map(b));
-    a.keys().chain(b.keys()).filter(|k| a.get(*k) != b.get(*k)).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    a.keys()
+        .chain(b.keys())
+        .filter(|k| a.get(*k) != b.get(*k))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// What a trigger type may set when it is chosen on the hardware: Delay and Setup/Hold put their second source on a
@@ -38,7 +49,8 @@ fn round(u: &mut Ui, it: Item, n: usize, own: &[&str]) {
         u.step(0.05);
     }
     let after = crate::store::setup_text(&u.m);
-    let bad: Vec<String> = changed(&before, &after).into_iter().filter(|k| !own.contains(&k.as_str()) && !k.starts_with("ser.")).collect();
+    let bad: Vec<String> =
+        changed(&before, &after).into_iter().filter(|k| !own.contains(&k.as_str()) && !k.starts_with("ser.")).collect();
     assert!(bad.is_empty(), "{:?} round: {:?} changed", it, bad);
 }
 
@@ -144,7 +156,16 @@ fn every_analyser_page_and_back_leaves_the_rest() {
 #[test]
 fn draw_path_bottom_bar_and_features_leave_the_acquisition() {
     let mut u = ui();
-    let keep = |m: &Model| (m.tscale, m.trig_type, m.trig_level.to_bits(), m.acq, m.ch.iter().map(|c| (c.on, c.vscale)).collect::<Vec<_>>(), m.meas.clone());
+    let keep = |m: &Model| {
+        (
+            m.tscale,
+            m.trig_type,
+            m.trig_level.to_bits(),
+            m.acq,
+            m.ch.iter().map(|c| (c.on, c.vscale)).collect::<Vec<_>>(),
+            m.meas.clone(),
+        )
+    };
     let before = keep(&u.m);
     for it in [Item::AcqDrawPath, Item::BottomBar] {
         u.adjust(it, 1);
@@ -174,7 +195,12 @@ fn every_decoder_protocol_and_back_leaves_the_channels_and_the_trigger() {
         u.step(0.05);
         assert_eq!(u.m.ch.iter().map(|c| c.on).collect::<Vec<_>>(), on, "{} switched a channel", u.m.dec_proto.name());
         let roles = u.m.dec_proto.roles();
-        for (role, c) in [(roles[1].map(|_| u.m.dec_src2), ()), (roles[2].and(u.m.dec_cs), ()), (roles[3].and(u.m.dec_src4), ())].map(|x| x.0).into_iter().enumerate() {
+        for (role, c) in
+            [(roles[1].map(|_| u.m.dec_src2), ()), (roles[2].and(u.m.dec_cs), ()), (roles[3].and(u.m.dec_src4), ())]
+                .map(|x| x.0)
+                .into_iter()
+                .enumerate()
+        {
             if let Some(c) = c.filter(|&c| c != u.m.dec_src) {
                 assert!(c < NCH, "{} role {}: {c}", u.m.dec_proto.name(), role + 1);
             }
@@ -182,7 +208,10 @@ fn every_decoder_protocol_and_back_leaves_the_channels_and_the_trigger() {
     }
     let after = crate::store::setup_text(&u.m);
     // the decoder's own keys and the pane a protocol with a view of its own opens
-    let bad: Vec<String> = changed(&before, &after).into_iter().filter(|k| !k.starts_with("dec") && !k.starts_with("ser.") && k != "pane").collect();
+    let bad: Vec<String> = changed(&before, &after)
+        .into_iter()
+        .filter(|k| !k.starts_with("dec") && !k.starts_with("ser.") && k != "pane")
+        .collect();
     assert!(bad.is_empty(), "protocols round: {bad:?} changed");
 }
 
@@ -228,7 +257,9 @@ fn leaving_bus_after_a_recall_leaves_the_recalled_decoder() {
     u.step(0.05);
     assert!(u.m.dec_on, "Bus switches the decoder on");
     let mut saved = u.m.clone();
-    for c in 0..NCH { saved.ch[c].on = c < n_ch(); }
+    for c in 0..NCH {
+        saved.ch[c].on = c < n_ch();
+    }
     std::fs::write(u.setup_path(), crate::store::setup_text(&saved)).unwrap();
     u.recall_setup();
     u.step(0.05);

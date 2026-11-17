@@ -40,7 +40,20 @@ pub fn out_header(tag: u8, size: u32, eom: bool) -> [u8; HEADER] {
 /// Header of a REQUEST_DEV_DEP_MSG_IN asking for at most `max` bytes, ending early at `term` if given.
 pub fn request_header(tag: u8, max: u32, term: Option<u8>) -> [u8; HEADER] {
     let s = max.to_le_bytes();
-    [REQUEST_DEV_DEP_MSG_IN, tag, !tag, 0, s[0], s[1], s[2], s[3], if term.is_some() { 2 } else { 0 }, term.unwrap_or(0), 0, 0]
+    [
+        REQUEST_DEV_DEP_MSG_IN,
+        tag,
+        !tag,
+        0,
+        s[0],
+        s[1],
+        s[2],
+        s[3],
+        if term.is_some() { 2 } else { 0 },
+        term.unwrap_or(0),
+        0,
+        0,
+    ]
 }
 
 /// One DEV_DEP_MSG_OUT transfer: header, data, zeros up to a multiple of 4.
@@ -233,7 +246,13 @@ fn hex(dir: &Path, name: &str) -> Option<u32> {
 /// The bulk endpoints of an interface directory: (out, in).
 fn bulk_endpoints(ifdir: &Path) -> (Option<u8>, Option<u8>) {
     let (mut o, mut i) = (None, None);
-    let mut eps: Vec<PathBuf> = std::fs::read_dir(ifdir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("ep_"))).collect();
+    let mut eps: Vec<PathBuf> = std::fs::read_dir(ifdir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("ep_")))
+        .collect();
     eps.sort();
     for ep in eps {
         if attr(&ep, "type").as_deref() != Some("Bulk") {
@@ -251,7 +270,12 @@ fn bulk_endpoints(ifdir: &Path) -> (Option<u8>, Option<u8>) {
 
 /// The first USBTMC interface under `root` (`SYSFS`). The error names the other devices found, if any.
 pub fn find(root: &Path) -> Result<Device, String> {
-    let mut names: Vec<String> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    let mut names: Vec<String> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
     names.sort();
     let mut others = Vec::new();
     for n in &names {
@@ -266,7 +290,9 @@ pub fn find(root: &Path) -> Result<Device, String> {
             }
             continue;
         };
-        if hex(&dir, "bInterfaceClass") != Some(CLASS as u32) || hex(&dir, "bInterfaceSubClass") != Some(SUBCLASS as u32) {
+        if hex(&dir, "bInterfaceClass") != Some(CLASS as u32)
+            || hex(&dir, "bInterfaceSubClass") != Some(SUBCLASS as u32)
+        {
             continue;
         }
         let ddir = root.join(devname);
@@ -275,7 +301,8 @@ pub fn find(root: &Path) -> Result<Device, String> {
         let (Some(ep_out), Some(ep_in)) = bulk_endpoints(&dir) else {
             return Err(format!("USBTMC interface {} without two bulk endpoints", n));
         };
-        let name = [attr(&ddir, "manufacturer"), attr(&ddir, "product")].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        let name =
+            [attr(&ddir, "manufacturer"), attr(&ddir, "product")].into_iter().flatten().collect::<Vec<_>>().join(" ");
         return Ok(Device {
             bus,
             dev,
@@ -351,11 +378,12 @@ impl UsbFs {
     pub fn open(d: &Device) -> Result<UsbFs, String> {
         use std::os::fd::AsRawFd;
         let node = d.node();
-        let file = std::fs::OpenOptions::new().read(true).write(true).open(&node).map_err(|e| match e.raw_os_error() {
-            Some(libc::EACCES) | Some(libc::EPERM) => format!("no permission for {}", node.display()),
-            Some(libc::ENOENT) => format!("{} missing", node.display()),
-            _ => format!("{}: {}", node.display(), e),
-        })?;
+        let file =
+            std::fs::OpenOptions::new().read(true).write(true).open(&node).map_err(|e| match e.raw_os_error() {
+                Some(libc::EACCES) | Some(libc::EPERM) => format!("no permission for {}", node.display()),
+                Some(libc::ENOENT) => format!("{} missing", node.display()),
+                _ => format!("{}: {}", node.display(), e),
+            })?;
         let fd = file.as_raw_fd();
         let mut ifno = d.ifno;
         if let Err(e) = ioctl(fd, USBDEVFS_CLAIMINTERFACE, &mut ifno) {
@@ -363,7 +391,11 @@ impl UsbFs {
                 return Err(format!("claiming the interface: {}", e));
             }
             // a kernel driver holds it: let go of it, then claim again
-            let mut req = UsbIoctl { ifno: d.ifno as libc::c_int, code: USBDEVFS_DISCONNECT as libc::c_int, data: std::ptr::null_mut() };
+            let mut req = UsbIoctl {
+                ifno: d.ifno as libc::c_int,
+                code: USBDEVFS_DISCONNECT as libc::c_int,
+                data: std::ptr::null_mut(),
+            };
             let _ = ioctl(fd, USBDEVFS_IOCTL, &mut req);
             ioctl(fd, USBDEVFS_CLAIMINTERFACE, &mut ifno).map_err(|e| format!("interface in use: {}", e))?;
         }
@@ -376,7 +408,8 @@ impl UsbFs {
     }
 
     fn bulk(&mut self, ep: u8, ptr: *mut u8, len: usize, timeout_ms: u32) -> io::Result<usize> {
-        let mut t = BulkTransfer { ep: ep as u32, len: len as u32, timeout: timeout_ms, data: ptr as *mut libc::c_void };
+        let mut t =
+            BulkTransfer { ep: ep as u32, len: len as u32, timeout: timeout_ms, data: ptr as *mut libc::c_void };
         ioctl(self.fd(), USBDEVFS_BULK, &mut t).map(|n| n as usize)
     }
 }
@@ -462,7 +495,20 @@ mod tests {
                     let n = size.min(self.answer.len());
                     let data: Vec<u8> = self.answer.drain(..n).collect();
                     let s = (n as u32).to_le_bytes();
-                    let mut r = vec![DEV_DEP_MSG_IN, tag, !tag, 0, s[0], s[1], s[2], s[3], self.answer.is_empty() as u8, 0, 0, 0];
+                    let mut r = vec![
+                        DEV_DEP_MSG_IN,
+                        tag,
+                        !tag,
+                        0,
+                        s[0],
+                        s[1],
+                        s[2],
+                        s[3],
+                        self.answer.is_empty() as u8,
+                        0,
+                        0,
+                        0,
+                    ];
                     r.extend_from_slice(&data);
                     r.resize(r.len().next_multiple_of(4), 0);
                     match self.split {
@@ -584,7 +630,14 @@ mod tests {
         write(&root.join("usb1"), "idVendor", "1d6b");
         write(&root.join("usb1"), "idProduct", "0002");
         let stick = root.join("1-1");
-        for (k, v) in [("bDeviceClass", "00"), ("idVendor", "0781"), ("idProduct", "5567"), ("product", "Cruzer Blade"), ("busnum", "1"), ("devnum", "2")] {
+        for (k, v) in [
+            ("bDeviceClass", "00"),
+            ("idVendor", "0781"),
+            ("idProduct", "5567"),
+            ("product", "Cruzer Blade"),
+            ("busnum", "1"),
+            ("devnum", "2"),
+        ] {
             write(&stick, k, v);
         }
         for (k, v) in [("bInterfaceClass", "08"), ("bInterfaceSubClass", "06"), ("bInterfaceNumber", "00")] {
@@ -594,7 +647,15 @@ mod tests {
         assert!(e.contains("not USBTMC: 0781:5567 Cruzer Blade") && !e.contains("1d6b"), "{}", e);
         // the generator on bus 3, device 4: interface 0 with an interrupt and two bulk endpoints
         let g = root.join("3-1");
-        for (k, v) in [("bDeviceClass", "00"), ("idVendor", "6656"), ("idProduct", "0834"), ("manufacturer", "UNI-T"), ("product", "UTG900"), ("busnum", "3"), ("devnum", "4")] {
+        for (k, v) in [
+            ("bDeviceClass", "00"),
+            ("idVendor", "6656"),
+            ("idProduct", "0834"),
+            ("manufacturer", "UNI-T"),
+            ("product", "UTG900"),
+            ("busnum", "3"),
+            ("devnum", "4"),
+        ] {
             write(&g, k, v);
         }
         let i = root.join("3-1:1.0");
@@ -606,7 +667,18 @@ mod tests {
             write(&i.join(ep), "bEndpointAddress", a);
         }
         let d = find(&root).unwrap();
-        assert_eq!(d, Device { bus: 3, dev: 4, ifno: 0, ep_out: 0x02, ep_in: 0x81, id: "6656:0834".into(), name: "UNI-T UTG900".into() });
+        assert_eq!(
+            d,
+            Device {
+                bus: 3,
+                dev: 4,
+                ifno: 0,
+                ep_out: 0x02,
+                ep_in: 0x81,
+                id: "6656:0834".into(),
+                name: "UNI-T UTG900".into()
+            }
+        );
         assert_eq!(d.node(), PathBuf::from("/dev/bus/usb/003/004"));
         let _ = std::fs::remove_dir_all(&root);
     }

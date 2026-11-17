@@ -128,7 +128,11 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
         &b[32..576],
     ]);
     if id != info.id || b[596..608].iter().any(|&x| x != 0) {
-        return Err(format!("image id mismatch (header {}, content {}): the loader would refuse it", hex(&info.id), hex(&id)));
+        return Err(format!(
+            "image id mismatch (header {}, content {}): the loader would refuse it",
+            hex(&info.id),
+            hex(&id)
+        ));
     }
     if ks == 0 || &b[k0 + 0x38..k0 + 0x3c] != b"ARM\x64" {
         return Err("kernel is not an arm64 Image".into());
@@ -137,7 +141,10 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
     // 0x4bf0000 together below 0x3000000 bytes
     let (kaddr, raddr) = (le32(b, 12), le32(b, 20));
     if kaddr != 0x0028_0000 || raddr != 0x04bf_0000 {
-        return Err(format!("load addresses kernel {:#x}, ramdisk {:#x} (the loader uses 0x280000 and 0x4bf0000)", kaddr, raddr));
+        return Err(format!(
+            "load addresses kernel {:#x}, ramdisk {:#x} (the loader uses 0x280000 and 0x4bf0000)",
+            kaddr, raddr
+        ));
     }
     if 0x0028_0000 + ks > 0x03a0_0000 {
         return Err(format!("kernel of {} bytes reaches past 0x3a00000", ks));
@@ -181,7 +188,10 @@ impl Card {
         let text: String = raw.iter().filter(|&&c| c != 0).map(|&c| (c as char).to_ascii_lowercase()).collect();
         for w in ACTIVE.parm_marks {
             if !text.contains(w) {
-                return Err(format!("unexpected partition table (no '{}'): not the stock {} layout, nothing written", w, ACTIVE.family_name));
+                return Err(format!(
+                    "unexpected partition table (no '{}'): not the stock {} layout, nothing written",
+                    w, ACTIVE.family_name
+                ));
             }
         }
         Ok(())
@@ -284,7 +294,10 @@ impl Card {
             return Ok(false);
         }
         if &s[..4] != from {
-            return Err(format!("boot magic is '{}', neither KRNL nor OOSK: left alone", String::from_utf8_lossy(&s[..4])));
+            return Err(format!(
+                "boot magic is '{}', neither KRNL nor OOSK: left alone",
+                String::from_utf8_lossy(&s[..4])
+            ));
         }
         if !self.write {
             return Err("card opened read only".into());

@@ -10,7 +10,9 @@ use oos_dsp::trigger::Input;
 
 /// Packets of the decoder settings in `m` on the channels of `inp` (times = fractional sample indices).
 pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'static str> {
-    if m.dec_src >= NCH { return Err("stored decoder inputs need the reference adapter"); }
+    if m.dec_src >= NCH {
+        return Err("stored decoder inputs need the reference adapter");
+    }
     decode_at(m, ch, dt, m.dec_thr, 0.1 * m.ch[m.dec_src].volts_per_div())
 }
 
@@ -24,7 +26,12 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
     if m.dec_proto == Proto::PARALLEL {
         // up to 16 data lines upwards from the main source, skipping the clock line
         let first = la[0].unwrap_or(0);
-        let lines: Vec<Vec<f32>> = (0..16u8).map(|k| (first + k) % 16).filter(|&n| Some(n) != la[2]).take(m.dec_bits.clamp(1, 16) as usize).map(wave).collect();
+        let lines: Vec<Vec<f32>> = (0..16u8)
+            .map(|k| (first + k) % 16)
+            .filter(|&n| Some(n) != la[2])
+            .take(m.dec_bits.clamp(1, 16) as usize)
+            .map(wave)
+            .collect();
         let refs: Vec<&[f32]> = lines.iter().map(|l| &l[..]).collect();
         let clk = la[2].map(wave);
         return Ok(oos_dsp::decode_ext::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
@@ -54,10 +61,24 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
     let Proto::Module(i) = m.dec_proto;
     let p = crate::protocols::get(i);
     let r = p.roles();
-    let lines = [Some(line), if r[1].is_some() { Some(get(m.dec_src2)?) } else { None }, if r[2].is_some() { opt(m.dec_cs)? } else { None }, if r[3].is_some() { opt(m.dec_src4)? } else { None }];
+    let lines = [
+        Some(line),
+        if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },
+        if r[2].is_some() { opt(m.dec_cs)? } else { None },
+        if r[3].is_some() { opt(m.dec_src4)? } else { None },
+    ];
     let chans: [Option<&[f32]>; 4] = std::array::from_fn(|c| ch.get(c).copied().filter(|v| !v.is_empty()));
     let src = [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4];
-    p.decode(&crate::protocols::Lines { lines, dt, thr, hy, opt: m.dec_opts(), sh: crate::protocols::Shared::of(m), chans, src })
+    p.decode(&crate::protocols::Lines {
+        lines,
+        dt,
+        thr,
+        hy,
+        opt: m.dec_opts(),
+        sh: crate::protocols::Shared::of(m),
+        chans,
+        src,
+    })
 }
 
 /// Whether a packet satisfies the protocol trigger condition of `m` on its own. UART and SPI data take the relation,
@@ -85,7 +106,14 @@ pub fn matches(m: &Model, p: &Packet) -> bool {
             _ => false,
         },
         // USB: the token address or the PID byte
-        BusWhat::Id => (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true }) || p.kind == Kind::Field("ROM") || p.kind == Kind::Field("CMD") || p.kind == Kind::Field("HDR") || p.kind == Kind::Field("STAT")) && p.value == v,
+        BusWhat::Id => {
+            (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true })
+                || p.kind == Kind::Field("ROM")
+                || p.kind == Kind::Field("CMD")
+                || p.kind == Kind::Field("HDR")
+                || p.kind == Kind::Field("STAT"))
+                && p.value == v
+        }
         BusWhat::Data => matches!(p.kind, Kind::Data | Kind::Sample { .. } | Kind::Word { cmd: false }) && p.value == v,
         BusWhat::Error => !p.ok,
     }

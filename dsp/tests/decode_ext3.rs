@@ -34,7 +34,13 @@ fn arinc_want(words: &[(u8, u8, u32, u8)]) -> Vec<(Kind, u32, bool)> {
     let mut want = Vec::new();
     for &(label, sdi, data, ssm) in words {
         let b = gen::arinc429_word(label, sdi, data, ssm, false);
-        want.extend([(ID, label as u32, true), (F("SDI"), sdi as u32, true), (Kind::Data, data, true), (F("SSM"), ssm as u32, true), (F("PAR"), b[31] as u32, true)]);
+        want.extend([
+            (ID, label as u32, true),
+            (F("SDI"), sdi as u32, true),
+            (Kind::Data, data, true),
+            (F("SSM"), ssm as u32, true),
+            (F("PAR"), b[31] as u32, true),
+        ]);
     }
     want
 }
@@ -47,7 +53,13 @@ fn arinc429_words_at_both_rates_fixed_and_auto() {
     // label bit 1 (first on the bus) is the label MSB
     assert_eq!(&words[0][..8], &[true, true, false, false, true, false, false, false]);
     // A - B at +-10 V; one line against ground at +-5 V; a 14 kbit/s transmitter on the low-speed setting
-    for (rate, set, a, gap) in [(100e3, Some(ARINC429_HIGH), 10.0, 4), (100e3, None, 5.0, 4), (12.5e3, Some(ARINC429_LOW), 10.0, 8), (14e3, None, 5.0, 4), (14e3, Some(ARINC429_LOW), 5.0, 4)] {
+    for (rate, set, a, gap) in [
+        (100e3, Some(ARINC429_HIGH), 10.0, 4),
+        (100e3, None, 5.0, 4),
+        (12.5e3, Some(ARINC429_LOW), 10.0, 8),
+        (14e3, None, 5.0, 4),
+        (14e3, Some(ARINC429_LOW), 5.0, 4),
+    ] {
         let l = gen::arinc429(&words, rate, a, gap);
         let dt = 1.0 / rate / 40.0;
         let mut v = levels(&l, dt);
@@ -72,7 +84,10 @@ fn arinc429_parity_error_bad_words_and_record_edges() {
     let p = arinc429(&v, dt, None, 2.5, 0.5);
     let k = kv(&p);
     assert_eq!(k[..5], arinc_want(&[(0o310, 1, 0x1234, 3)])[..]);
-    assert_eq!(k[5..10].iter().map(|x| (x.0, x.2)).collect::<Vec<_>>(), [(ID, true), (F("SDI"), true), (Kind::Data, true), (F("SSM"), true), (F("PAR"), false)]);
+    assert_eq!(
+        k[5..10].iter().map(|x| (x.0, x.2)).collect::<Vec<_>>(),
+        [(ID, true), (F("SDI"), true), (Kind::Data, true), (F("SSM"), true), (F("PAR"), false)]
+    );
     assert_eq!(k[9].1, 1, "9 ones: parity bit 0, flipped");
     assert_eq!(k[10], (F("!ERR"), 0, false));
     assert_eq!(k[11..], arinc_want(&[(0o310, 1, 0x1234, 3)])[..]);
@@ -81,7 +96,10 @@ fn arinc429_parity_error_bad_words_and_record_edges() {
     let w0 = 6.0 * bit; // first word start
     let cut = &v[(w0 + 10.0 * bit) as usize..(w0 + 2.0 * 38.0 * bit + 20.0 * bit) as usize];
     let p = arinc429(cut, dt, Some(ARINC429_HIGH), 2.5, 0.5);
-    assert_eq!(p.iter().map(|x| (x.kind, x.ok)).collect::<Vec<_>>(), [(ID, true), (F("SDI"), true), (Kind::Data, true), (F("SSM"), true), (F("PAR"), false)]);
+    assert_eq!(
+        p.iter().map(|x| (x.kind, x.ok)).collect::<Vec<_>>(),
+        [(ID, true), (F("SDI"), true), (Kind::Data, true), (F("SSM"), true), (F("PAR"), false)]
+    );
     // nothing on a flat line, a zero threshold or too few samples per bit
     assert!(arinc429(&vec![0.0; 5000], dt, None, 2.5, 0.5).is_empty());
     assert!(arinc429(&v, dt, None, 0.0, 0.5).is_empty());
@@ -122,7 +140,12 @@ fn sent_want(fr: &[SentFrame], tick_ns: u32) -> Vec<(Kind, u32, bool)> {
     let mut want = Vec::new();
     for f in fr {
         let value = f.data.iter().fold(0u32, |a, &x| a << 4 | x as u32);
-        want.extend([(F("SYNC"), tick_ns, true), (F("STAT"), f.status as u32, true), (Kind::Data, value, true), (Kind::Crc, sent_crc(&f.data, false) as u32, true)]);
+        want.extend([
+            (F("SYNC"), tick_ns, true),
+            (F("STAT"), f.status as u32, true),
+            (Kind::Data, value, true),
+            (Kind::Crc, sent_crc(&f.data, false) as u32, true),
+        ]);
         if f.pause > 0 {
             want.push((F("PAUSE"), f.pause, true));
         }
@@ -149,7 +172,10 @@ fn sent_frames_with_pause_and_tick_tolerance() {
     let v = gen::sent(&fr, 3.9e-6, 0.0, 5.0).sample(0.3e-6, 0.0);
     assert!(sent(&v, 0.3e-6, Some(3e-6), 6, 2.5, 0.5).is_empty());
     // fewer data nibbles
-    let fr3 = vec![SentFrame { status: 1, data: vec![0x1, 0x2, 0x3], crc: None, pause: 20 }, SentFrame { status: 2, data: vec![0xf, 0xe, 0xd], crc: None, pause: 0 }];
+    let fr3 = vec![
+        SentFrame { status: 1, data: vec![0x1, 0x2, 0x3], crc: None, pause: 20 },
+        SentFrame { status: 2, data: vec![0xf, 0xe, 0xd], crc: None, pause: 0 },
+    ];
     let v = gen::sent(&fr3, 3e-6, 0.0, 5.0).sample(0.3e-6, 0.0);
     assert_eq!(skv(&sent(&v, 0.3e-6, Some(3e-6), 3, 2.5, 0.5)), sent_want(&fr3, 3000));
 }
@@ -164,7 +190,15 @@ fn sent_crc_error_invalid_nibble_and_cut_frames() {
     let v = gen::sent(&fr, tick, 0.0, 5.0).sample(dt, 0.0);
     let p = sent(&v, dt, Some(tick), 6, 2.5, 0.5);
     let crcs: Vec<(u32, bool)> = p.iter().filter(|x| x.kind == Kind::Crc).map(|x| (x.value, x.ok)).collect();
-    assert_eq!(crcs, [(sent_crc(&fr[0].data, false) as u32, true), (good as u32 ^ 1, false), (sent_crc(&fr[2].data, false) as u32, true), (sent_crc(&fr[3].data, false) as u32, true)]);
+    assert_eq!(
+        crcs,
+        [
+            (sent_crc(&fr[0].data, false) as u32, true),
+            (good as u32 ^ 1, false),
+            (sent_crc(&fr[2].data, false) as u32, true),
+            (sent_crc(&fr[3].data, false) as u32, true)
+        ]
+    );
     // a nibble of 30 ticks (value 18) in the second frame: an error with the nominal tick, skipped without one
     let mut t = gen::sent_ticks(&frames());
     t[9 + 3] = 30; // frame 2 (after 9 intervals): sync, status, data 1, data 2
@@ -221,7 +255,10 @@ fn usb_crc_known_vectors_and_residues() {
         assert_eq!(rev(usb_crc16(&d[1..]) as u32 ^ 0xffff, 16), 0x800d);
     }
     // PIDs: check nibble = complement of the type
-    assert_eq!([1, 9, 5, 13, 3, 11, 2, 10, 14, 12].map(usb_pid), [0xE1, 0x69, 0xA5, 0x2D, 0xC3, 0x4B, 0xD2, 0x5A, 0x1E, 0x3C]);
+    assert_eq!(
+        [1, 9, 5, 13, 3, 11, 2, 10, 14, 12].map(usb_pid),
+        [0xE1, 0x69, 0xA5, 0x2D, 0xC3, 0x4B, 0xD2, 0x5A, 0x1E, 0x3C]
+    );
     assert_eq!(usb_pid_name(0xC3), "DATA0");
     assert_eq!(usb_pid_name(0xC4), "?");
 }
@@ -232,7 +269,11 @@ fn usb_want(bytes: &[u8], kbit: u32) -> Vec<(Kind, u32, bool)> {
     let le = |a: usize| bytes[a] as u32 | (bytes[a + 1] as u32) << 8;
     match bytes[0] {
         0xA5 => w.extend([(F("FRAME"), le(1) & 0x7ff, true), (Kind::Crc, le(1) >> 11, true)]),
-        0xE1 | 0x69 | 0x2D | 0xB4 => w.extend([(F("ADDR"), le(1) & 0x7f, true), (F("ENDP"), le(1) >> 7 & 15, true), (Kind::Crc, le(1) >> 11, true)]),
+        0xE1 | 0x69 | 0x2D | 0xB4 => w.extend([
+            (F("ADDR"), le(1) & 0x7f, true),
+            (F("ENDP"), le(1) >> 7 & 15, true),
+            (Kind::Crc, le(1) >> 11, true),
+        ]),
         0xC3 | 0x4B | 0x87 | 0x0F => {
             let n = bytes.len();
             w.extend(bytes[1..n - 2].iter().map(|&b| (Kind::Data, b as u32, true)));
@@ -318,7 +359,11 @@ fn usb_low_speed_keep_alive_reset_and_pre() {
     use gen::UsbItem::*;
     let bit = 1.0 / USB_LOW;
     let dt = bit / 10.0;
-    let pk = [gen::usb_token(0x69, 0x05, 1), gen::usb_data(0x4B, &[0x12, 0x01, 0x10, 0x01, 0xff, 0x00, 0x00, 0x08]), vec![0xD2]];
+    let pk = [
+        gen::usb_token(0x69, 0x05, 1),
+        gen::usb_data(0x4B, &[0x12, 0x01, 0x10, 0x01, 0xff, 0x00, 0x00, 0x08]),
+        vec![0xD2],
+    ];
     let want: Vec<_> = pk.iter().flat_map(|p| usb_want(p, 1500)).collect();
     // keep-alive, the transaction, a reset; a transmitter 1.5 % slow
     for rate in [USB_LOW, USB_LOW * 0.985] {
@@ -341,7 +386,12 @@ fn usb_low_speed_keep_alive_reset_and_pre() {
     }
     // PRE on a full-speed bus: the low-speed packets follow at 1.5 Mbit/s with full-speed polarity
     // (the hub setup: 4 full-speed bit times of J)
-    let mut items = vec![Idle(2e-6), Packet { bits: gen::usb_stuff(&gen::usb_bits(&[0x3C])), rate: USB_FULL, eop: false }, Idle(4.0 / USB_FULL), gen::UsbItem::packet(&pk[0], USB_LOW)];
+    let mut items = vec![
+        Idle(2e-6),
+        Packet { bits: gen::usb_stuff(&gen::usb_bits(&[0x3C])), rate: USB_FULL, eop: false },
+        Idle(4.0 / USB_FULL),
+        gen::UsbItem::packet(&pk[0], USB_LOW),
+    ];
     items.extend(pk[1..].iter().flat_map(|p| [Idle(2.0 * bit), gen::UsbItem::packet(p, USB_LOW)]));
     items.extend(usb_items(&[gen::usb_sof(0x123)], USB_FULL, 1e-6));
     let dt = 1.0 / USB_FULL / 8.0;
@@ -398,7 +448,13 @@ fn usb_crc_pid_stuff_and_length_errors() {
     let mut w = usb_want(&dat, 12000);
     w[6].2 = false;
     want.extend(w);
-    want.extend([(F("SYNC"), 12000, true), (F("PID"), 0xC4, false), (Kind::Data, 0xAA, true), (Kind::Data, 0x55, true), (F("!EOP"), 0, true)]);
+    want.extend([
+        (F("SYNC"), 12000, true),
+        (F("PID"), 0xC4, false),
+        (Kind::Data, 0xAA, true),
+        (Kind::Data, 0x55, true),
+        (F("!EOP"), 0, true),
+    ]);
     // the rest of the packet is skipped up to its EOP
     want.extend([(F("SYNC"), 12000, true), (F("PID"), 0x4B, true), (F("!STUFF"), 0, false), (F("!EOP"), 0, true)]);
     want.extend([(F("SYNC"), 12000, true), (F("PID"), 0x69, true), (F("!ERR"), 0, false), (F("!EOP"), 0, true)]);
@@ -434,11 +490,11 @@ fn usb_cut_packets_flat_lines_and_slow_sampling() {
     assert_eq!(kv(&usb(&dp[a..b], None, dt, UsbSpeed::Auto, 1.65, 0.3)), want);
     // nothing on flat lines, too few samples per bit, or a bad dt
     assert!(usb(&vec![3.3; 5000], Some(&vec![0.0; 5000]), dt, UsbSpeed::Auto, 1.65, 0.3).is_empty());
-    let (p4, m4): (Vec<f32>, Vec<f32>) = (dp.iter().step_by(4).copied().collect(), dm.iter().step_by(4).copied().collect());
+    let (p4, m4): (Vec<f32>, Vec<f32>) =
+        (dp.iter().step_by(4).copied().collect(), dm.iter().step_by(4).copied().collect());
     assert!(usb(&p4, Some(&m4), dt * 4.0, UsbSpeed::Auto, 1.65, 0.3).iter().all(|x| x.kind != F("PID")));
     assert!(usb(&dp, Some(&dm), 0.0, UsbSpeed::Auto, 1.65, 0.3).is_empty());
 }
-
 
 // ------------------------------------------------------------------------------------------------- robustness
 
@@ -481,7 +537,6 @@ fn dcc_xor_and_baseline_packets() {
     assert!(dcc(&vec![1.65; 5000], dt, 1.65, 0.3).is_empty());
     assert!(dcc(&v, 50e-6, 1.65, 0.3).is_empty());
 }
-
 
 #[test]
 fn dcc_bad_xor_and_cut_packet() {

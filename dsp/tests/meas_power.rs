@@ -8,7 +8,6 @@ use oos_dsp::sim::sample;
 use oos_dsp::spectrum;
 use std::f64::consts::PI;
 
-
 fn close(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol
 }
@@ -25,7 +24,6 @@ fn pwl(p: &[(f64, f64)], t: f64) -> f64 {
     }
     p[p.len() - 1].1
 }
-
 
 #[test]
 fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
@@ -82,7 +80,14 @@ fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
     rail[100] = 6.0;
     rail[200] = 4.0;
     let r = power::rail(&rail, 1e-6, Some(5.0), None, None);
-    assert!(close(r.overshoot, 1.0, 1e-9) && close(r.undershoot, 1.0, 1e-9) && close(r.dc, 5.0, 1e-9) && close(r.turn_on, 6.0, 1e-9), "{:?}", r);
+    assert!(
+        close(r.overshoot, 1.0, 1e-9)
+            && close(r.undershoot, 1.0, 1e-9)
+            && close(r.dc, 5.0, 1e-9)
+            && close(r.turn_on, 6.0, 1e-9),
+        "{:?}",
+        r
+    );
 }
 
 #[test]
@@ -97,7 +102,6 @@ fn rail_with_a_clock_longer_than_the_rail_uses_the_cycles_inside_it() {
     let r = power::rail(&v[..10], 1e-6, Some(1.0), None, Some(&clk));
     assert!(close(r.overshoot, 0.0, 1e-9) && close(r.dc, 1.0, 1e-9), "no cycle inside: the whole record {:?}", r);
 }
-
 
 #[test]
 fn bode_psrr_negates_the_gain_and_impedance_is_the_ratio() {
@@ -115,7 +119,6 @@ fn bode_psrr_negates_the_gain_and_impedance_is_the_ratio() {
     assert!(close(z, 0.1, 1e-4) && close(p, -45.0, 0.05), "{} {}", z, p);
 }
 
-
 #[test]
 fn acpr_ratio_and_a_band_that_runs_off_the_trace() {
     use oos_dsp::spectrum::Spectrum;
@@ -128,7 +131,6 @@ fn acpr_ratio_and_a_band_that_runs_off_the_trace() {
     assert!(close(a.upper_db, -10.0, 1e-4) && a.lower_db.is_nan(), "{:?}", a);
     assert!(spectrum::acpr(&s, 0.0, 1.0).ratio.is_nan());
 }
-
 
 #[test]
 fn ripple_on_a_dc_rail_leaves_the_dc_out_over_part_cycles() {

@@ -6,8 +6,8 @@
 //! pulse, the end of a transition, the moment a timeout expires, the edge that completes a pattern, ...
 
 use crate::edges::{edges, Edge};
-use crate::CHANNELS;
 use crate::sim::VideoStd;
+use crate::CHANNELS;
 
 /// Time condition (seconds), as in the scope's "When" setting.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,28 +82,93 @@ pub enum WinWhen {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Trigger {
-    Edge { src: usize, slope: Slope, level: f32 },
+    Edge {
+        src: usize,
+        slope: Slope,
+        level: f32,
+    },
     /// pulse width (between the two crossings of `level`) satisfies `when`; trigger on the closing edge
-    Pulse { src: usize, pol: Pol, level: f32, when: When },
+    Pulse {
+        src: usize,
+        pol: Pol,
+        level: f32,
+        when: When,
+    },
     /// transition time between `lo` and `hi` satisfies `when`; trigger at the end of the transition
-    Slope { src: usize, slope: Slope, lo: f32, hi: f32, when: When },
+    Slope {
+        src: usize,
+        slope: Slope,
+        lo: f32,
+        hi: f32,
+        when: When,
+    },
     /// composite video with negative sync, `level` between sync tip and blanking
-    Video { src: usize, std: VideoStd, sync: VideoSync, level: f32 },
+    Video {
+        src: usize,
+        std: VideoStd,
+        sync: VideoSync,
+        level: f32,
+    },
     /// trigger when the pattern becomes true (or on its edge bit while the levels match)
-    Pattern { bits: [Bit; CHANNELS], levels: [f32; CHANNELS] },
+    Pattern {
+        bits: [Bit; CHANNELS],
+        levels: [f32; CHANNELS],
+    },
     /// the pattern (H/L/X) holds for a time satisfying `when`; trigger when it ends
-    Duration { bits: [Bit; CHANNELS], levels: [f32; CHANNELS], when: When },
+    Duration {
+        bits: [Bit; CHANNELS],
+        levels: [f32; CHANNELS],
+        when: When,
+    },
     /// no edge of `slope` for `time` after an edge; trigger when the time has elapsed
-    Timeout { src: usize, slope: Slope, level: f32, time: f64 },
+    Timeout {
+        src: usize,
+        slope: Slope,
+        level: f32,
+        time: f64,
+    },
     /// pulse that crosses one threshold but not the other before returning; optional width condition
-    Runt { src: usize, pol: Pol, lo: f32, hi: f32, when: Option<When> },
-    Window { src: usize, lo: f32, hi: f32, when: WinWhen },
+    Runt {
+        src: usize,
+        pol: Pol,
+        lo: f32,
+        hi: f32,
+        when: Option<When>,
+    },
+    Window {
+        src: usize,
+        lo: f32,
+        hi: f32,
+        when: WinWhen,
+    },
     /// time from an edge on A to the next edge on B satisfies `when`; trigger on the B edge
-    Delay { a: usize, slope_a: Slope, level_a: f32, b: usize, slope_b: Slope, level_b: f32, when: When },
+    Delay {
+        a: usize,
+        slope_a: Slope,
+        level_a: f32,
+        b: usize,
+        slope_b: Slope,
+        level_b: f32,
+        when: When,
+    },
     /// data changes less than `setup` before or `hold` after a clock edge
-    SetupHold { data: usize, clk: usize, clk_slope: Slope, data_level: f32, clk_level: f32, setup: f64, hold: f64 },
+    SetupHold {
+        data: usize,
+        clk: usize,
+        clk_slope: Slope,
+        data_level: f32,
+        clk_level: f32,
+        setup: f64,
+        hold: f64,
+    },
     /// the n-th edge after an idle time of at least `idle`
-    NthEdge { src: usize, slope: Slope, level: f32, idle: f64, n: u32 },
+    NthEdge {
+        src: usize,
+        slope: Slope,
+        level: f32,
+        idle: f64,
+        n: u32,
+    },
 }
 
 /// Trigger input: up to 4 channels (empty slice = off), sample period, comparator hysteresis per channel (volts).
@@ -235,8 +300,10 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
             }
         }
         Trigger::Delay { a, slope_a, level_a, b, slope_b, level_b, when } => {
-            let ea: Vec<f64> = inp.edges(a, level_a).iter().filter(|e| slope_a.matches(e.rising)).map(|e| e.t).collect();
-            let eb: Vec<f64> = inp.edges(b, level_b).iter().filter(|e| slope_b.matches(e.rising)).map(|e| e.t).collect();
+            let ea: Vec<f64> =
+                inp.edges(a, level_a).iter().filter(|e| slope_a.matches(e.rising)).map(|e| e.t).collect();
+            let eb: Vec<f64> =
+                inp.edges(b, level_b).iter().filter(|e| slope_b.matches(e.rising)).map(|e| e.t).collect();
             let mut j = 0;
             for &ta in &ea {
                 while j < eb.len() && eb[j] <= ta {
@@ -250,7 +317,8 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
             }
         }
         Trigger::SetupHold { data, clk, clk_slope, data_level, clk_level, setup, hold } => {
-            let ec: Vec<f64> = inp.edges(clk, clk_level).iter().filter(|e| clk_slope.matches(e.rising)).map(|e| e.t).collect();
+            let ec: Vec<f64> =
+                inp.edges(clk, clk_level).iter().filter(|e| clk_slope.matches(e.rising)).map(|e| e.t).collect();
             let ed: Vec<f64> = inp.edges(data, data_level).iter().map(|e| e.t).collect();
             let mut j = 0;
             for &tc in &ec {
@@ -275,7 +343,13 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
             let mut prev: Option<f64> = None;
             for &t in &e {
                 let gap = prev.map_or(t, |p| t - p);
-                count = if gap >= lim { 1 } else if count > 0 { count + 1 } else { 0 };
+                count = if gap >= lim {
+                    1
+                } else if count > 0 {
+                    count + 1
+                } else {
+                    0
+                };
                 if count == n {
                     out.push(t);
                 }

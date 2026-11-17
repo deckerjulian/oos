@@ -4,20 +4,23 @@
 //! The controlled worker keeps the pending phase deterministic: no timing sleeps,
 //! random PRBS payloads, native GUI, or live SCPI endpoint are involved.
 use super::*;
-use oos_dsp::{decode::Kind as PacketKind, sim::{i2c_logic, sample, I2cXfer}};
+use oos_dsp::{
+    decode::Kind as PacketKind,
+    sim::{i2c_logic, sample, I2cXfer},
+};
 
 const RATE: f64 = 100_000.0;
 const DT: f64 = 100e-9;
 const POINTS: usize = 20_000;
 
 fn data(payload: u8) -> (Vec<f32>, Vec<f32>) {
-    let messages = (0..8).map(|_| I2cXfer { addr: 0x50, read: false,
-        data: vec![payload], repeated: false, stop: true }).collect::<Vec<_>>();
+    let messages = (0..8)
+        .map(|_| I2cXfer { addr: 0x50, read: false, data: vec![payload], repeated: false, stop: true })
+        .collect::<Vec<_>>();
     let (sda, scl) = i2c_logic(&messages, RATE, 0.0, 3.3);
     // The stored clock deliberately has a different grid and negative origin.
     // It overlaps the entire generated record, whose native origin is zero.
-    (sample(|t| sda.v(t), 0.0, DT, POINTS),
-        sample(|t| scl.v(t), -4.0 * DT, 2.0 * DT, POINTS / 2 + 4))
+    (sample(|t| sda.v(t), 0.0, DT, POINTS), sample(|t| scl.v(t), -4.0 * DT, 2.0 * DT, POINTS / 2 + 4))
 }
 
 fn reference(label: &str, values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
@@ -31,7 +34,9 @@ fn fixture() -> (Ui, Vec<f32>, Vec<f32>) {
     assert_eq!(clock, same_clock, "payload changes must not alter the clock fixture");
     ui.refs[0] = Some(reference("old SDA 5A", old.clone(), DT, 0.0));
     ui.refs[1] = Some(reference("stored SCL", clock, 2.0 * DT, -4.0 * DT));
-    for channel in &mut ui.m.ch { channel.on = false; }
+    for channel in &mut ui.m.ch {
+        channel.on = false;
+    }
     ui.m.la.on = false;
     ui.offline = false;
     ui.session_is_sim = true;
@@ -102,17 +107,25 @@ fn eye_records(ui: &Ui) -> f64 {
 }
 
 struct Accepted {
-    samples: Arc<Vec<f32>>, captures: u64, revision: u64,
-    frame: Option<(usize, usize, usize)>, statistics: Vec<(u64, [u64; 4])>,
-    eye: Vec<(&'static str, u64)>, image: Vec<u32>,
+    samples: Arc<Vec<f32>>,
+    captures: u64,
+    revision: u64,
+    frame: Option<(usize, usize, usize)>,
+    statistics: Vec<(u64, [u64; 4])>,
+    eye: Vec<(&'static str, u64)>,
+    image: Vec<u32>,
 }
 impl Accepted {
     fn of(ui: &Ui) -> Self {
-        Self { samples: Arc::clone(&ui.refs[0].as_ref().unwrap().v), captures: ui.replay.captures,
-            revision: ui.replay.sim_revision, frame: ui.replay.frame_for_test(),
+        Self {
+            samples: Arc::clone(&ui.refs[0].as_ref().unwrap().v),
+            captures: ui.replay.captures,
+            revision: ui.replay.sim_revision,
+            frame: ui.replay.frame_for_test(),
             statistics: ui.measurement_statistics_snapshot_for_test(),
             eye: ui.eye_readings().iter().map(|(name, value)| (*name, value.to_bits())).collect(),
-            image: ui.azr.page.img.clone() }
+            image: ui.azr.page.img.clone(),
+        }
     }
     fn assert_held(&self, ui: &Ui) {
         assert!(Arc::ptr_eq(&self.samples, &ui.refs[0].as_ref().unwrap().v), "unaccepted data became visible");
@@ -136,8 +149,16 @@ impl Held {
     fn channel(ui: &mut Ui) -> Self {
         let (requests, input) = mpsc::channel();
         let (reply, results) = mpsc::channel();
-        ui.sim_generation = Some(Generation { requests, results, next: 0, active: None,
-            run: false, in_flight: false, queued: None, pending: None });
+        ui.sim_generation = Some(Generation {
+            requests,
+            results,
+            next: 0,
+            active: None,
+            run: false,
+            in_flight: false,
+            queued: None,
+            pending: None,
+        });
         Self { reply, request: None, _requests: input }
     }
     fn receive_request(&mut self) {
@@ -174,7 +195,10 @@ fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_phys
     ui.key(key::SINGLE);
     let clock = Arc::clone(&ui.refs[1].as_ref().unwrap().v);
     let mut held = Held::submit(&mut ui);
-    for _ in 0..5 { ui.step(0.0); before.assert_held(&ui); }
+    for _ in 0..5 {
+        ui.step(0.0);
+        before.assert_held(&ui);
+    }
     assert!(ui.sim_generating());
     assert_eq!(ui.m.status, TrigStatus::Wait);
     held.finish(&mut ui, fresh.clone());
@@ -204,9 +228,16 @@ fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_phys
     assert_eq!(hits.as_ref(), &data.iter().map(|p| p.t1).collect::<Vec<_>>());
     assert!(ui.decode_events_result().unwrap().contains("A5"));
     assert!(Arc::ptr_eq(&packets, &ui.decode_packets_of(&ui.m).unwrap()));
-    assert_eq!(ui.decoder_worker_state_for_test(), scans, "accepted candidate packets should serve Search/export without decoding again");
+    assert_eq!(
+        ui.decoder_worker_state_for_test(),
+        scans,
+        "accepted candidate packets should serve Search/export without decoding again"
+    );
     let accepted = Accepted::of(&ui);
-    for _ in 0..3 { ui.step(0.0); accepted.assert_held(&ui); }
+    for _ in 0..3 {
+        ui.step(0.0);
+        accepted.assert_held(&ui);
+    }
 }
 
 #[test]
@@ -241,7 +272,10 @@ fn sim_bus_miss_stop_and_force_keep_acceptance_statistics_and_eye_in_sync() {
     assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
     assert_eq!(eye_records(&ui), 2.0);
     let accepted = Accepted::of(&ui);
-    for _ in 0..3 { ui.step(0.0); accepted.assert_held(&ui); }
+    for _ in 0..3 {
+        ui.step(0.0);
+        accepted.assert_held(&ui);
+    }
 }
 
 #[test]
@@ -253,7 +287,10 @@ fn inflight_sim_bus_result_rejects_changed_threshold_auxiliary_owner_and_origin(
         let mut held = Held::submit(&mut ui);
         match change {
             0 => ui.m.dec_thr = 1.8,
-            1 => { let r = ui.refs[1].as_mut().unwrap(); r.v = Arc::new(r.v.as_ref().clone()); },
+            1 => {
+                let r = ui.refs[1].as_mut().unwrap();
+                r.v = Arc::new(r.v.as_ref().clone());
+            }
             _ => ui.m.deskew_ref[1] = 3.0 * DT,
         }
         held.finish(&mut ui, fresh);
@@ -345,7 +382,11 @@ fn first_sim_bus_normal_and_single_retry_a_miss_without_replacing_accepted_live_
         assert_eq!(ui.refs[2].as_ref().unwrap().v.as_slice(), fresh.as_slice());
         assert_eq!(ui.m.status, TrigStatus::Triggered);
         assert_eq!(ui.m.run, if mode == TrigMode::Single { RunState::Stop } else { RunState::Run });
-        assert_eq!(ui.last[0].as_ref().unwrap().ch[0].as_ptr(), clock, "required native clock must remain the accepted snapshot");
+        assert_eq!(
+            ui.last[0].as_ref().unwrap().ch[0].as_ptr(),
+            clock,
+            "required native clock must remain the accepted snapshot"
+        );
         assert_eq!((ui.last[0].as_ref().unwrap().dt, ui.last[0].as_ref().unwrap().t0), (2.0 * DT, -4.0 * DT));
         assert!(ui.m.ch[0].on, "the decoder cache key must retain a required CH auxiliary");
         assert!(!ui.search_events().is_empty());
@@ -437,15 +478,25 @@ fn large_stored_and_native_clock_snapshots_are_shared_without_ui_scans_and_keep_
         let owner: Arc<Vec<f32>>;
         let native_frame: Option<Arc<crate::board::Frame>>;
         if native {
-            let frame = Arc::new(crate::board::Frame { seq: 77, dt: 2.0 * DT, pre: 100,
-                ch: [clock, Vec::new(), Vec::new(), Vec::new()], ..Default::default() });
+            let frame = Arc::new(crate::board::Frame {
+                seq: 77,
+                dt: 2.0 * DT,
+                pre: 100,
+                ch: [clock, Vec::new(), Vec::new(), Vec::new()],
+                ..Default::default()
+            });
             let mut record = Ui::blank_record();
             // Wrong processed data/grid proves the immutable raw frame is used.
             record.ch[0] = vec![0.0; 64];
             record.dt = 32.0 * DT;
             record.t0 = 0.123;
-            record.raw = Some(crate::wave::Raw { frame: Arc::clone(&frame), i0: 100, i1: 164,
-                t0: -4.0 * DT + 100.0 * frame.dt, conditioned: true });
+            record.raw = Some(crate::wave::Raw {
+                frame: Arc::clone(&frame),
+                i0: 100,
+                i1: 164,
+                t0: -4.0 * DT + 100.0 * frame.dt,
+                conditioned: true,
+            });
             ui.last[0] = Some(record);
             ui.m.ch[0].on = true;
             ui.m.ch[0].vscale = VSCALES.iter().position(|&v| v == 0.5).unwrap();
@@ -464,9 +515,16 @@ fn large_stored_and_native_clock_snapshots_are_shared_without_ui_scans_and_keep_
         let request = ui.sim_capture_request(ui.sim_lane(), 0, true, true, true);
         let elapsed = start.elapsed();
         assert!(request.bus_trigger.as_ref().is_some_and(Result::is_ok));
-        assert_eq!(native_frame.as_ref().map_or_else(|| Arc::strong_count(&owner), Arc::strong_count), owners + 1,
-            "request must share the immutable native allocation instead of copying 3M samples");
-        assert_eq!(ui.decoder_worker_state_for_test(), scans, "request creation must not decode the installed old record");
+        assert_eq!(
+            native_frame.as_ref().map_or_else(|| Arc::strong_count(&owner), Arc::strong_count),
+            owners + 1,
+            "request must share the immutable native allocation instead of copying 3M samples"
+        );
+        assert_eq!(
+            ui.decoder_worker_state_for_test(),
+            scans,
+            "request creation must not decode the installed old record"
+        );
         before.assert_held(&ui);
         let generated = Generated::evaluate(&request, fresh.clone());
         assert!(generated.error.is_none(), "only native physical overlap is decoded");
@@ -484,7 +542,11 @@ fn large_stored_and_native_clock_snapshots_are_shared_without_ui_scans_and_keep_
         } else {
             assert!(Arc::ptr_eq(&owner, &ui.refs[1].as_ref().unwrap().v));
         }
-        println!("3M {} auxiliary: request {:?}; shared owner, no UI decode scan, eight original-time hits", if native { "native Frame" } else { "Ref" }, elapsed);
+        println!(
+            "3M {} auxiliary: request {:?}; shared owner, no UI decode scan, eight original-time hits",
+            if native { "native Frame" } else { "Ref" },
+            elapsed
+        );
     }
 }
 
@@ -503,13 +565,22 @@ fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry
     held.finish(&mut ui, old);
     before.assert_held(&ui);
     assert!(!ui.sim_generating(), "the worker request itself is finished");
-    assert!(ui.scpi_completed.contains(&completed_generation), "no-hit generation is a completed operation, not an accepted capture");
+    assert!(
+        ui.scpi_completed.contains(&completed_generation),
+        "no-hit generation is a completed operation, not an accepted capture"
+    );
     assert_eq!((ui.m.run, ui.m.status), (RunState::Run, TrigStatus::Wait));
     assert_eq!(fence.state(&ui), OperationState::Pending, "Single still needs its own accepted-capture receipt");
     assert!(scpi.poll_program(&mut ui, &cv, &mut query).is_none());
     ui.step(0.0);
     held.receive_request();
-    assert_ne!(held.request.as_ref().unwrap().id, match completed_generation { OperationToken::Sim(_, id) => id, _ => unreachable!() });
+    assert_ne!(
+        held.request.as_ref().unwrap().id,
+        match completed_generation {
+            OperationToken::Sim(_, id) => id,
+            _ => unreachable!(),
+        }
+    );
     assert_eq!(fence.state(&ui), OperationState::Pending);
     held.finish(&mut ui, fresh.clone());
     assert_eq!(ui.replay.captures, before.captures + 1);
@@ -518,7 +589,10 @@ fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry
     assert_eq!(fence.state(&ui), OperationState::Complete);
     assert_eq!(scpi.poll_program(&mut ui, &cv, &mut query), Some(b"1;STOP".to_vec()));
     let accepted = Accepted::of(&ui);
-    for _ in 0..3 { ui.step(0.0); accepted.assert_held(&ui); }
+    for _ in 0..3 {
+        ui.step(0.0);
+        accepted.assert_held(&ui);
+    }
 }
 
 #[test]

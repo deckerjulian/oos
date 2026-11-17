@@ -74,7 +74,11 @@ impl Protocol for I2c {
     }
     /// SDA on CH3, SCL on CH4 (LA: D13, D12); the trigger on the start (first SDA fall after a quiet bus).
     fn setup(&self) -> Setup {
-        Setup { la: [Some(13), Some(12), None, None], trig: Some(DemoTrig { role: 0, slope: Slope::Fall, idle: 20e-6, level: 1.65 }), ..Setup::default() }
+        Setup {
+            la: [Some(13), Some(12), None, None],
+            trig: Some(DemoTrig { role: 0, slope: Slope::Fall, idle: 20e-6, level: 1.65 }),
+            ..Setup::default()
+        }
     }
     /// 400 kHz: write 0x50 [00 42], repeated start, read [4F 53] = "OS", every 200 us.
     fn demo(&self) -> Option<Demo> {
@@ -88,7 +92,10 @@ impl Protocol for I2c {
             0.0,
             3.3,
         );
-        Some(Demo { period: 200e-6, lines: [Some(Box::new(move |t| sda.v(t))), Some(Box::new(move |t| scl.v(t))), None, None] })
+        Some(Demo {
+            period: 200e-6,
+            lines: [Some(Box::new(move |t| sda.v(t))), Some(Box::new(move |t| scl.v(t))), None, None],
+        })
     }
 }
 
@@ -140,8 +147,17 @@ impl Protocol for Spi {
     /// Mode 0, 2 MHz, words 9F/FF 00/1F 00/40 every 50 us.
     fn demo(&self) -> Option<Demo> {
         // `spi_logic`: CS, clock, MOSI, MISO
-        let [cs, clk, mosi, _] = oos_dsp::sim::spi_logic(&[(0x9f, 0xff), (0x00, 0x1f), (0x00, 0x40)], 8, 0, 2e6, 0.0, 3.3);
-        Some(Demo { period: 50e-6, lines: [Some(Box::new(move |t| mosi.v(t))), Some(Box::new(move |t| clk.v(t))), Some(Box::new(move |t| cs.v(t))), None] })
+        let [cs, clk, mosi, _] =
+            oos_dsp::sim::spi_logic(&[(0x9f, 0xff), (0x00, 0x1f), (0x00, 0x40)], 8, 0, 2e6, 0.0, 3.3);
+        Some(Demo {
+            period: 50e-6,
+            lines: [
+                Some(Box::new(move |t| mosi.v(t))),
+                Some(Box::new(move |t| clk.v(t))),
+                Some(Box::new(move |t| cs.v(t))),
+                None,
+            ],
+        })
     }
 }
 
@@ -181,7 +197,10 @@ impl Protocol for Can {
     fn demo(&self) -> Option<Demo> {
         use oos_dsp::sim::{can_logic, CanFrame};
         let l = can_logic(
-            &[CanFrame { id: 0x123, ext: false, rtr: false, data: vec![0x11, 0x22, 0x33, 0x44] }, CanFrame { id: 0x18da_f110, ext: true, rtr: false, data: vec![0x02, 0x10, 0x03] }],
+            &[
+                CanFrame { id: 0x123, ext: false, rtr: false, data: vec![0x11, 0x22, 0x33, 0x44] },
+                CanFrame { id: 0x18da_f110, ext: true, rtr: false, data: vec![0x02, 0x10, 0x03] },
+            ],
             500e3,
             0.0,
             3.3,
@@ -250,12 +269,23 @@ impl Protocol for Parallel {
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let d0 = l.src[0].unwrap_or(0);
         let n = l.chans.len();
-        let lines: Vec<&[f32]> = (0..n).map(|k| (d0 + k) % n).filter(|&c| Some(c) != l.src[2]).take(l.sh.bits.clamp(1, 4) as usize).map(|c| l.chans[c].ok_or("source channel off")).collect::<Result<_, _>>()?;
+        let lines: Vec<&[f32]> = (0..n)
+            .map(|k| (d0 + k) % n)
+            .filter(|&c| Some(c) != l.src[2])
+            .take(l.sh.bits.clamp(1, 4) as usize)
+            .map(|c| l.chans[c].ok_or("source channel off"))
+            .collect::<Result<_, _>>()?;
         Ok(x1::parallel(&lines, l.lines[2], oos_dsp::trigger::Slope::Rising, l.thr, l.hy))
     }
     /// D0..D2 on CH1..CH3, the clock on CH4, every channel on (LA: D0).
     fn setup(&self) -> Setup {
-        Setup { src: [Some(0), None, Some(3), None], la: [Some(0), None, None, None], rows: &[(Row::Bits, 3)], show_all: true, ..Setup::default() }
+        Setup {
+            src: [Some(0), None, Some(3), None],
+            la: [Some(0), None, None, None],
+            rows: &[(Row::Bits, 3)],
+            show_all: true,
+            ..Setup::default()
+        }
     }
 }
 
@@ -279,14 +309,31 @@ impl Protocol for Cphy {
     }
     /// Auto: a symbol a nanosecond.
     fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        if sh.cphy_rate > 0.0 { 1.0 / sh.cphy_rate } else { 1e-9 }
+        if sh.cphy_rate > 0.0 {
+            1.0 / sh.cphy_rate
+        } else {
+            1e-9
+        }
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let c = l.lines[2].ok_or("C-PHY C source missing")?;
-        Ok(oos_dsp::cphy::decode(l.main(), l.need(1, "source channel off")?, c, l.dt, (l.sh.cphy_rate > 0.0).then_some(l.sh.cphy_rate), l.thr.abs().max(1e-6)))
+        Ok(oos_dsp::cphy::decode(
+            l.main(),
+            l.need(1, "source channel off")?,
+            c,
+            l.dt,
+            (l.sh.cphy_rate > 0.0).then_some(l.sh.cphy_rate),
+            l.thr.abs().max(1e-6),
+        ))
     }
     /// A, B, C on CH1..CH3, the receiver's 20 mV threshold, 16-bit words; the analog channels, not the LA.
     fn setup(&self) -> Setup {
-        Setup { src: [Some(0), Some(1), Some(2), None], thr: 0.02, rows: &[(Row::Bits, 16)], la_off: true, ..Setup::default() }
+        Setup {
+            src: [Some(0), Some(1), Some(2), None],
+            thr: 0.02,
+            rows: &[(Row::Bits, 16)],
+            la_off: true,
+            ..Setup::default()
+        }
     }
 }

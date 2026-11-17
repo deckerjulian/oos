@@ -279,7 +279,9 @@ mod imp {
             if unsafe { libc::ftruncate(fd, ARENA as libc::off_t) } != 0 {
                 return Err(format!("arena: {}", std::io::Error::last_os_error()));
             }
-            let arena = unsafe { libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) };
+            let arena = unsafe {
+                libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
+            };
             if arena == libc::MAP_FAILED {
                 return Err(format!("arena map: {}", std::io::Error::last_os_error()));
             }
@@ -289,7 +291,17 @@ mod imp {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("{}: {}", helper, e))?;
-            let mut g = Gpu { child, sock: ours, arena: arena as *mut u8, targets: [None; 8], blocks: [Vec::new(), Vec::new()], monitor_from: 2, atlas: Vec::new(), atlas_rows: 0, times: Times::default() };
+            let mut g = Gpu {
+                child,
+                sock: ours,
+                arena: arena as *mut u8,
+                targets: [None; 8],
+                blocks: [Vec::new(), Vec::new()],
+                monitor_from: 2,
+                atlas: Vec::new(),
+                atlas_rows: 0,
+                times: Times::default(),
+            };
             clock_floor(true);
             let h = Hello { magic: MAGIC, version: VERSION, kind: K_HELLO, pad: 0, arena_size: ARENA as u64 };
             send_fd(&g.sock, bytes(&h), Some(mem.as_raw_fd())).map_err(|e| format!("hello: {}", e))?;
@@ -311,7 +323,9 @@ mod imp {
             let _ = self.sock.set_read_timeout(Some(t));
             let mut d = DoneMsg::default();
             // SAFETY: DoneMsg is plain integers and floats
-            let buf = unsafe { std::slice::from_raw_parts_mut(&mut d as *mut DoneMsg as *mut u8, std::mem::size_of::<DoneMsg>()) };
+            let buf = unsafe {
+                std::slice::from_raw_parts_mut(&mut d as *mut DoneMsg as *mut u8, std::mem::size_of::<DoneMsg>())
+            };
             self.sock.read_exact(buf).map_err(|e| format!("no answer: {}", e))?;
             if d.magic != MAGIC || d.kind != K_DONE {
                 return Err("bad answer".into());
@@ -325,7 +339,16 @@ mod imp {
 
         /// A scan-out buffer of the display as target `index` (the helper keeps the descriptor).
         pub fn target_dmabuf(&mut self, index: usize, w: i32, h: i32, pitch: i32, fd: OwnedFd) -> Result<(), String> {
-            let m = TargetMsg { magic: MAGIC, kind: K_TARGET, index: index as u32, w, h, pitch, fourcc: FOURCC_XRGB8888, memory: 0 };
+            let m = TargetMsg {
+                magic: MAGIC,
+                kind: K_TARGET,
+                index: index as u32,
+                w,
+                h,
+                pitch,
+                fourcc: FOURCC_XRGB8888,
+                memory: 0,
+            };
             send_fd(&self.sock, bytes(&m), Some(fd.as_raw_fd())).map_err(|e| format!("target: {}", e))?;
             drop(fd);
             self.wait(Duration::from_secs(2))?;
@@ -335,7 +358,16 @@ mod imp {
 
         /// A target in the helper's own memory, read back after every frame (tests).
         pub fn target_memory(&mut self, index: usize, w: i32, h: i32) -> Result<(), String> {
-            let m = TargetMsg { magic: MAGIC, kind: K_TARGET, index: index as u32, w, h, pitch: w * 4, fourcc: FOURCC_XRGB8888, memory: 1 };
+            let m = TargetMsg {
+                magic: MAGIC,
+                kind: K_TARGET,
+                index: index as u32,
+                w,
+                h,
+                pitch: w * 4,
+                fourcc: FOURCC_XRGB8888,
+                memory: 1,
+            };
             send_fd(&self.sock, bytes(&m), None).map_err(|e| format!("target: {}", e))?;
             self.wait(Duration::from_secs(2))?;
             self.targets[index] = Some((w, h, true));
@@ -344,14 +376,26 @@ mod imp {
 
         /// Puts the quads together in target `index`, on `clear` first when given (xrgb); with `back` the picture is
         /// read back into it (its size must be the target's). `submit` and `collect` in one.
-        pub fn compose(&mut self, index: usize, clear: Option<u32>, quads: &[Quad], back: Option<&mut Canvas>) -> Result<(), String> {
+        pub fn compose(
+            &mut self,
+            index: usize,
+            clear: Option<u32>,
+            quads: &[Quad],
+            back: Option<&mut Canvas>,
+        ) -> Result<(), String> {
             let t = self.submit(index, clear, quads, back.is_some())?;
             self.collect(t, back)
         }
 
         /// Sends a frame and returns at once: the helper works while the caller draws the next one. The layers and
         /// maps are copied now; the arena half of this target must not hold a frame still in work (collect first).
-        pub fn submit(&mut self, index: usize, clear: Option<u32>, quads: &[Quad], read: bool) -> Result<Ticket, String> {
+        pub fn submit(
+            &mut self,
+            index: usize,
+            clear: Option<u32>,
+            quads: &[Quad],
+            read: bool,
+        ) -> Result<Ticket, String> {
             let t0 = std::time::Instant::now();
             let (tw, th, memory) = self.targets.get(index).copied().flatten().ok_or("no such target")?;
             let mut f = FrameMsg {
@@ -434,7 +478,11 @@ mod imp {
                 let mut img0 = 0u32;
                 for (k, r) in [u, o].into_iter().enumerate() {
                     let Some(r) = r else { continue };
-                    let bases: Vec<u32> = r.fonts.iter().map(|f| self.atlas.iter().find(|a| a.0 == f.as_ptr() as usize).map_or(0, |a| a.1)).collect();
+                    let bases: Vec<u32> = r
+                        .fonts
+                        .iter()
+                        .map(|f| self.atlas.iter().find(|a| a.0 == f.as_ptr() as usize).map_or(0, |a| a.1))
+                        .collect();
                     let at = alloc(r.cmds.len() * std::mem::size_of::<Cmd>())?;
                     // SAFETY: inside the mapping (alloc), room for all commands
                     let dst = unsafe { std::slice::from_raw_parts_mut(base.add(at) as *mut Cmd, r.cmds.len()) };
@@ -453,11 +501,17 @@ mod imp {
             let end = tail;
             let mut blocks: Vec<(usize, usize)> = Vec::new();
             // the blocks so far lie where they lay in the last frame of this half
-            let same = |blocks: &Vec<(usize, usize)>, prev: &Vec<(usize, usize)>| prev.len() >= blocks.len() && prev[..blocks.len()] == blocks[..];
+            let same = |blocks: &Vec<(usize, usize)>, prev: &Vec<(usize, usize)>| {
+                prev.len() >= blocks.len() && prev[..blocks.len()] == blocks[..]
+            };
             let prev = std::mem::take(&mut self.blocks[half]);
             // a block of `rows` rows of `row` bytes: the rows that differ from the arena's copy are copied; the band
             // of changed rows comes back (all of them for a new block)
-            let mut put = |src: *const u8, row: usize, rows: usize, blocks: &mut Vec<(usize, usize)>| -> Result<(u32, i32, i32), String> {
+            let mut put = |src: *const u8,
+                           row: usize,
+                           rows: usize,
+                           blocks: &mut Vec<(usize, usize)>|
+             -> Result<(u32, i32, i32), String> {
                 at = (at + 63) & !63;
                 let len = row * rows;
                 if at + len > end {
@@ -468,7 +522,12 @@ mod imp {
                 let (mut y0, mut y1) = (rows as i32, 0);
                 for r in 0..rows {
                     // SAFETY: inside the mapping; the source has `rows` rows of `row` readable bytes
-                    let (a, b) = unsafe { (std::slice::from_raw_parts(base.add(at + r * row), row), std::slice::from_raw_parts(src.add(r * row), row)) };
+                    let (a, b) = unsafe {
+                        (
+                            std::slice::from_raw_parts(base.add(at + r * row), row),
+                            std::slice::from_raw_parts(src.add(r * row), row),
+                        )
+                    };
                     if !known || differ(a, b) {
                         unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), base.add(at + r * row), row) };
                         y0 = y0.min(r as i32);
@@ -480,7 +539,9 @@ mod imp {
                 Ok((o, y0, y1.max(y0)))
             };
             for (qi, q) in quads.iter().enumerate() {
-                let mut layer = |c: Option<&Canvas>, blocks: &mut Vec<(usize, usize)>| -> Result<(u32, i32, i32), String> {
+                let mut layer = |c: Option<&Canvas>,
+                                 blocks: &mut Vec<(usize, usize)>|
+                 -> Result<(u32, i32, i32), String> {
                     match c {
                         Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
                         Some(c) if !q.reuse => put(c.px.as_ptr() as *const u8, c.w as usize * 4, c.h as usize, blocks),
@@ -520,7 +581,11 @@ mod imp {
                         }
                     }
                     if !q.reuse {
-                        j.lut_off = if job.graded { put(job.colours.as_ptr() as *const u8, job.colours.len() * 4, 1, &mut blocks)?.0 } else { put(job.alpha.as_ptr(), job.alpha.len(), 1, &mut blocks)?.0 };
+                        j.lut_off = if job.graded {
+                            put(job.colours.as_ptr() as *const u8, job.colours.len() * 4, 1, &mut blocks)?.0
+                        } else {
+                            put(job.alpha.as_ptr(), job.alpha.len(), 1, &mut blocks)?.0
+                        };
                     }
                     f.j[f.n_jobs as usize] = j;
                     f.n_jobs += 1;
@@ -593,7 +658,13 @@ mod imp {
                     return Err("read-back canvas of another size".into());
                 }
                 // SAFETY: the helper wrote tw * th pixels there
-                unsafe { std::ptr::copy_nonoverlapping(self.arena.add(off) as *const u32, cv.px.as_mut_ptr(), (tw * th) as usize) };
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        self.arena.add(off) as *const u32,
+                        cv.px.as_mut_ptr(),
+                        (tw * th) as usize,
+                    )
+                };
             }
             Ok(())
         }
@@ -609,7 +680,11 @@ mod imp {
             if !e.file_name().to_string_lossy().ends_with(".gpu") {
                 continue;
             }
-            let steps: Vec<u64> = std::fs::read_to_string(p.join("available_frequencies")).unwrap_or_default().split_whitespace().filter_map(|v| v.parse().ok()).collect();
+            let steps: Vec<u64> = std::fs::read_to_string(p.join("available_frequencies"))
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|v| v.parse().ok())
+                .collect();
             let low = steps.iter().copied().min().unwrap_or(0);
             let want = if on { steps.iter().copied().filter(|&f| f >= 400_000_000).min().unwrap_or(low) } else { low };
             if want > 0 {
@@ -674,7 +749,15 @@ mod tests {
         use crate::gfx::Cmd;
         use std::mem::size_of;
         assert_eq!(
-            (size_of::<Hello>(), size_of::<TargetMsg>(), size_of::<QuadMsg>(), size_of::<JobMsg>(), size_of::<FrameMsg>(), size_of::<DoneMsg>(), size_of::<Cmd>()),
+            (
+                size_of::<Hello>(),
+                size_of::<TargetMsg>(),
+                size_of::<QuadMsg>(),
+                size_of::<JobMsg>(),
+                size_of::<FrameMsg>(),
+                size_of::<DoneMsg>(),
+                size_of::<Cmd>()
+            ),
             (24, 32, 96, 112, 2224, 32, 24)
         );
         let _ = (K_HELLO, K_TARGET, K_FRAME, K_DONE, NONE);

@@ -29,7 +29,15 @@ fn can_standard_extended_and_remote_frames() {
     let dt = 1.0 / 25e6; // 50 samples per bit
     let v = sample(|t| l.v(t), 0.0, dt, 25_000);
     let p = can(&v, dt, br, 1.65, 0.2, false);
-    assert_eq!(ids(&p), vec![(0x123, false, false), (0x1abc_def0 & 0x1fff_ffff, true, false), (0x7ff, false, true), (0x0f0, false, false)]);
+    assert_eq!(
+        ids(&p),
+        vec![
+            (0x123, false, false),
+            (0x1abc_def0 & 0x1fff_ffff, true, false),
+            (0x7ff, false, true),
+            (0x0f0, false, false)
+        ]
+    );
     let mut want = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 0x55];
     want.extend([0xff; 8]);
     assert_eq!(data(&p), want);
@@ -68,7 +76,8 @@ fn can_on_can_h_with_noise() {
 
 #[test]
 fn lin_classic_and_enhanced_frames() {
-    let frames = [(0x10u8, vec![0x01, 0x02, 0x03], false), (0x3c, vec![0xaa, 0x55, 0x00, 0xff, 0x12, 0x34, 0x56, 0x78], true)];
+    let frames =
+        [(0x10u8, vec![0x01, 0x02, 0x03], false), (0x3c, vec![0xaa, 0x55, 0x00, 0xff, 0x12, 0x34, 0x56, 0x78], true)];
     let l = lin_logic(&frames, 19200.0, 0.0, 12.0);
     let dt = 1.0 / 1e6;
     let v = sample(|t| l.v(t), 0.0, dt, 20_000);
@@ -148,7 +157,12 @@ fn can_stuff_bit_after_the_crc() {
         let v = sample(|t| l.v(t), 0.0, dt, 8_000);
         let p = can(&v, dt, br, 1.65, 0.2, false);
         assert_eq!(crcs(&p), vec![true], "id {:#x}", id);
-        assert!(p.iter().any(|x| x.kind == Kind::Ack && x.ok), "id {:#x}: {:?}", id, p.iter().filter(|x| x.kind == Kind::Ack).collect::<Vec<_>>());
+        assert!(
+            p.iter().any(|x| x.kind == Kind::Ack && x.ok),
+            "id {:#x}: {:?}",
+            id,
+            p.iter().filter(|x| x.kind == Kind::Ack).collect::<Vec<_>>()
+        );
         checked += 1;
         if checked >= 5 {
             break;

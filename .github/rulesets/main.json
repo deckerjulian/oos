@@ -61,6 +61,13 @@
         ],
         "do_not_enforce_on_create": false
       }
+    },
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": false,
+        "review_draft_pull_requests": false
+      }
     }
   ]
 }

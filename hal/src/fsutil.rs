@@ -89,7 +89,12 @@ mod tests {
         let d = dir("replace");
         let p = d.join("a.hex");
         write_atomic(&p, b"one", &Opts::default()).unwrap();
-        write_atomic(&p, b"two", &Opts { bak: true, mode: Some(0o600), dir_sync: DirSync::Required, ..Default::default() }).unwrap();
+        write_atomic(
+            &p,
+            b"two",
+            &Opts { bak: true, mode: Some(0o600), dir_sync: DirSync::Required, ..Default::default() },
+        )
+        .unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
         assert_eq!(std::fs::read(d.join("a.hex.bak")).unwrap(), b"one");
         assert!(!d.join("a.hex.new").exists());

@@ -5,7 +5,10 @@
 //! platform is set once per process): at 2 GHz the register values equal those of the nominal 1.25 GHz model for the
 //! correspondingly scaled times, while rates and periods come out in real units.
 
-use oos_hal::{model, dho::{acq, afg, boot, clock, hz, roll, scu::Shadows}};
+use oos_hal::{
+    dho::{acq, afg, boot, clock, hz, roll, scu::Shadows},
+    model,
+};
 
 const US: i128 = 1_000_000_000;
 

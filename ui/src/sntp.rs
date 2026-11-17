@@ -106,7 +106,9 @@ fn ask(addr: SocketAddr) -> Result<Sample, String> {
     loop {
         let n = match s.recv(&mut b) {
             Ok(n) => n,
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => return Err("no answer".into()),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                return Err("no answer".into())
+            }
             Err(e) => return Err(e.to_string()),
         };
         let t4 = crate::clock::unix_now();
@@ -123,9 +125,11 @@ fn ask(addr: SocketAddr) -> Result<Sample, String> {
 
 /// Asks `server` (a name or an address) for the time; the first of its addresses that answers counts.
 pub fn query(server: &str) -> Result<Sample, String> {
-    let addrs: Vec<SocketAddr> = (server, PORT).to_socket_addrs().map_err(|_| "name not found (DNS)".to_string())?.collect();
+    let addrs: Vec<SocketAddr> =
+        (server, PORT).to_socket_addrs().map_err(|_| "name not found (DNS)".to_string())?.collect();
     // IPv4 first: OOS gets no IPv6 route from DHCP
-    let mut v: Vec<SocketAddr> = addrs.iter().filter(|a| a.is_ipv4()).chain(addrs.iter().filter(|a| a.is_ipv6())).copied().collect();
+    let mut v: Vec<SocketAddr> =
+        addrs.iter().filter(|a| a.is_ipv4()).chain(addrs.iter().filter(|a| a.is_ipv6())).copied().collect();
     v.truncate(4);
     let mut err = "name without an address".to_string();
     for a in v {

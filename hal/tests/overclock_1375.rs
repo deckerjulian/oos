@@ -4,7 +4,10 @@
 //! A clock off the 1-2-5 grid (1.375 GHz, the first step of the overclocking test), in its own process: the rate the
 //! time base model reports must be the rate the SPU dividers it writes really make, or the time axis is wrong.
 
-use oos_hal::{model, dho::{clock, hz, spu}};
+use oos_hal::{
+    dho::{clock, hz, spu},
+    model,
+};
 
 /// Sample rate the SPU makes from its registers at the clock in effect (nominal registers scaled to real).
 fn rate_of(w: &[(u32, u32)], max: f64) -> f64 {
@@ -30,7 +33,15 @@ fn dividers_match_the_model() {
                 let max = clock::adc_hz() as f64 / p.ratio as f64;
                 let got = rate_of(&spu::sample_rate(p.rate, max as u64), max);
                 // the model keeps whole Sa/s: within that rounding (before the fix the error was up to 60 %)
-                assert!((got - p.rate as f64).abs() <= 2.0 + p.rate as f64 * 1e-9, "mask {} {} ns/div depth {}: model {} dividers {}", mask, tdiv_ns, depth, p.rate, got);
+                assert!(
+                    (got - p.rate as f64).abs() <= 2.0 + p.rate as f64 * 1e-9,
+                    "mask {} {} ns/div depth {}: model {} dividers {}",
+                    mask,
+                    tdiv_ns,
+                    depth,
+                    p.rate,
+                    got
+                );
                 // and the period agrees with the rate
                 assert!((p.dot_fs as f64 * p.rate as f64 / 1e15 - 1.0).abs() < 1e-3);
                 checked += 1;

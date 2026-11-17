@@ -84,7 +84,11 @@ impl Retry {
 
 /// Link speed in Mbit/s from sysfs (none without a link).
 pub fn speed() -> Option<u32> {
-    std::fs::read_to_string(format!("/sys/class/net/{}/speed", IFACE)).ok().and_then(|s| s.trim().parse::<i64>().ok()).filter(|&s| s > 0).map(|s| s as u32)
+    std::fs::read_to_string(format!("/sys/class/net/{}/speed", IFACE))
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&s| s > 0)
+        .map(|s| s as u32)
 }
 
 pub fn carrier() -> bool {
@@ -92,7 +96,9 @@ pub fn carrier() -> bool {
 }
 
 pub fn duplex() -> String {
-    std::fs::read_to_string(format!("/sys/class/net/{}/duplex", IFACE)).map(|s| s.trim().to_string()).unwrap_or_default()
+    std::fs::read_to_string(format!("/sys/class/net/{}/duplex", IFACE))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// `struct ifreq`: the name, then a 24-byte union (64-bit Linux).

@@ -204,7 +204,10 @@ mod tests {
         assert_eq!(ui.cat_open[0], 0, "folded again");
         let view = ui.catalog_view();
         let first = ui.catalog_group_rect(0).unwrap();
-        assert!(first.y >= view.y && first.y + first.h <= view.y + view.h, "the first header is in view: {first:?} in {view:?}");
+        assert!(
+            first.y >= view.y && first.y + first.h <= view.y + view.h,
+            "the first header is in view: {first:?} in {view:?}"
+        );
         let (bar, _) = ui.catalog_bar().unwrap();
         assert!(!bar.needed() || bar.top() <= bar.max());
     }

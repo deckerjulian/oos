@@ -12,6 +12,15 @@ on:
   # the waits run out without an event, and an approving review is picked up here within a quarter of an hour
   schedule:
     - cron: '7,22,37,52 * * * *'
+  # when CI is done: whether the comparison found nothing decides whether a pull request has to wait at all
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  # Copilot's review, and the maintainer resolving its comments, change the status review
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [edited, deleted]
   workflow_dispatch:
 permissions:
   contents: read

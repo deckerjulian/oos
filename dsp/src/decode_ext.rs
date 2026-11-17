@@ -109,8 +109,8 @@ pub fn parallel(data: &[&[f32]], clk: Option<&[f32]>, edge: Slope, thr: f32, hys
 
 /// Standard UART bit rates `uart_baud` snaps to (incl. MIDI 31250 and DMX512 250000).
 pub const STD_BAUD: [f64; 25] = [
-    300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0, 14400.0, 19200.0, 28800.0, 31250.0, 38400.0, 57600.0, 76800.0, 115200.0, 230400.0,
-    250000.0, 460800.0, 500000.0, 921600.0, 1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6,
+    300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0, 14400.0, 19200.0, 28800.0, 31250.0, 38400.0, 57600.0, 76800.0,
+    115200.0, 230400.0, 250000.0, 460800.0, 500000.0, 921600.0, 1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6,
 ];
 
 /// Bit rate of an asynchronous serial signal: the shortest pulse width that occurs consistently (at least 2 pulses
@@ -170,7 +170,12 @@ pub fn uart9(v: &[f32], dt: f64, baud: f64, thr: f32, hyst: f32, invert: bool) -
         .into_iter()
         .map(|p| {
             let a = (p.value >> 8) & 1;
-            Packet { kind: if a == 1 { Kind::Addr { read: false } } else { Kind::Data }, value: p.value & 0xff, value2: Some(a), ..p }
+            Packet {
+                kind: if a == 1 { Kind::Addr { read: false } } else { Kind::Data },
+                value: p.value & 0xff,
+                value2: Some(a),
+                ..p
+            }
         })
         .collect()
 }
@@ -241,7 +246,14 @@ fn field_be(out: &mut Vec<Packet>, s: &[Byte], label: &'static str, a: usize, n:
     }
     let v = s[a..a + n].iter().fold(0u64, |acc, x| acc << 8 | x.0 as u64);
     let fok = s[a..a + n].iter().all(|x| x.3);
-    out.push(pk(Kind::Field(label), s[a].1, s[a + n - 1].2, v as u32, if n > 4 { Some((v >> 32) as u32) } else { None }, ok && fok));
+    out.push(pk(
+        Kind::Field(label),
+        s[a].1,
+        s[a + n - 1].2,
+        v as u32,
+        if n > 4 { Some((v >> 32) as u32) } else { None },
+        ok && fok,
+    ));
     true
 }
 
@@ -350,7 +362,16 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
 /// Modbus ASCII (Modbus over serial line V1.02, 2.5.2): characters from `decode::uart` (`bits` = 7 normally, 8 also
 /// accepted); Start at ':', hex pairs (address, PDU, LRC), Stop at CR LF. Same fields as `modbus_rtu`, the LRC as
 /// Crc (`ok` = it matches). Bad hex characters or an odd count: Field("!ERR").
-pub fn modbus_ascii(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, thr: f32, hyst: f32, invert: bool) -> Vec<Packet> {
+pub fn modbus_ascii(
+    v: &[f32],
+    dt: f64,
+    baud: f64,
+    bits: u32,
+    parity: Parity,
+    thr: f32,
+    hyst: f32,
+    invert: bool,
+) -> Vec<Packet> {
     let mut out = Vec::new();
     if !(baud > 0.0 && dt > 0.0) || !(7..=8).contains(&bits) {
         return out;
@@ -407,7 +428,14 @@ fn modbus_adu(b: &[Byte], out: &mut Vec<Packet>) {
     let words = |out: &mut Vec<Packet>, from: usize| {
         let mut i = from;
         while i + 1 < d.len() {
-            out.push(pk(Kind::Data, d[i].1, d[i + 1].2, (d[i].0 as u32) << 8 | d[i + 1].0 as u32, None, d[i].3 && d[i + 1].3));
+            out.push(pk(
+                Kind::Data,
+                d[i].1,
+                d[i + 1].2,
+                (d[i].0 as u32) << 8 | d[i + 1].0 as u32,
+                None,
+                d[i].3 && d[i + 1].3,
+            ));
             i += 2;
         }
         bytes_from(out, d, i);
@@ -590,7 +618,14 @@ impl OwNet {
         let c = std::mem::take(&mut self.code);
         let b = |i: usize| c[i].0 as u32;
         self.out.push(pk(Kind::Field("FAM"), c[0].1, c[0].2, b(0), None, true));
-        self.out.push(pk(Kind::Field("SER"), c[1].1, c[6].2, b(1) | b(2) << 8 | b(3) << 16 | b(4) << 24, Some(b(5) | b(6) << 8), true));
+        self.out.push(pk(
+            Kind::Field("SER"),
+            c[1].1,
+            c[6].2,
+            b(1) | b(2) << 8 | b(3) << 16 | b(4) << 24,
+            Some(b(5) | b(6) << 8),
+            true,
+        ));
         let bytes: Vec<u8> = c.iter().map(|x| x.0).collect();
         self.out.push(pk(Kind::Crc, c[7].1, c[7].2, b(7), None, ow_crc8(&bytes[..7]) == bytes[7]));
     }
@@ -855,7 +890,8 @@ pub fn can_fd(v: &[f32], dt: f64, nominal: f64, data_rate: f64, thr: f32, hyst: 
         if x.t < busy_until {
             continue;
         }
-        let idle_from = last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
+        let idle_from =
+            last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
         if x.t - idle_from < 7.0 * tn {
             continue;
         }
@@ -919,7 +955,13 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
             need = fdf_at + 1;
         } else if dlc_at == usize::MAX && fdf_at != usize::MAX && n == fdf_at + 1 {
             fd = bits[fdf_at].0;
-            dlc_at = if fd { fdf_at + 4 } else if ext { fdf_at + 2 } else { fdf_at + 1 };
+            dlc_at = if fd {
+                fdf_at + 4
+            } else if ext {
+                fdf_at + 2
+            } else {
+                fdf_at + 1
+            };
             if fd {
                 brs_at = fdf_at + 2;
             }
@@ -927,7 +969,13 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         } else if data_end == usize::MAX && dlc_at != usize::MAX && n == dlc_at + 4 {
             let dlc = bits[dlc_at..dlc_at + 4].iter().fold(0usize, |a, b| a << 1 | b.0 as usize);
             let rtr = !fd && bits[if ext { 32 } else { 12 }].0;
-            let nb = if fd { FD_LEN[dlc] } else if rtr { 0 } else { dlc.min(8) };
+            let nb = if fd {
+                FD_LEN[dlc]
+            } else if rtr {
+                0
+            } else {
+                dlc.min(8)
+            };
             data_end = n + 8 * nb;
             need = if fd { data_end } else { data_end + 15 };
         }
@@ -938,7 +986,10 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
     let id = if ext { val(1..12) << 18 | val(14..32) } else { val(1..12) };
     let dlc = val(dlc_at..dlc_at + 4);
     let nb = (data_end - dlc_at - 4) / 8;
-    let mut out = vec![span(Kind::Start, 0, 0, 0, None, true), span(Kind::Id { ext, rtr }, 1, if ext { 31 } else { 11 }, id, None, true)];
+    let mut out = vec![
+        span(Kind::Start, 0, 0, 0, None, true),
+        span(Kind::Id { ext, rtr }, 1, if ext { 31 } else { 11 }, id, None, true),
+    ];
     if fd {
         out.push(span(Kind::Field("BRS"), brs_at, brs_at, bits[brs_at].0 as u32, None, true));
         out.push(span(Kind::Field("ESI"), brs_at + 1, brs_at + 1, bits[brs_at + 1].0 as u32, None, true));
@@ -1038,7 +1089,11 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
     // frame, so the tail of a frame cut by the record start is not taken for one), and a low first decision after as
     // long an undefined start (a differential bus idles at 0 V)
     let idle = 10.0 * spb;
-    let mut starts: Vec<f64> = fall.iter().copied().filter(|&f| f - rise.partition_point(|&x| x < f).checked_sub(1).map_or(0.0, |k| rise[k]) >= idle).collect();
+    let mut starts: Vec<f64> = fall
+        .iter()
+        .copied()
+        .filter(|&f| f - rise.partition_point(|&x| x < f).checked_sub(1).map_or(0.0, |k| rise[k]) >= idle)
+        .collect();
     if let Some(i) = st.iter().position(|s| s.is_some()) {
         if st[i].map(|b| b != invert) == Some(false) && i as f64 >= idle {
             starts.insert(0, i as f64);
@@ -1084,7 +1139,8 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
         }
         busy = exp + spb;
         let fv = |a: usize, n: usize| bits[a..a + n].iter().fold(0u32, |acc, b| acc << 1 | b.0 as u32);
-        let fld = |kind, a: usize, n: usize, value2, ok| pk(kind, bits[a].1, bits[a + n - 1].1 + spb, fv(a, n), value2, ok);
+        let fld =
+            |kind, a: usize, n: usize, value2, ok| pk(kind, bits[a].1, bits[a + n - 1].1 + spb, fv(a, n), value2, ok);
         out.push(pk(Kind::Field("TSS"), f, r, tss.round() as u32, None, (2.5..=15.5).contains(&tss)));
         out.push(fld(Kind::Field("IND"), 0, 5, None, !bits[0].0));
         let id = fv(5, 11);
@@ -1183,7 +1239,17 @@ pub mod gen {
     }
 
     /// RDM request/response bytes (ANSI E1.20): start code .. parameter data, then the 16-bit checksum.
-    pub fn rdm_packet(dst: u64, src: u64, tn: u8, port: u8, mc: u8, subdev: u16, cc: u8, pid: u16, pd: &[u8]) -> Vec<u8> {
+    pub fn rdm_packet(
+        dst: u64,
+        src: u64,
+        tn: u8,
+        port: u8,
+        mc: u8,
+        subdev: u16,
+        cc: u8,
+        pid: u16,
+        pd: &[u8],
+    ) -> Vec<u8> {
         let mut b = vec![RDM_SC, 0x01, (24 + pd.len()) as u8];
         b.extend_from_slice(&dst.to_be_bytes()[2..]);
         b.extend_from_slice(&src.to_be_bytes()[2..]);
@@ -1222,7 +1288,9 @@ pub mod gen {
     /// 1-Wire master/slave activity for `onewire_logic`.
     #[derive(Clone, Copy, Debug)]
     pub enum Ow {
-        Reset { presence: bool },
+        Reset {
+            presence: bool,
+        },
         /// master writes a byte (LSB first)
         Write(u8),
         /// a slave answers a read byte
@@ -1242,8 +1310,11 @@ pub mod gen {
         let mut od = false;
         for &op in ops {
             // (write-1 low, read-0 low, write-0 low, slot, reset, presence wait, presence low, after reset)
-            let (a, rd0, c, slot, h, pw, pl, j) =
-                if od { (1.0, 5.0, 7.5, 10.0, 70.0, 3.0, 12.0, 40.0) } else { (6.0, 30.0, 60.0, 70.0, 480.0, 30.0, 120.0, 410.0) };
+            let (a, rd0, c, slot, h, pw, pl, j) = if od {
+                (1.0, 5.0, 7.5, 10.0, 70.0, 3.0, 12.0, 40.0)
+            } else {
+                (6.0, 30.0, 60.0, 70.0, 480.0, 30.0, 120.0, 410.0)
+            };
             let bit = |w: &mut Wave, low: f64| {
                 w.level(false, low * us);
                 w.level(true, (slot - low) * us);
@@ -1288,7 +1359,11 @@ pub mod gen {
     pub fn can_fd_bits(f: &FdFrame, nominal: f64, data_rate: f64) -> Vec<(bool, f64)> {
         let (tn, td) = (1.0 / nominal, 1.0 / data_rate);
         let push = |h: &mut Vec<bool>, v: u32, n: u32| (0..n).rev().for_each(|i| h.push((v >> i) & 1 == 1));
-        let dlc = if f.fd { FD_LEN.iter().position(|&l| l >= f.data.len()).unwrap_or(15) as u32 } else { f.data.len().min(8) as u32 };
+        let dlc = if f.fd {
+            FD_LEN.iter().position(|&l| l >= f.data.len()).unwrap_or(15) as u32
+        } else {
+            f.data.len().min(8) as u32
+        };
         let nb = if f.fd { FD_LEN[dlc as usize] } else { dlc as usize };
         let mut h = vec![false];
         if f.ext {
@@ -1330,7 +1405,13 @@ pub mod gen {
         let mut raw = Vec::new();
         let (mut run, mut last, mut cnt) = (0, None, 0u32);
         for (k, &x) in h.iter().enumerate() {
-            let len = if fast && k == brs_at { brs_len } else if fast && k > brs_at { td } else { tn };
+            let len = if fast && k == brs_at {
+                brs_len
+            } else if fast && k > brs_at {
+                td
+            } else {
+                tn
+            };
             out.push((x, len));
             raw.push(x);
             if Some(x) == last {
@@ -1410,7 +1491,9 @@ pub mod gen {
         }
         let words = (pl.len() / 2) as u64;
         let id = (f.id & 0x7ff) as u64;
-        let hcrc = flexray_header_crc(((f.sync as u32) << 19) | ((f.startup as u32) << 18) | (id as u32) << 7 | words as u32) as u64;
+        let hcrc =
+            flexray_header_crc(((f.sync as u32) << 19) | ((f.startup as u32) << 18) | (id as u32) << 7 | words as u32)
+                as u64;
         let h: u64 = (f.ppi as u64) << 38
             | (f.nf as u64) << 37
             | (f.sync as u64) << 36

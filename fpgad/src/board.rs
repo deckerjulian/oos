@@ -53,11 +53,23 @@ pub fn run(cmd: &str, a: &[String]) -> Result<(), String> {
             bp.play(b).map_err(|e| format!("beeper: {}", e))?;
         }
         "guard" => {
-            let period = a.iter().position(|x| x == "--period").and_then(|i| a.get(i + 1)).map(|x| x.parse::<f32>().map_err(|e| e.to_string())).transpose()?.unwrap_or(1.0);
+            let period = a
+                .iter()
+                .position(|x| x == "--period")
+                .and_then(|i| a.get(i + 1))
+                .map(|x| x.parse::<f32>().map_err(|e| e.to_string()))
+                .transpose()?
+                .unwrap_or(1.0);
             let arm = a.iter().any(|x| x == "--power-off");
             let beeper = Beeper::open(Path::new("/sys/class/pwm")).ok();
             let mut g = Guard::default();
-            eprintln!("oos-fpgad guard: period {} s, limits SoC {} C / FPGA {} C, power off {}", period, board::SOC_LIMIT, board::FPGA_LIMIT, if arm { "ARMED" } else { "not armed (log only)" });
+            eprintln!(
+                "oos-fpgad guard: period {} s, limits SoC {} C / FPGA {} C, power off {}",
+                period,
+                board::SOC_LIMIT,
+                board::FPGA_LIMIT,
+                if arm { "ARMED" } else { "not armed (log only)" }
+            );
             loop {
                 let (z, x) = (board::thermal_zones(thermal), fpga_xadc());
                 let ev = g.feed(board::is_hot(&z, x.map(|v| v.0)));

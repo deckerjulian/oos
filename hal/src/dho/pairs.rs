@@ -103,7 +103,9 @@ pub fn check(raw: &[u16], comp: &[u16], k: usize) -> Vec<Fit> {
     let lo = n.saturating_sub(CHECK_POINTS) / 2;
     let hi = (lo + CHECK_POINTS).min(n);
     let mut fits = Vec::new();
-    for (block_k, order) in [(2, Order::Time), (2, Order::MinFirst), (2, Order::MaxFirst), (1, Order::MinFirst), (1, Order::MaxFirst)] {
+    for (block_k, order) in
+        [(2, Order::Time), (2, Order::MinFirst), (2, Order::MaxFirst), (1, Order::MinFirst), (1, Order::MaxFirst)]
+    {
         for shift in -2..=2i64 {
             let layout = Layout { block_k, order, shift };
             let (mut points, mut within, mut max_err) = (0, 0, 0u32);
@@ -168,7 +170,13 @@ mod tests {
     fn check_finds_the_layout_a_read_was_made_with() {
         let raw = noisy(60_000);
         for k in [4usize, 16, 64, 256] {
-            for truth in [LAYOUT, Layout { order: Order::MinFirst, ..LAYOUT }, Layout { order: Order::MaxFirst, ..LAYOUT }, Layout { block_k: 1, order: Order::MinFirst, ..LAYOUT }, Layout { shift: -1, ..LAYOUT }] {
+            for truth in [
+                LAYOUT,
+                Layout { order: Order::MinFirst, ..LAYOUT },
+                Layout { order: Order::MaxFirst, ..LAYOUT },
+                Layout { block_k: 1, order: Order::MinFirst, ..LAYOUT },
+                Layout { shift: -1, ..LAYOUT },
+            ] {
                 // a read shifted by -1 point: one point in front of the aligned ones
                 let aligned = model(&raw, k, Layout { shift: 0, ..truth });
                 let comp: Vec<u16> = std::iter::repeat_n(0, (-truth.shift).max(0) as usize).chain(aligned).collect();
@@ -180,8 +188,17 @@ mod tests {
             }
             // a time-ordered read fits a fixed order only in part
             let comp = model(&raw, k, LAYOUT);
-            let min_first = check(&raw, &comp, k).into_iter().find(|f| f.layout == Layout { order: Order::MinFirst, ..LAYOUT }).unwrap();
-            assert!(min_first.within < min_first.points * 9 / 10, "k {}: {} of {}", k, min_first.within, min_first.points);
+            let min_first = check(&raw, &comp, k)
+                .into_iter()
+                .find(|f| f.layout == Layout { order: Order::MinFirst, ..LAYOUT })
+                .unwrap();
+            assert!(
+                min_first.within < min_first.points * 9 / 10,
+                "k {}: {} of {}",
+                k,
+                min_first.within,
+                min_first.points
+            );
         }
     }
 }

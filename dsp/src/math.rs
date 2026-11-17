@@ -157,7 +157,11 @@ impl Window {
             Window::Hann => 0.5 - 0.5 * x.cos(),
             Window::Hamming => 0.54 - 0.46 * x.cos(),
             Window::Blackman => 0.42 - 0.5 * x.cos() + 0.08 * (2.0 * x).cos(),
-            Window::Flattop => 0.215_578_95 - 0.416_631_58 * x.cos() + 0.277_263_158 * (2.0 * x).cos() - 0.083_578_947 * (3.0 * x).cos() + 0.006_947_368 * (4.0 * x).cos(),
+            Window::Flattop => {
+                0.215_578_95 - 0.416_631_58 * x.cos() + 0.277_263_158 * (2.0 * x).cos()
+                    - 0.083_578_947 * (3.0 * x).cos()
+                    + 0.006_947_368 * (4.0 * x).cos()
+            }
         }
     }
     pub fn name(self) -> &'static str {
@@ -249,7 +253,10 @@ pub fn dbv(vrms: f64) -> f64 {
 
 /// The `count` largest local maxima of a spectrum (bin, value), excluding DC, highest first.
 pub fn peaks(spec: &[f64], count: usize) -> Vec<(usize, f64)> {
-    let mut p: Vec<(usize, f64)> = (2..spec.len().saturating_sub(1)).filter(|&k| spec[k] > spec[k - 1] && spec[k] >= spec[k + 1]).map(|k| (k, spec[k])).collect();
+    let mut p: Vec<(usize, f64)> = (2..spec.len().saturating_sub(1))
+        .filter(|&k| spec[k] > spec[k - 1] && spec[k] >= spec[k + 1])
+        .map(|k| (k, spec[k]))
+        .collect();
     p.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     p.truncate(count);
     p
@@ -263,13 +270,17 @@ mod tests {
     fn band_pass_and_stop() {
         // 1 kHz + 10 kHz at 1 MSa/s: the band-pass at 10 kHz keeps 10 kHz and removes 1 kHz, the notch the opposite
         let dt = 1e-6;
-        let sine = |f: f64| (0..200_000).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 * dt).sin() as f32).collect::<Vec<f32>>();
+        let sine = |f: f64| {
+            (0..200_000).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 * dt).sin() as f32).collect::<Vec<f32>>()
+        };
         let (a, b) = (sine(1e3), sine(10e3));
         let mix: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x + y).collect();
         let rms = |v: &[f32], w: &[f32]| {
             // rms of the difference in the middle (edges excluded)
             let n = v.len();
-            (v[n / 4..3 * n / 4].iter().zip(&w[n / 4..3 * n / 4]).map(|(x, y)| ((x - y) as f64).powi(2)).sum::<f64>() / (n / 2) as f64).sqrt()
+            (v[n / 4..3 * n / 4].iter().zip(&w[n / 4..3 * n / 4]).map(|(x, y)| ((x - y) as f64).powi(2)).sum::<f64>()
+                / (n / 2) as f64)
+                .sqrt()
         };
         let bp = unary(Op1::Bandpass(10e3, 2e3), &mix, dt);
         assert!(rms(&bp, &b) < 0.03, "band-pass error {}", rms(&bp, &b));

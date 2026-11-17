@@ -251,7 +251,11 @@ fn at(x: &[f32], t: f64) -> f64 {
         return v;
     }
     let w = x[k + 1] as f64;
-    if v.is_finite() && w.is_finite() { v + (w - v) * (t - k as f64) } else { f64::NAN }
+    if v.is_finite() && w.is_finite() {
+        v + (w - v) * (t - k as f64)
+    } else {
+        f64::NAN
+    }
 }
 
 /// (ψ, i) from t0 to t1, ψ at t1, and the peak |ψ|. NaN voltage holds ψ; NaN current is left out of the trace.
@@ -264,24 +268,24 @@ fn flux_loop(v: &[f32], i: &[f32], mean: f64, t0: f64, t1: f64, dt: f64) -> (Vec
     let k0 = (t0.ceil() as usize).min(n);
     let k1 = (t1.floor() as usize).min(n.saturating_sub(1));
     if k0 <= k1 && k1 < n {
-    for k in k0..=k1 {
-        let tk = k as f64;
-        if tk + 1e-9 < t0 {
-            continue;
-        }
-        let vk = v[k] as f64 - mean;
-        if let Some((pt, pv)) = prev {
-            if pv.is_finite() && vk.is_finite() && tk > pt {
-                psi += 0.5 * (pv + vk) * (tk - pt) * dt;
+        for k in k0..=k1 {
+            let tk = k as f64;
+            if tk + 1e-9 < t0 {
+                continue;
+            }
+            let vk = v[k] as f64 - mean;
+            if let Some((pt, pv)) = prev {
+                if pv.is_finite() && vk.is_finite() && tk > pt {
+                    psi += 0.5 * (pv + vk) * (tk - pt) * dt;
+                }
+            }
+            prev = if vk.is_finite() { Some((tk, vk)) } else { None };
+            peak = peak.max(psi.abs());
+            let y = i[k] as f64;
+            if y.is_finite() && tk <= t1 + 1e-9 {
+                pts.push((psi, y));
             }
         }
-        prev = if vk.is_finite() { Some((tk, vk)) } else { None };
-        peak = peak.max(psi.abs());
-        let y = i[k] as f64;
-        if y.is_finite() && tk <= t1 + 1e-9 {
-            pts.push((psi, y));
-        }
-    }
     }
     if let Some((pt, pv)) = prev {
         let vend = at(v, t1) - mean;
@@ -318,7 +322,8 @@ fn branch_fit(pts: &[(f64, f64)], i_peak_hint: f64) -> Option<(f64, f64, f64, bo
             imax = k;
         }
     }
-    let rising: Vec<usize> = if imax >= imin { (imin..=imax).collect() } else { (imin..pts.len()).chain(0..=imax).collect() };
+    let rising: Vec<usize> =
+        if imax >= imin { (imin..=imax).collect() } else { (imin..pts.len()).chain(0..=imax).collect() };
     if rising.len() < 8 {
         return None;
     }
@@ -361,7 +366,11 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     let x = p.clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
     let i = x.floor() as usize;
     let f = x - i as f64;
-    if i + 1 >= sorted.len() { sorted[i] } else { sorted[i] * (1.0 - f) + sorted[i + 1] * f }
+    if i + 1 >= sorted.len() {
+        sorted[i]
+    } else {
+        sorted[i] * (1.0 - f) + sorted[i + 1] * f
+    }
 }
 
 /// Least-squares slope of y against x.
