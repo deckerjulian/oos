@@ -52,6 +52,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | accepted |
 | [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | proposed |
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | proposed |
+| [0035](process/0035-every-text-has-one-home-the-wiki-comes-from-the-tree.md) | process | Every text has one home; the wiki is published from the tree, and a change brings its texts along | proposed |
 
 ## Reading order for agents
 

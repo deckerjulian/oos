@@ -3,6 +3,61 @@
 How the pieces of OOS fit together: from the SD card over the kernel to the Rust crates and the GUI. The register-level
 details are in `protocols/`.
 
+The three diagrams follow the C4 levels: the scope and who uses it, the programs of the image, and the parts inside
+the programs. They are drawn from the code; the files are named under each.
+
+## The scope and who uses it
+
+```mermaid
+flowchart LR
+    user["Person at the scope<br/>touch screen, keys, knobs"]
+    pc["Computer on the network<br/>browser, scripts, VISA, SSH"]
+    subgraph scope["Oscilloscope DHO800 / DHO900"]
+        oos["OOS<br/>Linux kernel, initramfs, Rust programs"]
+        fpga["FPGA with ADC and front ends<br/>its image stays as it is"]
+        mcu["Front-panel MCU"]
+        stock["Stock system and its data<br/>on the same card, still bootable"]
+    end
+    user -- "touch, keys, knobs" --> oos
+    oos -- "screen, LEDs, beeper" --> user
+    pc -- "web remote, SCPI, VXI-11, SSH" --> oos
+    oos -- "register writes, sample stream over PCIe" --> fpga
+    oos -- "frames over a UART" --> mcu
+    oos -- "reads the factory calibration, writes nothing" --> stock
+```
+
+Drawn from: [boot.md](boot.md), [network.md](network.md), ADR 0009 and ADR 0011, `ui/src/main.rs`.
+
+## The programs of the image
+
+```mermaid
+flowchart TB
+    subgraph img["OOS image: kernel 6.12 and initramfs, in the recovery partition"]
+        rcs["Start-up scripts<br/>/etc/rcS, oos-board, oos-oneshot"]
+        ui["oos-ui<br/>screen, acquisition, analysis, remote control"]
+        gpu["oos-gpu<br/>puts the picture together on the GPU, optional"]
+        fpgad["oos-fpgad<br/>cold boot of the FPGA, service commands"]
+        net["Network programs<br/>udhcpc, wpa_supplicant, nftables, Dropbear"]
+        kernel["Linux kernel<br/>PCIe and XDMA, DRM, GPIO, UART, input"]
+    end
+    data[("/oos<br/>settings, calibration by OOS, update state")]
+    rigol[("Stock data partition<br/>factory calibration, read only")]
+    hw["FPGA, front ends, ADC, panel MCU, display, touch"]
+    rcs -- "starts" --> ui
+    rcs -- "cold-boot --execute" --> fpgad
+    rcs -- "starts" --> net
+    ui -- "layers and trace maps: shared memory, a Unix socket" --> gpu
+    ui -- "device files" --> kernel
+    fpgad -- "device files" --> kernel
+    gpu -- "scan-out buffers" --> kernel
+    kernel -- "PCIe, GPIO, UART, DRM" --> hw
+    ui -- "reads and writes" --> data
+    ui -- "reads" --> rigol
+```
+
+Drawn from: `rootfs/initramfs/etc/rcS`, `rootfs/initramfs/bin/`, `ui/src/main.rs`, `ui/src/gpu.rs`, `fpgad/src/main.rs`,
+`hal/src/dho/calfile.rs`, [boot.md](boot.md).
+
 ## Boot and system
 
 ```
@@ -24,21 +79,38 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
 
 ## Rust crates
 
+```mermaid
+flowchart TB
+    subgraph uiP["oos-ui (ui/)"]
+        remote["Remote control<br/>SCPI, web, VXI-11, HiSLIP, mDNS"]
+        mainloop["Main loop<br/>events, model, analysis, render"]
+        mods["Modules<br/>protocols, measurements, analysers"]
+        draw["Renderer<br/>gfx, font, drm, GPU helper"]
+        board["board::Board<br/>the one door to the hardware"]
+        acq["Acquisition thread<br/>board/dho/hw.rs"]
+    end
+    subgraph fpgadP["oos-fpgad (fpgad/)"]
+        cli["Command line<br/>plan, run, cold-boot, status"]
+    end
+    dsp["oos-dsp (dsp/)<br/>signal processing on slices of f32, no hardware"]
+    hal["oos-hal (hal/)<br/>register sequences as step lists, buses, cold boot"]
+    dev["Device files<br/>xdma0_bypass, xdma0_c2h_0, gpiochipN, ttyS0, sysfs"]
+    remote -- "commands, read without waiting" --> mainloop
+    mods -- "menu rows, tiles, pages, through traits" --> mainloop
+    mainloop -- "picture" --> draw
+    mainloop -- "settings" --> board
+    board -- "what to apply" --> acq
+    acq -- "frames in volts" --> mainloop
+    mainloop -- "samples" --> dsp
+    mods -- "decoding, measuring" --> dsp
+    acq -- "plans and runs step lists" --> hal
+    cli -- "plans and runs step lists" --> hal
+    hal -- "Bus trait, GPIO lines, sysfs" --> dev
 ```
-            ┌─────────────── oos-ui (ui/) ────────────────┐      ┌── oos-fpgad (fpgad/) ──┐
-            │ GUI, SCPI :5555, web :8080, control FIFO    │      │ CLI: plan/run/status/  │
-            │ sources: Demo | Replay | Live | Hw          │      │ rd/wr/cold-boot/temp/  │
-            └──────┬───────────────────────────┬──────────┘      │ beep/guard             │
-                   │                           │                 └───────────┬────────────┘
-         ┌─────────▼─────────┐       ┌─────────▼──────────────────────────────▼─────────┐
-         │ oos-dsp (dsp/)    │       │ oos-hal (hal/)                                   │
-         │ pure signal       │       │ FPGA register sequences, AFE/ADC/PLL buses,      │
-         │ processing        │       │ cold boot, panel MCU frames, board management    │
-         └───────────────────┘       └───────────────────────┬──────────────────────────┘
-                                                             │ Bus trait / GPIO chardev / sysfs
-                                     /dev/xdma0_bypass (BAR1), /dev/xdma0_c2h_0 (stream), /dev/gpiochipN,
-                                     /dev/ttyS0 (panel MCU), /sys/class/thermal, /sys/class/pwm
-```
+
+Drawn from: `ui/src/main.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
+`ui/src/measures/mod.rs`, `fpgad/src/main.rs`, `hal/src/dho/`. `oos-ui` also offers the control FIFO
+`/tmp/oos-ui.ctl`, and takes its signal from one of four sources: Demo, Replay, Live or Hw (below).
 
 Rule for all crates: no vendor code is in the tree. Only dependency of what runs on the scope: `libc`; the Windows
 desktop build of `oos-ui` adds its platform's crates (ADR 0021, [fork/deps.md](fork/deps.md)).

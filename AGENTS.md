@@ -70,6 +70,27 @@ there. These instructions are the same for every agent and every person; the rea
 What `.gitignore` leaves out (`local/` with calibration files and surveys, `log/`, `device-test/`, backups, notes) is
 private to the person who made it; never move its content into the tree.
 
+## Keeping the texts true
+
+Every text has one home (ADR 0035): `README.md` is the entry page, `wiki/` the guide for people who use a scope
+(published as the wiki from the tree; never edited on the wiki itself), `docs/` the technical reference, `docs/adr/`
+the decisions, `CHANGELOG.md` what a user notices. A fact is written in its home and linked from elsewhere. A pull
+request that changes one of these brings the text along:
+
+| You change | Bring along |
+|---|---|
+| a remote command (`ui/src/scpi.rs`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
+| a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
+| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
+| a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
+| installing, updating, starting | `docs/boot.md`, `docs/update.md`, `wiki/Installation.md`, `wiki/Updates-and-Going-Back.md` |
+| a tool in `tools/` | `tools/README.md` |
+| a crate, a program, a thread, what talks to what | `docs/architecture.md` and its diagrams |
+| something others build on | a new record in `docs/adr/` and its row in the index |
+
+Diagrams are Mermaid in a fenced block, one C4 level each (context, programs, parts), as `flowchart` with `subgraph`,
+with the source files named under them.
+
 ## Build and check
 
 ```sh

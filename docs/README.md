@@ -28,6 +28,7 @@ and in our own words. The code of OOS is written to them
 - [analyser-modules.md](analyser-modules.md): adding an analyser page: its start menu entry, Features, view bar, SCPI, setups and drawing behind one trait.
 - [fork/deps.md](fork/deps.md): the sources the image builds from (`rootfs/deps.lock`), when a part is built again,
   how to update one; the platform crates of the desktop builds.
+- [../wiki/](../wiki/README.md): the guide for people who use a scope; published as the wiki of the repository.
 - [porting.md](porting.md): other models (MHO900, DHO1000/4000): what carries over, and how to describe one.
 - [bandwidth-test.md](bandwidth-test.md): procedure to measure the analog bandwidth.
 
