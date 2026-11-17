@@ -16,7 +16,7 @@ struct Gesture { panel: Panel, origin: Rect, x: i32, y: i32, at: f64, moved: boo
 pub(super) enum Action {
     Overlay, Stacked, Sources, Source(WaveId), Trigger(WaveId), Menu(MenuId),
     ZoomReset, ZoomClose, FitRecord, Live, Single, Run, Panel,
-    EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose,
+    EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose, RestoreLayout,
     MeasureFloat, MeasureDock(StripDock), Close,
     /// the quick actions of a channel (its hold popup)
     ChCoupling(usize), ChInvert(usize), ChZero(usize), Autoset,
@@ -942,6 +942,9 @@ impl Ui {
             rows.push(("Sources".into(), Action::Sources));
             rows
         };
+        let mut rows = rows;
+        // a view that fills the area has a way back in every menu of it
+        if self.dock_full_state() { rows.insert(0, ("Restore layout".into(), Action::RestoreLayout)); }
         self.popup(if eye { "Eye" } else if measurements { "Measurements" } else { "Plot" }, x, y, rows);
     }
     pub(super) fn workspace_popup_tap(&mut self, x: i32, y: i32) -> bool {
@@ -984,6 +987,7 @@ impl Ui {
             Action::RefClear(i) => self.ref_clear_slot(i),
             Action::RefHorizontal(i) => { self.select_workspace_source(WaveId::Ref(i)); self.studio.sz.pop = false; self.studio.sz.ref_pop = Some(i); }
             Action::RefSettings(i) => { self.select_workspace_source(WaveId::Ref(i)); self.open_menu(MenuId::Ref); }
+            Action::RestoreLayout => { self.dock_exit_full(); }
             Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
@@ -1147,6 +1151,8 @@ impl Ui {
         self.zoom_arm = false; self.zoom_path.clear(); self.zoom_map = None;
         self.touch.down = false; self.touch.drag = Drag::None;
         if self.menu_open { self.close_menu(); }
+        // a view that fills the area: Escape is the way back
+        else if self.dock_exit_full() {}
         else if self.m.zoom && !was_drawing { self.set_zoom(false); }
     }
     pub fn cancel_pointer(&mut self) {

@@ -30,6 +30,8 @@ pub(super) enum CtxRow {
     MeasOn(WaveId),
     CursorHere,
     Sources,
+    /// every view in tabs of one group, or back from it
+    Layout,
 }
 
 /// Where the menu was opened and the lane under that point.
@@ -79,7 +81,8 @@ impl Ui {
         let mut add = Vec::new();
         if let Some(id) = lane { add.push((CtxRow::MeasOn(id), format!("Measurement on {}", name(id)))); }
         add.push((CtxRow::CursorHere, "Cursor here".to_string()));
-        vec![view, acquire, trig, add, vec![(CtxRow::Sources, "Sources".to_string())]]
+        let layout = if self.dock_full_state() { "Restore layout" } else { "Maximise view" };
+        vec![view, acquire, trig, add, vec![(CtxRow::Sources, "Sources".to_string()), (CtxRow::Layout, layout.to_string())]]
     }
 
     /// The popover: anchored at the press, flipped and clamped to stay on the screen.
@@ -132,6 +135,7 @@ impl Ui {
             CtxRow::LevelHere(_) => { cv.hline(cx - 8, cx + 8, cy, c); cv.triangle([(cx - 4, cy - 5), (cx + 4, cy - 5), (cx, cy - 1)], c); }
             CtxRow::MeasOn(_) => { for (i, h) in [6, 11, 8].into_iter().enumerate() { cv.fill(Rect::new(cx - 7 + i as i32 * 5, cy + 6 - h, 3, h), c); } }
             CtxRow::CursorHere => icon_cursors(cv, cx - 5, cy, c),
+            CtxRow::Layout => { cv.rect(Rect::new(cx - 6, cy - 6, 12, 12), c); cv.hline(cx - 6, cx + 5, cy - 3, c); }
             CtxRow::Sources => { for dy in [-5, 0, 5] { cv.circle(cx - 5, cy + dy, 1, c); cv.hline(cx - 1, cx + 7, cy + dy, c); } }
         }
     }
@@ -211,6 +215,7 @@ impl Ui {
             CtxRow::MeasOn(id) => { self.meas_src = id; self.open_meas_list(); }
             CtxRow::CursorHere => self.studio_cursors_add(None),
             CtxRow::Sources => self.workspace_action(Action::Sources),
+            CtxRow::Layout => { if !self.dock_exit_full() { self.dock_maximise(super::dock::VKind::Wave); } }
         }
     }
 
