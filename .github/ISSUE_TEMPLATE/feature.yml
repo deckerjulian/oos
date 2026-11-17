@@ -1,0 +1,23 @@
+name: Wish
+description: Something OOS should do, or do differently
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do, and what is in the way
+    validations:
+      required: true
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What OOS should do
+      description: >-
+        As you would see it on the scope or over the network. How the stock system does it is welcome, in your own
+        words.
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model, if it matters

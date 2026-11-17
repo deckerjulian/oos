@@ -1,1 +1,11 @@
 blank_issues_enabled: false
+contact_links:
+  - name: A question about using OOS
+    url: https://www.eevblog.com/forum/testgear/oos-an-open-operating-system-for-the-rigol-scopes/
+    about: The thread in the EEVblog forum is the place for questions and for talking about OOS.
+  - name: The guide
+    url: https://github.com/dekajoule/oos/wiki
+    about: Installing, first steps, remote control, going back to the stock system.
+  - name: A security problem
+    url: https://github.com/dekajoule/oos/security/advisories/new
+    about: Report it privately, not as an issue.
