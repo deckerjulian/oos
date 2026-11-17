@@ -10,14 +10,8 @@
 //! 111 is free) and HiSLIP (`_hislip._tcp`, on a computer).
 
 use std::net::{Ipv4Addr, UdpSocket};
-#[cfg(unix)]
 use std::net::SocketAddrV4;
 use std::time::{Duration, Instant};
-
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-use windows::{addresses, host_label, join, mcast_socket, send_mcast};
 
 const MDNS_PORT: u16 = 5353;
 const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -98,7 +92,6 @@ fn clip(s: &str, n: usize) -> String {
     o
 }
 
-#[cfg(unix)]
 fn host_label() -> String {
     let mut b = [0u8; 256];
     let rc = unsafe { libc::gethostname(b.as_mut_ptr() as *mut libc::c_char, b.len()) };
@@ -313,7 +306,6 @@ pub fn answer(query: &[u8], id: &Identity, services: &[Svc], legacy: bool) -> Op
 }
 
 /// Non-loopback IPv4 addresses that are up.
-#[cfg(unix)]
 fn addresses() -> Vec<[u8; 4]> {
     let mut out = Vec::new();
     unsafe {
@@ -360,7 +352,6 @@ fn prefer_primary(addresses: Vec<[u8; 4]>, primary: Option<[u8; 4]>) -> Vec<[u8;
     ordered
 }
 
-#[cfg(unix)]
 fn mcast_socket() -> Option<UdpSocket> {
     unsafe {
         let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
@@ -391,7 +382,6 @@ fn mcast_socket() -> Option<UdpSocket> {
     }
 }
 
-#[cfg(unix)]
 fn join(sock: &UdpSocket, addr: [u8; 4]) {
     let mreq = libc::ip_mreq {
         imr_multiaddr: libc::in_addr { s_addr: u32::from(GROUP).to_be() },
@@ -402,7 +392,6 @@ fn join(sock: &UdpSocket, addr: [u8; 4]) {
     }
 }
 
-#[cfg(unix)]
 fn send_mcast(sock: &UdpSocket, pkt: &[u8], iface: Option<[u8; 4]>) {
     if let Some(a) = iface {
         let ip = libc::in_addr { s_addr: u32::from(Ipv4Addr::from(a)).to_be() };
@@ -436,20 +425,8 @@ impl Announcer {
         Announcer { sock, services: services.to_vec(), joined: Vec::new(), last: Vec::new(), burst: 2, next: Instant::now(), refresh: Instant::now() + Duration::from_secs(60), interfaces_next: Instant::now() }
     }
 
-    /// The responder owns a socket and has real listeners to announce.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
-    pub fn available(&self) -> bool {
-        self.sock.is_some() && !self.services.is_empty()
-    }
-
-    /// Addresses in the most recent announcement, excluding down and loopback interfaces.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
-    pub fn local_addresses(&self) -> &[[u8; 4]] {
-        &self.last
-    }
-
     pub fn poll(&mut self) {
-        // Adapter enumeration is expensive on Windows and Linux; a fresh list once per second is enough.
+        // Listing the interfaces is expensive; a fresh list once per second is enough.
         let ifs = if Instant::now() >= self.interfaces_next {
             self.interfaces_next = Instant::now() + Duration::from_secs(1);
             prefer_primary(addresses(), primary_address())
@@ -539,7 +516,6 @@ impl Drop for Announcer {
     }
 }
 
-#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 #[cfg(test)]

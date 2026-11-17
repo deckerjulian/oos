@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Validate a local OOS desktop build against analytic waveforms (no hardware).
+"""Validate a local OOS host build (`oos-ui --serve`) against analytic waveforms (no hardware).
 
     python tools/scpi_validate.py --web-port 18080 --scpi-port 5555
 
@@ -40,7 +40,7 @@ POINTS = 50000
 class OOS:
     def __init__(self, host, scpi_port, web_port):
         if not ipaddress.ip_address(host).is_loopback:
-            raise ValueError("This validation is for a loopback OOS desktop build only")
+            raise ValueError("This validation is for a loopback OOS host build only")
         self.link = Link(host, scpi_port, timeout=5)
         self.base = f"http://{host}:{web_port}"
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))

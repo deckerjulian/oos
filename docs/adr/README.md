@@ -56,6 +56,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | proposed |
 | [0036](process/0036-the-rules-of-the-repository-are-files-a-change-by-others-needs-the-maintainers-review.md) | process | The rules of the repository are files in the tree; a change by anyone else needs the maintainer's review | proposed |
 | [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | proposed |
+| [0033](process/0033-development-on-linux-macos-and-wsl.md) | process | OOS is developed on Linux, macOS and Windows with WSL; there is no native Windows build | proposed |
 
 ## Reading order for agents
 

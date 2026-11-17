@@ -214,7 +214,7 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(system[0], Item::Open(MenuId::Utility));
     assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Sim))));
     assert!(u.items(MenuId::Ref).contains(&Item::RefLoad));
-    // The destination dialog of the desktop's Ctrl+O.
+    // The destination dialog of a waveform load.
     u.request_waveform();
     assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
     u.dismiss_context();
@@ -237,7 +237,6 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
 }
 
 /// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.
-#[cfg(not(windows))]
 #[test]
 fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     let dir = crate::ui::testkit::Scratch::new("refload");

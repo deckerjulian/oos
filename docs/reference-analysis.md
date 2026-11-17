@@ -144,7 +144,7 @@ interpolated display record. Panning or changing time scale while stopped rebuil
 the view from that retained memory without taking a new capture or changing its
 accepted trigger. The RAW waveform interface exposes native memory, including
 segments outside the initial screen. A frame outside the view is retained so
-navigation can return to it. Deep desktop demo captures are prepared off-thread.
+navigation can return to it. Deep demo captures are prepared off-thread.
 
 Screen measurements follow the physical visible interval while stopped; Full
 record stays fixed on pan. Long reference/acquired gates run in a bounded worker.
@@ -180,7 +180,7 @@ remain available. Model-derived BER/jitter quantities are distinguished from
 measured values; this is not a claim of DPOJET compliance equivalence.
 
 SSH provisioning and host-key/public-key management are described in
-[SSH access](ssh.md). Desktop OOS does not start an SSH server.
+[SSH access](ssh.md). A host build (`--serve`) does not start an SSH server.
 
 Auto deskew aligns nearby transitions on shown sources; use a common known edge
 for calibration. It preserves hidden-source corrections and native file metadata.

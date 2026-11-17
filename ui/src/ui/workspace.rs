@@ -973,7 +973,7 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
+    #[cfg_attr(not(test), allow(dead_code))] // only the tests call it
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask { self.cancel_load_slot(); return; }
         let was_drawing = self.zoom_arm;

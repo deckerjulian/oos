@@ -1431,30 +1431,11 @@ impl super::analysers::Analyser for PowerPage {
 mod measurement_gate_tests {
     use super::*;
 
-    fn process_memory() -> Option<(usize, usize)> {
-        #[cfg(target_os = "windows")]
-        {
-            #[repr(C)]
-            struct Counters { cb: u32, faults: u32, sizes: [usize; 9] }
-            #[link(name = "kernel32")]
-            extern "system" {
-                fn GetCurrentProcess() -> *mut std::ffi::c_void;
-                fn K32GetProcessMemoryInfo(process: *mut std::ffi::c_void, counters: *mut Counters, cb: u32) -> i32;
-            }
-            let mut counters = Counters { cb: std::mem::size_of::<Counters>() as u32, faults: 0, sizes: [0; 9] };
-            let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
-            return (ok != 0).then_some((counters.sizes[0], counters.sizes[8]));
-        }
-        #[cfg(not(target_os = "windows"))]
-        None
-    }
-
     /// Actual user file only, never part of unattended tests or CI.
     #[test]
     #[ignore = "requires OOS_GATE_WAVEFORM pointing at a supplied large waveform"]
     fn actual_large_reference_full_record_cache_latency_and_memory() {
         let path = std::env::var("OOS_GATE_WAVEFORM").expect("supply the actual read-only waveform path");
-        let baseline = process_memory();
         let load = std::time::Instant::now();
         let bytes = std::fs::read(&path).unwrap();
         let traces = crate::store::parse_wave(&bytes, &path).unwrap();
@@ -1487,7 +1468,7 @@ mod measurement_gate_tests {
             assert!(Arc::ptr_eq(&first, &analysis), "pan {k} rescanned the immutable full record");
             assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), first.get(Meas::Vpp));
         }
-        println!("file={path} points={points} load+initial_screen={loaded:?} full_dispatch={dispatch:?} full_result_ready={full_scan:?} worst_event_tick={worst_tick:?} cached_100_pan_readouts={:?} memory_peak_private_bytes_baseline={baseline:?} memory_peak_private_bytes_after={:?}", cached.elapsed(), process_memory());
+        println!("file={path} points={points} load+initial_screen={loaded:?} full_dispatch={dispatch:?} full_result_ready={full_scan:?} worst_event_tick={worst_tick:?} cached_100_pan_readouts={:?}", cached.elapsed());
     }
 
     fn sources() -> Ui {

@@ -114,7 +114,7 @@ layer_text() {
         sed 's/^/  /' "$tmp/eof"
         bad=1
     fi
-    { git ls-files '*.rs' '*.py' '*.c' '*.h' '*.ps1' | outside; shell_scripts; } | sort -u | while IFS= read -r f; do
+    { git ls-files '*.rs' '*.py' '*.c' '*.h' | outside; shell_scripts; } | sort -u | while IFS= read -r f; do
         head -n 5 "$f" | grep -q 'SPDX-License-Identifier:' || echo "$f"
     done >"$tmp/spdx"
     if [ -s "$tmp/spdx" ]; then

@@ -528,7 +528,7 @@ struct Pending {
     large: bool,
 }
 
-/// A waveform upload (`POST /waveform`) parsed on a thread of its own, as the desktop build's file picker does: a file
+/// A waveform upload (`POST /waveform`) parsed on a thread of its own: a file
 /// near the 128 MiB limit takes seconds to parse, which on the frame loop stopped the scope's screen and keys. The
 /// frame loop puts the traces into the slot (`Ui::commit_waveform_traces_at`) and answers the client, which waits.
 struct WaveJob {
@@ -1266,7 +1266,7 @@ mod tests {
     }
 
     /// An explicitly started, private backend for tools/scpi_validate.py.
-    /// It opens no desktop, hardware device or LAN discovery announcer.
+    /// It opens no display, hardware device or LAN discovery announcer.
     #[test]
     #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
     fn scpi_validation_fixture() {

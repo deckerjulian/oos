@@ -605,7 +605,7 @@ impl Source {
         self.acquire_impl(m, dt_wall, rng, false)
     }
 
-    /// Full-depth desktop acquisition, called only by the bounded demo worker.
+    /// Full-depth demo acquisition, called only by the bounded demo worker.
     pub(crate) fn acquire_full_demo(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng) -> Option<Record> {
         self.acquire_impl(m, dt_wall, rng, true)
     }

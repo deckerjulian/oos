@@ -43,7 +43,6 @@ pub fn write_atomic(path: &Path, bytes: &[u8], o: &Opts) -> std::io::Result<()> 
     let tmp = o.tmp.map_or_else(|| appended(path, ".new"), Path::to_path_buf);
     let mut open = std::fs::OpenOptions::new();
     open.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     if let Some(m) = o.mode {
         std::os::unix::fs::OpenOptionsExt::mode(&mut open, m);
     }
@@ -66,18 +65,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8], o: &Opts) -> std::io::Result<()> 
     }
 }
 
-/// Makes a rename or a removal of `path` durable: syncs the directory it is in (Unix; elsewhere nothing to do).
+/// Makes a rename or a removal of `path` durable: syncs the directory it is in.
 pub fn sync_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        std::fs::File::open(dir)?.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Ok(())
-    }
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    std::fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(test)]
@@ -105,7 +96,6 @@ mod tests {
         let tmp = d.join("b.tmp");
         write_atomic(&d.join("b"), b"x", &Opts { tmp: Some(&tmp), mode: Some(0o600), ..Default::default() }).unwrap();
         assert!(!tmp.exists() && std::fs::read(d.join("b")).unwrap() == b"x");
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(d.join("b")).unwrap().permissions().mode() & 0o777, 0o600);
