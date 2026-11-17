@@ -1,6 +1,7 @@
 # ADR 0030: OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them
 
-- Status: proposed
+- Status: accepted (2026-11-17, by the maintainer; in force since that day, and an objection is an issue and can
+  still change it)
 - Date: 2026-11-17
 - Category: process
 

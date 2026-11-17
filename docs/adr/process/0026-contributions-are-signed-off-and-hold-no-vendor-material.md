@@ -1,6 +1,6 @@
 # ADR 0026: A contribution is signed off, holds no vendor material and enters main as reviewed commits
 
-- Status: accepted
+- Status: accepted, amended by ADR 0030 (what a running unit shows may be named)
 - Date: 2026-11-16
 - Category: process
 

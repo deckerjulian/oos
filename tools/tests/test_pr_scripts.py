@@ -104,31 +104,41 @@ class PullRequests(unittest.TestCase):
         return set(self.run_tool("pr-labels.sh").split(":", 1)[1].split())
 
     def test_the_wait(self):
-        self.pull(["ui/src/ui.rs"], hours=1)
+        self.pull(["ui/src/ui.rs"], author="someone", hours=1)
         self.assertEqual(self.gate()["waited"], "pending")
-        self.pull(["ui/src/ui.rs"], hours=25)
+        self.pull(["ui/src/ui.rs"], author="someone", hours=25)
         self.assertEqual(self.gate()["waited"], "success")
-        self.pull(["ui/src/ui.rs", "docs/adr/process/0099-x.md"], hours=25)
+        self.pull(["ui/src/ui.rs", "docs/adr/process/0099-x.md"], author="someone", hours=25)
         self.assertEqual(self.gate()["waited"], "pending", "a decision record waits 72 hours")
-        self.pull(["docs/adr/README.md"], hours=25)
+        self.pull(["docs/adr/README.md"], author="someone", hours=25)
         self.assertEqual(self.gate()["waited"], "success", "the index alone is no decision record")
-        self.pull(["docs/adr/process/0099-x.md"], hours=1, labels=["no-wait"])
+        self.pull(["docs/adr/process/0099-x.md"], author="someone", hours=1, labels=["no-wait"])
         self.assertEqual(self.gate()["waited"], "success")
+
+    def test_no_wait_for_the_maintainers_own(self):
+        self.pull(["hal/src/dho/seq.rs", "docs/adr/process/0099-x.md", ".github/workflows/ci.yml"])
+        self.assertEqual(self.gate()["waited"], "success", "the maintainer's own, whatever it touches")
+        self.pull(["ui/src/ui.rs"], author="owner", fork=True)
+        self.assertEqual(self.gate()["waited"], "pending", "from a fork, under the maintainer's name")
+        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/x", draft=False)
+        self.assertEqual(self.gate()["waited"], "pending", "an agent's, under the maintainer's name")
+        self.pull(["ui/src/ui.rs"], author="someone")
+        self.assertEqual(self.gate()["waited"], "pending", "somebody else's, 24 hours")
 
     def test_no_wait_when_it_is_proven(self):
         unchanged = "**What changes:** x\n\n**Behaviour:** unchanged.\n"
-        self.pull(["README.md", "docs/boot.md", "wiki/Home.md"])
+        self.pull(["README.md", "docs/boot.md", "wiki/Home.md"], author="someone")
         self.assertEqual(self.gate()["waited"], "success", "documents only")
         for path in ("docs/adr/process/0099-x.md", "AGENTS.md", "CONTRIBUTING.md"):
-            self.pull(["README.md", path])
+            self.pull(["README.md", path], author="someone")
             self.assertEqual(self.gate()["waited"], "pending", f"{path} is a rule, not a document to correct")
         self.ci()
-        self.pull(["ui/src/ui.rs", "dsp/src/x.rs", "tools/tests/test_x.py"], body=unchanged)
+        self.pull(["ui/src/ui.rs", "dsp/src/x.rs", "tools/tests/test_x.py"], author="someone", body=unchanged)
         self.assertEqual(self.gate()["waited"], "success", "unchanged, and the comparison found nothing")
-        self.pull(["ui/src/ui.rs"], body="**Behaviour:** changed: the menu")
+        self.pull(["ui/src/ui.rs"], author="someone", body="**Behaviour:** changed: the menu")
         self.assertEqual(self.gate()["waited"], "pending", "it does not say unchanged")
         self.ci(kept=True)
-        self.pull(["ui/src/ui.rs"], body=unchanged)
+        self.pull(["ui/src/ui.rs"], author="someone", body=unchanged)
         self.assertEqual(self.gate()["waited"], "pending", "the comparison kept what differed")
         self.ci(compare="failure")
         self.assertEqual(self.gate()["waited"], "pending", "the comparison failed")
@@ -136,7 +146,7 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["waited"], "pending", "the comparison has not run yet")
         self.ci()
         for path in ("hal/src/dho/seq.rs", ".github/workflows/ci.yml", "tools/check.sh", "ui/tools/layout-check.sh"):
-            self.pull(["ui/src/ui.rs", path], body=unchanged)
+            self.pull(["ui/src/ui.rs", path], author="someone", body=unchanged)
             self.assertEqual(self.gate()["waited"], "pending", f"{path} is not seen by the comparison")
 
     def test_the_review(self):

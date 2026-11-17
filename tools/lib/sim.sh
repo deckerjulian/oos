@@ -21,7 +21,11 @@ sim_busybox() {
 sim_vm_initramfs() {
 	sim_w=$1 sim_pkgs=$2 sim_mods=$3 sim_script=$4
 	shift 4
-	docker run --rm --platform linux/arm64 -e PKGS="$sim_pkgs" -e MODS="$sim_mods" -e SCRIPT="$sim_script" -v "$sim_w:/w" \
+	# HOST_IDS: what the container makes in the work folder belongs to the user that runs QEMU on it afterwards. On
+	# Linux the container's root would own it, and QEMU could not open a disk image for writing; on macOS Docker
+	# maps the owner by itself.
+	docker run --rm --platform linux/arm64 -e PKGS="$sim_pkgs" -e MODS="$sim_mods" -e SCRIPT="$sim_script" \
+		-e HOST_IDS="$(id -u):$(id -g)" -v "$sim_w:/w" \
 		"$@" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache linux-firmware-none cpio xz zstd $PKGS >/dev/null
 	apk add --no-cache --no-scripts linux-lts >/dev/null
@@ -45,6 +49,7 @@ sim_vm_initramfs() {
 	done
 	(cd $r && find . | cpio -o -H newc -R 0:0 --quiet | gzip -1) > /w/initramfs.gz
 	cp /boot/vmlinuz-lts /w/kernel
+	chown -R "$HOST_IDS" /w
 '
 }
 
