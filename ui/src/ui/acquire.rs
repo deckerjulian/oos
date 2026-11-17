@@ -760,3 +760,199 @@ impl Ui {
         trig
     }
 }
+
+/// The fast path's take for the next screen after drawing `n` frames in `ms` with `budget` ms (`Ui::fast_max`).
+pub(super) fn fast_take_next(take: f32, n: usize, ms: f32, budget: f32) -> f32 {
+    let est = n as f32 * budget / ms;
+    let limited = n >= (take as usize).clamp(4, crate::board::QUEUE_MAX);
+    if ms > budget || (limited && est > take) {
+        (take + 0.5 * (est - take)).clamp(4.0, crate::board::QUEUE_MAX as f32)
+    } else {
+        take
+    }
+}
+
+/// What the fast display path does with one frame (`fast_plan`).
+pub enum FastPlan {
+    /// sparse views (fewer than 2 samples a column), envelopes, roll and scan: a screen record, drawn as a trace
+    /// (made here, so the interpolation is spread over the frames, not the channels)
+    Rec(crate::wave::Record),
+    /// dense views: the raw samples with the trigger at sample `ti`; `class`: the `Ui::fast_edges` index (None: the
+    /// source is an LA line), `off`: how far the edge was from the hardware point (class 2); per channel the columns'
+    /// spans (None: dots, drawn sample by sample)
+    Raw { ti: f64, class: Option<usize>, off: f64, spans: [Option<crate::fastdraw::Spans>; NCH] },
+}
+
+/// One frame placed by `fast_plan`: how to draw it, whether it counts as triggered (false if its trigger edge was not
+/// found near the hardware trigger point), and per channel the voltage values of the statistics (where wanted).
+pub struct FastFrame {
+    pub plan: FastPlan,
+    pub triggered: bool,
+    pub fold: [Option<crate::fastdraw::Fold>; NCH],
+}
+
+/// Where channel `c` of a dense frame lands on the `w` x `h` map with the trigger at sample `ti`.
+fn raw_map(m: &Model, w: usize, h: usize, c: usize, f: &crate::board::Frame, ti: f64) -> crate::fastdraw::Map {
+    let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
+    crate::drawpipe::screen_map(m, w, h, c, x_per_sample, ti)
+}
+
+/// One frame of the fast path placed on the screen (`w` x `h` map): the trigger, the columns of a dense frame or the
+/// screen record of a sparse one, and the statistics of the channels in `fold`. Touches nothing but the frame, so the
+/// frames of a batch are placed on several cores; this is where most of the work is.
+pub fn fast_plan(
+    m: &Model,
+    w: usize,
+    h: usize,
+    f: &std::sync::Arc<crate::board::Frame>,
+    fold: [bool; NCH],
+) -> FastFrame {
+    let tdiv = m.time_per_div() as f64;
+    let window = tdiv * HDIV as f64;
+    let t_first = m.delay as f64 - window / 2.0;
+    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
+        // the record's 3600 points: fewer thin out the picture of a fast signal (at 8 samples a period, two points a
+        // column lit a fifth fewer pixels than 3600, and those a sixth fewer than a nearly continuous curve)
+        let rec = crate::board::to_record(f, m, 3600, window, t_first);
+        // the statistics on the screen record, as the measurements of a sparse record
+        let fold = std::array::from_fn(|c| (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(&rec.ch[c])));
+        let triggered = rec.triggered;
+        return FastFrame { plan: FastPlan::Rec(rec), triggered, fold };
+    }
+    let src = &f.ch[m.trig_src];
+    let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
+    // the full search of `fastdraw::edge_smooth` (the Batch path takes `trignear::edge_smooth_near`)
+    let t = crate::drawpipe::refine_edge(m, f, col, |level, hyst, rising, either, half, col| {
+        crate::fastdraw::edge_smooth(src, f.pre, level, hyst, rising, either, half, col, |_| true)
+    });
+    let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
+    let ti = t.ti;
+    let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
+    let spans = std::array::from_fn(|c| {
+        (used(c) && !m.dots).then(|| crate::fastdraw::spans(w, h, &f.ch[c], &raw_map(m, w, h, c, f, ti)))
+    });
+    // the statistics on the samples of the screen window, as the measurements of a dense record
+    let fold = std::array::from_fn(|c| {
+        (fold[c] && used(c)).then(|| {
+            let v = &f.ch[c];
+            let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(v.len());
+            let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(v.len());
+            crate::fastdraw::Fold::of(&v[i0..i1.max(i0)])
+        })
+    });
+    FastFrame { plan: FastPlan::Raw { ti, class, off, spans }, triggered: t.triggered, fold }
+}
+
+/// The rows (first, last + 1) the points `v` of channel `c` of a screen record fall on, within a map `h` high.
+fn rec_rows(m: &Model, h: usize, c: usize, v: &[f32]) -> (usize, usize) {
+    let ch = &m.ch[c];
+    let (vpd, ppd_y) = (ch.volts_per_div(), h as f32 / VDIV);
+    let (lo, hi) =
+        v.iter().filter(|x| x.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+    if lo > hi {
+        return (usize::MAX, 0);
+    }
+    let y = |val: f32| h as f32 / 2.0 - (val + ch.offset) / vpd * ppd_y;
+    // rounded as `wave::trace_columns`, one row of slack each side
+    let (a, b) = (y(hi).round() - 1.0, y(lo).round() + 1.0);
+    (a.max(0.0) as usize, (b.max(-1.0) + 1.0).min(h as f32) as usize)
+}
+
+/// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
+/// `c_lo ..` of a map `w` x `h`, `h + 1` rows of them.
+#[allow(clippy::too_many_arguments)]
+pub fn fast_deposit_t(
+    m: &Model,
+    w: usize,
+    h: usize,
+    c: usize,
+    band: &mut [u16],
+    c_lo: usize,
+    f: &crate::board::Frame,
+    p: &FastPlan,
+) {
+    if !m.ch[c].on {
+        return;
+    }
+    match p {
+        FastPlan::Rec(rec) => {
+            if !rec.ch[c].is_empty() {
+                let bw = band.len() / (h + 1);
+                let c_hi = (c_lo + bw) as i32;
+                crate::wave::trace_columns(
+                    w,
+                    h,
+                    c,
+                    m,
+                    (m.time_per_div(), m.delay),
+                    rec.t0,
+                    rec.dt,
+                    &rec.ch[c],
+                    24,
+                    None,
+                    rec.pairs,
+                    (c_lo as i32, c_hi),
+                    |cx, r0, r1, wt| {
+                        crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
+                    },
+                );
+            }
+        }
+        FastPlan::Raw { ti, spans, .. } => match &spans[c] {
+            Some(s) => crate::fastdraw::add_spans_t(band, h, c_lo, s, 24),
+            None if !f.ch[c].is_empty() => {
+                crate::fastdraw::deposit_dots_t(band, h, c_lo, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
+            }
+            None => {}
+        },
+    }
+}
+
+/// Channel `c` of a placed frame into the rows `r_lo` .. `r_lo + band.len() / w` of that channel's map (`w` x `h`),
+/// held in `band` (the whole map: `r_lo` 0): one frame after the other straight into the row-major map, the tests'
+/// reference for the fast path's drawing.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub fn fast_deposit(
+    m: &Model,
+    w: usize,
+    h: usize,
+    c: usize,
+    band: &mut [u16],
+    r_lo: usize,
+    f: &crate::board::Frame,
+    p: &FastPlan,
+) {
+    if !m.ch[c].on {
+        return;
+    }
+    match p {
+        FastPlan::Rec(rec) => {
+            if !rec.ch[c].is_empty() {
+                crate::wave::draw_trace(
+                    band,
+                    w,
+                    h,
+                    r_lo,
+                    c,
+                    m,
+                    (m.time_per_div(), m.delay),
+                    rec.t0,
+                    rec.dt,
+                    &rec.ch[c],
+                    24,
+                    None,
+                    rec.pairs,
+                );
+            }
+        }
+        FastPlan::Raw { ti, spans, .. } => match &spans[c] {
+            Some(s) => crate::fastdraw::add_spans(band, w, r_lo, s, 24),
+            None if !f.ch[c].is_empty() => {
+                crate::fastdraw::deposit_dots_band(band, w, r_lo, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
+            }
+            None => {}
+        },
+    }
+}
