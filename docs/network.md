@@ -335,7 +335,7 @@ the web server and SCPI without a restart, an SCPI connection from outside the n
 Dropbear (`rootfs/build-dropbear.sh`: static, arm64, built in Docker; no X11 or agent forwarding) with OpenSSH's
 `sftp-server` for the SFTP subsystem (`rootfs/build-sftp-server.sh`: that program alone, static, without OpenSSL and
 zlib, installed as `/bin/sftp-server`, the path Dropbear is built with). Versions and checksums: `rootfs/deps.lock`
-(docs/deps.md). `/bin/oos-ssh` starts it from rcS
+(docs/fork/deps.md). `/bin/oos-ssh` starts it from rcS
 after the firewall, in the background, and oos-ui restarts or stops it when a setting changes. Log: `/tmp/oos-ssh.log`.
 
 **When it listens.** Only with `remote.ssh = on`, a non-empty `net.allow` (section 6) and the firewall table loaded.

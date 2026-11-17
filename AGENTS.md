@@ -24,7 +24,7 @@ there. These instructions are the same for every agent and every person; the rea
   behaviour (ADR 0013).
 - **Add a dependency** beyond `libc` to what runs on the scope, or to `oos-hal` and `oos-dsp`, without a strong reason
   stated in the pull request (ADR 0013). A desktop-only build may use its platform's crates, behind its `cfg` and listed
-  in `docs/deps.md` (ADR 0021).
+  in `docs/fork/deps.md` (ADR 0021).
 - **Turn on a hardware function that is not verified on a unit by default** (ADR 0010).
 - **Put personal data** (serial numbers, MAC addresses, licence keys, a scope's address) into code, docs or commits.
 - **Put vendor material into a text around the code**: commit messages, pull request descriptions and issues follow

@@ -3,7 +3,7 @@
 # docker.sh - sourced by the scripts that build or test in Docker: the base images, the arm64 check, and the images
 # OOS builds on top of them. The functions keep their variables to the oos_ prefix: they run in the caller's shell.
 #
-#   $OOS_ALPINE, $OOS_UBUNTU     the base images, named here only (docs/deps.md)
+#   $OOS_ALPINE, $OOS_UBUNTU     the base images, named here only (docs/fork/deps.md)
 #   need_docker_arm64            stop with a hint unless Docker runs and runs arm64 containers
 #   oos_image NAME [PLATFORM]    the image whose Dockerfile comes on stdin (@ALPINE@ and @UBUNTU@ stand for the base
 #                                images), built unless it is there, as NAME:<hash of the Dockerfile and PLATFORM>;

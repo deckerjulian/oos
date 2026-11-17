@@ -20,7 +20,7 @@ of its own.
   into `rootfs/out/` for the release and stops when Alpine installs another version.
 - What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
   `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
-  ([THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md)).
+  ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
 - Not in the manifest: the Docker base images (`alpine:3.22` and `ubuntu:26.04`, named once in `tools/lib/docker.sh`),
   busybox (Ubuntu's `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of
   each build), the kernel base archive (`kernel/base.sha256`) and Rust crates (`Cargo.lock`).
@@ -28,7 +28,7 @@ of its own.
 ## Rust crates
 
 What runs on the scope, `oos-hal` and `oos-dsp` depend on `libc` and the crates of the tree only; `tools/check.sh
-target` fails otherwise ([ADR 0021](adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
+target` fails otherwise ([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
 A build that only runs on a computer may use its platform's crates; each is listed here:
 
 | Crate | Build | For | Versions |

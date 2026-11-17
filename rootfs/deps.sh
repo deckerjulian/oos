@@ -1,7 +1,7 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # deps.sh - sourced by every build script that downloads a source, and by the scripts that decide whether to run them:
-# the sources from rootfs/deps.lock (docs/deps.md). DEPS_LOCK names the file when the caller is not in rootfs/.
+# the sources from rootfs/deps.lock (docs/fork/deps.md). DEPS_LOCK names the file when the caller is not in rootfs/.
 #   dep_ver NAME                 the pinned version
 #   dep_fetch NAME DIR           download into DIR once, check the SHA-256, print the path
 #   dep_stale ARTIFACT INPUT...  true when ARTIFACT is missing or was built from other inputs; an INPUT with a `/` is a

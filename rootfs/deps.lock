@@ -1,4 +1,4 @@
-# deps.lock - every source archive OOS builds from, with its pinned version and SHA-256 (docs/deps.md).
+# deps.lock - every source archive OOS builds from, with its pinned version and SHA-256 (docs/fork/deps.md).
 # Columns: name, version, sha256, url, and optionally a page that lists the releases where the url's directory has no
 # listing (netfilter.org answers 403 there). The build scripts read their lines through rootfs/deps.sh. The url holds
 # the version literally: tools/deps-check.sh finds newer releases in its directory listing.
