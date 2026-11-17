@@ -960,7 +960,7 @@ fn meas_audit_table() {
         for _ in 0..6 { u.step(0.04); }
         u.catalog_add(def);
         let end = std::time::Instant::now() + std::time::Duration::from_secs(8);
-        let mut rows = u.meas_rows();
+        let mut rows;
         loop {
             u.step(0.04);
             rows = u.meas_rows();
@@ -1131,5 +1131,22 @@ fn walk_hist_pictures() {
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
         let _ = crate::store::write(&std::path::Path::new(&dir).join(format!("{name}.png")), &crate::store::png_of(&cv));
+    }
+}
+
+/// The histogram's mean and sigma are those of the samples, whatever the height of the lane its bars are read from.
+#[test]
+fn the_histogram_header_reads_the_samples_in_any_lane_height() {
+    for on in [vec![0], vec![0, 1, 2]] {
+        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = Layout::Studio;
+        for c in 0..4 { u.m.ch[c].on = on.contains(&c); }
+        u.m.hist = Hist::Vertical;
+        u.relayout();
+        for _ in 0..20 { u.step(0.04); }
+        let (mean, sd) = (u.meas_number(WaveId::Ch(0), Meas::Vavg), u.meas_number(WaveId::Ch(0), Meas::StdDev));
+        assert!((mean - 1.25).abs() < 0.02 && (sd - 1.25).abs() < 0.03, "{} channels: mean {mean} sd {sd}", on.len());
+        let mut cv = Canvas::new(u.scr.w, u.scr.h);
+        u.render(&mut cv);
     }
 }

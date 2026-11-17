@@ -4743,7 +4743,11 @@ impl Ui {
                 let h = bins.len().max(1) as f64;
                 let vpp = ch.volts_per_div() as f64 * VDIV as f64 / h / factor as f64;
                 let mv = (h / 2.0 - mean) * vpp + center as f64 * ch.volts_per_div() as f64 - ch.offset as f64;
-                format!("Hist CH{}  mean {}  \u{3c3} {}", c + 1, si(mv, self.m.unit(c)), si(sd * vpp, self.m.unit(c)))
+                // the figures come from the samples where there are any: the bars are rows of the picture, bright in
+                // proportion to what was drawn there, and a lane of 150 rows moved the mean by 0.16 V of 1.25 V
+                let (sm, ss) = (self.meas_number(WaveId::Ch(c), Meas::Vavg), self.meas_number(WaveId::Ch(c), Meas::StdDev));
+                let (mv, sv) = if sm.is_finite() && ss.is_finite() { (sm, ss) } else { (mv, sd * vpp) };
+                format!("Hist CH{}  mean {}  \u{3c3} {}", c + 1, si(mv, self.m.unit(c)), si(sv, self.m.unit(c)))
             }
             _ => {
                 let n = bins.len().max(1) as i32;

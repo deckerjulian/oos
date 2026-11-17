@@ -52,7 +52,9 @@ Added:
   - a SIM waveform added to a reference while the scope runs live says how long it is when it is far shorter than the
     screen, and its message carries the tick of a done action instead of the warning triangle;
   - the Histogram view of Studio uses its whole height (it copied the position of the channel's lane, a third of the
-    view in stacked lanes), draws bars of at least four pixels, and has its header under the bars, not on them;
+    view in stacked lanes), draws bars of at least four pixels, and has its header under the bars, not on them; its
+    mean and sigma are those of the samples (they came from the brightness of picture rows and moved with the
+    height of the lane: 1.09 V for 1.25 V in a third of the view);
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it
