@@ -128,6 +128,15 @@ class Coverage(unittest.TestCase):
         self.assertEqual(cov.setup_fields(STORE_RS), ["vscale", "tdiv", "grid", "bus"])
         self.assertEqual(self.result()["fields-scpi"], (["grid", "bus"], 4))
 
+    def test_the_files_of_the_folder_count(self):
+        # a subsystem in its own file of ui/src/scpi/ (also one folder down) is the interpreter as much as scpi.rs
+        sub = self.root / cov.SCPI_DIR / "tests"
+        sub.mkdir(parents=True)
+        (self.root / cov.SCPI_DIR / "grid.rs").write_text('fn g(n0: &str) { if kw(n0, "GRID") { m.grid = 1; } }\n')
+        (sub / "bus.rs").write_text("fn t() { ui.m.bus = 2; }\n")
+        self.assertEqual(self.result()["words-docs"], (["SOURce", "SECRet", "GRID"], 9))
+        self.assertEqual(self.result()["fields-scpi"], ([], 4))
+
     def test_prints_and_exits_0(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
