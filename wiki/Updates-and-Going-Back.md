@@ -25,7 +25,8 @@ Signatures protect against damaged files, not against an attacker: the community
 - **Persist mode:** **System > Boot mode > One-shot**, then switch off and on. Or, with the card in a reader:
   `sudo python3 boot/switch.py stock /dev/rdiskM --execute`
 - **For good:** put your original card back. After an install without opening the scope there is no original card in a
-  drawer: OOS stays in `recovery` and does nothing there; putting the stock `recovery` back is in [[Installation]],
-  After the install.
+  drawer: OOS stays in `recovery` and does nothing there. Putting the stock `recovery` back needs the card in a reader
+  and `OOS-rescue/recovery.bin` from the stick, a dry run first, then the same with `--execute`:
+  `sudo python3 boot/card-install.py restore /dev/rdiskM --backup OOS-rescue/recovery.bin`
 
 OOS never writes the FPGA flash, `/rigol/data` or the `uboot`, `trust` and `parameter` partitions.
