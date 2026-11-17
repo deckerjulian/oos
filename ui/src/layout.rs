@@ -237,9 +237,15 @@ mod tests {
             let n = panel_uses(&production(&std::fs::read_to_string(&f).unwrap()));
             let budget = PANEL_BUDGET.iter().find(|b| b.0 == name).map_or(0, |b| b.1);
             if n > budget {
-                errs.push(format!("{}: {} uses of PANEL_W/PANEL_H, at most {}: lay it out from Ui::scr / Ui::frame", name, n, budget));
+                errs.push(format!(
+                    "{}: {} uses of PANEL_W/PANEL_H, at most {}: lay it out from Ui::scr / Ui::frame",
+                    name, n, budget
+                ));
             } else if n < budget {
-                errs.push(format!("{}: {} uses of PANEL_W/PANEL_H, fewer than {}: lower its PANEL_BUDGET", name, n, budget));
+                errs.push(format!(
+                    "{}: {} uses of PANEL_W/PANEL_H, fewer than {}: lower its PANEL_BUDGET",
+                    name, n, budget
+                ));
             }
         }
         assert!(errs.is_empty(), "{}", errs.join("\n"));

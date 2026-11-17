@@ -22,10 +22,12 @@ while [ $# -gt 0 ]; do
 	case $1 in
 	--paginate) ;;
 	--jq) expr=$2; shift ;;
+	-f) shift ;;
 	*) path=$1 ;;
 	esac
 	shift
 done
+case $path in graphql) path="graphql_$(printf '%s' "$expr" | tr -dc 'a-z' | cut -c1-12)" ;; esac
 file="$FAKE_GH/$(printf '%s' "$path" | tr '/?=' '___').json"
 [ -f "$file" ] || { echo "no stand-in for $path" >&2; exit 1; }
 if [ -n "$expr" ]; then jq -r "$expr" "$file"; else cat "$file"; fi
@@ -48,10 +50,10 @@ class PullRequests(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
 
     def pull(self, files, author="owner", fork=False, hours=1, labels=(), reviews=(), title="UI: something", bot=False,
-             patches=None, ref="topic", draft=False):
+             patches=None, ref="topic", draft=False, body=""):
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
         pr = {"head": {"sha": "abc", "ref": ref, "repo": {"full_name": "other/oos" if fork else "owner/oos"}},
-              "draft": draft,
+              "draft": draft, "body": body,
               "base": {"repo": {"full_name": "owner/oos"}}, "user": {"login": author, "type": "Bot" if bot else "User"},
               "labels": [{"name": l} for l in labels], "created_at": ago(hours), "title": title}
         name("repos/owner/oos/pulls/7").write_text(json.dumps(pr))
@@ -59,6 +61,34 @@ class PullRequests(unittest.TestCase):
         name("repos/owner/oos/pulls/7/files").write_text(json.dumps(entries))
         name("repos/owner/oos/pulls/7/reviews").write_text(json.dumps(
             [{"user": {"login": who}, "state": state, "commit_id": sha} for who, state, sha in reviews]))
+        self.copilot(None)
+
+    def copilot(self, body, open_threads=0, effort="lite"):
+        """Copilot's review of pull request 7: its overview text (None: no review yet) and its unresolved threads."""
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+        reviews = json.loads(name("repos/owner/oos/pulls/7/reviews").read_text())
+        reviews = [r for r in reviews if not r.get("is_copilot_code_review")]
+        if body is not None:
+            reviews.append({"user": {"login": "copilot-pull-request-reviewer[bot]"}, "state": "COMMENTED",
+                            "commit_id": "abc", "is_copilot_code_review": True, "copilot_code_review_effort": effort,
+                            "body": body})
+        name("repos/owner/oos/pulls/7/reviews").write_text(json.dumps(reviews))
+        threads = [{"isResolved": i >= open_threads, "comments": {"nodes": [{"author": {"login": "Copilot"}}]}}
+                   for i in range(open_threads + 1)]
+        threads.append({"isResolved": False, "comments": {"nodes": [{"author": {"login": "someone"}}]}})
+        # the stand-in files the graphql query under the first twelve letters of the jq expression
+        name("graphql_datareposito").write_text(json.dumps(
+            {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": threads}}}}}))
+
+    def ci(self, compare="success", kept=False):
+        """The run of CI for the commit abc: the conclusion of its job compare, and whether it kept what differed."""
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+        name("repos/owner/oos/actions/runs?head_sha=abc&event=pull_request&per_page=20").write_text(json.dumps(
+            {"workflow_runs": [{"id": 5, "name": "Gate"}, {"id": 9, "name": "CI"}]}))
+        name("repos/owner/oos/actions/runs/9/jobs?per_page=100").write_text(json.dumps(
+            {"jobs": [{"name": "test", "conclusion": "success"}, {"name": "compare", "conclusion": compare}]}))
+        name("repos/owner/oos/actions/runs/9/artifacts").write_text(json.dumps(
+            {"artifacts": [{"name": "compare-base"}] if kept else []}))
 
     def run_tool(self, tool):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
@@ -84,6 +114,48 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["waited"], "success", "the index alone is no decision record")
         self.pull(["docs/adr/process/0099-x.md"], hours=1, labels=["no-wait"])
         self.assertEqual(self.gate()["waited"], "success")
+
+    def test_no_wait_when_it_is_proven(self):
+        unchanged = "**What changes:** x\n\n**Behaviour:** unchanged.\n"
+        self.pull(["README.md", "docs/boot.md", "wiki/Home.md"])
+        self.assertEqual(self.gate()["waited"], "success", "documents only")
+        for path in ("docs/adr/process/0099-x.md", "AGENTS.md", "CONTRIBUTING.md"):
+            self.pull(["README.md", path])
+            self.assertEqual(self.gate()["waited"], "pending", f"{path} is a rule, not a document to correct")
+        self.ci()
+        self.pull(["ui/src/ui.rs", "dsp/src/x.rs", "tools/tests/test_x.py"], body=unchanged)
+        self.assertEqual(self.gate()["waited"], "success", "unchanged, and the comparison found nothing")
+        self.pull(["ui/src/ui.rs"], body="**Behaviour:** changed: the menu")
+        self.assertEqual(self.gate()["waited"], "pending", "it does not say unchanged")
+        self.ci(kept=True)
+        self.pull(["ui/src/ui.rs"], body=unchanged)
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison kept what differed")
+        self.ci(compare="failure")
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison failed")
+        self.ci(compare=None)
+        self.assertEqual(self.gate()["waited"], "pending", "the comparison has not run yet")
+        self.ci()
+        for path in ("hal/src/dho/seq.rs", ".github/workflows/ci.yml", "tools/check.sh", "ui/tools/layout-check.sh"):
+            self.pull(["ui/src/ui.rs", path], body=unchanged)
+            self.assertEqual(self.gate()["waited"], "pending", f"{path} is not seen by the comparison")
+
+    def test_the_review(self):
+        self.pull(["ui/src/ui.rs"], draft=True, ref="copilot/x")
+        self.assertEqual(self.gate()["review"], "pending", "a draft has no review yet")
+        self.pull(["ui/src/ui.rs"])
+        self.assertEqual(self.gate()["review"], "pending", "no review yet")
+        self.copilot("### Looks good\n\n**No open issues** 🎉\n")
+        self.assertEqual(self.gate()["review"], "success")
+        self.copilot("### Needs a closer look\n\n**2 open issues**\n", open_threads=2)
+        self.assertEqual(self.gate()["review"], "pending", "open comments")
+        self.copilot("### Needs a closer look\n\n**2 open issues**\n", open_threads=0)
+        self.assertEqual(self.gate()["review"], "success", "every comment of Copilot's resolved; others' do not count")
+
+    def test_hold(self):
+        self.pull(["ui/src/ui.rs"], labels=["hold"])
+        self.assertEqual(self.gate()["owner"], "pending", "the maintainer's own, held")
+        self.pull(["ui/src/ui.rs"], labels=["holder"])
+        self.assertEqual(self.gate()["owner"], "success", "only the label hold")
 
     def test_whose_it_is(self):
         self.pull(["ui/src/ui.rs"])

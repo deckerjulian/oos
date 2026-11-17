@@ -9,14 +9,17 @@
 use super::magnetic::missing_wave;
 use super::*;
 use oos_dsp::{eye, identify, power, spectrum};
-use std::{cell::{Cell, RefCell}, sync::{Arc, mpsc}};
+use std::{
+    cell::{Cell, RefCell},
+    sync::{mpsc, Arc},
+};
 
 const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
-#[path = "measure_own.rs"]
-mod own;
 #[cfg(test)]
 #[path = "channel_measurement_tests.rs"]
 mod channel_measurement_tests;
+#[path = "measure_own.rs"]
+mod own;
 
 /// A reference may keep the same allocation between accepted SIM captures.
 /// Include its revision as well as the physical gate and analysis settings.
@@ -68,29 +71,55 @@ enum MeasureSamples {
 
 impl MeasureSamples {
     fn slice(&self) -> &[f32] {
-        match self { Self::Owned(v) => v, Self::Native { frame, channel, lo, hi } => &frame.ch[*channel][*lo..*hi] }
+        match self {
+            Self::Owned(v) => v,
+            Self::Native { frame, channel, lo, hi } => &frame.ch[*channel][*lo..*hi],
+        }
     }
 }
 
 fn basic_analysis(basic: crate::board::BasicStats) -> oos_dsp::measure::Analysis {
     let [vmin, vmax, _, avg, rms, std] = basic.values;
-    oos_dsp::measure::Analysis { valid: basic.valid, vmin, vmax, avg, rms, std,
-        rise_time: f64::NAN, fall_time: f64::NAN, t_vmax: f64::NAN, t_vmin: f64::NAN,
-        ..Default::default() }
+    oos_dsp::measure::Analysis {
+        valid: basic.valid,
+        vmin,
+        vmax,
+        avg,
+        rms,
+        std,
+        rise_time: f64::NAN,
+        fall_time: f64::NAN,
+        t_vmax: f64::NAN,
+        t_vmin: f64::NAN,
+        ..Default::default()
+    }
 }
 
 fn scalar_readings(analysis: &oos_dsp::measure::Analysis, key: RefMeasureKey) -> Vec<f64> {
     use oos_dsp::measure::{burst_width, duration_n, time_outside, Outside};
-    let outside = match key.outside { 0 => Outside::Above, 1 => Outside::Below, _ => Outside::Both };
-    ALL_MEAS.iter().map(|&kind| match kind {
-        Meas::Burst => burst_width(analysis, f64::from_bits(key.idle)),
-        Meas::Outside => time_outside(analysis, outside),
-        Meas::NPeriods => duration_n(analysis, key.periods.max(1) as usize, key.data),
-        _ => analysis.get(kind),
-    }).collect()
+    let outside = match key.outside {
+        0 => Outside::Above,
+        1 => Outside::Below,
+        _ => Outside::Both,
+    };
+    ALL_MEAS
+        .iter()
+        .map(|&kind| match kind {
+            Meas::Burst => burst_width(analysis, f64::from_bits(key.idle)),
+            Meas::Outside => time_outside(analysis, outside),
+            Meas::NPeriods => duration_n(analysis, key.periods.max(1) as usize, key.data),
+            _ => analysis.get(kind),
+        })
+        .collect()
 }
 
-struct RefMeasureResult { source: WaveId, key: RefMeasureKey, analysis: Arc<oos_dsp::measure::Analysis>, readings: Vec<f64>, own: bool }
+struct RefMeasureResult {
+    source: WaveId,
+    key: RefMeasureKey,
+    analysis: Arc<oos_dsp::measure::Analysis>,
+    readings: Vec<f64>,
+    own: bool,
+}
 
 /// One worker, one in-flight input copy. Waiting sources keep metadata only.
 struct RefMeasureWorker {
@@ -105,14 +134,27 @@ impl RefMeasureWorker {
     fn open() -> Self {
         let (input, requests) = mpsc::sync_channel::<RefMeasureJob>(1);
         let (results, output) = mpsc::channel();
-        std::thread::Builder::new().name("reference-measurements".into()).spawn(move || {
-            while let Ok(job) = requests.recv() {
-                let analysis = job.analysis.unwrap_or_else(|| Arc::new(if job.key.basic { basic_analysis(crate::board::BasicStats::of(job.samples.slice())) }
-                    else { oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high) }));
-                let readings = scalar_readings(&analysis, job.key);
-                if results.send(RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own }).is_err() { break; }
-            }
-        }).expect("start bounded reference measurement worker");
+        std::thread::Builder::new()
+            .name("reference-measurements".into())
+            .spawn(move || {
+                while let Ok(job) = requests.recv() {
+                    let analysis = job.analysis.unwrap_or_else(|| {
+                        Arc::new(if job.key.basic {
+                            basic_analysis(crate::board::BasicStats::of(job.samples.slice()))
+                        } else {
+                            oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high)
+                        })
+                    });
+                    let readings = scalar_readings(&analysis, job.key);
+                    if results
+                        .send(RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("start bounded reference measurement worker");
         Self { input, output, busy: false, submitted: 0, own_turn: true }
     }
 }
@@ -201,7 +243,14 @@ fn bus_name(f: &identify::Finding) -> Option<String> {
 }
 
 const TRACES: [&str; 4] = ["Normal", "Average", "Max hold", "Min hold"];
-const POWER_MODES: [PowerMode; 6] = [PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple, PowerMode::Capacitance, PowerMode::Rail];
+const POWER_MODES: [PowerMode; 6] = [
+    PowerMode::Quality,
+    PowerMode::Harmonics,
+    PowerMode::Switching,
+    PowerMode::Ripple,
+    PowerMode::Capacitance,
+    PowerMode::Rail,
+];
 
 fn power_page(p: PowerMode) -> &'static str {
     match p {
@@ -227,18 +276,28 @@ fn step_ladder(v: f64, d: i32) -> f64 {
 impl Ui {
     pub(crate) fn set_measurement_full_record(&mut self, full: bool) {
         self.m.meas_full_record = full;
-        if !full { for pending in &self.azr.ref_measure_pending { pending.set(None); } }
+        if !full {
+            for pending in &self.azr.ref_measure_pending {
+                pending.set(None);
+            }
+        }
         self.clear_measurement_statistics();
         self.measure_last();
         self.mark_changed();
     }
 
     pub(super) fn measurement_gate_label(&self) -> &'static str {
-        if self.m.meas_full_record { "Full record" } else { "Screen" }
+        if self.m.meas_full_record {
+            "Full record"
+        } else {
+            "Screen"
+        }
     }
 
     pub(super) fn measurement_bounds(&self, len: usize, t0: f64, dt: f64) -> (usize, usize) {
-        if self.m.meas_full_record { return (0, len); }
+        if self.m.meas_full_record {
+            return (0, len);
+        }
         let (scale, delay) = self.view();
         let half = scale as f64 * HDIV as f64 * 0.5;
         let index = |time: f64| {
@@ -261,28 +320,52 @@ impl Ui {
     /// overlays use the same physical screen times at their own sample intervals.
     pub(super) fn measurement_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
         let screen = rec.ch.get(c)?;
-        let (samples, t0, dt) = if let Some(raw) = rec.raw.as_ref().filter(|raw| self.m.acq != AcqMode::HiRes
-            && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)) {
+        let (samples, t0, dt) = if let Some(raw) = rec.raw.as_ref().filter(|raw| {
+            self.m.acq != AcqMode::HiRes && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)
+        }) {
             (raw.frame.ch.get(c)?.as_slice(), raw.t0 - raw.i0 as f64 * raw.frame.dt, raw.frame.dt)
-        } else { (screen.as_slice(), rec.t0, rec.dt) };
+        } else {
+            (screen.as_slice(), rec.t0, rec.dt)
+        };
         let t0 = self.source_time_origin(WaveId::Ch(c), t0);
-        if samples.len() < 2 || !dt.is_finite() || dt <= 0.0 { return None; }
+        if samples.len() < 2 || !dt.is_finite() || dt <= 0.0 {
+            return None;
+        }
         let (lo, hi) = self.measurement_bounds(samples.len(), t0, dt);
         (hi >= lo + 2).then_some((&samples[lo..hi], t0 + lo as f64 * dt, dt))
     }
 
     fn reference_measurement_key(&self, slot: usize) -> Option<(RefMeasureKey, f64)> {
         let r = self.refs.get(slot)?.as_ref()?;
-        if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 { return None; }
+        if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 {
+            return None;
+        }
         let t0 = self.source_time_origin(WaveId::Ref(slot), r.t0);
         let (lo, hi) = self.measurement_bounds(r.v.len(), t0, r.dt);
-        if hi < lo + 2 { return None; }
-        let key = RefMeasureKey { samples: r.v.as_ptr() as usize, len: r.v.len(), lo, hi,
-            dt: r.dt.to_bits(), t0: t0.to_bits(), vpd: r.vpd.to_bits(),
-            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), epoch: self.workflow_epoch,
-            revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 }, full: self.m.meas_full_record, basic: false,
-            idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
-            conditioning: (0, false, 0), capture: 0 };
+        if hi < lo + 2 {
+            return None;
+        }
+        let key = RefMeasureKey {
+            samples: r.v.as_ptr() as usize,
+            len: r.v.len(),
+            lo,
+            hi,
+            dt: r.dt.to_bits(),
+            t0: t0.to_bits(),
+            vpd: r.vpd.to_bits(),
+            low: self.m.meas_lpct.to_bits(),
+            high: self.m.meas_hpct.to_bits(),
+            epoch: self.workflow_epoch,
+            revision: if self.session_is_sim && self.m.sim_slot == slot { self.replay.sim_revision } else { 0 },
+            full: self.m.meas_full_record,
+            basic: false,
+            idle: self.m.meas_idle.to_bits(),
+            outside: self.m.meas_out as u8,
+            periods: self.m.meas_n,
+            data: self.m.meas_data,
+            conditioning: (0, false, 0),
+            capture: 0,
+        };
         Some((key, t0 + lo as f64 * r.dt))
     }
 
@@ -297,16 +380,33 @@ impl Ui {
             let mut worker = self.azr.ref_measure_worker.borrow_mut();
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
             if !worker.busy {
-                let job = RefMeasureJob { source: WaveId::Ref(slot), key, samples: MeasureSamples::Owned(r.v[key.lo..key.hi].to_vec()), dt: r.dt,
-                    min_amp: 0.4 * r.vpd as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
-                if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
+                let job = RefMeasureJob {
+                    source: WaveId::Ref(slot),
+                    key,
+                    samples: MeasureSamples::Owned(r.v[key.lo..key.hi].to_vec()),
+                    dt: r.dt,
+                    min_amp: 0.4 * r.vpd as f64,
+                    low: self.m.meas_lpct,
+                    high: self.m.meas_hpct,
+                    own: false,
+                    analysis: None,
+                };
+                if worker.input.try_send(job).is_ok() {
+                    worker.busy = true;
+                    worker.submitted += 1;
+                }
             }
             return None;
         }
         let mut cache = self.azr.ref_measure[slot].borrow_mut();
         if cache.as_ref().is_none_or(|cached| cached.key != key) {
-            let analysis = oos_dsp::measure::analyze_refs(&r.v[key.lo..key.hi], r.dt,
-                0.4 * r.vpd as f64, self.m.meas_lpct, self.m.meas_hpct);
+            let analysis = oos_dsp::measure::analyze_refs(
+                &r.v[key.lo..key.hi],
+                r.dt,
+                0.4 * r.vpd as f64,
+                self.m.meas_lpct,
+                self.m.meas_hpct,
+            );
             let readings = scalar_readings(&analysis, key);
             *cache = Some(RefMeasureCache { key, analysis: Arc::new(analysis), readings });
         }
@@ -327,20 +427,41 @@ impl Ui {
     }
 
     fn channel_measurement_key(&self, channel: usize, basic: bool) -> Option<(RefMeasureKey, f64)> {
-        if channel >= n_ch() || !self.m.ch[channel].on { return None; }
+        if channel >= n_ch() || !self.m.ch[channel].on {
+            return None;
+        }
         let record = self.last[0].as_ref()?;
         let (samples, t0, dt) = self.measurement_channel_samples(record, channel)?;
-        Some((RefMeasureKey { samples: samples.as_ptr() as usize, len: samples.len(), lo: 0, hi: samples.len(),
-            dt: dt.to_bits(), t0: t0.to_bits(), vpd: self.m.ch[channel].volts_per_div().to_bits(),
-            low: self.m.meas_lpct.to_bits(), high: self.m.meas_hpct.to_bits(), epoch: self.workflow_epoch,
-            revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq), full: self.m.meas_full_record, basic,
-            idle: self.m.meas_idle.to_bits(), outside: self.m.meas_out as u8, periods: self.m.meas_n, data: self.m.meas_data,
-            conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
-            capture: self.wfm_total }, t0))
+        Some((
+            RefMeasureKey {
+                samples: samples.as_ptr() as usize,
+                len: samples.len(),
+                lo: 0,
+                hi: samples.len(),
+                dt: dt.to_bits(),
+                t0: t0.to_bits(),
+                vpd: self.m.ch[channel].volts_per_div().to_bits(),
+                low: self.m.meas_lpct.to_bits(),
+                high: self.m.meas_hpct.to_bits(),
+                epoch: self.workflow_epoch,
+                revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq),
+                full: self.m.meas_full_record,
+                basic,
+                idle: self.m.meas_idle.to_bits(),
+                outside: self.m.meas_out as u8,
+                periods: self.m.meas_n,
+                data: self.m.meas_data,
+                conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
+                capture: self.wfm_total,
+            },
+            t0,
+        ))
     }
 
     fn native_channel_basic(&self, channel: usize) -> Option<crate::board::BasicStats> {
-        if channel >= n_ch() || !self.m.ch[channel].on { return None; }
+        if channel >= n_ch() || !self.m.ch[channel].on {
+            return None;
+        }
         let record = self.last[0].as_ref()?;
         let raw = record.raw.as_ref()?;
         let full = raw.frame.ch.get(channel)?;
@@ -350,25 +471,39 @@ impl Ui {
     }
 
     pub(super) fn channel_basic_reading(&self, channel: usize, kind: Meas) -> Option<f64> {
-        if !Self::channel_basic_kind(kind) { return None; }
+        if !Self::channel_basic_kind(kind) {
+            return None;
+        }
         let kind = if kind == Meas::VrmsAc { Meas::StdDev } else { kind };
-        if let Some(basic) = self.native_channel_basic(channel) { return basic.reading(kind); }
+        if let Some(basic) = self.native_channel_basic(channel) {
+            return basic.reading(kind);
+        }
         self.channel_measurement(channel, false).map(|(analysis, _)| analysis.get(kind))
     }
 
     /// Shared with reference jobs: one worker and one retained native frame.
     /// Large CH gates submit an Arc plus indices, never a full-record UI copy.
-    pub(super) fn channel_measurement(&self, channel: usize, full_analysis: bool) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
+    pub(super) fn channel_measurement(
+        &self,
+        channel: usize,
+        full_analysis: bool,
+    ) -> Option<(Arc<oos_dsp::measure::Analysis>, f64)> {
         let (mut key, t0) = self.channel_measurement_key(channel, !full_analysis)?;
         let large = key.len > BACKGROUND_MEASUREMENT_POINTS;
-        if !large || self.channel_needs_full_analysis(channel) { key.basic = false; }
+        if !large || self.channel_needs_full_analysis(channel) {
+            key.basic = false;
+        }
         // A scalar reader must not downgrade an outstanding explicit edge query.
         if let Some(pending) = self.azr.ch_measure_pending[channel].get() {
-            let mut comparable = key; comparable.basic = pending.basic;
-            if comparable == pending && !pending.basic { key.basic = false; }
+            let mut comparable = key;
+            comparable.basic = pending.basic;
+            if comparable == pending && !pending.basic {
+                key.basic = false;
+            }
         }
         if let Some(cache) = self.azr.ch_measure[channel].borrow().as_ref() {
-            let mut comparable = key; comparable.basic = cache.key.basic;
+            let mut comparable = key;
+            comparable.basic = cache.key.basic;
             if cache.key == key || (key.basic && !cache.key.basic && comparable == cache.key) {
                 return Some((Arc::clone(&cache.analysis), t0));
             }
@@ -377,7 +512,8 @@ impl Ui {
             if let Some(basic) = self.native_channel_basic(channel) {
                 let analysis = Arc::new(basic_analysis(basic));
                 let readings = scalar_readings(&analysis, key);
-                *self.azr.ch_measure[channel].borrow_mut() = Some(RefMeasureCache { key, analysis: Arc::clone(&analysis), readings });
+                *self.azr.ch_measure[channel].borrow_mut() =
+                    Some(RefMeasureCache { key, analysis: Arc::clone(&analysis), readings });
                 return Some((analysis, t0));
             }
         }
@@ -392,19 +528,41 @@ impl Ui {
                     let values = &raw.frame.ch[channel];
                     let offset = (samples.as_ptr() as usize).checked_sub(values.as_ptr() as usize)?;
                     let lo = offset / std::mem::size_of::<f32>();
-                    if lo.checked_add(samples.len())? > values.len() { return None; }
+                    if lo.checked_add(samples.len())? > values.len() {
+                        return None;
+                    }
                     MeasureSamples::Native { frame: Arc::clone(&raw.frame), channel, lo, hi: lo + samples.len() }
-                } else { MeasureSamples::Owned(samples.to_vec()) };
-                let job = RefMeasureJob { source: WaveId::Ch(channel), key, samples: input, dt,
-                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64, low: self.m.meas_lpct, high: self.m.meas_hpct, own: false, analysis: None };
-                if worker.input.try_send(job).is_ok() { worker.busy = true; worker.submitted += 1; }
+                } else {
+                    MeasureSamples::Owned(samples.to_vec())
+                };
+                let job = RefMeasureJob {
+                    source: WaveId::Ch(channel),
+                    key,
+                    samples: input,
+                    dt,
+                    min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64,
+                    low: self.m.meas_lpct,
+                    high: self.m.meas_hpct,
+                    own: false,
+                    analysis: None,
+                };
+                if worker.input.try_send(job).is_ok() {
+                    worker.busy = true;
+                    worker.submitted += 1;
+                }
             }
             return None;
         }
-        let analysis = Arc::new(oos_dsp::measure::analyze_refs(samples, dt, 0.4 * self.m.ch[channel].volts_per_div() as f64,
-            self.m.meas_lpct, self.m.meas_hpct));
+        let analysis = Arc::new(oos_dsp::measure::analyze_refs(
+            samples,
+            dt,
+            0.4 * self.m.ch[channel].volts_per_div() as f64,
+            self.m.meas_lpct,
+            self.m.meas_hpct,
+        ));
         let readings = scalar_readings(&analysis, key);
-        *self.azr.ch_measure[channel].borrow_mut() = Some(RefMeasureCache { key, analysis: Arc::clone(&analysis), readings });
+        *self.azr.ch_measure[channel].borrow_mut() =
+            Some(RefMeasureCache { key, analysis: Arc::clone(&analysis), readings });
         Some((analysis, t0))
     }
 
@@ -414,15 +572,39 @@ impl Ui {
             let analysis = self.channel_measurement(channel, full).map(|(analysis, _)| analysis);
             // a large record measured in the background: the values of the last one stay until the worker answers (a
             // deep record measured raw once a second showed "not available" for that time, unit 2026-11-15)
-            if analysis.is_none() && self.m.ch[channel].on && self.computing_like_last(channel) && self.ana[channel].valid {
+            if analysis.is_none()
+                && self.m.ch[channel].on
+                && self.computing_like_last(channel)
+                && self.ana[channel].valid
+            {
                 continue;
             }
             let basic = self.native_channel_basic(channel);
-            let stats = analysis.as_ref().map(|a| Stats { valid: a.valid, vmin: a.vmin as f32, vmax: a.vmax as f32,
-                vavg: a.avg as f32, vrms: a.rms as f32, top: a.top as f32, base: a.base as f32,
-                period: a.get(Meas::Period), pwidth: self.cached_measurement_reading(WaveId::Ch(channel), Meas::PWidth, a).unwrap_or(f64::NAN), rise: a.rise_time, fall: a.fall_time });
-            self.stats[channel] = stats.or_else(|| basic.map(|b| Stats { valid: b.valid, vmin: b.values[0] as f32,
-                vmax: b.values[1] as f32, vavg: b.values[3] as f32, vrms: b.values[4] as f32, ..Stats::default() })).unwrap_or_default();
+            let stats = analysis.as_ref().map(|a| Stats {
+                valid: a.valid,
+                vmin: a.vmin as f32,
+                vmax: a.vmax as f32,
+                vavg: a.avg as f32,
+                vrms: a.rms as f32,
+                top: a.top as f32,
+                base: a.base as f32,
+                period: a.get(Meas::Period),
+                pwidth: self.cached_measurement_reading(WaveId::Ch(channel), Meas::PWidth, a).unwrap_or(f64::NAN),
+                rise: a.rise_time,
+                fall: a.fall_time,
+            });
+            self.stats[channel] = stats
+                .or_else(|| {
+                    basic.map(|b| Stats {
+                        valid: b.valid,
+                        vmin: b.values[0] as f32,
+                        vmax: b.values[1] as f32,
+                        vavg: b.values[3] as f32,
+                        vrms: b.values[4] as f32,
+                        ..Stats::default()
+                    })
+                })
+                .unwrap_or_default();
             self.ana[channel] = analysis.unwrap_or_default();
             if !self.m.ch[channel].on {
                 *self.azr.ch_measure[channel].borrow_mut() = None;
@@ -431,10 +613,21 @@ impl Ui {
         }
     }
 
-    pub(super) fn cached_measurement_reading(&self, id: WaveId, kind: Meas, analysis: &Arc<oos_dsp::measure::Analysis>) -> Option<f64> {
-        let cache = match id { WaveId::Ch(c) => self.azr.ch_measure.get(c)?, WaveId::Ref(i) => self.azr.ref_measure.get(i)? }.borrow();
+    pub(super) fn cached_measurement_reading(
+        &self,
+        id: WaveId,
+        kind: Meas,
+        analysis: &Arc<oos_dsp::measure::Analysis>,
+    ) -> Option<f64> {
+        let cache = match id {
+            WaveId::Ch(c) => self.azr.ch_measure.get(c)?,
+            WaveId::Ref(i) => self.azr.ref_measure.get(i)?,
+        }
+        .borrow();
         let cache = cache.as_ref()?;
-        if !Arc::ptr_eq(&cache.analysis, analysis) || (cache.key.basic && !Self::channel_basic_kind(kind)) { return None; }
+        if !Arc::ptr_eq(&cache.analysis, analysis) || (cache.key.basic && !Self::channel_basic_kind(kind)) {
+            return None;
+        }
         let index = ALL_MEAS.iter().position(|&entry| entry == kind)?;
         cache.readings.get(index).copied()
     }
@@ -444,7 +637,8 @@ impl Ui {
             WaveId::Ch(c) => (self.azr.ch_measure.get(c)?, self.channel_measurement_key(c, false)),
             WaveId::Ref(i) => (self.azr.ref_measure.get(i)?, self.reference_measurement_key(i)),
         };
-        let cache = cache.borrow(); let cache = cache.as_ref()?;
+        let cache = cache.borrow();
+        let cache = cache.as_ref()?;
         (current.is_some_and(|(key, _)| key == cache.key) && !cache.key.basic)
             .then_some((cache.key, Arc::as_ptr(&cache.analysis) as usize))
     }
@@ -460,40 +654,70 @@ impl Ui {
         // only for the raw window of a deep record (deepmeas.rs), read once in a while: where records come faster
         // than the worker (roll at 0.2 to 0.5 s/div) the last finished value could be from before a change of the
         // signal and stood for seconds (time_axis_at_every_channel_count on the unit, 2026-11-15)
-        if !self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
+        if !self.last[0]
+            .as_ref()
+            .and_then(|r| r.raw.as_ref())
+            .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
+        {
             return false;
         }
         let Some(pending) = self.azr.ch_measure_pending[channel].get() else { return false };
         let cache = self.azr.ch_measure[channel].borrow();
         cache.as_ref().is_some_and(|c| {
             let k = c.key;
-            (k.len, k.dt, k.t0, k.vpd, k.low, k.high, k.epoch, k.full) == (pending.len, pending.dt, pending.t0, pending.vpd, pending.low, pending.high, pending.epoch, pending.full)
+            (k.len, k.dt, k.t0, k.vpd, k.low, k.high, k.epoch, k.full)
+                == (
+                    pending.len,
+                    pending.dt,
+                    pending.t0,
+                    pending.vpd,
+                    pending.low,
+                    pending.high,
+                    pending.epoch,
+                    pending.full,
+                )
         })
     }
 
     pub(super) fn measurement_computing(&self, id: WaveId) -> bool {
         if let WaveId::Ch(channel) = id {
-            return channel < NCH && self.azr.ch_measure_pending[channel].get().is_some_and(|key|
-                self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key));
+            return channel < NCH
+                && self.azr.ch_measure_pending[channel].get().is_some_and(|key| {
+                    self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key)
+                });
         }
         let WaveId::Ref(slot) = id else { unreachable!() };
-        let Some((key, _)) = self.reference_measurement_key(slot) else { return false; };
+        let Some((key, _)) = self.reference_measurement_key(slot) else {
+            return false;
+        };
         key.hi - key.lo > BACKGROUND_MEASUREMENT_POINTS
             && self.azr.ref_measure[slot].borrow().as_ref().is_none_or(|cached| cached.key != key)
     }
 
     pub(crate) fn measurement_busy(&self) -> bool {
-        self.catalog_measurement_busy() || self.own_measurement_busy() || self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| pending.get().is_some_and(|key|
-            self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key)))
-        || self.pair_measurement_busy()
-        || self.azr.ref_measure_pending.iter().enumerate().any(|(slot, pending)|
-            pending.get().is_some_and(|key| self.reference_measurement_key(slot).is_some_and(|(current, _)| current == key)))
+        self.catalog_measurement_busy()
+            || self.own_measurement_busy()
+            || self.azr.ch_measure_pending.iter().enumerate().any(|(channel, pending)| {
+                pending.get().is_some_and(|key| {
+                    self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key)
+                })
+            })
+            || self.pair_measurement_busy()
+            || self.azr.ref_measure_pending.iter().enumerate().any(|(slot, pending)| {
+                pending
+                    .get()
+                    .is_some_and(|key| self.reference_measurement_key(slot).is_some_and(|(current, _)| current == key))
+            })
     }
 
     pub(super) fn poll_reference_measurements(&mut self) {
         let mut completed = Vec::new();
         if let Some(worker) = self.azr.ref_measure_worker.borrow_mut().as_mut() {
-            while let Ok(result) = worker.output.try_recv() { worker.busy = false; worker.own_turn = !result.own; completed.push(result); }
+            while let Ok(result) = worker.output.try_recv() {
+                worker.busy = false;
+                worker.own_turn = !result.own;
+                completed.push(result);
+            }
         }
         let mut changed = false;
         for result in completed {
@@ -502,31 +726,46 @@ impl Ui {
                 continue;
             }
             let (pending, cache, current) = match result.source {
-                WaveId::Ref(slot) => (&self.azr.ref_measure_pending[slot], &self.azr.ref_measure[slot], self.reference_measurement_key(slot)),
-                WaveId::Ch(channel) => (&self.azr.ch_measure_pending[channel], &self.azr.ch_measure[channel], self.channel_measurement_key(channel, result.key.basic)),
+                WaveId::Ref(slot) => (
+                    &self.azr.ref_measure_pending[slot],
+                    &self.azr.ref_measure[slot],
+                    self.reference_measurement_key(slot),
+                ),
+                WaveId::Ch(channel) => (
+                    &self.azr.ch_measure_pending[channel],
+                    &self.azr.ch_measure[channel],
+                    self.channel_measurement_key(channel, result.key.basic),
+                ),
             };
             if pending.get() == Some(result.key) {
                 pending.set(None);
                 if current.is_some_and(|(current, _)| current == result.key) {
-                    *cache.borrow_mut() = Some(RefMeasureCache { key: result.key, analysis: result.analysis, readings: result.readings });
+                    *cache.borrow_mut() =
+                        Some(RefMeasureCache { key: result.key, analysis: result.analysis, readings: result.readings });
                     changed = true;
                 }
             }
         }
         let own_turn = self.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.own_turn);
-        if own_turn { self.schedule_own_measurement(); }
+        if own_turn {
+            self.schedule_own_measurement();
+        }
         for channel in 0..NCH {
             if let Some(key) = self.azr.ch_measure_pending[channel].get() {
                 if self.channel_measurement_key(channel, key.basic).is_some_and(|(current, _)| current == key) {
                     let _ = self.channel_measurement(channel, !key.basic);
-                } else { self.azr.ch_measure_pending[channel].set(None); }
+                } else {
+                    self.azr.ch_measure_pending[channel].set(None);
+                }
             }
         }
         for slot in 0..NREF {
             if let Some(key) = self.azr.ref_measure_pending[slot].get() {
                 if self.reference_measurement_key(slot).is_some_and(|(current, _)| current == key) {
                     let _ = self.reference_measurement(slot);
-                } else { self.azr.ref_measure_pending[slot].set(None); }
+                } else {
+                    self.azr.ref_measure_pending[slot].set(None);
+                }
             }
         }
         self.schedule_own_measurement();
@@ -545,18 +784,23 @@ impl Ui {
             let id = WaveId::Ref(i);
             let requested = self.refs[i].as_ref().is_some_and(|r| r.on)
                 || self.m.meas.iter().any(|entry| entry.1 == id)
-                || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id) || meter == Some(i);
+                || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id)
+                || meter == Some(i);
             let analysis = requested.then(|| self.reference_measurement(i)).flatten();
             self.ref_ana_valid[i] = analysis.is_some();
             self.ref_ana[i] = analysis.map_or_else(Default::default, |(a, _)| a);
-            if self.refs[i].is_none() { *self.azr.ref_measure[i].borrow_mut() = None; }
+            if self.refs[i].is_none() {
+                *self.azr.ref_measure[i].borrow_mut() = None;
+            }
         }
     }
 
     pub(super) fn refresh_stopped_measurements(&mut self) {
         let (scale, delay) = self.view();
         let key = (scale.to_bits(), delay.to_bits(), self.m.meas_full_record);
-        if self.azr.measure_view == Some(key) { return; }
+        if self.azr.measure_view == Some(key) {
+            return;
+        }
         self.azr.measure_view = Some(key);
         self.measure_last();
     }
@@ -571,13 +815,50 @@ impl Ui {
 
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::SpecAcprW | Item::SpecAcprS | Item::EyeRate | Item::EyeBer | Item::EyePnLo | Item::EyePnHi | Item::EyeNotch | Item::PowFline | Item::PowFsw | Item::PowRef => Kind::Value,
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => Kind::Action,
+            Item::SpecCenter
+            | Item::SpecSpan
+            | Item::SpecRbw
+            | Item::SpecRef
+            | Item::SpecAcprW
+            | Item::SpecAcprS
+            | Item::EyeRate
+            | Item::EyeBer
+            | Item::EyePnLo
+            | Item::EyePnHi
+            | Item::EyeNotch
+            | Item::PowFline
+            | Item::PowFsw
+            | Item::PowRef => Kind::Value,
+            Item::SpecPeak
+            | Item::SpecLimitSet
+            | Item::SpecLimitClear
+            | Item::EyeClear
+            | Item::EyeAct
+            | Item::IdentifyAct => Kind::Action,
             Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
             // a finding is a row with its summary as the only option: tapping it applies it
             Item::IdFind(_) => Kind::Choice,
-            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyePlace | Item::EyeSrc | Item::EyeB | Item::EyeHp | Item::EyeNpj | Item::EyeRail | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode | Item::PowVin | Item::PowClk => Kind::Choice,
+            Item::SpecOn
+            | Item::SpecSrc
+            | Item::SpecHarm
+            | Item::SpecWin
+            | Item::SpecTrace
+            | Item::SpecWf
+            | Item::SpecDist
+            | Item::EyeOn
+            | Item::EyePlace
+            | Item::EyeSrc
+            | Item::EyeB
+            | Item::EyeHp
+            | Item::EyeNpj
+            | Item::EyeRail
+            | Item::PowOn
+            | Item::PowV
+            | Item::PowI
+            | Item::PowMode
+            | Item::PowVin
+            | Item::PowClk => Kind::Choice,
             _ => return None,
         })
     }
@@ -650,7 +931,9 @@ impl Ui {
             Item::PowI => self.wave_name(m.pw_i),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
             Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
-            Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => format!("Auto {}", si_short(self.azr.spec_stop, "Hz")),
+            Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => {
+                format!("Auto {}", si_short(self.azr.spec_stop, "Hz"))
+            }
             Item::SpecSpan => "Full".into(),
             Item::SpecHarm => panes::harm_names()[m.spec_harm.min(PANE_HARMS.len() - 1)].clone(),
             Item::SpecRbw => match &self.azr.spec {
@@ -663,13 +946,15 @@ impl Ui {
             Item::SpecRef => format!("{:.0} dBV", m.spec_ref),
             Item::SpecWf => onoff(m.spec_wf),
             Item::SpecDist => onoff(m.spec_dist),
-            Item::EyeRate => if m.eye_from_record && m.eye_rate > 0.0 {
-                format!("{} from record", si_short(m.eye_rate, "b/s"))
-            } else if m.eye_rate == 0.0 {
-                "Auto".into()
-            } else {
-                si_short(m.eye_rate, "b/s")
-            },
+            Item::EyeRate => {
+                if m.eye_from_record && m.eye_rate > 0.0 {
+                    format!("{} from record", si_short(m.eye_rate, "b/s"))
+                } else if m.eye_rate == 0.0 {
+                    "Auto".into()
+                } else {
+                    si_short(m.eye_rate, "b/s")
+                }
+            }
             Item::EyeBer => format!("{:.0e}", m.eye_ber),
             Item::EyeB => m.eye_b.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::EyeHp => onoff(m.eye_hp),
@@ -677,10 +962,28 @@ impl Ui {
             Item::EyePnHi => si_short(m.eye_pn_hi, "Hz"),
             Item::EyeNpj => onoff(m.eye_npj),
             Item::EyeRail => m.eye_rail.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
-            Item::EyeNotch => if m.eye_notch > 0.0 { si_short(m.eye_notch, "Hz") } else { "off".into() },
+            Item::EyeNotch => {
+                if m.eye_notch > 0.0 {
+                    si_short(m.eye_notch, "Hz")
+                } else {
+                    "off".into()
+                }
+            }
             Item::PowMode => power_page(m.pw_mode).into(),
-            Item::PowFline => if m.pw_fline > 0.0 { si_short(m.pw_fline, "Hz") } else { "auto".into() },
-            Item::PowFsw => if m.pw_fsw > 0.0 { si_short(m.pw_fsw, "Hz") } else { "auto".into() },
+            Item::PowFline => {
+                if m.pw_fline > 0.0 {
+                    si_short(m.pw_fline, "Hz")
+                } else {
+                    "auto".into()
+                }
+            }
+            Item::PowFsw => {
+                if m.pw_fsw > 0.0 {
+                    si_short(m.pw_fsw, "Hz")
+                } else {
+                    "auto".into()
+                }
+            }
             Item::PowVin => m.pw_vin.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::PowRef => m.pw_ref.map(|v| si_short(v, "V")).unwrap_or_else(|| "Top".into()),
             Item::PowClk => m.pw_clk.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
@@ -690,7 +993,12 @@ impl Ui {
                 // the whole text: the row's button draws it in the largest font that fits
                 format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary)
             }),
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct | Item::IdentifyAct => String::new(),
+            Item::SpecPeak
+            | Item::SpecLimitSet
+            | Item::SpecLimitClear
+            | Item::EyeClear
+            | Item::EyeAct
+            | Item::IdentifyAct => String::new(),
             Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),
             _ => return None,
         })
@@ -699,7 +1007,14 @@ impl Ui {
     pub(super) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::SpecOn
+            | Item::EyeOn
+            | Item::PowOn
+            | Item::SpecWf
+            | Item::SpecDist
+            | Item::EyeHp
+            | Item::EyeNpj
+            | Item::ProtoWatch => v(&["Off", "On"]),
             Item::EyePlace => v(&["Full", "Side", "Under"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
@@ -748,7 +1063,9 @@ impl Ui {
                 Item::SpecSrc => self.m.spec_src = next,
                 Item::EyeSrc => {
                     self.m.eye_src = next;
-                    if self.m.eye_from_record { self.m.eye_rate = self.waveform_bit_rate(next).unwrap_or(0.0); }
+                    if self.m.eye_from_record {
+                        self.m.eye_rate = self.waveform_bit_rate(next).unwrap_or(0.0);
+                    }
                     self.azr.eye = None;
                     self.azr.eye_ref = None;
                     self.azr.eye_res = None;
@@ -831,7 +1148,10 @@ impl Ui {
                 let next = step_ladder(cur, d);
                 m.pw_ref = if next == 0.0 { None } else { Some(next) };
             }
-            Item::PowMode => m.pw_mode = POWER_MODES[cycle(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len(), d)],
+            Item::PowMode => {
+                m.pw_mode = POWER_MODES
+                    [cycle(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len(), d)]
+            }
             _ => return false,
         }
         // the averaging/waterfall/eye restart on any analyser change
@@ -893,7 +1213,8 @@ impl Ui {
 
     /// The spectrum is on the screen and its span is left to the signal.
     fn spec_follows(&self) -> bool {
-        let shown = self.m.view == AView::Spectrum || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
+        let shown = self.m.view == AView::Spectrum
+            || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         shown && self.m.spec_span == 0.0 && PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)] > 0
     }
 
@@ -905,7 +1226,6 @@ impl Ui {
             self.azr.peaks.sort_by(|a, b| b.dbv.total_cmp(&a.dbv));
         }
     }
-
 
     /// The source exists: a channel that is on, or a ref that holds samples.
     pub(super) fn wave_ready(&self, id: WaveId) -> bool {
@@ -946,7 +1266,8 @@ impl Ui {
         let (mut center, mut span) = (self.m.spec_center, self.m.spec_span);
         if self.spec_follows() {
             // no frequency this record: the span stays
-            self.azr.spec_stop = spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
+            self.azr.spec_stop =
+                spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
             (center, span) = (self.azr.spec_stop / 2.0, self.azr.spec_stop);
         }
         let area = if pane { self.pane_rect() } else { self.area };
@@ -958,7 +1279,12 @@ impl Ui {
             rbw: if self.m.spec_rbw > 0.0 { self.m.spec_rbw } else { finest },
             window: self.m.spec_win,
             averaging: 16,
-            trace: [spectrum::Trace::Normal, spectrum::Trace::Average, spectrum::Trace::MaxHold, spectrum::Trace::MinHold][self.m.spec_trace.min(3)],
+            trace: [
+                spectrum::Trace::Normal,
+                spectrum::Trace::Average,
+                spectrum::Trace::MaxHold,
+                spectrum::Trace::MinHold,
+            ][self.m.spec_trace.min(3)],
             detector: spectrum::Detector::Peak,
             points: self.spec_box(area, pane).plot.w.max(100) as usize,
             ref_level_dbv: self.m.spec_ref as f64,
@@ -1023,7 +1349,19 @@ impl Ui {
     /// SCPI / MCP: Identify now, one finding per line ("CH1 Clock 1.000 kHz ... (90 %)").
     pub fn identify_text(&mut self) -> String {
         self.identify_now();
-        self.azr.findings.iter().map(|f| format!("{} {} ({:.0} %)", f.channels.iter().map(|c| format!("CH{}", c + 1)).collect::<Vec<_>>().join("+"), f.summary, f.confidence * 100.0)).collect::<Vec<_>>().join(";")
+        self.azr
+            .findings
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {} ({:.0} %)",
+                    f.channels.iter().map(|c| format!("CH{}", c + 1)).collect::<Vec<_>>().join("+"),
+                    f.summary,
+                    f.confidence * 100.0
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";")
     }
 
     /// Identify on every captured sample of the channels that are on.
@@ -1057,7 +1395,8 @@ impl Ui {
         let m = &mut self.m;
         match f.trigger {
             T::Edge { source, level, rising, .. } => {
-                (m.trig_type, m.trig_src, m.trig_level, m.slope) = (TrigType::Edge, source, level, if rising { Slope::Rise } else { Slope::Fall });
+                (m.trig_type, m.trig_src, m.trig_level, m.slope) =
+                    (TrigType::Edge, source, level, if rising { Slope::Rise } else { Slope::Fall });
             }
             T::PulseWidth { source, level, positive, less_than, greater_than } => {
                 (m.trig_type, m.trig_src, m.trig_level) = (TrigType::Pulse, source, level);
@@ -1074,17 +1413,26 @@ impl Ui {
             }
             T::None => {}
         }
-        let nearest = |l: &[f64], x: f64| l.iter().enumerate().min_by(|a, b| (a.1 - x).abs().partial_cmp(&(b.1 - x).abs()).unwrap()).map_or(0, |e| e.0);
+        let nearest = |l: &[f64], x: f64| {
+            l.iter()
+                .enumerate()
+                .min_by(|a, b| (a.1 - x).abs().partial_cmp(&(b.1 - x).abs()).unwrap())
+                .map_or(0, |e| e.0)
+        };
         let Some(d) = &f.decoder else { return };
         m.dec_on = true;
         match d {
             D::Uart { ch, baud, bits, parity, thr, .. } => {
-                (m.dec_proto, m.dec_src, m.dec_bits, m.dec_parity, m.dec_thr) = (Proto::UART, *ch, *bits, *parity, *thr);
+                (m.dec_proto, m.dec_src, m.dec_bits, m.dec_parity, m.dec_thr) =
+                    (Proto::UART, *ch, *bits, *parity, *thr);
                 m.dec_baud = nearest(&crate::decode::BAUDS, *baud);
             }
-            D::I2c { sda, scl, thr } => (m.dec_proto, m.dec_src, m.dec_src2, m.dec_thr) = (Proto::I2C, *sda, *scl, *thr),
+            D::I2c { sda, scl, thr } => {
+                (m.dec_proto, m.dec_src, m.dec_src2, m.dec_thr) = (Proto::I2C, *sda, *scl, *thr)
+            }
             D::Spi { clk, data, cs, mode, bits, thr } => {
-                (m.dec_proto, m.dec_src2, m.dec_cs, m.dec_mode, m.dec_bits, m.dec_thr) = (Proto::SPI, *clk, *cs, *mode, *bits, *thr);
+                (m.dec_proto, m.dec_src2, m.dec_cs, m.dec_mode, m.dec_bits, m.dec_thr) =
+                    (Proto::SPI, *clk, *cs, *mode, *bits, *thr);
                 m.dec_src = data.first().copied().unwrap_or(0);
             }
             D::Can { ch, bitrate, thr, invert } => {
@@ -1123,7 +1471,9 @@ impl Ui {
             }
         }
         // the second pane runs the spectrum beside the scope; the peak list of the Results pane needs it less often
-        let beside = self.m.view == AView::Scope && self.pane_h() > 0 && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
+        let beside = self.m.view == AView::Scope
+            && self.pane_h() > 0
+            && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         if beside && self.m.pane == tables::PANE_RESULTS {
             if self.azr.spec.is_some() && (self.now - self.azr.spec_t).abs() < 0.5 {
                 return;
@@ -1149,16 +1499,24 @@ impl Ui {
     /// cycle), or `None` when the numbers mean something.
     fn power_quality_reason(&self, v: &[f32], i: &[f32], q: &power::Quality) -> Option<Vec<String>> {
         let flat = |x: &[f32]| {
-            let (lo, hi) = x.iter().filter(|a| a.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &a| (l.min(a), h.max(a)));
+            let (lo, hi) = x
+                .iter()
+                .filter(|a| a.is_finite())
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &a| (l.min(a), h.max(a)));
             !(hi - lo > 1e-9)
         };
         let (v_name, i_name) = (self.wave_name(self.m.pw_v), self.wave_name(self.m.pw_i));
         let mut why = Vec::new();
-        if flat(v) { why.push(format!("No voltage: {v_name} shows no signal")); }
+        if flat(v) {
+            why.push(format!("No voltage: {v_name} shows no signal"));
+        }
         if flat(i) {
             let probe = matches!(self.m.pw_i, WaveId::Ch(c) if self.m.ch[c].unit == AmpUnit::A);
-            if probe { why.push(format!("No current: {i_name} reads 0 A, check the current probe")); }
-            else { why.push(format!("No current probe set: {i_name} is not in amps")); }
+            if probe {
+                why.push(format!("No current: {i_name} reads 0 A, check the current probe"));
+            } else {
+                why.push(format!("No current probe set: {i_name} is not in amps"));
+            }
         }
         if why.is_empty() && q.cycles == 0 {
             why.push("No whole cycle of the voltage in the record".into());
@@ -1187,7 +1545,13 @@ impl Ui {
         let v = taken.v[0].clone();
         let dt = taken.dt;
         let opt = |k: usize| taken.opt.get(k).and_then(|s| s.clone()).unwrap_or_default();
-        let i = if matches!(mode, PowerMode::Ripple) { opt(0) } else if matches!(mode, PowerMode::Rail) { Vec::new() } else { taken.v[1].clone() };
+        let i = if matches!(mode, PowerMode::Ripple) {
+            opt(0)
+        } else if matches!(mode, PowerMode::Rail) {
+            Vec::new()
+        } else {
+            taken.v[1].clone()
+        };
         self.azr.power = match mode {
             PowerMode::Quality => {
                 let q = power::quality(&v, &i, dt, if fline > 0.0 { Some(fline) } else { None });
@@ -1195,7 +1559,12 @@ impl Ui {
                     Some(why) => why,
                     None => vec![
                         format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
-                        format!("P {}   S {}   Q {}", si(q.p_real, "W"), si(q.s_apparent, "VA"), si(q.q_reactive, "var")),
+                        format!(
+                            "P {}   S {}   Q {}",
+                            si(q.p_real, "W"),
+                            si(q.s_apparent, "VA"),
+                            si(q.q_reactive, "var")
+                        ),
                         format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
                         format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
                     ],
@@ -1204,7 +1573,15 @@ impl Ui {
             PowerMode::Harmonics => {
                 let h = power::harmonics(&i, dt, None, 15);
                 let mut out = vec!["Current harmonics vs. IEC 61000-3-2 class A".to_string()];
-                out.extend(h.iter().map(|(n, a, lim, pass)| format!("H{:<2} {:>10}  limit {:>10}  {}", n, si(*a, "A"), if lim.is_finite() { si(*lim, "A") } else { "-".into() }, if *pass { "pass" } else { "FAIL" })));
+                out.extend(h.iter().map(|(n, a, lim, pass)| {
+                    format!(
+                        "H{:<2} {:>10}  limit {:>10}  {}",
+                        n,
+                        si(*a, "A"),
+                        if lim.is_finite() { si(*lim, "A") } else { "-".into() },
+                        if *pass { "pass" } else { "FAIL" }
+                    )
+                }));
                 out
             }
             PowerMode::Switching => {
@@ -1233,7 +1610,11 @@ impl Ui {
                 ];
                 let vin = opt(1);
                 if !vin.is_empty() {
-                    rows.push(format!("Turn on {}   turn off {}", si(power::turn_on_time(&vin, &v, dt), "s"), si(power::turn_off_time(&vin, &v, dt), "s")));
+                    rows.push(format!(
+                        "Turn on {}   turn off {}",
+                        si(power::turn_on_time(&vin, &v, dt), "s"),
+                        si(power::turn_off_time(&vin, &v, dt), "s")
+                    ));
                 }
                 rows
             }
@@ -1246,7 +1627,13 @@ impl Ui {
             PowerMode::Rail => {
                 let vin = opt(0);
                 let clk = opt(1);
-                let r = power::rail(&v, dt, reference, (!vin.is_empty()).then_some(vin.as_slice()), (!clk.is_empty()).then_some(clk.as_slice()));
+                let r = power::rail(
+                    &v,
+                    dt,
+                    reference,
+                    (!vin.is_empty()).then_some(vin.as_slice()),
+                    (!clk.is_empty()).then_some(clk.as_slice()),
+                );
                 let refn = reference.map(|v| si(v, "V")).unwrap_or_else(|| "top".into());
                 vec![
                     format!("Overshoot {}   undershoot {}", si(r.overshoot, "V"), si(r.undershoot, "V")),
@@ -1279,7 +1666,11 @@ impl Ui {
         let f = self.fonts();
         let col = self.wave_color(self.m.spec_src);
         let Some(sp) = &self.azr.spec else {
-            let t = if self.wave_ready(self.m.spec_src) { "Spectrum: waiting for a record".to_string() } else { format!("Spectrum: {}", missing_wave(self.m.spec_src)) };
+            let t = if self.wave_ready(self.m.spec_src) {
+                "Spectrum: waiting for a record".to_string()
+            } else {
+                format!("Spectrum: {}", missing_wave(self.m.spec_src))
+            };
             cv.text(&f.sb, a.x + 20, a.y + a.h / 2 + 5, &t, DIM);
             return;
         };
@@ -1289,7 +1680,10 @@ impl Ui {
         let wf_h = self.spec_wf_h(a, pane);
         let n = sp.dbv.len().max(2);
         let (top, dbdiv) = (self.m.spec_ref, panes::DB_PER_DIV);
-        let y_of = |db: f32| (g.y as f32 + (top - db) / dbdiv * (g.h as f32 / VDIV)).clamp(g.y as f32 - 2.0, (g.y + g.h) as f32 + 2.0) as i32;
+        let y_of = |db: f32| {
+            (g.y as f32 + (top - db) / dbdiv * (g.h as f32 / VDIV)).clamp(g.y as f32 - 2.0, (g.y + g.h) as f32 + 2.0)
+                as i32
+        };
         let x_of = |i: usize| g.x + (i as i64 * (g.w as i64 - 1) / (n as i64 - 1)) as i32;
         self.draw_spec_frame(cv, &b, sp);
         cv.set_clip(g);
@@ -1341,7 +1735,12 @@ impl Ui {
 
     fn draw_power(&self, cv: &mut Canvas) {
         let a = self.area;
-        let mut l = vec![format!("Power  V = {}  I = {}  ({:?})", self.wave_name(self.m.pw_v), self.wave_name(self.m.pw_i), self.m.pw_mode)];
+        let mut l = vec![format!(
+            "Power  V = {}  I = {}  ({:?})",
+            self.wave_name(self.m.pw_v),
+            self.wave_name(self.m.pw_i),
+            self.m.pw_mode
+        )];
         l.extend(self.azr.power.iter().cloned());
         self.panel(cv, a.x + 20, a.y + 30, &l, TEXT);
     }
@@ -1480,12 +1879,34 @@ mod measurement_gate_tests {
         ui.m.delay = 500e-9;
         let mut rec = Ui::blank_record();
         rec.dt = 1e-9;
-        rec.ch[0] = (0..4000).map(|i| {
-            let amplitude = if i < 2000 { 1.0 } else { 3.0 };
-            if i % 100 < 50 { amplitude } else { -amplitude }
-        }).collect();
+        rec.ch[0] = (0..4000)
+            .map(|i| {
+                let amplitude = if i < 2000 { 1.0 } else { 3.0 };
+                if i % 100 < 50 {
+                    amplitude
+                } else {
+                    -amplitude
+                }
+            })
+            .collect();
         ui.last[0] = Some(rec);
-        ui.refs[0] = Some(RefWave { label: "2ns reference".into(), ..RefWave::test((0..2000).map(|i| { let amplitude = if i < 1000 { 2.0 } else { 4.0 }; if i % 50 < 25 { amplitude } else { -amplitude } }).collect::<Vec<_>>(), 2e-9, 0.0) });
+        ui.refs[0] = Some(RefWave {
+            label: "2ns reference".into(),
+            ..RefWave::test(
+                (0..2000)
+                    .map(|i| {
+                        let amplitude = if i < 1000 { 2.0 } else { 4.0 };
+                        if i % 50 < 25 {
+                            amplitude
+                        } else {
+                            -amplitude
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                2e-9,
+                0.0,
+            )
+        });
         ui
     }
 
@@ -1504,7 +1925,9 @@ mod measurement_gate_tests {
             let (lo, hi) = (49_950, 50_050);
             assert_eq!(ui.measurement_bounds(100_000, t0, dt), (lo, hi));
             let mut values = vec![0.0; 100_000];
-            for (i, value) in values[lo..hi].iter_mut().enumerate() { *value = if i % 2 == 0 { -0.02 } else { 0.02 }; }
+            for (i, value) in values[lo..hi].iter_mut().enumerate() {
+                *value = if i % 2 == 0 { -0.02 } else { 0.02 };
+            }
             values[lo] = -0.08; // exact left border belongs to the gate
             values[hi - 1] = 0.04;
             values[lo - 1] = -0.6; // the old floor bound leaked this in
@@ -1583,7 +2006,9 @@ mod measurement_gate_tests {
         let (thresholds, _) = ui.reference_measurement(0).unwrap();
         assert!(!Arc::ptr_eq(&scale, &thresholds));
         // A worker may fill the existing Vec: pointer/length alone are insufficient.
-        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) { *value *= 2.0; }
+        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) {
+            *value *= 2.0;
+        }
         ui.replay.sim_revision += 1;
         let (fresh, _) = ui.reference_measurement(0).unwrap();
         assert!(!Arc::ptr_eq(&thresholds, &fresh));
@@ -1607,7 +2032,8 @@ mod measurement_gate_tests {
     fn large() -> Ui {
         let mut ui = sources();
         ui.set_offline(true);
-        ui.refs[0].as_mut().unwrap().v = (0..400_000).map(|i| if i % 100 < 50 { 1.0 } else { -1.0 }).collect::<Vec<_>>().into();
+        ui.refs[0].as_mut().unwrap().v =
+            (0..400_000).map(|i| if i % 100 < 50 { 1.0 } else { -1.0 }).collect::<Vec<_>>().into();
         ui.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         ui
     }
@@ -1616,7 +2042,10 @@ mod measurement_gate_tests {
     fn pump(ui: &mut Ui) {
         loop {
             ui.step(0.0);
-            if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.busy) && !ui.measurement_busy() { break; }
+            if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.busy) && !ui.measurement_busy()
+            {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
@@ -1627,8 +2056,14 @@ mod measurement_gate_tests {
         ui.set_measurement_full_record(true);
         // dispatch does not scan on the event thread: the job is still running and no value is there yet
         assert!(ui.measurement_busy());
-        for _ in 0..100 { assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan()); }
-        assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1, "readouts must not queue duplicate jobs");
+        for _ in 0..100 {
+            assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
+        }
+        assert_eq!(
+            ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted,
+            1,
+            "readouts must not queue duplicate jobs"
+        );
         assert_eq!(ui.meas_rows()[0].text(), "Computing");
         assert!(ui.workflow_state().contains("\"measurementBusy\":true"));
         let captures = ui.replay.captures;
@@ -1636,7 +2071,10 @@ mod measurement_gate_tests {
         pump(&mut ui);
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         assert_eq!(ui.replay.captures, captures);
-        assert_eq!(ui.mstat[0].n, 7, "analysis completion must preserve acquisition statistics without adding a sample");
+        assert_eq!(
+            ui.mstat[0].n, 7,
+            "analysis completion must preserve acquisition statistics without adding a sample"
+        );
         assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1);
     }
 
@@ -1646,7 +2084,9 @@ mod measurement_gate_tests {
         ui.set_measurement_full_record(true);
         // Replace the source while its immutable worker snapshot is being measured.
         ui.workflow_epoch += 1;
-        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) { *value *= 3.0; }
+        for value in std::sync::Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v) {
+            *value *= 3.0;
+        }
         assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
         pump(&mut ui);
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 6.0);
@@ -1667,10 +2107,17 @@ mod measurement_gate_tests {
     #[test]
     fn a_large_screen_gate_runs_in_background_and_discards_stale_pan_results() {
         let mut ui = large();
-        ui.refs[0].as_mut().unwrap().v = (0..400_000).map(|i| {
-            let amplitude = if i < 200_000 { 3.0 } else { 1.0 };
-            if i % 100 < 50 { amplitude } else { -amplitude }
-        }).collect::<Vec<_>>().into();
+        ui.refs[0].as_mut().unwrap().v = (0..400_000)
+            .map(|i| {
+                let amplitude = if i < 200_000 { 3.0 } else { 1.0 };
+                if i % 100 < 50 {
+                    amplitude
+                } else {
+                    -amplitude
+                }
+            })
+            .collect::<Vec<_>>()
+            .into();
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
         ui.m.delay = 400e-6;
         ui.m.meas_full_record = false;
@@ -1685,7 +2132,10 @@ mod measurement_gate_tests {
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         let wanted = ui.reference_measurement_key(0).unwrap().0;
         pump(&mut ui);
-        assert!(ui.azr.ref_measure[0].borrow().as_ref().is_some_and(|cached| cached.key == wanted), "the old broad Screen result cannot replace the panned gate");
+        assert!(
+            ui.azr.ref_measure[0].borrow().as_ref().is_some_and(|cached| cached.key == wanted),
+            "the old broad Screen result cannot replace the panned gate"
+        );
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         assert_eq!(ui.replay.captures, 0);
     }

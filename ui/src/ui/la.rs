@@ -36,7 +36,8 @@ pub const HEIGHTS: [(&str, i32); 3] = [("Small", 12), ("Medium", 16), ("Large", 
 /// Line groups of the Lines row; "Custom" = any other set (Lines sub menu).
 const GROUPS: [(&str, u16); 4] = [("D0-D7", 0x00ff), ("D8-D15", 0xff00), ("All", 0xffff), ("Custom", 0x000f)];
 /// Line names (menu labels are static).
-const NAMES: [&str; 16] = ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15"];
+const NAMES: [&str; 16] =
+    ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15"];
 /// The hardware limits of a pod threshold (la.md 5.1).
 pub const THR_MAX: f32 = 15.0;
 /// Lane colours of pod 1 (D0-D7) and pod 2 (D8-D15).
@@ -127,7 +128,10 @@ impl LaSet {
 
     /// Setup value: `on show preset1 preset2 user1 user2 height` (show in hex).
     pub fn to_text(&self) -> String {
-        format!("{} {:04x} {} {} {} {} {}", self.on, self.show, self.preset[0], self.preset[1], self.user[0], self.user[1], self.height)
+        format!(
+            "{} {:04x} {} {} {} {} {}",
+            self.on, self.show, self.preset[0], self.preset[1], self.user[0], self.user[1], self.height
+        )
     }
 
     pub fn parse(v: &str) -> Result<LaSet, String> {
@@ -140,8 +144,15 @@ impl LaSet {
             "false" => Ok(false),
             _ => Err(format!("not a boolean: {}", s)),
         };
-        let idx = |s: &str, n: usize| s.parse::<usize>().ok().filter(|&i| i < n).ok_or_else(|| format!("bad index {}", s));
-        let volt = |s: &str| s.parse::<f32>().ok().filter(|x| x.is_finite()).map(|x| x.clamp(-THR_MAX, THR_MAX)).ok_or_else(|| format!("not a number: {}", s));
+        let idx =
+            |s: &str, n: usize| s.parse::<usize>().ok().filter(|&i| i < n).ok_or_else(|| format!("bad index {}", s));
+        let volt = |s: &str| {
+            s.parse::<f32>()
+                .ok()
+                .filter(|x| x.is_finite())
+                .map(|x| x.clamp(-THR_MAX, THR_MAX))
+                .ok_or_else(|| format!("not a number: {}", s))
+        };
         Ok(LaSet {
             on: b(w[0])?,
             show: u16::from_str_radix(w[1], 16).map_err(|e| e.to_string())?,
@@ -243,7 +254,9 @@ impl Ui {
 
     pub(super) fn la_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::LaOn | Item::LaShow | Item::LaThr(_) | Item::LaHeight | Item::LaLine(_) | Item::LaPat(_) => Kind::Choice,
+            Item::LaOn | Item::LaShow | Item::LaThr(_) | Item::LaHeight | Item::LaLine(_) | Item::LaPat(_) => {
+                Kind::Choice
+            }
             Item::LaUser(_) => Kind::Value,
             _ => return None,
         })
@@ -277,12 +290,34 @@ impl Ui {
             Item::LaUser(p) => format!("{:.2} V", l.user[p.min(1)]),
             Item::LaHeight => HEIGHTS[l.height.min(HEIGHTS.len() - 1)].0.into(),
             Item::LaLine(n) => onoff(l.show >> n.min(15) & 1 == 1),
-            Item::LaPat(n) => ["H", "L", "X"][PAT_BITS.iter().position(|&b| b == self.m.pat_la[n.min(15)]).unwrap_or(2)].into(),
-            Item::Open(MenuId::LaPat) => self.m.pat_la.iter().rev().map(|&b| match b { Bit::H => '1', Bit::L => '0', _ => 'x' }).collect(),
-            Item::DecIn => if self.m.dec_la_in { "LA".into() } else { "Analog".into() },
-            Item::TrigSrc if self.m.trig_line().is_some() => NAMES[self.m.trig_line().unwrap_or(0) as usize].to_string(),
+            Item::LaPat(n) => {
+                ["H", "L", "X"][PAT_BITS.iter().position(|&b| b == self.m.pat_la[n.min(15)]).unwrap_or(2)].into()
+            }
+            Item::Open(MenuId::LaPat) => self
+                .m
+                .pat_la
+                .iter()
+                .rev()
+                .map(|&b| match b {
+                    Bit::H => '1',
+                    Bit::L => '0',
+                    _ => 'x',
+                })
+                .collect(),
+            Item::DecIn => {
+                if self.m.dec_la_in {
+                    "LA".into()
+                } else {
+                    "Analog".into()
+                }
+            }
+            Item::TrigSrc if self.m.trig_line().is_some() => {
+                NAMES[self.m.trig_line().unwrap_or(0) as usize].to_string()
+            }
             // decoder roles on LA lines
-            Item::DecSrc | Item::DecSrc2 | Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => self.m.dec_la[Self::dec_role(it)].map_or("None".into(), |n| NAMES[n as usize].to_string()),
+            Item::DecSrc | Item::DecSrc2 | Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => {
+                self.m.dec_la[Self::dec_role(it)].map_or("None".into(), |n| NAMES[n as usize].to_string())
+            }
             _ => return None,
         })
     }
@@ -306,9 +341,13 @@ impl Ui {
             Item::LaHeight => HEIGHTS.iter().map(|h| h.0.to_string()).collect(),
             Item::LaPat(_) => names(&["H", "L", "X"]),
             Item::DecIn => names(&["Analog", "LA"]),
-            Item::TrigSrc if self.m.trig_la_ok() => ch_names().into_iter().chain(NAMES.iter().map(|s| s.to_string())).collect(),
+            Item::TrigSrc if self.m.trig_la_ok() => {
+                ch_names().into_iter().chain(NAMES.iter().map(|s| s.to_string())).collect()
+            }
             Item::DecSrc | Item::DecSrc2 if self.m.dec_on_la() => names(&NAMES),
-            Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => std::iter::once("None".to_string()).chain(NAMES.iter().map(|s| s.to_string())).collect(),
+            Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => {
+                std::iter::once("None".to_string()).chain(NAMES.iter().map(|s| s.to_string())).collect()
+            }
             _ => return None,
         })
     }
@@ -493,7 +532,8 @@ impl Ui {
     /// where the lanes are in a window).
     pub(super) fn la_strip_h(&self) -> i32 {
         let n = self.m.la.lines().len();
-        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy && self.n_wins() == 1 {
+        if self.m.la_on() && n > 0 && matches!(self.m.view, AView::Scope | AView::Eye) && !self.xy && self.n_wins() == 1
+        {
             self.la_fit(n).0
         } else {
             0
@@ -509,7 +549,16 @@ impl Ui {
         (Arc::as_ptr(&la.words) as usize, la.words.len(), la.t0.to_bits(), la.dt.to_bits()).hash(&mut h);
         format!(
             "{:?}",
-            (m.dec_proto, m.dec_la, m.dec_baud, m.dec_bits, m.dec_parity, m.dec_mode, (m.dec_canrate, m.dec_fdrate, m.dec_canh), (m.dec_arate, m.dec_tick, m.dec_nibbles, m.dec_uspeed))
+            (
+                m.dec_proto,
+                m.dec_la,
+                m.dec_baud,
+                m.dec_bits,
+                m.dec_parity,
+                m.dec_mode,
+                (m.dec_canrate, m.dec_fdrate, m.dec_canh),
+                (m.dec_arate, m.dec_tick, m.dec_nibbles, m.dec_uspeed)
+            )
         )
         .hash(&mut h);
         let key = h.finish();
@@ -716,7 +765,10 @@ mod tests {
         // the band is drawn: the lane of D0 has trace pixels of the pod-1 colour
         let (band, pitch) = ui.la_band(16);
         let y0 = band.y + 14;
-        let lit = (y0..y0 + pitch).flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] & 0xff_ffff == POD_COLORS[0]).count();
+        let lit = (y0..y0 + pitch)
+            .flat_map(|y| (band.x + MARK_W..band.x + band.w - MARK_W).map(move |x| (x, y)))
+            .filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] & 0xff_ffff == POD_COLORS[0])
+            .count();
         assert!(lit > 500, "{} lit pixels", lit);
         // the LA key again: off and closed
         ui.key(key::LA);
@@ -773,7 +825,9 @@ mod decode_tests {
         ui.render(&mut cv);
         let _ = crate::store::write(&dir.join("la-decoder-row.png"), &crate::store::png_of(&cv));
         // something is drawn in the row, right of its label
-        let px = |cv: &Canvas, r: Rect| (r.x + 60..r.x + r.w - 20).filter(|&x| cv.px[((r.y + r.h / 2) * cv.w + x) as usize] != BG).count();
+        let px = |cv: &Canvas, r: Rect| {
+            (r.x + 60..r.x + r.w - 20).filter(|&x| cv.px[((r.y + r.h / 2) * cv.w + x) as usize] != BG).count()
+        };
         assert!(px(&cv, row) > 100, "the decoder row is empty");
         // off, or on the analog channels: no row, and the lanes move back up
         ui.m.dec_la_in = false;
@@ -798,7 +852,8 @@ mod decode_tests {
         ui.m.bar_compact = true;
         ui.relayout();
         ui.tap(80, BOTTOM.y + 15);
-        let (x, y) = fix_tests::row_xy(&ui, "Logic analyser"); ui.tap(x, y); // Sources > Logic analyser.
+        let (x, y) = fix_tests::row_xy(&ui, "Logic analyser");
+        ui.tap(x, y); // Sources > Logic analyser.
         assert!(!ui.m.la.on && !ui.menu_open);
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("No LA probe")));
         ui.key(key::LA);
@@ -1036,7 +1091,10 @@ mod pattern_tests {
         m.pat_la[15] = Bit::L;
         let s = crate::board::dho::hw::settings(&m, false);
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
-        assert_eq!((la[0], la[15], la[1]), (oos_hal::dho::tpu::Pat::H, oos_hal::dho::tpu::Pat::L, oos_hal::dho::tpu::Pat::X));
+        assert_eq!(
+            (la[0], la[15], la[1]),
+            (oos_hal::dho::tpu::Pat::H, oos_hal::dho::tpu::Pat::L, oos_hal::dho::tpu::Pat::X)
+        );
         m.la.on = false;
         let s = crate::board::dho::hw::settings(&m, false);
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
@@ -1066,7 +1124,8 @@ mod bus_tests {
         }
         assert!(ui.last[0].as_ref().unwrap().triggered);
         let p = ui.decode_packets().unwrap();
-        let t = p.iter().filter(|x| x.kind == Kind::Data && x.value == 0x42).map(|x| x.t1.abs()).fold(f64::MAX, f64::min);
+        let t =
+            p.iter().filter(|x| x.kind == Kind::Data && x.value == 0x42).map(|x| x.t1.abs()).fold(f64::MAX, f64::min);
         // within two LA samples
         let dl = ui.la_record().unwrap().dt;
         assert!(t < 3.0 * dl, "field end {} s from the trigger, LA sample {}", t, dl);
@@ -1110,7 +1169,9 @@ mod duration_tests {
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize] >> 14 & 1;
         assert_eq!(at(0.0), 1, "the line is high at the trigger point");
         let s = crate::board::dho::hw::settings(&ui.m, false);
-        assert!(matches!(s.trigger, oos_hal::dho::seq::Trig::Duration { la, .. } if la[14] == oos_hal::dho::tpu::Pat::H));
+        assert!(
+            matches!(s.trigger, oos_hal::dho::seq::Trig::Duration { la, .. } if la[14] == oos_hal::dho::tpu::Pat::H)
+        );
     }
 }
 
@@ -1131,7 +1192,8 @@ mod review_tests {
         let mut st = oos_hal::dho::seq::State::handover(1, None);
         let (steps, _) = st.configure(&s, None, None).unwrap();
         // the LA stream is on and the record is not doubled
-        let wr: Vec<_> = steps.iter().filter_map(|x| if let oos_hal::dho::seq::Step::Wr(w) = x { Some(*w) } else { None }).collect();
+        let wr: Vec<_> =
+            steps.iter().filter_map(|x| if let oos_hal::dho::seq::Step::Wr(w) = x { Some(*w) } else { None }).collect();
         assert!(wr.iter().rev().find(|w| w.0 == 0x4008).unwrap().1 & (1 << 24 | 1 << 26) == 1 << 24 | 1 << 26);
     }
 

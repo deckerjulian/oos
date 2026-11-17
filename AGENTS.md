@@ -74,6 +74,24 @@ fix and no feature on the side, no change to `.github/`, this file, `docs/adr/`,
 `kernel/`, `rootfs/` or `hal/src/dho/`, and never a check made to pass by weakening it. They open pull requests and
 never merge (ADR 0034).
 
+## A session that works alone
+
+When the maintainer sends an agent off to work through the tree on its own (a long session, not one of the standing
+agents), everything above holds, and:
+
+- At most five of its pull requests are open at once, and no two change the same file.
+- One topic per pull request, about 400 changed lines; `tools/check.sh` and `tools/compare-base.sh` before every
+  push. The private check of the maintainer runs before every push (a local hook).
+- It switches auto-merge on only for a change that says `Behaviour: unchanged` and that the comparison confirms
+  (lints, dead code, a move, tests), and for a correction of documents. Such a pull request needs no waiting time
+  (ADR 0038) and goes in when CI is green.
+- Everything else it opens and leaves to the maintainer: a fix that changes behaviour, anything in the hardware
+  paths, the decision records, `.github/`, the tools and the rules.
+- It never sets `unit-tested`, never removes `hold`, never merges or asks to merge a pull request of somebody else
+  or of a bot.
+- When main is red it fixes that first and does nothing else.
+- It keeps a report as one issue: what it found, opened and merged, and what it leaves to the maintainer.
+
 ## Layout of the tree
 
 | Path | What |
@@ -115,18 +133,17 @@ with the source files named under them.
 
 ```sh
 tools/check.sh                # every enforced host check, as CI runs them (ADR 0020)
-tools/check.sh test           # one layer: fmt clippy text syntax test target decoders ratchet (tools/check.sh list)
+tools/check.sh test           # one layer: fmt text syntax test target decoders clippy ratchet (tools/check.sh list)
 (cd ui && cargo run -- --serve)   # no display, no hardware: demo signals behind SCPI :5555 and the web page :8080
 ```
 
-Run `tools/check.sh` before you say a change is done, and say which layers ran. A compiler warning fails it. The
-layout of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016). Until the one formatting commit is in main,
-do not run `cargo fmt` over existing files, so a pull request does not reformat whole files; keep the layout of the
-file you edit. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR 0017). The
-numbers in `tools/ratchet.txt` only go down: a file over 2000 lines does not grow, no new file gets that large, and a
-crate gets no more `allow(` and no more `unsafe` than it has; after making one smaller, run `tools/ratchet.sh --lower`.
-Raising a number is the maintainer's decision, in a pull request that says why (ADR 0037). Tests
-that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
+Run `tools/check.sh` before you say a change is done, and say which layers ran. A compiler warning fails it. The layout
+of Rust code is rustfmt's with the tree's `rustfmt.toml` (ADR 0016): run `cargo fmt` in the crate you changed, the
+layer `fmt` fails otherwise. Clippy findings in code you touch are fixed or allowed at the place with a reason (ADR
+0017). The numbers in `tools/ratchet.txt` only go down: a file over 2000 lines does not grow, no new file gets that
+large, and a crate gets no more `allow(` and no more `unsafe` than it has; after making one smaller, run
+`tools/ratchet.sh --lower`. Raising a number is the maintainer's decision, in a pull request that says why (ADR 0037).
+Tests that need the calibration files of a real unit skip themselves without `local/cal`. A test must not depend on how
 fast the computer is: one that fails only under load is fixed, not run again (ADR 0020).
 
 ## Style

@@ -194,7 +194,13 @@ mod tests {
     /// phase `turn`.
     fn frame(rng: &mut Rng, n: usize, amp: f64, cyc: f64, turn: usize, pat: &[f64; P]) -> Vec<u16> {
         let ph = rng.next() * 6.283;
-        (0..n).map(|k| (32768.0 + amp * (6.283185307 * cyc * k as f64 + ph).sin() + 90.0 * rng.gauss() + pat[(k + turn) % P]).round().clamp(0.0, 65535.0) as u16).collect()
+        (0..n)
+            .map(|k| {
+                (32768.0 + amp * (6.283185307 * cyc * k as f64 + ph).sin() + 90.0 * rng.gauss() + pat[(k + turn) % P])
+                    .round()
+                    .clamp(0.0, 65535.0) as u16
+            })
+            .collect()
     }
 
     /// The pattern left in a corrected frame, measured on a long copy without signal: rms of the 8 phases.

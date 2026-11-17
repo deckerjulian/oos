@@ -137,7 +137,15 @@ mod tests {
         ]
         .concat();
         let v = parse(&text);
-        assert_eq!(v.stages.iter().map(|s| (s.label.as_str(), s.state)).collect::<Vec<_>>(), [("Linux", State::Ok), ("FPGA image", State::Ok), ("Calibration data", State::Warn), ("Sample clock (PLL lock)", State::Run)]);
+        assert_eq!(
+            v.stages.iter().map(|s| (s.label.as_str(), s.state)).collect::<Vec<_>>(),
+            [
+                ("Linux", State::Ok),
+                ("FPGA image", State::Ok),
+                ("Calibration data", State::Warn),
+                ("Sample clock (PLL lock)", State::Run)
+            ]
+        );
         assert_eq!((v.stages[1].t0, v.stages[1].t1, v.stages[1].detail.as_str()), (4.2, Some(14.4), "0xe2072115"));
         assert_eq!(v.warnings().count(), 1);
         assert!(v.finished.is_none() && v.t == 14.4);
@@ -156,5 +164,8 @@ mod tests {
 
 /// Seconds since the kernel started.
 fn uptime() -> f64 {
-    std::fs::read_to_string("/proc/uptime").ok().and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok())).unwrap_or(0.0)
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
+        .unwrap_or(0.0)
 }

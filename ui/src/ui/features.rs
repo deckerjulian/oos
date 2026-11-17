@@ -25,9 +25,17 @@ pub(crate) const DEC_PAGE: usize = 18;
 pub(super) fn features() -> &'static [Feature] {
     static F: std::sync::OnceLock<Vec<Feature>> = std::sync::OnceLock::new();
     F.get_or_init(|| {
-        let pages = super::analysers::ANALYSERS.iter().map(|a| Feature { id: a.feature().0, name: a.feature().1, view: Some(a.view()), menu: Some(a.menu()) });
+        let pages = super::analysers::ANALYSERS.iter().map(|a| Feature {
+            id: a.feature().0,
+            name: a.feature().1,
+            view: Some(a.view()),
+            menu: Some(a.menu()),
+        });
         pages
-            .chain([Feature { id: "sim", name: "SIM", view: None, menu: Some(MenuId::Sim) }, Feature { id: "load", name: "Load file", view: None, menu: None }])
+            .chain([
+                Feature { id: "sim", name: "SIM", view: None, menu: Some(MenuId::Sim) },
+                Feature { id: "load", name: "Load file", view: None, menu: None },
+            ])
             .collect()
     })
 }
@@ -93,7 +101,12 @@ impl Ui {
 
     pub(super) fn features_items(&self, id: MenuId) -> Option<Vec<Item>> {
         match id {
-            MenuId::Features => Some((0..features().len()).map(Item::FeatOn).chain(std::iter::once(Item::Open(MenuId::Decoders(0)))).collect()),
+            MenuId::Features => Some(
+                (0..features().len())
+                    .map(Item::FeatOn)
+                    .chain(std::iter::once(Item::Open(MenuId::Decoders(0))))
+                    .collect(),
+            ),
             // a page of decoders, the next page after them (the dialog holds about twenty rows)
             MenuId::Decoders(k) => {
                 let (a, b) = (k * DEC_PAGE, ((k + 1) * DEC_PAGE).min(PROTOS.len()));
@@ -205,7 +218,11 @@ mod tests {
         assert!(!u.options(Item::DecProto).contains(&Proto::UART.name().to_string()));
         // kept in the settings of the scope
         let (c, bad) = crate::sysconf::SysConf::parse(&u.sys.text());
-        assert!(bad.is_empty() && c.features_off == ["magnetic", "sim", "load"] && c.decoders_off == [Proto::UART.key()], "{:?}", c.features_off);
+        assert!(
+            bad.is_empty() && c.features_off == ["magnetic", "sim", "load"] && c.decoders_off == [Proto::UART.key()],
+            "{:?}",
+            c.features_off
+        );
         // and back
         u.select_option(Item::FeatOn(i), "On");
         assert!(u.feature_on("magnetic"));

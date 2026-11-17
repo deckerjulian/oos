@@ -324,7 +324,8 @@ impl Tpu<'_> {
     /// `trigger(E; when, t1, t2)`: [26:24] = when, then t1 and t2 in 1.6 ns ticks
     /// (truncated toward 0, 48 bit) at base+4, base+8 and their high parts at base+0xc.
     fn trigger(&mut self, ev: Ev, when: u32, t1_fs: i128, t2_fs: i128) {
-        let (t1, t2) = (crate::dho::clock::to_nominal_fs(t1_fs) / TICK_FS, crate::dho::clock::to_nominal_fs(t2_fs) / TICK_FS);
+        let (t1, t2) =
+            (crate::dho::clock::to_nominal_fs(t1_fs) / TICK_FS, crate::dho::clock::to_nominal_fs(t2_fs) / TICK_FS);
         let (r, s) = self.ev(ev);
         *s = (*s & !0x0700_0000) | (when & 7) << 24;
         let v = *s;
@@ -409,7 +410,17 @@ impl Tpu<'_> {
 /// Edge trigger on channel `ch` (1..4, or 9..24 = LA line D0..D15), DC coupling: writes 1-17 of trigger.md 6.1 (19 for `Either`, which as in 2.2
 /// writes source and pattern of A and B). `level`/`offset` in nV at the BNC,
 /// `scale` nV/div, `g` the channel's digital gain (1.0 if unknown), `holdoff_fs` in femtoseconds (8 ns minimum).
-pub fn edge(sh: &mut Shadows, ch: u32, slope: Slope, level: f64, offset: f64, scale: f64, g: f64, noise: f64, holdoff_fs: u64) -> Vec<Write> {
+pub fn edge(
+    sh: &mut Shadows,
+    ch: u32,
+    slope: Slope,
+    level: f64,
+    offset: f64,
+    scale: f64,
+    g: f64,
+    noise: f64,
+    holdoff_fs: u64,
+) -> Vec<Write> {
     edge_coupled(sh, ch, slope, Coupling::Dc, level, offset, scale, g, noise, holdoff_fs)
 }
 
@@ -417,7 +428,18 @@ pub fn edge(sh: &mut Shadows, ch: u32, slope: Slope, level: f64, offset: f64, sc
 /// and the filter 0x208c after the mode, and AC and LF reject leave the channel offset out of the level. 0x208c is written when the
 /// code changes (back to DC too), so DC on a DC unit writes exactly the list of 6.1. LA lines stay DC.
 #[allow(clippy::too_many_arguments)]
-pub fn edge_coupled(sh: &mut Shadows, ch: u32, slope: Slope, coupling: Coupling, level: f64, offset: f64, scale: f64, g: f64, noise: f64, holdoff_fs: u64) -> Vec<Write> {
+pub fn edge_coupled(
+    sh: &mut Shadows,
+    ch: u32,
+    slope: Slope,
+    coupling: Coupling,
+    level: f64,
+    offset: f64,
+    scale: f64,
+    g: f64,
+    noise: f64,
+    holdoff_fs: u64,
+) -> Vec<Write> {
     let coupling = if ch > 8 { Coupling::Dc } else { coupling };
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
@@ -553,7 +575,16 @@ pub fn holdoff(sh: &mut Shadows, t_fs: i128) -> Vec<Write> {
 /// Pulse width (type 1, trigger.md 10.2): bypass, levels, coupling filter,
 /// `trigger(A; when, lower, upper)`, source and pattern A (positive fires on the falling edge at the end of the
 /// pulse), mux 0. `Polarity::Any` writes no source/pattern at all (0x201c[23:0] keep the previous type's value).
-pub fn pulse(sh: &mut Shadows, ch: u32, pol: Polarity, when: When, lower: i128, upper: i128, level: f64, vt: &[Vert; 4]) -> Vec<Write> {
+pub fn pulse(
+    sh: &mut Shadows,
+    ch: u32,
+    pol: Polarity,
+    when: When,
+    lower: i128,
+    upper: i128,
+    level: f64,
+    vt: &[Vert; 4],
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
     t.bypass(digital_or_ext(ch));
@@ -577,7 +608,17 @@ pub fn pulse(sh: &mut Shadows, ch: u32, pol: Polarity, when: When, lower: i128, 
 
 /// Slope / transition time (type 2, trigger.md 10.3), then `trigger(A; when, lower, upper)`, which is written when the
 /// condition or width changes (the sequence itself never writes the time condition). Level A = `hi`, level B = `lo`; rising: both dir 1, falling: both dir 0.
-pub fn slope(sh: &mut Shadows, ch: u32, edge: Edge, when: When, lower: i128, upper: i128, hi: f64, lo: f64, vt: &[Vert; 4]) -> Vec<Write> {
+pub fn slope(
+    sh: &mut Shadows,
+    ch: u32,
+    edge: Edge,
+    when: When,
+    lower: i128,
+    upper: i128,
+    hi: f64,
+    lo: f64,
+    vt: &[Vert; 4],
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
     let rising = edge == Edge::Rising;
@@ -599,7 +640,18 @@ pub fn slope(sh: &mut Shadows, ch: u32, edge: Edge, when: When, lower: i128, upp
 /// Runt (type 7, trigger.md 10.4). `from_settype`: prepend the bypass-0 write of the type change (the sequence itself
 /// does not touch bit12). Level A = `hi`, B = `lo`.
 /// `When::None` becomes when 0 with both limits 0. `Polarity::Any` = positive in event A, negative in event B, mux 1.
-pub fn runt(sh: &mut Shadows, ch: u32, pol: Polarity, when: When, lower: i128, upper: i128, hi: f64, lo: f64, vt: &[Vert; 4], from_settype: bool) -> Vec<Write> {
+pub fn runt(
+    sh: &mut Shadows,
+    ch: u32,
+    pol: Polarity,
+    when: When,
+    lower: i128,
+    upper: i128,
+    hi: f64,
+    lo: f64,
+    vt: &[Vert; 4],
+    from_settype: bool,
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
     if from_settype {
@@ -638,7 +690,17 @@ pub fn runt(sh: &mut Shadows, ch: u32, pol: Polarity, when: When, lower: i128, u
 /// Window (type 8 "Over", trigger.md 10.5). `from_settype` as for `runt`.
 /// Level A = `hi` (dir = event != exit), B = `lo` (dir = event == exit). Event `Time` uses when 4 (timeout) with
 /// t1 = t2 = `time`, the others when 0 and no time. `Either` = rising in A, falling in B, mux 1.
-pub fn window(sh: &mut Shadows, ch: u32, slope: Slope, event: WindowEvent, time: i128, hi: f64, lo: f64, vt: &[Vert; 4], from_settype: bool) -> Vec<Write> {
+pub fn window(
+    sh: &mut Shadows,
+    ch: u32,
+    slope: Slope,
+    event: WindowEvent,
+    time: i128,
+    hi: f64,
+    lo: f64,
+    vt: &[Vert; 4],
+    from_settype: bool,
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let (a, b) = (cmp_a(ch), cmp_b(ch));
     let exit = event == WindowEvent::Exit;
@@ -710,7 +772,19 @@ pub fn timeout(sh: &mut Shadows, ch: u32, slope: Slope, time: i128, level: f64, 
 /// Delay (type 10, trigger.md 10.7): time from the edge `ea` on `srca` to the
 /// edge `eb` on `srcb`. Levels of both sources, bypass if either is digital/EXT, coupling filter for both,
 /// `trigger(A; when, lower, upper)`, `source(A; B edge, A edge)`, pattern (1,0,1,0), mux 0.
-pub fn delay(sh: &mut Shadows, srca: u32, ea: Edge, srcb: u32, eb: Edge, when: When, lower: i128, upper: i128, levela: f64, levelb: f64, vt: &[Vert; 4]) -> Vec<Write> {
+pub fn delay(
+    sh: &mut Shadows,
+    srca: u32,
+    ea: Edge,
+    srcb: u32,
+    eb: Edge,
+    when: When,
+    lower: i128,
+    upper: i128,
+    levela: f64,
+    levelb: f64,
+    vt: &[Vert; 4],
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let (sa, sb) = ((ea == Edge::Falling) as u32, (eb == Edge::Falling) as u32);
     t.levels(srca, levela, levela, true, false, vt);
@@ -730,7 +804,13 @@ pub fn delay(sh: &mut Shadows, srca: u32, ea: Edge, srcb: u32, eb: Edge, when: W
 /// Common part of pattern and duration: levels of the channels that are not X (`level[ch-1]`), coupling filter for
 /// CH1..CH4, 21 x `logic(i, sel, fun)` (sel: H -> 2, L -> 3, else 0; fun: OR -> 1, NOR -> 2, AND/NAND -> 0).
 /// Returns the 21 entries and the index of the first rise/fall entry.
-fn pattern_common(t: &mut Tpu, pats: &[Pat], logic: Logic, level: &[f64; 4], vt: &[Vert; 4]) -> ([Pat; 21], Option<usize>) {
+fn pattern_common(
+    t: &mut Tpu,
+    pats: &[Pat],
+    logic: Logic,
+    level: &[f64; 4],
+    vt: &[Vert; 4],
+) -> ([Pat; 21], Option<usize>) {
     let mut arr = [Pat::X; 21];
     arr[..pats.len()].copy_from_slice(pats);
     for ch in 1..=4u32 {
@@ -782,7 +862,16 @@ pub fn pattern(sh: &mut Shadows, pats: &[Pat], logic: Logic, level: &[f64; 4], v
 /// Duration (type 5): type change (bypass 0), then the sequence of trigger.md 10.9.
 /// As `pattern`, but with an edge the comparator is `cmp_a(e)` (index, not index + 1, the same as the stock system: a
 /// CH1 edge gives code 51 and a CH2 edge CH1's code), pattern (0, 0, 2, rise), and `trigger(A; when, lower, upper)`.
-pub fn duration(sh: &mut Shadows, pats: &[Pat], logic: Logic, when: When, lower: i128, upper: i128, level: &[f64; 4], vt: &[Vert; 4]) -> Vec<Write> {
+pub fn duration(
+    sh: &mut Shadows,
+    pats: &[Pat],
+    logic: Logic,
+    when: When,
+    lower: i128,
+    upper: i128,
+    level: &[f64; 4],
+    vt: &[Vert; 4],
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     t.bypass(false);
     let (arr, e) = pattern_common(&mut t, pats, logic, level, vt);
@@ -803,7 +892,19 @@ pub fn duration(sh: &mut Shadows, pats: &[Pat], logic: Logic, when: When, lower:
 /// Din/Dout = data edge into/out of the valid level `dtype`. Setup: A = (C, Din), pattern (2, clk rising, 3, L),
 /// `trigger(A; 1, 0, setup)`; hold: A = (Dout, C), pattern (2, L, 6, 0), `trigger(A; 1, 0, hold)`; both: setup in A,
 /// hold in B, mux 1.
-pub fn setup_hold(sh: &mut Shadows, clk: u32, data: u32, edge: Edge, dtype: DataLevel, event: ShEvent, setup: i128, hold: i128, levelc: f64, leveld: f64, vt: &[Vert; 4]) -> Vec<Write> {
+pub fn setup_hold(
+    sh: &mut Shadows,
+    clk: u32,
+    data: u32,
+    edge: Edge,
+    dtype: DataLevel,
+    event: ShEvent,
+    setup: i128,
+    hold: i128,
+    levelc: f64,
+    leveld: f64,
+    vt: &[Vert; 4],
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let s = (edge == Edge::Falling) as u32;
     let d = (dtype == DataLevel::L) as u32;
@@ -870,7 +971,17 @@ pub fn nth(sh: &mut Shadows, ch: u32, edge: Edge, count: u32, idle: i128, level:
 /// known; 0x201c[15:0] keep the previous value), mux 14, `video2` (sync width, line period / `clk`),
 /// `video3`, `video1(sync != any, line)`. Odd/even field: `line` is replaced by the field's line
 /// (NTSC 4/267, PAL 1/313). Bit12 is not written.
-pub fn video(sh: &mut Shadows, ch: u32, std: VideoStd, pol: bool, sync: VideoSync, line: u32, level: f64, vt: &[Vert; 4], clk: VideoClk) -> Vec<Write> {
+pub fn video(
+    sh: &mut Shadows,
+    ch: u32,
+    std: VideoStd,
+    pol: bool,
+    sync: VideoSync,
+    line: u32,
+    level: f64,
+    vt: &[Vert; 4],
+    clk: VideoClk,
+) -> Vec<Write> {
     let mut t = Tpu { sh, w: Vec::new() };
     let a = cmp_a(ch);
     let line = match (std, sync) {
@@ -921,7 +1032,19 @@ mod tests {
         let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
         let last = |w: &[Write], r: u32| w.iter().filter(|x| x.0 == r).last().map(|x| x.1);
         let mut sh = Shadows::APP;
-        let s = Spi { clk: 2, data: 1, cs: 3, clk_falling: true, cs_high: false, timeout: None, width: 8, rel: Relation::Eq, min: 0x5a, max: 0x5a, mask: 0xff };
+        let s = Spi {
+            clk: 2,
+            data: 1,
+            cs: 3,
+            clk_falling: true,
+            cs_high: false,
+            timeout: None,
+            width: 8,
+            rel: Relation::Eq,
+            min: 0x5a,
+            max: 0x5a,
+            mask: 0xff,
+        };
         let w = spi(&mut sh, &s, 1.5e9, &vt);
         // the stock patterns: A = CH2 level A (code 2) (2, 1, 2, 1) for the falling clock, R = CH1 (code 0) (2, 0, 2, 0),
         // B = CH3 (code 4) (2, 0, 2, 0) for an active-low CS
@@ -931,7 +1054,18 @@ mod tests {
         assert!([0x2004, 0x200c, 0x20b8].iter().all(|r| w.iter().any(|x| x.0 == *r)), "levels of CH1..CH3");
         assert_eq!(*w.last().unwrap(), (0x205c, 12));
         assert_eq!(last(&w, 0x2178), Some(7 << 4));
-        let i = I2c { scl: 1, sda: 2, cond: I2cCond::Start, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr: (0, 0, 0), data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) };
+        let i = I2c {
+            scl: 1,
+            sda: 2,
+            cond: I2cCond::Start,
+            dir: Dir::Either,
+            ten_bit: false,
+            addr_rel: Relation::Eq,
+            addr: (0, 0, 0),
+            data_rel: Relation::Eq,
+            bytes: 1,
+            data: (0, 0, 0),
+        };
         let w = i2c(&mut sh, &i, 1.5e9, &vt);
         assert_eq!(last(&w, 0x201c).unwrap() & 0x00ff_ffff, 2 << 16 | 2 << 20);
         assert_eq!(last(&w, 0x2034).unwrap() & 0x00ff_ffff, 2 | 2 << 8 | 2 << 16 | 2 << 20);
@@ -997,10 +1131,32 @@ mod tests {
         assert_eq!(last(&w, 0x208c), None);
         let w = edge_coupled(&mut sh, 3, Slope::Rising, Coupling::Ac, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
         assert_eq!(last(&w, 0x208c), Some(0x800b));
-        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::HfReject, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        let w = edge_coupled(
+            &mut sh,
+            1,
+            Slope::Rising,
+            Coupling::HfReject,
+            0.0,
+            1e9,
+            5e8,
+            1.0,
+            noise_div(false),
+            8_000_000,
+        );
         assert_eq!(last(&w, 0x208c), Some(0x8001));
         assert_eq!(last(&w, 0x2008).unwrap() & 0xffff, 0x8000 + 2 * 7500 + 2250);
-        let w = edge_coupled(&mut sh, 1, Slope::Rising, Coupling::LfReject, 0.0, 1e9, 5e8, 1.0, noise_div(false), 8_000_000);
+        let w = edge_coupled(
+            &mut sh,
+            1,
+            Slope::Rising,
+            Coupling::LfReject,
+            0.0,
+            1e9,
+            5e8,
+            1.0,
+            noise_div(false),
+            8_000_000,
+        );
         assert_eq!(last(&w, 0x208c), Some(0x8002));
         assert_eq!(last(&w, 0x2008).unwrap() & 0xffff, 0x8000 + 2250, "LF reject: no offset either");
         // back to DC: no bypass, filter code 0
@@ -1024,11 +1180,17 @@ mod tests {
         // 10.3 slope CH1 rising < 20 ns, high 1 V, low 0.2 V
         let mut sh = Shadows::APP;
         let w = slope(&mut sh, 1, Edge::Rising, When::Lt, 0, 20_000_000, 1e9, 2e8, &vt);
-        assert_eq!((last(&w, 0x2004), last(&w, 0x2008), sh.s201c, last(&w, 0x2024)), (0xb1ce_ba98, 0x82ee_8bb8, 0x011a_0100, 12));
+        assert_eq!(
+            (last(&w, 0x2004), last(&w, 0x2008), sh.s201c, last(&w, 0x2024)),
+            (0xb1ce_ba98, 0x82ee_8bb8, 0x011a_0100, 12)
+        );
         // 10.5 window any, time 1 us
         let mut sh = Shadows::APP;
         let w = window(&mut sh, 1, Slope::Either, WindowEvent::Time, 1_000_000_000, 1e9, -1e9, &vt, true);
-        assert_eq!((sh.s201c, sh.s2034, last(&w, 0x2020), last(&w, 0x203c), sh.s205c & 0x1f), (0x0422_0100, 0x04aa_0001, 625, 625, 1));
+        assert_eq!(
+            (sh.s201c, sh.s2034, last(&w, 0x2020), last(&w, 0x203c), sh.s205c & 0x1f),
+            (0x0422_0100, 0x04aa_0001, 625, 625, 1)
+        );
         // 10.7 delay CH1 rising -> CH2 falling > 50 ns
         let mut sh = Shadows::APP;
         delay(&mut sh, 1, Edge::Rising, 2, Edge::Falling, When::Gt, 50_000_000, 0, 0.0, 0.0, &vt);
@@ -1114,11 +1276,32 @@ mod tests {
                     "0.7" => true,
                     x => panic!("edge noise {}", x),
                 };
-                edge(sh, u("ch"), slope_("slope"), f("level"), f("offset"), f("scale"), f("g"), noise_div(nr), i("holdoff_fs") as u64)
+                edge(
+                    sh,
+                    u("ch"),
+                    slope_("slope"),
+                    f("level"),
+                    f("offset"),
+                    f("scale"),
+                    f("g"),
+                    noise_div(nr),
+                    i("holdoff_fs") as u64,
+                )
             }
             "pulse" => pulse(sh, u("ch"), pol(), when(), i("lower"), i("upper"), f("level"), &vt),
             "slope" => slope(sh, u("ch"), edge_("slope"), when(), i("lower"), i("upper"), f("hi"), f("lo"), &vt),
-            "runt" => runt(sh, u("ch"), pol(), when(), i("lower"), i("upper"), f("hi"), f("lo"), &vt, s("from_settype") == "1"),
+            "runt" => runt(
+                sh,
+                u("ch"),
+                pol(),
+                when(),
+                i("lower"),
+                i("upper"),
+                f("hi"),
+                f("lo"),
+                &vt,
+                s("from_settype") == "1",
+            ),
             "window" => {
                 let ev = match s("event") {
                     "enter" => WindowEvent::Enter,
@@ -1129,7 +1312,19 @@ mod tests {
                 window(sh, u("ch"), slope_("slope"), ev, i("time"), f("hi"), f("lo"), &vt, s("from_settype") == "1")
             }
             "timeout" => timeout(sh, u("ch"), slope_("slope"), i("time"), f("level"), &vt),
-            "delay" => delay(sh, u("srca"), edge_("slopea"), u("srcb"), edge_("slopeb"), when(), i("lower"), i("upper"), f("levela"), f("levelb"), &vt),
+            "delay" => delay(
+                sh,
+                u("srca"),
+                edge_("slopea"),
+                u("srcb"),
+                edge_("slopeb"),
+                when(),
+                i("lower"),
+                i("upper"),
+                f("levela"),
+                f("levelb"),
+                &vt,
+            ),
             "pattern" => pattern(sh, &pats(), logic(), &[f("level"); 4], &vt),
             "duration" => duration(sh, &pats(), logic(), when(), i("lower"), i("upper"), &[f("level"); 4], &vt),
             "setuphold" => {
@@ -1140,7 +1335,19 @@ mod tests {
                     "both" => ShEvent::Both,
                     x => panic!("event {}", x),
                 };
-                setup_hold(sh, u("clk"), u("data"), edge_("slope"), dt, ev, i("setup"), i("hold"), f("levelc"), f("leveld"), &vt)
+                setup_hold(
+                    sh,
+                    u("clk"),
+                    u("data"),
+                    edge_("slope"),
+                    dt,
+                    ev,
+                    i("setup"),
+                    i("hold"),
+                    f("levelc"),
+                    f("leveld"),
+                    &vt,
+                )
             }
             "nth" => nth(sh, u("ch"), edge_("slope"), u("count"), i("idle"), f("level"), &vt),
             "video" => {

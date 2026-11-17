@@ -3,8 +3,8 @@
 
 //! Math channel operations (computed by oos-dsp).
 
-pub use oos_dsp::math::Window;
 use oos_dsp::linecode::{self, Gate};
+pub use oos_dsp::math::Window;
 use oos_dsp::math::{binary, unary, Op1, Op2};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,7 +54,8 @@ pub enum MathFamily {
 }
 
 impl MathFamily {
-    pub const ALL: [MathFamily; 5] = [MathFamily::Arith, MathFamily::Fn, MathFamily::Filter, MathFamily::Logic, MathFamily::Convert];
+    pub const ALL: [MathFamily; 5] =
+        [MathFamily::Arith, MathFamily::Fn, MathFamily::Filter, MathFamily::Logic, MathFamily::Convert];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -70,7 +71,17 @@ impl MathFamily {
     pub fn ops(self) -> &'static [MathOp] {
         match self {
             MathFamily::Arith => &[MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Conv],
-            MathFamily::Fn => &[MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt, MathOp::Lg, MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr],
+            MathFamily::Fn => &[
+                MathOp::Intg,
+                MathOp::Diff,
+                MathOp::Abs,
+                MathOp::Sqrt,
+                MathOp::Lg,
+                MathOp::Ln,
+                MathOp::Exp,
+                MathOp::Lin,
+                MathOp::Expr,
+            ],
             MathFamily::Filter => &[MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fir, MathOp::Fft],
             MathFamily::Logic => &[MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not],
             MathFamily::Convert => &[MathOp::A2d, MathOp::D2a, MathOp::Unnrzi],
@@ -79,9 +90,36 @@ impl MathFamily {
 }
 
 pub const MATH_OPS: [MathOp; 30] = [
-    MathOp::Off, MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Conv, MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt,
-    MathOp::Lg, MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr, MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fir,
-    MathOp::Fft, MathOp::And, MathOp::Or, MathOp::Xor, MathOp::Nand, MathOp::Nor, MathOp::Not, MathOp::A2d, MathOp::D2a, MathOp::Unnrzi,
+    MathOp::Off,
+    MathOp::Add,
+    MathOp::Sub,
+    MathOp::Mul,
+    MathOp::Div,
+    MathOp::Conv,
+    MathOp::Intg,
+    MathOp::Diff,
+    MathOp::Abs,
+    MathOp::Sqrt,
+    MathOp::Lg,
+    MathOp::Ln,
+    MathOp::Exp,
+    MathOp::Lin,
+    MathOp::Expr,
+    MathOp::Lpf,
+    MathOp::Hpf,
+    MathOp::Bpf,
+    MathOp::Bsf,
+    MathOp::Fir,
+    MathOp::Fft,
+    MathOp::And,
+    MathOp::Or,
+    MathOp::Xor,
+    MathOp::Nand,
+    MathOp::Nor,
+    MathOp::Not,
+    MathOp::A2d,
+    MathOp::D2a,
+    MathOp::Unnrzi,
 ];
 
 /// Math channels (8, math on math).
@@ -147,14 +185,34 @@ impl MathOp {
     pub fn family(self) -> MathFamily {
         match self {
             MathOp::Off | MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div | MathOp::Conv => MathFamily::Arith,
-            MathOp::Intg | MathOp::Diff | MathOp::Abs | MathOp::Sqrt | MathOp::Lg | MathOp::Ln | MathOp::Exp | MathOp::Lin | MathOp::Expr => MathFamily::Fn,
+            MathOp::Intg
+            | MathOp::Diff
+            | MathOp::Abs
+            | MathOp::Sqrt
+            | MathOp::Lg
+            | MathOp::Ln
+            | MathOp::Exp
+            | MathOp::Lin
+            | MathOp::Expr => MathFamily::Fn,
             MathOp::Lpf | MathOp::Hpf | MathOp::Bpf | MathOp::Bsf | MathOp::Fir | MathOp::Fft => MathFamily::Filter,
             MathOp::And | MathOp::Or | MathOp::Xor | MathOp::Nand | MathOp::Nor | MathOp::Not => MathFamily::Logic,
             MathOp::A2d | MathOp::D2a | MathOp::Unnrzi => MathFamily::Convert,
         }
     }
     pub fn two_sources(self) -> bool {
-        matches!(self, MathOp::Add | MathOp::Sub | MathOp::Mul | MathOp::Div | MathOp::And | MathOp::Or | MathOp::Xor | MathOp::Nand | MathOp::Nor | MathOp::Conv)
+        matches!(
+            self,
+            MathOp::Add
+                | MathOp::Sub
+                | MathOp::Mul
+                | MathOp::Div
+                | MathOp::And
+                | MathOp::Or
+                | MathOp::Xor
+                | MathOp::Nand
+                | MathOp::Nor
+                | MathOp::Conv
+        )
     }
     pub fn unit(self) -> &'static str {
         match self {
@@ -209,7 +267,17 @@ pub struct MathCh {
 
 impl Default for MathCh {
     fn default() -> MathCh {
-        MathCh { op: MathOp::Off, a: 0, b: 1, scale: 3, fc: 10e3, bw: 2e3, offset: 0.0, win: Window::Hann, lin: (1.0, 0.0) }
+        MathCh {
+            op: MathOp::Off,
+            a: 0,
+            b: 1,
+            scale: 3,
+            fc: 10e3,
+            bw: 2e3,
+            offset: 0.0,
+            win: Window::Hann,
+            lin: (1.0, 0.0),
+        }
     }
 }
 

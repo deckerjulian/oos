@@ -50,11 +50,25 @@ pub fn flash_time(seconds: f32) -> [u8; 5] {
 /// Hardware LED bit of each panel LED index (from the LED id: bit = 8 * (id >> 8) + log2(id & 0xff) - 8).
 /// G2 (index 10) has no valid id on the DHO900.
 pub const LED_HW_BIT: [Option<u8>; 19] = [
-    Some(10), Some(11), Some(12), Some(13), // CH1-CH4
-    Some(16), Some(17), Some(15), Some(14), // RUN, STOP, SINGLE red, SINGLE orange
-    Some(1), Some(2), None, Some(0),        // LA, G1, G2, TOUCH
-    Some(7), Some(5), Some(9), Some(8),     // A up/down, B left/right, SLOPE1, SLOPE2
-    Some(6), Some(3), Some(4),              // A left/right, B up/down, INTENSITY
+    Some(10),
+    Some(11),
+    Some(12),
+    Some(13), // CH1-CH4
+    Some(16),
+    Some(17),
+    Some(15),
+    Some(14), // RUN, STOP, SINGLE red, SINGLE orange
+    Some(1),
+    Some(2),
+    None,
+    Some(0), // LA, G1, G2, TOUCH
+    Some(7),
+    Some(5),
+    Some(9),
+    Some(8), // A up/down, B left/right, SLOPE1, SLOPE2
+    Some(6),
+    Some(3),
+    Some(4), // A left/right, B up/down, INTENSITY
 ];
 
 /// The three LED frames (cmd 1/2/3 = hardware LEDs 0-7, 8-15, 16-18) for a mask in panel LED order (see `Ui::leds`).

@@ -144,7 +144,15 @@ pub fn i2c_words(i: &I2c) -> Vec<Write> {
         (I2C_DMAX, lo(dmax)),
         (I2C_DMASK, lo(dmask)),
         (I2C_D4, b4(dmin) | b4(dmax) << 8 | b4(dmask) << 16),
-        (I2C_CFG, i.cond.code() | i.addr_rel.code() << 3 | i.data_rel.code() << 6 | dir << 9 | (i.ten_bit as u32) << 11 | (i.bytes.clamp(1, 5) - 1) << 12),
+        (
+            I2C_CFG,
+            i.cond.code()
+                | i.addr_rel.code() << 3
+                | i.data_rel.code() << 6
+                | dir << 9
+                | (i.ten_bit as u32) << 11
+                | (i.bytes.clamp(1, 5) - 1) << 12,
+        ),
     ]
 }
 
@@ -153,7 +161,19 @@ mod tests {
     use super::*;
 
     fn spi() -> Spi {
-        Spi { clk: 2, data: 1, cs: 3, clk_falling: false, cs_high: false, timeout: None, width: 8, rel: Relation::Eq, min: 0x5a, max: 0x5a, mask: 0xff }
+        Spi {
+            clk: 2,
+            data: 1,
+            cs: 3,
+            clk_falling: false,
+            cs_high: false,
+            timeout: None,
+            width: 8,
+            rel: Relation::Eq,
+            min: 0x5a,
+            max: 0x5a,
+            mask: 0xff,
+        }
     }
 
     #[test]
@@ -177,18 +197,52 @@ mod tests {
 
     #[test]
     fn i2c_words_by_condition() {
-        let base = I2c { scl: 1, sda: 2, cond: I2cCond::Address, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr: (0x50, 0x50, 0x7f), data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) };
+        let base = I2c {
+            scl: 1,
+            sda: 2,
+            cond: I2cCond::Address,
+            dir: Dir::Either,
+            ten_bit: false,
+            addr_rel: Relation::Eq,
+            addr: (0x50, 0x50, 0x7f),
+            data_rel: Relation::Eq,
+            bytes: 1,
+            data: (0, 0, 0),
+        };
         let w = i2c_words(&base);
         assert_eq!(w[0], (0x2190, 0x50 | 0x50 << 10 | 0x7f << 20));
         assert_eq!(*w.last().unwrap(), (0x218c, 4 | 2 << 9));
         // (condition, 0x218c [2:0])
-        for (c, code) in [(I2cCond::Start, 0), (I2cCond::Stop, 1), (I2cCond::RepeatedStart, 2), (I2cCond::MissingAck, 3), (I2cCond::Data, 5), (I2cCond::AddressData, 6)] {
+        for (c, code) in [
+            (I2cCond::Start, 0),
+            (I2cCond::Stop, 1),
+            (I2cCond::RepeatedStart, 2),
+            (I2cCond::MissingAck, 3),
+            (I2cCond::Data, 5),
+            (I2cCond::AddressData, 6),
+        ] {
             assert_eq!(i2c_words(&I2c { cond: c, ..base }).last().unwrap().1 & 7, code);
         }
         // 5 data bytes, big-endian: byte 4 (the first on the bus) in 0x21a0
-        let d = I2c { cond: I2cCond::Data, data_rel: Relation::In, bytes: 5, data: (0x01_0203_0405, 0xff_0203_0405, 0xff_ffff_ffff), dir: Dir::Read, ten_bit: true, ..base };
+        let d = I2c {
+            cond: I2cCond::Data,
+            data_rel: Relation::In,
+            bytes: 5,
+            data: (0x01_0203_0405, 0xff_0203_0405, 0xff_ffff_ffff),
+            dir: Dir::Read,
+            ten_bit: true,
+            ..base
+        };
         let w = i2c_words(&d);
-        assert_eq!(&w[1..5], &[(0x2194, 0x0203_0405), (0x2198, 0x0203_0405), (0x219c, 0xffff_ffff), (0x21a0, 0x01 | 0xff << 8 | 0xff << 16)]);
+        assert_eq!(
+            &w[1..5],
+            &[
+                (0x2194, 0x0203_0405),
+                (0x2198, 0x0203_0405),
+                (0x219c, 0xffff_ffff),
+                (0x21a0, 0x01 | 0xff << 8 | 0xff << 16)
+            ]
+        );
         assert_eq!(w[5], (0x218c, 5 | 4 << 6 | 1 << 9 | 1 << 11 | 4 << 12));
     }
 }

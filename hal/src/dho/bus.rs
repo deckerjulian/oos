@@ -21,7 +21,11 @@ pub trait Bus {
 
 /// Reads `bytes` from the XDMA C2H stream (`/dev/xdma0_c2h_0`) into a new buffer (a `DmaBuf` used once). For reads in
 /// a loop keep a `DmaBuf` instead: no allocation, no zero fill and no move per read.
-pub fn read_dma(c2h: &mut impl std::io::Read, bytes: usize, short: impl FnMut(usize, usize)) -> std::io::Result<Vec<u8>> {
+pub fn read_dma(
+    c2h: &mut impl std::io::Read,
+    bytes: usize,
+    short: impl FnMut(usize, usize),
+) -> std::io::Result<Vec<u8>> {
     let mut b = DmaBuf::new();
     b.read(c2h, bytes, short)?;
     Ok(b.into_vec())
@@ -69,7 +73,12 @@ impl DmaBuf {
 
     /// Reads `bytes` from `c2h` to the start of the region. `short(got, k)` is called for every read shorter than
     /// what was left.
-    pub fn read(&mut self, c2h: &mut impl std::io::Read, bytes: usize, mut short: impl FnMut(usize, usize)) -> std::io::Result<&mut [u8]> {
+    pub fn read(
+        &mut self,
+        c2h: &mut impl std::io::Read,
+        bytes: usize,
+        mut short: impl FnMut(usize, usize),
+    ) -> std::io::Result<&mut [u8]> {
         self.reserve(bytes);
         self.len = 0;
         let off = self.off;
@@ -78,7 +87,12 @@ impl DmaBuf {
             // at most `MAX_READ` per read(): the rest of the stream follows in the next one, as after a short read
             let want = (bytes - got).min(MAX_READ);
             match c2h.read(&mut self.raw[off + got..off + got + want])? {
-                0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("end of stream after {} of {} bytes", got, bytes))),
+                0 => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        format!("end of stream after {} of {} bytes", got, bytes),
+                    ))
+                }
                 k => {
                     if k < want {
                         short(got, k);
@@ -142,7 +156,16 @@ impl Bar1 {
     /// Maps the 32 KiB of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
     fn from_file(f: std::fs::File) -> std::io::Result<Bar1> {
         use std::os::unix::io::AsRawFd;
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), 0x8000, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        let p = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                0x8000,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                f.as_raw_fd(),
+                0,
+            )
+        };
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }

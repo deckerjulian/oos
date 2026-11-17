@@ -58,7 +58,8 @@ impl Args {
         let mut it = std::env::args().skip(1);
         while let Some(s) = it.next() {
             match s.as_str() {
-                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec" | "--new-dt" => a.flags.push(s),
+                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
+                | "--new-dt" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -124,16 +125,29 @@ fn stock_card() -> Option<String> {
 
 /// First install from the stock system (docs/install-usb.md); `shell/do_extract.sh` of the update file runs this.
 fn gel_install(a: &Args) {
-    let f = a.rest.get(1).unwrap_or_else(|| die("gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]"));
+    let f = a
+        .rest
+        .get(1)
+        .unwrap_or_else(|| die("gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]"));
     let save = a.val("--save").unwrap_or_else(|| die("gel-install needs --save DIR on the USB stick"));
     let p = read_file(f);
-    let opt = update::first::FirstOpt { execute: a.flag("--execute"), any_model: a.flag("--any-model"), reinstall: a.flag("--reinstall") };
-    let path = a.val("--card").map(str::to_string).or_else(stock_card).unwrap_or_else(|| die(&format!("no SD card on {}", oos_hal::target::ACTIVE.card_controller)));
+    let opt = update::first::FirstOpt {
+        execute: a.flag("--execute"),
+        any_model: a.flag("--any-model"),
+        reinstall: a.flag("--reinstall"),
+    };
+    let path = a
+        .val("--card")
+        .map(str::to_string)
+        .or_else(stock_card)
+        .unwrap_or_else(|| die(&format!("no SD card on {}", oos_hal::target::ACTIVE.card_controller)));
     println!("card {}", path);
     let vendor = std::fs::read(a.val("--vendor").unwrap_or("/rigol/data/vendor.bin")).ok();
     let mut c = Card::open(Path::new(&path), opt.execute).unwrap_or_else(|e| die(&format!("{}: {}", path, e)));
     let keys = keys(a, a.val("--card").is_some());
-    let r = update::first::first_install(&mut c, &p, &keys, Path::new(save), vendor.as_deref(), &opt, &mut |l| println!("{}", l));
+    let r = update::first::first_install(&mut c, &p, &keys, Path::new(save), vendor.as_deref(), &opt, &mut |l| {
+        println!("{}", l)
+    });
     if let Err(e) = r {
         die(&e);
     }
@@ -304,7 +318,8 @@ fn install(a: &Args) {
 
 /// The oos-ui loop of rcS, started again after a kexec start that failed.
 #[cfg(target_os = "linux")]
-const UI_LOOP: &str = "while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done";
+const UI_LOOP: &str =
+    "while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done";
 
 /// What was stopped for the kexec start, to put back after a failure.
 #[cfg(target_os = "linux")]
@@ -324,9 +339,14 @@ const DRM: &str = "/sys/bus/platform/drivers/rockchip-drm";
 #[cfg(target_os = "linux")]
 fn quiesce() -> Quiet {
     let out = |args: &[&str]| {
-        std::process::Command::new(args[0]).args(&args[1..]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        std::process::Command::new(args[0])
+            .args(&args[1..])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
     };
-    let routes: Vec<String> = out(&["ip", "-4", "route", "show"]).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    let routes: Vec<String> =
+        out(&["ip", "-4", "route", "show"]).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
     let mut links = Vec::new();
     if let Ok(d) = std::fs::read_dir("/sys/class/net") {
         for e in d.flatten() {
@@ -335,14 +355,25 @@ fn quiesce() -> Quiet {
                 .ok()
                 .and_then(|f| u32::from_str_radix(f.trim().trim_start_matches("0x"), 16).ok())
                 .is_some_and(|f| f & 1 != 0);
-            if n != "lo" && up && std::process::Command::new("ip").args(["link", "set", "dev", &n, "down"]).status().is_ok_and(|x| x.success()) {
+            if n != "lo"
+                && up
+                && std::process::Command::new("ip")
+                    .args(["link", "set", "dev", &n, "down"])
+                    .status()
+                    .is_ok_and(|x| x.success())
+            {
                 links.push(n);
             }
         }
     }
     // the display subsystem lets go of the VOPs and their IOMMUs while it still owns them
-    let display = Path::new(&format!("{}/display-subsystem", DRM)).exists() && std::fs::write(format!("{}/unbind", DRM), "display-subsystem").is_ok();
-    tell(&format!("stopped for the kexec start: links {:?}, display {}", links, if display { "unbound" } else { "left" }));
+    let display = Path::new(&format!("{}/display-subsystem", DRM)).exists()
+        && std::fs::write(format!("{}/unbind", DRM), "display-subsystem").is_ok();
+    tell(&format!(
+        "stopped for the kexec start: links {:?}, display {}",
+        links,
+        if display { "unbound" } else { "left" }
+    ));
     Quiet { links, routes, display }
 }
 
@@ -383,7 +414,10 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
                 .stderr(std::process::Stdio::null())
                 .spawn();
         }
-        notice(&format!("Update {}: the kexec start failed ({}); nothing installed, this build keeps running", short, why));
+        notice(&format!(
+            "Update {}: the kexec start failed ({}); nothing installed, this build keeps running",
+            short, why
+        ));
         std::process::exit(1)
     };
     let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
@@ -440,7 +474,9 @@ fn kexec_check(a: &Args) {
     kexec::unload().unwrap_or_else(|e| die(&e));
     let tree = match std::fs::read(kexec::BOOTED_DT) {
         Ok(b) if b == dt => "the same as the running one",
-        Ok(_) if Path::new(kexec::TOOL).exists() => "DIFFERS from the running one (the kexec start tries the new one, with kexec-tools)",
+        Ok(_) if Path::new(kexec::TOOL).exists() => {
+            "DIFFERS from the running one (the kexec start tries the new one, with kexec-tools)"
+        }
         Ok(_) => "DIFFERS from the running one (install needs --new-dt)",
         Err(_) => "running one unknown",
     };
@@ -498,16 +534,27 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     let pk = read_file(kexec::PACKAGE);
     let build = update::running_build().unwrap_or_default();
     let short = update::short(&build).to_string();
-    let _ = std::fs::write("/dev/tty1", format!("\nUpdate {}: started by kexec, installing it. Do not power off.\n", short));
+    let _ = std::fs::write(
+        "/dev/tty1",
+        format!("\nUpdate {}: started by kexec, installing it. Do not power off.\n", short),
+    );
     tell(&format!("build {} started by kexec: kernel, card and /oos work; installing it", short));
     // where the previous kernel put the initramfs, for a damaged package
-    let at = |n: &str| std::fs::read(format!("/proc/device-tree/chosen/linux,{}", n)).ok().map(|b| b.iter().fold(0u64, |a, &x| a << 8 | x as u64));
+    let at = |n: &str| {
+        std::fs::read(format!("/proc/device-tree/chosen/linux,{}", n))
+            .ok()
+            .map(|b| b.iter().fold(0u64, |a, &x| a << 8 | x as u64))
+    };
     if let (Some(a0), Some(a1)) = (at("initrd-start"), at("initrd-end")) {
         tell(&format!("initramfs at {:#x}..{:#x}", a0, a1));
     }
     // the running build verified the package; this build may trust other keys (a key change by update)
     let mut keys = update::trusted_keys();
-    if let Some(k) = std::fs::read_to_string(kexec::KEY_FILE).ok().and_then(|t| update::hash::unhex(t.trim())).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+    if let Some(k) = std::fs::read_to_string(kexec::KEY_FILE)
+        .ok()
+        .and_then(|t| update::hash::unhex(t.trim()))
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+    {
         keys.push(k);
     }
     let opt = InstallOpt { execute: true, downgrade: f.downgrade, force: f.force };
@@ -533,7 +580,9 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
             let back = if began && st.previous.is_some() {
                 match update::rollback(&mut c, p, "its install after the kexec start failed", true, None) {
                     Ok(_) => "the previous build was written back, it starts at the next power-on".to_string(),
-                    Err(r) => format!("writing the previous build back FAILED too ({}): the next power-on starts stock", r),
+                    Err(r) => {
+                        format!("writing the previous build back FAILED too ({}): the next power-on starts stock", r)
+                    }
                 }
             } else {
                 "the next power-on starts the previous build (or stock in one-shot mode)".to_string()
@@ -563,7 +612,9 @@ fn keep_booted_tree(a: &Args, kexec_start: bool) {
         c.read(lba, 2048).ok().and_then(|h| kexec::tree_at(&h)).and_then(|(off, len)| {
             let first = off / card::SECTOR as usize;
             let skip = off % card::SECTOR as usize;
-            let b = c.read(lba + first as u64, (skip + len).div_ceil(card::SECTOR as usize) * card::SECTOR as usize).ok()?;
+            let b = c
+                .read(lba + first as u64, (skip + len).div_ceil(card::SECTOR as usize) * card::SECTOR as usize)
+                .ok()?;
             Some(b[skip..skip + len].to_vec())
         })
     };
@@ -609,7 +660,14 @@ fn status(a: &Args) {
                     .filter_map(|e| e.as_ref())
                     .find(|e| e.len == h.len as u64)
                     .map_or("untracked".to_string(), |e| format!("same size as build {}", e.build));
-                println!("{:<12} '{}', {} bytes, {}, loader id {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, &hex(&h.id)[..16]);
+                println!(
+                    "{:<12} '{}', {} bytes, {}, loader id {}",
+                    if r == card::Region::Recovery { "recovery" } else { "rollback" },
+                    h.name,
+                    h.len,
+                    known,
+                    &hex(&h.id)[..16]
+                );
             }
             Ok(Some(h)) => {
                 let (b, sha) = c.read_image(r, h.len).unwrap_or_else(|e| die(&e.to_string()));
@@ -619,7 +677,15 @@ fn status(a: &Args) {
                     .filter_map(|e| e.as_ref())
                     .find(|e| e.sha256 == sha)
                     .map_or("untracked".to_string(), |e| format!("build {}", e.build));
-                println!("{:<12} '{}', {} bytes, {}, {}, sha256 {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, ok, &hex(&sha)[..16]);
+                println!(
+                    "{:<12} '{}', {} bytes, {}, {}, sha256 {}",
+                    if r == card::Region::Recovery { "recovery" } else { "rollback" },
+                    h.name,
+                    h.len,
+                    known,
+                    ok,
+                    &hex(&sha)[..16]
+                );
             }
             Ok(None) => println!("{:<12} no image", if r == card::Region::Recovery { "recovery" } else { "rollback" }),
             Err(e) => println!("{:?}: unreadable: {}", r, e),
@@ -636,7 +702,10 @@ fn status(a: &Args) {
     if let Ok(b) = std::fs::read_to_string("/etc/oos-build") {
         println!("running      {}", b.trim());
     }
-    println!("trusted keys {}", update::trusted_keys().iter().map(|k| hex(&pkg::key_id(k))).collect::<Vec<_>>().join(", "));
+    println!(
+        "trusted keys {}",
+        update::trusted_keys().iter().map(|k| hex(&pkg::key_id(k))).collect::<Vec<_>>().join(", ")
+    );
 }
 
 fn boot(a: &Args) {
@@ -671,11 +740,16 @@ fn boot(a: &Args) {
     let running = update::running_build();
     match update::boot_started(&p, running.as_deref()) {
         Ok(update::Boot::NoTrial) => {}
-        Ok(update::Boot::Trial(n)) => tell(&format!("build {} on trial (start {})", update::short(running.as_deref().unwrap_or("?")), n)),
+        Ok(update::Boot::Trial(n)) => {
+            tell(&format!("build {} on trial (start {})", update::short(running.as_deref().unwrap_or("?")), n))
+        }
         Ok(update::Boot::Dropped(m)) => tell(&m),
         Ok(update::Boot::Rollback) => {
             // on the panel: nothing else shows yet, and a power-cycle in this write is what must not happen
-            let _ = std::fs::write("/dev/tty1", "\nUpdate not confirmed: restoring the previous build. Do not power off.\n");
+            let _ = std::fs::write(
+                "/dev/tty1",
+                "\nUpdate not confirmed: restoring the previous build. Do not power off.\n",
+            );
             let mut c = open_card(a, true);
             match update::rollback(&mut c, &p, "it started a second time without having been confirmed", true, None) {
                 Ok(r) => {
@@ -753,7 +827,12 @@ fn watch(a: &Args) {
         let startup_done = !autoacq
             || std::fs::read_to_string(&status)
                 .is_ok_and(|t| t.lines().any(|l| matches!(l.split('\t').nth(1), Some("end") | Some("abort"))));
-        let h = Health { elapsed: now, ui_restarts: restarts, ui_up: if pid.is_some() { now - since } else { 0.0 }, startup_done };
+        let h = Health {
+            elapsed: now,
+            ui_restarts: restarts,
+            ui_up: if pid.is_some() { now - since } else { 0.0 },
+            startup_done,
+        };
         match update::judge(&h) {
             Verdict::Wait => continue,
             v => break v,
@@ -764,7 +843,10 @@ fn watch(a: &Args) {
         Verdict::Good => {
             if trial_sha.is_some() {
                 match update::confirm(&p, trial_sha) {
-                    Ok(true) => tell(&format!("build {} confirmed (trial passed)", st.current.as_ref().map_or("?", |c| update::short(&c.build)))),
+                    Ok(true) => tell(&format!(
+                        "build {} confirmed (trial passed)",
+                        st.current.as_ref().map_or("?", |c| update::short(&c.build))
+                    )),
                     Ok(false) => tell("start was good, but the update state changed meanwhile: nothing confirmed"),
                     Err(e) => tell(&e),
                 }
@@ -813,7 +895,8 @@ fn default_key() -> PathBuf {
 }
 
 fn load_seed(path: &Path) -> [u8; 32] {
-    let t = std::fs::read_to_string(path).unwrap_or_else(|e| die(&format!("{}: {} (oos-update keygen)", path.display(), e)));
+    let t = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| die(&format!("{}: {} (oos-update keygen)", path.display(), e)));
     t.lines()
         .map(|l| l.split('#').next().unwrap_or("").trim())
         .find(|l| !l.is_empty())
@@ -825,12 +908,17 @@ fn load_seed(path: &Path) -> [u8; 32] {
 fn keygen(a: &Args) {
     let out = a.val("--out").map(PathBuf::from).unwrap_or_else(default_key);
     if out.exists() {
-        die(&format!("{} exists: not overwritten (a lost key means every unit needs a hand-installed image)", out.display()));
+        die(&format!(
+            "{} exists: not overwritten (a lost key means every unit needs a hand-installed image)",
+            out.display()
+        ));
     }
     let mut seed = [0u8; 32];
     {
         use std::io::Read;
-        std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed)).unwrap_or_else(|e| die(&e.to_string()));
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(&mut seed))
+            .unwrap_or_else(|e| die(&e.to_string()));
     }
     let pk = oos_hal::update::ed25519::public_key(&seed);
     if let Some(d) = out.parent() {
@@ -847,8 +935,7 @@ fn keygen(a: &Args) {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut f = options.open(&out)
-            .unwrap_or_else(|e| die(&format!("{}: {}", out.display(), e)));
+        let mut f = options.open(&out).unwrap_or_else(|e| die(&format!("{}: {}", out.display(), e)));
         f.write_all(text.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
     }
     println!("secret key: {} (mode 0600)", out.display());
@@ -860,7 +947,10 @@ fn pack(a: &Args) {
     let img = read_file(a.val("--image").unwrap_or_else(|| die("pack --image IMG --build ID --out FILE")));
     let build = a.val("--build").unwrap_or_else(|| die("pack needs --build ID (the image's /etc/oos-build)"));
     let out = a.val("--out").unwrap_or_else(|| die("pack needs --out FILE"));
-    let kernel = a.val("--kernel").map(str::to_string).unwrap_or_else(|| build.split(" kernel ").nth(1).unwrap_or("?").to_string());
+    let kernel = a
+        .val("--kernel")
+        .map(str::to_string)
+        .unwrap_or_else(|| build.split(" kernel ").nth(1).unwrap_or("?").to_string());
     let info = card::check_image(&img).unwrap_or_else(|e| die(&format!("image: {}", e)));
     if info.len != img.len() {
         die(&format!("image is {} bytes, its sections end at {}", img.len(), info.len));
@@ -868,7 +958,10 @@ fn pack(a: &Args) {
     let seed = load_seed(&a.val("--key").map(PathBuf::from).unwrap_or_else(default_key));
     let pk = oos_hal::update::ed25519::public_key(&seed);
     if !update::trusted_keys().contains(&pk) {
-        eprintln!("oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package", hex(&pkg::key_id(&pk)));
+        eprintln!(
+            "oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package",
+            hex(&pkg::key_id(&pk))
+        );
     }
     // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
     let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE]).unwrap_or_else(|e| die(&e));

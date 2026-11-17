@@ -9,6 +9,9 @@
 # source (see the job). That is a check of the build, not a part of a release: a release needs one image.
 #
 # With `sims` (the weekly run asks for it): the simulations run on what was built (tools/check.sh sim).
+#
+# For a tag `vX.Y.Z` the last job drafts the release: the image, the update package, the install file, SHA256SUMS
+# and the changelog of that version. A draft, not a publication.
 name: Image
 on:
   workflow_dispatch:
@@ -149,3 +152,63 @@ jobs:
             cat strict.txt
             exit 1
           fi
+  # For a tag `vX.Y.Z`: a DRAFT of the release with what was built here, its checksums and the changelog of that
+  # version. Nothing is published: the maintainer looks at the draft, adds the sources that a release carries
+  # (tools/release-sources.sh names them, and the notes of the draft list them), and publishes it.
+  draft-release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: oos-image-ARM64
+          path: built
+      - name: The files of the release, their checksums, the notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          # the tag is the version of the crates
+          for c in hal dsp ui fpgad; do
+            grep -qx "version = \"$version\"" "$c/Cargo.toml" || {
+              echo "::error::$c/Cargo.toml is not at version $version"
+              exit 1
+            }
+          done
+          mkdir release
+          cp built/boot/out/oos-dev.img "release/oos-$version.img"
+          cp built/boot/out/oos-dev.oosupd "release/oos-$version.oosupd"
+          cp built/boot/out/*.GEL release/
+          (cd release && sha256sum -- * > SHA256SUMS)
+          {
+            # the section of this version in the changelog
+            awk -v v="## $version" '$0 == v { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md
+            echo
+            echo "---"
+            echo
+            echo "Built by CI from the tag, on arm64, signed with the community key of the repository."
+            echo "Still to add before this draft is published, the sources a release carries:"
+            echo
+            echo '```'
+            tools/release-sources.sh list
+            echo '```'
+          } > notes.md
+          cat release/SHA256SUMS
+      - name: The draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::the release $TAG exists already: nothing is changed; the files are in the artifact"
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "OOS ${TAG#v}" --notes-file notes.md release/*

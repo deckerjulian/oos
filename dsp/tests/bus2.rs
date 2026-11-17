@@ -15,10 +15,15 @@ fn i2s_stereo_16_and_24_bit() {
         let tb = 1.0 / (48e3 * 2.0 * bits as f64);
         let dt = tb / 20.0;
         let n = ((frames.len() as f64 * 2.0 * bits as f64 + 8.0) * tb / dt) as usize;
-        let (c, w, d) = (sample(|t| sck.v(t), 0.0, dt, n), sample(|t| ws.v(t), 0.0, dt, n), sample(|t| sd.v(t), 0.0, dt, n));
+        let (c, w, d) =
+            (sample(|t| sck.v(t), 0.0, dt, n), sample(|t| ws.v(t), 0.0, dt, n), sample(|t| sd.v(t), 0.0, dt, n));
         let p = i2s(&c, Some(&w), &d, bits, 1.65, 0.2);
-        let got: Vec<(bool, u32)> = p.iter().filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None }).collect();
-        let want: Vec<(bool, u32)> = frames.iter().flat_map(|&(l, r)| [(false, l as u32 & mask), (true, r as u32 & mask)]).collect();
+        let got: Vec<(bool, u32)> = p
+            .iter()
+            .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
+            .collect();
+        let want: Vec<(bool, u32)> =
+            frames.iter().flat_map(|&(l, r)| [(false, l as u32 & mask), (true, r as u32 & mask)]).collect();
         // the first word may be cut (no WS edge before it); all complete words must match
         assert!(got.len() >= want.len() - 1, "{} bits: {:?}", bits, got);
         let off = want.len() - got.len().min(want.len());
@@ -34,7 +39,10 @@ fn mil1553_command_and_data_words_with_noise() {
     let mut v = sample(|t| l.v(t), 0.0, dt, 50 * 110);
     add_noise(&mut v, 0.3, 3);
     let p = mil1553(&v, dt, 0.0, 1.0);
-    let got: Vec<(bool, u32, bool)> = p.iter().filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None }).collect();
+    let got: Vec<(bool, u32, bool)> = p
+        .iter()
+        .filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None })
+        .collect();
     assert_eq!(got, vec![(true, 0x0c21, true), (false, 0xbeef, true), (false, 0, true), (false, 0xffff, true)]);
 }
 

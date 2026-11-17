@@ -10,7 +10,10 @@
 /// One step of a generator sequence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
-    Bar1 { off: u32, val: u32 },
+    Bar1 {
+        off: u32,
+        val: u32,
+    },
     /// afg_in1..5 (bit n = line n + 1)
     Gpio(u8),
     /// FG_M2C: generator supply
@@ -54,7 +57,16 @@ pub fn increment(f_uhz: f64) -> u64 {
 /// Frequency; noise uses the fixed increment 2^38.
 pub fn set_freq(o: &mut Vec<Op>, f_uhz: f64, noise: bool) {
     let inc = if noise { 1u64 << 38 } else { increment(f_uhz) };
-    bank(o, B, &[(0x3048, (inc & 0xffff) as u32), (0x304c, (inc >> 16 & 0xffff) as u32), (0x3050, (inc >> 32 & 0xffff) as u32), (0x3054, (inc >> 48 & 0xff) as u32)]);
+    bank(
+        o,
+        B,
+        &[
+            (0x3048, (inc & 0xffff) as u32),
+            (0x304c, (inc >> 16 & 0xffff) as u32),
+            (0x3050, (inc >> 32 & 0xffff) as u32),
+            (0x3054, (inc >> 48 & 0xff) as u32),
+        ],
+    );
 }
 
 /// Phase (milli-degrees).
@@ -119,11 +131,23 @@ pub fn gear(a_nv: f64, o_nv: f64, dc: bool) -> Gear {
         return g(0x15, 0, 0, 0, true, 3.162_277_66);
     }
     if o_abs <= v(2.0) {
-        let steps = [(0.005, 0x1b, 2, 0.003_162_277), (0.0165, 0x1a, 3, 0.01), (0.054, 0x19, 4, 0.031_622_776_6), (0.18, 0x18, 5, 0.1), (0.59, 0x11, 6, 0.316_227_766), (2.0, 0x10, 7, 1.0)];
+        let steps = [
+            (0.005, 0x1b, 2, 0.003_162_277),
+            (0.0165, 0x1a, 3, 0.01),
+            (0.054, 0x19, 4, 0.031_622_776_6),
+            (0.18, 0x18, 5, 0.1),
+            (0.59, 0x11, 6, 0.316_227_766),
+            (2.0, 0x10, 7, 1.0),
+        ];
         let &(_, code, gg, gain) = steps.iter().find(|s| a_nv <= v(s.0)).unwrap_or(&steps[5]);
         g(code, gg, 2, gg, false, gain)
     } else {
-        let steps = [(0.054, 0x1f, 9, 0.031_622_776_6), (0.18, 0x1e, 10, 0.1), (0.59, 0x1d, 11, 0.316_227_766), (2.0, 0x1c, 12, 1.0)];
+        let steps = [
+            (0.054, 0x1f, 9, 0.031_622_776_6),
+            (0.18, 0x1e, 10, 0.1),
+            (0.59, 0x1d, 11, 0.316_227_766),
+            (2.0, 0x1c, 12, 1.0),
+        ];
         let &(_, code, gg, gain) = steps.iter().find(|s| a_nv <= v(s.0)).unwrap_or(&steps[3]);
         g(code, gg, 0, gg, true, gain)
     }
@@ -157,7 +181,18 @@ impl Cal {
     }
     /// First segment of record `r` that contains `x` (lo <= x <= hi; flatness records below 100 kHz store hi first).
     fn find(&self, r: usize, x: f64, swapped: bool) -> Option<(f32, f32)> {
-        (0..self.n(r)).map(|i| self.seg(r, i)).find(|&(lo, hi, _, _)| if swapped { lo as f64 >= x && x >= hi as f64 } else { lo as f64 <= x && x <= hi as f64 }).map(|(_, _, k, b)| (k, b))
+        (0..self.n(r))
+            .map(|i| self.seg(r, i))
+            .find(
+                |&(lo, hi, _, _)| {
+                    if swapped {
+                        lo as f64 >= x && x >= hi as f64
+                    } else {
+                        lo as f64 <= x && x <= hi as f64
+                    }
+                },
+            )
+            .map(|(_, _, k, b)| (k, b))
     }
 }
 
@@ -196,7 +231,13 @@ pub fn codes(cal: Option<&Cal>, a_nv: f64, o_nv: f64, f_uhz: f64, noise: bool, d
 /// 5 V (10..30 MHz), 2.5 V above; offset +-(Vmax - A) / 2 with Vmax 10 V (f <= 10 MHz) else 5 V.
 pub fn clamp(a_nv: f64, o_nv: f64, f_uhz: f64) -> (f64, f64) {
     let f = f_uhz * 1e-6;
-    let amax = if f <= 10e6 { 10e9 } else if f <= 30e6 { 5e9 } else { 2.5e9 };
+    let amax = if f <= 10e6 {
+        10e9
+    } else if f <= 30e6 {
+        5e9
+    } else {
+        2.5e9
+    };
     let a = a_nv.clamp(2e6, amax);
     let vmax = if f <= 10e6 { 10e9 } else { 5e9 };
     let omax = ((vmax - a) / 2.0).max(0.0);
@@ -209,17 +250,27 @@ pub fn clamp(a_nv: f64, o_nv: f64, f_uhz: f64) -> (f64, f64) {
 pub enum Wave {
     Sine,
     /// duty cycle 0.01..0.99
-    Square { duty: f64 },
+    Square {
+        duty: f64,
+    },
     /// symmetry 0..1: fraction of the period that rises
-    Ramp { symmetry: f64 },
+    Ramp {
+        symmetry: f64,
+    },
     /// duty 0.01..0.99, edge times in s (at least one DAC clock)
-    Pulse { duty: f64, rise: f64, fall: f64 },
+    Pulse {
+        duty: f64,
+        rise: f64,
+        fall: f64,
+    },
     Noise,
     /// level = offset (the offset DAC), the table is 0
     Dc,
     /// arbitrary wave: the table set by `arb_set`, `id` is what it returned (a new table is a new wave, so a running
     /// output gets it)
-    Arb { id: u32 },
+    Arb {
+        id: u32,
+    },
 }
 
 /// Samples of the waveform RAM.
@@ -333,7 +384,13 @@ impl Wave {
                 (0..N)
                     .map(|i| {
                         let x = i as f64;
-                        let v = if x < s { x / s } else if s >= N as f64 { 1.0 } else { 1.0 - (x - s) / (N as f64 - s) };
+                        let v = if x < s {
+                            x / s
+                        } else if s >= N as f64 {
+                            1.0
+                        } else {
+                            1.0 - (x - s) / (N as f64 - s)
+                        };
                         (32767.0 * (2.0 * v - 1.0)).round() as i16
                     })
                     .collect()
@@ -393,8 +450,22 @@ impl ModShape {
         let p = i as f64 / n as f64;
         match self {
             ModShape::Sine => (std::f64::consts::TAU * p).sin(),
-            ModShape::Square => if p < 0.5 { 1.0 } else { -1.0 },
-            ModShape::Triangle => if p < 0.25 { 4.0 * p } else if p < 0.75 { 2.0 - 4.0 * p } else { 4.0 * p - 4.0 },
+            ModShape::Square => {
+                if p < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            ModShape::Triangle => {
+                if p < 0.25 {
+                    4.0 * p
+                } else if p < 0.75 {
+                    2.0 - 4.0 * p
+                } else {
+                    4.0 * p - 4.0
+                }
+            }
             ModShape::UpRamp => 2.0 * p - 1.0,
             ModShape::DownRamp => 1.0 - 2.0 * p,
             ModShape::Noise => {
@@ -458,8 +529,12 @@ pub fn mod_table(md: &Mod) -> Vec<u32> {
             })
             .collect(),
         // PM noise: unipolar, s16 upload
-        Mod::Pm { shape: ModShape::Noise, .. } => (0..N).map(|i| (16383.5 * (1.0 + ModShape::Noise.at(i, N))) as u32).collect(),
-        Mod::Fm { shape, .. } | Mod::Pm { shape, .. } => (0..N).map(|i| (32767.0 * shape.at(i, N)).round() as i16 as i32 as u32).collect(),
+        Mod::Pm { shape: ModShape::Noise, .. } => {
+            (0..N).map(|i| (16383.5 * (1.0 + ModShape::Noise.at(i, N))) as u32).collect()
+        }
+        Mod::Fm { shape, .. } | Mod::Pm { shape, .. } => {
+            (0..N).map(|i| (32767.0 * shape.at(i, N)).round() as i16 as i32 as u32).collect()
+        }
     }
 }
 
@@ -518,7 +593,8 @@ pub fn start_mod(cal: Option<&Cal>, wave: Wave, f_uhz: f64, a_nv: f64, o_nv: f64
     let f_uhz = f_uhz.clamp(2000.0, wave.max_hz() * 1e6);
     let (noise, dc) = (wave == Wave::Noise, wave == Wave::Dc);
     // noise runs at a fixed increment: its limits do not depend on the set frequency (those of 1 MHz)
-    let (a_nv, o_nv) = if dc { (a_nv, o_nv.clamp(-5e9, 5e9)) } else { clamp(a_nv, o_nv, if noise { 1e12 } else { f_uhz }) };
+    let (a_nv, o_nv) =
+        if dc { (a_nv, o_nv.clamp(-5e9, 5e9)) } else { clamp(a_nv, o_nv, if noise { 1e12 } else { f_uhz }) };
     let (ac, oc, g) = codes(cal, a_nv, o_nv, f_uhz, noise, dc);
     let mut o = Vec::new();
     relays(&mut o, current, g.code);
@@ -544,7 +620,15 @@ pub fn start_mod(cal: Option<&Cal>, wave: Wave, f_uhz: f64, a_nv: f64, o_nv: f64
 /// A running output without modulation to new frequency, amplitude or offset: only their registers, about a thousand
 /// times faster than `start_mod` and with no gap in the signal. `None` = it takes `start_mod`: another gear (the relays
 /// switch), another wave table, or noise.
-pub fn retune(cal: Option<&Cal>, wave: Wave, f_old_uhz: f64, f_uhz: f64, a_nv: f64, o_nv: f64, current: u8) -> Option<Vec<Op>> {
+pub fn retune(
+    cal: Option<&Cal>,
+    wave: Wave,
+    f_old_uhz: f64,
+    f_uhz: f64,
+    a_nv: f64,
+    o_nv: f64,
+    current: u8,
+) -> Option<Vec<Op>> {
     if wave == Wave::Noise {
         return None;
     }
@@ -683,7 +767,9 @@ mod tests {
 
     #[test]
     fn start_per_wave() {
-        let freq = |o: &[Op]| o.iter().filter_map(|x| if let Op::Bar1 { off: 0x3048, val } = x { Some(*val) } else { None }).next();
+        let freq = |o: &[Op]| {
+            o.iter().filter_map(|x| if let Op::Bar1 { off: 0x3048, val } = x { Some(*val) } else { None }).next()
+        };
         // noise: fixed increment 2^38 (low word 0)
         let o = start(None, Wave::Noise, 1e9, 1e9, 0.0, 0x10);
         assert_eq!(freq(&o), Some(0));
@@ -703,7 +789,10 @@ mod tests {
         assert_eq!(mod_rate(1e3), (1e9 / 78.125e12 * 2f64.powi(48)) as u64);
         // FM deviation 1 MHz: d = 1e12 / 156.25e12 * 2^48 = 2^48 * 0.0064
         let d = (1e12 / 156.25e12 * 2f64.powi(48)) as u64;
-        assert_eq!(fm_dev_words(1e6), [((d & 0x7fff) << 1) as u32, (d >> 15 & 0xffff) as u32, (d >> 31 & 0xffff) as u32]);
+        assert_eq!(
+            fm_dev_words(1e6),
+            [((d & 0x7fff) << 1) as u32, (d >> 15 & 0xffff) as u32, (d >> 31 & 0xffff) as u32]
+        );
         // PM 180 degrees: v = 2^63, word = 2^63 / 65535
         let w = (1u128 << 63) / 65535;
         assert_eq!(pm_dev_words(180.0), [(w & 0xffff) as u32, (w >> 16 & 0xffff) as u32, (w >> 32 & 0xffff) as u32]);
@@ -717,14 +806,16 @@ mod tests {
         // AM sequence (afg.md 2.4): B 0x3000 <- 0, rate, M 0x3000 <- 0x82, 0x3010 <- 0xffff, 0x3014 <- 0, table, rate
         let mut o = Vec::new();
         modulate(&mut o, &Mod::Am { rate: 1e3, depth: 0.5, shape: ModShape::Sine });
-        let wr: Vec<(u32, u32)> = o.iter().filter_map(|x| if let Op::Bar1 { off, val } = x { Some((*off, *val)) } else { None }).collect();
+        let wr: Vec<(u32, u32)> =
+            o.iter().filter_map(|x| if let Op::Bar1 { off, val } = x { Some((*off, *val)) } else { None }).collect();
         assert_eq!(&wr[..3], &[(B, 1), (0x3000, 0), (B, 0)]);
         assert!(wr.contains(&(0x3000, 0x82)) && wr.contains(&(0x3010, 0xffff)) && wr.contains(&(0x3014, 0)));
         assert_eq!(wr.iter().filter(|w| w.0 == 0x3038).count(), 4096);
         // FM uploads 4095 entries and sets 0x84 with the deviation words
         let mut o = Vec::new();
         modulate(&mut o, &Mod::Fm { rate: 1e3, dev: 1e6, shape: ModShape::Sine });
-        let wr: Vec<(u32, u32)> = o.iter().filter_map(|x| if let Op::Bar1 { off, val } = x { Some((*off, *val)) } else { None }).collect();
+        let wr: Vec<(u32, u32)> =
+            o.iter().filter_map(|x| if let Op::Bar1 { off, val } = x { Some((*off, *val)) } else { None }).collect();
         assert_eq!(wr.iter().filter(|w| w.0 == 0x3038).count(), 4095);
         assert!(wr.contains(&(0x3000, 0x84)) && wr.contains(&(0x3004, fm_dev_words(1e6)[0])));
         // the select registers always end at 0
@@ -732,7 +823,8 @@ mod tests {
             assert_eq!(wr.iter().rev().find(|w| w.0 == sel).map(|w| w.1), Some(0));
         }
         // start with a modulation: the modulation before the output goes on
-        let o = start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0x10, Mod::Am { rate: 10.0, depth: 1.0, shape: ModShape::Sine });
+        let o =
+            start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0x10, Mod::Am { rate: 10.0, depth: 1.0, shape: ModShape::Sine });
         let on = o.iter().rposition(|x| *x == Op::Bar1 { off: 0x3000, val: 1 }).unwrap();
         let am = o.iter().position(|x| *x == Op::Bar1 { off: 0x3000, val: 0x82 }).unwrap();
         assert!(am < on);
@@ -744,7 +836,15 @@ mod tests {
         let o = idle(6e9, 0.0, 1e9, 0);
         let code = gear(6e9, 0.0, false).code;
         assert_eq!(code, 0x15);
-        assert_eq!(o[..4], [Op::Power(false), Op::Bar1 { off: B, val: 1 }, Op::Bar1 { off: 0x3000, val: 0 }, Op::Bar1 { off: B, val: 0 }]);
+        assert_eq!(
+            o[..4],
+            [
+                Op::Power(false),
+                Op::Bar1 { off: B, val: 1 },
+                Op::Bar1 { off: 0x3000, val: 0 },
+                Op::Bar1 { off: B, val: 0 }
+            ]
+        );
         assert_eq!(o[4..], [Op::Gpio(code & 0x0f), Op::SleepMs(3), Op::Gpio(code)]);
         // already on the gear: no relay switching
         assert_eq!(idle(6e9, 0.0, 1e9, code), stop());
@@ -831,7 +931,9 @@ mod noise_mod_tests {
     fn rate_words(md: &Mod) -> Vec<u32> {
         let mut o = Vec::new();
         modulate(&mut o, md);
-        o.iter().filter_map(|x| if let Op::Bar1 { off: 0x302c..=0x3034, val } = x { Some(*val) } else { None }).collect()
+        o.iter()
+            .filter_map(|x| if let Op::Bar1 { off: 0x302c..=0x3034, val } = x { Some(*val) } else { None })
+            .collect()
     }
 
     #[test]
@@ -844,7 +946,10 @@ mod noise_mod_tests {
         // uniform -1..1: variance 1/3
         assert!((var - 1.0 / 3.0).abs() < 0.03, "{}", var);
         assert!(v.iter().all(|x| x.abs() <= 1.0));
-        assert_eq!(mod_table(&Mod::Am { rate: 1.0, depth: 0.5, shape: ModShape::Noise }), mod_table(&Mod::Am { rate: 9.0, depth: 0.5, shape: ModShape::Noise }));
+        assert_eq!(
+            mod_table(&Mod::Am { rate: 1.0, depth: 0.5, shape: ModShape::Noise }),
+            mod_table(&Mod::Am { rate: 9.0, depth: 0.5, shape: ModShape::Noise })
+        );
     }
 
     #[test]
@@ -857,7 +962,8 @@ mod noise_mod_tests {
 
     #[test]
     fn fm_noise_enables_with_bit_7() {
-        let o = start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0x10, Mod::Fm { rate: 1.0, dev: 1e3, shape: ModShape::Noise });
+        let o =
+            start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0x10, Mod::Fm { rate: 1.0, dev: 1e3, shape: ModShape::Noise });
         let on = o.iter().rposition(|x| *x == Op::Bar1 { off: 0x3000, val: 0x81 }).unwrap();
         assert_eq!(o[on - 1], Op::Bar1 { off: 0x3000, val: 0x80 });
         // PM: unipolar; FM: offset binary around 32768, sigma about 9900

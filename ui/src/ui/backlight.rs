@@ -23,7 +23,11 @@ pub fn apply(pct: u32) {
     let Ok(d) = std::fs::read_dir("/sys/class/backlight") else { return };
     for e in d.flatten() {
         let p = e.path();
-        let Some(max) = std::fs::read_to_string(p.join("max_brightness")).ok().and_then(|s| s.trim().parse::<u32>().ok()) else { continue };
+        let Some(max) =
+            std::fs::read_to_string(p.join("max_brightness")).ok().and_then(|s| s.trim().parse::<u32>().ok())
+        else {
+            continue;
+        };
         if let Err(err) = std::fs::write(p.join("brightness"), level(pct, max).to_string()) {
             eprintln!("oos-ui: backlight {}: {}", p.display(), err);
         }

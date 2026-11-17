@@ -9,8 +9,8 @@
 //! up is announced: the SCPI socket (`_scpi-raw._tcp`), VXI-11 (`_vxi-11._tcp`, on the scope, where port
 //! 111 is free) and HiSLIP (`_hislip._tcp`, on a computer).
 
-use std::net::{Ipv4Addr, UdpSocket};
 use std::net::SocketAddrV4;
+use std::net::{Ipv4Addr, UdpSocket};
 use std::time::{Duration, Instant};
 
 const MDNS_PORT: u16 = 5353;
@@ -100,7 +100,9 @@ fn host_label() -> String {
     }
     let n = b.iter().position(|&c| c == 0).unwrap_or(b.len());
     let s = String::from_utf8_lossy(&b[..n]);
-    let ok = (1..64).contains(&s.len()) && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') && !s.eq_ignore_ascii_case("localhost");
+    let ok = (1..64).contains(&s.len())
+        && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        && !s.eq_ignore_ascii_case("localhost");
     if ok {
         s.to_string()
     } else {
@@ -368,7 +370,9 @@ fn mcast_socket() -> Option<UdpSocket> {
         let mut addr: libc::sockaddr_in = std::mem::zeroed();
         addr.sin_family = libc::AF_INET as libc::sa_family_t;
         addr.sin_port = MDNS_PORT.to_be();
-        if libc::bind(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of_val(&addr) as libc::socklen_t) != 0 {
+        if libc::bind(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of_val(&addr) as libc::socklen_t)
+            != 0
+        {
             libc::close(fd);
             return None;
         }
@@ -388,7 +392,13 @@ fn join(sock: &UdpSocket, addr: [u8; 4]) {
         imr_interface: libc::in_addr { s_addr: u32::from(Ipv4Addr::from(addr)).to_be() },
     };
     unsafe {
-        libc::setsockopt(sock.as_raw_fd(), libc::IPPROTO_IP, libc::IP_ADD_MEMBERSHIP, &mreq as *const _ as *const _, std::mem::size_of_val(&mreq) as libc::socklen_t);
+        libc::setsockopt(
+            sock.as_raw_fd(),
+            libc::IPPROTO_IP,
+            libc::IP_ADD_MEMBERSHIP,
+            &mreq as *const _ as *const _,
+            std::mem::size_of_val(&mreq) as libc::socklen_t,
+        );
     }
 }
 
@@ -422,7 +432,16 @@ impl Announcer {
             Some(_) => eprintln!("oos-ui: announcing {} (identification {})", names.join(", "), IDENTIFICATION_PATH),
             None => eprintln!("oos-ui: announcement not available"),
         }
-        Announcer { sock, services: services.to_vec(), joined: Vec::new(), last: Vec::new(), burst: 2, next: Instant::now(), refresh: Instant::now() + Duration::from_secs(60), interfaces_next: Instant::now() }
+        Announcer {
+            sock,
+            services: services.to_vec(),
+            joined: Vec::new(),
+            last: Vec::new(),
+            burst: 2,
+            next: Instant::now(),
+            refresh: Instant::now() + Duration::from_secs(60),
+            interfaces_next: Instant::now(),
+        }
     }
 
     pub fn poll(&mut self) {
@@ -555,7 +574,10 @@ mod tests {
         let (mut id, services) = sample();
         id.addresses = prefer_primary(adapters.clone(), Some(lan));
         let advertised: Vec<Vec<u8>> = names(&advertisement(&id, &services))
-            .into_iter().filter(|(_, typ, _)| *typ == A).map(|(_, _, data)| data).collect();
+            .into_iter()
+            .filter(|(_, typ, _)| *typ == A)
+            .map(|(_, _, data)| data)
+            .collect();
         assert_eq!(advertised, vec![lan.to_vec(), vpn.to_vec(), virtual_net.to_vec()]);
         // A stale route must never inject an address absent from the adapter list.
         assert_eq!(prefer_primary(adapters.clone(), Some([10, 0, 0, 1])), vec![vpn, lan, virtual_net]);
@@ -575,8 +597,12 @@ mod tests {
         let port = |typ: &str| {
             recs.iter().find(|r| r.1 == SRV && r.0.ends_with(&format!(".{typ}.local"))).map(|r| srv_port(&r.2)).unwrap()
         };
-        assert_eq!((port("_scpi-raw._tcp"), port("_vxi-11._tcp"), port("_hislip._tcp"), port("_http._tcp")), (5555, 9009, 4880, 8080));
-        let txts: Vec<String> = recs.iter().filter(|r| r.1 == TXT).map(|r| String::from_utf8_lossy(&r.2).into_owned()).collect();
+        assert_eq!(
+            (port("_scpi-raw._tcp"), port("_vxi-11._tcp"), port("_hislip._tcp"), port("_http._tcp")),
+            (5555, 9009, 4880, 8080)
+        );
+        let txts: Vec<String> =
+            recs.iter().filter(|r| r.1 == TXT).map(|r| String::from_utf8_lossy(&r.2).into_owned()).collect();
         assert!(txts.iter().any(|t| t.contains("path=/lxi/identification")), "{txts:?}");
         assert!(txts.iter().any(|t| t.contains("_http._tcp") || t.contains("path=/lxi/identification")));
         // the page path is on the web services, and the socket records name their own ports
@@ -639,7 +665,9 @@ mod tests {
     fn legacy_dns_sd_echoes_exact_compressed_questions_without_cache_flush() {
         let (id, services) = sample();
         let mut query = Vec::new();
-        for value in [0x9876, 0, 2, 0, 0, 0] { put_u16(&mut query, value); }
+        for value in [0x9876, 0, 2, 0, 0, 0] {
+            put_u16(&mut query, value);
+        }
         put_name(&mut query, "_HTTP._tcp.local");
         put_u16(&mut query, PTR);
         put_u16(&mut query, IN); // no QU bit: an ephemeral source still requires unicast
@@ -719,7 +747,9 @@ mod tests {
             a.poll();
             match c.recv_from(&mut buf) {
                 Ok((n, _)) => break n,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
                 Err(error) => panic!("no discovery response: {error}"),
             }
         };

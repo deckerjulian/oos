@@ -70,7 +70,11 @@ pub fn slots(mask: u32, ch: usize) -> Vec<usize> {
         1 => (0..8).collect(),
         2 => {
             let lower = (0..ch).all(|c| mask & (1 << c) == 0);
-            if lower { vec![0, 1, 2, 3] } else { vec![4, 5, 6, 7] }
+            if lower {
+                vec![0, 1, 2, 3]
+            } else {
+                vec![4, 5, 6, 7]
+            }
         }
         _ => [[0, 2], [1, 3], [4, 6], [5, 7]][ch].to_vec(),
     }
@@ -123,7 +127,8 @@ pub fn channel_levels(runs: &[[Slot; 8]], mask: u32, vert: &[Vert; 4]) -> [Optio
         if lo > hi {
             return None;
         }
-        let means: Vec<f64> = sl.iter().map(|&k| runs.iter().map(|r| r[k].mean).sum::<f64>() / runs.len() as f64).collect();
+        let means: Vec<f64> =
+            sl.iter().map(|&k| runs.iter().map(|r| r[k].mean).sum::<f64>() / runs.len() as f64).collect();
         let (mlo, mhi) = means.iter().fold((f64::MAX, f64::MIN), |(a, b), &m| (a.min(m), b.max(m)));
         let swing = (hi - lo) as f64 * 16.0;
         if mhi - mlo > 0.1 * swing + AGREE_CODES {
@@ -191,7 +196,15 @@ mod tests {
             // the record path: words through seq::volts
             let rec = |raw: f64| crate::dho::seq::volts(&[word(raw, gain).round() as u16], scale, offset)[0] as f64;
             let tol = scale * 24.0 * gain / 7500.0 + 1e-6;
-            assert!((l.lo - rec(lo)).abs() < tol && (l.hi - rec(hi)).abs() < tol, "gain {} scale {}: {:?} vs {} {}", gain, scale, l, rec(lo), rec(hi));
+            assert!(
+                (l.lo - rec(lo)).abs() < tol && (l.hi - rec(hi)).abs() < tol,
+                "gain {} scale {}: {:?} vs {} {}",
+                gain,
+                scale,
+                l,
+                rec(lo),
+                rec(hi)
+            );
             assert!((l.mean - rec((lo + hi) / 2.0)).abs() < tol);
             assert!(!l.clipped);
         }
@@ -204,7 +217,10 @@ mod tests {
         assert_eq!(slots(1, 0), (0..8).collect::<Vec<_>>());
         assert_eq!((slots(0b1010, 1), slots(0b1010, 3)), (vec![0, 1, 2, 3], vec![4, 5, 6, 7]));
         assert_eq!((slots(0b0101, 0), slots(0b0101, 2)), (vec![0, 1, 2, 3], vec![4, 5, 6, 7]));
-        assert_eq!((slots(0xf, 0), slots(0xf, 1), slots(0xf, 2), slots(0xf, 3)), (vec![0, 2], vec![1, 3], vec![4, 6], vec![5, 7]));
+        assert_eq!(
+            (slots(0xf, 0), slots(0xf, 1), slots(0xf, 2), slots(0xf, 3)),
+            (vec![0, 2], vec![1, 3], vec![4, 6], vec![5, 7])
+        );
         // three channels run in 4-channel mode: the same slots, none for the channel that is off
         assert_eq!((slots(0b0111, 2), slots(0b0111, 3), slots(0b1011, 2)), (vec![4, 6], vec![], vec![]));
         let v = [Vert { scale: 1.0, offset: 0.0, gain: 1.0 }; 4];
@@ -243,7 +259,10 @@ mod tests {
         let a = [Slot { min: 1000, max: 2000, mean: 24000.0 }; 8];
         let b = [Slot { min: 1500, max: 3000, mean: 36000.0 }; 8];
         let l = channel_levels(&[a, b], 1, &v)[0].unwrap();
-        assert!((l.lo - volts(1000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9 && (l.hi - volts(3000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9);
+        assert!(
+            (l.lo - volts(1000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9
+                && (l.hi - volts(3000.0 * 16.0 + 8.0, &v[0])).abs() < 1e-9
+        );
         // a unit that never finishes: no reading
         assert!(run(&mut crate::dho::bus::Recorder::default(), &mut |_| {}).is_none());
     }

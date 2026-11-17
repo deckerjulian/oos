@@ -161,7 +161,8 @@ impl P<'_> {
         while self.peek().is_some_and(|c| c.is_ascii_digit()) && self.i - st < 3 {
             self.i += 1;
         }
-        let n: u32 = std::str::from_utf8(&self.s[st..self.i]).ok().and_then(|t| t.parse().ok()).ok_or("a number is missing")?;
+        let n: u32 =
+            std::str::from_utf8(&self.s[st..self.i]).ok().and_then(|t| t.parse().ok()).ok_or("a number is missing")?;
         if n > max {
             return Err(format!("{} is too large", n));
         }
@@ -451,7 +452,17 @@ mod tests {
         assert_eq!(t.offset_at(unix(2026, 7, 1, 0, 0)), (3 * 3600, true));
         // a rule with a negative time and one past midnight
         assert!(Tz::parse("<-02>2<-01>,M3.5.0/-1,M10.5.0/25").is_ok());
-        for bad in ["", "C", "CET", "CET-1CEST,M3.5.0", "CET-1CEST,M13.5.0,M10.5.0", "CET-1x", "<ab>1", "CET-1CEST,M3.0.0,M10.5.0", "Ä-1"] {
+        for bad in [
+            "",
+            "C",
+            "CET",
+            "CET-1CEST,M3.5.0",
+            "CET-1CEST,M13.5.0,M10.5.0",
+            "CET-1x",
+            "<ab>1",
+            "CET-1CEST,M3.0.0,M10.5.0",
+            "Ä-1",
+        ] {
             assert!(Tz::parse(bad).is_err(), "{}", bad);
         }
     }
@@ -474,7 +485,15 @@ mod tests {
         assert_eq!(l.text(), "2026-11-11 14:30:00");
         assert_eq!(tz.to_unix(&l), unix(2026, 11, 11, 13, 30));
         assert_eq!(Local::parse(" 2026-02-28T23:59:59 ").unwrap().s, 59);
-        for bad in ["2026-11-11", "2026-02-29 10:00", "2026-13-01 10:00", "1999-01-01 00:00", "2026-11-11 24:00", "x-y-z 1:2", "2026-11-11 10"] {
+        for bad in [
+            "2026-11-11",
+            "2026-02-29 10:00",
+            "2026-13-01 10:00",
+            "1999-01-01 00:00",
+            "2026-11-11 24:00",
+            "x-y-z 1:2",
+            "2026-11-11 10",
+        ] {
             assert!(Local::parse(bad).is_err(), "{}", bad);
         }
     }

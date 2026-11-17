@@ -232,7 +232,13 @@ mod tests {
         let n = (1u64 << EXP) as f64;
         let sum = (mean * n).round() as u64;
         let sq = ((mean * mean + sigma * sigma) * n).round() as u64;
-        Raw { cfg: (sq >> 32) as u32 & !0xff | 0x38, sum_lo: sum as u32, sum_hi: ((sum >> 32) as u32) << 16 | 0x00b8, sq_lo: sq as u32, sq_hi: (sq >> 32) as u32 }
+        Raw {
+            cfg: (sq >> 32) as u32 & !0xff | 0x38,
+            sum_lo: sum as u32,
+            sum_hi: ((sum >> 32) as u32) << 16 | 0x00b8,
+            sq_lo: sq as u32,
+            sq_hi: (sq >> 32) as u32,
+        }
     }
 
     // The readings of the unit session (2026-11-13, round 2), decoded and converted. Break it catches: the 16-bit
@@ -256,7 +262,15 @@ mod tests {
             assert!((r.mean - mean).abs() < 1e-6 && (r.mean_sq - mean * mean - sigma * sigma).abs() < 1e-3, "{:?}", r);
             let v = Vert { scale, offset, gain };
             let got = (volts(&r, Mode::Dc, &v), volts(&r, Mode::AcRms, &v));
-            assert!((got.0 - dc).abs() < 2e-5 && (got.1 - ac).abs() < 2e-5, "mean {} sigma {}: {:?} != ({}, {})", mean, sigma, got, dc, ac);
+            assert!(
+                (got.0 - dc).abs() < 2e-5 && (got.1 - ac).abs() < 2e-5,
+                "mean {} sigma {}: {:?} != ({}, {})",
+                mean,
+                sigma,
+                got,
+                dc,
+                ac
+            );
             let acdc = volts(&r, Mode::AcDcRms, &v);
             assert!((acdc - got.0.hypot(got.1)).abs() < 1e-9, "{} vs {:?}", acdc, got);
         }

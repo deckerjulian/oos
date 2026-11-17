@@ -5,14 +5,19 @@ use super::*;
 
 /// PR #8's layouts: Default is the card bar here, Minimal the compact bar (Display > Bottom bar); Studio is not taken.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Layout { Default, Minimal }
+enum Layout {
+    Default,
+    Minimal,
+}
 
 fn fresh(l: Layout) -> Ui {
     let mut u = crate::ui::testkit::demo_ui();
     u.m.bar_compact = l == Layout::Minimal;
     u.m.ch[1].on = true;
     u.relayout();
-    for _ in 0..10 { u.step(0.05); }
+    for _ in 0..10 {
+        u.step(0.05);
+    }
     u
 }
 
@@ -23,12 +28,16 @@ fn put_ref(u: &mut Ui, slot: usize, color: usize, v: Vec<f32>, dt: f64) {
 fn snap(u: &mut Ui) -> Canvas {
     let mut cv = Canvas::new(W, H);
     u.render(&mut cv);
-    for _ in 0..8 { u.step(0.05); }
+    for _ in 0..8 {
+        u.step(0.05);
+    }
     u.render(&mut cv);
     cv
 }
 
-fn shot(u: &mut Ui, name: &str) { shotc(u, name, &[]); }
+fn shot(u: &mut Ui, name: &str) {
+    shotc(u, name, &[]);
+}
 
 /// A picture and 3x crops (x, y, w, h) of it.
 fn shotc(u: &mut Ui, name: &str, crops: &[(i32, i32, i32, i32)]) {
@@ -38,8 +47,13 @@ fn shotc(u: &mut Ui, name: &str, crops: &[(i32, i32, i32, i32)]) {
         std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), crate::store::png_of(&cv)).unwrap();
         for (k, &(x, y, w, h)) in crops.iter().enumerate() {
             let mut big = Canvas::new(w * 3, h * 3);
-            for j in 0..h * 3 { for i in 0..w * 3 { big.px[(j * w * 3 + i) as usize] = cv.px[((y + j / 3) * W + x + i / 3) as usize]; } }
-            std::fs::write(std::path::Path::new(&dir).join(format!("{name}-c{k}.png")), crate::store::png_of(&big)).unwrap();
+            for j in 0..h * 3 {
+                for i in 0..w * 3 {
+                    big.px[(j * w * 3 + i) as usize] = cv.px[((y + j / 3) * W + x + i / 3) as usize];
+                }
+            }
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}-c{k}.png")), crate::store::png_of(&big))
+                .unwrap();
         }
     }
 }
@@ -50,21 +64,32 @@ fn sim_eye(l: Layout, place: EyePlace) -> Ui {
     assert!(u.sim_preset_set("PCIe 3.0"));
     u.sim_activate(Item::SimPlay);
     u.wait_sim_generation();
-    for _ in 0..10 { u.step(0.05); u.wait_sim_generation(); }
+    for _ in 0..10 {
+        u.step(0.05);
+        u.wait_sim_generation();
+    }
     u.key(key::RUNSTOP);
     u.m.view = AView::Eye;
     u.eye_set_place(place);
     for _ in 0..300 {
-        u.step(0.05); u.wait_sim_generation(); std::thread::sleep(std::time::Duration::from_millis(20));
-        if u.azr.eye.is_some() { break; }
+        u.step(0.05);
+        u.wait_sim_generation();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        if u.azr.eye.is_some() {
+            break;
+        }
     }
-    for _ in 0..10 { u.step(0.05); }
+    for _ in 0..10 {
+        u.step(0.05);
+    }
     u
 }
 
 #[test]
 fn shots_eye() {
-    if std::env::var_os("OOS_SHOTS").is_none() { return; }
+    if std::env::var_os("OOS_SHOTS").is_none() {
+        return;
+    }
     for (l, n) in [(Layout::Default, "d"), (Layout::Minimal, "m")] {
         for p in [EyePlace::Full, EyePlace::Side, EyePlace::Under] {
             let mut u = sim_eye(l, p);
@@ -75,10 +100,18 @@ fn shots_eye() {
 
 #[test]
 fn shots() {
-    if std::env::var_os("OOS_SHOTS").is_none() { return; }
+    if std::env::var_os("OOS_SHOTS").is_none() {
+        return;
+    }
     let names = [(Layout::Default, "d"), (Layout::Minimal, "m")];
     for (l, n) in names {
-        for (vn, v) in [("spec", AView::Spectrum), ("eye", AView::Eye), ("power", AView::Power), ("bode", AView::Bode), ("step", AView::Step)] {
+        for (vn, v) in [
+            ("spec", AView::Spectrum),
+            ("eye", AView::Eye),
+            ("power", AView::Power),
+            ("bode", AView::Bode),
+            ("step", AView::Step),
+        ] {
             let mut u = fresh(l);
             u.m.view = v;
             shot(&mut u, &format!("{n}-{vn}"));
@@ -110,7 +143,12 @@ fn shots() {
         let mut u = fresh(l);
         u.set_zoom(true);
         shot(&mut u, &format!("{n}-zoom"));
-        for (mn, m) in [("spectrum", MenuId::Spectrum), ("identify", MenuId::Identify), ("eyemenu", MenuId::Eye), ("bodemenu", MenuId::Bode)] {
+        for (mn, m) in [
+            ("spectrum", MenuId::Spectrum),
+            ("identify", MenuId::Identify),
+            ("eyemenu", MenuId::Eye),
+            ("bodemenu", MenuId::Bode),
+        ] {
             let mut u = fresh(l);
             u.open_menu(m);
             shot(&mut u, &format!("{n}-menu-{mn}"));
@@ -120,7 +158,9 @@ fn shots() {
 
 #[test]
 fn shots_more() {
-    if std::env::var_os("OOS_SHOTS").is_none() { return; }
+    if std::env::var_os("OOS_SHOTS").is_none() {
+        return;
+    }
     for (l, n) in [(Layout::Default, "d"), (Layout::Minimal, "m")] {
         let mut u = fresh(l);
         let _ = u.identify_text();
@@ -145,7 +185,9 @@ fn shots_more() {
 
 #[test]
 fn shots_stacked() {
-    if std::env::var_os("OOS_SHOTS").is_none() { return; }
+    if std::env::var_os("OOS_SHOTS").is_none() {
+        return;
+    }
     for (l, n) in [(Layout::Default, "d"), (Layout::Minimal, "m")] {
         let mut u = fresh(l);
         u.m.ch[2].on = true;
@@ -160,7 +202,9 @@ fn shots_stacked() {
 
 #[test]
 fn shots_pan() {
-    if std::env::var_os("OOS_SHOTS").is_none() { return; }
+    if std::env::var_os("OOS_SHOTS").is_none() {
+        return;
+    }
     for (l, n) in [(Layout::Default, "d"), (Layout::Minimal, "m")] {
         for (k, zs, zd) in [(0, 3usize, -0.3041e-3f32), (1, 6, 0.1237e-3), (2, 9, 2.0e-6)] {
             let mut u = fresh(l);

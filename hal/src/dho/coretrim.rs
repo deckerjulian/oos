@@ -101,7 +101,12 @@ pub fn order(hw: &mut dyn TrimHw, cur: &[i32; 8]) -> Result<Order, String> {
         let k = (0..8).max_by(|&a, &b| d[a].abs().total_cmp(&d[b].abs())).unwrap_or(0);
         let clear = d[k].abs() >= MIN_MOVE && (0..8).all(|j| j == k || d[j].abs() <= d[k].abs() / 4.0);
         if !clear {
-            return Err(format!("core {}: nudge of {} moved the slots by {:?} codes", n, NUDGE, d.map(|x| x.round() as i64)));
+            return Err(format!(
+                "core {}: nudge of {} moved the slots by {:?} codes",
+                n,
+                NUDGE,
+                d.map(|x| x.round() as i64)
+            ));
         }
         slot[n] = k;
         codes[n] = d[k] / NUDGE as f64;
@@ -153,7 +158,13 @@ pub struct Trimmed {
 /// `cur`: offsets now in the registers; `order`: from `order`; `lsb[k]`: codes per ADC step of slot k (16, or 32 with
 /// the ADC x2 of 0x105c), for the tolerance and the gates. Corrections are in register steps through the measured
 /// `order.codes`. Err when a matched channel does not converge in `ROUNDS`.
-pub fn trim(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &Order, lsb: &[f64; 8]) -> Result<Trimmed, String> {
+pub fn trim(
+    hw: &mut dyn TrimHw,
+    groups: &[(usize, Vec<usize>)],
+    cur: &[i32; 8],
+    order: &Order,
+    lsb: &[f64; 8],
+) -> Result<Trimmed, String> {
     let g = gate(hw, groups, lsb)?;
     trim_gated(hw, groups, cur, order, lsb, &g)
 }
@@ -200,7 +211,14 @@ pub fn gate(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], lsb: &[f64; 8])
 }
 
 /// `trim` after `gate` (and `order`) ran: matches the channels `g` let through, starting from its readings.
-pub fn trim_gated(hw: &mut dyn TrimHw, groups: &[(usize, Vec<usize>)], cur: &[i32; 8], order: &Order, lsb: &[f64; 8], g: &Gate) -> Result<Trimmed, String> {
+pub fn trim_gated(
+    hw: &mut dyn TrimHw,
+    groups: &[(usize, Vec<usize>)],
+    cur: &[i32; 8],
+    order: &Order,
+    lsb: &[f64; 8],
+    g: &Gate,
+) -> Result<Trimmed, String> {
     let mut o = *cur;
     let core_of = |slot: usize| order.slot.iter().position(|&k| k == slot);
     let (matched, skipped) = (g.matched, g.skipped);
@@ -444,7 +462,19 @@ mod tests {
     const ERR: [f64; 8] = [1.4, -1.3, 0.2, -0.9, 1.1, -1.5, 0.7, 0.0];
 
     fn model(level: f64) -> Model {
-        Model { err: ERR, reg: [3, -2, 0, 1, 0, 4, -1, 0], perm: PERM, level, lsb: 16.0, reg_codes: 8.0, writes: 0, noise: 0.0, seed: 1, lag: 0.0, prev: [3, -2, 0, 1, 0, 4, -1, 0] }
+        Model {
+            err: ERR,
+            reg: [3, -2, 0, 1, 0, 4, -1, 0],
+            perm: PERM,
+            level,
+            lsb: 16.0,
+            reg_codes: 8.0,
+            writes: 0,
+            noise: 0.0,
+            seed: 1,
+            lag: 0.0,
+            prev: [3, -2, 0, 1, 0, 4, -1, 0],
+        }
     }
 
     // Break it catches: an overlay that writes modes it does not hold over the cal file, a byte layout that does not
@@ -529,7 +559,11 @@ mod tests {
         let t = trim(&mut m, &groups, &cur, &ORD, &[16.0; 8]).unwrap();
         assert_eq!(t.matched, 0b11);
         for (_, sl) in &groups {
-            let tot: Vec<f64> = sl.iter().map(|&k| PERM.iter().position(|&p| p == k).unwrap()).map(|n| total(&m.0, n, t.offsets[n])).collect();
+            let tot: Vec<f64> = sl
+                .iter()
+                .map(|&k| PERM.iter().position(|&p| p == k).unwrap())
+                .map(|n| total(&m.0, n, t.offsets[n]))
+                .collect();
             let mean = tot.iter().sum::<f64>() / tot.len() as f64;
             assert!(tot.iter().all(|x| (x - mean).abs() <= TOL + 1e-9), "{:?}", tot);
         }
@@ -556,9 +590,20 @@ mod tests {
             (m.noise, m.seed, m.reg_codes, m.lag) = (0.3, seed, 8.8, 0.6);
             let cur = m.reg;
             let ord = order(&mut m, &cur).unwrap();
-            assert!(ord.codes.iter().all(|c| (c - 8.8).abs() < 0.2), "seed {}: register step measured after settling {:?}", seed, ord.codes);
-            let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ord, &[16.0; 8]).unwrap_or_else(|e| panic!("seed {}: {}", seed, e));
-            assert_eq!((t.matched, m.reg), (1, t.offsets), "seed {}: matched, the registers hold the kept offsets", seed);
+            assert!(
+                ord.codes.iter().all(|c| (c - 8.8).abs() < 0.2),
+                "seed {}: register step measured after settling {:?}",
+                seed,
+                ord.codes
+            );
+            let t = trim(&mut m, &[(0, (0..8).collect())], &cur, &ord, &[16.0; 8])
+                .unwrap_or_else(|e| panic!("seed {}: {}", seed, e));
+            assert_eq!(
+                (t.matched, m.reg),
+                (1, t.offsets),
+                "seed {}: matched, the registers hold the kept offsets",
+                seed
+            );
             let tot: Vec<f64> = (0..8).map(|n| total(&m, n, t.offsets[n])).collect();
             let mean = tot.iter().sum::<f64>() / 8.0;
             assert!(tot.iter().all(|x| (x - mean).abs() <= ACCEPT + 0.2), "seed {}: {:?}", seed, tot);

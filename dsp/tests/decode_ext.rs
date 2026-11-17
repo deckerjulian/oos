@@ -139,13 +139,24 @@ fn uart9_multidrop_on_rs485_pair() {
     add_noise(&mut b, 0.15, 2);
     let pair = diff(&a, &b);
     let p = uart9(&pair, dt, baud, 0.0, 0.4, false);
-    let got: Vec<(bool, u32, Option<u32>, bool)> = p.iter().map(|x| (matches!(x.kind, Kind::Addr { .. }), x.value, x.value2, x.ok)).collect();
+    let got: Vec<(bool, u32, Option<u32>, bool)> =
+        p.iter().map(|x| (matches!(x.kind, Kind::Addr { .. }), x.value, x.value2, x.ok)).collect();
     assert_eq!(
         got,
-        [(true, 0x01, Some(1), true), (false, 0x22, Some(0), true), (false, 0x33, Some(0), true), (true, 0xfe, Some(1), true), (false, 0x44, Some(0), true), (false, 0x00, Some(0), true)]
+        [
+            (true, 0x01, Some(1), true),
+            (false, 0x22, Some(0), true),
+            (false, 0x33, Some(0), true),
+            (true, 0xfe, Some(1), true),
+            (false, 0x44, Some(0), true),
+            (false, 0x00, Some(0), true)
+        ]
     );
     // the single wire A against ground does not decode through the hum, the pair does
-    assert_ne!(uart9(&a, dt, baud, 2.5, 0.4, false).iter().map(|x| x.value).collect::<Vec<_>>(), p.iter().map(|x| x.value).collect::<Vec<_>>());
+    assert_ne!(
+        uart9(&a, dt, baud, 2.5, 0.4, false).iter().map(|x| x.value).collect::<Vec<_>>(),
+        p.iter().map(|x| x.value).collect::<Vec<_>>()
+    );
     // swapped wires = the other polarity convention
     assert_eq!(uart9(&diff(&b, &a), dt, baud, 0.0, 0.4, true).len(), words.len());
 }
@@ -172,19 +183,27 @@ fn dmx512_dimmer_frame_and_rdm() {
     assert_eq!(vals(&p, "MAB"), [12; 4]);
     assert_eq!(vals(&p, "SC"), [0x00, 0xcc, 0xcc, 0xcc]);
     // dimmer slots: level and slot number
-    let slots: Vec<(u32, Option<u32>)> = p.iter().filter(|x| x.kind == Kind::Data).take(24).map(|x| (x.value, x.value2)).collect();
+    let slots: Vec<(u32, Option<u32>)> =
+        p.iter().filter(|x| x.kind == Kind::Data).take(24).map(|x| (x.value, x.value2)).collect();
     assert_eq!(slots, levels.iter().enumerate().map(|(i, &l)| (l as u32, Some(i as u32 + 1))).collect::<Vec<_>>());
     // RDM fields
-    let dst: Vec<(u32, Option<u32>)> = p.iter().filter(|x| label(x.kind) == "DST").map(|x| (x.value, x.value2)).collect();
+    let dst: Vec<(u32, Option<u32>)> =
+        p.iter().filter(|x| label(x.kind) == "DST").map(|x| (x.value, x.value2)).collect();
     assert_eq!(dst, [(0x1234_5678, Some(0x7a70)); 3]);
-    assert_eq!(p.iter().find(|x| label(x.kind) == "SRC").map(|x| (x.value, x.value2)), Some((0x0000_0001, Some(0x4d41))));
+    assert_eq!(
+        p.iter().find(|x| label(x.kind) == "SRC").map(|x| (x.value, x.value2)),
+        Some((0x0000_0001, Some(0x4d41)))
+    );
     assert_eq!(vals(&p, "TN"), [5, 6, 6]);
     assert_eq!(vals(&p, "CC"), [0x20, 0x30, 0x30]);
     assert_eq!(vals(&p, "PID"), [0x0060, 0x00f0, 0x00f0]);
     assert_eq!(vals(&p, "SUBDEV"), [0, 3, 3]);
     assert_eq!(vals(&p, "PDL"), [0, 2, 2]);
     assert_eq!(vals(&p, "LEN"), [24, 26, 26]);
-    assert_eq!(p.iter().filter(|x| x.kind == Kind::Data).skip(24).map(|x| x.value).collect::<Vec<_>>(), [0x00, 0x2a, 0x00, 0x2a]);
+    assert_eq!(
+        p.iter().filter(|x| x.kind == Kind::Data).skip(24).map(|x| x.value).collect::<Vec<_>>(),
+        [0x00, 0x2a, 0x00, 0x2a]
+    );
     assert_eq!(oks(&p, "CRC"), [true, true, false]);
     assert!(p.iter().filter(|x| label(x.kind) != "CRC").all(|x| x.ok), "{:?}", lvo(&p));
 }
@@ -204,7 +223,10 @@ fn dmx512_short_break_and_bad_stop_bits() {
     let dt = 0.25e-6;
     let p = dmx512(&w.done().sample(dt, 50e-6), dt, 2.5, 0.5, false);
     assert_eq!(p.iter().filter(|x| x.kind == Kind::Break).count(), 1);
-    assert_eq!(p.iter().filter(|x| x.kind == Kind::Data).map(|x| (x.value, x.ok)).collect::<Vec<_>>(), [(0x7f, false), (0x01, true)]);
+    assert_eq!(
+        p.iter().filter(|x| x.kind == Kind::Data).map(|x| (x.value, x.ok)).collect::<Vec<_>>(),
+        [(0x7f, false), (0x01, true)]
+    );
 }
 
 #[test]
@@ -388,7 +410,13 @@ fn onewire_search_rom_and_errors() {
         ops.extend([Ow::ReadBit(b), Ow::ReadBit(!b), Ow::WriteBit(b)]);
     }
     // nobody answers the next search; then a reset without presence
-    ops.extend([Ow::Reset { presence: true }, Ow::Write(0xec), Ow::ReadBit(true), Ow::ReadBit(true), Ow::WriteBit(true)]);
+    ops.extend([
+        Ow::Reset { presence: true },
+        Ow::Write(0xec),
+        Ow::ReadBit(true),
+        Ow::ReadBit(true),
+        Ow::WriteBit(true),
+    ]);
     ops.push(Ow::Reset { presence: false });
     // READ ROM with a corrupted CRC
     let mut bad = rom;
@@ -438,7 +466,8 @@ fn onewire_search_rom_and_errors() {
 #[test]
 fn onewire_overdrive_switch() {
     let rom = rom_with_crc([0x3a, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
-    let mut ops = vec![Ow::Reset { presence: true }, Ow::Write(0x3c), Ow::Speed(true), Ow::Write(0x4e), Ow::Write(0x81)];
+    let mut ops =
+        vec![Ow::Reset { presence: true }, Ow::Write(0x3c), Ow::Speed(true), Ow::Write(0x4e), Ow::Write(0x81)];
     ops.extend([Ow::Reset { presence: true }, Ow::Write(0x69)]);
     ops.extend(rom.iter().map(|&b| Ow::Write(b)));
     ops.extend([Ow::Write(0xbe), Ow::Read(0x12), Ow::Speed(false), Ow::Reset { presence: true }, Ow::Write(0xcc)]);
@@ -562,12 +591,29 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
     let mut r = rng(77);
     let d8: Vec<u8> = (0..8).map(|_| r() as u8).collect();
     let d20: Vec<u8> = (0..20).map(|_| r() as u8).collect();
-    let d64: Vec<u8> = (0..64).map(|i| if i < 16 { 0xff } else if i < 32 { 0x00 } else { r() as u8 }).collect();
+    let d64: Vec<u8> = (0..64)
+        .map(|i| {
+            if i < 16 {
+                0xff
+            } else if i < 32 {
+                0x00
+            } else {
+                r() as u8
+            }
+        })
+        .collect();
     let frames = [
         fd(0x123, false, true, d8.clone()),
         fd(0x1234_567, true, true, d20.clone()),
         fd(0x7ff, false, true, d64.clone()),
-        FdFrame { id: 0x055, ext: false, fd: true, brs: false, esi: true, data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+        FdFrame {
+            id: 0x055,
+            ext: false,
+            fd: true,
+            brs: false,
+            esi: true,
+            data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        },
         FdFrame { id: 0x0f0, ext: false, fd: false, brs: false, esi: false, data: vec![0xde, 0xad] },
         FdFrame { id: 0x1fff_ffff, ext: true, fd: false, brs: false, esi: false, data: vec![0xff; 8] },
         fd(0x000, false, true, vec![]),
@@ -580,7 +626,19 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
     let mut v = l.sample(dt, 20.0 / nom);
     add_noise(&mut v, 0.1, 21);
     let p = can_fd(&v, dt, nom, dat, 1.65, 0.3, false);
-    assert_eq!(ids(&p), vec![(0x123, false, false), (0x1234_567, true, false), (0x7ff, false, false), (0x055, false, false), (0x0f0, false, false), (0x1fff_ffff, true, false), (0, false, false), (0x100, false, false)]);
+    assert_eq!(
+        ids(&p),
+        vec![
+            (0x123, false, false),
+            (0x1234_567, true, false),
+            (0x7ff, false, false),
+            (0x055, false, false),
+            (0x0f0, false, false),
+            (0x1fff_ffff, true, false),
+            (0, false, false),
+            (0x100, false, false)
+        ]
+    );
     assert_eq!(vals(&p, "DLC"), [8, 11, 15, 9, 2, 8, 0, 2]);
     let mut want: Vec<u32> = Vec::new();
     for d in [&d8, &d20, &d64] {
@@ -676,7 +734,16 @@ fn fr_logic(frames: &[FrFrame], tss: usize, flip: Option<usize>) -> Vec<bool> {
 fn flexray_frames_on_rxd() {
     let frames = [
         fr(5, 3, (0..8).collect(), false),
-        FrFrame { ppi: false, nf: true, sync: true, startup: true, id: 2047, cycle: 63, payload: (0..16).map(|i| 0xf0 ^ i).collect(), channel_b: true },
+        FrFrame {
+            ppi: false,
+            nf: true,
+            sync: true,
+            startup: true,
+            id: 2047,
+            cycle: 63,
+            payload: (0..16).map(|i| 0xf0 ^ i).collect(),
+            channel_b: true,
+        },
         fr(100, 0, vec![], false),
     ];
     let bits = fr_logic(&frames, 11, None);
@@ -696,7 +763,10 @@ fn flexray_frames_on_rxd() {
     want.extend((0..16).map(|i| 0xf0 ^ i));
     assert_eq!(vals(&p, "D"), want);
     assert_eq!(oks(&p, "CRC"), [true; 3]);
-    assert_eq!(p.iter().filter(|x| x.kind == Kind::Crc).map(|x| x.value2).collect::<Vec<_>>(), [Some(0), Some(1), Some(0)]);
+    assert_eq!(
+        p.iter().filter(|x| x.kind == Kind::Crc).map(|x| x.value2).collect::<Vec<_>>(),
+        [Some(0), Some(1), Some(0)]
+    );
     assert!(p.iter().all(|x| x.ok), "{:?}", lvo(&p));
 }
 
@@ -705,7 +775,8 @@ fn flexray_differential_pair() {
     // BP/BM: idle both 2.5 V (0 V difference), Data_1 = BP 3.0 / BM 2.0, Data_0 the inverse
     let frames = [fr(0x1a, 9, vec![0x12, 0x34, 0x56, 0x78], false), fr(0x1b, 10, vec![0xaa, 0x55], false)];
     let tb = 1e-7;
-    let (mut bp, mut bm) = (Levels { seg: vec![(0.0, 2.5)], tr: tb / 10.0 }, Levels { seg: vec![(0.0, 2.5)], tr: tb / 10.0 });
+    let (mut bp, mut bm) =
+        (Levels { seg: vec![(0.0, 2.5)], tr: tb / 10.0 }, Levels { seg: vec![(0.0, 2.5)], tr: tb / 10.0 });
     let mut t = 30.0 * tb;
     for f in &frames {
         for b in gen::flexray_bits(f, 9) {
@@ -817,7 +888,15 @@ fn noise_and_garbage_never_panic() {
         }
         // the DS2482 interpreter on decoded garbage and on random packets
         let _ = ds2482(&i2c(&v, &w, 1.65, 0.2));
-        let kinds = [Kind::Start, Kind::RepStart, Kind::Stop, Kind::Addr { read: false }, Kind::Addr { read: true }, Kind::Data, Kind::Ack];
+        let kinds = [
+            Kind::Start,
+            Kind::RepStart,
+            Kind::Stop,
+            Kind::Addr { read: false },
+            Kind::Addr { read: true },
+            Kind::Data,
+            Kind::Ack,
+        ];
         let pk: Vec<Packet> = (0..3000)
             .map(|i| {
                 let k = kinds[(r() % kinds.len() as u32) as usize];

@@ -41,7 +41,9 @@ impl Protocol for Usb {
     /// The speed of the SYNC, PID names, bytes.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         Some(match p.kind {
-            Kind::Field("SYNC") => format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" }),
+            Kind::Field("SYNC") => {
+                format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" })
+            }
             Kind::Field("PID") if p.ok => x3::usb_pid_name(p.value as u8).to_string(),
             Kind::Field("PID") => format!("PID {:02X} !", p.value),
             Kind::Data => format!("{:02X}", p.value),
@@ -118,8 +120,18 @@ mod tests {
             let d = p.demo().unwrap();
             let dt = 1e-8;
             let n = (d.period / dt) as usize;
-            let waves: Vec<Option<Vec<f32>>> = d.lines.iter().map(|f| f.as_ref().map(|f| (0..n).map(|k| f(k as f64 * dt) as f32).collect())).collect();
-            let l = Lines { lines: std::array::from_fn(|k| waves[k].as_deref()), dt, thr: 1.65, hy: 0.1, opt: [0; OPTS], sh: Shared::default(), chans: [None; 4], src: [None; 4] };
+            let waves: Vec<Option<Vec<f32>>> =
+                d.lines.iter().map(|f| f.as_ref().map(|f| (0..n).map(|k| f(k as f64 * dt) as f32).collect())).collect();
+            let l = Lines {
+                lines: std::array::from_fn(|k| waves[k].as_deref()),
+                dt,
+                thr: 1.65,
+                hy: 0.1,
+                opt: [0; OPTS],
+                sh: Shared::default(),
+                chans: [None; 4],
+                src: [None; 4],
+            };
             assert!(!p.decode(&l).unwrap().is_empty(), "{}", p.name());
         }
     }

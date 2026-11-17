@@ -27,7 +27,10 @@ impl MeasModule for Rate {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let Some(v) = x.wave(x.row[0]) else {
-            return Values { values: ids.iter().map(|&id| (id, f64::NAN)).collect(), quality: "NRZ estimate: insufficient transitions" };
+            return Values {
+                values: ids.iter().map(|&id| (id, f64::NAN)).collect(),
+                quality: "NRZ estimate: insufficient transitions",
+            };
         };
         let analysis = oos_dsp::measure::analyze(v, x.dt);
         let interval = analysis.est_ui;
@@ -41,7 +44,21 @@ impl MeasModule for Rate {
         } else {
             "NRZ estimate: transition intervals / fitted bit counts"
         };
-        let values = ids.iter().map(|&id| (id, if !ok { f64::NAN } else if id == UNIT_INTERVAL { interval } else { 1.0 / interval })).collect();
+        let values = ids
+            .iter()
+            .map(|&id| {
+                (
+                    id,
+                    if !ok {
+                        f64::NAN
+                    } else if id == UNIT_INTERVAL {
+                        interval
+                    } else {
+                        1.0 / interval
+                    },
+                )
+            })
+            .collect();
         Values { values, quality }
     }
 

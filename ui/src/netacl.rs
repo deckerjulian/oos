@@ -86,7 +86,10 @@ impl Acl {
             IpAddr::V6(a) => a.to_ipv4_mapped().map_or(ip, IpAddr::V4),
             v4 => v4,
         };
-        if self.is_open() || ip.is_loopback() || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net) {
+        if self.is_open()
+            || ip.is_loopback()
+            || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net)
+        {
             return true;
         }
         self.onlink6 && ip.is_ipv6() && onlink().into_iter().any(|(net, n)| masked(ip, n) == masked(IpAddr::V6(net), n))
@@ -317,9 +320,21 @@ mod tests {
     fn an_entry_from_the_screen() {
         assert_eq!(canonical("").as_deref(), Ok(""));
         assert_eq!(canonical("  ").as_deref(), Ok(""));
-        assert_eq!(canonical("192.0.2.7/24, onlink6 fd00::1:0/8 10.1.2.3").as_deref(), Ok("192.0.2.0/24 fd00::/8 10.1.2.3/32 onlink6"));
+        assert_eq!(
+            canonical("192.0.2.7/24, onlink6 fd00::1:0/8 10.1.2.3").as_deref(),
+            Ok("192.0.2.0/24 fd00::/8 10.1.2.3/32 onlink6")
+        );
         assert_eq!(canonical("169.254.0.0/16").as_deref(), Ok("169.254.0.0/16"));
-        for (s, bad) in [("192.0.2.0/33", "192.0.2.0/33"), ("192.0.2.0/24 x", "x"), ("300.1.1.1", "300.1.1.1"), ("::ffff:192.0.2.1", "::ffff:192.0.2.1"), ("::ffff:c000:201/128", "::ffff:c000:201/128"), ("fe80::1%eth0", "fe80::1%eth0"), ("010.0.0.1", "010.0.0.1"), ("192.0.2.0/24;reboot", "192.0.2.0/24;reboot")] {
+        for (s, bad) in [
+            ("192.0.2.0/33", "192.0.2.0/33"),
+            ("192.0.2.0/24 x", "x"),
+            ("300.1.1.1", "300.1.1.1"),
+            ("::ffff:192.0.2.1", "::ffff:192.0.2.1"),
+            ("::ffff:c000:201/128", "::ffff:c000:201/128"),
+            ("fe80::1%eth0", "fe80::1%eth0"),
+            ("010.0.0.1", "010.0.0.1"),
+            ("192.0.2.0/24;reboot", "192.0.2.0/24;reboot"),
+        ] {
             assert_eq!(canonical(s), Err(format!("Not an address prefix: {}", bad)), "{}", s);
         }
         // what is written reads back as the same list, and the firewall's checks take every word of it
@@ -358,7 +373,10 @@ mod tests {
         // every network once, the link-local one only alone
         let m24 = v4("255.255.255.0");
         let ll = (v4("169.254.124.87"), v4("255.255.0.0"));
-        assert_eq!(lans(&[ll, (v4("10.20.0.51"), m24), (v4("192.168.177.75"), m24), (v4("10.20.0.9"), m24)]), vec!["10.20.0.0/24", "192.168.177.0/24"]);
+        assert_eq!(
+            lans(&[ll, (v4("10.20.0.51"), m24), (v4("192.168.177.75"), m24), (v4("10.20.0.9"), m24)]),
+            vec!["10.20.0.0/24", "192.168.177.0/24"]
+        );
         assert_eq!(lans(&[ll]), vec!["169.254.0.0/16"]);
         assert!(lans(&[]).is_empty());
     }

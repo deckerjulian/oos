@@ -29,7 +29,15 @@ impl Default for Cfg {
     fn default() -> Cfg {
         // values of the hand-over of 2026-11-02 21:12 (2.5 M points, trigger in the middle, ratio 1, fsm mode 1)
         let h = Shadows::HANDOVER;
-        Cfg { n: 4000, start: 1_248_000, ratio: 1, fsm: 1, sh: [h.s4004, h.s4008, h.s400c, h.s1000, h.s1010, h.s4080], arm: false, play4: false }
+        Cfg {
+            n: 4000,
+            start: 1_248_000,
+            ratio: 1,
+            fsm: 1,
+            sh: [h.s4004, h.s4008, h.s400c, h.s1000, h.s1010, h.s4080],
+            arm: false,
+            play4: false,
+        }
     }
 }
 
@@ -40,7 +48,15 @@ impl Cfg {
         Window { n: self.n, start: self.start, ratio: self.ratio, fsm: self.fsm, la: false, avg: false }
     }
     pub fn shadows(&self) -> Shadows {
-        Shadows { s4004: self.sh[0], s4008: self.sh[1], s400c: self.sh[2], s1000: self.sh[3], s1010: self.sh[4], s4080: self.sh[5], ..Shadows::HANDOVER }
+        Shadows {
+            s4004: self.sh[0],
+            s4008: self.sh[1],
+            s400c: self.sh[2],
+            s1000: self.sh[3],
+            s1010: self.sh[4],
+            s4080: self.sh[5],
+            ..Shadows::HANDOVER
+        }
     }
 }
 
@@ -86,7 +102,11 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
         };
         let mut sh = cfg.shadows();
         let win = cfg.window();
-        status(format!("mode: {}, read {}", if cfg.arm { "arm + read" } else { "read only" }, if cfg.play4 { "type-4 play" } else { "play last" }));
+        status(format!(
+            "mode: {}, read {}",
+            if cfg.arm { "arm + read" } else { "read only" },
+            if cfg.play4 { "type-4 play" } else { "play last" }
+        ));
         let mut buf = vec![0u8; 2 * cfg.n as usize];
         let mut seq = 0u64;
         let mut prev: Vec<u16> = Vec::new();
@@ -102,7 +122,16 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
                     sh.s4080 = v;
                     count = bar.rd(0x4010).wrapping_sub(bar.rd(0x4014)).wrapping_add(1);
                 }
-                info = format!("pre-stop {} ({:#x}) done {} after {:.1} ms 0x4080 {:#x} count {} 0x4034 {:#x}", stopped, st, done, ms, v, count, bar.rd(0x4034));
+                info = format!(
+                    "pre-stop {} ({:#x}) done {} after {:.1} ms 0x4080 {:#x} count {} 0x4034 {:#x}",
+                    stopped,
+                    st,
+                    done,
+                    ms,
+                    v,
+                    count,
+                    bar.rd(0x4034)
+                );
                 if !done {
                     status(format!("arm: no acquisition within 1 s ({})", info));
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -120,10 +149,15 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
                     seq += 1;
                     let words: Vec<u16> = buf.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
                     // log: does each cycle give new data? (changed words against the previous frame)
-                    let changed = if prev.len() == words.len() { words.iter().zip(&prev).filter(|(a, b)| a != b).count() } else { words.len() };
+                    let changed = if prev.len() == words.len() {
+                        words.iter().zip(&prev).filter(|(a, b)| a != b).count()
+                    } else {
+                        words.len()
+                    };
                     if seq <= 20 || seq % 30 == 0 {
                         let sum: u64 = words.iter().map(|&w| w as u64).sum();
-                        let (mn, mx) = (words.iter().min().copied().unwrap_or(0), words.iter().max().copied().unwrap_or(0));
+                        let (mn, mx) =
+                            (words.iter().min().copied().unwrap_or(0), words.iter().max().copied().unwrap_or(0));
                         eprintln!(
                             "oos-ui fpga: frame {} t {:.2} s sum {:#x} min {} max {} changed {} status {:#x} {}",
                             seq,

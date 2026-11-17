@@ -137,7 +137,10 @@ mod tests {
         assert_eq!(PassFail { event: Event::Pass, ..p }.word(), 156 | 1 << 31);
         assert_eq!(PassFail { source: Source::Zone, ..p }.word(), 156 | 1 << 29);
         // the zone trigger's own set-up: 68 clocks, zone, idle high, on fail
-        assert_eq!(PassFail { width: 68.0 * 6.4e-9, source: Source::Zone, event: Event::Fail, idle_high: true }.word(), 0x6000_0044);
+        assert_eq!(
+            PassFail { width: 68.0 * 6.4e-9, source: Source::Zone, event: Event::Fail, idle_high: true }.word(),
+            0x6000_0044
+        );
         let all = PassFail { width: 1.0, source: Source::Zone, event: Event::Pass, idle_high: true };
         assert_eq!(all.word(), 0xe0ff_ffff);
     }

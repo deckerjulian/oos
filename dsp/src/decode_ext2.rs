@@ -58,7 +58,8 @@ fn msb(bits: &[(f64, bool)]) -> u64 {
 /// at least one idle cycle (as the protocol requires), else the next start bit counts into the reset.
 pub fn swd(swclk: &[f32], swdio: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
     let io = states(swdio, thr, hyst);
-    let bits: Vec<(f64, bool)> = rising(swclk, thr, hyst).into_iter().filter_map(|t| at(&io, t).map(|b| (t, b))).collect();
+    let bits: Vec<(f64, bool)> =
+        rising(swclk, thr, hyst).into_iter().filter_map(|t| at(&io, t).map(|b| (t, b))).collect();
     let n = bits.len();
     let mut out = Vec::new();
     let mut i = 0;
@@ -197,7 +198,15 @@ pub struct JtagShift {
 
 /// Walks the TAP controller: state changes (with the time of the edge) and completed scans. Without a known `start`
 /// state the walk begins after 5 consecutive TMS-high edges (which reach Test-Logic-Reset from any state).
-fn jtag_walk(tck: &[f32], tms: &[f32], tdi: Option<&[f32]>, tdo: Option<&[f32]>, start: Option<TapState>, thr: f32, hyst: f32) -> (Vec<(f64, TapState)>, Vec<JtagShift>) {
+fn jtag_walk(
+    tck: &[f32],
+    tms: &[f32],
+    tdi: Option<&[f32]>,
+    tdo: Option<&[f32]>,
+    start: Option<TapState>,
+    thr: f32,
+    hyst: f32,
+) -> (Vec<(f64, TapState)>, Vec<JtagShift>) {
     let ms = states(tms, thr, hyst);
     let di = tdi.map(|v| states(v, thr, hyst));
     let dout = tdo.map(|v| states(v, thr, hyst));
@@ -230,7 +239,12 @@ fn jtag_walk(tck: &[f32], tms: &[f32], tdi: Option<&[f32]>, tdo: Option<&[f32]>,
             trans.push((t, ns));
             match ns {
                 TapState::CaptureDr | TapState::CaptureIr => {
-                    cur = Some(JtagShift { ir: ns == TapState::CaptureIr, t: Vec::new(), tdi: Vec::new(), tdo: Vec::new() });
+                    cur = Some(JtagShift {
+                        ir: ns == TapState::CaptureIr,
+                        t: Vec::new(),
+                        tdi: Vec::new(),
+                        tdo: Vec::new(),
+                    });
                 }
                 TapState::UpdateDr | TapState::UpdateIr | TapState::TestLogicReset => {
                     if let Some(c) = cur.take() {
@@ -254,7 +268,15 @@ pub fn jtag_states(tck: &[f32], tms: &[f32], start: Option<TapState>, thr: f32, 
 }
 
 /// All IR/DR scans with their full length (`tdi.len()` bits).
-pub fn jtag_shifts(tck: &[f32], tms: &[f32], tdi: &[f32], tdo: Option<&[f32]>, start: Option<TapState>, thr: f32, hyst: f32) -> Vec<JtagShift> {
+pub fn jtag_shifts(
+    tck: &[f32],
+    tms: &[f32],
+    tdi: &[f32],
+    tdo: Option<&[f32]>,
+    start: Option<TapState>,
+    thr: f32,
+    hyst: f32,
+) -> Vec<JtagShift> {
     jtag_walk(tck, tms, Some(tdi), tdo, start, thr, hyst).1
 }
 
@@ -263,9 +285,21 @@ pub fn jtag_shifts(tck: &[f32], tms: &[f32], tdi: &[f32], tdo: Option<&[f32]>, s
 /// `Field("IR")` / `Field("DR")`: value = TDI bits, value2 = TDO bits (None without TDO), first shifted bit = LSB.
 /// Scans longer than 32 bits are split into 32-bit packets, the continuation packets labelled "IR+" / "DR+". The
 /// bit count of a scan is in `jtag_shifts`.
-pub fn jtag(tck: &[f32], tms: &[f32], tdi: &[f32], tdo: Option<&[f32]>, start: Option<TapState>, thr: f32, hyst: f32) -> Vec<Packet> {
+pub fn jtag(
+    tck: &[f32],
+    tms: &[f32],
+    tdi: &[f32],
+    tdo: Option<&[f32]>,
+    start: Option<TapState>,
+    thr: f32,
+    hyst: f32,
+) -> Vec<Packet> {
     let (trans, shifts) = jtag_walk(tck, tms, Some(tdi), tdo, start, thr, hyst);
-    let mut out: Vec<Packet> = trans.iter().filter(|x| x.1 == TapState::TestLogicReset && !(x.0 == 0.0 && start.is_some())).map(|x| tag(x.0, x.0, "!TLR", true)).collect();
+    let mut out: Vec<Packet> = trans
+        .iter()
+        .filter(|x| x.1 == TapState::TestLogicReset && !(x.0 == 0.0 && start.is_some()))
+        .map(|x| tag(x.0, x.0, "!TLR", true))
+        .collect();
     let val = |b: &[bool]| b.iter().enumerate().fold(0u32, |v, (k, &x)| v | (x as u32) << k);
     for s in &shifts {
         for (c, ch) in s.t.chunks(32).enumerate() {
@@ -301,7 +335,14 @@ pub struct QspiCfg {
 }
 
 impl QspiCfg {
-    pub const fn new(cmd_lines: u8, addr_lines: u8, data_lines: u8, addr_bytes: u8, dummy_cycles: u32, mode: bool) -> QspiCfg {
+    pub const fn new(
+        cmd_lines: u8,
+        addr_lines: u8,
+        data_lines: u8,
+        addr_bytes: u8,
+        dummy_cycles: u32,
+        mode: bool,
+    ) -> QspiCfg {
         QspiCfg { cmd_lines, addr_lines, data_lines, addr_bytes, dummy_cycles, mode }
     }
 }
@@ -386,7 +427,8 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
         0x90 => c(3, 1, 1, false, 0),
         0xab => c(0, 1, 1, false, 24),
         0x4b => c(0, 1, 1, false, 32),
-        0x01 | 0x04 | 0x05 | 0x06 | 0x11 | 0x15 | 0x31 | 0x35 | 0x60 | 0x66 | 0x75 | 0x7a | 0x99 | 0x9f | 0xb7 | 0xb9 | 0xc7 | 0xe9 | 0xf5 | 0xff => c(0, 1, 1, false, 0),
+        0x01 | 0x04 | 0x05 | 0x06 | 0x11 | 0x15 | 0x31 | 0x35 | 0x60 | 0x66 | 0x75 | 0x7a | 0x99 | 0x9f | 0xb7
+        | 0xb9 | 0xc7 | 0xe9 | 0xf5 | 0xff => c(0, 1, 1, false, 0),
         _ => return None,
     };
     if !qpi {
@@ -398,7 +440,14 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
         _ if cfg.dummy_cycles > 0 || cfg.mode => qpi_dummy,
         _ => 0,
     };
-    Some(QspiCfg { cmd_lines: 4, addr_lines: 4, data_lines: 4, addr_bytes: cfg.addr_bytes, dummy_cycles: dummy, mode: false })
+    Some(QspiCfg {
+        cmd_lines: 4,
+        addr_lines: 4,
+        data_lines: 4,
+        addr_bytes: cfg.addr_bytes,
+        dummy_cycles: dummy,
+        mode: false,
+    })
 }
 
 /// Quad-SPI flash / PSRAM: CS# active low frames, all lines sampled on the rising SCK edge (SPI mode 0 or 3), MSB
@@ -453,11 +502,23 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
             *k += n;
             Some(r)
         };
-        let cmd_l = if auto { if qpi { 4 } else { 1 } } else { lines(cfg.cmd_lines) };
+        let cmd_l = if auto {
+            if qpi {
+                4
+            } else {
+                1
+            }
+        } else {
+            lines(cfg.cmd_lines)
+        };
         let Some((op, t0, t1)) = take(cmd_l, 8, &mut k) else { continue };
         let op = op as u8;
         out.push(field(t0, t1, "CMD", op as u32, None, true));
-        let f = if auto { qspi_opcode_cfg(op, qpi, if ab4 { 4 } else { 3 }, cfg.dummy_cycles).unwrap_or(*cfg) } else { *cfg };
+        let f = if auto {
+            qspi_opcode_cfg(op, qpi, if ab4 { 4 } else { 3 }, cfg.dummy_cycles).unwrap_or(*cfg)
+        } else {
+            *cfg
+        };
         if auto {
             let only_cmd = k == cyc.len();
             match op {
@@ -696,7 +757,18 @@ pub fn i3c(sda: &[f32], scl: &[f32], i3c_addrs: &[u8], thr: f32, hyst: f32) -> V
     ev.extend(edges(sda, thr, hyst).iter().map(|e| (e.t, if e.rising { 2 } else { 1 })));
     ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let high = |s: &[Option<bool>], t: f64| at(s, t).unwrap_or(true);
-    let mut d = I3c { out: Vec::new(), ph: I3cPh::Idle, buf: Vec::new(), in_frame: false, after_start: false, daa: false, ccc: None, known: i3c_addrs.to_vec(), user: i3c_addrs.to_vec(), hdr: false };
+    let mut d = I3c {
+        out: Vec::new(),
+        ph: I3cPh::Idle,
+        buf: Vec::new(),
+        in_frame: false,
+        after_start: false,
+        daa: false,
+        ccc: None,
+        known: i3c_addrs.to_vec(),
+        user: i3c_addrs.to_vec(),
+        hdr: false,
+    };
     let mut exit_cnt = 0;
     for (t, k) in ev {
         if d.hdr {
@@ -817,7 +889,14 @@ pub fn spdif(v: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
             blk += 1;
         }
         let vflag = bits >> 24 & 1 == 1;
-        out.push(pk(e[i], e[j], Kind::Sample { right: right == Some(true) }, bits & 0xff_ffff, Some(bits >> 24), bits.count_ones() % 2 == 0 && !vflag));
+        out.push(pk(
+            e[i],
+            e[j],
+            Kind::Sample { right: right == Some(true) },
+            bits & 0xff_ffff,
+            Some(bits >> 24),
+            bits.count_ones() % 2 == 0 && !vflag,
+        ));
         i = j;
     }
     out
@@ -872,7 +951,8 @@ pub fn spdif_sample_rate(cs: &[u8; 24]) -> Option<u32> {
 // USB Power Delivery
 
 /// 4b5b symbols of USB PD (r3.1 table 5-1) as 5-bit numbers, first transmitted bit = LSB.
-pub const PD_4B5B: [u8; 16] = [0x1e, 0x09, 0x14, 0x15, 0x0a, 0x0b, 0x0e, 0x0f, 0x12, 0x13, 0x16, 0x17, 0x1a, 0x1b, 0x1c, 0x1d];
+pub const PD_4B5B: [u8; 16] =
+    [0x1e, 0x09, 0x14, 0x15, 0x0a, 0x0b, 0x0e, 0x0f, 0x12, 0x13, 0x16, 0x17, 0x1a, 0x1b, 0x1c, 0x1d];
 pub const PD_SYNC1: u8 = 0x18;
 pub const PD_SYNC2: u8 = 0x11;
 pub const PD_SYNC3: u8 = 0x06;
@@ -982,11 +1062,26 @@ pub fn usbpd_msg_name(hdr: u16) -> &'static str {
 /// A decoded power data object (USB PD r3.1 section 6.4.1).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pdo {
-    Fixed { volts: f64, amps: f64 },
-    Battery { min_v: f64, max_v: f64, watts: f64 },
-    Variable { min_v: f64, max_v: f64, amps: f64 },
+    Fixed {
+        volts: f64,
+        amps: f64,
+    },
+    Battery {
+        min_v: f64,
+        max_v: f64,
+        watts: f64,
+    },
+    Variable {
+        min_v: f64,
+        max_v: f64,
+        amps: f64,
+    },
     /// SPR programmable power supply (augmented PDO)
-    Pps { min_v: f64, max_v: f64, amps: f64 },
+    Pps {
+        min_v: f64,
+        max_v: f64,
+        amps: f64,
+    },
     Other(u32),
 }
 
@@ -1187,7 +1282,14 @@ pub mod gen {
         JtagToSwd,
         Idle(u32),
         /// request (APnDP, RnW, register byte address 0/4/8/C), target ACK, data; `bad_parity` flips the data parity
-        Xfer { ap: bool, read: bool, a: u8, ack: u8, data: u32, bad_parity: bool },
+        Xfer {
+            ap: bool,
+            read: bool,
+            a: u8,
+            ack: u8,
+            data: u32,
+            bad_parity: bool,
+        },
     }
 
     /// SWD waveforms (SWCLK, SWDIO), host and target, all changes on the falling SWCLK edge; turnaround = high
@@ -1528,7 +1630,12 @@ pub mod gen {
     #[derive(Clone, Debug)]
     pub enum PdFrame {
         /// `sop` = index of the ordered set (0 SOP, 1 SOP', 2 SOP'', 3 SOP'_Debug, 4 SOP''_Debug)
-        Msg { sop: usize, header: u16, data: Vec<u32>, bad_crc: bool },
+        Msg {
+            sop: usize,
+            header: u16,
+            data: Vec<u32>,
+            bad_crc: bool,
+        },
         HardReset,
         CableReset,
     }

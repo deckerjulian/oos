@@ -55,7 +55,11 @@ const ANNOUNCE_GAP: f64 = 1.0;
 /// A name of the scope: one DNS label of letters, digits and hyphens (RFC 952/1123), not starting or ending with a
 /// hyphen, up to 63 characters.
 pub fn name_ok(s: &str) -> bool {
-    !s.is_empty() && s.len() <= NAME_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') && !s.starts_with('-') && !s.ends_with('-')
+    !s.is_empty()
+        && s.len() <= NAME_MAX
+        && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+        && !s.starts_with('-')
+        && !s.ends_with('-')
 }
 
 /// The digits that tell this unit from others of its model: the last six of the serial number's final run of digits
@@ -70,7 +74,8 @@ fn serial_tag(serial: Option<&str>) -> Option<String> {
 
 /// The name of a unit from its model and serial number: `dho924s-123456`; `oos` without either.
 pub fn default_name(model: &str, serial: Option<&str>) -> String {
-    let m: String = model.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>().to_ascii_lowercase();
+    let m: String =
+        model.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>().to_ascii_lowercase();
     let mut n = match (m.is_empty(), serial_tag(serial)) {
         (true, None) => "oos".to_string(),
         (true, Some(t)) => format!("oos-{}", t),
@@ -185,9 +190,15 @@ pub enum Data {
     /// not sent while the services listen on IPv4 only (`Responder::records`), kept for when they do
     Aaaa(Ipv6Addr),
     Ptr(Name),
-    Srv { port: u16, target: Name },
+    Srv {
+        port: u16,
+        target: Name,
+    },
     Txt(Vec<String>),
-    Nsec { next: Name, types: Vec<u16> },
+    Nsec {
+        next: Name,
+        types: Vec<u16>,
+    },
 }
 
 impl Data {
@@ -375,7 +386,8 @@ pub fn parse(b: &[u8]) -> Option<Msg> {
 /// `parse`, with where the questions end and where the last record ends (bytes after it are not looked at).
 pub(crate) fn parse_ends(b: &[u8]) -> Option<(Msg, usize, usize)> {
     let counts = [u16_at(b, 4)?, u16_at(b, 6)?, u16_at(b, 8)?, u16_at(b, 10)?];
-    let mut m = Msg { id: u16_at(b, 0)?, flags: u16_at(b, 2)?, qs: Vec::new(), an: Vec::new(), ns: Vec::new(), ar: Vec::new() };
+    let mut m =
+        Msg { id: u16_at(b, 0)?, flags: u16_at(b, 2)?, qs: Vec::new(), an: Vec::new(), ns: Vec::new(), ar: Vec::new() };
     let mut p = 12;
     for _ in 0..counts[0] {
         let (name, e) = read_name(b, p)?;
@@ -387,7 +399,8 @@ pub(crate) fn parse_ends(b: &[u8]) -> Option<(Msg, usize, usize)> {
     for (sec, &n) in counts[1..].iter().enumerate() {
         for _ in 0..n {
             let (name, e) = read_name(b, p)?;
-            let (rtype, class, ttl, len) = (u16_at(b, e)?, u16_at(b, e + 2)?, u32_at(b, e + 4)?, u16_at(b, e + 8)? as usize);
+            let (rtype, class, ttl, len) =
+                (u16_at(b, e)?, u16_at(b, e + 2)?, u32_at(b, e + 4)?, u16_at(b, e + 8)? as usize);
             let canon = read_rdata(b, e + 10, len, rtype)?;
             let r = Rr { name, rtype, class: class & !TOP, flush: class & TOP != 0, ttl, canon };
             [&mut m.an, &mut m.ns, &mut m.ar][sec].push(r);
@@ -618,8 +631,14 @@ enum Phase {
     Off,
     /// on without an interface
     Idle,
-    Probe { sent: u32, at: f64 },
-    Announce { sent: u32, at: f64 },
+    Probe {
+        sent: u32,
+        at: f64,
+    },
+    Announce {
+        sent: u32,
+        at: f64,
+    },
     Run,
 }
 
@@ -650,7 +669,18 @@ pub struct Responder {
 
 impl Responder {
     pub fn new(seed: u64) -> Responder {
-        Responder { cfg: Config::default(), ifaces: Vec::new(), host_n: 1, inst_n: 1, phase: Phase::Off, conflicts: Vec::new(), seed: seed | 1, sent: Vec::new(), mine: Vec::new(), log: Vec::new() }
+        Responder {
+            cfg: Config::default(),
+            ifaces: Vec::new(),
+            host_n: 1,
+            inst_n: 1,
+            phase: Phase::Off,
+            conflicts: Vec::new(),
+            seed: seed | 1,
+            sent: Vec::new(),
+            mine: Vec::new(),
+            log: Vec::new(),
+        }
     }
 
     fn rand(&mut self) -> f64 {
@@ -726,7 +756,12 @@ impl Responder {
         for s in &self.cfg.services {
             let ty = Self::service_type(&s.kind);
             let inst = self.instance(&s.kind);
-            v.push(Rec::new(dname(&["_services", "_dns-sd", "_udp", "local"]), Data::Ptr(ty.clone()), TTL_OTHER, false));
+            v.push(Rec::new(
+                dname(&["_services", "_dns-sd", "_udp", "local"]),
+                Data::Ptr(ty.clone()),
+                TTL_OTHER,
+                false,
+            ));
             v.push(Rec::new(ty, Data::Ptr(inst.clone()), TTL_OTHER, false));
             v.push(Rec::new(inst.clone(), Data::Srv { port: s.port, target: host.clone() }, TTL_HOST, true));
             v.push(Rec::new(inst, Data::Txt(s.txt.clone()), TTL_OTHER, true));
@@ -877,9 +912,18 @@ impl Responder {
             if sent == 0 {
                 let ifs: Vec<String> = self.ifaces.iter().map(|i| i.name.clone()).collect();
                 let services: Vec<&str> = self.cfg.services.iter().map(|s| s.kind.as_str()).collect();
-                self.log.push(format!("mDNS: {}.local on {}, services {}", self.host_label(), ifs.join(" "), if services.is_empty() { "none".into() } else { services.join(" ") }));
+                self.log.push(format!(
+                    "mDNS: {}.local on {}, services {}",
+                    self.host_label(),
+                    ifs.join(" "),
+                    if services.is_empty() { "none".into() } else { services.join(" ") }
+                ));
             }
-            self.phase = if sent + 1 >= ANNOUNCES { Phase::Run } else { Phase::Announce { sent: sent + 1, at: now + ANNOUNCE_GAP } };
+            self.phase = if sent + 1 >= ANNOUNCES {
+                Phase::Run
+            } else {
+                Phase::Announce { sent: sent + 1, at: now + ANNOUNCE_GAP }
+            };
         }
         out
     }
@@ -891,7 +935,8 @@ impl Responder {
         for (n, _) in &names {
             w.question(n, T_ANY, CLASS_IN | TOP);
         }
-        let recs: Vec<Rec> = self.records(ifc).into_iter().filter(|r| r.unique && names.iter().any(|(n, _)| same(n, &r.name))).collect();
+        let recs: Vec<Rec> =
+            self.records(ifc).into_iter().filter(|r| r.unique && names.iter().any(|(n, _)| same(n, &r.name))).collect();
         for r in &recs {
             w.rec(r, r.ttl, false);
         }
@@ -917,19 +962,29 @@ impl Responder {
                 let ll = a.octets()[0] == 169 && a.octets()[1] == 254;
                 ll || ifc.v4.is_some_and(|(x, m)| u32::from(x) & u32::from(m) == u32::from(a) & u32::from(m))
             }
-            IpAddr::V6(a) => (a.segments()[0] & 0xffc0) == 0xfe80 || ifc.v6.iter().any(|x| x.segments()[..4] == a.segments()[..4]),
+            IpAddr::V6(a) => {
+                (a.segments()[0] & 0xffc0) == 0xfe80 || ifc.v6.iter().any(|x| x.segments()[..4] == a.segments()[..4])
+            }
         }
     }
 
     fn conflict(&mut self, now: f64, owner: Owner, why: &str) {
         self.conflicts.push(now);
         if matches!(self.phase, Phase::Probe { .. }) {
-            let old = if owner == Owner::Host { format!("{}.local", self.host_label()) } else { format!("\"{}\"", self.inst_label()) };
+            let old = if owner == Owner::Host {
+                format!("{}.local", self.host_label())
+            } else {
+                format!("\"{}\"", self.inst_label())
+            };
             match owner {
                 Owner::Host => self.host_n += 1,
                 Owner::Instance => self.inst_n += 1,
             }
-            let new = if owner == Owner::Host { format!("{}.local", self.host_label()) } else { format!("\"{}\"", self.inst_label()) };
+            let new = if owner == Owner::Host {
+                format!("{}.local", self.host_label())
+            } else {
+                format!("\"{}\"", self.inst_label())
+            };
             self.log.push(format!("mDNS: {} is taken ({}), now {}", old, why, new));
             self.restart(now, 0.0);
         } else {
@@ -947,7 +1002,11 @@ impl Responder {
             IpAddr::V4(a) => i.v4.is_some_and(|(x, m)| u32::from(x) & u32::from(m) == u32::from(a) & u32::from(m)),
             IpAddr::V6(a) => i.v6.contains(&a),
         };
-        let Some(ifc) = self.ifaces.iter().find(|i| i.index == iface).or_else(|| self.ifaces.iter().find(by_addr)).cloned() else { return Vec::new() };
+        let Some(ifc) =
+            self.ifaces.iter().find(|i| i.index == iface).or_else(|| self.ifaces.iter().find(by_addr)).cloned()
+        else {
+            return Vec::new();
+        };
         if !self.cfg.on || !m.standard() {
             return Vec::new();
         }
@@ -996,15 +1055,23 @@ impl Responder {
     fn tie_break(&mut self, now: f64, m: &Msg, ifc: &Iface) {
         let recs = self.records(ifc);
         for (name, _) in self.unique_names() {
-            let mut theirs: Vec<(u16, u16, Vec<u8>)> = m.ns.iter().filter(|r| same(&r.name, &name)).map(|r| (r.class, r.rtype, r.canon.clone())).collect();
+            let mut theirs: Vec<(u16, u16, Vec<u8>)> =
+                m.ns.iter().filter(|r| same(&r.name, &name)).map(|r| (r.class, r.rtype, r.canon.clone())).collect();
             if theirs.is_empty() {
                 continue;
             }
-            let mut ours: Vec<(u16, u16, Vec<u8>)> = recs.iter().filter(|r| r.unique && same(&r.name, &name)).map(|r| (CLASS_IN, r.data.rtype(), r.data.canon())).collect();
+            let mut ours: Vec<(u16, u16, Vec<u8>)> = recs
+                .iter()
+                .filter(|r| r.unique && same(&r.name, &name))
+                .map(|r| (CLASS_IN, r.data.rtype(), r.data.canon()))
+                .collect();
             theirs.sort();
             ours.sort();
             if ours < theirs {
-                self.log.push(format!("mDNS: another host probes for {} too and wins the tie, probing again in 1 s", name.join(".")));
+                self.log.push(format!(
+                    "mDNS: another host probes for {} too and wins the tie, probing again in 1 s",
+                    name.join(".")
+                ));
                 self.conflicts.push(now);
                 self.phase = Phase::Probe { sent: 0, at: now + 1.0 };
                 return;
@@ -1022,7 +1089,10 @@ impl Responder {
             if q.qclass != CLASS_IN && q.qclass != T_ANY {
                 continue;
             }
-            let hits: Vec<&Rec> = recs.iter().filter(|r| same(&r.name, &q.name) && (q.qtype == T_ANY || q.qtype == r.data.rtype())).collect();
+            let hits: Vec<&Rec> = recs
+                .iter()
+                .filter(|r| same(&r.name, &q.name) && (q.qtype == T_ANY || q.qtype == r.data.rtype()))
+                .collect();
             if hits.is_empty() {
                 // a name of the scope without that type: say which types it has (§6.1)
                 if uniq.iter().any(|(n, _)| same(n, &q.name)) {
@@ -1049,15 +1119,25 @@ impl Responder {
         let ar = self.additional(&recs, &an);
         let legacy = src.port() != PORT;
         if legacy {
-            return responses(m.id, &m.qs, &an, &ar, Style::Legacy).into_iter().map(|pkt| Out { iface: ifc.index, dest: Dest::To(src), pkt }).collect();
+            return responses(m.id, &m.qs, &an, &ar, Style::Legacy)
+                .into_iter()
+                .map(|pkt| Out { iface: ifc.index, dest: Dest::To(src), pkt })
+                .collect();
         }
         if all_qu || !to_group {
-            return responses(0, &[], &an, &ar, Style::Normal).into_iter().map(|pkt| Out { iface: ifc.index, dest: Dest::To(src), pkt }).collect();
+            return responses(0, &[], &an, &ar, Style::Normal)
+                .into_iter()
+                .map(|pkt| Out { iface: ifc.index, dest: Dest::To(src), pkt })
+                .collect();
         }
         // multicast: a record sent in the last second is not sent again, except to defend against a probe (§6)
         self.sent.retain(|(_, t)| now - t < 1.0);
         if m.ns.is_empty() {
-            an.retain(|r| !self.sent.iter().any(|((i, n, t), _)| *i == ifc.index && *t == r.data.rtype() && *n == r.name.join(".").to_ascii_lowercase()));
+            an.retain(|r| {
+                !self.sent.iter().any(|((i, n, t), _)| {
+                    *i == ifc.index && *t == r.data.rtype() && *n == r.name.join(".").to_ascii_lowercase()
+                })
+            });
             if an.is_empty() {
                 return Vec::new();
             }
@@ -1066,7 +1146,10 @@ impl Responder {
             self.sent.push(((ifc.index, r.name.join(".").to_ascii_lowercase(), r.data.rtype()), now));
         }
         let dest = if src.is_ipv4() { Dest::Group4 } else { Dest::Group6 };
-        responses(0, &[], &an, &ar, Style::Normal).into_iter().map(|pkt| Out { iface: ifc.index, dest: dest.clone(), pkt }).collect()
+        responses(0, &[], &an, &ar, Style::Normal)
+            .into_iter()
+            .map(|pkt| Out { iface: ifc.index, dest: dest.clone(), pkt })
+            .collect()
     }
 
     /// The NSEC record of a name: the types the scope has for it.
@@ -1083,12 +1166,17 @@ impl Responder {
         let host = self.host();
         let mut want: Vec<Rec> = Vec::new();
         let addrs = |want: &mut Vec<Rec>| {
-            want.extend(recs.iter().filter(|r| same(&r.name, &host) && matches!(r.data, Data::A(_) | Data::Aaaa(_))).cloned());
+            want.extend(
+                recs.iter().filter(|r| same(&r.name, &host) && matches!(r.data, Data::A(_) | Data::Aaaa(_))).cloned(),
+            );
         };
         for a in an {
             match &a.data {
                 Data::Ptr(target) => {
-                    let inst: Vec<&Rec> = recs.iter().filter(|r| same(&r.name, target) && matches!(r.data, Data::Srv { .. } | Data::Txt(_))).collect();
+                    let inst: Vec<&Rec> = recs
+                        .iter()
+                        .filter(|r| same(&r.name, target) && matches!(r.data, Data::Srv { .. } | Data::Txt(_)))
+                        .collect();
                     if !inst.is_empty() {
                         want.extend(inst.into_iter().cloned());
                         addrs(&mut want);
@@ -1099,7 +1187,9 @@ impl Responder {
                 _ => {}
             }
         }
-        if want.iter().chain(an).any(|r| matches!(r.data, Data::A(_))) && !recs.iter().any(|r| matches!(r.data, Data::Aaaa(_))) {
+        if want.iter().chain(an).any(|r| matches!(r.data, Data::A(_)))
+            && !recs.iter().any(|r| matches!(r.data, Data::Aaaa(_)))
+        {
             want.push(Self::nsec(recs, &host));
         }
         let mut out: Vec<Rec> = Vec::new();
@@ -1148,7 +1238,15 @@ mod net {
 
     fn opt(fd: i32, level: i32, name: i32, v: i32) -> io::Result<()> {
         // SAFETY: a pointer to an int of the size given, for the duration of the call
-        let r = unsafe { libc::setsockopt(fd, level, name, &v as *const i32 as *const libc::c_void, std::mem::size_of::<i32>() as libc::socklen_t) };
+        let r = unsafe {
+            libc::setsockopt(
+                fd,
+                level,
+                name,
+                &v as *const i32 as *const libc::c_void,
+                std::mem::size_of::<i32>() as libc::socklen_t,
+            )
+        };
         if r == 0 {
             Ok(())
         } else {
@@ -1175,13 +1273,21 @@ mod net {
                 let mut a: libc::sockaddr_in6 = std::mem::zeroed();
                 a.sin6_family = libc::AF_INET6 as libc::sa_family_t;
                 a.sin6_port = PORT.to_be();
-                libc::bind(fd, &a as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
+                libc::bind(
+                    fd,
+                    &a as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                )
             } else {
                 opt(fd, libc::IPPROTO_IP, libc::IP_PKTINFO, 1)?;
                 let mut a: libc::sockaddr_in = std::mem::zeroed();
                 a.sin_family = libc::AF_INET as libc::sa_family_t;
                 a.sin_port = PORT.to_be();
-                libc::bind(fd, &a as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+                libc::bind(
+                    fd,
+                    &a as *const _ as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                )
             };
             if r != 0 {
                 return Err(io::Error::last_os_error());
@@ -1219,7 +1325,12 @@ mod net {
                     Some(l) => l.contains(&name),
                     None => !flag(libc::IFF_LOOPBACK),
                 };
-                if !wanted || !flag(libc::IFF_UP) || !flag(libc::IFF_RUNNING) || !flag(libc::IFF_MULTICAST) || a.ifa_addr.is_null() {
+                if !wanted
+                    || !flag(libc::IFF_UP)
+                    || !flag(libc::IFF_RUNNING)
+                    || !flag(libc::IFF_MULTICAST)
+                    || a.ifa_addr.is_null()
+                {
                     continue;
                 }
                 let index = libc::if_nametoindex(a.ifa_name);
@@ -1236,7 +1347,11 @@ mod net {
                 match (*a.ifa_addr).sa_family as i32 {
                     libc::AF_INET if out[i].v4.is_none() => {
                         let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
-                        let mask = if a.ifa_netmask.is_null() { 0 } else { u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr) };
+                        let mask = if a.ifa_netmask.is_null() {
+                            0
+                        } else {
+                            u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr)
+                        };
                         out[i].v4 = Some((Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), Ipv4Addr::from(mask)));
                     }
                     libc::AF_INET6 => {
@@ -1267,7 +1382,11 @@ mod net {
                 let a = &*p;
                 p = a.ifa_next;
                 let f = a.ifa_flags;
-                if f & (libc::IFF_LOOPBACK as u32) != 0 || f & (libc::IFF_UP as u32) == 0 || a.ifa_addr.is_null() || a.ifa_netmask.is_null() {
+                if f & (libc::IFF_LOOPBACK as u32) != 0
+                    || f & (libc::IFF_UP as u32) == 0
+                    || a.ifa_addr.is_null()
+                    || a.ifa_netmask.is_null()
+                {
                     continue;
                 }
                 if (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
@@ -1358,7 +1477,15 @@ mod net {
                     let Some((a, _)) = ifc.v4 else { return };
                     let ia = libc::in_addr { s_addr: u32::from(a).to_be() };
                     // SAFETY: a pointer to an in_addr of the size given
-                    unsafe { libc::setsockopt(self.s4.as_raw_fd(), libc::IPPROTO_IP, libc::IP_MULTICAST_IF, &ia as *const _ as *const libc::c_void, std::mem::size_of::<libc::in_addr>() as libc::socklen_t) };
+                    unsafe {
+                        libc::setsockopt(
+                            self.s4.as_raw_fd(),
+                            libc::IPPROTO_IP,
+                            libc::IP_MULTICAST_IF,
+                            &ia as *const _ as *const libc::c_void,
+                            std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+                        )
+                    };
                     self.s4.send_to(&o.pkt, (GROUP4, PORT))
                 }
                 Dest::Group6 => {
@@ -1406,7 +1533,12 @@ mod net {
                 }
                 libc::AF_INET6 => {
                     let a = &*(&from as *const _ as *const libc::sockaddr_in6);
-                    SocketAddr::V6(std::net::SocketAddrV6::new(Ipv6Addr::from(a.sin6_addr.s6_addr), u16::from_be(a.sin6_port), 0, a.sin6_scope_id))
+                    SocketAddr::V6(std::net::SocketAddrV6::new(
+                        Ipv6Addr::from(a.sin6_addr.s6_addr),
+                        u16::from_be(a.sin6_port),
+                        0,
+                        a.sin6_scope_id,
+                    ))
                 }
                 _ => return Some((0, SocketAddr::from(([0, 0, 0, 0], 0)), 0, false)),
             };
@@ -1494,7 +1626,8 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
     let now = || t0.elapsed().as_secs_f64();
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64) ^ std::process::id() as u64;
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
+        ^ std::process::id() as u64;
     let mut r = Responder::new(seed);
     let mut sock: Option<net::Net> = None;
     let mut ifs: Vec<Iface> = Vec::new();
@@ -1593,7 +1726,12 @@ mod tests {
     const ETH: u32 = 2;
 
     fn eth(a: [u8; 4]) -> Iface {
-        Iface { index: ETH, name: "eth0".into(), v4: Some((Ipv4Addr::from(a), Ipv4Addr::new(255, 255, 255, 0))), v6: Vec::new() }
+        Iface {
+            index: ETH,
+            name: "eth0".into(),
+            v4: Some((Ipv4Addr::from(a), Ipv4Addr::new(255, 255, 255, 0))),
+            v6: Vec::new(),
+        }
     }
 
     fn cfg() -> Config {
@@ -1700,7 +1838,12 @@ mod tests {
         assert!(parse(&p).is_none());
         // names in record data: a PTR whose target is compressed
         let mut w = Wr::new(0, RESPONSE);
-        let r = Rec::new(dname(&["_http", "_tcp", "local"]), Data::Ptr(dname(&["Scope", "_http", "_tcp", "local"])), 4500, false);
+        let r = Rec::new(
+            dname(&["_http", "_tcp", "local"]),
+            Data::Ptr(dname(&["Scope", "_http", "_tcp", "local"])),
+            4500,
+            false,
+        );
         w.rec(&r, 4500, false);
         w.counts([0, 1, 0, 0]);
         assert_eq!(w.b.len(), 12 + 18 + 10 + 8, "the target points back");
@@ -1779,7 +1922,10 @@ mod tests {
         assert!(p.qs.iter().all(|q| q.qtype == T_ANY && q.qu));
         assert!(p.qs.iter().any(|q| q.name == dname(&["dho924s-123456", "local"])));
         assert!(p.qs.iter().any(|q| q.name.join(".") == "Rigol DHO924S OOS (123456)._http._tcp.local"));
-        assert!(has(&p.ns, "dho924s-123456.local", T_A) && has(&p.ns, "Rigol DHO924S OOS (123456)._scpi-raw._tcp.local", T_SRV));
+        assert!(
+            has(&p.ns, "dho924s-123456.local", T_A)
+                && has(&p.ns, "Rigol DHO924S OOS (123456)._scpi-raw._tcp.local", T_SRV)
+        );
         // announcements: two, a second apart, every record with cache flush on the unique ones
         assert_eq!(ann.len(), 2);
         assert!(ann[0].0 - probes[2].0 >= 0.25 - 1e-9);
@@ -1788,7 +1934,10 @@ mod tests {
         assert!(a.is_response() && a.flags & 0x0400 != 0);
         let addr = a.an.iter().find(|r| r.rtype == T_A).unwrap();
         assert!(addr.flush && addr.ttl == 120 && addr.canon == vec![169, 254, 7, 9]);
-        assert!(a.an.iter().any(|r| r.rtype == T_PTR && !r.flush && r.name.join(".") == "_services._dns-sd._udp.local"));
+        assert!(a
+            .an
+            .iter()
+            .any(|r| r.rtype == T_PTR && !r.flush && r.name.join(".") == "_services._dns-sd._udp.local"));
         assert!(has(&a.an, "9.7.254.169.in-addr.arpa", T_PTR));
         assert_eq!(r.log.len(), 1, "{:?}", r.log);
         assert!(r.log[0].contains("dho924s-123456.local on eth0"));
@@ -1807,11 +1956,18 @@ mod tests {
         assert!(m.an[0].flush && m.an[0].canon == vec![192, 168, 1, 20]);
         assert!(m.ar.iter().any(|r| r.rtype == T_NSEC));
         // the same again within a second: not multicast twice
-        assert!(r.receive(10.5, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r
+            .receive(10.5, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true)
+            .is_empty());
         // browsing: the PTR with SRV, TXT and the address in the additional section
         let m = one(&r.receive(11.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an.len(), 1);
-        let want = Rec::new(dname(&["_http", "_tcp", "local"]), Data::Ptr(dname(&["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"])), 4500, false);
+        let want = Rec::new(
+            dname(&["_http", "_tcp", "local"]),
+            Data::Ptr(dname(&["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"])),
+            4500,
+            false,
+        );
         assert!(want.matches(&m.an[0]) && !m.an[0].flush);
         let inst = "Rigol DHO924S OOS (123456)._http._tcp.local";
         assert!(has(&m.ar, inst, T_SRV) && has(&m.ar, inst, T_TXT) && has(&m.ar, "dho924s-123456.local", T_A));
@@ -1822,22 +1978,43 @@ mod tests {
         let txt = m.ar.iter().find(|r| r.rtype == T_TXT).unwrap();
         assert_eq!(txt.canon, b"\x06path=/".to_vec());
         // SRV and TXT asked directly; an empty TXT is one empty string
-        let m = one(&r.receive(12.0, &query(0, &[(&["Rigol DHO924S OOS (123456)", "_scpi-raw", "_tcp", "local"], T_ANY, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(
+            12.0,
+            &query(0, &[(&["Rigol DHO924S OOS (123456)", "_scpi-raw", "_tcp", "local"], T_ANY, false)]),
+            peer(PORT),
+            ETH,
+            true,
+        ));
         assert!(has(&m.an, "Rigol DHO924S OOS (123456)._scpi-raw._tcp.local", T_SRV));
         assert_eq!(m.an.iter().find(|r| r.rtype == T_TXT).unwrap().canon, vec![0]);
         // the service types
-        let m = one(&r.receive(13.0, &query(0, &[(&["_services", "_dns-sd", "_udp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(
+            13.0,
+            &query(0, &[(&["_services", "_dns-sd", "_udp", "local"], T_PTR, false)]),
+            peer(PORT),
+            ETH,
+            true,
+        ));
         assert_eq!(m.an.len(), 3);
         // the reverse name
-        let m = one(&r.receive(14.0, &query(0, &[(&["20", "1", "168", "192", "in-addr", "arpa"], T_PTR, false)]), peer(PORT), ETH, true));
+        let m = one(&r.receive(
+            14.0,
+            &query(0, &[(&["20", "1", "168", "192", "in-addr", "arpa"], T_PTR, false)]),
+            peer(PORT),
+            ETH,
+            true,
+        ));
         assert_eq!(m.an[0].canon[1..15].to_vec(), b"dho924s-123456".to_vec());
         // AAAA of a host without IPv6: NSEC that lists A only
-        let m = one(&r.receive(15.0, &query(0, &[(&["dho924s-123456", "local"], T_AAAA, false)]), peer(PORT), ETH, true));
+        let m =
+            one(&r.receive(15.0, &query(0, &[(&["dho924s-123456", "local"], T_AAAA, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an[0].rtype, T_NSEC);
         assert_eq!(m.an[0].canon[m.an[0].canon.len() - 3..].to_vec(), vec![0, 1, 0x40]);
         // other names and other hosts' services: nothing
         assert!(r.receive(16.0, &query(0, &[(&["other", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
-        assert!(r.receive(16.0, &query(0, &[(&["_ipp", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r
+            .receive(16.0, &query(0, &[(&["_ipp", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true)
+            .is_empty());
         // an interface the responder does not know: by the sender's network (the host's own query on loopback), else
         // nothing
         let q = query(9, &[(&["dho924s-123456", "local"], T_A, false)]);
@@ -1855,7 +2032,8 @@ mod tests {
         assert_eq!(out[0].dest, Dest::To(peer(PORT)));
         assert!(parse(&out[0].pkt).unwrap().an[0].flush);
         // a plain resolver (dig): its id, its question, TTL 10 at most, no cache flush, to its port
-        let out = r.receive(10.1, &query(0x4242, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(53000), ETH, true);
+        let out =
+            r.receive(10.1, &query(0x4242, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(53000), ETH, true);
         assert_eq!(out[0].dest, Dest::To(peer(53000)));
         let m = one(&out);
         assert_eq!(m.id, 0x4242);
@@ -1863,7 +2041,11 @@ mod tests {
         assert_eq!(m.qs[0].name, dname(&["_http", "_tcp", "local"]));
         assert!(m.an.iter().chain(&m.ar).all(|r| r.ttl <= 10 && !r.flush));
         // again at once: a legacy query is always answered
-        assert_eq!(r.receive(10.2, &query(0x4243, &[(&["dho924s-123456", "local"], T_A, false)]), peer(53000), ETH, true).len(), 1);
+        assert_eq!(
+            r.receive(10.2, &query(0x4243, &[(&["dho924s-123456", "local"], T_A, false)]), peer(53000), ETH, true)
+                .len(),
+            1
+        );
         // sent to the scope's own address: only from the same link
         let q = query(1, &[(&["dho924s-123456", "local"], T_A, false)]);
         assert_eq!(r.receive(11.0, &q, peer(PORT), ETH, false)[0].dest, Dest::To(peer(PORT)));
@@ -1921,7 +2103,10 @@ mod tests {
         r.receive(1.0, &other2, peer(PORT), ETH, true);
         assert_eq!(r.host_label(), "dho924s-123456-3");
         // an instance name: (2)
-        let srv = response_from(&["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"], Data::Srv { port: 80, target: dname(&["x", "local"]) });
+        let srv = response_from(
+            &["Rigol DHO924S OOS (123456)", "_http", "_tcp", "local"],
+            Data::Srv { port: 80, target: dname(&["x", "local"]) },
+        );
         r.receive(1.1, &srv, peer(PORT), ETH, true);
         assert_eq!(r.inst_label(), "Rigol DHO924S OOS (123456) (2)");
         // probes and announcements under the new names
@@ -1930,9 +2115,12 @@ mod tests {
             t += 0.05;
             r.tick(t);
         }
-        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-123456-3", "local"], T_A, false)]), peer(PORT), ETH, true));
+        let m =
+            one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-123456-3", "local"], T_A, false)]), peer(PORT), ETH, true));
         assert_eq!(m.an[0].canon, vec![192, 168, 1, 20]);
-        assert!(r.receive(t + 2.0, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r
+            .receive(t + 2.0, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true)
+            .is_empty());
         // a new name set by hand starts without a number
         let mut c = cfg();
         c.name = "lab-3".into();
@@ -1951,7 +2139,11 @@ mod tests {
         // a goodbye of another host for the name is no conflict
         let mut r = running();
         let mut w = Wr::new(0, RESPONSE);
-        w.rec(&Rec::new(dname(&["dho924s-123456", "local"]), Data::A(Ipv4Addr::new(192, 168, 1, 77)), 120, true), 0, true);
+        w.rec(
+            &Rec::new(dname(&["dho924s-123456", "local"]), Data::A(Ipv4Addr::new(192, 168, 1, 77)), 120, true),
+            0,
+            true,
+        );
         w.counts([0, 1, 0, 0]);
         r.receive(20.0, &w.b, peer(PORT), ETH, true);
         assert_eq!(r.state(), State::Running);
@@ -2001,7 +2193,9 @@ mod tests {
         assert!(has(&m.an, "dho924s-123456.local", T_A) && m.an.iter().all(|a| a.ttl == 0));
         assert_eq!(r.state(), State::Off);
         assert!(r.tick(t + 10.0).is_empty());
-        assert!(r.receive(t, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true).is_empty());
+        assert!(r
+            .receive(t, &query(0, &[(&["dho924s-123456", "local"], T_A, false)]), peer(PORT), ETH, true)
+            .is_empty());
     }
 
     #[test]
@@ -2035,7 +2229,13 @@ mod tests {
             assert!(outs.iter().any(|o| o.iface == i && o.dest == d), "{} {:?}", i, d);
         }
         assert!(!outs.iter().any(|o| o.iface == ETH && o.dest == Dest::Group6), "eth0 has no IPv6 address");
-        let m = one(&r.receive(t + 2.0, &query(0, &[(&["dho924s-123456", "local"], T_ANY, false)]), SocketAddr::from(([10, 0, 0, 9], PORT)), 5, true));
+        let m = one(&r.receive(
+            t + 2.0,
+            &query(0, &[(&["dho924s-123456", "local"], T_ANY, false)]),
+            SocketAddr::from(([10, 0, 0, 9], PORT)),
+            5,
+            true,
+        ));
         assert!(m.an.iter().any(|a| a.rtype == T_A && a.canon == vec![10, 0, 0, 5]));
         assert!(!m.an.iter().any(|a| a.rtype == T_AAAA), "the services have no IPv6");
         assert!(!m.an.iter().any(|a| a.canon == vec![192, 168, 1, 20]), "only the address of the interface asked on");
@@ -2050,7 +2250,8 @@ mod tests {
         let mut r = Responder::new(7);
         r.set_config(0.0, Config { v6: true, ..cfg() });
         let mut e = eth([192, 168, 1, 20]);
-        let (ll, global): (Ipv6Addr, Ipv6Addr) = ("fe80::0:ff:fe00:1".parse().unwrap(), "2001:db8:5:7:1d2e:3f4a:5b6c:7d8e".parse().unwrap());
+        let (ll, global): (Ipv6Addr, Ipv6Addr) =
+            ("fe80::0:ff:fe00:1".parse().unwrap(), "2001:db8:5:7:1d2e:3f4a:5b6c:7d8e".parse().unwrap());
         e.v6 = vec![ll, global];
         r.set_ifaces(0.0, vec![e]);
         let mut t = 0.0;
@@ -2064,7 +2265,8 @@ mod tests {
         assert_eq!(got, vec![ll.octets().to_vec(), global.octets().to_vec()]);
         assert!(m.an.iter().all(|a| a.flush) && !m.ar.iter().any(|r| r.rtype == T_NSEC));
         assert!(has(&m.ar, "dho924s-123456.local", T_A), "the other family as additional");
-        let m = one(&r.receive(t + 2.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
+        let m =
+            one(&r.receive(t + 2.0, &query(0, &[(&["_http", "_tcp", "local"], T_PTR, false)]), peer(PORT), ETH, true));
         assert!(has(&m.ar, "dho924s-123456.local", T_A) && has(&m.ar, "dho924s-123456.local", T_AAAA));
     }
 
@@ -2073,7 +2275,11 @@ mod tests {
         let mut r = Responder::new(1);
         let mut c = cfg();
         for i in 0..20 {
-            c.services.push(Service { kind: format!("_x{}._tcp", i), port: 1000 + i, txt: vec!["k=".to_string() + &"v".repeat(200)] });
+            c.services.push(Service {
+                kind: format!("_x{}._tcp", i),
+                port: 1000 + i,
+                txt: vec!["k=".to_string() + &"v".repeat(200)],
+            });
         }
         r.set_config(0.0, c);
         r.set_ifaces(0.0, vec![eth([192, 168, 1, 20])]);
@@ -2098,7 +2304,8 @@ mod tests {
     #[ignore]
     fn host_responder() {
         let lo = if cfg!(target_os = "linux") { "lo" } else { "lo0" };
-        let only: Vec<String> = std::env::var("OOS_MDNS_IF").unwrap_or(lo.into()).split(',').map(str::to_string).collect();
+        let only: Vec<String> =
+            std::env::var("OOS_MDNS_IF").unwrap_or(lo.into()).split(',').map(str::to_string).collect();
         let ifs = net::interfaces(Some(&only));
         assert!(!ifs.is_empty(), "no interface {:?}", only);
         let name = format!("oos-test-{}", std::process::id());
@@ -2114,7 +2321,15 @@ mod tests {
         let ia = libc::in_addr { s_addr: u32::from(a).to_be() };
         use std::os::fd::AsRawFd;
         // SAFETY: a pointer to an in_addr of the size given
-        unsafe { libc::setsockopt(s.as_raw_fd(), libc::IPPROTO_IP, libc::IP_MULTICAST_IF, &ia as *const _ as *const libc::c_void, std::mem::size_of::<libc::in_addr>() as libc::socklen_t) };
+        unsafe {
+            libc::setsockopt(
+                s.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_MULTICAST_IF,
+                &ia as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+            )
+        };
         s.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
         s.send_to(&query(0x1234, &[(&[&name, "local"], T_A, false)]), (GROUP4, PORT)).unwrap();
         let mut buf = [0u8; 1500];

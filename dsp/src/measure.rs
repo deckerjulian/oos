@@ -87,13 +87,66 @@ pub enum Meas {
 }
 
 pub const ALL: [Meas; 60] = [
-    Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
-    Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
-    Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
-    Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
-    Meas::HighTime, Meas::LowTime, Meas::Burst, Meas::Outside, Meas::NPeriods, Meas::CycAmp, Meas::CycTop, Meas::CycBase,
-    Meas::CycPp, Meas::CycMax, Meas::CycMin, Meas::EstUi, Meas::Median, Meas::Mode, Meas::LinSlope, Meas::LinInt,
-    Meas::Pam0, Meas::Pam1, Meas::Pam2, Meas::Pam3, Meas::PamSep, Meas::Bits, Meas::PllUi, Meas::UiWtd, Meas::FoldRms,
+    Meas::Vmax,
+    Meas::Vmin,
+    Meas::Vpp,
+    Meas::Vtop,
+    Meas::Vbase,
+    Meas::Vamp,
+    Meas::Vupper,
+    Meas::Vmid,
+    Meas::Vlower,
+    Meas::Vavg,
+    Meas::Vrms,
+    Meas::VavgCyc,
+    Meas::VrmsCyc,
+    Meas::VrmsAc,
+    Meas::StdDev,
+    Meas::Overshoot,
+    Meas::Preshoot,
+    Meas::Area,
+    Meas::AreaCyc,
+    Meas::Period,
+    Meas::Freq,
+    Meas::Rise,
+    Meas::Fall,
+    Meas::PWidth,
+    Meas::NWidth,
+    Meas::PDuty,
+    Meas::NDuty,
+    Meas::PPulses,
+    Meas::NPulses,
+    Meas::PEdges,
+    Meas::NEdges,
+    Meas::TVmax,
+    Meas::TVmin,
+    Meas::PSlew,
+    Meas::NSlew,
+    Meas::HighTime,
+    Meas::LowTime,
+    Meas::Burst,
+    Meas::Outside,
+    Meas::NPeriods,
+    Meas::CycAmp,
+    Meas::CycTop,
+    Meas::CycBase,
+    Meas::CycPp,
+    Meas::CycMax,
+    Meas::CycMin,
+    Meas::EstUi,
+    Meas::Median,
+    Meas::Mode,
+    Meas::LinSlope,
+    Meas::LinInt,
+    Meas::Pam0,
+    Meas::Pam1,
+    Meas::Pam2,
+    Meas::Pam3,
+    Meas::PamSep,
+    Meas::Bits,
+    Meas::PllUi,
+    Meas::UiWtd,
+    Meas::FoldRms,
 ];
 
 impl Meas {
@@ -165,8 +218,21 @@ impl Meas {
         match self {
             Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
             Meas::Area | Meas::AreaCyc => "Vs",
-            Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin | Meas::HighTime
-            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods | Meas::EstUi | Meas::PllUi | Meas::UiWtd => "s",
+            Meas::Period
+            | Meas::Rise
+            | Meas::Fall
+            | Meas::PWidth
+            | Meas::NWidth
+            | Meas::TVmax
+            | Meas::TVmin
+            | Meas::HighTime
+            | Meas::LowTime
+            | Meas::Burst
+            | Meas::Outside
+            | Meas::NPeriods
+            | Meas::EstUi
+            | Meas::PllUi
+            | Meas::UiWtd => "s",
             Meas::Freq => "Hz",
             Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges | Meas::Bits => "",
             Meas::PSlew | Meas::NSlew | Meas::LinSlope => "V/s",
@@ -249,7 +315,11 @@ fn mean(v: &[f64]) -> f64 {
 fn refs(lpct: f64, hpct: f64) -> (f64, f64) {
     let lo = if lpct.is_finite() && lpct > 0.0 && lpct < 0.5 { lpct } else { 0.1 };
     let hi = if hpct.is_finite() && hpct > 0.5 && hpct < 1.0 { hpct } else { 0.9 };
-    if hi > lo { (lo, hi) } else { (0.1, 0.9) }
+    if hi > lo {
+        (lo, hi)
+    } else {
+        (0.1, 0.9)
+    }
 }
 
 fn median_samples(f: &[f32]) -> f64 {
@@ -463,12 +533,15 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     // noisy samples that seldom reach the 10 % and 90 % levels held the main thread for half a minute
     for (k, x) in e.iter().enumerate() {
         let i = x.t as usize + 1;
-        let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
+        let (before, after) =
+            (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
         if x.rising {
             if let (Some(p), Some(q)) = (cross(v, i, lo, true, true, before), cross(v, i, hi_l, true, false, after)) {
                 rt.push((q - p) * dt);
             }
-        } else if let (Some(p), Some(q)) = (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after)) {
+        } else if let (Some(p), Some(q)) =
+            (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after))
+        {
             ft.push((q - p) * dt);
         }
     }
@@ -607,9 +680,17 @@ impl Analysis {
             Meas::Pam2 => self.pam[2],
             Meas::Pam3 => self.pam[3],
             Meas::PamSep => {
-                if self.pam.iter().any(|level| !level.is_finite()) { return f64::NAN; }
+                if self.pam.iter().any(|level| !level.is_finite()) {
+                    return f64::NAN;
+                }
                 let d = [self.pam[1] - self.pam[0], self.pam[2] - self.pam[1], self.pam[3] - self.pam[2]];
-                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| if a.is_nan() { x } else { a.min(x) })
+                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| {
+                    if a.is_nan() {
+                        x
+                    } else {
+                        a.min(x)
+                    }
+                })
             }
             Meas::Bits => self.bits,
             Meas::PllUi => self.pll_ui,
@@ -619,10 +700,18 @@ impl Analysis {
     }
 
     fn lpct_or_default(&self) -> f64 {
-        if self.lpct > 0.0 { self.lpct } else { 0.1 }
+        if self.lpct > 0.0 {
+            self.lpct
+        } else {
+            0.1
+        }
     }
     fn hpct_or_default(&self) -> f64 {
-        if self.hpct > 0.0 { self.hpct } else { 0.9 }
+        if self.hpct > 0.0 {
+            self.hpct
+        } else {
+            0.9
+        }
     }
 }
 
@@ -672,7 +761,9 @@ fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
         }
         let Some(&e) = close.get(j) else { break };
         next = next.max(i + 1);
-        while next < open.len() && (open[next].is_nan() || open[next] <= s) { next += 1; }
+        while next < open.len() && (open[next].is_nan() || open[next] <= s) {
+            next += 1;
+        }
         if s.is_nan() || !open.get(next).is_some_and(|&x| x < e) {
             w.push(e - s);
         }
@@ -683,7 +774,8 @@ fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
 /// Mean of the per-cycle histogram top and base, their difference, and the sample max, min and peak-to-peak.
 /// Cycles run from one rising mid crossing to the next. A record with fewer than two rising edges has no result.
 fn cycle_levels(v: &[f32], dt: f64, rises: &[f64]) -> (f64, f64, f64, f64, f64, f64) {
-    let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for w in rises.windows(2) {
         let s = (w[0] / dt).ceil() as usize;
         let e = ((w[1] / dt).floor() as usize).min(v.len().saturating_sub(1));
@@ -789,7 +881,11 @@ pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
 }
 
 fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
-    if rising { &a.rises } else { &a.falls }
+    if rising {
+        &a.rises
+    } else {
+        &a.falls
+    }
 }
 
 /// Mean, over every selected edge of A, of the closest selected edge of B minus that edge. May be negative.
@@ -874,31 +970,44 @@ mod tests {
 
     #[test]
     fn complete_pulse_join_matches_suffix_reference_with_duplicate_and_nan_edges() {
-        fn old(open:&[f64],close:&[f64])->Vec<f64>{
-            let (mut widths,mut j)=(Vec::new(),0);
-            for (i,&s) in open.iter().enumerate(){
-                while j<close.len()&&close[j]<=s{j+=1;}
-                let Some(&e)=close.get(j) else{break};
-                if !open[i+1..].iter().any(|&x|x>s&&x<e){widths.push(e-s);}
+        fn old(open: &[f64], close: &[f64]) -> Vec<f64> {
+            let (mut widths, mut j) = (Vec::new(), 0);
+            for (i, &s) in open.iter().enumerate() {
+                while j < close.len() && close[j] <= s {
+                    j += 1;
+                }
+                let Some(&e) = close.get(j) else { break };
+                if !open[i + 1..].iter().any(|&x| x > s && x < e) {
+                    widths.push(e - s);
+                }
             }
             widths
         }
-        let cases:Vec<(Vec<f64>,Vec<f64>)>=vec![
-            (vec![],vec![]),(vec![1.0],vec![]),(vec![],vec![1.0]),
-            (vec![1.0,1.0,2.0,3.0],vec![1.0,1.5,2.0,2.5,3.5]),
-            (vec![3.0,4.0],vec![0.0,1.0]),(vec![0.0,1.0,2.0],vec![3.0]),
-            (vec![f64::NAN;3],vec![f64::NAN;3]),
+        let cases: Vec<(Vec<f64>, Vec<f64>)> = vec![
+            (vec![], vec![]),
+            (vec![1.0], vec![]),
+            (vec![], vec![1.0]),
+            (vec![1.0, 1.0, 2.0, 3.0], vec![1.0, 1.5, 2.0, 2.5, 3.5]),
+            (vec![3.0, 4.0], vec![0.0, 1.0]),
+            (vec![0.0, 1.0, 2.0], vec![3.0]),
+            (vec![f64::NAN; 3], vec![f64::NAN; 3]),
         ];
-        for (open,close) in cases {
-            let (a,b)=(pair_widths(&open,&close),old(&open,&close));
-            assert_eq!(a.len(),b.len());assert!(a.iter().zip(b).all(|(a,b)|*a==b||(a.is_nan()&&b.is_nan())));
+        for (open, close) in cases {
+            let (a, b) = (pair_widths(&open, &close), old(&open, &close));
+            assert_eq!(a.len(), b.len());
+            assert!(a.iter().zip(b).all(|(a, b)| *a == b || (a.is_nan() && b.is_nan())));
         }
-        let mut state=7u32;
-        for count in [2,17,100,1_000] {
-            let mut values=||{state=state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);(state%100) as f64};
-            let mut open:Vec<_>=(0..count).map(|_|values()).collect();let mut close:Vec<_>=(0..count+3).map(|_|values()).collect();
-            open.sort_by(f64::total_cmp);close.sort_by(f64::total_cmp);
-            assert_eq!(pair_widths(&open,&close),old(&open,&close));
+        let mut state = 7u32;
+        for count in [2, 17, 100, 1_000] {
+            let mut values = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state % 100) as f64
+            };
+            let mut open: Vec<_> = (0..count).map(|_| values()).collect();
+            let mut close: Vec<_> = (0..count + 3).map(|_| values()).collect();
+            open.sort_by(f64::total_cmp);
+            close.sort_by(f64::total_cmp);
+            assert_eq!(pair_widths(&open, &close), old(&open, &close));
         }
     }
 
@@ -906,9 +1015,11 @@ mod tests {
     // shows a regression without a threshold that a loaded computer trips.
     #[test]
     fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
-        let open:Vec<f64>=(0..400_000).map(|i|i as f64).collect();let close:Vec<f64>=open.iter().map(|t|t+0.5).collect();
-        let widths=pair_widths(&open,&close);
-        assert_eq!(widths.len(),400_000);assert!(widths.iter().all(|&width|width==0.5));
+        let open: Vec<f64> = (0..400_000).map(|i| i as f64).collect();
+        let close: Vec<f64> = open.iter().map(|t| t + 0.5).collect();
+        let widths = pair_widths(&open, &close);
+        assert_eq!(widths.len(), 400_000);
+        assert!(widths.iter().all(|&width| width == 0.5));
     }
 
     #[test]
@@ -944,7 +1055,13 @@ mod tests {
         // what they mean, edge by edge
         fn width(a: &[f64], b: &[f64]) -> f64 {
             let w: Vec<f64> = a.iter().filter_map(|&s| b.iter().find(|&&e| e > s).map(|&e| e - s)).collect();
-            mean(&a.iter().zip(w.iter()).filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd)).map(|(_, &wd)| wd).collect::<Vec<f64>>())
+            mean(
+                &a.iter()
+                    .zip(w.iter())
+                    .filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd))
+                    .map(|(_, &wd)| wd)
+                    .collect::<Vec<f64>>(),
+            )
         }
         let mut x = 7u32;
         let mut r = || {
@@ -952,7 +1069,8 @@ mod tests {
             (x >> 16) as f64
         };
         for n in [0usize, 1, 2, 3, 10, 200] {
-            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) = ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
+            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) =
+                ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
             rises.sort_by(f64::total_cmp);
             falls.sort_by(f64::total_cmp);
             let an = Analysis { rises: rises.clone(), falls: falls.clone(), ..Default::default() };

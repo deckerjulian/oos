@@ -70,7 +70,12 @@ fn overshoot_preshoot() {
 #[test]
 fn pulse_counts_with_missing_pulse() {
     let dt = 1e-6;
-    let p = PulseTrain { every: 5, at: 2, special: Pulse { width: 0.5e-3, height: 0.0 }, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
+    let p = PulseTrain {
+        every: 5,
+        at: 2,
+        special: Pulse { width: 0.5e-3, height: 0.0 },
+        ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6)
+    };
     let v = sample(|t| p.v(t), 0.0, dt, 10_500);
     let a = analyze(&v, dt);
     assert_eq!(a.get(Meas::PEdges), 9.0);
@@ -194,9 +199,11 @@ fn delay_and_phase() {
     let b = analyze(&sample(|t| fb.v(t), 0.0, dt, 5000), dt);
     assert!(close(delay(&a, &b, Pair(true, true)), 125e-6, 1e-3));
     assert!(close(phase(&a, &b, Pair(true, true)), 45.0, 1e-3));
-    assert!(close(delay(&a, &b, Pair(true, false)), 625e-6, 1e-3).then_some(()).or_else(|| close(delay(&a, &b, Pair(true, false)), -375e-6, 1e-3).then_some(())).is_some());
+    assert!(close(delay(&a, &b, Pair(true, false)), 625e-6, 1e-3)
+        .then_some(())
+        .or_else(|| close(delay(&a, &b, Pair(true, false)), -375e-6, 1e-3).then_some(()))
+        .is_some());
 }
-
 
 #[test]
 fn no_frequency_on_noise() {

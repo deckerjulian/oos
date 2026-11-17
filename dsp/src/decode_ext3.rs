@@ -73,7 +73,8 @@ pub fn arinc429(v: &[f32], dt: f64, rate: Option<f64>, thr: f32, hyst: f32) -> V
         None => {
             // pulses are half a bit wide, inside a word they follow one bit apart
             let w = median(pulses.iter().map(|p| p.1 - p.0).collect()).unwrap_or(0.0);
-            median(pulses.windows(2).map(|q| mid(&q[1]) - mid(&q[0])).filter(|&d| d < 3.0 * w).collect()).unwrap_or(2.0 * w)
+            median(pulses.windows(2).map(|q| mid(&q[1]) - mid(&q[0])).filter(|&d| d < 3.0 * w).collect())
+                .unwrap_or(2.0 * w)
         }
     };
     if !(bit >= 4.0) || !bit.is_finite() {
@@ -99,7 +100,9 @@ fn arinc429_word(p: &[Pulse], bit: f64, n: f64, out: &mut Vec<Packet>) {
     let m0 = mid(&first);
     // the bit time of this word, and every pulse in its slot
     let b = (mid(&last) - m0) / 31.0;
-    let slots = p.len() == 32 && (b / bit - 1.0).abs() < 0.2 && p.iter().enumerate().all(|(k, q)| ((mid(q) - m0) / b - k as f64).abs() < 0.3);
+    let slots = p.len() == 32
+        && (b / bit - 1.0).abs() < 0.2
+        && p.iter().enumerate().all(|(k, q)| ((mid(q) - m0) / b - k as f64).abs() < 0.3);
     if !slots {
         if inside {
             out.push(tag("!ERR", first.0, last.1, false));
@@ -216,9 +219,16 @@ pub fn sent(v: &[f32], dt: f64, tick: Option<f64>, nibbles: usize, thr: f32, hys
         let data: Vec<u8> = vals[1..=nn].iter().map(|&x| x as u8).collect();
         let value = data.iter().fold(0u32, |a, &x| a << 4 | x as u32);
         out.push(pk(Kind::Data, e(1), e(nn + 1), value, Some(nn as u32), true));
-        out.push(pk(Kind::Crc, e(nn + 1), e(nn + 2), vals[nn + 1], None, vals[nn + 1] == sent_crc(&data, false) as u32));
+        out.push(pk(
+            Kind::Crc,
+            e(nn + 1),
+            e(nn + 2),
+            vals[nn + 1],
+            None,
+            vals[nn + 1] == sent_crc(&data, false) as u32,
+        ));
         i += nn + 3; // the edge that ends the CRC nibble
-        // a pause pulse: followed by a sync of this tick
+                     // a pause pulse: followed by a sync of this tick
         if let (Some(&a), Some(&b)) = (f.get(i + 1), f.get(i + 2)) {
             let p = (a - f[i]) / tk;
             if (11.5..=768.5).contains(&p) && ((b - a) / (56.0 * tk) - 1.0).abs() < 0.1 {
@@ -342,11 +352,16 @@ impl UsbBus {
         let idle_or_sync = |k: usize| self.end(k) >= self.n || self.dur(k) > 7.0 * bit || self.sync(k + 1).is_some();
         if self.fs_pol {
             // the SE0 looks like K, then J
-            let ok = self.segs[q].1 == Ls::K && (self.end(q) - te - 2.0 * bit).abs() <= 0.6 * bit && q + 1 < self.segs.len() && (self.dur(q + 1) >= 1.5 * bit || self.end(q + 1) >= self.n) && idle_or_sync(q + 1);
+            let ok = self.segs[q].1 == Ls::K
+                && (self.end(q) - te - 2.0 * bit).abs() <= 0.6 * bit
+                && q + 1 < self.segs.len()
+                && (self.dur(q + 1) >= 1.5 * bit || self.end(q + 1) >= self.n)
+                && idle_or_sync(q + 1);
             ok.then_some(q + 1)
         } else {
             // the SE0 looks like J: at least two bit times of it and two of idle
-            let ok = self.segs[q].1 == Ls::J && (self.end(q) - te >= 3.5 * bit || self.end(q) >= self.n) && idle_or_sync(q);
+            let ok =
+                self.segs[q].1 == Ls::J && (self.end(q) - te >= 3.5 * bit || self.end(q) >= self.n) && idle_or_sync(q);
             ok.then_some(q + 1)
         }
     }
@@ -358,7 +373,15 @@ fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
     let (fs, ls) = (1.0 / USB_FULL / dt, 1.0 / USB_LOW / dt);
     // line code: bit 0 = D+, bit 1 = D-; with D+ alone D- is taken as its inverse
     let lines: Vec<&[f32]> = std::iter::once(&dp[..len]).chain(dm.map(|m| &m[..len])).collect();
-    let single = |c: u8| if dm.is_some() { c } else if c & 1 != 0 { 1 } else { 2 };
+    let single = |c: u8| {
+        if dm.is_some() {
+            c
+        } else if c & 1 != 0 {
+            1
+        } else {
+            2
+        }
+    };
     let mut code = 0u8;
     let mut ev = Vec::new();
     for (k, v) in lines.iter().enumerate() {
@@ -384,7 +407,10 @@ fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
     let jc = match speed {
         UsbSpeed::Low => 2,
         UsbSpeed::Full => 1,
-        UsbSpeed::Auto => (0..raw.len()).filter(|&k| raw[k].1 == 1 || raw[k].1 == 2).max_by(|&a, &b| rdur(a).total_cmp(&rdur(b))).map_or(1, |k| raw[k].1),
+        UsbSpeed::Auto => (0..raw.len())
+            .filter(|&k| raw[k].1 == 1 || raw[k].1 == 2)
+            .max_by(|&a, &b| rdur(a).total_cmp(&rdur(b)))
+            .map_or(1, |k| raw[k].1),
     };
     let fs_pol = jc == 1;
     // SE0 / SE1 shorter than 0.3 bit: the crossover of D+ and D- in a J <-> K transition; the transition is in its
@@ -462,7 +488,9 @@ pub fn usb(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
                 Some((bit, kbit)) => {
                     // a SYNC from idle: after an EOP, a long J or where the last packet ended (PRE, D+ alone); else
                     // (after a packet cut by the record start) only a packet without errors
-                    let from_idle = resume.is_some_and(|r| i <= r + 1) || (i >= 2 && segs[i - 2].1 == Ls::Se0) || bus.dur(i - 1) > idle;
+                    let from_idle = resume.is_some_and(|r| i <= r + 1)
+                        || (i >= 2 && segs[i - 2].1 == Ls::Se0)
+                        || bus.dur(i - 1) > idle;
                     let mut p = Vec::new();
                     let r = usb_packet(&bus, i, bit, kbit, reset, &mut p).max(i + 1);
                     if from_idle || (p.iter().any(|x| x.kind == Kind::Field("PID")) && p.iter().all(|x| x.ok)) {
@@ -522,7 +550,8 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
                 tm.push(te);
                 usb_fields(&b, &tm, kbit, true, out);
                 if !pre {
-                    let eop_end = if bus.fs_pol { segs.get(next).map_or(te + 2.0 * bit, |s| s.0) } else { te + 2.0 * bit };
+                    let eop_end =
+                        if bus.fs_pol { segs.get(next).map_or(te + 2.0 * bit, |s| s.0) } else { te + 2.0 * bit };
                     out.push(tag("!EOP", te, eop_end, true));
                 }
                 return next;
@@ -616,7 +645,9 @@ fn usb_end(bus: &UsbBus, b: &[bool], te: f64, bit: f64) -> Option<(usize, bool)>
     let len_ok = match pid {
         0xE1 | 0x69 | 0x2D | 0xB4 | 0xA5 => m == 3,
         0xD2 | 0x5A | 0x1E | 0x96 => m == 1,
-        0xC3 | 0x4B | 0x87 | 0x0F => m >= 3 && byte(m - 1) as u16 | (byte(m) as u16) << 8 == usb_crc16(&(2..m - 1).map(byte).collect::<Vec<_>>()),
+        0xC3 | 0x4B | 0x87 | 0x0F => {
+            m >= 3 && byte(m - 1) as u16 | (byte(m) as u16) << 8 == usb_crc16(&(2..m - 1).map(byte).collect::<Vec<_>>())
+        }
         _ => false,
     };
     if len_ok {

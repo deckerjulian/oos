@@ -144,7 +144,10 @@ impl Ui {
             None => "no hardware".into(),
             Some(None) => "pending".into(),
             Some(Some((id, None))) => format!("{};none", id),
-            Some(Some((id, Some(s)))) => std::iter::once(id.to_string()).chain(s.iter().map(|x| format!("{},{},{:.1}", x[0], x[1], x[2]))).collect::<Vec<_>>().join(";"),
+            Some(Some((id, Some(s)))) => std::iter::once(id.to_string())
+                .chain(s.iter().map(|x| format!("{},{},{:.1}", x[0], x[1], x[2])))
+                .collect::<Vec<_>>()
+                .join(";"),
         }
     }
 
@@ -161,15 +164,18 @@ impl Ui {
             self.toast("Autoset needs a live channel; use Fit record");
             return;
         }
-        if self.src.is_hw() { self.auto_start(); }
-        else {
+        if self.src.is_hw() {
+            self.auto_start();
+        } else {
             autoset(&mut self.m, &self.src);
             self.dirty_map = true;
             self.settings_changed();
             self.toast("Auto set-up");
         }
     }
-    pub(super) fn auto_operation(&self) -> Option<u64> { self.auto.as_ref().map(|job| job.id) }
+    pub(super) fn auto_operation(&self) -> Option<u64> {
+        self.auto.as_ref().map(|job| job.id)
+    }
 
     /// An auto set-up is under way.
     pub fn auto_running(&self) -> bool {
@@ -216,8 +222,27 @@ impl Ui {
         let stamp = m.hw_stamp;
         // any channel set: the slots per channel follow the core table (`levels::slots`); a channel whose slots
         // disagree falls back to the records (`auto_unit`)
-        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some()).then_some(Unit { id: stamp, tries: 1, since: self.now });
-        self.auto = Some(AutoRun { id: self.operation_serial, back, stamp, unit, plan: Vec::new(), deep: false, best: [None; NCH], stage: Stage::Wide, records: self.records, since: self.now, fits: false, lv: [(0.0, 0.0); NCH], st: [Stats::default(); NCH], want: [false; NCH], period: [None; NCH], full: [0.0; NCH], swing: [0.0; NCH] });
+        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some())
+            .then_some(Unit { id: stamp, tries: 1, since: self.now });
+        self.auto = Some(AutoRun {
+            id: self.operation_serial,
+            back,
+            stamp,
+            unit,
+            plan: Vec::new(),
+            deep: false,
+            best: [None; NCH],
+            stage: Stage::Wide,
+            records: self.records,
+            since: self.now,
+            fits: false,
+            lv: [(0.0, 0.0); NCH],
+            st: [Stats::default(); NCH],
+            want: [false; NCH],
+            period: [None; NCH],
+            full: [0.0; NCH],
+            swing: [0.0; NCH],
+        });
         self.mark_changed();
         self.toast("Auto set-up...");
     }
@@ -330,7 +355,8 @@ impl Ui {
                     // the deep record missed it: fewer than three rises (or less than its height) is a slower signal;
                     // more without a steady period an irregular one, which no slower record times either
                     if a.deep && i == 1 && !found && a.period[c].is_none() {
-                        let rises = oos_dsp::edges::edges(&v, (lo + hi) / 2.0, 0.4 * swing).iter().filter(|e| e.rising).count();
+                        let rises =
+                            oos_dsp::edges::edges(&v, (lo + hi) / 2.0, 0.4 * swing).iter().filter(|e| e.rising).count();
                         slow |= rises < 3 || swing < 0.7 * a.full[c];
                     }
                 }
@@ -338,7 +364,9 @@ impl Ui {
                     a.plan.truncate(2);
                 }
                 // done at the last time base, or when each channel has its period with nearly the full height
-                if i + 1 >= a.plan.len() || (0..n_ch()).all(|c| !a.want[c] || (a.period[c].is_some() && a.swing[c] >= 0.7 * a.full[c])) {
+                if i + 1 >= a.plan.len()
+                    || (0..n_ch()).all(|c| !a.want[c] || (a.period[c].is_some() && a.swing[c] >= 0.7 * a.full[c]))
+                {
                     return self.auto_end(a);
                 }
                 self.set_search(&a.plan, i + 1);
@@ -407,7 +435,8 @@ impl Ui {
             let _ = self.src.hw_levels(Some((a.stamp, a.stamp, UNIT_RUNS)));
             return UnitStep::Wait;
         }
-        let levels: [(f32, f32); NCH] = std::array::from_fn(|c| lv.get(c).copied().flatten().map_or((0.0, 0.0), |l| (l.lo, l.hi)));
+        let levels: [(f32, f32); NCH] =
+            std::array::from_fn(|c| lv.get(c).copied().flatten().map_or((0.0, 0.0), |l| (l.lo, l.hi)));
         eprintln!("oos-ui auto: measure-unit levels {:?}", levels);
         a.unit = None;
         let _ = self.src.hw_levels(None);
@@ -444,10 +473,15 @@ impl Ui {
             a.lv[c] = (lo, hi);
             // the extremes only from the unit: the trigger level is their middle until a record of the search has top
             // and base (`place`)
-            a.st[c] = if levels.is_some() { Stats { vmin: lo, vmax: hi, valid: true, ..Stats::default() } } else { crate::wave::stats(&self.record_volts(c), self.last[0].as_ref().map_or(1.0, |r| r.dt)) };
+            a.st[c] = if levels.is_some() {
+                Stats { vmin: lo, vmax: hi, valid: true, ..Stats::default() }
+            } else {
+                crate::wave::stats(&self.record_volts(c), self.last[0].as_ref().map_or(1.0, |r| r.dt))
+            };
             let vpp = hi - lo;
             a.full[c] = vpp;
-            a.want[c] = vpp.is_finite() && vpp >= MIN_VPP * self.m.ch[c].probe && vpp >= 0.3 * self.m.ch[c].volts_per_div();
+            a.want[c] =
+                vpp.is_finite() && vpp >= MIN_VPP * self.m.ch[c].probe && vpp >= 0.3 * self.m.ch[c].volts_per_div();
         }
         let Some(first) = (0..n_ch()).find(|&c| a.want[c]) else { return false };
         for c in (0..n_ch()).filter(|&c| a.want[c]) {
@@ -483,7 +517,8 @@ impl Ui {
         // the channels with a period first (the trigger goes to the first), then those with a signal but no steady
         // period (noise, glitches, an irregular bus): they keep the fitted scale and level, the time base comes from the
         // window that showed most of their height
-        let mut found: Vec<(usize, Stats, f64)> = (0..n_ch()).filter_map(|c| a.period[c].map(|p| (c, stats(c), p))).collect();
+        let mut found: Vec<(usize, Stats, f64)> =
+            (0..n_ch()).filter_map(|c| a.period[c].map(|p| (c, stats(c), p))).collect();
         let timed = !found.is_empty();
         found.extend((0..n_ch()).filter(|&c| a.want[c] && a.period[c].is_none()).map(|c| (c, stats(c), f64::NAN)));
         if found.is_empty() {
@@ -542,7 +577,13 @@ impl Ui {
             return;
         }
         // Borrow the records: four 20M files must not create four extra 80MB vectors.
-        let waves: Vec<(&[f32], f64)> = shown.iter().map(|&i| { let r = self.refs[i].as_ref().unwrap(); (r.v.as_slice(), r.dt) }).collect();
+        let waves: Vec<(&[f32], f64)> = shown
+            .iter()
+            .map(|&i| {
+                let r = self.refs[i].as_ref().unwrap();
+                (r.v.as_slice(), r.dt)
+            })
+            .collect();
         let views = autoset_shown(&mut self.m, &waves);
         let mut any = false;
         let mut fitted = Vec::new();
@@ -562,7 +603,10 @@ impl Ui {
         }
         // Keep the chosen time window in an actual record, including files whose
         // first sample is far from zero. Prefer the user's selected shown source.
-        let selected = self.selected_workspace_source().and_then(|id| match id { WaveId::Ref(i) if fitted.contains(&i) => Some(i), _ => None });
+        let selected = self.selected_workspace_source().and_then(|id| match id {
+            WaveId::Ref(i) if fitted.contains(&i) => Some(i),
+            _ => None,
+        });
         if let Some(reference) = selected.or_else(|| fitted.first().copied()).and_then(|i| self.refs[i].as_ref()) {
             let end = reference.t0 + reference.dt * reference.v.len().saturating_sub(1) as f64;
             let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
@@ -571,7 +615,9 @@ impl Ui {
                 self.m.delay = (reference.t0 + 0.5 * (end - reference.t0)) as f32;
             }
         }
-        if self.m.zoom { self.reset_zoom(); }
+        if self.m.zoom {
+            self.reset_zoom();
+        }
         self.ph.clear();
         self.phz.clear();
         self.measure_refs();
@@ -611,7 +657,11 @@ impl Ui {
         let w = n * AB_W + (n - 1) * AB_GAP;
         let x0 = g.x + (g.w - w) / 2;
         let y = g.y + AB_TOP;
-        let mut v: Vec<(Rect, Option<AutoView>)> = AUTO_VIEWS.iter().enumerate().map(|(i, &v)| (Rect::new(x0 + i as i32 * (AB_W + AB_GAP), y, AB_W, AB_H), Some(v))).collect();
+        let mut v: Vec<(Rect, Option<AutoView>)> = AUTO_VIEWS
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (Rect::new(x0 + i as i32 * (AB_W + AB_GAP), y, AB_W, AB_H), Some(v)))
+            .collect();
         v.push((Rect::new(x0 + w + AB_GAP, y, AB_H, AB_H), None));
         v
     }
@@ -650,19 +700,40 @@ impl Ui {
         let native = self.last[0].as_ref().map(|record| {
             if let Some(raw) = record.raw.as_ref().filter(|raw| !raw.frame.envelope && !raw.frame.ch[c].is_empty()) {
                 crate::wave::autoset_summary(&raw.frame.ch[c], raw.frame.dt)
-            } else { crate::wave::autoset_summary(&record.ch[c], record.dt) }
+            } else {
+                crate::wave::autoset_summary(&record.ch[c], record.dt)
+            }
         });
-        let period = native.as_ref().map(|summary| summary.period).filter(|&p| ok(p))
+        let period = native
+            .as_ref()
+            .map(|summary| summary.period)
+            .filter(|&p| ok(p))
             .or_else(|| Some(self.meas(c, Meas::Period)).filter(|&p| ok(p)));
         let Some(p) = period else { return self.toast("No period on the trigger channel") };
         let (t, slope) = match v {
             AutoView::Few => (p * 3.0 / HDIV as f64, None),
             AutoView::Many => (p * 10.0 / HDIV as f64, None),
             // the 10-90 % time over about two divisions; a period / 20 when there is no edge time
-            AutoView::Rise => (native.as_ref().map(|summary| summary.rise).filter(|&x| ok(x))
-                .or_else(|| Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x))).unwrap_or(p / 10.0) / 2.0, Some(Slope::Rise)),
-            AutoView::Fall => (native.as_ref().map(|summary| summary.fall).filter(|&x| ok(x))
-                .or_else(|| Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x))).unwrap_or(p / 10.0) / 2.0, Some(Slope::Fall)),
+            AutoView::Rise => (
+                native
+                    .as_ref()
+                    .map(|summary| summary.rise)
+                    .filter(|&x| ok(x))
+                    .or_else(|| Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x)))
+                    .unwrap_or(p / 10.0)
+                    / 2.0,
+                Some(Slope::Rise),
+            ),
+            AutoView::Fall => (
+                native
+                    .as_ref()
+                    .map(|summary| summary.fall)
+                    .filter(|&x| ok(x))
+                    .or_else(|| Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x)))
+                    .unwrap_or(p / 10.0)
+                    / 2.0,
+                Some(Slope::Fall),
+            ),
         };
         self.m.tscale = tscale_for(t as f32);
         self.m.tfine = 1.0;
@@ -750,55 +821,82 @@ mod tests {
 
     #[test]
     fn reference_autoset_reuses_samples_and_recenters_a_record_away_from_zero() {
-        let mut ui=Ui::new(Source::Demo{t:0.0});
-        ui.m.ch.iter_mut().for_each(|ch|ch.on=false);ui.m.run=RunState::Stop;
-        ui.refs[0]=Some(sine_ref(2000,10.0,1e-7));
-        ui.refs[0].as_mut().unwrap().t0=0.123;
-        let pointer=ui.refs[0].as_ref().unwrap().v.as_ptr();
-        let trigger=(ui.m.trigger_wave(),ui.m.trig_level,ui.m.trig_mode);
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.ch.iter_mut().for_each(|ch| ch.on = false);
+        ui.m.run = RunState::Stop;
+        ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
+        ui.refs[0].as_mut().unwrap().t0 = 0.123;
+        let pointer = ui.refs[0].as_ref().unwrap().v.as_ptr();
+        let trigger = (ui.m.trigger_wave(), ui.m.trig_level, ui.m.trig_mode);
         ui.autoset_reference();
-        let record=ui.refs[0].as_ref().unwrap();
-        assert_eq!(record.v.as_ptr(),pointer);
-        assert!(ui.m.delay as f64>=record.t0 && ui.m.delay as f64<=record.t0+record.dt*record.v.len() as f64);
-        assert_eq!((ui.m.trigger_wave(),ui.m.trig_level,ui.m.trig_mode),trigger);
-        assert_eq!((ui.m.run,ui.replay.captures),(RunState::Stop,0));
+        let record = ui.refs[0].as_ref().unwrap();
+        assert_eq!(record.v.as_ptr(), pointer);
+        assert!(ui.m.delay as f64 >= record.t0 && ui.m.delay as f64 <= record.t0 + record.dt * record.v.len() as f64);
+        assert_eq!((ui.m.trigger_wave(), ui.m.trig_level, ui.m.trig_mode), trigger);
+        assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
     }
 
     #[test]
     fn successful_hardware_autoset_restores_configured_memory_depth() {
-        let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=1;
-        let back=Box::new(ui.m.clone());ui.m.mdepth=0;
-        ui.auto_end(AutoRun{id:0,back,stage:Stage::Search(0),records:0,since:0.0,fits:true,
-            lv:[(-1.0,1.0);NCH],want:[true;NCH],period:[Some(1e-6),None,None,None],full:[2.0;NCH],swing:[2.0;NCH],
-            st:[Stats::default();NCH],best:[None;NCH],stamp:0,plan:Vec::new(),deep:false,unit:None});
-        assert_eq!(ui.m.mdepth,1);
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.mdepth = 1;
+        let back = Box::new(ui.m.clone());
+        ui.m.mdepth = 0;
+        ui.auto_end(AutoRun {
+            id: 0,
+            back,
+            stage: Stage::Search(0),
+            records: 0,
+            since: 0.0,
+            fits: true,
+            lv: [(-1.0, 1.0); NCH],
+            want: [true; NCH],
+            period: [Some(1e-6), None, None, None],
+            full: [2.0; NCH],
+            swing: [2.0; NCH],
+            st: [Stats::default(); NCH],
+            best: [None; NCH],
+            stamp: 0,
+            plan: Vec::new(),
+            deep: false,
+            unit: None,
+        });
+        assert_eq!(ui.m.mdepth, 1);
     }
 
     #[test]
-    #[ignore="local user-provided D-drive files; no app, window or services"]
+    #[ignore = "local user-provided D-drive files; no app, window or services"]
     fn actual_gen7_20m_reference_fit_is_bounded_and_keeps_native_records() {
-        let mut ui=Ui::new(Source::Demo{t:0.0});
-        for path in ["D:/Gen7_65GB_CP_Q6_n_Ch2.wfm","D:/Gen7_65GB_CP_Q6_p_Ch1.wfm"] {
-            let bytes=std::fs::read(path).unwrap();ui.load_waveform_auto(&bytes,path.rsplit('/').next().unwrap()).unwrap();
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        for path in ["D:/Gen7_65GB_CP_Q6_n_Ch2.wfm", "D:/Gen7_65GB_CP_Q6_p_Ch1.wfm"] {
+            let bytes = std::fs::read(path).unwrap();
+            ui.load_waveform_auto(&bytes, path.rsplit('/').next().unwrap()).unwrap();
         }
-        let identity:Vec<_>=ui.refs.iter().flatten().map(|r|(r.v.as_ptr(),r.v.len(),r.dt,r.t0)).collect();
-        let acquisition=(ui.m.run,ui.m.trigger_wave(),ui.m.trig_mode,ui.m.trig_level,ui.records,ui.replay.captures);
-        let start=std::time::Instant::now();
+        let identity: Vec<_> = ui.refs.iter().flatten().map(|r| (r.v.as_ptr(), r.v.len(), r.dt, r.t0)).collect();
+        let acquisition =
+            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures);
+        let start = std::time::Instant::now();
         for slot in 0..2 {
-            let other=ui.refs[1-slot].as_ref().map(|r|(r.vpd,r.offset));
+            let other = ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset));
             ui.select_workspace_source(WaveId::Ref(slot));
             assert!(ui.fit_selected_record());
-            assert_eq!(other,ui.refs[1-slot].as_ref().map(|r|(r.vpd,r.offset)));
-            let record=ui.refs[slot].as_ref().unwrap();
-            let half=ui.m.time_per_div() as f64*HDIV as f64*0.5;
-            assert!(ui.m.delay as f64-half<=record.t0+1e-14);
-            assert!(ui.m.delay as f64+half>=record.t0+(record.v.len()-1) as f64*record.dt-1e-14);
+            assert_eq!(other, ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset)));
+            let record = ui.refs[slot].as_ref().unwrap();
+            let half = ui.m.time_per_div() as f64 * HDIV as f64 * 0.5;
+            assert!(ui.m.delay as f64 - half <= record.t0 + 1e-14);
+            assert!(ui.m.delay as f64 + half >= record.t0 + (record.v.len() - 1) as f64 * record.dt - 1e-14);
         }
-        let elapsed=start.elapsed();
-        assert_eq!(identity,ui.refs.iter().flatten().map(|r|(r.v.as_ptr(),r.v.len(),r.dt,r.t0)).collect::<Vec<_>>());
-        assert_eq!(acquisition,(ui.m.run,ui.m.trigger_wave(),ui.m.trig_mode,ui.m.trig_level,ui.records,ui.replay.captures));
-        assert!(ui.refs.iter().flatten().all(|r|r.vpd>0.0&&r.offset.is_finite()));
-        assert!(elapsed<std::time::Duration::from_secs(3),"bounded setup took {elapsed:?}");
+        let elapsed = start.elapsed();
+        assert_eq!(
+            identity,
+            ui.refs.iter().flatten().map(|r| (r.v.as_ptr(), r.v.len(), r.dt, r.t0)).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            acquisition,
+            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures)
+        );
+        assert!(ui.refs.iter().flatten().all(|r| r.vpd > 0.0 && r.offset.is_finite()));
+        assert!(elapsed < std::time::Duration::from_secs(3), "bounded setup took {elapsed:?}");
         eprintln!("actual Gen7 two20M explicit selected-reference Fit: {elapsed:?}; native pointers/metadata, other refs and acquisition state unchanged");
     }
 
@@ -849,7 +947,10 @@ mod tests {
         // inside the plot, above the band an auto set-up leaves free at the top (0.8 div), clear of the trigger mark
         let g = u.grid;
         let b = u.auto_bar_rects();
-        assert!(b.iter().all(|(r, _)| r.y > g.y && r.y + r.h < g.y + (0.8 * g.h as f32 / 8.0) as i32 && r.x > g.x && r.x + r.w < g.x + g.w));
+        assert!(b.iter().all(|(r, _)| r.y > g.y
+            && r.y + r.h < g.y + (0.8 * g.h as f32 / 8.0) as i32
+            && r.x > g.x
+            && r.x + r.w < g.x + g.w));
         let mid = g.x + g.w / 2;
         assert!(b.iter().all(|(r, _)| r.x > mid + 6 || r.x + r.w < mid - 6));
     }
@@ -939,7 +1040,14 @@ mod tests {
         let n = 8000usize;
         let dt = window * 1.25 / n as f64;
         let v: Vec<f32> = (0..n).map(|i| sig(i as f64 * dt)).collect();
-        let f = std::sync::Arc::new(crate::board::Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], stamp, ..Default::default() });
+        let f = std::sync::Arc::new(crate::board::Frame {
+            seq: 1,
+            dt,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            stamp,
+            ..Default::default()
+        });
         crate::board::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
     }
 
@@ -957,7 +1065,11 @@ mod tests {
         for _ in 0..20 {
             let Some(a) = ui.auto.as_ref() else { return stages };
             let stamp = a.stamp;
-            stages.push(match a.stage { Stage::Wide => "wide".to_string(), Stage::Fit => "fit".to_string(), Stage::Search(i) => format!("search {}", i) });
+            stages.push(match a.stage {
+                Stage::Wide => "wide".to_string(),
+                Stage::Fit => "fit".to_string(),
+                Stage::Search(i) => format!("search {}", i),
+            });
             // a record of the stage before does not count
             ui.last[0] = Some(hw_record_of(ui, stamp - 1, sig));
             ui.auto_step();
@@ -1007,7 +1119,11 @@ mod tests {
         };
         let sig = move |t: f64| {
             let k = edges.partition_point(|&e| e <= t);
-            if k % 2 == 1 { 5.0 } else { 0.0 }
+            if k % 2 == 1 {
+                5.0
+            } else {
+                0.0
+            }
         };
         run_hw_of(&mut ui, &sig);
         assert!(ui.auto.is_none());
@@ -1033,11 +1149,14 @@ mod tests {
         let noisy = |t: f64| {
             // 0..5 V, 1 kHz, +-0.6 V pseudo-random noise (about 0.35 V sigma, more than 0.3 div at 1 or 2 V/div / 6)
             let k = (t * 1e9) as u64;
-            let r = (k.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 40) as f32 / (1u64 << 24) as f32;
+            let r = (k.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 40) as f32
+                / (1u64 << 24) as f32;
             (if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { 5.0 } else { 0.0 }) + (r - 0.5) * 1.2
         };
         let clean = |t: f64| if ((t + 0.3e-3) % 1e-3) < 0.5e-3 { 5.0 } else { 0.0 };
-        for (opt, sig, want) in [(true, &noisy as &dyn Fn(f64) -> f32, true), (true, &clean, false), (false, &noisy, false)] {
+        for (opt, sig, want) in
+            [(true, &noisy as &dyn Fn(f64) -> f32, true), (true, &clean, false), (false, &noisy, false)]
+        {
             let mut ui = crate::ui::testkit::demo_ui();
             ui.m.auto_nrej = opt;
             run_hw_of(&mut ui, sig);
@@ -1136,7 +1255,9 @@ mod tests {
     #[test]
     fn one_deep_record_finds_the_period() {
         let square = |f: f64| move |t: f64| if (t * f + 0.3) % 1.0 < 0.5 { 3.0f32 } else { 0.0 };
-        for (f, want) in [(1e3, vec![FAST_TBASE, DEEP.0]), (50.0, vec![FAST_TBASE, DEEP.0, SLOW_TBASE]), (2e7, vec![FAST_TBASE])] {
+        for (f, want) in
+            [(1e3, vec![FAST_TBASE, DEEP.0]), (50.0, vec![FAST_TBASE, DEEP.0, SLOW_TBASE]), (2e7, vec![FAST_TBASE])]
+        {
             let (mut ui, shared) = hw_ui();
             ui.auto_start();
             answer(&shared, &ui, Some((0.0, 3.0, false)));
@@ -1153,7 +1274,14 @@ mod tests {
                 let n = if mdepths()[ui.m.mdepth].1 == DEEP.1 { 200_000 } else { 20_000 };
                 let dt = window / n as f64;
                 let v: Vec<f32> = (0..n).map(|k| sig(k as f64 * dt)).collect();
-                let fr = std::sync::Arc::new(crate::board::Frame { seq: 1, dt, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], stamp: a.stamp, ..Default::default() });
+                let fr = std::sync::Arc::new(crate::board::Frame {
+                    seq: 1,
+                    dt,
+                    pre: n / 2,
+                    ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                    stamp: a.stamp,
+                    ..Default::default()
+                });
                 ui.last[0] = Some(crate::board::to_record(&fr, &ui.m, 3600, window, -window / 2.0));
                 ui.auto_step();
             }
@@ -1227,7 +1355,10 @@ mod tests {
         let (mut ui, _shared) = hw_ui();
         let before = crate::store::setup_text(&ui.m);
         ui.auto_start();
-        assert!(ui.auto.is_some() && crate::store::setup_text(&ui.m) != before, "the levels stage has its own time base and Peak");
+        assert!(
+            ui.auto.is_some() && crate::store::setup_text(&ui.m) != before,
+            "the levels stage has its own time base and Peak"
+        );
         assert_eq!(crate::store::setup_text(ui.setup_model()), before);
         ui.auto = None;
         assert_eq!(crate::store::setup_text(ui.setup_model()), crate::store::setup_text(&ui.m));
@@ -1257,7 +1388,10 @@ mod tests {
         ui.m.trig_level = 9.0;
         ui.m.trig_src = 2;
         ui.select_workspace_source(WaveId::Ref(0));
-        let reference = { let r = ui.refs[0].as_ref().unwrap(); (r.v.as_ptr(), r.v.len(), r.dt, r.t0) };
+        let reference = {
+            let r = ui.refs[0].as_ref().unwrap();
+            (r.v.as_ptr(), r.v.len(), r.dt, r.t0)
+        };
         ui.key(key::AUTO);
         let r = ui.refs[0].as_ref().unwrap();
         assert!((r.vpd - 10.0).abs() < 1e-6 && (r.offset - 3.0).abs() < 1e-6);
@@ -1275,7 +1409,8 @@ mod tests {
         ui.m.ch[0].on = true;
         let before = ui.m.clone();
         ui.auto_start();
-        assert_eq!(ui.m, before); assert!(!ui.auto_running());
+        assert_eq!(ui.m, before);
+        assert!(!ui.auto_running());
         assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
     }
 
@@ -1292,10 +1427,40 @@ mod tests {
         ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
         ui.refs[0].as_mut().unwrap().on = false;
         let before = ui.m.clone();
-        let references: Vec<_> = ui.refs.iter().flatten().map(|reference| (reference.v.as_ptr(), reference.v.len(), reference.dt, reference.t0, reference.vpd, reference.offset, reference.on)).collect();
+        let references: Vec<_> = ui
+            .refs
+            .iter()
+            .flatten()
+            .map(|reference| {
+                (
+                    reference.v.as_ptr(),
+                    reference.v.len(),
+                    reference.dt,
+                    reference.t0,
+                    reference.vpd,
+                    reference.offset,
+                    reference.on,
+                )
+            })
+            .collect();
         ui.key(key::AUTO);
         assert_eq!(ui.m, before);
-        assert_eq!(references, ui.refs.iter().flatten().map(|reference| (reference.v.as_ptr(), reference.v.len(), reference.dt, reference.t0, reference.vpd, reference.offset, reference.on)).collect::<Vec<_>>());
+        assert_eq!(
+            references,
+            ui.refs
+                .iter()
+                .flatten()
+                .map(|reference| (
+                    reference.v.as_ptr(),
+                    reference.v.len(),
+                    reference.dt,
+                    reference.t0,
+                    reference.vpd,
+                    reference.offset,
+                    reference.on
+                ))
+                .collect::<Vec<_>>()
+        );
         assert!(!ui.auto_running());
         assert!(ui.toast.as_ref().unwrap().0.contains("Autoset needs a live channel; use Fit record"));
         assert!(ui.m.ch.iter().all(|c| !c.on));
@@ -1323,7 +1488,10 @@ mod tests {
         r.vpd = 10.0;
         r.offset = 3.0;
         let before = ui.m.clone();
-        let source = { let r = ui.refs[4].as_ref().unwrap(); (r.v.as_ptr(), r.v.len(), r.dt, r.t0, r.vpd, r.offset) };
+        let source = {
+            let r = ui.refs[4].as_ref().unwrap();
+            (r.v.as_ptr(), r.v.len(), r.dt, r.t0, r.vpd, r.offset)
+        };
         let captures = ui.replay.captures;
         ui.key(key::AUTO);
         assert_eq!(ui.m, before);

@@ -86,7 +86,9 @@ mod tests {
 
     #[test]
     fn the_button_opens_the_menu_and_exit_ends_the_view() {
-        for view in [AView::Spectrum, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt] {
+        for view in
+            [AView::Spectrum, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt]
+        {
             let mut ui = at(view);
             let r = ui.view_btn();
             ui.tap(r.x + 5, r.y + 5);
