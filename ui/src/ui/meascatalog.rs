@@ -567,10 +567,6 @@ impl Ui {
         let cat=cat_from(id)?;let info=cat;let reading=self.catalog_reading(cat,[a,b,c,d]);
         Some(tools::MeasRow{name:info.name.into(),src:[a,b,c,d][catalog_roles(cat)[0]],v:reading.value,unit:info.unit,computing:reading.computing})
     }
-    #[cfg(test)]
-    fn cat_number(&self,c:Cat,a:WaveId,b:WaveId,csrc:WaveId,d:WaveId)->f64{
-        self.catalog_reading(c,[a,b,csrc,d]).value
-    }
 
 }
 
