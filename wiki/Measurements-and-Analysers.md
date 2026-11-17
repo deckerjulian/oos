@@ -45,8 +45,9 @@ If the source of an analyser is switched off, choose another one in its Settings
 
 ### Bode with an external generator
 
-In **Analysers > Bode** pick the Generator preset: **Rigol DG**, **Siglent SDG**, **UNI-T UTG900** for the UTG932 and
-UTG962, or **SCPI** for one that takes `FREQ` and `VOLT`. Then **Connection**:
+In **Analysers > Bode** pick the Generator preset by the commands the generator takes: **APPL** (Rigol DG, `:APPL`),
+**BSWV** (Siglent SDG), **CHANnel** (UNI-T UTG900: UTG932, UTG962), or **SCPI** for one that takes `FREQ` and `VOLT`.
+Then **Connection**:
 
 - **LAN**, with **Gen address**: the IP, port 5555 if none is given; the knob moves the last number.
 - **USB** (from 0.1.11, please test and report), for a generator in the scope's USB-A port instead of the network. The
@@ -58,7 +59,7 @@ The scope sets channel 1 of the generator to a sine of **Amplitude** (Vpp) witho
 steps through the frequencies. Over SCPI, `:BODE:GENerator "usb"` selects USB and
 `:BODE:GENerator "192.168.1.20:5025"` the LAN again.
 
-The UNI-T UTG900 preset sends `:CHANnel1:MODe CONTINUE`, `:CHANnel1:BASE:WAVe SINe`, `:CHANnel1:AMPLitude:UNIT VPP`,
+The **CHANnel** preset sends `:CHANnel1:MODe CONTINUE`, `:CHANnel1:BASE:WAVe SINe`, `:CHANnel1:AMPLitude:UNIT VPP`,
 `:CHANnel1:BASE:AMPLitude`, `:CHANnel1:BASE:OFFSet 0`, `:CHANnel1:BASE:FREQuency` and `:CHANnel1:OUTPut ON`, from the
 UNI-T UTG900 series programming manual (REV 00, 2022-07-15; the English UTG900E manual has the same commands). It has
 not been tried with a real UTG900 yet.

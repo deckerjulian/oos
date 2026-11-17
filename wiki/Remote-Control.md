@@ -10,21 +10,20 @@
 | VXI-11 | 111, 9009 | on the scope, where port 111 is free: VISA `TCPIP::<ip>::INSTR` |
 | HiSLIP | 4880 | on a computer only: the same SCPI interpreter, `TCPIP::<ip>::hislip0::INSTR` |
 | LXI identification | 8080 | `/lxi/identification` |
-| LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | Telnet | 23 | root shell, no password, on by default |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](https://github.com/dekajoule/oos/blob/main/docs/network.md) 7) |
-| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-123456.local:8080`, and its services for browsing ([below](#ethernet)) |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-123456.local:8080`, and its services for browsing ([below](#ethernet)): the web remote (`_http._tcp`, path `/`), LXI discovery (`_lxi._tcp`, path `/lxi/identification`), the SCPI socket and VXI-11; on a computer (`--serve`) HiSLIP instead of VXI-11 |
 
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
 the slow cores with spare time only. All of them run over Ethernet and over [WLAN](#wlan).
 
 ## Web remote
 
-Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the window, so
-it also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer; records
-above 2 million points have to be saved on the scope or read over SCPI. The Update link leads to the update page
-([[Updates and Going Back]]).
+Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It scales with the window, so it
+also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer, as CSV or
+binary; CSV takes records up to 2 million points, larger ones go as binary, through Storage on the scope or over SCPI.
+The Update link leads to the update page ([[Updates and Going Back]]).
 
 The live picture is a PNG (about 90 to 115 KB, depending on what the screen shows). **Live picture format** can switch
 it to the uncompressed 1.8 MB BMP, or to a JPEG (below). The choice is kept in the browser. The PNG is made off the
