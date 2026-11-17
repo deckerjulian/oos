@@ -1942,7 +1942,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 _ => replayed = None,
             }
-            if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
+            if current.as_ref().is_none_or(|c| c.0 != want) || mode != want_mode {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 mode = want_mode;
@@ -2151,8 +2151,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         // analog chunk
                         let per = oos_hal::dho::roll::points_per_chunk(s.mask);
                         let first = buf
-                            .chunks_exact(oos_hal::dho::roll::CHUNK_BYTES)
-                            .find(|c| !oos_hal::dho::roll::is_la_chunk(c))
+                            .as_chunks::<{ oos_hal::dho::roll::CHUNK_BYTES }>()
+                            .0
+                            .iter()
+                            .find(|c| !oos_hal::dho::roll::is_la_chunk(c.as_slice()))
+                            .map(|c| c.as_slice())
                             .unwrap_or(&buf[..oos_hal::dho::roll::CHUNK_BYTES]);
                         let col = oos_hal::dho::roll::scan_column(oos_hal::dho::roll::counter(first), la_t.is_some());
                         cursor = (col * per) % keep;
@@ -2285,7 +2288,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     };
                     let mut g = out.lock().unwrap();
                     // a complete sweep must not be dropped by the next partial picture
-                    if g.queue.back().map_or(true, |b| b.partial) {
+                    if g.queue.back().is_none_or(|b| b.partial) {
                         g.queue.clear();
                     }
                     g.queue.push_back(f.clone());
@@ -2539,7 +2542,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             *logged += 1;
                             // the newest frame's first words (every recorded frame was played)
                             let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
-                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().chunks_exact(2).take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
+                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().as_chunks::<2>().0.iter().take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
                             eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
                         }
                         a
@@ -2563,7 +2566,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         Some(a) if !a.show => 0,
                         _ => count,
                     };
-                    let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
+                    let avail = dma.data().len().checked_div(fb).map_or(0, |n| (shown as usize).min(n));
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back

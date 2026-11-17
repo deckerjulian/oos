@@ -7,7 +7,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 
 | Tool | Touches a scope? | Purpose |
 |---|---|---|
-| `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, decoders); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
+| `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, decoders, ratchet); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
 | `ci-parts.sh [--all]` | no | reads changed file names and prints the parts of `check.sh` CI runs for them, and whether the comparison runs (ADR 0040) |
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); needs the calibration files (`OOS_CAL_DIR=local/cal`) |
 | `compare-base.sh [BASE]` | no | the pictures, stored files and answers to remote commands (`ui/tools/layout-check.sh`) and the register sequences (`plan-matrix.sh`) of the working tree against those of a commit before the change, built in a tree of its own; the proof that a change leaves behaviour as it was (ADR 0014, ADR 0032); CI runs it for every pull request that changes a crate (ADR 0040) |
