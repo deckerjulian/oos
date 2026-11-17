@@ -214,6 +214,10 @@ jobs:
           rc=0
           tools/compare-base.sh HEAD^1 || rc=$?
           [ ! -f ui/target/compare-base/summary.md ] || cat ui/target/compare-base/summary.md >> "$GITHUB_STEP_SUMMARY"
+          # how many lines of code the pull request adds or removes: to see, not a gate
+          if [ -d ui/target/compare-base/tree ]; then
+            { echo; python3 -I tools/code-size.py ui/target/compare-base/tree .; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "differs=$rc" >> "$GITHUB_OUTPUT"
           [ "$rc" -le 1 ]
       - name: Keep what differs
