@@ -8,3 +8,34 @@ serial DHO9A000123456
 
 # the address OOS took without DHCP before 0.1.9; the guide names it
 address 192.168.177.64
+
+# addresses in private networks that tests, simulations and documents of the tree used on 2026-11-17 as examples;
+# listed so that moving them in a refactoring is not a finding
+address 10.0.0.1
+address 10.0.0.7
+address 10.0.0.9
+address 10.0.0.10
+address 10.1.2.4
+address 10.9.9.1
+address 10.9.9.8
+address 10.9.9.9
+address 10.20.0.9
+address 10.20.0.51
+address 172.16.0.9
+address 192.168.1.1
+address 192.168.1.2
+address 192.168.1.5
+address 192.168.1.7
+address 192.168.1.9
+address 192.168.1.20
+address 192.168.1.100
+address 192.168.1.148
+address 192.168.50.1
+address 192.168.50.2
+address 192.168.50.3
+address 192.168.78.1
+address 192.168.100.200
+address 192.168.177.75
+address 192.168.177.164
+# the vendor's prefix with a made-up device part, in the tests of the model and the update
+mac 00:19:AF:00:00:01
