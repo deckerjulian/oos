@@ -29,16 +29,19 @@ does not see timing, calibrated values, or what the hardware does.
     24. The label `no-wait`, which only the maintainer can set, is for what ADR 0031 lets in at once: a fix for a
     red main, a security fix, a correction of a document.
   - `owner`: it is the maintainer's own; or it is Dependabot's and changes nothing but the commits of actions in
-    the workflow files; or the maintainer has approved its newest commit. An agent's pull request and a pull
-    request from a fork always need that approval.
+    the workflow files; or the maintainer has approved its newest commit. A pull request from a fork always needs
+    that approval. An agent's pull request (a `copilot/` branch of this repository) is opened in the name of the
+    person who gave the task, and GitHub does not let that person approve it: it passes when a person has marked
+    it ready for review, which an agent cannot do. (Corrected on 2026-11-17 after the first run of an agent: the
+    first version took such a pull request for the maintainer's own.)
   - `unit`: it touches nothing that is only proven on a scope (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`,
     `fpgad/`, `boot/`, `kernel/`, `rootfs/`); or it carries the label `unit-tested`, which the maintainer sets after
     trying it on a unit.
 - **These three, `test` and `compare` become required checks of main.** A pull request is merged when all five have
   passed, by whoever presses the button or by GitHub.
 - **GitHub is asked to merge by itself** (workflow `Auto-merge`) for pull requests from branches of this repository
-  by the maintainer, by Dependabot and by the standing agents, once they are not drafts. Never for a fork: there the
-  maintainer decides, and may then ask for it by hand.
+  by the maintainer and by Dependabot. Never for a fork and never for an agent: there the maintainer looks and
+  merges. (Changed on 2026-11-17, on the maintainer's decision: the first version included the agents.)
 - **The squashed commit** carries the title of the pull request, the messages of its commits and the sign-off of the
   maintainer, who answers for it (ADR 0026, ADR 0034).
 - **The review of ADR 0036 is asked by the status `owner`** once this is switched on; the ruleset `main-review` is

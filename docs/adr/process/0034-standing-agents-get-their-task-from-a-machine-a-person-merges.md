@@ -101,9 +101,11 @@ What GitHub offers, read in its documentation on 2026-11-17 (not all of it tried
 - `agent-paths` runs from the workflow file of the pull request itself, so it is a help for the reviewer and not a
   lock: a change under `.github/` is what the reviewer looks for first.
 - The scout's issue names the fork's work without links, so the fork gets no notices from this repository.
-- Not tried yet, and to be confirmed with the first runs: that a profile can be chosen through the API on this plan,
-  that the forum can be read from GitHub's runners (it can from a desktop), and that an agent keeps to its task.
-  What fails is recorded here.
+- Tried on 2026-11-17: a task given through the API with the profile `cleaner` started an agent on this plan, and
+  it opened a draft pull request on a `copilot/` branch, in the name of the person whose token gave the task. That
+  name is why the status `owner` of ADR 0038 goes by the branch, not by the author. Not tried yet: that the forum
+  can be read from GitHub's runners (it can from a desktop), and how well an agent keeps to its task. What fails is
+  recorded here.
 - `.github/workflows/copilot-setup-steps.yml` prepares the agent's environment (Rust with the scope's target), so
   an agent can run `tools/check.sh` before it opens a pull request.
 - Worth a second look when a second maintainer joins (required reviews), or when the agents' pull requests are

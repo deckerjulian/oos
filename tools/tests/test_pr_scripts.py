@@ -48,9 +48,10 @@ class PullRequests(unittest.TestCase):
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
 
     def pull(self, files, author="owner", fork=False, hours=1, labels=(), reviews=(), title="UI: something", bot=False,
-             patches=None):
+             patches=None, ref="topic", draft=False):
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
-        pr = {"head": {"sha": "abc", "repo": {"full_name": "other/oos" if fork else "owner/oos"}},
+        pr = {"head": {"sha": "abc", "ref": ref, "repo": {"full_name": "other/oos" if fork else "owner/oos"}},
+              "draft": draft,
               "base": {"repo": {"full_name": "owner/oos"}}, "user": {"login": author, "type": "Bot" if bot else "User"},
               "labels": [{"name": l} for l in labels], "created_at": ago(hours), "title": title}
         name("repos/owner/oos/pulls/7").write_text(json.dumps(pr))
@@ -101,7 +102,20 @@ class PullRequests(unittest.TestCase):
                   reviews=[("owner", "APPROVED", "abc"), ("owner", "CHANGES_REQUESTED", "abc")])
         self.assertEqual(self.gate()["owner"], "pending", "the last review counts")
         self.pull(["ui/src/ui.rs"], author="Copilot", bot=True)
-        self.assertEqual(self.gate()["owner"], "pending", "an agent needs the approval")
+        self.assertEqual(self.gate()["owner"], "pending", "a bot that is not Dependabot")
+
+    def test_an_agents_pull_request(self):
+        # opened in the name of the person who gave the task, as a draft on a copilot/ branch
+        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=True)
+        self.assertEqual(self.gate()["owner"], "pending", "the maintainer's name does not make it the maintainer's")
+        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=False)
+        self.assertEqual(self.gate()["owner"], "success", "a person marked it ready")
+        self.pull(["ui/src/ui.rs"], author="someone", fork=True, ref="copilot/fix-something", draft=False)
+        self.assertEqual(self.gate()["owner"], "pending", "a fork's branch of that name is a fork's")
+        self.pull(["ui/src/ui.rs"], author="owner", ref="copilot/fix-something", draft=True, title="Lints: x in ui")
+        self.assertEqual(self.labels(), {"area/ui", "type/refactor", "agent"})
+        self.pull(["ui/src/ui.rs"], author="someone", fork=True, ref="copilot/fix-something", title="Lints: x in ui")
+        self.assertEqual(self.labels(), {"area/ui", "type/refactor"})
 
     def test_dependabot(self):
         bump = "@@ -1 +1 @@\n-      - uses: actions/checkout@aaa # v4.4.0\n+      - uses: actions/checkout@bbb # v4.5.0"
