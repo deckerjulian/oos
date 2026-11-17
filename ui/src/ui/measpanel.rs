@@ -12,7 +12,7 @@ pub(super) const TOOL_H: i32 = 32;
 /// A panel at least this wide has its controls in the title strip.
 pub(super) const WIDE_BAR_FROM: i32 = 760;
 /// A card of the cards view and the space between cards.
-pub(super) const CARD_H: i32 = 98;
+pub(super) const CARD_H: i32 = 60;
 const CARD_GAP: i32 = 4;
 
 /// The dropdown that is open.
@@ -429,10 +429,10 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ cards
 
-    /// Columns of cards in a list `w` wide: two, and three once each is still wide enough for its trend, so a wide
-    /// panel of two rows shows six measurements.
+    /// Columns of cards in a list `w` wide: as many as fit at the width a card needs for its value and its
+    /// statistics, two at least (a narrow side panel) and six at most.
     pub(super) fn panel_card_cols(w: i32) -> i32 {
-        if w >= 720 { 3 } else { 2 }
+        (w / 168).clamp(2, 6)
     }
 
     /// The cards that are on the page, in columns. `pos` indexes `listed`.
@@ -451,85 +451,55 @@ impl Ui {
         (((list_h + CARD_GAP) / (CARD_H + CARD_GAP)).max(1) * Self::panel_card_cols(list_w)) as usize
     }
 
-    /// The small trend of a card: the last values of its measurement, in the room right of its numbers. The scale
-    /// is the range of those values (a flat line when they do not move), with the newest at the right edge.
-    fn draw_card_trend(&self, cv: &mut Canvas, plot: Rect, i: usize, col: Rgb) {
-        let Some(h) = self.mhist.get(i).filter(|h| h.len() >= 2) else { return };
-        let (lo, hi) = h.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
-        let span = (hi - lo).max(hi.abs().max(lo.abs()) * 1e-4).max(f32::MIN_POSITIVE);
-        let mid = (hi + lo) / 2.0;
-        cv.hline(plot.x, plot.right() - 1, plot.y, mix(BTN, LINE, 160));
-        cv.hline(plot.x, plot.right() - 1, plot.bottom() - 1, mix(BTN, LINE, 160));
-        let n = h.len() as i32;
-        // the newest value sits at the right edge; a short history starts part of the way in
-        let step = (plot.w - 1) as f32 / (super::MHIST_LEN as f32 - 1.0);
-        let x_of = |k: i32| plot.right() - 1 - ((n - 1 - k) as f32 * step) as i32;
-        let y_of = |v: f32| plot.y + plot.h / 2 - (((v - mid) / span) * (plot.h - 6) as f32) as i32;
-        let outer = cv.save_clip();
-        cv.clip_within(plot);
-        let mut prev: Option<(i32, i32)> = None;
-        for (k, v) in h.iter().enumerate() {
-            let p = (x_of(k as i32), y_of(*v));
-            if let Some(q) = prev { cv.line(q.0, q.1, p.0, p.1, col); }
-            prev = Some(p);
-        }
-        if let Some(p) = prev { cv.circle(p.0 - 1, p.1, 2, col); }
-        cv.restore_clip(outer);
-    }
-
     /// The pin of a card: top right.
     pub(super) fn panel_card_pin(r: Rect) -> Rect {
-        Rect::new(r.right() - 34, r.y, 34, 34)
+        Rect::new(r.right() - 30, r.y, 30, 30)
     }
 
+    /// The cards: three lines each. The name and the pin; the value and, at the right, the source in its colour;
+    /// two statistics and the count. No space is kept for anything else, so a panel shows as many as it can.
     pub(super) fn draw_panel_cards(&self, cv: &mut Canvas, g: &PanelGeo, rows: &[tools::MeasRow], keys: &[studio::MeasKey], listed: &[usize], first: usize) {
         let f = self.fonts();
         let pinned = self.studio_pinned();
-        let gate = if self.m.meas_full_record { "Full" } else { "Screen" };
         cv.set_clip(g.list);
         for (pos, r) in self.panel_cards_layout(first, listed.len(), g.list) {
             let i = listed[pos];
             let row = &rows[i];
             let is_pinned = keys.get(i).is_some_and(|k| pinned.contains(k));
+            let col = self.wave_color(row.src);
             chip(cv, r, BTN, if is_pinned { mix(BTN_BORDER, AMBER, 90) } else { BTN_BORDER });
             // the name and the pin
-            cv.set_clip(Rect::new(r.x + 4, r.y, r.w - 34, 24));
-            cv.text(&f.s, r.x + 9, r.y + 17, &self.panel_row_name(keys.get(i).copied(), &row.name), LABEL);
+            cv.set_clip(Rect::new(r.x + 4, r.y, r.w - 30, 20));
+            cv.text(&f.s, r.x + 8, r.y + 15, &self.panel_row_name(keys.get(i).copied(), &row.name), LABEL);
             cv.set_clip(g.list);
-            icon_pin(cv, r.right() - 22, r.y + 14, is_pinned, if is_pinned { AMBER } else { DIM });
-            // the value
-            cv.set_clip(Rect::new(r.x + 4, r.y + 20, r.w - 8, 28));
-            cv.text(&f.lb, r.x + 9, r.y + 43, &row.text(), TEXT);
-            cv.set_clip(g.list);
-            // the statistics
+            icon_pin(cv, r.right() - 16, r.y + 12, is_pinned, if is_pinned { AMBER } else { DIM });
+            // the value, and the source at the right of its line
+            let src = self.wave_name(row.src);
+            let sw = f.sb.width(&src);
+            cv.set_clip(Rect::new(r.x + 4, r.y + 18, (r.w - 8 - sw - 10).max(1), 24));
+            cv.text(&f.lb, r.x + 8, r.y + 38, &row.text(), TEXT);
+            cv.set_clip(Rect::new(r.x + 4, r.y + 18, r.w - 8, 24));
+            cv.text(&f.sb, r.right() - 8 - sw, r.y + 37, &src, col);
+            // the statistics: mean and deviation, or minimum and maximum, then the count while there is room
             let st = self.studio_stat_values(i);
-            let cell = |v: Option<f64>| v.map_or("----".to_string(), |v| row.fmt(v));
-            let (a, b) = if self.studio.panel.stats_mode == 2 {
-                (format!("Min {}", cell(st.map(|s| s.1))), format!("Max {}", cell(st.map(|s| s.2))))
-            } else {
-                (format!("Mean {}", cell(st.map(|s| s.0))), format!("Std dev {}", cell(st.map(|s| s.3))))
-            };
-            cv.set_clip(Rect::new(r.x + 4, r.y + 48, r.w - 8, 32));
             if self.studio.panel.stats_mode != 0 || st.is_some() {
-                cv.text(&f.s, r.x + 9, r.y + 59, &a, DIM);
-                cv.text(&f.s, r.x + 9, r.y + 73, &b, DIM);
+                let cell = |v: Option<f64>| v.map_or("----".to_string(), |v| row.fmt(v));
+                let line = if self.studio.panel.stats_mode == 2 {
+                    format!("min {}  max {}", cell(st.map(|s| s.1)), cell(st.map(|s| s.2)))
+                } else {
+                    format!("\u{b5} {}  \u{3c3} {}", cell(st.map(|s| s.0)), cell(st.map(|s| s.3)))
+                };
+                let n = self.mstat.get(i).map_or(0, |s| s.n);
+                let count = if n > 0 { format!("n {n}") } else { String::new() };
+                let room = r.w - 16;
+                let with_count = !count.is_empty() && f.s.width(&line) + 10 + f.s.width(&count) <= room;
+                cv.set_clip(Rect::new(r.x + 4, r.y + 40, r.w - 8 - if with_count { f.s.width(&count) + 8 } else { 0 }, 18));
+                cv.text(&f.s, r.x + 8, r.y + 53, &line, DIM);
+                if with_count {
+                    cv.set_clip(Rect::new(r.x + 4, r.y + 40, r.w - 8, 18));
+                    cv.text(&f.s, r.right() - 8 - f.s.width(&count), r.y + 53, &count, DIM);
+                }
             }
-            cv.set_clip(g.list);
-            // a wide card has room right of its numbers: the trend of the measurement
-            if r.w >= 250 {
-                let left = (9 + f.lb.width(&row.text()).max(f.s.width(&a)).max(f.s.width(&b)) + 18).max(150);
-                let plot = Rect::new(r.x + left, r.y + 26, r.w - left - 14, r.h - 26 - 24);
-                if plot.w >= 60 { self.draw_card_trend(cv, plot, i, self.wave_color(row.src)); }
-            }
-            // the foot: the source in its colour, the gate and the count
-            let n = self.mstat.get(i).map_or(0, |s| s.n);
-            let foot = if n > 0 { format!("{gate} \u{b7} n {n}") } else { gate.to_string() };
-            let fw = f.s.width(&foot);
-            let col = self.wave_color(row.src);
-            cv.set_clip(Rect::new(r.x + 4, r.y + r.h - 20, r.w - 8, 18));
-            cv.circle(r.x + 12, r.y + r.h - 11, 3, col);
-            cv.text(&f.sb, r.x + 19, r.y + r.h - 7, &self.wave_name(row.src), col);
-            cv.text(&f.s, (r.right() - 8 - fw).max(r.x + 19 + f.sb.width(&self.wave_name(row.src)) + 4), r.y + r.h - 7, &foot, DIM);
             cv.set_clip(g.list);
         }
         cv.no_clip();

@@ -486,4 +486,10 @@ fn walk_table_pictures() {
     u.relayout();
     for _ in 0..100 { u.step(0.04); }
     shot(&mut u, "t6-cards-narrow");
+    // the detailed table in a panel docked above the waveform
+    let mut u = studio(V::Docked, true, true);
+    u.dock_apply(super::dock::VKind::Measure, super::dock::Drop::Split(super::dock::VKind::Wave, super::dock::Side::Top));
+    u.relayout();
+    for _ in 0..100 { u.step(0.04); }
+    shot(&mut u, "t7-detail-wide");
 }
