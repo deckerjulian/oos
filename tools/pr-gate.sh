@@ -7,7 +7,9 @@
 #   waited   it has been open as long as ADR 0031 asks: 72 hours with a decision record, else 24; the label `no-wait`
 #            (a fix for a red main, a security fix, a correction of a document) takes the wait away
 #   owner    it is the maintainer's own, or Dependabot's and changes nothing but the commits of actions, or the
-#            maintainer has approved its newest commit
+#            maintainer has approved its newest commit. An agent's pull request (a copilot/ branch of this
+#            repository) is opened in the name of the person who gave the task, who cannot approve it: it passes
+#            when a person has marked it ready for review, which an agent cannot do.
 #   unit     it touches nothing that is only proven on a scope, or it carries the label `unit-tested`
 #
 #   tools/pr-gate.sh NUMBER        one pull request
@@ -38,6 +40,9 @@ one() {
 	author=$(printf '%s' "$pr" | jq -r .user.login)
 	here=$(printf '%s' "$pr" | jq -r '.head.repo.full_name == .base.repo.full_name')
 	labels=$(printf '%s' "$pr" | jq -r '[.labels[].name] | join(" ")')
+	draft=$(printf '%s' "$pr" | jq -r '.draft == true')
+	agent=false
+	case $(printf '%s' "$pr" | jq -r .head.ref) in copilot/*) [ "$here" != true ] || agent=true ;; esac
 	files=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename')
 
 	# waited
@@ -60,7 +65,13 @@ one() {
 	approved=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
 		jq -s --arg m "$maintainer" --arg s "$sha" \
 			'add | [.[] | select(.user.login == $m and .commit_id == $s)] | last | .state == "APPROVED"')
-	if [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
+	if [ $agent = true ]; then
+		if [ "$draft" = true ]; then
+			status "$sha" owner pending "an agent's: a person marks it ready for review after looking at it"
+		else
+			status "$sha" owner success "an agent's, marked ready for review by a person"
+		fi
+	elif [ "$here" = true ] && [ "$author" = "$maintainer" ]; then
 		status "$sha" owner success "the maintainer's own"
 	elif [ "$approved" = true ]; then
 		status "$sha" owner success "approved by the maintainer"
