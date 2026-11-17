@@ -73,6 +73,10 @@ class Judge(unittest.TestCase):
         self.assertEqual(res, "FAIL")
         self.assertIn("a / b", detail)
 
+    def test_a_register_or_safety_failure_is_never_known(self):
+        for n in ("plan_matches_this_build", "protected_areas_after"):
+            self.assertEqual(d.judge(n, [("FAIL", "x")], {n: "FAIL"})[0], "FAIL", n)
+
     def test_one_pass_is_a_pass(self):
         self.assertEqual(d.judge("t", [("PASS", "ok")], {"t": "FAIL"}), ("PASS", "ok"))
 
@@ -106,6 +110,9 @@ class Plan(unittest.TestCase):
         diff, _ = d.plan_compare(HOST, UNIT.replace("0x1000 0x1", "0x1000 0x2"))
         self.assertEqual(len(diff), 1)
         self.assertIn("### plan 1 ch line 1", diff[0])
+
+    def test_the_last_empty_line_the_unit_drops_is_no_difference(self):
+        self.assertEqual(d.plan_compare(HOST + "\n", UNIT.rstrip("\n"))[0], [])
 
     def test_a_missing_section_is_a_difference(self):
         diff, _ = d.plan_compare(HOST, UNIT.split("### la thr")[0])

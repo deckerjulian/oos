@@ -54,8 +54,9 @@ image, the update path, the build or the tests themselves change.
   first failure stays in the report. A test that fails every time is `FAIL` with each attempt's detail: a retry
   absorbs noise, not a fault that is always there.
 - **`--known FILE`** (default `device-test/known.json`): the results of a run of main on the same unit. A failure that
-  the known run has too is `KNOWN`, not a failure of the change. `--save-known` writes the run into that file:
-  do it with the installed image or a build of main, after main changed in the hardware paths.
+  the known run has too is `KNOWN`, not a failure of the change; a difference of the register sequences and a failed
+  smoke test never are. `--save-known` writes the run into that file: do it with the installed image or a build of
+  main, after main changed in the hardware paths.
 
 `FLAKY` and `KNOWN` are in the report and do not fail the run (exit code 0). A test that is `FLAKY` again and again
 is a fault of its own: of the test, or of OOS. It deserves an issue, not more retries.

@@ -118,6 +118,8 @@ def select(names, areas):
 
 
 BAD = ("FAIL", "ERROR")
+# a failure of these is never "known": a register sequence or the safety of the unit is not noise of a measurement
+NEVER_KNOWN = SMOKE + ("plan_matches_this_build",)
 
 
 def judge(name, attempts, known):
@@ -125,7 +127,7 @@ def judge(name, attempts, known):
     res, detail = attempts[-1]
     if res == "PASS" and len(attempts) > 1:
         return "FLAKY", f"passed on attempt {len(attempts)}; before: {attempts[0][1]}"
-    if res in BAD and known.get(name) in BAD + ("KNOWN",):
+    if res in BAD and name not in NEVER_KNOWN and known.get(name) in BAD + ("KNOWN",):
         return "KNOWN", f"fails in the known run too: {detail}"
     if res in BAD and len(attempts) > 1:
         return res, f"{len(attempts)} attempts: " + " / ".join(d[:120] for _, d in attempts)
@@ -154,8 +156,10 @@ def sections(text):
         if re.match(r"probe (present|absent)\b", line):
             continue
         out[cur].append(line.rstrip())
-    while out[""] and not out[""][-1]:
-        out[""].pop()
+    # the shell on the unit drops the last empty line of its output
+    for lines in out.values():
+        while lines and not lines[-1]:
+            lines.pop()
     return out
 
 
