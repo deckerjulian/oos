@@ -65,7 +65,9 @@ impl Ui {
                 self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
             }
         }
-        if self.m.win_layout != WinLayout::One { self.workspace.stacked = false; }
+        if self.m.win_layout != WinLayout::One {
+            self.workspace.stacked = false;
+        }
         self.sync_full();
         if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
             self.spread_wins();
@@ -131,7 +133,9 @@ impl Ui {
     pub(super) fn win_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
             Item::WinLayout => Density::ALL.iter().map(|d| d.label().to_string()).collect(),
-            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
+            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => {
+                (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect()
+            }
             _ => return None,
         })
     }
@@ -184,7 +188,12 @@ mod tests {
             let g = u.grid;
             for (i, a) in u.wins.iter().enumerate() {
                 assert_eq!((a.w, a.h), (u.wins[0].w, u.wins[0].h), "{:?}", l);
-                assert!(a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h, "{:?} {:?}", l, a);
+                assert!(
+                    a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h,
+                    "{:?} {:?}",
+                    l,
+                    a
+                );
                 assert_eq!(a.h % 8, 0, "{:?}", l);
                 for b in &u.wins[i + 1..] {
                     assert!(!overlaps(*a, *b), "{:?}", l);
@@ -426,7 +435,10 @@ mod tests {
         assert_eq!(u.value(Item::PaneSel), "Traces");
         u.select_option(Item::PaneSel, "Results");
         render(&mut u);
-        assert_eq!((u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density), (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split));
+        assert_eq!(
+            (u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
+            (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split)
+        );
         assert!(u.pane_h() > 0);
         u.select_option(Item::PaneSel, "Spectrum");
         assert_eq!(u.m.pane, tables::PANE_SPECTRUM);
@@ -524,7 +536,10 @@ mod tests {
             let (k, v) = l.split_once(" = ").unwrap();
             crate::store::set(&mut back, k, v).unwrap();
         }
-        assert_eq!((back.win_layout, back.density, back.split_pane, back.ch_win, back.math_win), (u.m.win_layout, u.m.density, u.m.split_pane, u.m.ch_win, u.m.math_win));
+        assert_eq!(
+            (back.win_layout, back.density, back.split_pane, back.ch_win, back.math_win),
+            (u.m.win_layout, u.m.density, u.m.split_pane, u.m.ch_win, u.m.math_win)
+        );
         // a setup written before the density row
         let old = crate::store::parse_setup("windows = Cols\npane = 0\n").unwrap();
         assert_eq!((old.density, old.win_layout), (Density::Split, WinLayout::Rows));
@@ -543,9 +558,20 @@ mod tests {
         let s = Stats { vmin: -1.0, vmax: 1.0, ..Stats::default() };
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
         // CH1 alone in window 1: its 2 Vpp fill about 80 % of 8 div, centred
-        assert!(2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6, "{} {}", m.ch[0].volts_per_div(), m.ch[0].offset);
+        assert!(
+            2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6,
+            "{} {}",
+            m.ch[0].volts_per_div(),
+            m.ch[0].offset
+        );
         // CH2 and CH3 share window 2: half the height each, one above the other
-        assert!(2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0, "{} {} {}", m.ch[1].volts_per_div(), m.ch[1].offset, m.ch[2].offset);
+        assert!(
+            2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0,
+            "{} {} {}",
+            m.ch[1].volts_per_div(),
+            m.ch[1].offset,
+            m.ch[2].offset
+        );
         // one window: three bands
         m.win_layout = WinLayout::One;
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
@@ -568,7 +594,12 @@ mod tests {
         let w = u.wins[0];
         // at the bottom of the window, half of it or what 16 lanes of the smallest pitch need
         let n = u.m.la.lines().len() as i32;
-        assert!(band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w, "{:?} {:?}", band, w);
+        assert!(
+            band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w,
+            "{:?} {:?}",
+            band,
+            w
+        );
         assert!(band.h <= (w.h / 2).max(n * 9 + 18), "{:?} {:?}", band, w);
         assert!(pitch >= 9);
         // the plot keeps its height: no strip under it
@@ -591,7 +622,13 @@ mod tests {
         for _ in 0..30 {
             u.step(0.05);
         }
-        for (name, l, full) in [("win-one", WinLayout::One, false), ("win-cols", WinLayout::Cols, false), ("win-rows", WinLayout::Rows, false), ("win-quad", WinLayout::Quad, true), ("win-full", WinLayout::One, true)] {
+        for (name, l, full) in [
+            ("win-one", WinLayout::One, false),
+            ("win-cols", WinLayout::Cols, false),
+            ("win-rows", WinLayout::Rows, false),
+            ("win-quad", WinLayout::Quad, true),
+            ("win-full", WinLayout::One, true),
+        ] {
             u.m.win_layout = l;
             u.spread_wins();
             u.full = full;

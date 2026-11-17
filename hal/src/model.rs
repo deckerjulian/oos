@@ -176,7 +176,12 @@ impl Platform {
     /// `build` with the capability defaults of the image (`UNIT_CONF`) applied between the vendor file and the limits
     /// file: vendor.bin < unit defaults < limits.conf < forced model. A forced model keeps the unit defaults and the
     /// capability overrides on top. Only capability keys count in the unit file; others are warnings.
-    pub fn build_unit(vendor: Option<&[u8]>, unit_conf: Option<&str>, limits_conf: Option<&str>, force: Option<&str>) -> Platform {
+    pub fn build_unit(
+        vendor: Option<&[u8]>,
+        unit_conf: Option<&str>,
+        limits_conf: Option<&str>,
+        force: Option<&str>,
+    ) -> Platform {
         let mut p = Platform::default();
         match vendor.map(decode_vendor) {
             Some(Ok(v)) => {
@@ -190,7 +195,10 @@ impl Platform {
                     None => {
                         let m = v.model.unwrap_or_default();
                         if (ACTIVE.family)(&m) {
-                            p.warnings.push(format!("vendor.bin: model {:?} is not in the model table: {} assumed", m, ACTIVE.assumed_model));
+                            p.warnings.push(format!(
+                                "vendor.bin: model {:?} is not in the model table: {} assumed",
+                                m, ACTIVE.assumed_model
+                            ));
                         } else {
                             p.warnings.push(format!(
                                 "vendor.bin: model {:?} is not a {}, another board: OOS does not drive its hardware (docs/porting.md)",
@@ -208,7 +216,10 @@ impl Platform {
             for (n, k, v) in conf_lines(text, &mut p.warnings, UNIT_CONF) {
                 match set_cap(&mut p.caps, k, v) {
                     Ok(true) => p.unit.push(format!("{} = {}", k, v)),
-                    Ok(false) => p.warnings.push(format!("{}:{}: {} is not a capability key (channels, la, afg, ext_trig)", UNIT_CONF, n, k)),
+                    Ok(false) => p.warnings.push(format!(
+                        "{}:{}: {} is not a capability key (channels, la, afg, ext_trig)",
+                        UNIT_CONF, n, k
+                    )),
                     Err(e) => p.warnings.push(format!("{}:{}: {}", UNIT_CONF, n, e)),
                 }
             }
@@ -260,7 +271,13 @@ impl Platform {
         if set_cap(&mut self.caps, k, v)? {
             return Ok(());
         }
-        let f = || v.replace('_', "").parse::<f64>().ok().filter(|x| x.is_finite()).ok_or(format!("{}: {:?} is not a number", k, v));
+        let f = || {
+            v.replace('_', "")
+                .parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite())
+                .ok_or(format!("{}: {:?} is not a number", k, v))
+        };
         let l = &mut self.limits;
         let i = |s: &str| match s {
             "1ch" => Some(0),
@@ -304,7 +321,11 @@ impl Platform {
             Source::Assumed => "  (assumed)",
         };
         if let Some(m) = &self.foreign {
-            return format!("{}  SN {}  (another board: hardware not driven)", m, self.serial.as_deref().unwrap_or("-"));
+            return format!(
+                "{}  SN {}  (another board: hardware not driven)",
+                m,
+                self.serial.as_deref().unwrap_or("-")
+            );
         }
         format!("{}  SN {}{}", self.caps.name, self.serial.as_deref().unwrap_or("-"), src)
     }
@@ -419,7 +440,10 @@ pub struct Keys {
 
 /// Made-up keys of the tests.
 #[cfg(test)]
-pub(crate) const TEST_KEYS: Keys = Keys { file: [0x1111_2222, 0x3333_4444, 0x5555_6666, 0x7777_8888], item: [0x0102_0304, 0x0506_0708, 0x090a_0b0c, 0x0d0e_0f10] };
+pub(crate) const TEST_KEYS: Keys = Keys {
+    file: [0x1111_2222, 0x3333_4444, 0x5555_6666, 0x7777_8888],
+    item: [0x0102_0304, 0x0506_0708, 0x090a_0b0c, 0x0d0e_0f10],
+};
 
 /// Decoded vendor items.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -534,7 +558,9 @@ fn items(payload: &[u8], key: &[u32; 4]) -> Vendor {
         let (id, n) = (u32_at(payload, o + 4).unwrap(), u32_at(payload, o + 8).unwrap() as usize);
         let Some(item) = payload.get(o + 12..(o + 12).saturating_add(n)) else { break };
         o += 12 + n;
-        let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else { continue };
+        let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else {
+            continue;
+        };
         let (ilen, slen) = (ilen as usize, slen as usize);
         let Some(signed) = item.get(8..12 + ilen) else { continue };
         if crate::crc32(signed) != icrc || ilen % 4 != 0 || slen > ilen {
@@ -617,7 +643,10 @@ mod tests {
     #[test]
     fn model_table() {
         let c = lookup("dho802").unwrap();
-        assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.has_gen(), c.ext_trig, c.series), (2, 70, false, false, true, "DHO800"));
+        assert_eq!(
+            (c.channels, c.rated_bw_mhz, c.la, c.has_gen(), c.ext_trig, c.series),
+            (2, 70, false, false, true, "DHO800")
+        );
         let c = lookup("DHO814").unwrap();
         assert_eq!((c.channels, c.rated_bw_mhz, c.la, c.ext_trig), (4, 100, false, false));
         let c = lookup("DHO914S").unwrap();
@@ -647,7 +676,10 @@ mod tests {
 
         // forced model (file or argument), capability overrides stay on top
         let p = Platform::build(Some(&f), Some("model = DHO924S\nafg = no\n"), None);
-        assert_eq!((p.caps.name.as_str(), p.caps.channels, p.caps.has_gen(), p.source.clone()), ("DHO924S", 4, false, Source::Forced));
+        assert_eq!(
+            (p.caps.name.as_str(), p.caps.channels, p.caps.has_gen(), p.source.clone()),
+            ("DHO924S", 4, false, Source::Forced)
+        );
         let p = Platform::build(None, Some("model = DHO804"), Some("DHO914S"));
         assert_eq!(p.caps.name, "DHO914S");
         let p = Platform::build(None, None, None);
@@ -768,7 +800,12 @@ mod unit_defaults_tests {
 
     #[test]
     fn unit_file_takes_capability_keys_only() {
-        let p = Platform::build_unit(None, Some("afg = no\nadc.clock_hz = 2e9\nmem.1ch = 1e9\nmodel = DHO804\nla = maybe\nnonsense\n"), None, None);
+        let p = Platform::build_unit(
+            None,
+            Some("afg = no\nadc.clock_hz = 2e9\nmem.1ch = 1e9\nmodel = DHO804\nla = maybe\nnonsense\n"),
+            None,
+            None,
+        );
         assert_eq!(p.unit, vec!["afg = no"]);
         assert_eq!(p.limits, Limits::standard());
         assert_eq!(p.caps.name, "DHO924S");

@@ -23,10 +23,21 @@ pub fn mode_of_mask(mask: u32) -> Option<usize> {
 }
 
 /// Channel pair (i, j) of modes 0..9 for the SPU fine gain.
-const FINE_PAIR: [(usize, usize); 10] = [(0, 0), (1, 1), (2, 2), (3, 3), (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+const FINE_PAIR: [(usize, usize); 10] =
+    [(0, 0), (1, 1), (2, 2), (3, 3), (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
 /// Input-mode shadows (SWONP1, SWONP2) per mode; reg 0x54 data = SWONP1 ^ 0x1041, reg 0x55 data = SWONP2 ^ 4.
 const SWONP: [(u16, u16); 11] = [
-    (0x8421, 0), (0x0842, 1), (0x2108, 4), (0x1084, 2), (0x0821, 1), (0x2021, 4), (0x1021, 2), (0x2042, 4), (0x1042, 2), (0x1108, 2), (0x1041, 4),
+    (0x8421, 0),
+    (0x0842, 1),
+    (0x2108, 4),
+    (0x1084, 2),
+    (0x0821, 1),
+    (0x2021, 4),
+    (0x1021, 2),
+    (0x2042, 4),
+    (0x1042, 2),
+    (0x1108, 2),
+    (0x1041, 4),
 ];
 const REC: usize = 0x68;
 const FINE: usize = 0x478;
@@ -49,9 +60,11 @@ impl CalAdc {
     /// The first valid cal_adc.hex: OOS's own (`calfile::OOS_CAL_DIR`), then `dir`, then `dir/default`.
     pub fn load(dir: &str) -> std::io::Result<CalAdc> {
         let def = format!("{}/default", dir.trim_end_matches('/'));
-        let (d, _) = crate::dho::calfile::load_first("cal_adc.hex", &[crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()])
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cal_adc.hex: no valid copy"))?;
-        CalAdc::from_file_bytes(&d).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "cal_adc.hex: bad container"))
+        let (d, _) =
+            crate::dho::calfile::load_first("cal_adc.hex", &[crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()])
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "cal_adc.hex: no valid copy"))?;
+        CalAdc::from_file_bytes(&d)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "cal_adc.hex: bad container"))
     }
     /// The 0x738-byte payload (for the self-cal, which edits a copy and saves it with `calfile`).
     pub fn payload(&self) -> &[u8] {
@@ -167,7 +180,8 @@ impl Adc {
         spi(&mut w, 100, 0x09, self.r09 ^ 0x2720, 100);
         self.r09 = (self.r09 & 0xffc0) | (v1 as u16 & 0x3f);
         w.push(Wr { pre_us: 0, reg: 0x1058, val: cal.fine(mode), post_us: 0 });
-        let order: [[usize; 2]; 4] = if mode <= 3 || mode == 10 { [[0, 4], [1, 5], [2, 6], [3, 7]] } else { [[0, 4], [2, 6], [1, 5], [3, 7]] };
+        let order: [[usize; 2]; 4] =
+            if mode <= 3 || mode == 10 { [[0, 4], [1, 5], [2, 6], [3, 7]] } else { [[0, 4], [2, 6], [1, 5], [3, 7]] };
         for pair in order {
             for core in pair {
                 let g = cal.s16(cal.gain_src(mode, core));
@@ -363,14 +377,23 @@ mod tests {
             eprintln!("cal_adc.hex not found, skipped");
             return;
         };
-        let fmt = |w: &[Wr]| w.iter().map(|x| format!("{} {:#x} {:#x} {}", x.pre_us, x.reg, x.val, x.post_us)).collect::<Vec<_>>();
+        let fmt = |w: &[Wr]| {
+            w.iter().map(|x| format!("{} {:#x} {:#x} {}", x.pre_us, x.reg, x.val, x.post_us)).collect::<Vec<_>>()
+        };
         let mut got = vec!["== boot".to_string()];
         let mut adc = Adc::default();
         got.extend(fmt(&adc.parameter(&cal, 0)));
         for m in [0x3, 0xf, 0xc, 0x1] {
             got.push(format!("== {:#x}", m));
             got.extend(fmt(&adc.channel_mode(&cal, mode_of_mask(m).unwrap())));
-            got.push(format!("-- wpu {}", wpu_gain(m, [1; 4], 0x5555).iter().map(|(c, v)| format!("{}:{:#x}", c, v)).collect::<Vec<_>>().join(" ")));
+            got.push(format!(
+                "-- wpu {}",
+                wpu_gain(m, [1; 4], 0x5555)
+                    .iter()
+                    .map(|(c, v)| format!("{}:{:#x}", c, v))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ));
         }
         got.push("== onoff".into());
         got.extend(fmt(&adc.onoff()));

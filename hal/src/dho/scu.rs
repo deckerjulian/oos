@@ -29,8 +29,19 @@ pub struct Shadows {
 
 impl Shadows {
     /// The stock register values at STOP after the hand-over of 2026-11-02 21:12 (CH1, 2.5 Mpts).
-    pub const HANDOVER: Shadows =
-        Shadows { s4004: 0x1, s4008: 0x80_0001, s400c: 0x6000_0000, s1000: 0, s1010: 0x2000_0000, s4080: 0x4000_0010, s1004: 0x0400_0000, s4020: 0x2001, s1080: 0x01e0_0000, s1084: 0, s40b8: 0 };
+    pub const HANDOVER: Shadows = Shadows {
+        s4004: 0x1,
+        s4008: 0x80_0001,
+        s400c: 0x6000_0000,
+        s1000: 0,
+        s1010: 0x2000_0000,
+        s4080: 0x4000_0010,
+        s1004: 0x0400_0000,
+        s4020: 0x2001,
+        s1080: 0x01e0_0000,
+        s1084: 0,
+        s40b8: 0,
+    };
 }
 
 /// Read-out window: `n` points from memory point `start`, interleave factor `ratio`, FSM channel mask `fsm`.
@@ -341,7 +352,10 @@ mod tests {
     fn auto_trigger_200us() {
         // acquisition-start.md: 200 us/div -> 0x4060 = 0x2625a0, 0x4064 = 0x17d7840; shadow 0x2001
         let mut sh = Shadows::HANDOVER;
-        assert_eq!(auto_trigger(&mut sh, true, 200_000_000_000, 8_000_000), [(0x4020, 0x2001), (0x4060, 0x2625a0), (0x4064, 0x17d7840)]);
+        assert_eq!(
+            auto_trigger(&mut sh, true, 200_000_000_000, 8_000_000),
+            [(0x4020, 0x2001), (0x4060, 0x2625a0), (0x4064, 0x17d7840)]
+        );
         assert_eq!(auto_trigger(&mut sh, false, 1_000_000_000, 0)[0], (0x4020, 0x2000));
     }
 

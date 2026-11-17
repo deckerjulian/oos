@@ -115,7 +115,8 @@ pub fn unescape(s: &str) -> Vec<u8> {
             b't' => out.push(b'\t'),
             b'e' => out.push(0x1b),
             b'x' => {
-                let d: Vec<u8> = b[i..].iter().take(2).map_while(|c| (*c as char).to_digit(16).map(|v| v as u8)).collect();
+                let d: Vec<u8> =
+                    b[i..].iter().take(2).map_while(|c| (*c as char).to_digit(16).map(|v| v as u8)).collect();
                 match d[..] {
                     [h, l] => out.push(h << 4 | l),
                     [l] => out.push(l),
@@ -353,9 +354,15 @@ mod tests {
     #[test]
     fn key_of_a_passphrase() {
         assert_eq!(hex(&psk("password", b"IEEE")), "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e");
-        assert_eq!(hex(&psk("ThisIsAPassword", b"ThisIsASSID")), "0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af");
+        assert_eq!(
+            hex(&psk("ThisIsAPassword", b"ThisIsASSID")),
+            "0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af"
+        );
         // longest password, longest name (the value comes from Python's hashlib)
-        assert_eq!(hex(&psk(&format!("{}xyz", "a\"#b c".repeat(10)), &[b'Z'; 32])), "986b0d59e31ee983f3ddda05e5382ace06ff85570d0294cd10df55f38f7773f4");
+        assert_eq!(
+            hex(&psk(&format!("{}xyz", "a\"#b c".repeat(10)), &[b'Z'; 32])),
+            "986b0d59e31ee983f3ddda05e5382ace06ff85570d0294cd10df55f38f7773f4"
+        );
     }
 
     #[test]

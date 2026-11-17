@@ -69,7 +69,11 @@ impl Protocol for Dcc {
                 }
                 Kind::Crc => {
                     if let Some((t, a, d)) = cur.take() {
-                        v.push((t, if x.ok { describe(a, &d) } else { format!("{}  XOR wrong", describe(a, &d)) }, x.ok));
+                        v.push((
+                            t,
+                            if x.ok { describe(a, &d) } else { format!("{}  XOR wrong", describe(a, &d)) },
+                            x.ok,
+                        ));
                     }
                 }
                 Kind::Field("!ERR") => v.push((x.t0, "Broken packet".into(), false)),
@@ -128,19 +132,44 @@ impl Protocol for Dcc {
             TrackStatus::Estop => Tone::Bad,
             TrackStatus::Off => Tone::Neutral,
         };
-        let status = format!("{} \u{b7} {} idle, {} broadcast", yard.status.label(), yard.idle_count, yard.broadcast_count);
+        let status =
+            format!("{} \u{b7} {} idle, {} broadcast", yard.status.label(), yard.idle_count, yard.broadcast_count);
         let mut sections = vec![
             Section {
                 title: format!("Locomotives ({})", yard.locos.len()),
-                rows: yard.locos.iter().map(|l| format!("{}  {} {}  {}", l.addr, l.dir_text(), l.speed_text(), functions_text(l.functions)).trim_end().to_string()).collect(),
+                rows: yard
+                    .locos
+                    .iter()
+                    .map(|l| {
+                        format!("{}  {} {}  {}", l.addr, l.dir_text(), l.speed_text(), functions_text(l.functions))
+                            .trim_end()
+                            .to_string()
+                    })
+                    .collect(),
             },
-            Section { title: format!("Turnouts ({})", yard.turnouts.len()), rows: yard.turnouts.iter().map(|t| format!("{}  {}", t.addr, t.side_text())).collect() },
-            Section { title: format!("Signals ({})", yard.signals.len()), rows: yard.signals.iter().map(|s| format!("{}  {}", s.addr, s.aspect_text())).collect() },
+            Section {
+                title: format!("Turnouts ({})", yard.turnouts.len()),
+                rows: yard.turnouts.iter().map(|t| format!("{}  {}", t.addr, t.side_text())).collect(),
+            },
+            Section {
+                title: format!("Signals ({})", yard.signals.len()),
+                rows: yard.signals.iter().map(|s| format!("{}  {}", s.addr, s.aspect_text())).collect(),
+            },
         ];
         if !yard.advanced.is_empty() {
             sections.push(Section {
                 title: "Advanced".into(),
-                rows: yard.advanced.iter().map(|a| format!("{}  {}", a.kind, a.data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))).collect(),
+                rows: yard
+                    .advanced
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "{}  {}",
+                            a.kind,
+                            a.data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
+                        )
+                    })
+                    .collect(),
             });
         }
         Some(View { status: Some((status, tone)), sections })
@@ -153,7 +182,9 @@ fn describe(addr: u8, data: &[u8]) -> String {
         255 => "Idle".into(),
         0 => format!("All  {}", instruction(data)),
         1..=127 => format!("Loco {}  {}", addr, instruction(data)),
-        192..=231 if !data.is_empty() => format!("Loco {}  {}", ((addr as u16 & 0x3f) << 8) | data[0] as u16, instruction(&data[1..])),
+        192..=231 if !data.is_empty() => {
+            format!("Loco {}  {}", ((addr as u16 & 0x3f) << 8) | data[0] as u16, instruction(&data[1..]))
+        }
         128..=191 => {
             let y = Yard::default().apply(addr, data);
             if let Some(t) = y.turnouts.first() {
@@ -176,15 +207,22 @@ fn instruction(data: &[u8]) -> String {
     let l = y.locos.first();
     let fns = |lo: u32, hi: u32| {
         let f = l.map_or(0, |l| l.functions);
-        let on: Vec<String> = (lo..=hi).filter(|n| f >> n & 1 == 1).map(|n| match oos_dsp::dcc_yard::function_label(n as u8) {
-            "" => format!("F{}", n),
-            s => s.to_string(),
-        }).collect();
+        let on: Vec<String> = (lo..=hi)
+            .filter(|n| f >> n & 1 == 1)
+            .map(|n| match oos_dsp::dcc_yard::function_label(n as u8) {
+                "" => format!("F{}", n),
+                s => s.to_string(),
+            })
+            .collect();
         format!("F{}-F{}: {}", lo, hi, if on.is_empty() { "off".to_string() } else { on.join(" ") })
     };
     match b >> 5 {
-        0b001 if b & 0x1f == 0x1f => l.map_or_else(|| hex(data), |l| format!("{} {}", l.dir_text(), l.speed_text())).replace("E-Stop E-Stop", "E-Stop"),
-        0b010 | 0b011 => l.map_or_else(|| hex(data), |l| format!("{} {}", l.dir_text(), l.speed_text())).replace("E-Stop E-Stop", "E-Stop"),
+        0b001 if b & 0x1f == 0x1f => l
+            .map_or_else(|| hex(data), |l| format!("{} {}", l.dir_text(), l.speed_text()))
+            .replace("E-Stop E-Stop", "E-Stop"),
+        0b010 | 0b011 => l
+            .map_or_else(|| hex(data), |l| format!("{} {}", l.dir_text(), l.speed_text()))
+            .replace("E-Stop E-Stop", "E-Stop"),
         0b100 => fns(0, 4),
         0b101 if b & 0x10 != 0 => fns(5, 8),
         0b101 => fns(9, 12),
@@ -230,8 +268,20 @@ mod tests {
     fn demo_layout_and_emergency_stop() {
         let d = Dcc.demo().unwrap();
         let dt = x3::DCC_ONE_HALF / 10.0;
-        let v: Vec<f32> = (0..(1.2 * d.period / dt) as usize).map(|k| d.lines[0].as_ref().unwrap()(k as f64 * dt) as f32).collect();
-        let p = Dcc.decode(&Lines { lines: [Some(&v), None, None, None], dt, thr: 0.0, hy: 0.3, opt: [0; OPTS], sh: Shared::default(), chans: [None; 4], src: [None; 4] }).unwrap();
+        let v: Vec<f32> =
+            (0..(1.2 * d.period / dt) as usize).map(|k| d.lines[0].as_ref().unwrap()(k as f64 * dt) as f32).collect();
+        let p = Dcc
+            .decode(&Lines {
+                lines: [Some(&v), None, None, None],
+                dt,
+                thr: 0.0,
+                hy: 0.3,
+                opt: [0; OPTS],
+                sh: Shared::default(),
+                chans: [None; 4],
+                src: [None; 4],
+            })
+            .unwrap();
         let mut mem = None;
         let view = Dcc.view(&p, &[0; OPTS], &mut mem).unwrap();
         assert_eq!(view.status.as_ref().unwrap().1, Tone::Good, "{:?}", view);
@@ -268,11 +318,21 @@ mod tests {
         assert_eq!(describe(0xc1, &[0x02, 0x3f, 0x85]), "Loco 258  Fwd 4/128");
         assert_eq!(describe(0x81, &[0xf8]), "Turnout 1  Left");
         assert_eq!(describe(0x81, &[0x71, 0x24]), "Signal 1  Aspect 24");
-        let id = |t: f64, v| Packet { t0: t, t1: t, kind: Kind::Id { ext: false, rtr: false }, value: v, value2: None, ok: true };
+        let id = |t: f64, v| Packet {
+            t0: t,
+            t1: t,
+            kind: Kind::Id { ext: false, rtr: false },
+            value: v,
+            value2: None,
+            ok: true,
+        };
         let d = |t: f64, v| Packet { t0: t, t1: t, kind: Kind::Data, value: v, value2: None, ok: true };
         let x = |t: f64, ok| Packet { t0: t, t1: t, kind: Kind::Crc, value: 0, value2: None, ok };
         let p = [id(1.0, 5), d(2.0, 0x3f), d(3.0, 0x80 | 51), x(4.0, true), id(5.0, 255), d(6.0, 0), x(7.0, false)];
-        assert_eq!(Dcc.events(&p, &[0; OPTS]).unwrap(), vec![(1.0, "Loco 5  Fwd 50/128".to_string(), true), (5.0, "Idle  XOR wrong".to_string(), false)]);
+        assert_eq!(
+            Dcc.events(&p, &[0; OPTS]).unwrap(),
+            vec![(1.0, "Loco 5  Fwd 50/128".to_string(), true), (5.0, "Idle  XOR wrong".to_string(), false)]
+        );
     }
 
     #[test]

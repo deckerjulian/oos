@@ -22,8 +22,9 @@ pub const SPI_IOC_WR_MAX_SPEED_HZ: u32 = spi_iow(4, 4);
 pub fn fpga_boot(addr: u32) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::io::AsRawFd;
-    let msg = super::regs::boot_message(addr)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{:#x} is not an FPGA image slot", addr)))?;
+    let msg = super::regs::boot_message(addr).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{:#x} is not an FPGA image slot", addr))
+    })?;
     let mut f = std::fs::OpenOptions::new().read(true).write(true).open("/dev/spidev1.0")?;
     let fd = f.as_raw_fd();
     let mode: u8 = 0;
@@ -56,7 +57,11 @@ pub struct GpioPll {
 impl GpioPll {
     pub fn open() -> std::io::Result<GpioPll> {
         use crate::dho::gpio::Line;
-        Ok(GpioPll { le: Line::output("spi_le", false)?, sclk: Line::output("spi_sclk", false)?, sdio: Line::output("spi_sdio", false)? })
+        Ok(GpioPll {
+            le: Line::output("spi_le", false)?,
+            sclk: Line::output("spi_sclk", false)?,
+            sdio: Line::output("spi_sdio", false)?,
+        })
     }
 }
 
@@ -80,14 +85,22 @@ pub const FPGA_BOOT_WAIT_S: u64 = 3;
 /// Seconds since boot (`/proc/uptime`): the clock shared by the processes of the start-up (the BOOT command is sent by
 /// one process at the start of rcS, the cold boot runs later in another).
 pub fn uptime() -> f64 {
-    std::fs::read_to_string("/proc/uptime").ok().and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok())).unwrap_or(0.0)
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
+        .unwrap_or(0.0)
 }
 
 /// The wait for the bitstream load after the BOOT command: OOS_FPGA_WAIT or /oos/fpga-wait (seconds) for boot-time
 /// trials, else `FPGA_BOOT_WAIT_S`; the PCIe bring-up retries anyway if the FPGA is not up yet (oos-fpga-up worked
 /// with 5 s on 2026-11-02).
 pub fn fpga_wait_s() -> f64 {
-    std::env::var("OOS_FPGA_WAIT").ok().or_else(|| std::fs::read_to_string("/oos/fpga-wait").ok()).and_then(|s| s.trim().parse::<f64>().ok()).filter(|w| (1.0..=30.0).contains(w)).unwrap_or(FPGA_BOOT_WAIT_S as f64)
+    std::env::var("OOS_FPGA_WAIT")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/oos/fpga-wait").ok())
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|w| (1.0..=30.0).contains(w))
+        .unwrap_or(FPGA_BOOT_WAIT_S as f64)
 }
 
 /// How often the BOOT command is repeated when the version register still shows the golden image (see
@@ -114,7 +127,12 @@ pub trait Link<B: Bus> {
 /// Called with the link of the first bring-up: while 0x4000 is not `expected`, up to `retries` times the drivers are
 /// unloaded (the BAR is dropped first, or the unload fails), BOOT is sent again and the link is brought up again.
 /// Returns the last link, wrong version or not: the cold boot's own check reports a version that is still wrong.
-pub fn up_with_boot_retries<B: Bus>(mut bar: B, expected: u32, retries: u32, link: &mut dyn Link<B>) -> Result<B, String> {
+pub fn up_with_boot_retries<B: Bus>(
+    mut bar: B,
+    expected: u32,
+    retries: u32,
+    link: &mut dyn Link<B>,
+) -> Result<B, String> {
     for attempt in 1..=retries {
         if bar.rd(0x4000) == expected {
             break;
@@ -157,7 +175,10 @@ where
         Ok(())
     }
     fn repeated(&mut self, attempt: u32) {
-        eprintln!("oos-fpgad: 0x4000 shows another image: the BOOT command got no answer, sending it again ({} of {})", attempt, FPGA_BOOT_RETRIES);
+        eprintln!(
+            "oos-fpgad: 0x4000 shows another image: the BOOT command got no answer, sending it again ({} of {})",
+            attempt, FPGA_BOOT_RETRIES
+        );
         (self.note)(attempt)
     }
 }
@@ -198,8 +219,19 @@ pub fn power_on(
     let mut link = BootLink { addr, up: pcie_up, down: pcie_down, note: repeated };
     let mut bar = up_with_boot_retries(first, opt.fpga_version, FPGA_BOOT_RETRIES, &mut link)?;
     // boot-time profile: FPGA boot command + fixed wait + PCIe bring-up (+ repeats) before the register steps
-    eprintln!("oos-fpgad: FPGA boot {:.1} s wait ({:.1} s of it here), PCIe up after {:.1} s, at uptime {:.1} s", wait, left, t0.elapsed().as_secs_f64(), uptime());
-    Ok(super::cold_boot_with(super::Hw { bus: &mut bar, clock: &mut clk, pll: None, afe: Some(&mut afe), early: Some(early) }, cal, opt, progress))
+    eprintln!(
+        "oos-fpgad: FPGA boot {:.1} s wait ({:.1} s of it here), PCIe up after {:.1} s, at uptime {:.1} s",
+        wait,
+        left,
+        t0.elapsed().as_secs_f64(),
+        uptime()
+    );
+    Ok(super::cold_boot_with(
+        super::Hw { bus: &mut bar, clock: &mut clk, pll: None, afe: Some(&mut afe), early: Some(early) },
+        cal,
+        opt,
+        progress,
+    ))
 }
 
 #[cfg(test)]
@@ -318,7 +350,10 @@ mod tests {
         let first = link.bar();
         let mut bar = up_with_boot_retries(first, MAIN, FPGA_BOOT_RETRIES, &mut link).unwrap();
         assert_eq!(bar.rd(0x4000), MAIN);
-        assert_eq!(events(&log), ["bar dropped", "down", "repeat 1", "boot", "up", "bar dropped", "down", "repeat 2", "boot", "up"]);
+        assert_eq!(
+            events(&log),
+            ["bar dropped", "down", "repeat 1", "boot", "up", "bar dropped", "down", "repeat 2", "boot", "up"]
+        );
     }
 
     // Breaks it catches: an endless loop, a third repeat, and an error of its own that hides the cold boot's message:

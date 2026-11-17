@@ -52,7 +52,17 @@ pub struct PulseTrain {
 
 impl PulseTrain {
     pub fn square(f: f64, lo: f64, hi: f64, tr: f64) -> PulseTrain {
-        PulseTrain { period: 1.0 / f, width: 0.5 / f, lo, hi, tr, offset: 0.0, every: 0, at: 0, special: Pulse { width: 0.0, height: 0.0 } }
+        PulseTrain {
+            period: 1.0 / f,
+            width: 0.5 / f,
+            lo,
+            hi,
+            tr,
+            offset: 0.0,
+            every: 0,
+            at: 0,
+            special: Pulse { width: 0.0, height: 0.0 },
+        }
     }
     fn pulse(&self, k: i64) -> Pulse {
         if self.every > 0 && k.rem_euclid(self.every) == self.at {
@@ -131,8 +141,8 @@ pub fn video(std: VideoStd, t: f64) -> f64 {
         let w = u - slot as f64 * l / 2.0;
         let group = slot / eq;
         let low = match group {
-            1 => w < l / 2.0 - std.hsync(),  // broad pulse: low except the last 4.7 us
-            _ => w < std.hsync() / 2.0,      // equalizing pulse: half an H sync
+            1 => w < l / 2.0 - std.hsync(), // broad pulse: low except the last 4.7 us
+            _ => w < std.hsync() / 2.0,     // equalizing pulse: half an H sync
         };
         return if low { 0.0 } else { blank };
     }
@@ -166,7 +176,12 @@ mod tests {
 
     #[test]
     fn pulse_train_with_runt() {
-        let p = PulseTrain { every: 4, at: 2, special: Pulse { width: 0.5e-3, height: 0.4 }, ..PulseTrain::square(1e3, 0.0, 2.0, 1e-6) };
+        let p = PulseTrain {
+            every: 4,
+            at: 2,
+            special: Pulse { width: 0.5e-3, height: 0.4 },
+            ..PulseTrain::square(1e3, 0.0, 2.0, 1e-6)
+        };
         assert!((p.v(0.25e-3) - 2.0).abs() < 1e-9);
         assert!((p.v(0.75e-3) - 0.0).abs() < 1e-9);
         assert!((p.v(2.25e-3) - 0.8).abs() < 1e-9); // runt: 40 %
@@ -472,7 +487,8 @@ pub fn lin_logic(frames: &[(u8, Vec<u8>, bool)], baud: f64, lo: f64, hi: f64) ->
 /// falling SCK edge. `fs` = sample rate (frames per second).
 pub fn i2s_logic(frames: &[(i32, i32)], bits: u32, fs: f64, lo: f64, hi: f64) -> (Logic, Logic, Logic) {
     let tb = 1.0 / (fs * 2.0 * bits as f64);
-    let (mut sck, mut ws, mut sd) = (Logic::new(lo, hi, tb / 20.0), Logic::new(lo, hi, tb / 20.0), Logic::new(lo, hi, tb / 20.0));
+    let (mut sck, mut ws, mut sd) =
+        (Logic::new(lo, hi, tb / 20.0), Logic::new(lo, hi, tb / 20.0), Logic::new(lo, hi, tb / 20.0));
     // a stream of bits: WS changes one clock before the MSB of each word
     let mut slots: Vec<(bool, bool)> = Vec::new(); // (ws, sd) per clock
     for &(l, r) in frames {

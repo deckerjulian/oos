@@ -17,8 +17,8 @@ pub mod fsutil;
 pub mod model;
 pub mod procs;
 pub mod target;
-pub mod vendorkeys;
 pub mod update;
+pub mod vendorkeys;
 pub mod wlan;
 
 pub mod dho;

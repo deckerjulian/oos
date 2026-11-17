@@ -136,17 +136,91 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u
     };
     use MenuId::*;
-    for m in [Main, Channel(0), Channel(3), Horizontal, Acquire, Measure, MeasAdd, MeasHold, MeasPair, Dvm, Cursor, Display, Windows, Utility, Math, Ref, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote, Time, Magnetic, Inverter, Dpt] {
+    for m in [
+        Main,
+        Channel(0),
+        Channel(3),
+        Horizontal,
+        Acquire,
+        Measure,
+        MeasAdd,
+        MeasHold,
+        MeasPair,
+        Dvm,
+        Cursor,
+        Display,
+        Windows,
+        Utility,
+        Math,
+        Ref,
+        Storage,
+        Mask,
+        Zone,
+        Spectrum,
+        Eye,
+        Power,
+        Identify,
+        SelfCal,
+        Bode,
+        Afg,
+        BwTest,
+        La,
+        LaLines,
+        LaPat,
+        Network,
+        Remote,
+        Time,
+        Magnetic,
+        Inverter,
+        Dpt,
+    ] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
     walk(&|| open(Inverter, &|u| u.m.inv_page = InvPage::Mech), "Inverter mechanical", &mut out);
-    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Analog; }), "Inverter analog", &mut out);
-    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Quad; }), "Inverter quadrature", &mut out);
-    walk(&|| open(Inverter, &|u| { u.m.inv_page = InvPage::Mech; u.m.inv_ang = InvAngle::Hall; }), "Inverter hall", &mut out);
+    walk(
+        &|| {
+            open(Inverter, &|u| {
+                u.m.inv_page = InvPage::Mech;
+                u.m.inv_ang = InvAngle::Analog;
+            })
+        },
+        "Inverter analog",
+        &mut out,
+    );
+    walk(
+        &|| {
+            open(Inverter, &|u| {
+                u.m.inv_page = InvPage::Mech;
+                u.m.inv_ang = InvAngle::Quad;
+            })
+        },
+        "Inverter quadrature",
+        &mut out,
+    );
+    walk(
+        &|| {
+            open(Inverter, &|u| {
+                u.m.inv_page = InvPage::Mech;
+                u.m.inv_ang = InvAngle::Hall;
+            })
+        },
+        "Inverter hall",
+        &mut out,
+    );
     walk(&|| open(Inverter, &|u| u.m.inv_ang = InvAngle::Analog), "Inverter DQ0 analog", &mut out);
     walk(&|| open(Dpt, &|u| u.m.dpt_4th = DptFourth::Gate), "Double pulse gate", &mut out);
-    walk(&|| open(Magnetic, &|u| { u.m.mag_ae = 1e-4; u.m.mag_le = 0.05; u.m.mag_plot = MagPlot::BH; }), "Magnetic B-H", &mut out);
+    walk(
+        &|| {
+            open(Magnetic, &|u| {
+                u.m.mag_ae = 1e-4;
+                u.m.mag_le = 0.05;
+                u.m.mag_plot = MagPlot::BH;
+            })
+        },
+        "Magnetic B-H",
+        &mut out,
+    );
     let trend = |u: &mut Ui| {
         u.m.pane = tables::PANE_TREND;
         u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(3))];
@@ -156,9 +230,27 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Split")), "Windows split", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Four")), "Windows four", &mut out);
     walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
-    walk(&|| open(Bode, &|u| { u.m.bode_gen = bode::FREE; u.m.bode_sw_in = 0 }), "Bode free sweep no input", &mut out);
+    walk(
+        &|| {
+            open(Bode, &|u| {
+                u.m.bode_gen = bode::FREE;
+                u.m.bode_sw_in = 0
+            })
+        },
+        "Bode free sweep no input",
+        &mut out,
+    );
     walk(&|| open(Bode, &|u| u.m.bode_gen = 5), "Bode UNI-T LAN", &mut out);
-    walk(&|| open(Bode, &|u| { u.m.bode_gen = 5; u.m.bode_usb = true }), "Bode UNI-T USB", &mut out);
+    walk(
+        &|| {
+            open(Bode, &|u| {
+                u.m.bode_gen = 5;
+                u.m.bode_usb = true
+            })
+        },
+        "Bode UNI-T USB",
+        &mut out,
+    );
     // the clock page in its longest states: a failure after a sync, a zone of its own, a long server name
     let ntp_failed = |u: &mut Ui| {
         u.sys.ntp = true;
@@ -175,26 +267,110 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u.ntp_dhcp_asked_for_tests("pool.ntp.org", crate::sysconf::NtpOrigin::NoDhcp);
     };
     walk(&|| open(Time, &dhcp_failed), "Time DHCP failed", &mut out);
-    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_dhcp_asked_for_tests("255.255.255.255", crate::sysconf::NtpOrigin::Dhcp("wlan0")); u.ntp_report(Err("Address family not supported (os error 97)".into())) }), "Time DHCP failed lease", &mut out);
-    walk(&|| open(Time, &|u| { u.sys.ntp = true; u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 })) }), "Time synced", &mut out);
-    walk(&|| open(Network, &|u| { u.eth_link = true; u.eth.speed = Some(100); u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())] }), "Network 100M", &mut out);
+    walk(
+        &|| {
+            open(Time, &|u| {
+                u.sys.ntp = true;
+                u.ntp_dhcp_asked_for_tests("255.255.255.255", crate::sysconf::NtpOrigin::Dhcp("wlan0"));
+                u.ntp_report(Err("Address family not supported (os error 97)".into()))
+            })
+        },
+        "Time DHCP failed lease",
+        &mut out,
+    );
+    walk(
+        &|| {
+            open(Time, &|u| {
+                u.sys.ntp = true;
+                u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 }))
+            })
+        },
+        "Time synced",
+        &mut out,
+    );
+    walk(
+        &|| {
+            open(Network, &|u| {
+                u.eth_link = true;
+                u.eth.speed = Some(100);
+                u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())]
+            })
+        },
+        "Network 100M",
+        &mut out,
+    );
     // the longest name on the network, and the longest default (DHO924S with six digits)
-    walk(&|| open(Remote, &|u| { u.sys.net_name = "x".repeat(63); u.net = "192.168.177.164".into() }), "Remote long name", &mut out);
+    walk(
+        &|| {
+            open(Remote, &|u| {
+                u.sys.net_name = "x".repeat(63);
+                u.net = "192.168.177.164".into()
+            })
+        },
+        "Remote long name",
+        &mut out,
+    );
     walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-123456".into()), "Remote default name", &mut out);
     // the longest address list, the network beside it, and a change waiting for the next start
-    walk(&|| open(Remote, &|u| { u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6))); u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()] }), "Remote long allow list", &mut out);
-    walk(&|| open(Spectrum, &|u| { u.m.pane = tables::PANE_SPECTRUM; u.azr.spec_stop = 1.5e8; }), "Spectrum pane", &mut out);
+    walk(
+        &|| {
+            open(Remote, &|u| {
+                u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6)));
+                u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()]
+            })
+        },
+        "Remote long allow list",
+        &mut out,
+    );
+    walk(
+        &|| {
+            open(Spectrum, &|u| {
+                u.m.pane = tables::PANE_SPECTRUM;
+                u.azr.spec_stop = 1.5e8;
+            })
+        },
+        "Spectrum pane",
+        &mut out,
+    );
     for t in TRIG_TYPES {
         walk(&|| open(Trigger, &|u| u.set_trig_type(t)), &format!("Trigger {}", t.name()), &mut out);
-        walk(&|| open(Trigger, &|u| { u.m.la.on = true; u.set_trig_type(t) }), &format!("Trigger {} LA", t.name()), &mut out);
+        walk(
+            &|| {
+                open(Trigger, &|u| {
+                    u.m.la.on = true;
+                    u.set_trig_type(t)
+                })
+            },
+            &format!("Trigger {} LA", t.name()),
+            &mut out,
+        );
     }
     for p in PROTOS.iter().copied() {
         walk(&|| open(Decode, &|u| u.set_dec_proto(p)), &format!("Decode {}", p.name()), &mut out);
-        walk(&|| open(Decode, &|u| { u.m.la.on = true; u.m.dec_la_in = true; u.set_dec_proto(p) }), &format!("Decode {} LA", p.name()), &mut out);
+        walk(
+            &|| {
+                open(Decode, &|u| {
+                    u.m.la.on = true;
+                    u.m.dec_la_in = true;
+                    u.set_dec_proto(p)
+                })
+            },
+            &format!("Decode {} LA", p.name()),
+            &mut out,
+        );
     }
     for t in TRIG_TYPES {
         for p in [Proto::UART, Proto::CAN, Proto::I2C] {
-            walk(&|| open(Trigger, &|u| { u.set_dec_proto(p); u.set_trig_type(t) }), &format!("Trigger {} {}", t.name(), p.name()), &mut out);
+            walk(
+                &|| {
+                    open(Trigger, &|u| {
+                        u.set_dec_proto(p);
+                        u.set_trig_type(t)
+                    })
+                },
+                &format!("Trigger {} {}", t.name(), p.name()),
+                &mut out,
+            );
         }
     }
     all.extend(out.into_iter().map(|l| format!("{}x{} {}: {}", scr.w, scr.h, ts.name(), l)));
@@ -305,7 +481,11 @@ fn system_info_has_the_rates() {
     u.wfm_rate = 123.0;
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
-    assert!(u.sysinfo_rows().iter().flatten().any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
+    assert!(u
+        .sysinfo_rows()
+        .iter()
+        .flatten()
+        .any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
 }
 
 /// The cards fit every mix of channels, LA and generator; the compact bar's source controls too, auxiliary tools
@@ -387,9 +567,17 @@ fn screen_in_order_on(scr: Screen) {
             (u.usb, u.wlan_stick) = (usb, wlan);
             let pill = u.run_pill();
             assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
-            let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())].into_iter().flatten().collect();
+            let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())]
+                .into_iter()
+                .flatten()
+                .collect();
             for (i, b) in boxes.iter().enumerate() {
-                assert!(b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6, "{:?}: {:?}", ts, b);
+                assert!(
+                    b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
+                    "{:?}: {:?}",
+                    ts,
+                    b
+                );
                 assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
             }
             for (_, l, r) in u.top_buttons() {
@@ -426,7 +614,13 @@ fn screen_in_order_on(scr: Screen) {
         u.stats_on = true;
         u.relayout();
         let (head, body) = u.results_rects().unwrap();
-        assert!(head.x >= 0 && body.y + body.h <= u.grid.y + u.grid.h && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w, "{:?}", ts);
+        assert!(
+            head.x >= 0
+                && body.y + body.h <= u.grid.y + u.grid.h
+                && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w,
+            "{:?}",
+            ts
+        );
         u.render(&mut cv);
         (u.stats_on, u.m.meas) = (false, all);
         // the cards in every mix of channels, LA and generator, with long texts
@@ -442,18 +636,69 @@ fn screen_in_order_on(scr: Screen) {
             let sub = u.card_sub_font();
             for c in (0..NCH).filter(|&c| u.m.ch[c].on) {
                 let (r, t) = (chs[c], u.card_sub(c));
-                assert!(sub.width(&t) <= r.w - 22 || normal.s.width(&t) > r.w - 22, "{:?} mix {:b}: CH{} '{}'", ts, bits, c + 1, t);
+                assert!(
+                    sub.width(&t) <= r.w - 22 || normal.s.width(&t) > r.w - 22,
+                    "{:?} mix {:b}: CH{} '{}'",
+                    ts,
+                    bits,
+                    c + 1,
+                    t
+                );
                 let scale = format!("{}/div", si_short(u.m.ch[c].volts_per_div() as f64, "V"));
-                assert!(Ui::card_font(f, &scale, r.w - 24).width(&scale) <= r.w - 24 || normal.m.width(&scale) > r.w - 24, "{:?} mix {:b}: CH{}", ts, bits, c + 1);
+                assert!(
+                    Ui::card_font(f, &scale, r.w - 24).width(&scale) <= r.w - 24 || normal.m.width(&scale) > r.w - 24,
+                    "{:?} mix {:b}: CH{}",
+                    ts,
+                    bits,
+                    c + 1
+                );
             }
             u.render(&mut cv);
         }
         // menus under the top bar, on the screen, as high as at the normal size (the rows keep their 44 px)
         use MenuId::*;
-        for m in [Main, Channel(0), Horizontal, Trigger, Acquire, Measure, MeasAdd, MeasPair, Dvm, Cursor, Display, Utility, Math, Ref, Decode, Storage, Mask, Zone, Spectrum, Eye, Power, Identify, SelfCal, Bode, Afg, BwTest, La, LaLines, LaPat, Network, Remote] {
+        for m in [
+            Main,
+            Channel(0),
+            Horizontal,
+            Trigger,
+            Acquire,
+            Measure,
+            MeasAdd,
+            MeasPair,
+            Dvm,
+            Cursor,
+            Display,
+            Utility,
+            Math,
+            Ref,
+            Decode,
+            Storage,
+            Mask,
+            Zone,
+            Spectrum,
+            Eye,
+            Power,
+            Identify,
+            SelfCal,
+            Bode,
+            Afg,
+            BwTest,
+            La,
+            LaLines,
+            LaPat,
+            Network,
+            Remote,
+        ] {
             u.open_menu(m);
             let d = u.dlg_layout().unwrap();
-            assert!(d.r.y >= u.frame().top.bottom() && d.r.bottom() <= u.scr.h && d.r.x >= 0 && d.r.right() <= u.scr.w, "{:?}: {:?} {:?}", ts, m, d.r);
+            assert!(
+                d.r.y >= u.frame().top.bottom() && d.r.bottom() <= u.scr.h && d.r.x >= 0 && d.r.right() <= u.scr.w,
+                "{:?}: {:?} {:?}",
+                ts,
+                m,
+                d.r
+            );
             assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}: {:?}", ts, m);
             u.render(&mut cv);
             u.close_menu();
@@ -466,11 +711,13 @@ fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = crate::ui::testkit::demo_ui();
     u.m.bar_compact = true;
     u.tap(80, BOTTOM.y + 15);
-    let (x, y) = fix_tests::row_xy(&u, "Logic analyser"); u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
+    let (x, y) = fix_tests::row_xy(&u, "Logic analyser");
+    u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
     u.close_menu();
     u.tap(80, BOTTOM.y + 15);
-    let (x, y) = fix_tests::row_xy(&u, "Generator"); u.tap(x, y);
+    let (x, y) = fix_tests::row_xy(&u, "Generator");
+    u.tap(x, y);
     assert!(u.menu_open && u.menu == MenuId::Afg);
     assert!(!u.m.afg_on, "a card must not switch an output on");
 }
@@ -561,10 +808,21 @@ fn dvm_prefers_a_decoded_block_reading_of_its_source() {
     let sw = u.dvm_value();
     assert!(sw.is_finite());
     assert!(u.dvm_debug_text().starts_with("off,sw="));
-    let r = crate::board::DvmRead { ch: 0, lane: 0, exp: 28, raw: [0x39, 1, 2, 3, 4], volts: Some([0.25, 0.5, 0.75]), n: 3 };
+    let r = crate::board::DvmRead {
+        ch: 0,
+        lane: 0,
+        exp: 28,
+        raw: [0x39, 1, 2, 3, 4],
+        volts: Some([0.25, 0.5, 0.75]),
+        n: 3,
+    };
     // (reading, mode, value): the mode picks the value; another channel's or a refused reading leaves the software DVM
-    let cases: [(crate::board::DvmRead, usize, f64); 4] =
-        [(r, 0, 0.25), (r, 2, 0.75), (crate::board::DvmRead { ch: 1, ..r }, 0, sw), (crate::board::DvmRead { volts: None, ..r }, 0, sw)];
+    let cases: [(crate::board::DvmRead, usize, f64); 4] = [
+        (r, 0, 0.25),
+        (r, 2, 0.75),
+        (crate::board::DvmRead { ch: 1, ..r }, 0, sw),
+        (crate::board::DvmRead { volts: None, ..r }, 0, sw),
+    ];
     for (hw, mode, want) in cases {
         u.dvm_hw = Some(hw);
         u.m.dvm_mode = mode;
@@ -676,7 +934,10 @@ fn setups_keep_what_is_new() {
     u.m.math_lin = (3.0, -1.5);
     u.m.cursor = CursorMode::Track;
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
-    assert_eq!((b.meas2.clone(), b.dvm_src, b.dvm_mode, b.cnt_src, b.cnt_mode, b.cnt_digits), (vec![(5, WaveId::Ch(1), WaveId::Ch(2))], 2, 1, 3, 2, 6));
+    assert_eq!(
+        (b.meas2.clone(), b.dvm_src, b.dvm_mode, b.cnt_src, b.cnt_mode, b.cnt_digits),
+        (vec![(5, WaveId::Ch(1), WaveId::Ch(2))], 2, 1, 3, 2, 6)
+    );
     assert_eq!((b.math_lin, b.cursor), ((3.0, -1.5), CursorMode::Track));
 }
 
@@ -801,7 +1062,11 @@ fn binary_waveform_can_be_read_back() {
 
 #[test]
 fn second_pane_fits_with_everything_else() {
-    for (pane, la, ts, scr) in (1..tables::PANES.len()).flat_map(|p| [false, true].into_iter().flat_map(move |l| TEXT_SIZES.into_iter().flat_map(move |t| SCREENS.map(|s| (p, l, t, s))))) {
+    for (pane, la, ts, scr) in (1..tables::PANES.len()).flat_map(|p| {
+        [false, true]
+            .into_iter()
+            .flat_map(move |l| TEXT_SIZES.into_iter().flat_map(move |t| SCREENS.map(|s| (p, l, t, s))))
+    }) {
         {
             let mut u = with_two_channels();
             u.scr = scr;
@@ -817,7 +1082,13 @@ fn second_pane_fits_with_everything_else() {
             assert!(u.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.grid);
             if u.pane_h() > 0 {
                 let r = u.pane_rect();
-                assert!(r.y > u.grid.y + u.grid.h && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y, "pane {} la {}: {:?}", pane, la, r);
+                assert!(
+                    r.y > u.grid.y + u.grid.h && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
+                    "pane {} la {}: {:?}",
+                    pane,
+                    la,
+                    r
+                );
             }
             let mut cv = Canvas::new(u.scr.w, u.scr.h);
             u.render(&mut cv);
@@ -859,7 +1130,24 @@ fn random_input_on(scr: Screen) {
         x ^= x << 17;
         x
     };
-    let pages = [MenuId::Logger, MenuId::ChMore(0), MenuId::Measure, MenuId::MeasPair, MenuId::Dvm, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Sim, MenuId::Mask, MenuId::Decode, MenuId::Bus, MenuId::Trigger, MenuId::Display, MenuId::Storage, MenuId::Bode];
+    let pages = [
+        MenuId::Logger,
+        MenuId::ChMore(0),
+        MenuId::Measure,
+        MenuId::MeasPair,
+        MenuId::Dvm,
+        MenuId::Cursor,
+        MenuId::Math,
+        MenuId::Ref,
+        MenuId::Sim,
+        MenuId::Mask,
+        MenuId::Decode,
+        MenuId::Bus,
+        MenuId::Trigger,
+        MenuId::Display,
+        MenuId::Storage,
+        MenuId::Bode,
+    ];
     u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
     for i in 0..3_000 {
         if i % 40 == 0 {
@@ -887,7 +1175,13 @@ fn random_input_on(scr: Screen) {
 #[test]
 fn every_cursor_mode_can_be_chosen() {
     let mut u = with_two_channels();
-    for (want, m) in [("Time", CursorMode::Time), ("Volt", CursorMode::Volt), ("Track", CursorMode::Track), ("XY", CursorMode::Xy), ("Off", CursorMode::Off)] {
+    for (want, m) in [
+        ("Time", CursorMode::Time),
+        ("Volt", CursorMode::Volt),
+        ("Track", CursorMode::Track),
+        ("XY", CursorMode::Xy),
+        ("Off", CursorMode::Off),
+    ] {
         u.select_option(Item::CurMode, want);
         assert_eq!(u.m.cursor, m, "{}", want);
     }
@@ -944,7 +1238,11 @@ fn fine_scale_walks_between_the_steps() {
     u.adjust(Item::ChScale(0), 1);
     let v1 = u.m.ch[0].volts_per_div();
     assert!((v1 / v0 - 1.02).abs() < 1e-4, "{} {}", v0, v1);
-    assert!(u.value(Item::ChScale(0)).contains("1.02") || u.value(Item::ChScale(0)).contains("102"), "{}", u.value(Item::ChScale(0)));
+    assert!(
+        u.value(Item::ChScale(0)).contains("1.02") || u.value(Item::ChScale(0)).contains("102"),
+        "{}",
+        u.value(Item::ChScale(0))
+    );
     // up through the next step of the ladder
     for _ in 0..200 {
         u.adjust(Item::ChScale(0), 1);
@@ -1070,7 +1368,10 @@ fn a_channel_can_measure_something_else() {
         u.step(0.04);
     }
     u.m.ch[0].bias = 0.0;
-    let mean = |u: &Ui| { let v = &u.last[0].as_ref().unwrap().ch[0]; v.iter().sum::<f32>() / v.len() as f32 };
+    let mean = |u: &Ui| {
+        let v = &u.last[0].as_ref().unwrap().ch[0];
+        v.iter().sum::<f32>() / v.len() as f32
+    };
     let m0 = mean(&u);
     u.activate(Item::ChBiasZero(0));
     assert!((u.m.ch[0].bias - m0).abs() < 1e-3, "{} {}", u.m.ch[0].bias, m0);
@@ -1102,7 +1403,10 @@ fn what_the_screen_says_reaches_the_settings() {
     m.acq = AcqMode::Peak;
     m.delay = 2e-4;
     let s = hw(&m);
-    assert_eq!((s.ch[0].couple, s.ch[0].invert, s.mode), (oos_hal::dho::seq::Couple::Ac, true, oos_hal::dho::acq::Mode::Peak));
+    assert_eq!(
+        (s.ch[0].couple, s.ch[0].invert, s.mode),
+        (oos_hal::dho::seq::Couple::Ac, true, oos_hal::dho::acq::Mode::Peak)
+    );
     assert!((s.delay - 2e-4).abs() < 1e-9);
     // a trigger source that is switched off is acquired all the same, and keeps its role
     let mut m = Model::default();
@@ -1245,7 +1549,12 @@ fn the_logger_writes_rows_at_its_interval() {
     }
     assert!(u.value(Item::LogInfo).contains("rows"));
     u.adjust(Item::LogOn, 1);
-    let name = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "csv")).unwrap();
+    let name = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "csv"))
+        .unwrap();
     let t = std::fs::read_to_string(&name).unwrap();
     let l: Vec<&str> = t.lines().collect();
     assert!(l[0].starts_with("Elapsed (s),Unix time (s),") && l[0].contains("CH2 (Hz)"), "{}", l[0]);
@@ -1302,7 +1611,9 @@ fn square_on_ch1(u: &mut Ui) {
         seed ^= seed << 17;
         (seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5
     };
-    let v: Vec<f32> = (0..n).map(|i| if (i as f64 * dt * 200e3).rem_euclid(1.0) < 0.5 { 2.0 } else { 0.0 } + 4e-3 * noise()).collect();
+    let v: Vec<f32> = (0..n)
+        .map(|i| if (i as f64 * dt * 200e3).rem_euclid(1.0) < 0.5 { 2.0 } else { 0.0 } + 4e-3 * noise())
+        .collect();
     u.m.tscale = tscales().iter().position(|&x| (x - 5e-6).abs() < 1e-9).unwrap();
     u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Vpp, WaveId::Ch(0))];
     u.m.run = RunState::Stop;
@@ -1378,7 +1689,12 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
     u.analyzer_update();
     u.render(&mut cv);
     let b = u.spec_box(u.area, false);
-    assert!(!overlaps(b.sort, u.view_btn()) && !overlaps(b.list, u.view_btn()) && !overlaps(b.plot, u.view_btn()) && !overlaps(b.title, u.view_btn()));
+    assert!(
+        !overlaps(b.sort, u.view_btn())
+            && !overlaps(b.list, u.view_btn())
+            && !overlaps(b.plot, u.view_btn())
+            && !overlaps(b.title, u.view_btn())
+    );
     u.tap(b.sort.x + 5, b.sort.y + 5);
     assert_eq!(u.m.spec_sort, 0);
     let v = u.view_btn();
@@ -1469,7 +1785,10 @@ fn a_long_results_list_scrolls_by_touch() {
     let (bar, _) = u.results_bar().expect("Results pane");
     assert!(bar.needed());
     let th = bar.thumb();
-    crate::cmd::run(&mut u, &format!("drag {} {} {} {}", th.x + th.w / 2, th.y + 5, th.x + th.w / 2, bar.track.y + bar.track.h + 40));
+    crate::cmd::run(
+        &mut u,
+        &format!("drag {} {} {} {}", th.x + th.w / 2, th.y + 5, th.x + th.w / 2, bar.track.y + bar.track.h + 40),
+    );
     assert_eq!(u.pn.top, 14 - fit);
     u.render(&mut cv);
     crate::cmd::run(&mut u, &format!("drag {0} {1} {0} {1}", bar.track.x + bar.track.w / 2, bar.track.y + 2));
@@ -1596,14 +1915,28 @@ fn pane_pictures() {
     shot(&mut u, "spectrum-pane-by-level");
     let mut u = square(0, &|u| u.m.view = AView::Spectrum);
     shot(&mut u, "spectrum-view-full-band");
-    let mut u = square(0, &|u| { u.m.view = AView::Spectrum; u.m.spec_span = 2.5e6; u.m.spec_center = 1.25e6; u.m.spec_dist = true; });
+    let mut u = square(0, &|u| {
+        u.m.view = AView::Spectrum;
+        u.m.spec_span = 2.5e6;
+        u.m.spec_center = 1.25e6;
+        u.m.spec_dist = true;
+    });
     shot(&mut u, "spectrum-view-span");
-    let mut u = square(0, &|u| { u.m.view = AView::Spectrum; u.m.spec_span = 2.5e6; u.m.spec_center = 1.25e6; u.m.spec_wf = true; });
-    for _ in 0..10 { u.analyzer_update(); }
+    let mut u = square(0, &|u| {
+        u.m.view = AView::Spectrum;
+        u.m.spec_span = 2.5e6;
+        u.m.spec_center = 1.25e6;
+        u.m.spec_wf = true;
+    });
+    for _ in 0..10 {
+        u.analyzer_update();
+    }
     shot(&mut u, "spectrum-view-waterfall");
     let mut u = square(2, &|_| {});
     shot(&mut u, "results-two-rows");
-    let mut u = square(2, &|u| { u.m.spec_src = WaveId::Ch(1); });
+    let mut u = square(2, &|u| {
+        u.m.spec_src = WaveId::Ch(1);
+    });
     shot(&mut u, "results-table-only");
     let live = |pane: usize, f: &dyn Fn(&mut Ui), secs: usize| {
         let mut u = crate::ui::testkit::demo_ui();
@@ -1615,29 +1948,69 @@ fn pane_pictures() {
         }
         u
     };
-    let mut u = live(2, &|u| {
-        u.m.cursor = CursorMode::Track;
-        u.m.meas = ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect();
-        u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
-    }, 2);
+    let mut u = live(
+        2,
+        &|u| {
+            u.m.cursor = CursorMode::Track;
+            u.m.meas = ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect();
+            u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
+        },
+        2,
+    );
     shot(&mut u, "results-many");
     // a protocol module's own view (the example module, compiled in the tests)
-    let mut u = live(tables::PANE_BUS, &|u| { u.set_dec_proto(Proto::from_key("Example").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap(); }, 1);
+    let mut u = live(
+        tables::PANE_BUS,
+        &|u| {
+            u.set_dec_proto(Proto::from_key("Example").unwrap());
+            u.m.dec_on = true;
+            u.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
+        },
+        1,
+    );
     shot(&mut u, "bus-view");
     let mut u = live(tables::PANE_BUS, &|_| {}, 1);
     shot(&mut u, "bus-view-empty");
     // DCC: the demo layout, collected over two seconds of records
-    let mut u = live(0, &|u| { u.set_dec_proto(Proto::from_key("Dcc").unwrap()); u.m.dec_on = true; u.m.tscale = tscales().iter().position(|&x| (x - 2e-3).abs() < 1e-6).unwrap(); }, 3);
+    let mut u = live(
+        0,
+        &|u| {
+            u.set_dec_proto(Proto::from_key("Dcc").unwrap());
+            u.m.dec_on = true;
+            u.m.tscale = tscales().iter().position(|&x| (x - 2e-3).abs() < 1e-6).unwrap();
+        },
+        3,
+    );
     shot(&mut u, "bus-view-dcc");
-    let mut u = live(2, &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))], 2);
+    let mut u = live(
+        2,
+        &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1))],
+        2,
+    );
     shot(&mut u, "results-three");
-    let mut u = live(2, &|u| { u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))]; u.m.ch[0].on = true; u.m.spec_src = WaveId::Ch(3); }, 2);
+    let mut u = live(
+        2,
+        &|u| {
+            u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
+            u.m.ch[0].on = true;
+            u.m.spec_src = WaveId::Ch(3);
+        },
+        2,
+    );
     shot(&mut u, "results-one-no-side");
     let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(1))], 40);
     shot(&mut u, "trend-two");
     let mut u = live(4, &|u| u.m.meas = vec![(Meas::Vrms, WaveId::Ch(1))], 15);
     shot(&mut u, "trend-one");
-    let mut u = live(3, &|u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; }, 2);
+    let mut u = live(
+        3,
+        &|u| {
+            u.m.ch[2].on = true;
+            u.m.dec_on = true;
+            u.m.dec_src = 2;
+        },
+        2,
+    );
     shot(&mut u, "events");
     let mut u = live(4, &|_| {}, 1);
     u.m.meas.clear();
@@ -1805,8 +2178,15 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
         ch: screen.clone(),
         triggered: true,
         partial: false,
-        raw: Some(crate::wave::Raw { frame: std::sync::Arc::new(frame), i0: 0, i1: 200, t0: -2e-7, conditioned: false }),
-        la: None, pairs: false
+        raw: Some(crate::wave::Raw {
+            frame: std::sync::Arc::new(frame),
+            i0: 0,
+            i1: 200,
+            t0: -2e-7,
+            conditioned: false,
+        }),
+        la: None,
+        pairs: false,
     });
     let rec = u.last[0].as_ref().unwrap();
     let samp = u.wave_samples(rec, WaveId::Ref(0)).unwrap();
@@ -1886,7 +2266,12 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     u.analyzer_update();
     let dq = u.azr.dq.as_ref().expect(&u.azr.inv_note);
     let direct = oos_dsp::motor::dq0(&pa, &pb, &pc, pdt, oos_dsp::motor::Theta::Vector).unwrap();
-    assert!((dq.d - direct.d).abs() < 1e-6 && (dq.q - direct.q).abs() < 1e-6, "{:?} {:?}", (dq.d, dq.q), (direct.d, direct.q));
+    assert!(
+        (dq.d - direct.d).abs() < 1e-6 && (dq.q - direct.q).abs() < 1e-6,
+        "{:?} {:?}",
+        (dq.d, dq.q),
+        (direct.d, direct.q)
+    );
     assert!((dq.d - a).abs() < 0.15, "D {}", dq.d);
 
     // double pulse at 1 ns, far above a 250 MHz front end
@@ -1916,7 +2301,22 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     fine[7] = 4.0;
     put_ref(&mut u, 0, 0.0, 2e-6, coarse);
     put_ref(&mut u, 1, 0.0, 1e-6, fine.clone());
-    let taken = u.take_waves(u.last[0].as_ref().unwrap_or(&Record { t0: 0.0, dt: 1.0, ch: Default::default(), triggered: false, partial: false, raw: None, la: None, pairs: false }), &[WaveId::Ref(0), WaveId::Ref(1)], &[]).unwrap();
+    let taken = u
+        .take_waves(
+            u.last[0].as_ref().unwrap_or(&Record {
+                t0: 0.0,
+                dt: 1.0,
+                ch: Default::default(),
+                triggered: false,
+                partial: false,
+                raw: None,
+                la: None,
+                pairs: false,
+            }),
+            &[WaveId::Ref(0), WaveId::Ref(1)],
+            &[],
+        )
+        .unwrap();
     assert!((taken.dt - 1e-6).abs() < 1e-18);
     assert_eq!(taken.v[1], fine);
     assert_eq!(taken.v[0].len(), fine.len());
@@ -1942,14 +2342,20 @@ fn inductor_pair(l: f64, dt: f64, n: usize) -> (Vec<f32>, Vec<f32>) {
     let f = 1000.0;
     let i = |t: f64| {
         let x = (t * f).fract();
-        if x < 0.5 { -1.0 + 4.0 * x } else { 3.0 - 4.0 * x }
+        if x < 0.5 {
+            -1.0 + 4.0 * x
+        } else {
+            3.0 - 4.0 * x
+        }
     };
-    let v: Vec<f32> = (0..n).map(|k| {
-        let t = k as f64 * dt;
-        let x = (t * f).fract();
-        let di = if x < 0.5 { 4.0 * f } else { -4.0 * f };
-        (l * di) as f32
-    }).collect();
+    let v: Vec<f32> = (0..n)
+        .map(|k| {
+            let t = k as f64 * dt;
+            let x = (t * f).fract();
+            let di = if x < 0.5 { 4.0 * f } else { -4.0 * f };
+            (l * di) as f32
+        })
+        .collect();
     let cur: Vec<f32> = (0..n).map(|k| i(k as f64 * dt) as f32).collect();
     (v, cur)
 }
@@ -1968,9 +2374,41 @@ fn pwl(p: &[(f64, f64)], t: f64) -> f64 {
 
 fn double_pulse(dt: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let n = (13e-6 / dt) as usize;
-    let gate = [(0.0, 0.0), (1e-6, 0.0), (1.02e-6, 10.0), (6e-6, 10.0), (6.02e-6, 0.0), (10e-6, 0.0), (10.02e-6, 10.0), (12e-6, 10.0), (12.02e-6, 0.0)];
-    let id = [(0.0, 0.0), (1.1e-6, 0.0), (1.2e-6, 10.0), (6.05e-6, 10.0), (6.15e-6, 0.0), (10.05e-6, 0.0), (10.15e-6, 10.0), (10.25e-6, 14.0), (10.35e-6, 10.0), (12e-6, 10.0)];
-    let vds = [(0.0, 400.0), (1.05e-6, 400.0), (1.15e-6, 1.0), (6.1e-6, 1.0), (6.2e-6, 400.0), (6.25e-6, 480.0), (6.4e-6, 400.0), (10.05e-6, 400.0), (10.15e-6, 1.0), (12e-6, 1.0)];
+    let gate = [
+        (0.0, 0.0),
+        (1e-6, 0.0),
+        (1.02e-6, 10.0),
+        (6e-6, 10.0),
+        (6.02e-6, 0.0),
+        (10e-6, 0.0),
+        (10.02e-6, 10.0),
+        (12e-6, 10.0),
+        (12.02e-6, 0.0),
+    ];
+    let id = [
+        (0.0, 0.0),
+        (1.1e-6, 0.0),
+        (1.2e-6, 10.0),
+        (6.05e-6, 10.0),
+        (6.15e-6, 0.0),
+        (10.05e-6, 0.0),
+        (10.15e-6, 10.0),
+        (10.25e-6, 14.0),
+        (10.35e-6, 10.0),
+        (12e-6, 10.0),
+    ];
+    let vds = [
+        (0.0, 400.0),
+        (1.05e-6, 400.0),
+        (1.15e-6, 1.0),
+        (6.1e-6, 1.0),
+        (6.2e-6, 400.0),
+        (6.25e-6, 480.0),
+        (6.4e-6, 400.0),
+        (10.05e-6, 400.0),
+        (10.15e-6, 1.0),
+        (12e-6, 1.0),
+    ];
     let sample = |p: &[(f64, f64)]| (0..n).map(|k| pwl(p, k as f64 * dt) as f32).collect();
     (sample(&vds), sample(&id), sample(&gate))
 }
@@ -2038,7 +2476,8 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let ui = 1e-9;
     let dt = ui / 16.0;
     let n = 1600usize;
-    let dq: Vec<f32> = (0..n).map(|k| if ((k as f64 * dt + 0.5 * ui) / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
+    let dq: Vec<f32> =
+        (0..n).map(|k| if ((k as f64 * dt + 0.5 * ui) / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
     let dqs: Vec<f32> = (0..n).map(|k| if (k as f64 * dt / ui).floor() as i32 % 2 == 0 { 1.0 } else { 0.0 }).collect();
     put_ref(&mut u, 0, 0.0, dt, dq);
     put_ref(&mut u, 1, 0.0, dt, dqs);
@@ -2119,7 +2558,38 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
         crate::cmd::run(u, &format!("key {}", s));
     };
     type S = (&'static str, fn(&mut Ui));
-    let menus: Vec<(&str, M)> = vec![("menu-main", M::Main), ("menu-ch", M::Channel(0)), ("menu-hor", M::Horizontal), ("menu-trig", M::Trigger), ("menu-acq", M::Acquire), ("menu-measure", M::Measure), ("menu-measadd", M::MeasAdd), ("menu-cursor", M::Cursor), ("menu-display", M::Display), ("menu-system", M::Utility), ("menu-math", M::Math), ("menu-ref", M::Ref), ("menu-decode", M::Decode), ("menu-storage", M::Storage), ("menu-mask", M::Mask), ("menu-zone", M::Zone), ("menu-spectrum", M::Spectrum), ("menu-eye", M::Eye), ("menu-power", M::Power), ("menu-identify", M::Identify), ("menu-selfcal", M::SelfCal), ("menu-bode", M::Bode), ("menu-afg", M::Afg), ("menu-bw", M::BwTest), ("menu-la", M::La), ("menu-lalines", M::LaLines), ("menu-lapat", M::LaPat), ("menu-network", M::Network), ("menu-remote", M::Remote), ("menu-time", M::Time)];
+    let menus: Vec<(&str, M)> = vec![
+        ("menu-main", M::Main),
+        ("menu-ch", M::Channel(0)),
+        ("menu-hor", M::Horizontal),
+        ("menu-trig", M::Trigger),
+        ("menu-acq", M::Acquire),
+        ("menu-measure", M::Measure),
+        ("menu-measadd", M::MeasAdd),
+        ("menu-cursor", M::Cursor),
+        ("menu-display", M::Display),
+        ("menu-system", M::Utility),
+        ("menu-math", M::Math),
+        ("menu-ref", M::Ref),
+        ("menu-decode", M::Decode),
+        ("menu-storage", M::Storage),
+        ("menu-mask", M::Mask),
+        ("menu-zone", M::Zone),
+        ("menu-spectrum", M::Spectrum),
+        ("menu-eye", M::Eye),
+        ("menu-power", M::Power),
+        ("menu-identify", M::Identify),
+        ("menu-selfcal", M::SelfCal),
+        ("menu-bode", M::Bode),
+        ("menu-afg", M::Afg),
+        ("menu-bw", M::BwTest),
+        ("menu-la", M::La),
+        ("menu-lalines", M::LaLines),
+        ("menu-lapat", M::LaPat),
+        ("menu-network", M::Network),
+        ("menu-remote", M::Remote),
+        ("menu-time", M::Time),
+    ];
     let shot = |u: &mut Ui, n: &str| {
         for _ in 0..24 {
             u.step(0.04);
@@ -2135,8 +2605,17 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
     }
     let scenes: Vec<S> = vec![
         ("s-default", |_| {}),
-        ("s-all-ch", |u| for c in 0..4 { u.m.ch[c].on = true; }),
-        ("s-meas6", |u| { u.m.meas.clear(); for i in 0..6 { u.m.meas.push((ALL_MEAS[i], WaveId::Ch(0))); } }),
+        ("s-all-ch", |u| {
+            for c in 0..4 {
+                u.m.ch[c].on = true;
+            }
+        }),
+        ("s-meas6", |u| {
+            u.m.meas.clear();
+            for i in 0..6 {
+                u.m.meas.push((ALL_MEAS[i], WaveId::Ch(0)));
+            }
+        }),
         ("s-cursor", |u| u.m.cursor = CursorMode::Time),
         ("s-more", |u| {
             u.m.ch[0].unit = AmpUnit::A;
@@ -2183,48 +2662,104 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.open_menu(MenuId::Ref);
         }),
         ("s-zoom", |u| u.set_zoom(true)),
-        ("s-xy", |u| { u.m.ch[1].on = true; u.xy = true; }),
+        ("s-xy", |u| {
+            u.m.ch[1].on = true;
+            u.xy = true;
+        }),
         ("s-stop", |u| u.m.run = RunState::Stop),
         ("s-spectrum", |u| u.m.view = AView::Spectrum),
         ("s-eye", |u| u.m.view = AView::Eye),
         ("s-power", |u| u.m.view = AView::Power),
         ("s-bode", |u| u.m.view = AView::Bode),
         ("s-step", |u| u.m.view = AView::Step),
-        ("s-sysinfo", |u| { u.sysinfo_open(); u.dialog = Some(vec![]); }),
+        ("s-sysinfo", |u| {
+            u.sysinfo_open();
+            u.dialog = Some(vec![]);
+        }),
         ("s-power-dlg", |u| u.power_dlg = true),
         ("s-touchlock", |u| u.m.touch_lock = true),
         ("s-la", |u| u.m.la.on = true),
-        ("s-cards-1", |u| { u.m.la.on = true; u.m.afg_on = true; }),
-        ("s-cards-4", |u| { u.m.la.on = true; u.m.afg_on = true; for c in 0..4 { u.m.ch[c].on = true; } }),
-        ("s-pane-spec", |u| { u.m.ch[1].on = true; u.m.pane = 1; }),
-        ("s-pane-res", |u| { u.m.ch[1].on = true; u.m.pane = 2; u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))]; u.m.dvm_on = true; u.m.cnt_on = true; }),
+        ("s-cards-1", |u| {
+            u.m.la.on = true;
+            u.m.afg_on = true;
+        }),
+        ("s-cards-4", |u| {
+            u.m.la.on = true;
+            u.m.afg_on = true;
+            for c in 0..4 {
+                u.m.ch[c].on = true;
+            }
+        }),
+        ("s-pane-spec", |u| {
+            u.m.ch[1].on = true;
+            u.m.pane = 1;
+        }),
+        ("s-pane-res", |u| {
+            u.m.ch[1].on = true;
+            u.m.pane = 2;
+            u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)), (4, WaveId::Ch(0), WaveId::Ch(1))];
+            u.m.dvm_on = true;
+            u.m.cnt_on = true;
+        }),
         ("s-decoders", |u| {
-            u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2;
-            u.m.dec_select(1); u.m.dec_on = true; u.m.dec_src = 2; u.set_dec_proto(Proto::SPI); u.m.dec_select(0);
+            u.m.ch[2].on = true;
+            u.m.dec_on = true;
+            u.m.dec_src = 2;
+            u.m.dec_select(1);
+            u.m.dec_on = true;
+            u.m.dec_src = 2;
+            u.set_dec_proto(Proto::SPI);
+            u.m.dec_select(0);
             u.table = Some(tables::TableKind::Decode);
         }),
-        ("s-track", |u| { u.m.cursor = CursorMode::Track; }),
+        ("s-track", |u| {
+            u.m.cursor = CursorMode::Track;
+        }),
         ("s-network", |u| {
             (u.net, u.net_if) = ("192.168.177.64".into(), "wlan0".into());
             u.net_ifs = vec![("eth0".into(), "192.0.2.51".into()), ("wlan0".into(), "192.168.177.64".into())];
             u.wlan.link = wlan::tests_link("Labor", "192.168.177.64");
             u.open_menu(MenuId::Network);
         }),
-        ("s-decode", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; }),
+        ("s-decode", |u| {
+            u.m.ch[2].on = true;
+            u.m.dec_on = true;
+            u.m.dec_src = 2;
+        }),
         ("s-4ch-meas", |u| {
             for c in 0..4 {
                 u.m.ch[c].on = true;
             }
-            u.m.meas.extend([(Meas::Vpp, WaveId::Ch(1)), (Meas::Freq, WaveId::Ch(1)), (Meas::Vrms, WaveId::Ch(1)), (Meas::Vpp, WaveId::Ch(2)), (Meas::Period, WaveId::Ch(2)), (Meas::Vmax, WaveId::Ch(3)), (Meas::Vmin, WaveId::Ch(3))]);
+            u.m.meas.extend([
+                (Meas::Vpp, WaveId::Ch(1)),
+                (Meas::Freq, WaveId::Ch(1)),
+                (Meas::Vrms, WaveId::Ch(1)),
+                (Meas::Vpp, WaveId::Ch(2)),
+                (Meas::Period, WaveId::Ch(2)),
+                (Meas::Vmax, WaveId::Ch(3)),
+                (Meas::Vmin, WaveId::Ch(3)),
+            ]);
             u.m.cursor = CursorMode::Time;
         }),
-        ("s-events", |u| { u.m.ch[2].on = true; u.m.dec_on = true; u.m.dec_src = 2; u.m.pane = tables::PANE_EVENTS; }),
-        ("s-stats", |u| { u.m.ch[1].on = true; u.m.meas.push((Meas::Freq, WaveId::Ch(1))); u.stats_on = true; }),
+        ("s-events", |u| {
+            u.m.ch[2].on = true;
+            u.m.dec_on = true;
+            u.m.dec_src = 2;
+            u.m.pane = tables::PANE_EVENTS;
+        }),
+        ("s-stats", |u| {
+            u.m.ch[1].on = true;
+            u.m.meas.push((Meas::Freq, WaveId::Ch(1)));
+            u.stats_on = true;
+        }),
         ("s-osk", |u| u.activate(Item::ChLabel(0))),
         ("s-startup", |u| {
             use oos_hal::bootstatus::line;
             u.start_up_begin(None);
-            let t = line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "ok", "FPGA image", "") + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex") + &line(14.4, "run", "Sample clock (PLL lock)", "waiting for the lock");
+            let t = line(3.9, "ok", "Linux", "6.12.115")
+                + &line(4.0, "ok", "FPGA image", "")
+                + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex")
+                + &line(14.4, "run", "Sample clock (PLL lock)", "waiting for the lock");
             u.start_up_update(&t, 16.0);
         }),
     ];
@@ -2311,7 +2846,14 @@ fn dq_and_dqs_refs_make_a_strobe_eye() {
     u.now = 1.0;
     u.analyzer_update();
     let (meas, _, period) = u.azr.eye_res.clone().expect("DQ vs DQS eye");
-    eprintln!("DQS UI {} s ({:.3} GT/s) height {} V width {} s title {}", period, 1e-9 / period, meas.height, meas.width, u.azr.page.title);
+    eprintln!(
+        "DQS UI {} s ({:.3} GT/s) height {} V width {} s title {}",
+        period,
+        1e-9 / period,
+        meas.height,
+        meas.width,
+        u.azr.page.title
+    );
     assert!(period > 1e-10 && period < 2e-9, "UI {period}");
     assert!(u.azr.page.title.contains("clock from R2"), "{}", u.azr.page.title);
     let mut cv = Canvas::new(W, H);
@@ -2454,7 +2996,9 @@ fn measurement_queries_read_a_channel_or_a_ref() {
     }
     let cv = Canvas::new(W, H);
     let mut s = crate::scpi::Scpi::open(0);
-    let ask = |s: &mut crate::scpi::Scpi, u: &mut Ui, cmd: &str| String::from_utf8_lossy(&s.exec_line(u, &cv, cmd)).into_owned();
+    let ask = |s: &mut crate::scpi::Scpi, u: &mut Ui, cmd: &str| {
+        String::from_utf8_lossy(&s.exec_line(u, &cv, cmd)).into_owned()
+    };
     let ch = ask(&mut s, &mut u, ":MEAS:ITEM? VPP");
     assert!(ch.parse::<f64>().unwrap().is_finite() && ch != "9.9E37", "{}", ch);
 
@@ -2541,7 +3085,15 @@ fn measurement_queries_read_a_channel_or_a_ref() {
     let mut sq = Vec::new();
     for k in 0..8000 {
         let p = k % 400;
-        let x = if p < 40 { p as f32 / 40.0 } else if p < 200 { 1.0 } else if p < 240 { 1.0 - (p - 200) as f32 / 40.0 } else { 0.0 };
+        let x = if p < 40 {
+            p as f32 / 40.0
+        } else if p < 200 {
+            1.0
+        } else if p < 240 {
+            1.0 - (p - 200) as f32 / 40.0
+        } else {
+            0.0
+        };
         sq.push(x);
     }
     put_ref(&mut u, 0, 0.0, 1e-8, sq);
@@ -2659,7 +3211,12 @@ fn the_measurement_strip_docks_on_four_sides() {
         let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
     };
     u.close_menu();
-    for (side, name) in [(StripDock::Under, "strip-under.png"), (StripDock::Left, "strip-left.png"), (StripDock::Right, "strip-right.png"), (StripDock::Above, "strip-above.png")] {
+    for (side, name) in [
+        (StripDock::Under, "strip-under.png"),
+        (StripDock::Left, "strip-left.png"),
+        (StripDock::Right, "strip-right.png"),
+        (StripDock::Above, "strip-above.png"),
+    ] {
         u.m.strip_dock = side;
         shot(&mut u, name);
         let g = u.grid;
@@ -2710,11 +3267,15 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
         u.render(&mut again);
         assert!(again.px == cv.px, "{}: the panel picture changed", name);
         if !u.xy && u.m.view == AView::Scope {
-            let yellow = hc.px.iter().filter(|&&p| (p >> 16) & 255 > 150 && (p >> 8) & 255 > 120 && p & 255 < 90).count();
+            let yellow =
+                hc.px.iter().filter(|&&p| (p >> 16) & 255 > 150 && (p >> 8) & 255 > 120 && p & 255 < 90).count();
             assert!(yellow > 2000, "{}: {} trace pixels on the monitor", name, yellow);
         }
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = crate::store::write(&std::path::Path::new(&d).join(format!("hdmi-layout-{}.png", name.replace(' ', "-"))), &crate::store::png_of(&hc));
+            let _ = crate::store::write(
+                &std::path::Path::new(&d).join(format!("hdmi-layout-{}.png", name.replace(' ', "-"))),
+                &crate::store::png_of(&hc),
+            );
         }
     }
 }

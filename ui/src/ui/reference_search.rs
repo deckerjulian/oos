@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Full-record reference trigger hits shared by Search and replay acquisition.
 use super::*;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 
 const BACKGROUND_POINTS: usize = 262_144;
 
@@ -15,21 +15,34 @@ struct Job {
     hyst: [f32; NCH],
 }
 
-fn scan_condition(model: &Model, primary: &[f32], dt: f64, t0: f64,
-    secondary: Option<(&[f32], f64, f64)>, hyst: [f32; NCH]) -> Arc<Vec<f64>> {
+fn scan_condition(
+    model: &Model,
+    primary: &[f32],
+    dt: f64,
+    t0: f64,
+    secondary: Option<(&[f32], f64, f64)>,
+    hyst: [f32; NCH],
+) -> Arc<Vec<f64>> {
     let aligned;
     let second = if let Some((values, start, step)) = secondary {
-        if start == t0 && step == dt && values.len() == primary.len() { values }
-        else {
-            aligned = (0..primary.len()).map(|i| {
-                let index = (t0 + i as f64 * dt - start) / step;
-                if !index.is_finite() || index < 0.0 || index >= values.len().saturating_sub(1) as f64 { return f32::NAN; }
-                let k = index.floor() as usize;
-                values[k] + index.fract() as f32 * (values[k + 1] - values[k])
-            }).collect::<Vec<_>>();
+        if start == t0 && step == dt && values.len() == primary.len() {
+            values
+        } else {
+            aligned = (0..primary.len())
+                .map(|i| {
+                    let index = (t0 + i as f64 * dt - start) / step;
+                    if !index.is_finite() || index < 0.0 || index >= values.len().saturating_sub(1) as f64 {
+                        return f32::NAN;
+                    }
+                    let k = index.floor() as usize;
+                    values[k] + index.fract() as f32 * (values[k + 1] - values[k])
+                })
+                .collect::<Vec<_>>();
             aligned.as_slice()
         }
-    } else { &[] };
+    } else {
+        &[]
+    };
     let input = oos_dsp::trigger::Input { ch: [primary, second, &[], &[]], dt, hyst };
     let mut times: Vec<f64> = crate::trig::find_all(model, &input).into_iter().map(|index| t0 + index * dt).collect();
     times.sort_by(f64::total_cmp);
@@ -51,9 +64,15 @@ pub(super) struct SimTrigger {
 
 impl SimTrigger {
     pub(super) fn evaluate(&self, generated: &[f32], generated_dt: f64) -> Arc<Vec<f64>> {
-        let (primary, t0, dt) = self.primary.as_ref().map_or((generated, self.generated_t0, generated_dt), |wave| (wave.v.as_slice(), wave.t0, wave.dt));
-        let secondary = if self.secondary_generated { Some((generated, self.generated_t0, generated_dt)) }
-            else { self.secondary.as_ref().map(|wave| (wave.v.as_slice(), wave.t0, wave.dt)) };
+        let (primary, t0, dt) = self
+            .primary
+            .as_ref()
+            .map_or((generated, self.generated_t0, generated_dt), |wave| (wave.v.as_slice(), wave.t0, wave.dt));
+        let secondary = if self.secondary_generated {
+            Some((generated, self.generated_t0, generated_dt))
+        } else {
+            self.secondary.as_ref().map(|wave| (wave.v.as_slice(), wave.t0, wave.dt))
+        };
         scan_condition(&self.model, primary, dt, t0, secondary, self.hyst)
     }
 }
@@ -61,11 +80,17 @@ impl SimTrigger {
 impl Job {
     fn run(self) -> ResultSet {
         let secondary = self.secondary.as_ref().map(|wave| (wave.v.as_slice(), wave.t0, wave.dt));
-        ResultSet { key: self.key, times: scan_condition(&self.model, &self.primary, self.dt, self.t0, secondary, self.hyst) }
+        ResultSet {
+            key: self.key,
+            times: scan_condition(&self.model, &self.primary, self.dt, self.t0, secondary, self.hyst),
+        }
     }
 }
 
-struct ResultSet { key: String, times: Arc<Vec<f64>> }
+struct ResultSet {
+    key: String,
+    times: Arc<Vec<f64>>,
+}
 struct Worker {
     input: mpsc::SyncSender<Job>,
     output: mpsc::Receiver<ResultSet>,
@@ -76,11 +101,16 @@ impl Worker {
     fn open() -> Self {
         let (input, requests) = mpsc::sync_channel::<Job>(1);
         let (results, output) = mpsc::channel();
-        std::thread::Builder::new().name("reference-search".into()).spawn(move || {
-            while let Ok(job) = requests.recv() {
-                if results.send(job.run()).is_err() { break; }
-            }
-        }).expect("start bounded reference search worker");
+        std::thread::Builder::new()
+            .name("reference-search".into())
+            .spawn(move || {
+                while let Ok(job) = requests.recv() {
+                    if results.send(job.run()).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("start bounded reference search worker");
         Self { input, output, busy: false }
     }
 }
@@ -99,14 +129,22 @@ impl Ui {
         let mut normalized = model.clone();
         normalized.trig_src = 0;
         normalized.trig_src2 = 1;
-        if normalized.trig_type == TrigType::Bus { normalized.dec_src = 0; }
+        if normalized.trig_type == TrigType::Bus {
+            normalized.dec_src = 0;
+        }
         normalized
     }
     fn source_stamp(&self, id: WaveId, candidate: Option<(usize, f32)>) -> Option<(usize, usize, u64, u64)> {
         match id {
-            WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => Some((0, 0, 0, self.source_time_shift(WaveId::Ref(i)).to_bits())),
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())),
-            WaveId::Ch(c) => self.last[0].as_ref().map(|r| (r.ch[c].as_ptr() as usize, r.ch[c].len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())),
+            WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => {
+                Some((0, 0, 0, self.source_time_shift(WaveId::Ref(i)).to_bits()))
+            }
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| {
+                (r.v.as_ptr() as usize, r.v.len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())
+            }),
+            WaveId::Ch(c) => self.last[0].as_ref().map(|r| {
+                (r.ch[c].as_ptr() as usize, r.ch[c].len(), r.dt.to_bits(), self.source_time_origin(id, r.t0).to_bits())
+            }),
         }
     }
     fn source_vpd(&self, id: WaveId, candidate: Option<(usize, f32)>) -> f32 {
@@ -114,29 +152,56 @@ impl Ui {
             WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => candidate.unwrap().1,
             WaveId::Ref(i) => self.refs[i].as_ref().map_or(1.0, |r| r.vpd),
             WaveId::Ch(c) => self.m.ch[c].volts_per_div(),
-        }.max(1e-6)
+        }
+        .max(1e-6)
     }
-    pub(super) fn reference_trigger_fingerprint(&self, model: &Model, slot: usize, candidate: Option<(usize, f32)>) -> String {
+    pub(super) fn reference_trigger_fingerprint(
+        &self,
+        model: &Model,
+        slot: usize,
+        candidate: Option<(usize, f32)>,
+    ) -> String {
         let normalized = Self::normalized_reference_model(model);
         let paired = matches!(model.trig_type, TrigType::Delay | TrigType::SetupHold);
         let second = model.trigger_wave2();
         let primary_hyst = self.source_vpd(WaveId::Ref(slot), candidate) * model.trig_hyst_div();
         let secondary_hyst = self.source_vpd(second, candidate) * model.trig_hyst_div();
-        let sim_used = self.session_is_sim && (slot == self.m.sim_slot || (paired && second == WaveId::Ref(self.m.sim_slot)));
-        format!("{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{}", normalized.trigger(), normalized.dec_cfg(),
-            (model.trig_type, model.trig_bus, model.trig_bus_val), slot,
-            self.source_stamp(WaveId::Ref(slot), candidate), paired.then(|| (second, self.source_stamp(second, candidate))), model.trigger_wave(),
-            primary_hyst.to_bits(), secondary_hyst.to_bits(), self.workflow_epoch, if sim_used { self.replay.sim_attempt } else { 0 })
+        let sim_used =
+            self.session_is_sim && (slot == self.m.sim_slot || (paired && second == WaveId::Ref(self.m.sim_slot)));
+        format!(
+            "{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{}",
+            normalized.trigger(),
+            normalized.dec_cfg(),
+            (model.trig_type, model.trig_bus, model.trig_bus_val),
+            slot,
+            self.source_stamp(WaveId::Ref(slot), candidate),
+            paired.then(|| (second, self.source_stamp(second, candidate))),
+            model.trigger_wave(),
+            primary_hyst.to_bits(),
+            secondary_hyst.to_bits(),
+            self.workflow_epoch,
+            if sim_used { self.replay.sim_attempt } else { 0 }
+        )
     }
     pub(super) fn prepare_sim_trigger(&self, model: &Model, slot: usize, vpd: f32) -> Option<SimTrigger> {
         let primary_slot = model.trig_ref?;
         let paired = matches!(model.trig_type, TrigType::Delay | TrigType::SetupHold);
         let second = model.trigger_wave2();
-        if primary_slot != slot && !(paired && second == WaveId::Ref(slot)) { return None; }
+        if primary_slot != slot && !(paired && second == WaveId::Ref(slot)) {
+            return None;
+        }
         if matches!(model.trig_type, TrigType::Pattern | TrigType::Duration)
-            || (model.trig_type == TrigType::Bus && (model.bus_on_la() || model.dec_proto.roles()[1].is_some() || model.dec_diff.is_some())) { return None; }
+            || (model.trig_type == TrigType::Bus
+                && (model.bus_on_la() || model.dec_proto.roles()[1].is_some() || model.dec_diff.is_some()))
+        {
+            return None;
+        }
         let sample = |id| match id {
-            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(id, r.t0), dt: r.dt }),
+            WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp {
+                v: r.v.as_ref().clone(),
+                t0: self.source_time_origin(id, r.t0),
+                dt: r.dt,
+            }),
             WaveId::Ch(_) => self.last[0].as_ref().and_then(|record| self.wave_samples(record, id)),
         };
         let primary = if primary_slot == slot { None } else { Some(sample(WaveId::Ref(primary_slot))?) };
@@ -144,9 +209,15 @@ impl Ui {
         let secondary = if paired && !secondary_generated { sample(second) } else { None };
         let primary_hyst = self.source_vpd(WaveId::Ref(primary_slot), Some((slot, vpd))) * model.trig_hyst_div();
         let secondary_hyst = self.source_vpd(second, Some((slot, vpd))) * model.trig_hyst_div();
-        Some(SimTrigger { primary_slot, model: Self::normalized_reference_model(model), primary, secondary,
-            secondary_generated, hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst],
-            generated_t0: self.source_time_origin(WaveId::Ref(slot), 0.0) })
+        Some(SimTrigger {
+            primary_slot,
+            model: Self::normalized_reference_model(model),
+            primary,
+            secondary,
+            secondary_generated,
+            hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst],
+            generated_t0: self.source_time_origin(WaveId::Ref(slot), 0.0),
+        })
     }
     pub(super) fn install_reference_trigger_hits(&self, slot: usize, times: Arc<Vec<f64>>) {
         let key = self.reference_trigger_fingerprint(&self.m, slot, None);
@@ -156,16 +227,21 @@ impl Ui {
         cache.times = Some(times);
     }
     pub(super) fn reference_search_supported(&self) -> bool {
-        if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) { return true; }
+        if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) {
+            return true;
+        }
         !matches!(self.m.trig_type, TrigType::Pattern | TrigType::Duration)
-            && !(self.m.trig_type == TrigType::Bus && (self.m.bus_on_la() || self.m.dec_proto.roles()[1].is_some()
-                || self.m.dec_diff.is_some()))
+            && !(self.m.trig_type == TrigType::Bus
+                && (self.m.bus_on_la() || self.m.dec_proto.roles()[1].is_some() || self.m.dec_diff.is_some()))
     }
 
     pub(super) fn reference_search_busy(&self) -> bool {
-        if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) { return self.decode_busy(); }
+        if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) {
+            return self.decode_busy();
+        }
         let cache = self.azr.reference_search.borrow();
-        cache.worker.as_ref().is_some_and(|worker| worker.busy) && (cache.key != cache.requested_key || cache.times.is_none())
+        cache.worker.as_ref().is_some_and(|worker| worker.busy)
+            && (cache.key != cache.requested_key || cache.times.is_none())
     }
 
     /// Times are absolute record times, never viewport-relative sample indices.
@@ -175,9 +251,13 @@ impl Ui {
         if self.m.trig_type == TrigType::Bus && Self::decoder_uses_refs(&self.m) {
             return self.decoder_trigger_hits(&self.m);
         }
-        if !self.reference_search_supported() { return None; }
+        if !self.reference_search_supported() {
+            return None;
+        }
         let r = self.refs.get(slot)?.as_ref()?;
-        if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 || !r.t0.is_finite() { return None; }
+        if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 || !r.t0.is_finite() {
+            return None;
+        }
         let model = Self::normalized_reference_model(&self.m);
         let paired = matches!(model.trig_type, TrigType::Delay | TrigType::SetupHold);
         let second = self.m.trigger_wave2();
@@ -185,25 +265,54 @@ impl Ui {
         let secondary_hyst = self.trigger_vpd(true).max(1e-6) * self.m.trig_hyst_div();
         let key = self.reference_trigger_fingerprint(&self.m, slot, None);
         let mut cache = self.azr.reference_search.borrow_mut();
-        if cache.requested_key != key { cache.requested_key = key.clone(); }
-        let completed = cache.worker.as_mut().and_then(|worker| worker.output.try_recv().ok().map(|result| { worker.busy = false; result }));
-        if let Some(result) = completed {
-            if result.key == key { cache.key = result.key; cache.times = Some(result.times); }
+        if cache.requested_key != key {
+            cache.requested_key = key.clone();
         }
-        if cache.key == key { return cache.times.as_ref().map(Arc::clone); }
-        if cache.worker.as_ref().is_some_and(|worker| worker.busy) { return None; }
+        let completed = cache.worker.as_mut().and_then(|worker| {
+            worker.output.try_recv().ok().map(|result| {
+                worker.busy = false;
+                result
+            })
+        });
+        if let Some(result) = completed {
+            if result.key == key {
+                cache.key = result.key;
+                cache.times = Some(result.times);
+            }
+        }
+        if cache.key == key {
+            return cache.times.as_ref().map(Arc::clone);
+        }
+        if cache.worker.as_ref().is_some_and(|worker| worker.busy) {
+            return None;
+        }
         let auxiliary = if paired {
             match second {
-                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp { v: r.v.as_ref().clone(), t0: self.source_time_origin(second, r.t0), dt: r.dt }),
+                WaveId::Ref(i) => self.refs[i].as_ref().map(|r| super::magnetic::WaveSamp {
+                    v: r.v.as_ref().clone(),
+                    t0: self.source_time_origin(second, r.t0),
+                    dt: r.dt,
+                }),
                 WaveId::Ch(_) => self.last[0].as_ref().and_then(|rec| self.wave_samples(rec, second)),
             }
-        } else { None };
-        let job = Job { key, model, primary: r.v.as_ref().clone(), secondary: auxiliary, dt: r.dt, t0: self.source_time_origin(WaveId::Ref(slot), r.t0),
-            hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst] };
+        } else {
+            None
+        };
+        let job = Job {
+            key,
+            model,
+            primary: r.v.as_ref().clone(),
+            secondary: auxiliary,
+            dt: r.dt,
+            t0: self.source_time_origin(WaveId::Ref(slot), r.t0),
+            hyst: [primary_hyst, secondary_hyst, primary_hyst, primary_hyst],
+        };
         cache.scans += 1;
         if r.v.len() > BACKGROUND_POINTS {
             let worker = cache.worker.get_or_insert_with(Worker::open);
-            if worker.input.try_send(job).is_ok() { worker.busy = true; }
+            if worker.input.try_send(job).is_ok() {
+                worker.busy = true;
+            }
             None
         } else {
             let result = job.run();
@@ -240,7 +349,9 @@ mod tests {
     fn wait(ui: &Ui) -> Arc<Vec<f64>> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if let Some(times) = ui.reference_trigger_hits(ui.m.trig_ref.unwrap()) { return times; }
+            if let Some(times) = ui.reference_trigger_hits(ui.m.trig_ref.unwrap()) {
+                return times;
+            }
             assert!(Instant::now() < deadline, "bounded reference search did not complete");
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -312,9 +423,15 @@ mod tests {
         }
         let empty = wait(&ui);
         assert!(empty.is_empty(), "old threshold results must not appear as current Search hits");
-        assert_eq!(ui.azr.reference_search.borrow().scans, 2, "one old job and one current job, without queued copies per pan");
+        assert_eq!(
+            ui.azr.reference_search.borrow().scans,
+            2,
+            "one old job and one current job, without queued copies per pan"
+        );
         let before = ui.azr.reference_search.borrow().scans;
-        for _ in 0..50 { assert!(Arc::ptr_eq(&empty, &ui.search_events())); }
+        for _ in 0..50 {
+            assert!(Arc::ptr_eq(&empty, &ui.search_events()));
+        }
         assert_eq!(ui.azr.reference_search.borrow().scans, before);
         assert_eq!(ui.replay.captures, 0);
         assert_eq!(ui.m.run, RunState::Stop);

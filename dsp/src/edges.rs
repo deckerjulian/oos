@@ -110,7 +110,9 @@ mod tests {
     #[test]
     fn square_with_noise() {
         // 0/1 V square, period 100 samples, small noise that would chatter without hysteresis
-        let v: Vec<f32> = (0..1000).map(|i| if (i / 50) % 2 == 1 { 1.0 } else { 0.0 } + if i % 2 == 0 { 0.02 } else { -0.02 }).collect();
+        let v: Vec<f32> = (0..1000)
+            .map(|i| if (i / 50) % 2 == 1 { 1.0 } else { 0.0 } + if i % 2 == 0 { 0.02 } else { -0.02 })
+            .collect();
         let e = edges(&v, 0.5, 0.1);
         assert_eq!(e.len(), 19);
         assert!(e[0].rising && (e[0].t - 49.5).abs() < 0.6);
@@ -144,9 +146,12 @@ mod tests {
             x = x.wrapping_mul(1664525).wrapping_add(1013904223);
             (x >> 8) as f32 / (1 << 24) as f32 - 0.5
         };
-        for (amp, level, h) in [(0.1f32, 0.5f32, 0.15f32), (0.5, 0.5, 0.15), (0.05, 0.02, 0.15), (0.3, 0.0, 0.0), (0.4, 1.0, 0.3)] {
+        for (amp, level, h) in
+            [(0.1f32, 0.5f32, 0.15f32), (0.5, 0.5, 0.15), (0.05, 0.02, 0.15), (0.3, 0.0, 0.0), (0.4, 1.0, 0.3)]
+        {
             let v: Vec<f32> = (0..5000).map(|i| if (i / 250) % 2 == 1 { 1.0 } else { 0.0 } + amp * noise()).collect();
-            let got: Vec<(usize, bool)> = trigger_edges(&v, level, h).iter().map(|e| (e.t.ceil() as usize, e.rising)).collect();
+            let got: Vec<(usize, bool)> =
+                trigger_edges(&v, level, h).iter().map(|e| (e.t.ceil() as usize, e.rising)).collect();
             let mut got = got;
             got.sort();
             assert_eq!(got, comparators(&v, level, h), "amp {} level {} h {}", amp, level, h);

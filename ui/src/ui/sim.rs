@@ -7,7 +7,10 @@
 
 use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
-use std::sync::{Arc, mpsc::{self, Receiver, Sender}};
+use std::sync::{
+    mpsc::{self, Receiver, Sender},
+    Arc,
+};
 
 #[path = "sim_bus_candidate.rs"]
 mod sim_bus_candidate;
@@ -38,14 +41,26 @@ struct Generated {
 
 impl Generated {
     fn evaluate(request: &Request, samples: Vec<f32>) -> Self {
-        if let Some(plan)=&request.bus_trigger {
-            return match plan.as_ref().map_err(|error|*error).and_then(|plan|plan.evaluate(&samples,serial::dt_of(&request.lane))) {
-                Ok(decoded)=>Self{samples,hits:Some((decoded.primary_slot,Arc::clone(&decoded.hits))),bus_decode:Some(decoded),error:None},
-                Err(error)=>Self{samples,hits:None,bus_decode:None,error:Some(error)},
+        if let Some(plan) = &request.bus_trigger {
+            return match plan
+                .as_ref()
+                .map_err(|error| *error)
+                .and_then(|plan| plan.evaluate(&samples, serial::dt_of(&request.lane)))
+            {
+                Ok(decoded) => Self {
+                    samples,
+                    hits: Some((decoded.primary_slot, Arc::clone(&decoded.hits))),
+                    bus_decode: Some(decoded),
+                    error: None,
+                },
+                Err(error) => Self { samples, hits: None, bus_decode: None, error: Some(error) },
             };
         }
-        let hits = request.trigger.as_ref().map(|trigger| (trigger.primary_slot, trigger.evaluate(&samples, serial::dt_of(&request.lane))));
-        Self { samples, hits, bus_decode:None,error:None }
+        let hits = request
+            .trigger
+            .as_ref()
+            .map(|trigger| (trigger.primary_slot, trigger.evaluate(&samples, serial::dt_of(&request.lane))));
+        Self { samples, hits, bus_decode: None, error: None }
     }
 }
 
@@ -66,15 +81,22 @@ impl Generation {
     fn new() -> Result<Self, String> {
         let (requests, input) = mpsc::channel::<Request>();
         let (output, results) = mpsc::channel();
-        std::thread::Builder::new().name("oos-sim".into()).spawn(move || {
-            while let Ok(mut request) = input.recv() {
-                while let Ok(newer) = input.try_recv() { request = newer; }
-                let generated = serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
-                if output.send((request, generated)).is_err() { break; }
-            }
-        }).map_err(|error| format!("Could not start SIM generator: {error}"))?;
-        Ok(Self { requests, results, next: 0, active: None, run: false, in_flight: false,
-            queued: None, pending: None })
+        std::thread::Builder::new()
+            .name("oos-sim".into())
+            .spawn(move || {
+                while let Ok(mut request) = input.recv() {
+                    while let Ok(newer) = input.try_recv() {
+                        request = newer;
+                    }
+                    let generated =
+                        serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
+                    if output.send((request, generated)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| format!("Could not start SIM generator: {error}"))?;
+        Ok(Self { requests, results, next: 0, active: None, run: false, in_flight: false, queued: None, pending: None })
     }
 
     fn submit(&mut self, mut request: Request) -> Result<(), String> {
@@ -82,7 +104,10 @@ impl Generation {
         request.id = self.next;
         self.active = Some(request.id);
         self.run = request.run;
-        if self.in_flight { self.queued = Some(request); return Ok(()); }
+        if self.in_flight {
+            self.queued = Some(request);
+            return Ok(());
+        }
         self.in_flight = true;
         self.requests.send(request).map_err(|_| {
             self.active = None;
@@ -92,11 +117,21 @@ impl Generation {
     }
 
     fn advance_queue(&mut self) -> Result<(), String> {
-        if self.in_flight { return Ok(()); }
-        let Some(request) = self.queued.take() else { return Ok(()); };
-        if self.active != Some(request.id) { return Ok(()); }
+        if self.in_flight {
+            return Ok(());
+        }
+        let Some(request) = self.queued.take() else {
+            return Ok(());
+        };
+        if self.active != Some(request.id) {
+            return Ok(());
+        }
         self.in_flight = true;
-        self.requests.send(request).map_err(|_| { self.in_flight = false; self.active = None; "SIM generator stopped".into() })
+        self.requests.send(request).map_err(|_| {
+            self.in_flight = false;
+            self.active = None;
+            "SIM generator stopped".into()
+        })
     }
 }
 
@@ -143,21 +178,46 @@ impl Ui {
             Item::SimShow,
             Item::SimDefaults,
         ];
-        if self.record_mode() { items.insert(0, Item::SimLive); }
+        if self.record_mode() {
+            items.insert(0, Item::SimLive);
+        }
         items
     }
 
     pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
-        vec![Item::SimSsc, Item::SimSscCenter, Item::SimSscDeviation, Item::SimSscHz,
-             Item::SimDcd, Item::SimCorrRj, Item::SimCorrHz, Item::SimDefaults]
+        vec![
+            Item::SimSsc,
+            Item::SimSscCenter,
+            Item::SimSscDeviation,
+            Item::SimSscHz,
+            Item::SimDcd,
+            Item::SimCorrRj,
+            Item::SimCorrHz,
+            Item::SimDefaults,
+        ]
     }
 
     pub(super) fn sim_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::SimPlay | Item::SimLive | Item::SimDefaults => Kind::Action,
-            Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => Kind::Choice,
-            Item::SimRate | Item::SimHigh | Item::SimLow | Item::SimRise | Item::SimBw | Item::SimDeemph | Item::SimNoise | Item::SimRj | Item::SimPj | Item::SimPjHz
-            | Item::SimSscDeviation | Item::SimSscHz | Item::SimDcd | Item::SimCorrRj | Item::SimCorrHz => Kind::Value,
+            Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => {
+                Kind::Choice
+            }
+            Item::SimRate
+            | Item::SimHigh
+            | Item::SimLow
+            | Item::SimRise
+            | Item::SimBw
+            | Item::SimDeemph
+            | Item::SimNoise
+            | Item::SimRj
+            | Item::SimPj
+            | Item::SimPjHz
+            | Item::SimSscDeviation
+            | Item::SimSscHz
+            | Item::SimDcd
+            | Item::SimCorrRj
+            | Item::SimCorrHz => Kind::Value,
             _ => return None,
         })
     }
@@ -206,16 +266,36 @@ impl Ui {
             Item::SimBw => si_short(m.sim_bw, "Hz"),
             Item::SimDeemph => format!("{:.1} dB", m.sim_deemph),
             Item::SimNoise => si_short(m.sim_noise, "V"),
-            Item::SimSsc => if m.sim_ssc { "On".into() } else { "Off".into() },
-            Item::SimSscCenter => if m.sim_ssc_center { "Center".into() } else { "Down, DC removed".into() },
-            Item::SimSscDeviation => format!("{:.2} % {}", 100.0 * m.sim_ssc_deviation, if m.sim_ssc_center { "pk" } else { "p-p" }),
+            Item::SimSsc => {
+                if m.sim_ssc {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
+            Item::SimSscCenter => {
+                if m.sim_ssc_center {
+                    "Center".into()
+                } else {
+                    "Down, DC removed".into()
+                }
+            }
+            Item::SimSscDeviation => {
+                format!("{:.2} % {}", 100.0 * m.sim_ssc_deviation, if m.sim_ssc_center { "pk" } else { "p-p" })
+            }
             Item::SimSscHz => si_short(m.sim_ssc_hz, "Hz"),
             Item::SimDcd => si_short(m.sim_dcd_pp, "s"),
             Item::SimCorrRj => si_short(m.sim_corr_rj, "s"),
             Item::SimCorrHz => si_short(m.sim_corr_hz, "Hz"),
             Item::SimRj => si_short(m.sim_rj, "s"),
             Item::SimPj => si_short(m.sim_pj, "s"),
-            Item::SimPjHz => if m.sim_pj > 0.0 { si_short(m.sim_pjhz, "Hz") } else { "off".into() },
+            Item::SimPjHz => {
+                if m.sim_pj > 0.0 {
+                    si_short(m.sim_pjhz, "Hz")
+                } else {
+                    "off".into()
+                }
+            }
             Item::SimSlot => format!("R{}", m.sim_slot + 1),
             Item::SimPlay => String::new(),
             Item::SimDefaults => String::new(),
@@ -263,7 +343,9 @@ impl Ui {
             Item::SimNoise => self.m.sim_noise = eng_ladder(self.m.sim_noise.max(100e-6), d, 100e-6, 50e-3, false),
             Item::SimSsc => self.m.sim_ssc = !self.m.sim_ssc,
             Item::SimSscCenter => self.m.sim_ssc_center = !self.m.sim_ssc_center,
-            Item::SimSscDeviation => self.m.sim_ssc_deviation = (self.m.sim_ssc_deviation + d as f64 * 0.0005).clamp(0.0, 0.05),
+            Item::SimSscDeviation => {
+                self.m.sim_ssc_deviation = (self.m.sim_ssc_deviation + d as f64 * 0.0005).clamp(0.0, 0.05)
+            }
             Item::SimSscHz => self.m.sim_ssc_hz = eng_ladder(self.m.sim_ssc_hz, d, 1e3, 1e6, false),
             Item::SimDcd => self.m.sim_dcd_pp = eng_ladder(self.m.sim_dcd_pp, d, 0.5e-12, 100e-12, true),
             Item::SimCorrRj => self.m.sim_corr_rj = eng_ladder(self.m.sim_corr_rj, d, 0.1e-12, 50e-12, true),
@@ -289,18 +371,26 @@ impl Ui {
         match it {
             Item::SimLive => self.return_to_live(),
             Item::SimPlay if self.sim_generating() => {
-                if self.session_is_sim && self.m.run==RunState::Run { self.record_key(key::RUNSTOP); }
-                else { self.sim_cancel_generation(); }
+                if self.session_is_sim && self.m.run == RunState::Run {
+                    self.record_key(key::RUNSTOP);
+                } else {
+                    self.sim_cancel_generation();
+                }
                 self.toast("SIM generation cancelled");
             }
-            Item::SimPlay if self.session_is_sim => { self.record_key(key::RUNSTOP); },
+            Item::SimPlay if self.session_is_sim => {
+                self.record_key(key::RUNSTOP);
+            }
             Item::SimPlay => self.sim_request_ui(true),
             Item::SimDefaults => {
                 let regenerate = self.session_is_sim || self.sim_generating();
                 let running = self.sim_requested_running();
                 self.m.apply_sim_preset();
-                if regenerate { self.sim_request_ui(running); }
-                else { self.toast("SIM knobs from the preset"); }
+                if regenerate {
+                    self.sim_request_ui(running);
+                } else {
+                    self.toast("SIM knobs from the preset");
+                }
             }
             _ => return false,
         }
@@ -352,21 +442,29 @@ impl Ui {
     }
 
     fn sim_requested_running(&self) -> bool {
-        self.sim_generation.as_ref().filter(|generation| generation.active.is_some())
+        self.sim_generation
+            .as_ref()
+            .filter(|generation| generation.active.is_some())
             .map_or(self.m.run == RunState::Run, |generation| generation.run)
     }
 
     fn sim_trigger_model(&self, lane: &Lane, slot: usize, continuing: bool) -> Model {
         let mut model = self.m.clone();
-        if !continuing || model.trig_ref.is_none() { model.set_trigger_wave(WaveId::Ref(slot), false); }
-        if !continuing { model.trig_level = (0.5 * (lane.v_high + lane.v_low)) as f32; }
+        if !continuing || model.trig_ref.is_none() {
+            model.set_trigger_wave(WaveId::Ref(slot), false);
+        }
+        if !continuing {
+            model.trig_level = (0.5 * (lane.v_high + lane.v_low)) as f32;
+        }
         model
     }
 
     fn sim_candidate_vpd(&self, lane: &Lane, slot: usize, continuing: bool, run: bool) -> f32 {
         if continuing && run {
             self.refs[slot].as_ref().map_or(((lane.v_high - lane.v_low) / 6.0) as f32, |r| r.vpd)
-        } else { nearest_vdiv(((lane.v_high - lane.v_low).abs().max(0.2) / 4.0) as f32) }
+        } else {
+            nearest_vdiv(((lane.v_high - lane.v_low).abs().max(0.2) / 4.0) as f32)
+        }
     }
 
     fn sim_trigger_guard(&self, lane: &Lane, slot: usize, continuing: bool, run: bool) -> String {
@@ -374,23 +472,48 @@ impl Ui {
         let vpd = self.sim_candidate_vpd(lane, slot, continuing, run);
         // Include the user's current configuration as well as the effective
         // initial-SIM defaults, but not unrelated live-frame allocations.
-        format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}", self.m.trigger(), self.m.dec_cfg(),
-            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val), self.m.trigger_wave(), self.m.trigger_wave2(),
-            self.trigger_vpd(false).to_bits(), self.trigger_vpd(true).to_bits(),
-            self.reference_trigger_fingerprint(&effective, effective.trig_ref.unwrap_or(slot), Some((slot, vpd)))) + &self.sim_bus_guard(&effective,slot)
+        format!(
+            "{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}",
+            self.m.trigger(),
+            self.m.dec_cfg(),
+            (self.m.trig_type, self.m.trig_bus, self.m.trig_bus_val),
+            self.m.trigger_wave(),
+            self.m.trigger_wave2(),
+            self.trigger_vpd(false).to_bits(),
+            self.trigger_vpd(true).to_bits(),
+            self.reference_trigger_fingerprint(&effective, effective.trig_ref.unwrap_or(slot), Some((slot, vpd)))
+        ) + &self.sim_bus_guard(&effective, slot)
     }
 
     fn sim_capture_request(&self, lane: Lane, slot: usize, continuing: bool, fresh: bool, run: bool) -> Request {
         let model = self.sim_trigger_model(&lane, slot, continuing);
         let vpd = self.sim_candidate_vpd(&lane, slot, continuing, run);
-        Request { id: 0, lane, slot, continuing, fresh, run,
-            guard: self.sim_trigger_guard(&lane, slot, continuing, run), trigger: self.prepare_sim_trigger(&model, slot, vpd),
-            bus_trigger: if self.m.trig_on_la(){Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))}else if matches!(model.trig_type,TrigType::Pattern|TrigType::Duration){Some(Err("SIM Pattern/Duration qualification is unavailable"))}else if model.trig_type==TrigType::Bus{Some(self.prepare_sim_bus(&model,slot,vpd))}else{None} }
+        Request {
+            id: 0,
+            lane,
+            slot,
+            continuing,
+            fresh,
+            run,
+            guard: self.sim_trigger_guard(&lane, slot, continuing, run),
+            trigger: self.prepare_sim_trigger(&model, slot, vpd),
+            bus_trigger: if self.m.trig_on_la() {
+                Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))
+            } else if matches!(model.trig_type, TrigType::Pattern | TrigType::Duration) {
+                Some(Err("SIM Pattern/Duration qualification is unavailable"))
+            } else if model.trig_type == TrigType::Bus {
+                Some(self.prepare_sim_bus(&model, slot, vpd))
+            } else {
+                None
+            },
+        }
     }
 
     pub(crate) fn sim_cancel_generation(&mut self) {
         if let Some(generation) = &mut self.sim_generation {
-            generation.active = None; generation.queued = None; generation.pending = None;
+            generation.active = None;
+            generation.queued = None;
+            generation.pending = None;
         }
     }
 
@@ -399,7 +522,9 @@ impl Ui {
     }
 
     fn sim_request_ui(&mut self, run: bool) {
-        if let Err(error) = self.sim_load(run) { self.toast(&format!("SIM: {error}")); }
+        if let Err(error) = self.sim_load(run) {
+            self.toast(&format!("SIM: {error}"));
+        }
     }
 
     /// Preflight before changing a live session or its working reference. Long
@@ -410,17 +535,25 @@ impl Ui {
         self.sim_cancel_generation();
         let lane = self.sim_lane();
         let count = serial::sample_count(&lane)?;
-        let continuing=self.session_is_sim && !self.replay.sim_initial_armed;
-        if !continuing { self.sim_pick_free_slot(lane.name); }
+        let continuing = self.session_is_sim && !self.replay.sim_initial_armed;
+        if !continuing {
+            self.sim_pick_free_slot(lane.name);
+        }
         let mut request = self.sim_capture_request(lane, self.m.sim_slot, continuing, false, run);
-        if let Some(Err(error))=&request.bus_trigger { return Err((*error).into()); }
+        if let Some(Err(error)) = &request.bus_trigger {
+            return Err((*error).into());
+        }
         if request.bus_trigger.is_some() && run && !continuing {
             // Arming changes control ownership, never the accepted data. A miss
             // must keep retrying even before the first SIM reference exists.
-            self.remember_live();self.session_is_sim=true;self.sim_play=true;
-            self.replay.sim_initial_armed=true;self.m.run=RunState::Run;self.m.status=TrigStatus::Wait;
-            self.m.set_trigger_wave(WaveId::Ref(self.m.sim_slot),false);
-            request=self.sim_capture_request(lane,self.m.sim_slot,false,false,true);
+            self.remember_live();
+            self.session_is_sim = true;
+            self.sim_play = true;
+            self.replay.sim_initial_armed = true;
+            self.m.run = RunState::Run;
+            self.m.status = TrigStatus::Wait;
+            self.m.set_trigger_wave(WaveId::Ref(self.m.sim_slot), false);
+            request = self.sim_capture_request(lane, self.m.sim_slot, false, false, true);
         }
         if count <= 65_536 && request.bus_trigger.is_none() {
             let generated = serial::try_generate(&lane)?;
@@ -428,7 +561,9 @@ impl Ui {
             let generated = Generated::evaluate(&request, generated);
             self.sim_finish(request, generated);
         } else {
-            if self.sim_generation.is_none() { self.sim_generation = Some(Generation::new()?); }
+            if self.sim_generation.is_none() {
+                self.sim_generation = Some(Generation::new()?);
+            }
             self.sim_generation.as_mut().unwrap().submit(request)?;
             self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
         }
@@ -440,8 +575,12 @@ impl Ui {
     /// of an earlier run of the same preset is simply reused.
     fn sim_pick_free_slot(&mut self, preset: &str) {
         let slot = self.m.sim_slot;
-        if self.refs.get(slot).and_then(Option::as_ref).is_none_or(|r| r.label == preset) { return; }
-        if let Some(free) = (0..NREF).find(|&i| self.refs[i].is_none()) { self.m.sim_slot = free; }
+        if self.refs.get(slot).and_then(Option::as_ref).is_none_or(|r| r.label == preset) {
+            return;
+        }
+        if let Some(free) = (0..NREF).find(|&i| self.refs[i].is_none()) {
+            self.m.sim_slot = free;
+        }
     }
 
     pub(super) fn sim_poll(&mut self) {
@@ -458,7 +597,9 @@ impl Ui {
                 Ok((request, result)) => {
                     generation.in_flight = false;
                     if generation.active != Some(request.id) {
-                        if let Err(error) = generation.advance_queue() { self.sim_error = Some(error); }
+                        if let Err(error) = generation.advance_queue() {
+                            self.sim_error = Some(error);
+                        }
                         continue;
                     }
                     generation.active = None;
@@ -496,7 +637,8 @@ impl Ui {
     #[cfg(test)]
     fn wait_sim_worker(&mut self) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some()) {
+        while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some())
+        {
             self.sim_poll();
             assert!(std::time::Instant::now() < deadline, "SIM worker did not finish");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -508,38 +650,56 @@ impl Ui {
         if request.guard != self.sim_trigger_guard(&request.lane, request.slot, request.continuing, request.run) {
             // This result belongs to a superseded trigger/source/scale snapshot.
             // Keep the last accepted record; the next running tick retries.
-            if self.session_is_sim { self.replay.sim_next = self.now; }
-            else { self.toast("SIM trigger changed while generating; press Play to use the new condition"); }
+            if self.session_is_sim {
+                self.replay.sim_next = self.now;
+            } else {
+                self.toast("SIM trigger changed while generating; press Play to use the new condition");
+            }
             return;
         }
-        if let Some(error)=generated.error {self.sim_error=Some(error.into());self.m.status=TrigStatus::Wait;self.toast(&format!("SIM: {error}"));return;}
+        if let Some(error) = generated.error {
+            self.sim_error = Some(error.into());
+            self.m.status = TrigStatus::Wait;
+            self.toast(&format!("SIM: {error}"));
+            return;
+        }
         let operation = OperationToken::Sim(self.workflow_epoch, request.id);
-        if request.bus_trigger.is_some() && request.run && generated.hits.as_ref().is_some_and(|(_,hits)|hits.is_empty())
-            && self.m.trig_mode!=TrigMode::Auto && !self.replay.force_requested() {
+        if request.bus_trigger.is_some()
+            && request.run
+            && generated.hits.as_ref().is_some_and(|(_, hits)| hits.is_empty())
+            && self.m.trig_mode != TrigMode::Auto
+            && !self.replay.force_requested()
+        {
             self.scpi_finish_operation(operation);
-            self.m.status=TrigStatus::Wait;return;
+            self.m.status = TrigStatus::Wait;
+            return;
         }
         if request.fresh || (request.continuing && request.run) {
             self.sim_finish_capture(request, generated);
-            if !self.sim_generating() { self.scpi_finish_operation(operation); }
+            if !self.sim_generating() {
+                self.scpi_finish_operation(operation);
+            }
             return;
         }
         self.scpi_finish_operation(operation);
         let Generated { samples: v, hits, bus_decode, .. } = generated;
         let Request { lane, slot, continuing, run, .. } = request;
-        let initialize_measurements = self.refs.iter().all(Option::is_none)
-            && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
+        let initialize_measurements =
+            self.refs.iter().all(Option::is_none) && self.m.meas == Self::default_meas() && self.m.meas2.is_empty();
         self.remember_live();
         self.session_is_sim = true;
-        let forced=self.replay.force_requested();
+        let forced = self.replay.force_requested();
         self.replay = Default::default();
-        if forced{self.replay.request_force();}
+        if forced {
+            self.replay.request_force();
+        }
         self.clear_measurement_statistics();
         let n = v.len();
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let vpd = nearest_vdiv((span / 4.0) as f32);
-        let replaced = self.refs[slot].as_ref().filter(|r| !continuing && r.label != lane.name).map(|r| r.label.clone());
+        let replaced =
+            self.refs[slot].as_ref().filter(|r| !continuing && r.label != lane.name).map(|r| r.label.clone());
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: 0,
@@ -552,11 +712,15 @@ impl Ui {
             on: true,
         });
         self.invalidate_reference_eye();
-        if self.offline { self.offline_ref = slot; }
+        if self.offline {
+            self.offline_ref = slot;
+        }
         // Required CH bus auxiliaries remain accepted immutable snapshots.
-        let retained_channels=bus_decode.as_ref().map_or([false;NCH],|decoded|decoded.channels);
+        let retained_channels = bus_decode.as_ref().map_or([false; NCH], |decoded| decoded.channels);
         // The SIM never switches an input off; the inputs its bus decode needs are switched on.
-        for c in 0..NCH {self.m.ch[c].on|=retained_channels[c];}
+        for c in 0..NCH {
+            self.m.ch[c].on |= retained_channels[c];
+        }
         self.m.la.on = false;
         let rec_s = n as f64 * dt;
         let bit = nearest_tscale(8.0 / lane.bits_per_s / HDIV as f64);
@@ -579,26 +743,41 @@ impl Ui {
                 // Starting a simulator must not erase the loaded-file catalog.
                 // Add useful SIM readouts without duplicating an existing item.
                 for item in Self::sim_meas(slot) {
-                    if !self.m.meas.contains(&item) { self.m.meas.push(item); }
+                    if !self.m.meas.contains(&item) {
+                        self.m.meas.push(item);
+                    }
                 }
             }
         }
         self.select_workspace_source(WaveId::Ref(slot));
         self.m.eye_src = WaveId::Ref(slot);
         self.m.eye_rate = lane.bits_per_s;
-        if !continuing || self.m.trig_ref.is_none() { self.m.set_trigger_wave(WaveId::Ref(slot), false); }
+        if !continuing || self.m.trig_ref.is_none() {
+            self.m.set_trigger_wave(WaveId::Ref(slot), false);
+        }
         self.m.run = if run { RunState::Run } else { RunState::Stop };
         self.m.status = if run { TrigStatus::Wait } else { TrigStatus::Stop };
-        if !continuing { self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32; }
-        if !retained_channels.iter().any(|on|*on){self.last[0] = None;}
+        if !continuing {
+            self.m.trig_level = ((lane.v_high + lane.v_low) * 0.5) as f32;
+        }
+        if !retained_channels.iter().any(|on| *on) {
+            self.last[0] = None;
+        }
         self.cleared = true;
         self.sim_play = run;
         self.replay.fresh_sim = true;
         self.replay.sim_next = self.now + 0.5;
-        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
-        if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
-        if run { self.replay_acquire(0.0); }
-        else { self.refresh_stopped_reference(); }
+        if let Some(decoded) = bus_decode {
+            self.seed_sim_bus_decode(&self.m, decoded.packets, Arc::clone(&decoded.hits));
+        }
+        if let Some((source, times)) = hits {
+            self.install_reference_trigger_hits(source, times);
+        }
+        if run {
+            self.replay_acquire(0.0);
+        } else {
+            self.refresh_stopped_reference();
+        }
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
@@ -669,41 +848,83 @@ impl Ui {
     /// Each SIM acquisition is a newly generated physical record, not an animated
     /// viewport over one seeded record. The single worker bounds cadence and memory.
     pub(super) fn sim_tick(&mut self, dt_wall: f64) {
-        if !self.session_is_sim { self.replay_acquire(dt_wall); return; }
+        if !self.session_is_sim {
+            self.replay_acquire(dt_wall);
+            return;
+        }
         // A large initial or external-reference scan must be serviced before
         // scheduling a replacement. Its source stays installed while pending.
-        if self.m.run == RunState::Run && self.sim_play && self.replay.fresh_sim && self.replay.captures == 0 && !self.sim_generating() {
+        if self.m.run == RunState::Run
+            && self.sim_play
+            && self.replay.fresh_sim
+            && self.replay.captures == 0
+            && !self.sim_generating()
+        {
             self.replay_acquire(dt_wall);
-            if self.reference_search_busy() { return; }
+            if self.reference_search_busy() {
+                return;
+            }
         }
-        if self.m.run != RunState::Run || !self.sim_play || self.sim_generating() || self.now < self.replay.sim_next { return; }
+        if self.m.run != RunState::Run || !self.sim_play || self.sim_generating() || self.now < self.replay.sim_next {
+            return;
+        }
         // Finish analysis/statistics for the accepted record before replacing
         // it, so large Full-record readouts cannot be perpetually superseded.
-        if self.measurement_busy() { return; }
+        if self.measurement_busy() {
+            return;
+        }
         self.replay.sim_next = self.now + 0.5;
         let mut lane = self.sim_lane();
         self.replay.sim_attempt = self.replay.sim_attempt.wrapping_add(1);
         lane.seed ^= self.replay.sim_attempt.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        if let Err(error) = serial::sample_count(&lane) { self.sim_error = Some(error); self.m.run = RunState::Stop; self.sim_play = false; return; }
-        if self.sim_generation.is_none() {
-            match Generation::new() { Ok(worker) => self.sim_generation = Some(worker), Err(error) => { self.sim_error = Some(error); return; } }
+        if let Err(error) = serial::sample_count(&lane) {
+            self.sim_error = Some(error);
+            self.m.run = RunState::Stop;
+            self.sim_play = false;
+            return;
         }
-        let initial=self.replay.sim_initial_armed;
+        if self.sim_generation.is_none() {
+            match Generation::new() {
+                Ok(worker) => self.sim_generation = Some(worker),
+                Err(error) => {
+                    self.sim_error = Some(error);
+                    return;
+                }
+            }
+        }
+        let initial = self.replay.sim_initial_armed;
         let request = self.sim_capture_request(lane, self.m.sim_slot, !initial, !initial, true);
-        if let Some(Err(error))=&request.bus_trigger {self.sim_error=Some((*error).into());self.m.status=TrigStatus::Wait;return;}
-        if let Err(error) = self.sim_generation.as_mut().unwrap().submit(request) { self.sim_error = Some(error); }
+        if let Some(Err(error)) = &request.bus_trigger {
+            self.sim_error = Some((*error).into());
+            self.m.status = TrigStatus::Wait;
+            return;
+        }
+        if let Err(error) = self.sim_generation.as_mut().unwrap().submit(request) {
+            self.sim_error = Some(error);
+        }
     }
 
     fn sim_finish_capture(&mut self, request: Request, generated: Generated) {
-        if !self.session_is_sim || !self.sim_play || self.m.run != RunState::Run || request.slot != self.m.sim_slot { return; }
+        if !self.session_is_sim || !self.sim_play || self.m.run != RunState::Run || request.slot != self.m.sim_slot {
+            return;
+        }
         if generated.hits.is_none() {
-            if !self.reference_search_supported() { self.m.status = TrigStatus::Wait; return; }
+            if !self.reference_search_supported() {
+                self.m.status = TrigStatus::Wait;
+                return;
+            }
             let source = self.m.trig_ref.unwrap_or_else(|| self.active_reference());
             if self.reference_trigger_hits(source).is_none() {
                 // The actual external trigger source has not finished scanning.
                 // Retain one candidate off-screen; polling never installs it.
                 if self.sim_generation.is_none() {
-                    match Generation::new() { Ok(worker) => self.sim_generation = Some(worker), Err(error) => { self.sim_error = Some(error); return; } }
+                    match Generation::new() {
+                        Ok(worker) => self.sim_generation = Some(worker),
+                        Err(error) => {
+                            self.sim_error = Some(error);
+                            return;
+                        }
+                    }
                 }
                 let generation = self.sim_generation.as_mut().unwrap();
                 generation.active = Some(request.id);
@@ -718,19 +939,30 @@ impl Ui {
         let dt = serial::dt_of(&request.lane);
         let midpoint = 0.5 * (request.lane.v_high + request.lane.v_low);
         self.refs[request.slot] = Some(RefWave {
-            src: 0, color: previous.as_ref().map_or(0, |r| r.color), label: request.lane.name.into(),
-            t0: 0.0, dt, v: (samples).into(),
+            src: 0,
+            color: previous.as_ref().map_or(0, |r| r.color),
+            label: request.lane.name.into(),
+            t0: 0.0,
+            dt,
+            v: (samples).into(),
             vpd: previous.as_ref().map_or(((request.lane.v_high - request.lane.v_low) / 6.0) as f32, |r| r.vpd),
-            offset: previous.as_ref().map_or(-midpoint as f32, |r| r.offset), on: true,
+            offset: previous.as_ref().map_or(-midpoint as f32, |r| r.offset),
+            on: true,
         });
         let captures = self.replay.captures;
         let old_rate = self.m.eye_rate;
-        if !request.fresh { self.m.eye_rate = request.lane.bits_per_s; }
+        if !request.fresh {
+            self.m.eye_rate = request.lane.bits_per_s;
+        }
         self.replay.sim_config_change = !request.fresh;
         self.replay.fresh_sim = true;
         self.replay.next = 0.0;
-        if let Some(decoded)=bus_decode {self.seed_sim_bus_decode(&self.m,decoded.packets,Arc::clone(&decoded.hits));}
-        if let Some((source, times)) = hits { self.install_reference_trigger_hits(source, times); }
+        if let Some(decoded) = bus_decode {
+            self.seed_sim_bus_decode(&self.m, decoded.packets, Arc::clone(&decoded.hits));
+        }
+        if let Some((source, times)) = hits {
+            self.install_reference_trigger_hits(source, times);
+        }
         self.replay_acquire(0.0);
         if self.replay.captures == captures {
             // Normal/Single without a hit holds the last accepted acquisition.
@@ -741,7 +973,6 @@ impl Ui {
             self.replay.sim_config_change = false;
         }
     }
-
 }
 
 fn nearest_vdiv(want: f32) -> f32 {
@@ -750,7 +981,12 @@ fn nearest_vdiv(want: f32) -> f32 {
 
 fn nearest_tscale(want: f64) -> usize {
     let ts = tscales();
-    ts.iter().copied().enumerate().min_by(|(_, a), (_, b)| (*a as f64 - want).abs().partial_cmp(&(*b as f64 - want).abs()).unwrap()).map(|(i, _)| i).unwrap_or(0)
+    ts.iter()
+        .copied()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a as f64 - want).abs().partial_cmp(&(*b as f64 - want).abs()).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -771,8 +1007,9 @@ mod tests {
         assert_eq!(u.parent, Some(MenuId::Sim));
         assert_eq!(u.menu_root(), MenuId::Sim);
         let items = u.items(MenuId::SimAdvanced);
-        for expected in [Item::SimSscCenter, Item::SimSscDeviation, Item::SimSscHz,
-                         Item::SimDcd, Item::SimCorrRj, Item::SimCorrHz] {
+        for expected in
+            [Item::SimSscCenter, Item::SimSscDeviation, Item::SimSscHz, Item::SimDcd, Item::SimCorrRj, Item::SimCorrHz]
+        {
             assert!(items.contains(&expected));
         }
         assert!(u.value(Item::SimSscDeviation).contains("p-p"));
@@ -830,7 +1067,11 @@ mod tests {
         u.sim_play_set(true).unwrap();
         let reference = u.refs[0].as_ref().unwrap();
         assert_eq!(reference.offset, -1.5);
-        let (low, high) = reference.v.iter().copied().fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| (low.min(value), high.max(value)));
+        let (low, high) = reference
+            .v
+            .iter()
+            .copied()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| (low.min(value), high.max(value)));
         assert!(low > 0.9 && high > 1.9 && high < 2.1, "samples retain their actual voltage: {low}..{high}");
         assert!((low + reference.offset).abs() < 4.0 * reference.vpd);
         assert!((high + reference.offset).abs() < 4.0 * reference.vpd);
@@ -918,7 +1159,11 @@ mod tests {
             assert!(!u.session_is_sim, "starting generation must not replace the live session");
             if import {
                 u.load_waveform_bytes(b"Time (s),Volts\n0,-1\n1e-9,1\n2e-9,-1\n", "keep.csv").unwrap();
-                assert_eq!((u.m.n_on(), u.m.run, u.record_mode()), live, "cancelling pending SIM must preserve additive Live import");
+                assert_eq!(
+                    (u.m.n_on(), u.m.run, u.record_mode()),
+                    live,
+                    "cancelling pending SIM must preserve additive Live import"
+                );
             } else {
                 u.return_to_live();
             }
@@ -927,7 +1172,9 @@ mod tests {
             u.wait_sim_worker();
             assert_eq!(u.workflow_state(), state, "a stale background reply must not start SIM");
             assert!(!u.session_is_sim);
-            if import { assert_eq!(u.refs[0].as_ref().unwrap().label, "keep.csv"); }
+            if import {
+                assert_eq!(u.refs[0].as_ref().unwrap().label, "keep.csv");
+            }
         }
     }
 
@@ -1017,7 +1264,8 @@ mod tests {
         assert!(u.m.zoom);
         // The overview fits the complete SSC period; zoom retains the bit scale.
         let record_span = r.v.len() as f64 * r.dt;
-        let expected_scale = tscales().iter().copied().find(|&scale| scale as f64 * HDIV as f64 >= record_span).unwrap();
+        let expected_scale =
+            tscales().iter().copied().find(|&scale| scale as f64 * HDIV as f64 >= record_span).unwrap();
         assert_eq!(u.m.time_per_div(), expected_scale);
         assert!((tscales()[u.m.zscale] as f64 - 50e-12).abs() < 1e-12, "zoom {}", tscales()[u.m.zscale]);
         assert!((u.m.delay as f64 - record_span * 0.5).abs() < record_span * 1e-6);
@@ -1048,7 +1296,20 @@ mod tests {
         assert_eq!(n, 65_536);
         let rows = u.meas_rows();
         assert_eq!(rows.len(), 12);
-        for want in ["Pk-pk", "Freq", "Period", "Rise", "Fall", "+Duty", "Amp", "Overshoot", "+Width", "-Width", "+Slew", "+Edges"] {
+        for want in [
+            "Pk-pk",
+            "Freq",
+            "Period",
+            "Rise",
+            "Fall",
+            "+Duty",
+            "Amp",
+            "Overshoot",
+            "+Width",
+            "-Width",
+            "+Slew",
+            "+Edges",
+        ] {
             let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
             assert!(!row.v.is_infinite(), "{want} {}", row.v);
         }
@@ -1083,7 +1344,19 @@ mod tests {
         assert!(!u.m.sim_ssc);
         u.open_menu(MenuId::Sim);
         let labels: Vec<_> = u.sim_items().iter().filter_map(|&it| Ui::sim_label(it)).collect();
-        for want in ["Rate", "Pattern", "High", "Low", "Rise 20-80%", "Bandwidth", "De-emph", "Noise", "Spread", "RJ RMS", "PJ peak"] {
+        for want in [
+            "Rate",
+            "Pattern",
+            "High",
+            "Low",
+            "Rise 20-80%",
+            "Bandwidth",
+            "De-emph",
+            "Noise",
+            "Spread",
+            "RJ RMS",
+            "PJ peak",
+        ] {
             assert!(labels.contains(&want), "missing {want} in {labels:?}");
         }
         u.render(&mut Canvas::new(W, H));
@@ -1220,7 +1493,11 @@ mod tests {
         }
         assert!(u.replay.captures >= captures + 2);
         assert_ne!(u.refs[0].as_ref().unwrap().v, before, "capture counters alone do not prove fresh acquisition");
-        assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value, "full-record SIM measurements must use the new noisy samples");
+        assert_ne!(
+            u.meas_at(WaveId::Ref(0), Meas::Vpp),
+            value,
+            "full-record SIM measurements must use the new noisy samples"
+        );
         assert!(records(&u) >= eye_records + 2.0, "Eye accumulates each accepted revision");
         u.key(key::RUNSTOP);
         let held = u.refs[0].as_ref().unwrap().v.clone();
@@ -1288,7 +1565,11 @@ mod tests {
         drive_until(&mut u, |u| u.replay.sim_attempt >= attempt + 2);
         assert_eq!(u.m.status, TrigStatus::Wait);
         assert_eq!(u.replay.captures, before);
-        assert_eq!(u.refs[0].as_ref().unwrap().v[..8192], waiting, "no-hit candidates never become the visible accepted record");
+        assert_eq!(
+            u.refs[0].as_ref().unwrap().v[..8192],
+            waiting,
+            "no-hit candidates never become the visible accepted record"
+        );
         u.key(key::FORCE);
         drive_until(&mut u, |u| u.m.run == RunState::Stop);
         assert_eq!(u.replay.captures, before + 1);
@@ -1314,7 +1595,11 @@ mod tests {
         assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value);
         u.key(key::RUNSTOP);
         let n = u.mstat[0].n;
-        for _ in 0..10 { u.poll_reference_measurements(); u.finish_deferred_capture_statistics(); let _ = u.meas_rows(); }
+        for _ in 0..10 {
+            u.poll_reference_measurements();
+            u.finish_deferred_capture_statistics();
+            let _ = u.meas_rows();
+        }
         assert_eq!(u.mstat[0].n, n, "worker polling and reads cannot count an accepted revision twice");
         u.wait_sim_worker();
     }
@@ -1326,7 +1611,13 @@ mod tests {
             u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
-            u.refs[1] = Some(RefWave { color: 1, label: "External".into(), vpd: 0.2, on: false, ..RefWave::test((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(), 2e-9, 0.0) });
+            u.refs[1] = Some(RefWave {
+                color: 1,
+                label: "External".into(),
+                vpd: 0.2,
+                on: false,
+                ..RefWave::test((0..1024).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(), 2e-9, 0.0)
+            });
             if change == 5 {
                 u.m.trig_type = TrigType::Delay;
                 u.m.set_trigger_wave(WaveId::Ref(1), true);
@@ -1348,12 +1639,15 @@ mod tests {
                 2 => u.m.set_trigger_wave(WaveId::Ref(1), false),
                 3 => u.refs[0].as_mut().unwrap().vpd *= 2.0,
                 4 => u.m.trig_nrej = !u.m.trig_nrej,
-                5 => u.refs[1].as_mut().unwrap().v = vec![0.0; 1024] .into(),
+                5 => u.refs[1].as_mut().unwrap().v = vec![0.0; 1024].into(),
                 _ => u.m.trig_bus_val = 0xaa,
             }
             u.sim_finish(request, generated);
             assert_eq!(u.refs[0].as_ref().unwrap().v.as_ptr(), pointer);
-            assert_eq!(u.replay.captures, captures, "change {change}: stale worker hits cannot validate a new condition");
+            assert_eq!(
+                u.replay.captures, captures,
+                "change {change}: stale worker hits cannot validate a new condition"
+            );
         }
     }
 
@@ -1364,7 +1658,17 @@ mod tests {
             u.m.sim_preset = LANES.iter().position(|lane| lane.name == "USB 2.0 HS").unwrap();
             u.m.apply_sim_preset();
             u.sim_play_set(true).unwrap();
-            u.refs[source] = Some(RefWave { color: source, label: "Long external trigger".into(), vpd: 0.2, on: false, ..RefWave::test((0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(), 10e-12, 20e-9) });
+            u.refs[source] = Some(RefWave {
+                color: source,
+                label: "Long external trigger".into(),
+                vpd: 0.2,
+                on: false,
+                ..RefWave::test(
+                    (0..263_168).map(|i| if i % 16 < 8 { -0.5 } else { 0.5 }).collect::<Vec<_>>(),
+                    10e-12,
+                    20e-9,
+                )
+            });
             assert!(u.set_trigger_source(WaveId::Ref(source), false));
             u.m.trig_level = 0.0;
             u.m.trig_mode = TrigMode::Single;
@@ -1385,7 +1689,10 @@ mod tests {
             assert!((u.replay.trigger_time.unwrap() - (20e-9 + 7.5 * 10e-12)).abs() < 1e-15);
             let hits = u.reference_trigger_hits(source).unwrap();
             u.replay.sim_attempt += 1;
-            assert!(Arc::ptr_eq(&hits, &u.reference_trigger_hits(source).unwrap()), "unrelated SIM attempts must not invalidate the external hit cache");
+            assert!(
+                Arc::ptr_eq(&hits, &u.reference_trigger_hits(source).unwrap()),
+                "unrelated SIM attempts must not invalidate the external hit cache"
+            );
         }
     }
 

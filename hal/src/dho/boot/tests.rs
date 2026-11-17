@@ -10,8 +10,8 @@ const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
 
 /// Every register the cold boot may write.
 const ALLOWED: [u32; 21] = [
-    0x1000, 0x1010, 0x1014, 0x1018, 0x1020, 0x1034, 0x1058, 0x105c, 0x1418, 0x141c, 0x1420, 0x1424, 0x1428, 0x1470, 0x1474, 0x147c,
-    0x1484, 0x148c, 0x1494, 0x4004, 0x4008,
+    0x1000, 0x1010, 0x1014, 0x1018, 0x1020, 0x1034, 0x1058, 0x105c, 0x1418, 0x141c, 0x1420, 0x1424, 0x1428, 0x1470,
+    0x1474, 0x147c, 0x1484, 0x148c, 0x1494, 0x4004, 0x4008,
 ];
 
 struct Run {
@@ -23,7 +23,11 @@ struct Run {
 
 fn boot(unit: &mut Unit, cal: &CalFiles) -> Run {
     let (mut clk, mut pll, mut afe) = (SimClock::default(), PllRec::default(), AfeStub::default());
-    let r = cold_boot(Hw { bus: unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None }, cal, &Options::default());
+    let r = cold_boot(
+        Hw { bus: unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None },
+        cal,
+        &Options::default(),
+    );
     Run { r, clk, pll, afe }
 }
 
@@ -90,7 +94,15 @@ fn nominal_boot_ends_in_the_live_state() {
     let i = unit.writes.iter().rposition(|w| *w == (0x1034, 0x0106_00c3)).unwrap();
     assert_eq!(
         &unit.writes[i + 1..i + 8],
-        &[(0x1034, 0x0100_0045), (0x1000, 0), (0x1000, 2), (0x1000, 0), (0x1034, 0x0100_00c5), (0x1000, 1), (0x1000, 0)]
+        &[
+            (0x1034, 0x0100_0045),
+            (0x1000, 0),
+            (0x1000, 2),
+            (0x1000, 0),
+            (0x1034, 0x0100_00c5),
+            (0x1000, 1),
+            (0x1000, 0)
+        ]
     );
     // the once-only writes and the SCU enables
     for w in [(0x1428, 0x646e), (0x1418, 0x8000), (0x1424, 0x8000), (0x4008, 0x80_0000)] {
@@ -101,7 +113,10 @@ fn nominal_boot_ends_in_the_live_state() {
     assert!(o.warnings.iter().any(|w| w.contains("cal_adc.hex")));
     // hand-over state
     assert_eq!(o.state.mode, usize::MAX);
-    assert_eq!((o.state.sh.s4004, o.state.sh.s4008, o.state.sh.s1000, o.state.sh.s1010), (0, 0x80_0000, 0, 0x2000_0000));
+    assert_eq!(
+        (o.state.sh.s4004, o.state.sh.s4008, o.state.sh.s1000, o.state.sh.s1010),
+        (0, 0x80_0000, 0, 0x2000_0000)
+    );
     // time: PLL 46 x 50 ms, ADC init 209 x 1.2 ms, sync sweep 8 x 20 ms, ...
     assert!(run.clk.t_us > 2_300_000 + 250_000 + 160_000 && run.clk.t_us < 3_500_000, "{}", run.clk.t_us);
 }
@@ -111,7 +126,14 @@ fn core_alignment_from_spu_init_ends_in_0x14f01301() {
     // cold-boot.md 3.5: from 0x00f00001 (SPU init) the sequence 3.4 + 3.5 ends exactly in the live 0x14f01301
     let mut unit = Unit::nominal();
     let mut clk = SimClock::default();
-    let mut c = Ctx { bus: &mut unit, clk: &mut clk, sh: Shadows::default(), log: Vec::new(), warnings: Vec::new(), progress: &mut |_| {} };
+    let mut c = Ctx {
+        bus: &mut unit,
+        clk: &mut clk,
+        sh: Shadows::default(),
+        log: Vec::new(),
+        warnings: Vec::new(),
+        progress: &mut |_| {},
+    };
     let w = regs::adc_init(&mut c.sh, regs::ADC_INIT_PRE_US_SHORT);
     c.adc(&w);
     let w = regs::spu_init(&mut c.sh);
@@ -130,7 +152,14 @@ fn core_alignment_from_spu_init_ends_in_0x14f01301() {
     assert_eq!(w, (0x1014, 0x14f0_1301));
     // the preamble codes Da/Db go to 0x1020 bits 1:0 / 9:8
     unit.preamble = 0x0002_0001;
-    let mut c = Ctx { bus: &mut unit, clk: &mut clk, sh: Shadows { s1014: 0x00f0_1001, ..Default::default() }, log: Vec::new(), warnings: Vec::new(), progress: &mut |_| {} };
+    let mut c = Ctx {
+        bus: &mut unit,
+        clk: &mut clk,
+        sh: Shadows { s1014: 0x00f0_1001, ..Default::default() },
+        log: Vec::new(),
+        warnings: Vec::new(),
+        progress: &mut |_| {},
+    };
     assert_eq!(c.core_align(), (1, 2));
     assert_eq!(c.sh.s1020, 0x1010 | 0x0201);
     assert_eq!(c.warnings.len(), 1);
@@ -169,7 +198,8 @@ fn sync_bit_that_never_moves_stops_at_delay_7() {
     let mut unit = with(|u| u.sync_do = [true; 8]);
     let e = boot(&mut unit, &CalFiles::default()).r.result.err().unwrap();
     assert!(e.contains("ADC0 Sync DO:1,1,1,1,1,1,1,1"), "{}", e);
-    let sync_words: Vec<u32> = unit.writes.iter().filter(|w| w.0 == 0x1034 && (w.1 >> 16) == 0x0106).map(|w| w.1).collect();
+    let sync_words: Vec<u32> =
+        unit.writes.iter().filter(|w| w.0 == 0x1034 && (w.1 >> 16) == 0x0106).map(|w| w.1).collect();
     assert_eq!(sync_words.last(), Some(&0x0106_07c3));
     assert!(!unit.writes.iter().any(|w| w.0 == 0x1018));
 }
@@ -192,7 +222,8 @@ fn sync_with_a_rising_edge_only_goes_on_at_delay_7() {
     let mut unit = with(|u| u.sync_do = [false, false, false, true, true, true, true, true]);
     let o = boot(&mut unit, &CalFiles::default()).r.result.unwrap();
     assert_eq!(o.sync_delay, 7);
-    let sync_words: Vec<u32> = unit.writes.iter().filter(|w| w.0 == 0x1034 && (w.1 >> 16) == 0x0106).map(|w| w.1).collect();
+    let sync_words: Vec<u32> =
+        unit.writes.iter().filter(|w| w.0 == 0x1034 && (w.1 >> 16) == 0x0106).map(|w| w.1).collect();
     assert_eq!(sync_words.last(), Some(&0x0106_07c3), "no final sync at another delay");
     assert!(unit.writes.iter().any(|w| w.0 == 0x1018), "the eye scan runs");
 }
@@ -207,7 +238,12 @@ fn early_start_leaves_steps_2_and_3_out() {
     assert_eq!(seen, [2, 3]);
     let writes = afe.writes;
     let mut steps = Vec::new();
-    let r = cold_boot_with(Hw { bus: &mut unit, clock: &mut clk, pll: None, afe: Some(&mut afe), early: Some(e) }, &CalFiles::default(), &Options::default(), &mut |n| steps.push(n));
+    let r = cold_boot_with(
+        Hw { bus: &mut unit, clock: &mut clk, pll: None, afe: Some(&mut afe), early: Some(e) },
+        &CalFiles::default(),
+        &Options::default(),
+        &mut |n| steps.push(n),
+    );
     assert!(r.result.is_ok(), "{:?}", r.result.err());
     assert!(!steps.contains(&2) && !steps.contains(&3) && steps.contains(&4));
     assert!(afe.writes > writes, "Hz enable at the end");
@@ -251,7 +287,10 @@ fn adc_trim_timeout_warns_and_continues() {
 
 #[test]
 fn cal_files_write_adc_parameters_and_ddr_taps() {
-    let mut cal = CalFiles { ddr: DdrCal::from_file_bytes(&ddr_container([0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0])), ..Default::default() };
+    let mut cal = CalFiles {
+        ddr: DdrCal::from_file_bytes(&ddr_container([0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0])),
+        ..Default::default()
+    };
     assert!(cal.ddr.is_some());
     let unit_cal = crate::dho::adc::CalAdc::load(&crate::dho::calfile::test_dir(false)).ok();
     let have_adc = unit_cal.is_some();
@@ -260,7 +299,16 @@ fn cal_files_write_adc_parameters_and_ddr_taps() {
     let run = boot(&mut unit, &cal);
     let o = run.r.result.unwrap_or_else(|e| panic!("{}", e));
     check_safe(&unit);
-    let taps = [(0x1000, 8), (0x1470, 0x12), (0x1474, 0x4d6), (0x147c, 0x8a2), (0x1484, 0x924), (0x148c, 0x1ef), (0x1494, 0), (0x1000, 0)];
+    let taps = [
+        (0x1000, 8),
+        (0x1470, 0x12),
+        (0x1474, 0x4d6),
+        (0x147c, 0x8a2),
+        (0x1484, 0x924),
+        (0x148c, 0x1ef),
+        (0x1494, 0),
+        (0x1000, 0),
+    ];
     let ti = unit.writes.windows(8).position(|w| w == taps).expect("DDR taps");
     // the taps come after the ADC parameters and before the sync sweep
     let si = unit.writes.iter().position(|w| *w == (0x1034, 0x0187_0000)).unwrap();
@@ -284,7 +332,16 @@ fn cal_files_write_adc_parameters_and_ddr_taps() {
 fn dry_run_prints_the_plan() {
     let cal = CalFiles::load(&crate::dho::calfile::test_dir(false));
     let s = dry_run(&cal, &Options::default());
-    for want in ["DRY RUN", "== 21", "pll R0 <- 0x221c", "wr 0x1014 <- 0x00f00001", "wr 0x1014 <- 0x14f01301", "-- result: ok", "-- todo: step 19", "== 20 AFE Hz enable"] {
+    for want in [
+        "DRY RUN",
+        "== 21",
+        "pll R0 <- 0x221c",
+        "wr 0x1014 <- 0x00f00001",
+        "wr 0x1014 <- 0x14f01301",
+        "-- result: ok",
+        "-- todo: step 19",
+        "== 20 AFE Hz enable",
+    ] {
         assert!(s.contains(want), "missing {:?}", want);
     }
     assert!(!s.contains("wr 0x1008"));
@@ -296,7 +353,12 @@ fn progress_reports_every_step_in_order() {
     let mut unit = Unit::nominal();
     let (mut clk, mut pll, mut afe) = (SimClock::default(), PllRec::default(), AfeStub::default());
     let mut steps = Vec::new();
-    let r = cold_boot_with(Hw { bus: &mut unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None }, &CalFiles::load(CAL_DIR), &Options::default(), &mut |n| steps.push(n));
+    let r = cold_boot_with(
+        Hw { bus: &mut unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None },
+        &CalFiles::load(CAL_DIR),
+        &Options::default(),
+        &mut |n| steps.push(n),
+    );
     assert!(r.result.is_ok());
     assert_eq!(steps, (1..=21).collect::<Vec<_>>());
     // the start-up screen's groups, in the order they first appear
@@ -306,14 +368,29 @@ fn progress_reports_every_step_in_order() {
             groups.push(stage(n));
         }
     }
-    assert_eq!(groups, ["FPGA image", "Sample clock (PLL lock)", "Analog front ends", "ADC and memory set-up", "ADC data lanes", "Signal path"]);
+    assert_eq!(
+        groups,
+        [
+            "FPGA image",
+            "Sample clock (PLL lock)",
+            "Analog front ends",
+            "ADC and memory set-up",
+            "ADC data lanes",
+            "Signal path"
+        ]
+    );
     // every group comes as one run of steps (no row of the screen starts twice)
     let runs = steps_runs(&(1..=21).map(stage).collect::<Vec<_>>());
     assert_eq!(runs, groups.len());
     // a wrong FPGA image stops in step 1
     let mut unit = with(|u| u.version = 0);
     let mut steps = Vec::new();
-    let r = cold_boot_with(Hw { bus: &mut unit, clock: &mut clk, pll: None, afe: None, early: None }, &CalFiles::load(CAL_DIR), &Options::default(), &mut |n| steps.push(n));
+    let r = cold_boot_with(
+        Hw { bus: &mut unit, clock: &mut clk, pll: None, afe: None, early: None },
+        &CalFiles::load(CAL_DIR),
+        &Options::default(),
+        &mut |n| steps.push(n),
+    );
     assert!(r.result.is_err() && steps == [1]);
 }
 

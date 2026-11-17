@@ -34,7 +34,13 @@ impl Ui {
     pub(super) fn cal_items(&self) -> Vec<Item> {
         // Start while nothing runs, Cancel only while it does
         let run = self.cal_running();
-        vec![Item::CalCh, Item::CalAdc, Item::CalZero, if run { Item::CalCancel } else { Item::CalStart }, Item::CalStatus]
+        vec![
+            Item::CalCh,
+            Item::CalAdc,
+            Item::CalZero,
+            if run { Item::CalCancel } else { Item::CalStart },
+            Item::CalStatus,
+        ]
     }
 
     /// Text about the warm-up for the dialog before the start.
@@ -79,9 +85,27 @@ impl Ui {
 
     pub(super) fn cal_value(&self, it: Item) -> Option<String> {
         Some(match it {
-            Item::CalCh => if self.cal.ch == 0 { "All".into() } else { format!("CH{}", self.cal.ch) },
-            Item::CalZero => if self.cal.zero { "On".into() } else { "Off".into() },
-            Item::CalAdc => if self.cal.adc { "On".into() } else { "Off".into() },
+            Item::CalCh => {
+                if self.cal.ch == 0 {
+                    "All".into()
+                } else {
+                    format!("CH{}", self.cal.ch)
+                }
+            }
+            Item::CalZero => {
+                if self.cal.zero {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
+            Item::CalAdc => {
+                if self.cal.adc {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::CalStart | Item::CalCancel => String::new(),
             Item::CalStatus => self.cal_status(),
             _ => return None,
@@ -139,7 +163,13 @@ impl Ui {
                     self.dialog = Some(vec![
                         "Self-calibration".into(),
                         "Disconnect ALL inputs (no probes, no cables).".into(),
-                        Self::cal_warmup(std::fs::read_to_string("/proc/uptime").ok().and_then(|t| t.split(' ').next()?.parse::<f64>().ok()).unwrap_or(self.now) / 60.0),
+                        Self::cal_warmup(
+                            std::fs::read_to_string("/proc/uptime")
+                                .ok()
+                                .and_then(|t| t.split(' ').next()?.parse::<f64>().ok())
+                                .unwrap_or(self.now)
+                                / 60.0,
+                        ),
                         "Takes about 5 minutes per channel and pass (4 passes).".into(),
                         "The result goes to /oos/cal; /rigol/data stays as it is.".into(),
                         "Press Start again within 10 s to begin.".into(),
@@ -201,7 +231,11 @@ impl Ui {
         let Some((d, t, s)) = p else { return };
         let a = self.area;
         let f = self.fonts();
-        let txt = format!("Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)", 100.0 * d as f64 / t.max(1) as f64, s);
+        let txt = format!(
+            "Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)",
+            100.0 * d as f64 / t.max(1) as f64,
+            s
+        );
         let r = Rect::new(a.x + 20, a.y + a.h / 2 - 20, a.w - 40, 40);
         cv.round(r, 6, CAL_BANNER, 240);
         let bar = Rect::new(r.x, r.y + r.h - 4, (r.w as f64 * d as f64 / t.max(1) as f64) as i32, 4);

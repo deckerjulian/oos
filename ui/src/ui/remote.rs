@@ -78,7 +78,14 @@ impl Ui {
 
     pub(super) fn remote_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemSsh | Item::RemMdns | Item::RemName | Item::RemAllow => Some(Kind::Choice),
+            Item::RemWeb
+            | Item::RemScpi
+            | Item::RemVxi
+            | Item::RemTelnet
+            | Item::RemSsh
+            | Item::RemMdns
+            | Item::RemName
+            | Item::RemAllow => Some(Kind::Choice),
             _ => Self::ssh_kind(it),
         }
     }
@@ -116,7 +123,11 @@ impl Ui {
         let mut services = Vec::new();
         let mut add = |on: bool, kind: &str, port: u16, txt: &[&str]| {
             if on {
-                services.push(mdns::Service { kind: kind.into(), port, txt: txt.iter().map(|t| t.to_string()).collect() });
+                services.push(mdns::Service {
+                    kind: kind.into(),
+                    port,
+                    txt: txt.iter().map(|t| t.to_string()).collect(),
+                });
             }
         };
         add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
@@ -124,7 +135,13 @@ impl Ui {
         add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
         // SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
         add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
-        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services, v6: crate::net6::enabled() }
+        mdns::Config {
+            on: s.remote_mdns,
+            instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name),
+            name,
+            services,
+            v6: crate::net6::enabled(),
+        }
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.
@@ -137,7 +154,9 @@ impl Ui {
         let suffix = if self.sys.remote_mdns { ".local" } else { "" };
         let full = format!("{}{}", n, suffix);
         // a long name: as much as its row has room for, `.local` kept
-        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let room = self
+            .dlg_layout()
+            .and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
         let f = &self.fonts().mb;
         let Some(room) = room.filter(|&w| f.width(&full) > w) else { return full };
         let mut c: Vec<char> = n.chars().collect();
@@ -332,7 +351,9 @@ impl Ui {
         if now.is_empty() {
             return "everyone".into();
         }
-        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemAllow).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let room = self
+            .dlg_layout()
+            .and_then(|d| d.rows.iter().find(|r| r.it == Item::RemAllow).map(|r| Self::value_parts(r.ctrl).1.w - 44));
         let f = &self.fonts().mb;
         let Some(room) = room.filter(|&w| f.width(&now) > w) else { return now };
         let mut c: Vec<char> = now.chars().collect();
@@ -360,7 +381,8 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall) || Self::ssh_text(it)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall)
+            || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -454,7 +476,15 @@ mod tests {
         let d = u.dlg_layout().unwrap();
         // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
-        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemTelnet, Item::RemTelnetInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName), (Item::RemAllow, Item::RemFirewall)] {
+        for (sw, info) in [
+            (Item::RemWeb, Item::NetWeb),
+            (Item::RemScpi, Item::RemScpiInfo),
+            (Item::RemVxi, Item::RemVxiInfo),
+            (Item::RemTelnet, Item::RemTelnetInfo),
+            (Item::RemSsh, Item::Open(MenuId::Ssh)),
+            (Item::RemMdns, Item::RemName),
+            (Item::RemAllow, Item::RemFirewall),
+        ] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
             let b = d.rows.iter().find(|r| r.it == info).unwrap().ctrl;
             assert!(a.y == b.y && a.x < b.x, "{:?} {:?}", sw, info);
@@ -538,7 +568,10 @@ mod tests {
         u.open_menu(MenuId::Remote);
         // the row is there, with no list: everyone, no firewall
         assert!(u.dlg_layout().unwrap().rows.iter().any(|r| r.it == Item::RemAllow));
-        assert_eq!((u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()), ("everyone", "off: everyone"));
+        assert_eq!(
+            (u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()),
+            ("everyone", "off: everyone")
+        );
         // the network the scope is on is offered and starts the keyboard
         u.remote.lans = vec!["192.0.2.0/24".into()];
         assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24".to_string(), OTHER.into()]);
@@ -570,7 +603,15 @@ mod tests {
         assert!(!servers.permits(ip("198.51.100.1")));
         // the list in use (cut as a name is) and the network are offered; the network sets the list from the picker
         u.remote.lans = vec!["198.51.100.0/24".into(), "203.0.113.0/24".into()];
-        assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), "203.0.113.0/24".into(), OTHER.into()]);
+        assert_eq!(
+            u.options(Item::RemAllow),
+            vec![
+                "192.0.2.0/24 fd00\u{2026}".to_string(),
+                "198.51.100.0/24".into(),
+                "203.0.113.0/24".into(),
+                OTHER.into()
+            ]
+        );
         u.open_menu(MenuId::Remote);
         u.open_picker(Item::RemAllow);
         u.activate(Item::PickOpt(1));

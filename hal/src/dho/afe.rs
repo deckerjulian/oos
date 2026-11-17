@@ -77,11 +77,14 @@ impl Cal {
         let dirs = [crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()];
         let mut from = Vec::new();
         let mut rd = |n: &str| {
-            let (b, d) = crate::dho::calfile::load_first(n, &dirs).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs)))?;
+            let (b, d) = crate::dho::calfile::load_first(n, &dirs).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs))
+            })?;
             from.push((n.to_string(), d));
             Ok::<_, std::io::Error>(b)
         };
-        let (lsb, zero, bw, vert) = (rd("cal_lsb.hex")?, rd("cal_afe_zero.hex")?, rd("cal_afe_bandwidth.hex")?, rd("cal_vertical.hex")?);
+        let (lsb, zero, bw, vert) =
+            (rd("cal_lsb.hex")?, rd("cal_afe_zero.hex")?, rd("cal_afe_bandwidth.hex")?, rd("cal_vertical.hex")?);
         // a good CRC says nothing about the length: `from_bytes` needs these sizes
         if lsb.len() < HDR + 128 || zero.len() < HDR + 320 || bw.len() < HDR + 320 || vert.len() < HDR + 4 * 801 * 56 {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "calibration file too short"));
@@ -249,8 +252,20 @@ impl Afe {
     pub fn new(ch: usize) -> Afe {
         let mut r = [0u16; 0x40];
         for (reg, v) in [
-            (0x06, 0x1d00), (0x07, 0x8440), (0x20, 0x0008), (0x21, 0x0a91), (0x22, 0x5a00), (0x23, 0x1000), (0x26, 0x3200),
-            (0x27, 0x80c4), (0x28, 0x8000), (0x29, 0x0282), (0x2a, 0x3c44), (0x2b, 0x4c5f), (0x2c, 0x000c), (0x2e, 0x1ff9),
+            (0x06, 0x1d00),
+            (0x07, 0x8440),
+            (0x20, 0x0008),
+            (0x21, 0x0a91),
+            (0x22, 0x5a00),
+            (0x23, 0x1000),
+            (0x26, 0x3200),
+            (0x27, 0x80c4),
+            (0x28, 0x8000),
+            (0x29, 0x0282),
+            (0x2a, 0x3c44),
+            (0x2b, 0x4c5f),
+            (0x2c, 0x000c),
+            (0x2e, 0x1ff9),
             (0x37, 0xc000),
         ] {
             r[reg] = v;
@@ -573,11 +588,23 @@ impl Afe {
     }
 
     /// Offset DAC (AFE reg 0x28) code = trunc(-(sign*offset + position) / 1e9 / lsb + zero).
-    pub fn set_offset(&mut self, o: &mut Vec<Op>, cal: &Cal, r: &Rec, offset_nv: i64, position_nv: i64, invert: bool) -> i64 {
+    pub fn set_offset(
+        &mut self,
+        o: &mut Vec<Op>,
+        cal: &Cal,
+        r: &Rec,
+        offset_nv: i64,
+        position_nv: i64,
+        invert: bool,
+    ) -> i64 {
         let lsb = cal.lsb[self.ch * 4 + r.g[0] as usize];
         let sign = if invert { -1.0 } else { 1.0 };
         // past the end of the DAC it stays at the end; wrapped it would throw the trace the other way (3.2)
-        let code = if lsb != 0.0 { ((-(sign * offset_nv as f64 + position_nv as f64) / 1e9 / lsb + r.zero as f64) as i64).clamp(0, 0xffff) } else { r.zero as i64 };
+        let code = if lsb != 0.0 {
+            ((-(sign * offset_nv as f64 + position_nv as f64) / 1e9 / lsb + r.zero as f64) as i64).clamp(0, 0xffff)
+        } else {
+            r.zero as i64
+        };
         self.set(o, 0x28, code);
         code
     }
@@ -592,9 +619,30 @@ pub trait AfeBus {
 
 /// AFE init table (registers 0x20..0x37), same for all channels.
 const INIT_TABLE: [(u8, u16); 24] = [
-    (0x20, 0x0008), (0x21, 0x0a91), (0x22, 0x5a00), (0x23, 0x1000), (0x24, 0x0000), (0x25, 0x0000), (0x26, 0x3200), (0x27, 0x0044),
-    (0x28, 0x0000), (0x29, 0x0282), (0x2a, 0x3c40), (0x2b, 0x4c00), (0x2c, 0x000c), (0x2d, 0x0000), (0x2e, 0x1ff9), (0x2f, 0x5980),
-    (0x30, 0x0000), (0x31, 0x0000), (0x32, 0xc000), (0x33, 0x0088), (0x34, 0x0009), (0x35, 0x0000), (0x36, 0x0000), (0x37, 0xc000),
+    (0x20, 0x0008),
+    (0x21, 0x0a91),
+    (0x22, 0x5a00),
+    (0x23, 0x1000),
+    (0x24, 0x0000),
+    (0x25, 0x0000),
+    (0x26, 0x3200),
+    (0x27, 0x0044),
+    (0x28, 0x0000),
+    (0x29, 0x0282),
+    (0x2a, 0x3c40),
+    (0x2b, 0x4c00),
+    (0x2c, 0x000c),
+    (0x2d, 0x0000),
+    (0x2e, 0x1ff9),
+    (0x2f, 0x5980),
+    (0x30, 0x0000),
+    (0x31, 0x0000),
+    (0x32, 0xc000),
+    (0x33, 0x0088),
+    (0x34, 0x0009),
+    (0x35, 0x0000),
+    (0x36, 0x0000),
+    (0x37, 0xc000),
 ];
 
 impl Afe {
@@ -802,14 +850,32 @@ pub fn adc_mode_words(mask: u32) -> [u32; 2] {
 /// Full channel set-up: ADC band-limit words, Hz filter of bandwidth `bwv`, scale, offset, then the input mode
 /// restore, which brings back the ADC input mode of the current channel
 /// set `mask` (the band-limit words leave the ADC in another mode). Op::Adc words need 100 us gaps.
-pub fn configure(afe: &mut Afe, cal: &Cal, scale_nv: i64, offset_nv: i64, bwv: u32, fs: u64, mask: u32) -> (Vec<Op>, Rec, i64) {
+pub fn configure(
+    afe: &mut Afe,
+    cal: &Cal,
+    scale_nv: i64,
+    offset_nv: i64,
+    bwv: u32,
+    fs: u64,
+    mask: u32,
+) -> (Vec<Op>, Rec, i64) {
     configure_ch(afe, cal, scale_nv, offset_nv, bwv, fs, mask, false, Some(true))
 }
 
 /// `configure` with the mirrored offset of an inverted channel (3.5) and the coupling: `dc` Some(true) DC, Some(false)
 /// AC, None leaves it as it is (GND, 3.3). The coupling is written only when it changes.
 #[allow(clippy::too_many_arguments)]
-pub fn configure_ch(afe: &mut Afe, cal: &Cal, scale_nv: i64, offset_nv: i64, bwv: u32, fs: u64, mask: u32, invert: bool, dc: Option<bool>) -> (Vec<Op>, Rec, i64) {
+pub fn configure_ch(
+    afe: &mut Afe,
+    cal: &Cal,
+    scale_nv: i64,
+    offset_nv: i64,
+    bwv: u32,
+    fs: u64,
+    mask: u32,
+    invert: bool,
+    dc: Option<bool>,
+) -> (Vec<Op>, Rec, i64) {
     let mut o: Vec<Op> = BANDLIMIT_ADC.iter().map(|&w| Op::Adc(w)).collect();
     afe.hz_filter(&mut o, filter(bwv, fs));
     let r = afe.set_scale(&mut o, cal, scale_nv, block_group(bwv, fs));
@@ -877,7 +943,10 @@ mod tests {
     #[test]
     fn the_ladder_is_the_table() {
         let l = scale_ladder();
-        assert_eq!((l.len(), l[160], l[270], l[480], l[530], l[640], l[800]), (801, 1_000_000, 5_000_000, 100_000_000, 200_000_000, 1_000_000_000, 10_000_000_000));
+        assert_eq!(
+            (l.len(), l[160], l[270], l[480], l[530], l[640], l[800]),
+            (801, 1_000_000, 5_000_000, 100_000_000, 200_000_000, 1_000_000_000, 10_000_000_000)
+        );
         assert!(l.windows(2).all(|w| w[0] < w[1] && w[1] as f64 / w[0] as f64 <= 1.0251));
         let Ok(cal) = Cal::load(&crate::dho::calfile::test_dir(false)) else {
             eprintln!("calibration files not found, skipped");
@@ -916,7 +985,10 @@ mod tests {
             let mut afe = Afe::new(ch);
             let (ops, r, code) = configure(&mut afe, &cal, scale, off, v, 1_250_000_000, 1 << ch);
             // ends with the restore: the input mode of the channel set
-            assert_eq!(&ops[ops.len() - 2..], &[Op::Adc(adc_mode_words(1 << ch)[0]), Op::Adc(adc_mode_words(1 << ch)[1])]);
+            assert_eq!(
+                &ops[ops.len() - 2..],
+                &[Op::Adc(adc_mode_words(1 << ch)[0]), Op::Adc(adc_mode_words(1 << ch)[1])]
+            );
             let (fa, fb, fc) = filter(v, 1_250_000_000);
             let mut got = vec![format!("filter {} {} {} group {}", fa, fb, fc, block_group(v, 1_250_000_000))];
             for op in &ops {

@@ -45,16 +45,16 @@
 //! :VOLTage[:AMPLitude] <Vpp>, :VOLTage:OFFSet <V> (all with queries)
 //! Settings go through the same model as the screen, so the screen follows remote changes.
 
-use crate::gfx::Canvas;
 use crate::board::{board, Board};
-use crate::math::{math_scales, MathCh, MathOp, Window, NMATH, MATH_REF_BASE};
+use crate::gfx::Canvas;
+use crate::math::{math_scales, MathCh, MathOp, Window, MATH_REF_BASE, NMATH};
 use crate::model::*;
 use crate::ui::Ui;
 
 mod ser;
-use std::io::{ErrorKind, Write};
 #[cfg(test)]
 use std::io::Read;
+use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
@@ -72,27 +72,39 @@ pub struct Program {
 }
 impl Program {
     pub fn new(text: &str) -> Self {
-        if text.len() > MAX_LINE { return Self { invalid: true, ..Self::default() }; }
+        if text.len() > MAX_LINE {
+            return Self { invalid: true, ..Self::default() };
+        }
         let mut commands = std::collections::VecDeque::new();
         for line in text.split(['\n', '\r']).filter(|line| !line.trim().is_empty()) {
             for (index, command) in line.split(';').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
-                if commands.len() >= 1024 { return Self { invalid: true, ..Self::default() }; }
+                if commands.len() >= 1024 {
+                    return Self { invalid: true, ..Self::default() };
+                }
                 commands.push_back((command.to_string(), index == 0));
             }
         }
         Self { commands, separator: b';', bytes: text.len(), ..Self::default() }
     }
     fn append(&mut self, reply: &[u8]) {
-        if self.has_reply { self.out.push(self.separator); }
-        self.out.extend_from_slice(reply); self.separator = b';'; self.has_reply = true;
+        if self.has_reply {
+            self.out.push(self.separator);
+        }
+        self.out.extend_from_slice(reply);
+        self.separator = b';';
+        self.has_reply = true;
     }
     /// Adapter used by transport unit fixtures with a synchronous test interpreter.
     #[cfg(test)]
     pub fn immediate(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
         while let Some((command, new_line)) = self.commands.pop_front() {
-            if new_line && self.has_reply { self.separator = b'\n'; }
+            if new_line && self.has_reply {
+                self.separator = b'\n';
+            }
             let reply = exec(&command);
-            if !reply.is_empty() || command.split_whitespace().next().is_some_and(|header| header.ends_with('?')) { self.append(&reply); }
+            if !reply.is_empty() || command.split_whitespace().next().is_some_and(|header| header.ends_with('?')) {
+                self.append(&reply);
+            }
         }
         std::mem::take(&mut self.out)
     }
@@ -197,12 +209,20 @@ fn persist_token(i: usize) -> String {
 /// The index of the entry of `list` nearest to `v` by difference (`nearest` compares ratios), the first of two as
 /// near; 0 for an empty list.
 fn nearest_index(list: &[f64], v: f64) -> usize {
-    list.iter().enumerate().min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0)
+    list.iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 fn bus_index(tok: &str) -> Option<usize> {
     let (k, n) = suffix(tok);
-    if kw(k, "BUS") { n.filter(|&n| (1..=DECODERS).contains(&n)).map(|n| n - 1) } else { None }
+    if kw(k, "BUS") {
+        n.filter(|&n| (1..=DECODERS).contains(&n)).map(|n| n - 1)
+    } else {
+        None
+    }
 }
 
 fn with_bus(ui: &mut Ui, k: usize, f: impl FnOnce(&mut Model)) {
@@ -214,7 +234,9 @@ fn with_bus(ui: &mut Ui, k: usize, f: impl FnOnce(&mut Model)) {
     if k != was {
         ui.m.dec_select(was);
     }
-    if k == was && ui.m.trig_type == TrigType::Bus { ui.mark_changed(); }
+    if k == was && ui.m.trig_type == TrigType::Bus {
+        ui.mark_changed();
+    }
 }
 
 fn parse_bus_wave(ui: &Ui, text: &str) -> Option<usize> {
@@ -237,19 +259,32 @@ fn bus_source_name(source: usize) -> String {
 /// Only the active decoder's primary role can take over the acquisition source.
 fn put_bus_wave(ui: &mut Ui, slot: usize, protocol: Proto, role: usize, source: Option<usize>) -> bool {
     let selected = ui.m.dec_sel;
-    if slot != selected { ui.m.dec_select(slot); }
+    if slot != selected {
+        ui.m.dec_select(slot);
+    }
     let previous_protocol = ui.m.dec_proto;
     ui.m.dec_proto = protocol;
-    let ok = if slot == selected { ui.configure_decoder_source(role, source) }
-        else {
-            ui.m.dec_la_in = false;
-            match role { 0 => ui.m.dec_src = source.unwrap(), 1 => ui.m.dec_src2 = source.unwrap(),
-                2 => ui.m.dec_cs = source, _ => unreachable!() }
-            true
-        };
-    if !ok { ui.m.dec_proto = previous_protocol; }
-    if slot != selected { ui.m.dec_select(selected); }
-    if ok && slot == selected && ui.m.trig_type == TrigType::Bus { ui.mark_changed(); }
+    let ok = if slot == selected {
+        ui.configure_decoder_source(role, source)
+    } else {
+        ui.m.dec_la_in = false;
+        match role {
+            0 => ui.m.dec_src = source.unwrap(),
+            1 => ui.m.dec_src2 = source.unwrap(),
+            2 => ui.m.dec_cs = source,
+            _ => unreachable!(),
+        }
+        true
+    };
+    if !ok {
+        ui.m.dec_proto = previous_protocol;
+    }
+    if slot != selected {
+        ui.m.dec_select(selected);
+    }
+    if ok && slot == selected && ui.m.trig_type == TrigType::Bus {
+        ui.mark_changed();
+    }
     ok
 }
 
@@ -267,12 +302,24 @@ fn proto_token(p: Proto) -> String {
 
 fn parse_proto(arg: &str) -> Option<Proto> {
     let a = arg.trim();
-    if kw(a, "PARallel") { return Some(Proto::PARALLEL); }
-    if kw(a, "RS232") || kw(a, "UART") { return Some(Proto::UART); }
-    if kw(a, "IIC") || kw(a, "I2C") { return Some(Proto::I2C); }
-    if kw(a, "LIN") { return Some(Proto::LIN); }
-    if kw(a, "SPI") { return Some(Proto::SPI); }
-    if kw(a, "CAN") { return Some(Proto::CAN); }
+    if kw(a, "PARallel") {
+        return Some(Proto::PARALLEL);
+    }
+    if kw(a, "RS232") || kw(a, "UART") {
+        return Some(Proto::UART);
+    }
+    if kw(a, "IIC") || kw(a, "I2C") {
+        return Some(Proto::I2C);
+    }
+    if kw(a, "LIN") {
+        return Some(Proto::LIN);
+    }
+    if kw(a, "SPI") {
+        return Some(Proto::SPI);
+    }
+    if kw(a, "CAN") {
+        return Some(Proto::CAN);
+    }
     PROTOS.iter().copied().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
 }
 
@@ -282,7 +329,11 @@ fn chan_token(c: usize) -> String {
 
 fn math_index(tok: &str) -> Option<usize> {
     let (k, n) = suffix(tok);
-    if kw(k, "MATH") { n.filter(|&n| (1..=NMATH).contains(&n)).map(|n| n - 1) } else { None }
+    if kw(k, "MATH") {
+        n.filter(|&n| (1..=NMATH).contains(&n)).map(|n| n - 1)
+    } else {
+        None
+    }
 }
 
 fn put_math(ui: &mut Ui, k: usize, c: MathCh) {
@@ -374,15 +425,23 @@ fn parse_math_op(arg: &str) -> Option<MathOp> {
 }
 
 fn math_src_name(src: usize) -> String {
-    if src < NCH { format!("CHAN{}", src + 1) }
-    else if src < MATH_REF_BASE { format!("MATH{}", src - NCH + 1) }
-    else { format!("R{}", src - MATH_REF_BASE + 1) }
+    if src < NCH {
+        format!("CHAN{}", src + 1)
+    } else if src < MATH_REF_BASE {
+        format!("MATH{}", src - NCH + 1)
+    } else {
+        format!("R{}", src - MATH_REF_BASE + 1)
+    }
 }
 
 /// A math input: a live channel, or an earlier math trace. A later trace would be a cycle.
 fn parse_math_src(s: &str, k: usize) -> Option<usize> {
     if let Some(id) = parse_wave(s) {
-        return match id { WaveId::Ch(c) if c < n_ch() => Some(c), WaveId::Ref(r) => Some(MATH_REF_BASE + r), _ => None };
+        return match id {
+            WaveId::Ch(c) if c < n_ch() => Some(c),
+            WaveId::Ref(r) => Some(MATH_REF_BASE + r),
+            _ => None,
+        };
     }
     let idx = math_index(s.trim())?;
     (idx < k).then_some(NCH + idx)
@@ -390,7 +449,11 @@ fn parse_math_src(s: &str, k: usize) -> Option<usize> {
 
 fn unquote(s: &str) -> &str {
     let s = s.trim();
-    if s.len() >= 2 && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\''))) { &s[1..s.len() - 1] } else { s }
+    if s.len() >= 2 && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\''))) {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
 }
 
 fn parse_ch(s: &str) -> Option<usize> {
@@ -622,14 +685,33 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
-        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: WaveId::Ch(0), wav_fmt: 0, wav_mode: 0, wav_start: 1, wav_stop: 0, err: Vec::new(), event_status: 0, error_serial: 0, last_error: None, opc_events: Vec::new(), acl: crate::netacl::Shared::default(), acl_seen: 0 }
+        Scpi {
+            l: Self::bind(port),
+            clients: Vec::new(),
+            wav_src: WaveId::Ch(0),
+            wav_fmt: 0,
+            wav_mode: 0,
+            wav_start: 1,
+            wav_stop: 0,
+            err: Vec::new(),
+            event_status: 0,
+            error_serial: 0,
+            last_error: None,
+            opc_events: Vec::new(),
+            acl: crate::netacl::Shared::default(),
+            acl_seen: 0,
+        }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
         let l = crate::net6::tcp(port);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
-            eprintln!("oos-ui: SCPI on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
+            eprintln!(
+                "oos-ui: SCPI on port {}{}",
+                port,
+                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
+            );
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
@@ -641,7 +723,9 @@ impl Scpi {
     fn push_err(&mut self, mut message: String) {
         if message.len() > ERR_LEN {
             let mut end = ERR_LEN;
-            while !message.is_char_boundary(end) { end -= 1; }
+            while !message.is_char_boundary(end) {
+                end -= 1;
+            }
             message.truncate(end);
         }
         let code = message.split(',').next().unwrap_or("").trim().parse::<i32>().unwrap_or(0);
@@ -654,8 +738,9 @@ impl Scpi {
         };
         self.error_serial = self.error_serial.wrapping_add(1);
         self.last_error = Some(message.clone());
-        if self.err.len() < ERR_MAX { self.err.push(message); }
-        else {
+        if self.err.len() < ERR_MAX {
+            self.err.push(message);
+        } else {
             self.err[ERR_MAX - 1] = "-350,\"Queue overflow\"".into();
             self.event_status |= 8;
         }
@@ -713,10 +798,16 @@ impl Scpi {
                         break;
                     }
                     Ok(n) => {
-                        if self.clients[i].buf.len() + n > MAX_LINE { closed = true; break; }
-                        self.clients[i].buf.extend_from_slice(&tmp[..n]); read_bytes += n;
-                        if read_bytes >= 65536 { break; }
-                    },
+                        if self.clients[i].buf.len() + n > MAX_LINE {
+                            closed = true;
+                            break;
+                        }
+                        self.clients[i].buf.extend_from_slice(&tmp[..n]);
+                        read_bytes += n;
+                        if read_bytes >= 65536 {
+                            break;
+                        }
+                    }
                     Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
@@ -730,7 +821,9 @@ impl Scpi {
             }
             while !closed {
                 if self.clients[i].program.is_none() {
-                    let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else { break; };
+                    let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else {
+                        break;
+                    };
                     let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                     self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
                 }
@@ -744,7 +837,10 @@ impl Scpi {
                 };
                 if program.has_reply {
                     response.push(b'\n');
-                    if !send(&mut self.clients[i].s, &response) { closed = true; break; }
+                    if !send(&mut self.clients[i].s, &response) {
+                        closed = true;
+                        break;
+                    }
                 }
             }
             closed |= eof || self.clients[i].buf.len() > MAX_LINE;
@@ -769,7 +865,12 @@ impl Scpi {
         self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
     }
 
-    pub fn exec_message_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<(Vec<u8>, bool), &'static str> {
+    pub fn exec_message_checked(
+        &mut self,
+        ui: &mut Ui,
+        cv: &Canvas,
+        line: &str,
+    ) -> Result<(Vec<u8>, bool), &'static str> {
         let mut program = Program::new(line);
         match self.poll_program(ui, cv, &mut program) {
             Some(response) => Ok((response, program.has_reply)),
@@ -785,7 +886,10 @@ impl Scpi {
     fn poll_events(&mut self, ui: &Ui) {
         self.opc_events.retain(|fence| match fence.state(ui) {
             crate::ui::OperationState::Pending => true,
-            crate::ui::OperationState::Complete => { self.event_status |= 1; false },
+            crate::ui::OperationState::Complete => {
+                self.event_status |= 1;
+                false
+            }
             crate::ui::OperationState::Cancelled => false,
         });
     }
@@ -811,33 +915,51 @@ impl Scpi {
 
     fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
         self.poll_events(ui);
-        if program.invalid { self.push_err("-363,\"Program message too large or too many commands\"".into()); return Some(Vec::new()); }
+        if program.invalid {
+            self.push_err("-363,\"Program message too large or too many commands\"".into());
+            return Some(Vec::new());
+        }
         if let Some(fence) = &program.waiting {
             match fence.state(ui) {
                 crate::ui::OperationState::Pending => return None,
                 crate::ui::OperationState::Complete => {
                     program.waiting = None;
-                    if !self.append_program_reply(program, b"1") { return Some(std::mem::take(&mut program.out)); }
-                },
+                    if !self.append_program_reply(program, b"1") {
+                        return Some(std::mem::take(&mut program.out));
+                    }
+                }
                 crate::ui::OperationState::Cancelled => {
                     self.push_err("-410,\"OPC query interrupted by cancelled operation\"".into());
-                    program.commands.clear(); program.out.clear(); program.has_reply = false; program.waiting = None;
+                    program.commands.clear();
+                    program.out.clear();
+                    program.has_reply = false;
+                    program.waiting = None;
                     return Some(Vec::new());
                 }
             }
         }
         while let Some((command, new_line)) = program.commands.pop_front() {
-            if new_line && program.has_reply { program.separator = b'\n'; }
+            if new_line && program.has_reply {
+                program.separator = b'\n';
+            }
             if program.out.len() >= RESP_MAX {
                 self.push_err("-363,\"Input buffer overrun\" rest of the line dropped".into());
-                program.commands.clear(); break;
+                program.commands.clear();
+                break;
             }
             if command.eq_ignore_ascii_case("*OPC?") {
                 let fence = ui.scpi_operations();
-                if fence.state(ui) == crate::ui::OperationState::Pending { program.waiting = Some(fence); return None; }
-                if !self.append_program_reply(program, b"1") { break; }
+                if fence.state(ui) == crate::ui::OperationState::Pending {
+                    program.waiting = Some(fence);
+                    return None;
+                }
+                if !self.append_program_reply(program, b"1") {
+                    break;
+                }
             } else if let Some(response) = self.exec(ui, cv, &command) {
-                if !self.append_program_reply(program, &response) { break; }
+                if !self.append_program_reply(program, &response) {
+                    break;
+                }
             }
         }
         Some(std::mem::take(&mut program.out))
@@ -892,12 +1014,20 @@ impl Scpi {
         match up.as_str() {
             "*IDN" => {
                 let p = oos_hal::model::platform();
-                return t(&format!("OOS,{},{},oos-ui {}", p.caps.name, p.serial.as_deref().unwrap_or("0"), env!("CARGO_PKG_VERSION")));
+                return t(&format!(
+                    "OOS,{},{},oos-ui {}",
+                    p.caps.name,
+                    p.serial.as_deref().unwrap_or("0"),
+                    env!("CARGO_PKG_VERSION")
+                ));
             }
             "*OPC" if !query => {
                 self.poll_events(ui);
-                if self.opc_events.len() < 64 { self.opc_events.push(ui.scpi_operations()); }
-                else { self.push_err("-350,\"Too many pending OPC events\"".into()); }
+                if self.opc_events.len() < 64 {
+                    self.opc_events.push(ui.scpi_operations());
+                } else {
+                    self.push_err("-350,\"Too many pending OPC events\"".into());
+                }
                 self.poll_events(ui);
                 return None;
             }
@@ -913,7 +1043,8 @@ impl Scpi {
                 return None;
             }
             "*RST" if !query => {
-                self.event_status = 0; self.opc_events.clear();
+                self.event_status = 0;
+                self.opc_events.clear();
                 ui.key(crate::ui::key::DEFAULT);
                 return None;
             }
@@ -921,19 +1052,33 @@ impl Scpi {
         }
         let nodes: Vec<&str> = head.trim_start_matches(':').split(':').collect();
         if !query && nodes.len() == 1 {
-            let command = if kw(nodes[0], "STOP") { Some(0) } else if kw(nodes[0], "RUN") { Some(1) }
-                else if kw(nodes[0], "SINGle") { Some(2) } else { None };
-            if command.is_some_and(|command| ui.mixed_bus_command(command)) { return None; }
+            let command = if kw(nodes[0], "STOP") {
+                Some(0)
+            } else if kw(nodes[0], "RUN") {
+                Some(1)
+            } else if kw(nodes[0], "SINGle") {
+                Some(2)
+            } else {
+                None
+            };
+            if command.is_some_and(|command| ui.mixed_bus_command(command)) {
+                return None;
+            }
         }
         // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
         // session that is the replay flag (`force_trigger`); on the live hardware it pulses the FPGA force bit.
-        if !query && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
-            || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe"))) {
+        if !query
+            && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
+                || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe")))
+        {
             ui.force_trigger();
             return None;
         }
-        if nodes.len() == 3 && kw(nodes[0], "DECode") && kw(nodes[1], "CPHY")
-            && (kw(nodes[2], "RATE") || kw(nodes[2], "SRATe")) {
+        if nodes.len() == 3
+            && kw(nodes[0], "DECode")
+            && kw(nodes[1], "CPHY")
+            && (kw(nodes[2], "RATE") || kw(nodes[2], "SRATe"))
+        {
             return self.decode_cphy_rate_cmd(ui, query, arg);
         }
         if nodes.len() == 2 && kw(nodes[0], "DECode") {
@@ -966,8 +1111,11 @@ impl Scpi {
         // RUN and STOP are assignments, so repeating either must not toggle it.
         // Call the shared record handler directly: an open UI dialog must not
         // consume a remote acquisition command as a dialog-dismissal key.
-        if !query && nodes.len() == 1 && ui.record_mode()
-            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command)) {
+        if !query
+            && nodes.len() == 1
+            && ui.record_mode()
+            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command))
+        {
             let key = crate::ui::key::RUNSTOP;
             if kw(nodes[0], "RUN") {
                 if ui.m.trig_mode == TrigMode::Single {
@@ -997,13 +1145,20 @@ impl Scpi {
                 let secondary = source_number == Some(2);
                 if query {
                     if !secondary && ui.m.trig_ref.is_none() {
-                        if let Some(line) = ui.m.trig_line() { return t(&format!("D{line}")); }
+                        if let Some(line) = ui.m.trig_line() {
+                            return t(&format!("D{line}"));
+                        }
                     }
                     let id = if secondary { ui.m.trigger_wave2() } else { ui.m.trigger_wave() };
-                    return t(&match id { WaveId::Ref(i) => format!("R{}", i + 1), WaveId::Ch(c) => format!("CHAN{}", c + 1) });
+                    return t(&match id {
+                        WaveId::Ref(i) => format!("R{}", i + 1),
+                        WaveId::Ch(c) => format!("CHAN{}", c + 1),
+                    });
                 }
                 if let Some(id) = parse_wave(arg) {
-                    if !ui.set_trigger_source(id, secondary) { self.push_err("-224,\"Trigger source is unavailable\"".into()); }
+                    if !ui.set_trigger_source(id, secondary) {
+                        self.push_err("-224,\"Trigger source is unavailable\"".into());
+                    }
                     ui.mark_changed();
                     return None;
                 }
@@ -1014,48 +1169,90 @@ impl Scpi {
                 }
             }
             if nodes.len() == 2 && (kw(last, "TYPe") || kw(last, "MODE")) {
-                if query { return t(if kw(last, "MODE") { match ui.m.trig_type {
-                    TrigType::Edge => "EDGE", TrigType::Pulse => "PULS", TrigType::Slope => "SLOP", TrigType::Video => "VID",
-                    TrigType::Pattern => "PATT", TrigType::Duration => "DUR", TrigType::Timeout => "TIM", TrigType::Runt => "RUNT",
-                    TrigType::Window => "WIND", TrigType::Delay => "DEL", TrigType::SetupHold => "SET", TrigType::NthEdge => "NEDG", TrigType::Bus => "BUS",
-                }} else { ui.m.trig_type.name() }); }
+                if query {
+                    return t(if kw(last, "MODE") {
+                        match ui.m.trig_type {
+                            TrigType::Edge => "EDGE",
+                            TrigType::Pulse => "PULS",
+                            TrigType::Slope => "SLOP",
+                            TrigType::Video => "VID",
+                            TrigType::Pattern => "PATT",
+                            TrigType::Duration => "DUR",
+                            TrigType::Timeout => "TIM",
+                            TrigType::Runt => "RUNT",
+                            TrigType::Window => "WIND",
+                            TrigType::Delay => "DEL",
+                            TrigType::SetupHold => "SET",
+                            TrigType::NthEdge => "NEDG",
+                            TrigType::Bus => "BUS",
+                        }
+                    } else {
+                        ui.m.trig_type.name()
+                    });
+                }
                 let name = arg.trim().to_ascii_uppercase();
                 let kind = match name.as_str() {
-                    "EDGE" => Some(TrigType::Edge), "PULSE" | "PULS" => Some(TrigType::Pulse),
-                    "SLOPE" | "SLOP" => Some(TrigType::Slope), "VIDEO" | "VID" => Some(TrigType::Video),
-                    "PATTERN" | "PATT" => Some(TrigType::Pattern), "DURATION" | "DUR" => Some(TrigType::Duration),
-                    "TIMEOUT" | "TIM" => Some(TrigType::Timeout), "RUNT" => Some(TrigType::Runt),
-                    "WINDOW" | "WIND" => Some(TrigType::Window), "DELAY" | "DEL" => Some(TrigType::Delay),
-                    "SETUPHOLD" | "SETUP" | "SET" => Some(TrigType::SetupHold), "NTHEDGE" | "NTH" | "NEDGE" | "NEDG" => Some(TrigType::NthEdge),
-                    "BUS" => Some(TrigType::Bus), _ => None,
+                    "EDGE" => Some(TrigType::Edge),
+                    "PULSE" | "PULS" => Some(TrigType::Pulse),
+                    "SLOPE" | "SLOP" => Some(TrigType::Slope),
+                    "VIDEO" | "VID" => Some(TrigType::Video),
+                    "PATTERN" | "PATT" => Some(TrigType::Pattern),
+                    "DURATION" | "DUR" => Some(TrigType::Duration),
+                    "TIMEOUT" | "TIM" => Some(TrigType::Timeout),
+                    "RUNT" => Some(TrigType::Runt),
+                    "WINDOW" | "WIND" => Some(TrigType::Window),
+                    "DELAY" | "DEL" => Some(TrigType::Delay),
+                    "SETUPHOLD" | "SETUP" | "SET" => Some(TrigType::SetupHold),
+                    "NTHEDGE" | "NTH" | "NEDGE" | "NEDG" => Some(TrigType::NthEdge),
+                    "BUS" => Some(TrigType::Bus),
+                    _ => None,
                 };
-                if let Some(kind) = kind { ui.trigger_type_set(kind); ui.mark_changed(); }
-                else { self.push_err("-224,\"Invalid trigger type\"".into()); }
+                if let Some(kind) = kind {
+                    ui.trigger_type_set(kind);
+                    ui.mark_changed();
+                } else {
+                    self.push_err("-224,\"Invalid trigger type\"".into());
+                }
                 return None;
             }
             if nodes.len() == 3 && kw(nodes[1], "RUNT") {
                 let upper = kw(last, "UPPer") || kw(last, "ALEVel");
                 let (lower, higher) = (ui.m.trig_level2, ui.m.trig_level);
-                let value = if upper { Some(&mut ui.m.trig_level) }
-                    else if kw(last, "LOWer") || kw(last, "BLEVel") { Some(&mut ui.m.trig_level2) } else { None };
+                let value = if upper {
+                    Some(&mut ui.m.trig_level)
+                } else if kw(last, "LOWer") || kw(last, "BLEVel") {
+                    Some(&mut ui.m.trig_level2)
+                } else {
+                    None
+                };
                 if let Some(value) = value {
-                    if query { return t(&e(*value as f64)); }
+                    if query {
+                        return t(&e(*value as f64));
+                    }
                     // the pair stays in order, as :MEASure:SETup:MAX|MIN: a threshold past the other is refused
                     match num(arg) {
                         Some(number) if (upper && number < lower) || (!upper && number > higher) => {
                             let other = if upper { "below the lower" } else { "above the upper" };
                             self.push_err(format!("-224,\"Illegal parameter value\" {other} threshold"));
                         }
-                        Some(number) => { *value = number; ui.mark_changed(); }
+                        Some(number) => {
+                            *value = number;
+                            ui.mark_changed();
+                        }
                         None => self.push_err("-224,\"Invalid runt threshold\"".into()),
                     }
                     return None;
                 }
             }
         }
-        if !query && (nodes.len() == 1 && kw(nodes[0], "SINGle")
-            || nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "SWEep")
-                && arg.to_ascii_uppercase().starts_with("SING") && ui.m.run == RunState::Run) {
+        if !query
+            && (nodes.len() == 1 && kw(nodes[0], "SINGle")
+                || nodes.len() == 2
+                    && kw(nodes[0], "TRIGger")
+                    && kw(nodes[1], "SWEep")
+                    && arg.to_ascii_uppercase().starts_with("SING")
+                    && ui.m.run == RunState::Run)
+        {
             ui.scpi_arm_operation();
         }
         if nodes.first().is_some_and(|n| kw(n, "TIMebase")) {
@@ -1225,7 +1422,10 @@ impl Scpi {
                         "AUTO" => 0,
                         "GND" => 3,
                         "20M" | "20MHZ" => BW_20M,
-                        _ => BWS.iter().position(|b| b.0.replace(' ', "").to_ascii_uppercase() == a || b.0.replace(' ', "").to_ascii_uppercase() == format!("{}HZ", a))?,
+                        _ => BWS.iter().position(|b| {
+                            b.0.replace(' ', "").to_ascii_uppercase() == a
+                                || b.0.replace(' ', "").to_ascii_uppercase() == format!("{}HZ", a)
+                        })?,
                     };
                 } else if kw(n1, "PROBe") {
                     if query {
@@ -1329,16 +1529,32 @@ impl Scpi {
                         }));
                     }
                     let a = arg.to_ascii_uppercase();
-                    m.trig_mode = if a.starts_with("AUTO") { TrigMode::Auto } else if a.starts_with("NORM") { TrigMode::Normal } else if a.starts_with("SING") { TrigMode::Single } else { return None };
+                    m.trig_mode = if a.starts_with("AUTO") {
+                        TrigMode::Auto
+                    } else if a.starts_with("NORM") {
+                        TrigMode::Normal
+                    } else if a.starts_with("SING") {
+                        TrigMode::Single
+                    } else {
+                        return None;
+                    };
                     return Some(None);
                 }
                 if nodes.len() == 3 && kw(nodes[1], "EDGE") {
                     if kw(last, "SOURce") {
                         if query {
-                            return Some(t(&m.trig_line().map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
+                            return Some(t(&m
+                                .trig_line()
+                                .map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
                         }
                         // D0..D15 like Rigol's source names, with the LA on
-                        match arg.trim().to_ascii_uppercase().strip_prefix('D').and_then(|n| n.parse::<u8>().ok()).filter(|&n| n < 16 && m.trig_la_ok()) {
+                        match arg
+                            .trim()
+                            .to_ascii_uppercase()
+                            .strip_prefix('D')
+                            .and_then(|n| n.parse::<u8>().ok())
+                            .filter(|&n| n < 16 && m.trig_la_ok())
+                        {
                             Some(n) => m.trig_la = Some(n),
                             None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
                         }
@@ -1356,7 +1572,15 @@ impl Scpi {
                             }));
                         }
                         let a = arg.to_ascii_uppercase();
-                        m.slope = if a.starts_with("POS") { Slope::Rise } else if a.starts_with("NEG") { Slope::Fall } else if a.starts_with("RFAL") { Slope::Either } else { return None };
+                        m.slope = if a.starts_with("POS") {
+                            Slope::Rise
+                        } else if a.starts_with("NEG") {
+                            Slope::Fall
+                        } else if a.starts_with("RFAL") {
+                            Slope::Either
+                        } else {
+                            return None;
+                        };
                     } else {
                         return None;
                     }
@@ -1411,7 +1635,13 @@ impl Scpi {
             if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
                 match (nodes.get(2).copied(), query) {
                     (None, true) => return Some(t(&m.segments.to_string())),
-                    (None, false) => m.segments = if parse_bool(arg) == Some(false) { 0 } else { (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX) },
+                    (None, false) => {
+                        m.segments = if parse_bool(arg) == Some(false) {
+                            0
+                        } else {
+                            (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX)
+                        }
+                    }
                     (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.seg_hw { "1" } else { "0" })),
                     (Some(x), false) if kw(x, "HARDware") => m.seg_hw = parse_bool(arg)?,
                     (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
@@ -1482,7 +1712,9 @@ impl Scpi {
             None
         })();
         if let Some(resp) = r {
-            if !query { ui.mark_changed(); }
+            if !query {
+                ui.mark_changed();
+            }
             return resp;
         }
         // measurement, waveform, display, system (need the record / canvas)
@@ -1578,17 +1810,35 @@ impl Scpi {
                 if query {
                     return t(["BYTE", "WORD", "ASC"][self.wav_fmt as usize]);
                 }
-                let format = if kw(arg.trim(), "BYTE") { Some(0) } else if kw(arg.trim(), "WORD") { Some(1) }
-                    else if kw(arg.trim(), "ASCii") { Some(2) } else { None };
-                if let Some(format) = format { self.wav_fmt = format; }
-                else { self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)); }
+                let format = if kw(arg.trim(), "BYTE") {
+                    Some(0)
+                } else if kw(arg.trim(), "WORD") {
+                    Some(1)
+                } else if kw(arg.trim(), "ASCii") {
+                    Some(2)
+                } else {
+                    None
+                };
+                if let Some(format) = format {
+                    self.wav_fmt = format;
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
                 return None;
             }
             if kw(n1, "STARt") || kw(n1, "STOP") {
                 let stop = kw(n1, "STOP");
                 if query {
                     let n = self.wave_len(ui);
-                    let v = if stop { if self.wav_stop == 0 { n } else { self.wav_stop } } else { self.wav_start };
+                    let v = if stop {
+                        if self.wav_stop == 0 {
+                            n
+                        } else {
+                            self.wav_stop
+                        }
+                    } else {
+                        self.wav_start
+                    };
                     return t(&v.to_string());
                 }
                 let Some(p) = arg.trim().parse::<u64>().ok().filter(|&p| p >= 1) else {
@@ -1633,7 +1883,10 @@ impl Scpi {
         if kw(n0, "SIM") {
             return self.sim_cmd(ui, &nodes[1..], query, arg);
         }
-        if kw(n0, "DISPlay") && !(nodes.len() == 2 && kw(nodes[1], "DATA")) && !(nodes.len() >= 2 && kw(nodes[1], "VIEW")) {
+        if kw(n0, "DISPlay")
+            && !(nodes.len() == 2 && kw(nodes[1], "DATA"))
+            && !(nodes.len() >= 2 && kw(nodes[1], "VIEW"))
+        {
             return self.display_cmd(ui, &nodes[1..], query, arg);
         }
         if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
@@ -1717,7 +1970,11 @@ impl Scpi {
                 return t(&ui.bode_text());
             }
             if kw(nodes[1], "MODE") {
-                const MODES: [(&str, oos_dsp::bode::Mode); 3] = [("LOOP", oos_dsp::bode::Mode::Loop), ("PSRR", oos_dsp::bode::Mode::Psrr), ("IMPedance", oos_dsp::bode::Mode::Z)];
+                const MODES: [(&str, oos_dsp::bode::Mode); 3] = [
+                    ("LOOP", oos_dsp::bode::Mode::Loop),
+                    ("PSRR", oos_dsp::bode::Mode::Psrr),
+                    ("IMPedance", oos_dsp::bode::Mode::Z),
+                ];
                 if query {
                     let name = match ui.m.bode_mode {
                         oos_dsp::bode::Mode::Loop => "LOOP",
@@ -1752,9 +2009,15 @@ impl Scpi {
                 return None;
             }
         }
-        if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n)) && kw(suffix(n0).0, "SOURce") && nodes.len() >= 2 {
+        if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n))
+            && kw(suffix(n0).0, "SOURce")
+            && nodes.len() >= 2
+        {
             if !oos_hal::model::platform().caps.has_gen() {
-                self.push_err(format!("-241,\"Hardware missing\" no generator on the {}", oos_hal::model::platform().caps.name));
+                self.push_err(format!(
+                    "-241,\"Hardware missing\" no generator on the {}",
+                    oos_hal::model::platform().caps.name
+                ));
                 return None;
             }
             // :SOURce<n> talks to generator n, whichever one the page shows
@@ -1786,7 +2049,10 @@ impl Scpi {
                 let a = arg.trim();
                 if has("INTernal") && has("FUNCtion") {
                     if query {
-                        return t(&SHAPES[m.afg_mod_shape.min(5)].chars().filter(|c| c.is_ascii_uppercase()).collect::<String>());
+                        return t(&SHAPES[m.afg_mod_shape.min(5)]
+                            .chars()
+                            .filter(|c| c.is_ascii_uppercase())
+                            .collect::<String>());
                     }
                     match SHAPES.iter().position(|s| kw(a, s)) {
                         Some(i) => ui.m.afg_mod_shape = i,
@@ -1900,7 +2166,9 @@ impl Scpi {
                     return t(&e(cur));
                 }
                 match x {
-                    Some(v) => ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v)),
+                    Some(v) => {
+                        ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v))
+                    }
                     None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
@@ -1995,13 +2263,17 @@ impl Scpi {
         if nodes.len() == 2 {
             let n1 = nodes[1];
             if kw(n1, "GATing") {
-                if query { return t(if ui.m.meas_full_record { "NONE" } else { "SCREEN" }); }
-                let full_record = if kw(arg.trim(), "SCReen") { false }
-                    else if kw(arg.trim(), "NONE") { true }
-                    else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return None;
-                    };
+                if query {
+                    return t(if ui.m.meas_full_record { "NONE" } else { "SCREEN" });
+                }
+                let full_record = if kw(arg.trim(), "SCReen") {
+                    false
+                } else if kw(arg.trim(), "NONE") {
+                    true
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                };
                 ui.set_measurement_full_record(full_record);
                 return None;
             }
@@ -2018,9 +2290,13 @@ impl Scpi {
                 let b = if words.len() == 2 {
                     let Some(b) = self.named_source(words[1]) else { return None };
                     Some(b)
-                } else { None };
+                } else {
+                    None
+                };
                 ui.set_meas_source(a);
-                if let Some(b) = b { ui.set_meas_source_b(b); }
+                if let Some(b) = b {
+                    ui.set_meas_source_b(b);
+                }
                 ui.mark_changed();
                 return None;
             }
@@ -2092,7 +2368,10 @@ impl Scpi {
         // test access: any key of a setup file on the live settings (`:SYST:SET ch1.bw = 20M`), its value, the state
         if nodes.len() == 2 {
             if kw(nodes[1], "SET") && !query {
-                let r = arg.split_once('=').ok_or("no '='".to_string()).and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
+                let r = arg
+                    .split_once('=')
+                    .ok_or("no '='".to_string())
+                    .and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
                 match r {
                     Ok(()) => ui.mark_changed(),
                     Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
@@ -2100,15 +2379,21 @@ impl Scpi {
                 // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
                 // are only written when they differ from their default do not show
                 let k = arg.split('=').next().unwrap_or("").trim();
-                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s)) || k.starts_with("math_expr") || k == "cat";
-                if !optional && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k) {
+                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s))
+                    || k.starts_with("math_expr")
+                    || k == "cat";
+                if !optional
+                    && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k)
+                {
                     self.push_err(format!("-224,\"Illegal parameter value\" unknown key {}", k));
                 }
                 return None;
             }
             if kw(nodes[1], "GET") && query {
                 let text = crate::store::setup_text(&ui.m);
-                let v = text.lines().find_map(|l| l.split_once('=').filter(|(k, _)| k.trim() == arg.trim()).map(|x| x.1.trim().to_string()));
+                let v = text.lines().find_map(|l| {
+                    l.split_once('=').filter(|(k, _)| k.trim() == arg.trim()).map(|x| x.1.trim().to_string())
+                });
                 return t(&v.unwrap_or_default());
             }
             if kw(nodes[1], "STATe") && query {
@@ -2297,7 +2582,9 @@ impl Scpi {
             let rest: Vec<&str> = parts.collect();
             let before = self.error_serial;
             self.meas_place(ui, &std::iter::once(item).chain(rest).collect::<Vec<_>>().join(","));
-            if self.error_serial == before { ui.set_stats_shown(true); }
+            if self.error_serial == before {
+                ui.set_stats_shown(true);
+            }
             return None;
         }
         let kind = if kw(first, "MAXimum") {
@@ -2612,7 +2899,11 @@ impl Scpi {
             ui.m.cursor = if kw(a, "OFF") {
                 CursorMode::Off
             } else if kw(a, "MANual") {
-                if ui.m.cursor == CursorMode::Volt { CursorMode::Volt } else { CursorMode::Time }
+                if ui.m.cursor == CursorMode::Volt {
+                    CursorMode::Volt
+                } else {
+                    CursorMode::Time
+                }
             } else if kw(a, "TRACk") {
                 CursorMode::Track
             } else if a.eq_ignore_ascii_case("XY") {
@@ -2644,17 +2935,29 @@ impl Scpi {
             }
             return None;
         }
-        if n.len() == 2 && (kw(n0, "MANual") || kw(n0, "TRACk")) && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2")) {
+        if n.len() == 2
+            && (kw(n0, "MANual") || kw(n0, "TRACk"))
+            && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2"))
+        {
             let second = kw(n[1], "SOURce2");
             let track = kw(n0, "TRACk");
-            if query { return t(&wave_tok(if second && track { ui.cursor_b_source() } else { ui.cursor_source() })); }
+            if query {
+                return t(&wave_tok(if second && track { ui.cursor_b_source() } else { ui.cursor_source() }));
+            }
             let Some(source) = parse_wave(arg) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)); return None;
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
             };
-            let ok = if second && track { ui.set_cursor_b_source(source) }
-                else if second { source == ui.cursor_source() }
-                else { ui.set_cursor_source(source) };
-            if !ok { self.push_err("-224,\"Cursor source is unavailable or unsupported\"".into()); }
+            let ok = if second && track {
+                ui.set_cursor_b_source(source)
+            } else if second {
+                source == ui.cursor_source()
+            } else {
+                ui.set_cursor_source(source)
+            };
+            if !ok {
+                self.push_err("-224,\"Cursor source is unavailable or unsupported\"".into());
+            }
             return None;
         }
         if n.len() != 2 {
@@ -2690,9 +2993,12 @@ impl Scpi {
             } else if ui.m.cursor == CursorMode::Volt {
                 ui.cursor_volt_at(if a { ui.m.cur_a } else { ui.m.cur_b })
             } else if matches!(ui.m.cursor, CursorMode::Track | CursorMode::Time) {
-                let source = if !a && ui.m.cursor == CursorMode::Track { ui.cursor_b_source() } else { ui.cursor_source() };
+                let source =
+                    if !a && ui.m.cursor == CursorMode::Track { ui.cursor_b_source() } else { ui.cursor_source() };
                 ui.wave_at_source(source, if a { ta } else { tb }).map(|v| v as f64).unwrap_or(f64::NAN)
-            } else { f64::NAN }
+            } else {
+                f64::NAN
+            }
         };
         if kw(which, "AXValue") {
             return if ui.m.cursor == CursorMode::Volt || ui.m.cursor == CursorMode::Off { miss() } else { t(&e(ta)) };
@@ -2707,14 +3013,24 @@ impl Scpi {
             return t(&e(y_of(false)));
         }
         if kw(which, "XDELta") {
-            return if matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(tb - ta)) } else { miss() };
+            return if matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
+                t(&e(tb - ta))
+            } else {
+                miss()
+            };
         }
         if kw(which, "IXDelta") {
             let d = (tb - ta).abs();
-            return if d > 0.0 && matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) { t(&e(1.0 / d)) } else { miss() };
+            return if d > 0.0 && matches!(ui.m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) {
+                t(&e(1.0 / d))
+            } else {
+                miss()
+            };
         }
         if kw(which, "YDELta") {
-            if ui.m.cursor == CursorMode::Track && ui.cursor_source_unit(ui.cursor_source()) != ui.cursor_source_unit(ui.cursor_b_source()) {
+            if ui.m.cursor == CursorMode::Track
+                && ui.cursor_source_unit(ui.cursor_source()) != ui.cursor_source_unit(ui.cursor_b_source())
+            {
                 return miss();
             }
             let d = y_of(false) - y_of(true);
@@ -2730,9 +3046,27 @@ impl Scpi {
             Some(match (x, ui.m.cursor) {
                 (true, CursorMode::Volt | CursorMode::Off) => return None,
                 (false, CursorMode::Time | CursorMode::Track | CursorMode::Off) => return None,
-                (false, CursorMode::Xy) => if a { ui.m.cur_c } else { ui.m.cur_d },
-                (false, CursorMode::Volt) => if a { ui.m.cur_a } else { ui.m.cur_b },
-                (true, _) => if a { ui.m.cur_a } else { ui.m.cur_b },
+                (false, CursorMode::Xy) => {
+                    if a {
+                        ui.m.cur_c
+                    } else {
+                        ui.m.cur_d
+                    }
+                }
+                (false, CursorMode::Volt) => {
+                    if a {
+                        ui.m.cur_a
+                    } else {
+                        ui.m.cur_b
+                    }
+                }
+                (true, _) => {
+                    if a {
+                        ui.m.cur_a
+                    } else {
+                        ui.m.cur_b
+                    }
+                }
             })
         };
         if query {
@@ -2749,29 +3083,57 @@ impl Scpi {
             (true, CursorMode::Volt) => {
                 ui.m.cur_c = ui.m.cur_a;
                 ui.m.cur_d = ui.m.cur_b;
-                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                if a {
+                    ui.m.cur_a = frac;
+                } else {
+                    ui.m.cur_b = frac;
+                }
                 ui.m.cursor = CursorMode::Xy;
             }
             (false, CursorMode::Time | CursorMode::Track) => {
-                if a { ui.m.cur_c = frac; } else { ui.m.cur_d = frac; }
+                if a {
+                    ui.m.cur_c = frac;
+                } else {
+                    ui.m.cur_d = frac;
+                }
                 ui.m.cursor = CursorMode::Xy;
             }
             (false, CursorMode::Xy) => {
-                if a { ui.m.cur_c = frac; } else { ui.m.cur_d = frac; }
+                if a {
+                    ui.m.cur_c = frac;
+                } else {
+                    ui.m.cur_d = frac;
+                }
             }
             (true, CursorMode::Off) => {
-                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                if a {
+                    ui.m.cur_a = frac;
+                } else {
+                    ui.m.cur_b = frac;
+                }
                 ui.m.cursor = CursorMode::Time;
             }
             (false, CursorMode::Off) => {
-                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                if a {
+                    ui.m.cur_a = frac;
+                } else {
+                    ui.m.cur_b = frac;
+                }
                 ui.m.cursor = CursorMode::Volt;
             }
             (true, _) => {
-                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                if a {
+                    ui.m.cur_a = frac;
+                } else {
+                    ui.m.cur_b = frac;
+                }
             }
             (false, _) => {
-                if a { ui.m.cur_a = frac; } else { ui.m.cur_b = frac; }
+                if a {
+                    ui.m.cur_a = frac;
+                } else {
+                    ui.m.cur_b = frac;
+                }
             }
         }
         None
@@ -3042,10 +3404,17 @@ impl Scpi {
             let events = match ui.decode_events_result() {
                 Ok(events) => events,
                 Err("Decode computing") => return t("BUSY"),
-                Err(error) => { self.push_err(format!("-230,\"{}\"", error)); return None; }
+                Err(error) => {
+                    self.push_err(format!("-230,\"{}\"", error));
+                    return None;
+                }
             };
             let prefix = format!("D{} ", k + 1);
-            let rows = events.lines().filter(|line| line.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix))).collect::<Vec<_>>().join("\n");
+            let rows = events
+                .lines()
+                .filter(|line| line.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix)))
+                .collect::<Vec<_>>()
+                .join("\n");
             return Some(block(format!("{}\n{}", proto_token(cfg.proto), rows).as_bytes()));
         }
         if n.len() == 2 && kw(n0, "RS232") {
@@ -3053,24 +3422,51 @@ impl Scpi {
         }
         if n.len() == 3 && kw(n0, "IIC") && kw(n[2], "SOURce") && (kw(n[1], "SCLK") || kw(n[1], "SDA")) {
             let clock = kw(n[1], "SCLK");
-            if query { return t(&bus_source_name(if clock { cfg.src2 } else { cfg.src })); }
+            if query {
+                return t(&bus_source_name(if clock { cfg.src2 } else { cfg.src }));
+            }
             let Some(source) = parse_bus_wave(ui, arg) else {
-                self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg)); return None;
+                self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
+                return None;
             };
             if !put_bus_wave(ui, k, Proto::I2C, usize::from(clock), Some(source)) {
                 self.push_err("-224,\"Decoder source is unavailable\"".into());
             }
             return None;
         }
-        if n.len() == 3 && kw(n0, "SPI") && kw(n[2], "SOURce") && (kw(n[1], "SCLK") || kw(n[1], "MOSI") || kw(n[1], "SS")) {
-            let role = if kw(n[1], "SCLK") { 1 } else if kw(n[1], "MOSI") { 0 } else { 2 };
-            if query { return t(&match role { 0 => bus_source_name(cfg.src), 1 => bus_source_name(cfg.src2),
-                _ => cfg.cs.map(bus_source_name).unwrap_or_else(|| "OFF".into()) }); }
-            let source = if role == 2 && (kw(arg, "OFF") || kw(arg, "NONE")) { None }
-                else { match parse_bus_wave(ui, arg) { Some(source) => Some(source), None => {
-                    self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg)); return None;
-                } } };
-            if !put_bus_wave(ui, k, Proto::SPI, role, source) { self.push_err("-224,\"Decoder source is unavailable\"".into()); }
+        if n.len() == 3
+            && kw(n0, "SPI")
+            && kw(n[2], "SOURce")
+            && (kw(n[1], "SCLK") || kw(n[1], "MOSI") || kw(n[1], "SS"))
+        {
+            let role = if kw(n[1], "SCLK") {
+                1
+            } else if kw(n[1], "MOSI") {
+                0
+            } else {
+                2
+            };
+            if query {
+                return t(&match role {
+                    0 => bus_source_name(cfg.src),
+                    1 => bus_source_name(cfg.src2),
+                    _ => cfg.cs.map(bus_source_name).unwrap_or_else(|| "OFF".into()),
+                });
+            }
+            let source = if role == 2 && (kw(arg, "OFF") || kw(arg, "NONE")) {
+                None
+            } else {
+                match parse_bus_wave(ui, arg) {
+                    Some(source) => Some(source),
+                    None => {
+                        self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
+                        return None;
+                    }
+                }
+            };
+            if !put_bus_wave(ui, k, Proto::SPI, role, source) {
+                self.push_err("-224,\"Decoder source is unavailable\"".into());
+            }
             return None;
         }
         if n.len() == 2 && kw(n0, "SPI") && kw(n[1], "DBITs") {
@@ -3096,11 +3492,16 @@ impl Scpi {
         let cfg = ui.m.dec_slot(k);
         if kw(which, "TX") || kw(which, "RX") {
             let role = usize::from(kw(which, "RX"));
-            if query { return t(&bus_source_name(if role == 1 { cfg.src2 } else { cfg.src })); }
+            if query {
+                return t(&bus_source_name(if role == 1 { cfg.src2 } else { cfg.src }));
+            }
             let Some(source) = parse_bus_wave(ui, arg) else {
-                self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg)); return None;
+                self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
+                return None;
             };
-            if !put_bus_wave(ui, k, Proto::UART, role, Some(source)) { self.push_err("-224,\"Decoder source is unavailable\"".into()); }
+            if !put_bus_wave(ui, k, Proto::UART, role, Some(source)) {
+                self.push_err("-224,\"Decoder source is unavailable\"".into());
+            }
             return None;
         }
         if kw(which, "BAUD") {
@@ -3174,7 +3575,15 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     let mut c = ui.m.math_ch(k);
-                    c.op = if on { if c.op == MathOp::Off { MathOp::Add } else { c.op } } else { MathOp::Off };
+                    c.op = if on {
+                        if c.op == MathOp::Off {
+                            MathOp::Add
+                        } else {
+                            c.op
+                        }
+                    } else {
+                        MathOp::Off
+                    };
                     put_math(ui, k, c);
                     None
                 }
@@ -3208,17 +3617,26 @@ impl Scpi {
                 return None;
             };
             if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
-                self.push_err("-230,\"Math reference source is empty\"".into()); return None;
+                self.push_err("-230,\"Math reference source is empty\"".into());
+                return None;
             }
             let mut c = ui.m.math_ch(k);
-            if second { c.b = src; } else { c.a = src; }
+            if second {
+                c.b = src;
+            } else {
+                c.a = src;
+            }
             put_math(ui, k, c);
             return None;
         }
         if n.len() == 1 && kw(n0, "SCALe") {
             let c = ui.m.math_ch(k);
             if query {
-                let v = if c.op == MathOp::Fft { FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64 } else { math_scales()[c.scale.min(math_scales().len() - 1)] };
+                let v = if c.op == MathOp::Fft {
+                    FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64
+                } else {
+                    math_scales()[c.scale.min(math_scales().len() - 1)]
+                };
                 return t(&e(v));
             }
             let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
@@ -3267,10 +3685,12 @@ impl Scpi {
                 return t(&math_src_name(ui.m.math_ch(k).a));
             }
             let Some(src) = parse_math_src(arg, k) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)); return None;
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
             };
             if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
-                self.push_err("-230,\"Math reference source is empty\"".into()); return None;
+                self.push_err("-230,\"Math reference source is empty\"".into());
+                return None;
             }
             let mut c = ui.m.math_ch(k);
             c.a = src;
@@ -3451,7 +3871,16 @@ impl Scpi {
             let pk = if s.max.is_finite() && s.min.is_finite() { e(s.max - s.min) } else { "9.9E37".to_string() };
             return t(&format!(
                 "Sum:{},Peaks:{},Max:{},Min:{},Pk_Pk:{},Mean:{},Median:{},Mode:{},Bin width:{},Sigma:{}",
-                s.sum, s.peaks, num(s.max), num(s.min), pk, num(s.mean), num(s.median), num(s.mode), num(s.bin), num(s.sigma)
+                s.sum,
+                s.peaks,
+                num(s.max),
+                num(s.min),
+                pk,
+                num(s.mean),
+                num(s.median),
+                num(s.mode),
+                num(s.bin),
+                num(s.sigma)
             ));
         }
         self.push_err(format!("-113,\"Undefined header\" :HISTogram:{}", n.join(":")));
@@ -3549,7 +3978,13 @@ impl Scpi {
             }
         } else if n.len() == 1 && query && (kw(n0, "FAILed") || kw(n0, "PASSed") || kw(n0, "TOTal")) {
             let (pass, fail) = ui.mask_counts();
-            let n = if kw(n0, "FAILed") { fail } else if kw(n0, "PASSed") { pass } else { pass + fail };
+            let n = if kw(n0, "FAILed") {
+                fail
+            } else if kw(n0, "PASSed") {
+                pass
+            } else {
+                pass + fail
+            };
             t(&n.to_string())
         } else {
             self.push_err(format!("-113,\"Undefined header\" :MASK:{}", n.join(":")));
@@ -3716,79 +4151,141 @@ impl Scpi {
     }
 
     fn decode_cmd(&mut self, ui: &mut Ui, node: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        if kw(node, "SRATe") { return self.decode_cphy_rate_cmd(ui, query, arg); }
+        if kw(node, "SRATe") {
+            return self.decode_cphy_rate_cmd(ui, query, arg);
+        }
         let text = |value: String| Some(value.into_bytes());
-        let illegal = |s: &mut Self| { s.push_err(format!("-224,\"Illegal decoder parameter\" {}", arg)); None };
+        let illegal = |s: &mut Self| {
+            s.push_err(format!("-224,\"Illegal decoder parameter\" {}", arg));
+            None
+        };
         if kw(node, "EVENts") && query {
             return match ui.decode_events_result() {
                 Ok(events) => text(events),
                 Err("Decode computing") => text("BUSY".into()),
-                Err(error) => { self.push_err(format!("-230,\"{}\"", error)); None }
+                Err(error) => {
+                    self.push_err(format!("-230,\"{}\"", error));
+                    None
+                }
             };
         }
-        if kw(node, "BUSY") && query { return text(if ui.decode_busy() { "1" } else { "0" }.into()); }
-        let role = if kw(node, "SOURce") || kw(node, "SOURce1") || node.eq_ignore_ascii_case("SOUR1") { Some(0) }
-            else if kw(node, "SOURce2") || node.eq_ignore_ascii_case("SOUR2") { Some(1) }
-            else if kw(node, "CS") { Some(2) }
-            else if kw(node, "SOURce4") || node.eq_ignore_ascii_case("SOUR4") { Some(3) }
-            else if kw(node, "DIFFerential") { Some(4) } else { None };
+        if kw(node, "BUSY") && query {
+            return text(if ui.decode_busy() { "1" } else { "0" }.into());
+        }
+        let role = if kw(node, "SOURce") || kw(node, "SOURce1") || node.eq_ignore_ascii_case("SOUR1") {
+            Some(0)
+        } else if kw(node, "SOURce2") || node.eq_ignore_ascii_case("SOUR2") {
+            Some(1)
+        } else if kw(node, "CS") {
+            Some(2)
+        } else if kw(node, "SOURce4") || node.eq_ignore_ascii_case("SOUR4") {
+            Some(3)
+        } else if kw(node, "DIFFerential") {
+            Some(4)
+        } else {
+            None
+        };
         if let Some(role) = role {
             if query {
                 if ui.m.dec_on_la() && role < 4 {
                     return text(ui.m.dec_la[role].map_or("NONE".into(), |line| format!("D{line}")));
                 }
-                let source = match role { 0 => Some(ui.m.dec_src), 1 => Some(ui.m.dec_src2), 2 => ui.m.dec_cs, 3 => ui.m.dec_src4, _ => ui.m.dec_diff };
+                let source = match role {
+                    0 => Some(ui.m.dec_src),
+                    1 => Some(ui.m.dec_src2),
+                    2 => ui.m.dec_cs,
+                    3 => ui.m.dec_src4,
+                    _ => ui.m.dec_diff,
+                };
                 return text(source.map_or("NONE".into(), decode_source_name));
             }
             if ui.m.dec_on_la() && role < 4 {
-                let source = arg.strip_prefix('D').or_else(|| arg.strip_prefix('d')).and_then(|v| v.parse::<u8>().ok()).filter(|&v| v < 16);
-                if source.is_none() && !(role >= 2 && arg.eq_ignore_ascii_case("NONE")) { return illegal(self); }
+                let source = arg
+                    .strip_prefix('D')
+                    .or_else(|| arg.strip_prefix('d'))
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .filter(|&v| v < 16);
+                if source.is_none() && !(role >= 2 && arg.eq_ignore_ascii_case("NONE")) {
+                    return illegal(self);
+                }
                 ui.m.dec_la[role] = source;
                 ui.mark_changed();
                 return None;
             }
-            let source = if arg.eq_ignore_ascii_case("NONE") { None }
-                else { match parse_wave(arg) { Some(WaveId::Ch(c)) => Some(c), Some(WaveId::Ref(i)) => Some(DEC_REF_BASE + i), None => return illegal(self) } };
-            if !ui.configure_decoder_source(role, source) { return illegal(self); }
+            let source = if arg.eq_ignore_ascii_case("NONE") {
+                None
+            } else {
+                match parse_wave(arg) {
+                    Some(WaveId::Ch(c)) => Some(c),
+                    Some(WaveId::Ref(i)) => Some(DEC_REF_BASE + i),
+                    None => return illegal(self),
+                }
+            };
+            if !ui.configure_decoder_source(role, source) {
+                return illegal(self);
+            }
             ui.mark_changed();
             return None;
         }
         if kw(node, "PROTocol") || node.eq_ignore_ascii_case("PROTO") {
-            if query { return text(ui.m.dec_proto.name().into()); }
-            let compact = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(char::to_uppercase).collect::<String>();
+            if query {
+                return text(ui.m.dec_proto.name().into());
+            }
+            let compact = |s: &str| {
+                s.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(char::to_uppercase).collect::<String>()
+            };
             let name = compact(arg);
-            let Some(protocol) = PROTOS.iter().copied().find(|p| compact(p.name()) == name) else { return illegal(self) };
+            let Some(protocol) = PROTOS.iter().copied().find(|p| compact(p.name()) == name) else {
+                return illegal(self);
+            };
             // SCPI configures an instrument, not the demo's suggested sources/trigger.
             ui.m.set_dec_proto_only(protocol);
-            if protocol == Proto::CPHY { ui.m.dec_thr = 0.02; ui.m.dec_la_in = false; }
+            if protocol == Proto::CPHY {
+                ui.m.dec_thr = 0.02;
+                ui.m.dec_la_in = false;
+            }
             ui.mark_changed();
             return None;
         }
         if kw(node, "STATe") {
-            if query { return text(if ui.m.dec_on { "1" } else { "0" }.into()); }
+            if query {
+                return text(if ui.m.dec_on { "1" } else { "0" }.into());
+            }
             let Some(on) = parse_bool(arg) else { return illegal(self) };
             ui.m.dec_on = on;
             ui.mark_changed();
             return None;
         }
         if kw(node, "SELect") {
-            if query { return text((ui.m.dec_sel + 1).to_string()); }
-            let Some(slot) = arg.parse::<usize>().ok().filter(|n| (1..=DECODERS).contains(n)) else { return illegal(self) };
+            if query {
+                return text((ui.m.dec_sel + 1).to_string());
+            }
+            let Some(slot) = arg.parse::<usize>().ok().filter(|n| (1..=DECODERS).contains(n)) else {
+                return illegal(self);
+            };
             ui.m.dec_select(slot - 1);
             return None;
         }
         if kw(node, "THReshold") {
-            if query { return text(e(ui.m.dec_thr as f64)); }
+            if query {
+                return text(e(ui.m.dec_thr as f64));
+            }
             let Some(threshold) = num(arg) else { return illegal(self) };
             ui.m.dec_thr = threshold;
             ui.mark_changed();
             return None;
         }
         if kw(node, "INPut") {
-            if query { return text(if ui.m.dec_la_in { "LA" } else { "WAVEFORM" }.into()); }
-            if arg.eq_ignore_ascii_case("LA") && ui.m.la_on() && ui.m.dec_proto != Proto::CPHY { ui.m.dec_la_in = true; }
-            else if arg.eq_ignore_ascii_case("WAVEFORM") || arg.eq_ignore_ascii_case("ANALOG") { ui.m.dec_la_in = false; }
-            else { return illegal(self); }
+            if query {
+                return text(if ui.m.dec_la_in { "LA" } else { "WAVEFORM" }.into());
+            }
+            if arg.eq_ignore_ascii_case("LA") && ui.m.la_on() && ui.m.dec_proto != Proto::CPHY {
+                ui.m.dec_la_in = true;
+            } else if arg.eq_ignore_ascii_case("WAVEFORM") || arg.eq_ignore_ascii_case("ANALOG") {
+                ui.m.dec_la_in = false;
+            } else {
+                return illegal(self);
+            }
             ui.mark_changed();
             return None;
         }
@@ -3797,9 +4294,14 @@ impl Scpi {
     }
 
     fn decode_cphy_rate_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        if query { return Some(if ui.m.dec_cphy_rate == 0.0 { b"AUTO".to_vec() } else { e(ui.m.dec_cphy_rate).into_bytes() }); }
+        if query {
+            return Some(if ui.m.dec_cphy_rate == 0.0 { b"AUTO".to_vec() } else { e(ui.m.dec_cphy_rate).into_bytes() });
+        }
         match crate::decode::parse_cphy_rate(arg) {
-            Ok(rate) => { ui.m.dec_cphy_rate = rate; ui.mark_changed(); }
+            Ok(rate) => {
+                ui.m.dec_cphy_rate = rate;
+                ui.mark_changed();
+            }
             Err(_) => self.push_err(format!("-224,\"Invalid C-PHY symbol rate\" {}", arg)),
         }
         None
@@ -3858,7 +4360,17 @@ impl Scpi {
         let (vpd, offset) = self.wave_scale(ui);
         let (yinc, yorg, yref) = self.y_codes(vpd, offset);
         let (dt, t0) = self.wave_origin(ui);
-        format!("{},{},{},1,{},{},0,{},{},{}", self.wav_fmt, self.wav_mode, self.page_count(ui), e(dt), e(t0), e(yinc), yorg, yref)
+        format!(
+            "{},{},{},1,{},{},0,{},{},{}",
+            self.wav_fmt,
+            self.wav_mode,
+            self.page_count(ui),
+            e(dt),
+            e(t0),
+            e(yinc),
+            yorg,
+            yref
+        )
     }
 
     /// Sample interval and the time of the first point of the current page. Does not copy the samples.
@@ -3882,7 +4394,8 @@ impl Scpi {
         match self.wav_src {
             WaveId::Ch(c) => {
                 let ch = &ui.m.ch[c];
-                let (v, dt, t0) = ui.channel_page(c, self.wave_memory(ui), start, stop).unwrap_or((Vec::new(), 0.0, 0.0));
+                let (v, dt, t0) =
+                    ui.channel_page(c, self.wave_memory(ui), start, stop).unwrap_or((Vec::new(), 0.0, 0.0));
                 (v, dt, t0, ch.volts_per_div() as f64, ch.offset as f64)
             }
             WaveId::Ref(i) => ui.ref_page(i, start, stop).unwrap_or((Vec::new(), 0.0, 0.0, 1.0, 0.0)),
@@ -3896,7 +4409,10 @@ impl Scpi {
         use crate::ui::la;
         let t = |s: String| Some(s.into_bytes());
         if !la::available() {
-            self.push_err(format!("-241,\"Hardware missing\" no logic analyser port on the {}", oos_hal::model::platform().caps.name));
+            self.push_err(format!(
+                "-241,\"Hardware missing\" no logic analyser port on the {}",
+                oos_hal::model::platform().caps.name
+            ));
             return None;
         }
         let bad = |s: &mut Self| {
@@ -3977,7 +4493,12 @@ impl Scpi {
         Ok(v)
     }
 
-    fn sourced(&mut self, ui: &Ui, arg: &str, f: impl FnOnce(&Ui, &str, &[WaveId]) -> Result<f64, ()>) -> Option<Vec<u8>> {
+    fn sourced(
+        &mut self,
+        ui: &Ui,
+        arg: &str,
+        f: impl FnOnce(&Ui, &str, &[WaveId]) -> Result<f64, ()>,
+    ) -> Option<Vec<u8>> {
         let src = match self.waves(arg_rest(arg)) {
             Ok(v) => v,
             Err(s) => {
@@ -4239,38 +4760,69 @@ impl Scpi {
         }
         if n.len() == 2 && kw(n0, "SSC") && kw(n[1], "MODE") {
             if query {
-                return t(if !ui.m.sim_ssc { "OFF" } else if ui.m.sim_ssc_center { "CENTER" } else { "DOWN" });
+                return t(if !ui.m.sim_ssc {
+                    "OFF"
+                } else if ui.m.sim_ssc_center {
+                    "CENTER"
+                } else {
+                    "DOWN"
+                });
             }
             match arg.trim().to_ascii_uppercase().as_str() {
                 "OFF" => ui.m.sim_ssc = false,
-                "DOWN" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = false; }
-                "CENTER" | "CENT" => { ui.m.sim_ssc = true; ui.m.sim_ssc_center = true; }
-                _ => { self.push_err("-224,\"Illegal parameter value\" SSC mode".into()); return None; }
+                "DOWN" => {
+                    ui.m.sim_ssc = true;
+                    ui.m.sim_ssc_center = false;
+                }
+                "CENTER" | "CENT" => {
+                    ui.m.sim_ssc = true;
+                    ui.m.sim_ssc_center = true;
+                }
+                _ => {
+                    self.push_err("-224,\"Illegal parameter value\" SSC mode".into());
+                    return None;
+                }
             }
             ui.mark_changed();
             return None;
         }
         if n.len() == 2 && (kw(n0, "SSC") || kw(n0, "JITTer")) {
             let setting = if kw(n0, "SSC") {
-                if kw(n[1], "DEViation") { Some((&mut ui.m.sim_ssc_deviation, 0.0, 0.05)) }
-                else if kw(n[1], "FREQuency") { Some((&mut ui.m.sim_ssc_hz, 1e3, 1e6)) }
-                else { None }
-            } else if kw(n[1], "DCD") { Some((&mut ui.m.sim_dcd_pp, 0.0, 100e-12)) }
-            else if kw(n[1], "CORRelated") { Some((&mut ui.m.sim_corr_rj, 0.0, 50e-12)) }
-            else if kw(n[1], "CORNer") { Some((&mut ui.m.sim_corr_hz, 1e3, 100e6)) }
-            else { None };
+                if kw(n[1], "DEViation") {
+                    Some((&mut ui.m.sim_ssc_deviation, 0.0, 0.05))
+                } else if kw(n[1], "FREQuency") {
+                    Some((&mut ui.m.sim_ssc_hz, 1e3, 1e6))
+                } else {
+                    None
+                }
+            } else if kw(n[1], "DCD") {
+                Some((&mut ui.m.sim_dcd_pp, 0.0, 100e-12))
+            } else if kw(n[1], "CORRelated") {
+                Some((&mut ui.m.sim_corr_rj, 0.0, 50e-12))
+            } else if kw(n[1], "CORNer") {
+                Some((&mut ui.m.sim_corr_hz, 1e3, 100e6))
+            } else {
+                None
+            };
             if let Some((value, min, max)) = setting {
-                if query { return t(&e(*value)); }
+                if query {
+                    return t(&e(*value));
+                }
                 match arg.trim().parse::<f64>() {
                     Ok(v) if v.is_finite() && v >= min && v <= max => *value = v,
-                    _ => { self.push_err("-224,\"Illegal parameter value\" SIM setting".into()); return None; }
+                    _ => {
+                        self.push_err("-224,\"Illegal parameter value\" SIM setting".into());
+                        return None;
+                    }
                 }
                 ui.mark_changed();
                 return None;
             }
         }
         if n.len() == 1 && (kw(n0, "PATTern") || n0.eq_ignore_ascii_case("PAT")) {
-            if query { return t(&format!("PRBS{}", ui.m.sim_prbs)); }
+            if query {
+                return t(&format!("PRBS{}", ui.m.sim_prbs));
+            }
             let a = arg.trim().to_ascii_uppercase();
             let order = a.strip_prefix("PRBS").unwrap_or(&a).trim_start_matches('-').parse::<u8>().ok();
             if let Some(p @ (7 | 9 | 13 | 15 | 23 | 31)) = order {
@@ -4349,7 +4901,11 @@ impl Scpi {
 
     fn wave_data(&mut self, ui: &Ui) -> Option<Vec<u8>> {
         // Bound output before taking a copy of the requested page. Metadata never copies samples.
-        let width = match self.wav_fmt { 0 => 1, 1 => 2, _ => 14 };
+        let width = match self.wav_fmt {
+            0 => 1,
+            1 => 2,
+            _ => 14,
+        };
         if self.page_count(ui).saturating_mul(width).saturating_add(11) > RESP_MAX as u64 {
             self.push_err("-223,\"Too much data; select a shorter waveform page\"".into());
             return None;
@@ -4362,7 +4918,9 @@ impl Scpi {
                 use std::fmt::Write as _;
                 let mut text = String::with_capacity(v.len().saturating_mul(14));
                 for (index, value) in v.iter().enumerate() {
-                    if index != 0 { text.push(','); }
+                    if index != 0 {
+                        text.push(',');
+                    }
                     let _ = write!(text, "{}", e(*value as f64));
                 }
                 block(text.as_bytes())
@@ -4378,7 +4936,8 @@ impl Scpi {
                 block(&b)
             }
             _ => {
-                let b: Vec<u8> = v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
+                let b: Vec<u8> =
+                    v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
                 block(&b)
             }
         })
@@ -4466,8 +5025,8 @@ fn meas_strip(ui: &Ui) -> String {
     for &(k, a, b) in &ui.m.meas2 {
         p.push(format!("{},{},{},{}", pair_token(k), wave_tok(a), wave_tok(b), e(ui.pair_at(k, a, b))));
     }
-    for (id,[a,b,c,d],value) in ui.catalog_export_values() {
-        p.push(format!("CAT{},{},{},{},{},{}",id,wave_tok(a),wave_tok(b),wave_tok(c),wave_tok(d),e(value)));
+    for (id, [a, b, c, d], value) in ui.catalog_export_values() {
+        p.push(format!("CAT{},{},{},{},{},{}", id, wave_tok(a), wave_tok(b), wave_tok(c), wave_tok(d), e(value)));
     }
     if ui.m.dvm_on {
         let mode = ["DC", "ACRMS", "ACDC"][ui.m.dvm_mode.min(2)];
@@ -4475,7 +5034,12 @@ fn meas_strip(ui: &Ui) -> String {
     }
     if ui.m.cnt_on {
         let mode = ["FREQUENCY", "PERIOD", "TOTALIZE"][ui.m.cnt_mode.min(2)];
-        p.push(format!("COUNTER,{},{},{}", mode, wave_tok(WaveId::Ch(ui.m.cnt_src.min(NCH - 1))), e(ui.counter_value())));
+        p.push(format!(
+            "COUNTER,{},{},{}",
+            mode,
+            wave_tok(WaveId::Ch(ui.m.cnt_src.min(NCH - 1))),
+            e(ui.counter_value())
+        ));
     }
     p.join(";")
 }
@@ -4599,7 +5163,10 @@ mod aux_out_tests {
         q(&mut ui, ":TRIGger:RS232:WHEN DATA");
         q(&mut ui, ":TRIG:RS232:RELation OUT");
         q(&mut ui, ":TRIG:RS232:DMAX 0x7e");
-        assert_eq!((q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus), ("OUT".to_string(), 0x7e, BusWhat::Data));
+        assert_eq!(
+            (q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus),
+            ("OUT".to_string(), 0x7e, BusWhat::Data)
+        );
         assert!(crate::store::setup_text(&ui.m).contains("ser.rel = Out\n"));
         q(&mut ui, ":TRIG:IIC:AWIDth 8");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));
@@ -4637,7 +5204,9 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":TIM:OFFS 2e-4");
         assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:POS?"), "2.000000E-04");
         assert!(err(&mut s, &mut ui).starts_with("0,"));
-        for bad in [":TIM:SCAL abc", ":TIM:FOO 1", ":TIM", ":MEAS:FOO 1", ":MEAS:SET:FOO?", ":SYST:DEB:FOO?", ":SYST:FOO 1"] {
+        for bad in
+            [":TIM:SCAL abc", ":TIM:FOO 1", ":TIM", ":MEAS:FOO 1", ":MEAS:SET:FOO?", ":SYST:DEB:FOO?", ":SYST:FOO 1"]
+        {
             line(&mut s, &mut ui, &cv, bad);
             let got = err(&mut s, &mut ui);
             assert!(got.starts_with("-113,"), "{}: {}", bad, got);
@@ -4656,100 +5225,190 @@ mod tests {
 
     #[test]
     fn compatibility_trigger_modes_roundtrip_actual_types() {
-        let (mut s,mut ui,cv)=reference_session();
-        for (token,reply,kind) in [("EDGE","EDGE",TrigType::Edge),("PULSe","PULS",TrigType::Pulse),("SLOPe","SLOP",TrigType::Slope),
-            ("VIDeo","VID",TrigType::Video),("PATTern","PATT",TrigType::Pattern),("DURation","DUR",TrigType::Duration),
-            ("TIMeout","TIM",TrigType::Timeout),("RUNT","RUNT",TrigType::Runt),("WINDow","WIND",TrigType::Window),
-            ("DELay","DEL",TrigType::Delay),("SETup","SET",TrigType::SetupHold),("NEDGe","NEDG",TrigType::NthEdge),("BUS","BUS",TrigType::Bus)] {
-            line(&mut s,&mut ui,&cv,&format!(":TRIG:MODE {token}"));assert_eq!(ui.m.trig_type,kind);
-            assert_eq!(line(&mut s,&mut ui,&cv,":TRIG:MODE?"),reply);
-            line(&mut s,&mut ui,&cv,&format!(":TRIG:MODE {reply}"));
-            assert_eq!(line(&mut s,&mut ui,&cv,":TRIG:TYPE?"),kind.name());assert_eq!(ui.m.trig_ref,Some(0));
+        let (mut s, mut ui, cv) = reference_session();
+        for (token, reply, kind) in [
+            ("EDGE", "EDGE", TrigType::Edge),
+            ("PULSe", "PULS", TrigType::Pulse),
+            ("SLOPe", "SLOP", TrigType::Slope),
+            ("VIDeo", "VID", TrigType::Video),
+            ("PATTern", "PATT", TrigType::Pattern),
+            ("DURation", "DUR", TrigType::Duration),
+            ("TIMeout", "TIM", TrigType::Timeout),
+            ("RUNT", "RUNT", TrigType::Runt),
+            ("WINDow", "WIND", TrigType::Window),
+            ("DELay", "DEL", TrigType::Delay),
+            ("SETup", "SET", TrigType::SetupHold),
+            ("NEDGe", "NEDG", TrigType::NthEdge),
+            ("BUS", "BUS", TrigType::Bus),
+        ] {
+            line(&mut s, &mut ui, &cv, &format!(":TRIG:MODE {token}"));
+            assert_eq!(ui.m.trig_type, kind);
+            assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:MODE?"), reply);
+            line(&mut s, &mut ui, &cv, &format!(":TRIG:MODE {reply}"));
+            assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:TYPE?"), kind.name());
+            assert_eq!(ui.m.trig_ref, Some(0));
         }
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("0,"));
-        line(&mut s,&mut ui,&cv,":TRIG:MODE MADEUP");assert_eq!(ui.m.trig_type,TrigType::Bus);
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-224,"));
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("0,"));
+        line(&mut s, &mut ui, &cv, ":TRIG:MODE MADEUP");
+        assert_eq!(ui.m.trig_type, TrigType::Bus);
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
     }
 
     #[test]
     fn compatibility_waveform_metadata_and_invalid_enums() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":WAV:SOUR R1;:WAV:FORM WORD");
-        for (mode,kind) in [("RAW",2),("NORM",0)] {
-            line(&mut s,&mut ui,&cv,&format!(":WAV:MODE {mode}"));
-            let pre=line(&mut s,&mut ui,&cv,":WAV:PRE?");let f:Vec<_>=pre.split(',').collect();
-            assert_eq!(f.len(),10);assert_eq!(f[0],"1");assert_eq!(f[1],kind.to_string());assert_eq!(f[2],"4000");
-            assert!((f[4].parse::<f64>().unwrap()-1e-9).abs()<1e-15);
-            assert_eq!(s.exec_line(&mut ui,&cv,":WAV:DATA?").len(),8011);
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":WAV:SOUR R1;:WAV:FORM WORD");
+        for (mode, kind) in [("RAW", 2), ("NORM", 0)] {
+            line(&mut s, &mut ui, &cv, &format!(":WAV:MODE {mode}"));
+            let pre = line(&mut s, &mut ui, &cv, ":WAV:PRE?");
+            let f: Vec<_> = pre.split(',').collect();
+            assert_eq!(f.len(), 10);
+            assert_eq!(f[0], "1");
+            assert_eq!(f[1], kind.to_string());
+            assert_eq!(f[2], "4000");
+            assert!((f[4].parse::<f64>().unwrap() - 1e-9).abs() < 1e-15);
+            assert_eq!(s.exec_line(&mut ui, &cv, ":WAV:DATA?").len(), 8011);
         }
-        line(&mut s,&mut ui,&cv,":WAV:MODE RAW");
-        for command in [":WAV:MODE WRONG",":WAV:MODE RAWsuffix",":WAV:FORM WRONG",":WAV:FORM WORDsuffix"] {
-            line(&mut s,&mut ui,&cv,command);assert_eq!(line(&mut s,&mut ui,&cv,":WAV:MODE?;:WAV:FORM?"),"RAW;WORD");
-            assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-224,"),"{command}");
+        line(&mut s, &mut ui, &cv, ":WAV:MODE RAW");
+        for command in [":WAV:MODE WRONG", ":WAV:MODE RAWsuffix", ":WAV:FORM WRONG", ":WAV:FORM WORDsuffix"] {
+            line(&mut s, &mut ui, &cv, command);
+            assert_eq!(line(&mut s, &mut ui, &cv, ":WAV:MODE?;:WAV:FORM?"), "RAW;WORD");
+            assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "{command}");
         }
     }
 
     #[test]
     fn compatibility_opc_single_waits_across_ticks_and_resumes_without_replaying_writes() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
-        let mut p=Program::new(":SINGLE;:TRIG:STAT?;*OPC?;:TRIG:STAT?");assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());
-        for _ in 0..3 {ui.step(0.2);assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());}
-        assert_eq!(captures(&ui),0.0);line(&mut s,&mut ui,&cv,":TRIG:FORC");ui.step(0.2);
-        assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(b"WAIT;1;STOP".to_vec()));assert_eq!(captures(&ui),1.0);
-        ui.step(0.2);assert_eq!(captures(&ui),1.0);line(&mut s,&mut ui,&cv,":RUN");
-        assert_eq!(line(&mut s,&mut ui,&cv,"*OPC?"),"1");
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
+        let mut p = Program::new(":SINGLE;:TRIG:STAT?;*OPC?;:TRIG:STAT?");
+        assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
+        for _ in 0..3 {
+            ui.step(0.2);
+            assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
+        }
+        assert_eq!(captures(&ui), 0.0);
+        line(&mut s, &mut ui, &cv, ":TRIG:FORC");
+        ui.step(0.2);
+        assert_eq!(s.poll_program(&mut ui, &cv, &mut p), Some(b"WAIT;1;STOP".to_vec()));
+        assert_eq!(captures(&ui), 1.0);
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0);
+        line(&mut s, &mut ui, &cv, ":RUN");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*OPC?"), "1");
     }
 
     #[test]
     fn compatibility_opc_events_clear_reset_and_immediate_adapter() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
-        assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");line(&mut s,&mut ui,&cv,"*CLS");
-        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");
-        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");assert_eq!(line(&mut s,&mut ui,&cv,"*OPC?"),"");
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-221,"));
-        line(&mut s,&mut ui,&cv,"*RST");assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"0");
-        line(&mut s,&mut ui,&cv,":STOP;*OPC");assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?;*ESR?"),"1;0");
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        line(&mut s, &mut ui, &cv, "*CLS");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
+        ui.step(0.2);
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*OPC?"), "");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-221,"));
+        line(&mut s, &mut ui, &cv, "*RST");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "0");
+        line(&mut s, &mut ui, &cv, ":STOP;*OPC");
+        assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?;*ESR?"), "1;0");
     }
 
     #[test]
     fn compatibility_raw_tcp_pending_opc_does_not_block_other_clients() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
-        let mut waiting=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();waiting.set_nonblocking(true).unwrap();
-        waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();for _ in 0..25 { s.poll(&mut ui,&cv); std::thread::sleep(std::time::Duration::from_millis(2)); }ui.step(0.2);for _ in 0..25 { s.poll(&mut ui,&cv); std::thread::sleep(std::time::Duration::from_millis(2)); }
-        let mut bytes=[0;128];assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(),ErrorKind::WouldBlock);
-        let mut control=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();control.write_all(b":TRIG:FORC\n").unwrap();
-        for _ in 0..25 { s.poll(&mut ui,&cv); std::thread::sleep(std::time::Duration::from_millis(2)); }ui.step(0.2);for _ in 0..25 { s.poll(&mut ui,&cv); std::thread::sleep(std::time::Duration::from_millis(2)); }let n=waiting.read(&mut bytes).unwrap();
-        assert_eq!(&bytes[..n],b"1;STOP\n");assert_eq!(captures(&ui),1.0);
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
+        let mut waiting = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
+        waiting.set_nonblocking(true).unwrap();
+        waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        ui.step(0.2);
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut bytes = [0; 128];
+        assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
+        let mut control = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
+        control.write_all(b":TRIG:FORC\n").unwrap();
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        ui.step(0.2);
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let n = waiting.read(&mut bytes).unwrap();
+        assert_eq!(&bytes[..n], b"1;STOP\n");
+        assert_eq!(captures(&ui), 1.0);
     }
 
     #[test]
     fn compatibility_cancelled_single_interrupts_query_and_does_not_follow_new_arm() {
-        for stored in [false,true] {
-            let (mut s,mut ui,cv)=if stored {reference_session()} else {session()};
-            line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
-            let mut p=Program::new("*OPC?;:RUN");assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());
-            ui.step(0.02);assert!(s.poll_program(&mut ui,&cv,&mut p).is_none(),"initial hardware stamp must not complete {stored:?} Single");
-            line(&mut s,&mut ui,&cv,":STOP;:SINGLE");
-            assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(Vec::new()));
-            assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));
-            assert_eq!(line(&mut s,&mut ui,&cv,"*ESR?"),"4", "cancelled query latches query-error bit, not OPC");assert_eq!(ui.m.trig_mode,TrigMode::Single);
-            let mut fresh=Program::new("*OPC?");assert!(s.poll_program(&mut ui,&cv,&mut fresh).is_none());
+        for stored in [false, true] {
+            let (mut s, mut ui, cv) = if stored { reference_session() } else { session() };
+            line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SINGLE;*OPC");
+            let mut p = Program::new("*OPC?;:RUN");
+            assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
+            ui.step(0.02);
+            assert!(
+                s.poll_program(&mut ui, &cv, &mut p).is_none(),
+                "initial hardware stamp must not complete {stored:?} Single"
+            );
+            line(&mut s, &mut ui, &cv, ":STOP;:SINGLE");
+            assert_eq!(s.poll_program(&mut ui, &cv, &mut p), Some(Vec::new()));
+            assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-410,"));
+            assert_eq!(line(&mut s, &mut ui, &cv, "*ESR?"), "4", "cancelled query latches query-error bit, not OPC");
+            assert_eq!(ui.m.trig_mode, TrigMode::Single);
+            let mut fresh = Program::new("*OPC?");
+            assert!(s.poll_program(&mut ui, &cv, &mut fresh).is_none());
         }
     }
 
     #[test]
     fn compatibility_hislip_defers_entire_multiline_payload_with_original_message_id() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
-        let mut server=crate::hislip::Server::open(0);
-        let mut client=TcpStream::connect(("127.0.0.1",server.port().unwrap())).unwrap();client.set_nonblocking(true).unwrap();
-        client.write_all(&crate::hislip::encode(0,0,0x0100_0000,b"hislip0")).unwrap();
-        for _ in 0..25 { server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-        let mut bytes=[0;1024];let n=client.read(&mut bytes).unwrap();let init=crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();assert_eq!(init.typ,1);
-        client.write_all(&crate::hislip::encode(7,0,77,b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
-        for _ in 0..25 { server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }ui.step(0.2);for _ in 0..25 { server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-        assert_eq!(client.read(&mut bytes).unwrap_err().kind(),ErrorKind::WouldBlock);
-        line(&mut s,&mut ui,&cv,":TRIG:FORC");ui.step(0.2);for _ in 0..25 { server.poll_async(&mut |p|s.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-        let n=client.read(&mut bytes).unwrap();let response=crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();
-        assert_eq!((response.typ,response.param),(7,77));assert_eq!(response.data,b"WAIT;1\nSTOP\n");
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
+        let mut server = crate::hislip::Server::open(0);
+        let mut client = TcpStream::connect(("127.0.0.1", server.port().unwrap())).unwrap();
+        client.set_nonblocking(true).unwrap();
+        client.write_all(&crate::hislip::encode(0, 0, 0x0100_0000, b"hislip0")).unwrap();
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut bytes = [0; 1024];
+        let n = client.read(&mut bytes).unwrap();
+        let init = crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();
+        assert_eq!(init.typ, 1);
+        client.write_all(&crate::hislip::encode(7, 0, 77, b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        ui.step(0.2);
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(client.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
+        line(&mut s, &mut ui, &cv, ":TRIG:FORC");
+        ui.step(0.2);
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let n = client.read(&mut bytes).unwrap();
+        let response = crate::hislip::take_message(&mut bytes[..n].to_vec()).unwrap().unwrap();
+        assert_eq!((response.typ, response.param), (7, 77));
+        assert_eq!(response.data, b"WAIT;1\nSTOP\n");
     }
 
     // Break it catches: SCPI keeping the net.allow of its start (a list changed on the screen counted only after a
@@ -4809,7 +5468,9 @@ mod tests {
         client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         for _ in 0..50 {
             s.poll(&mut ui, &cv);
-            if s.clients.is_empty() { break; }
+            if s.clients.is_empty() {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(2));
         }
         let mut answer = String::new();
@@ -4820,114 +5481,191 @@ mod tests {
     #[test]
     fn compatibility_disconnected_raw_client_cannot_resume_trailing_writes() {
         // a hang guard, not a time the test depends on
-        let guard=Duration::from_secs(60);
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10");
-        let mut client=TcpStream::connect(("127.0.0.1",s.port().unwrap())).unwrap();
+        let guard = Duration::from_secs(60);
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
+        let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();
         // until the program is in, however long the host takes to deliver the line (it was 50 polls, 100 ms)
-        let deadline=std::time::Instant::now()+guard;
+        let deadline = std::time::Instant::now() + guard;
         while !s.clients.first().is_some_and(|c| c.program.is_some()) {
-            s.poll(&mut ui,&cv);assert!(std::time::Instant::now()<deadline,"the program never arrived");
+            s.poll(&mut ui, &cv);
+            assert!(std::time::Instant::now() < deadline, "the program never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        client.shutdown(std::net::Shutdown::Both).unwrap();drop(client);
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+        drop(client);
         // The close goes through the host's network stack and can reach the server's socket after the next poll on a
         // busy computer; that poll would then resume the program. Wait until the server's side reads the end.
         s.clients[0].s.set_read_timeout(Some(guard)).unwrap();
-        assert_eq!(s.clients[0].s.peek(&mut [0u8;1]).expect("the close is readable at the server"),0);
-        line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);s.poll(&mut ui,&cv);
-        assert!(s.clients.is_empty());assert_eq!(ui.m.run,RunState::Stop);assert_eq!(captures(&ui),1.0);
+        assert_eq!(s.clients[0].s.peek(&mut [0u8; 1]).expect("the close is readable at the server"), 0);
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
+        ui.step(0.2);
+        s.poll(&mut ui, &cv);
+        assert!(s.clients.is_empty());
+        assert_eq!(ui.m.run, RunState::Stop);
+        assert_eq!(captures(&ui), 1.0);
     }
 
     #[test]
     fn compatibility_program_command_count_is_bounded_before_execution() {
-        let (mut s,mut ui,cv)=session();let old=ui.m.trig_level;
-        let message=format!("{}:TRIG:EDGE:LEV 2", ";".to_string()+&":TRIG:STAT?;".repeat(1025));
-        assert!(s.exec_line(&mut ui,&cv,&message).is_empty());assert_eq!(ui.m.trig_level,old);
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-363,"));
+        let (mut s, mut ui, cv) = session();
+        let old = ui.m.trig_level;
+        let message = format!("{}:TRIG:EDGE:LEV 2", ";".to_string() + &":TRIG:STAT?;".repeat(1025));
+        assert!(s.exec_line(&mut ui, &cv, &message).is_empty());
+        assert_eq!(ui.m.trig_level, old);
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-363,"));
     }
 
     #[test]
     fn compatibility_opc_waits_for_actual_large_sim_generation_but_not_future_captures() {
-        let (mut s,mut ui,cv)=session();let mut p=Program::new(":SIM:PLAY ON;*OPC?;:SIM:BUSY?");
-        assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());assert!(ui.sim_generating());
-        let deadline=std::time::Instant::now()+Duration::from_secs(15);
-        let response=loop {
+        let (mut s, mut ui, cv) = session();
+        let mut p = Program::new(":SIM:PLAY ON;*OPC?;:SIM:BUSY?");
+        assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
+        assert!(ui.sim_generating());
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let response = loop {
             ui.step(0.01);
-            if let Some(response)=s.poll_program(&mut ui,&cv,&mut p) {break response;}
-            assert!(std::time::Instant::now()<deadline,"SIM operation did not finish");std::thread::sleep(Duration::from_millis(2));
+            if let Some(response) = s.poll_program(&mut ui, &cv, &mut p) {
+                break response;
+            }
+            assert!(std::time::Instant::now() < deadline, "SIM operation did not finish");
+            std::thread::sleep(Duration::from_millis(2));
         };
-        assert!(response.starts_with(b"1;"));assert!(ui.ref_info(0).unwrap().0>262_144,"exercise real background default SSC");
-        line(&mut s,&mut ui,&cv,":STOP");
-        let (mut s,mut ui,cv)=session();let mut p=Program::new(":SIM:PLAY ON;*OPC?;:RUN");
-        assert!(s.poll_program(&mut ui,&cv,&mut p).is_none());line(&mut s,&mut ui,&cv,":SIM:PLAY OFF");
-        assert_eq!(s.poll_program(&mut ui,&cv,&mut p),Some(Vec::new()));
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));
+        assert!(response.starts_with(b"1;"));
+        assert!(ui.ref_info(0).unwrap().0 > 262_144, "exercise real background default SSC");
+        line(&mut s, &mut ui, &cv, ":STOP");
+        let (mut s, mut ui, cv) = session();
+        let mut p = Program::new(":SIM:PLAY ON;*OPC?;:RUN");
+        assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
+        line(&mut s, &mut ui, &cv, ":SIM:PLAY OFF");
+        assert_eq!(s.poll_program(&mut ui, &cv, &mut p), Some(Vec::new()));
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-410,"));
     }
 
     #[test]
     fn compatibility_newly_accepted_arm_cannot_complete_a_cancelled_prior_fence() {
-        let (mut s,mut ui,cv)=reference_session();line(&mut s,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE");
-        let mut old=Program::new("*OPC?;:RUN");assert!(s.poll_program(&mut ui,&cv,&mut old).is_none());
-        line(&mut s,&mut ui,&cv,":STOP;:TRIG:EDGE:LEV 0;:SINGLE");ui.step(0.2);assert_eq!(captures(&ui),1.0);
-        assert_eq!(s.poll_program(&mut ui,&cv,&mut old),Some(Vec::new()));
-        assert!(line(&mut s,&mut ui,&cv,":SYST:ERR?").starts_with("-410,"));assert_eq!(ui.m.run,RunState::Stop);
+        let (mut s, mut ui, cv) = reference_session();
+        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SINGLE");
+        let mut old = Program::new("*OPC?;:RUN");
+        assert!(s.poll_program(&mut ui, &cv, &mut old).is_none());
+        line(&mut s, &mut ui, &cv, ":STOP;:TRIG:EDGE:LEV 0;:SINGLE");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0);
+        assert_eq!(s.poll_program(&mut ui, &cv, &mut old), Some(Vec::new()));
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-410,"));
+        assert_eq!(ui.m.run, RunState::Stop);
     }
 
     #[test]
     fn compatibility_hislip_sync_and_async_clear_discard_pending_tail_without_stale_reply() {
-        fn read_message(socket:&mut TcpStream)->crate::hislip::Message {
-            let mut b=[0;4096];let n=socket.read(&mut b).unwrap();crate::hislip::take_message(&mut b[..n].to_vec()).unwrap().unwrap()
+        fn read_message(socket: &mut TcpStream) -> crate::hislip::Message {
+            let mut b = [0; 4096];
+            let n = socket.read(&mut b).unwrap();
+            crate::hislip::take_message(&mut b[..n].to_vec()).unwrap().unwrap()
         }
-        for asynchronous in [false,true] {
-            let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 10");
-            let mut server=crate::hislip::Server::open(0);let port=server.port().unwrap();
-            let mut sync=TcpStream::connect(("127.0.0.1",port)).unwrap();sync.set_nonblocking(true).unwrap();
-            sync.write_all(&crate::hislip::encode(0,0,0x0100_0000,b"hislip0")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-            let session=read_message(&mut sync).param as u16;
-            sync.write_all(&crate::hislip::encode(7,0,42,b":SINGLE;*OPC?;:RUN\n")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-            if asynchronous {
-                let mut control=TcpStream::connect(("127.0.0.1",port)).unwrap();control.set_nonblocking(true).unwrap();
-                control.write_all(&crate::hislip::encode(17,0,session as u32,b"")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-                assert_eq!(read_message(&mut control).typ,18);
-                control.write_all(&crate::hislip::encode(19,0,0,b"")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-                assert_eq!(read_message(&mut control).typ,23);
-            } else {
-                sync.write_all(&crate::hislip::encode(8,0,0,b"")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-                assert_eq!(read_message(&mut sync).typ,9);
+        for asynchronous in [false, true] {
+            let (mut scpi, mut ui, cv) = reference_session();
+            line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
+            let mut server = crate::hislip::Server::open(0);
+            let port = server.port().unwrap();
+            let mut sync = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            sync.set_nonblocking(true).unwrap();
+            sync.write_all(&crate::hislip::encode(0, 0, 0x0100_0000, b"hislip0")).unwrap();
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 0");ui.step(0.2);for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
-            assert_eq!(ui.m.run,RunState::Stop);let mut b=[0;128];assert_eq!(sync.read(&mut b).unwrap_err().kind(),ErrorKind::WouldBlock);
-            sync.write_all(&crate::hislip::encode(7,0,44,b"*IDN?\n")).unwrap();for _ in 0..25 { server.poll_async(&mut|p|scpi.poll_program(&mut ui,&cv,p)); std::thread::sleep(std::time::Duration::from_millis(2)); }
+            let session = read_message(&mut sync).param as u16;
+            sync.write_all(&crate::hislip::encode(7, 0, 42, b":SINGLE;*OPC?;:RUN\n")).unwrap();
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            if asynchronous {
+                let mut control = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                control.set_nonblocking(true).unwrap();
+                control.write_all(&crate::hislip::encode(17, 0, session as u32, b"")).unwrap();
+                for _ in 0..25 {
+                    server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                assert_eq!(read_message(&mut control).typ, 18);
+                control.write_all(&crate::hislip::encode(19, 0, 0, b"")).unwrap();
+                for _ in 0..25 {
+                    server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                assert_eq!(read_message(&mut control).typ, 23);
+            } else {
+                sync.write_all(&crate::hislip::encode(8, 0, 0, b"")).unwrap();
+                for _ in 0..25 {
+                    server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                assert_eq!(read_message(&mut sync).typ, 9);
+            }
+            line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
+            ui.step(0.2);
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert_eq!(ui.m.run, RunState::Stop);
+            let mut b = [0; 128];
+            assert_eq!(sync.read(&mut b).unwrap_err().kind(), ErrorKind::WouldBlock);
+            sync.write_all(&crate::hislip::encode(7, 0, 44, b"*IDN?\n")).unwrap();
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             assert!(read_message(&mut sync).data.starts_with(b"OOS,"));
         }
     }
 
     #[test]
     fn compatibility_sweep_single_allocates_new_arm_after_a_completed_single() {
-        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":SINGLE");ui.step(0.2);assert_eq!(captures(&ui),1.0);
-        let mut program=Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:TRIG:SWE SING;*OPC?");
-        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none(),"a previous Single receipt must not complete the SWEEP arm");
-        ui.step(0.2);assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());assert_eq!(captures(&ui),1.0);
-        assert_eq!((ui.m.run,ui.m.status),(RunState::Run,TrigStatus::Wait));
+        let (mut scpi, mut ui, cv) = reference_session();
+        line(&mut scpi, &mut ui, &cv, ":SINGLE");
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0);
+        let mut program = Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:TRIG:SWE SING;*OPC?");
+        assert!(
+            scpi.poll_program(&mut ui, &cv, &mut program).is_none(),
+            "a previous Single receipt must not complete the SWEEP arm"
+        );
+        ui.step(0.2);
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+        assert_eq!(captures(&ui), 1.0);
+        assert_eq!((ui.m.run, ui.m.status), (RunState::Run, TrigStatus::Wait));
     }
 
     #[test]
     fn compatibility_pending_and_invalid_program_errors_stay_bounded() {
-        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":TRIG:EDGE:LEV 10;:SINGLE");
-        for _ in 0..100 {assert!(scpi.exec_line_checked(&mut ui,&cv,"*OPC?").is_err());}
-        assert!(scpi.err.len()<=ERR_MAX);
-        let invalid=":TRIG:STAT?;".repeat(1025);
-        for _ in 0..100 {scpi.exec_line(&mut ui,&cv,&invalid);}
-        assert!(scpi.err.len()<=ERR_MAX);assert!(scpi.err.iter().all(|error|error.len()<=ERR_LEN));
+        let (mut scpi, mut ui, cv) = reference_session();
+        line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 10;:SINGLE");
+        for _ in 0..100 {
+            assert!(scpi.exec_line_checked(&mut ui, &cv, "*OPC?").is_err());
+        }
+        assert!(scpi.err.len() <= ERR_MAX);
+        let invalid = ":TRIG:STAT?;".repeat(1025);
+        for _ in 0..100 {
+            scpi.exec_line(&mut ui, &cv, &invalid);
+        }
+        assert!(scpi.err.len() <= ERR_MAX);
+        assert!(scpi.err.iter().all(|error| error.len() <= ERR_LEN));
     }
 
     #[test]
     fn compatibility_setup_single_rearms_with_a_fresh_operation_identity() {
-        let (mut scpi,mut ui,cv)=reference_session();line(&mut scpi,&mut ui,&cv,":SINGLE");ui.step(0.2);
-        let mut program=Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:SYST:SET trig_mode = Single;*OPC?");
-        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());ui.step(0.2);
-        assert!(scpi.poll_program(&mut ui,&cv,&mut program).is_none());assert_eq!(captures(&ui),1.0);
+        let (mut scpi, mut ui, cv) = reference_session();
+        line(&mut scpi, &mut ui, &cv, ":SINGLE");
+        ui.step(0.2);
+        let mut program = Program::new(":TRIG:SWE NORM;:RUN;:TRIG:EDGE:LEV 10;:SYST:SET trig_mode = Single;*OPC?");
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+        ui.step(0.2);
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+        assert_eq!(captures(&ui), 1.0);
     }
 
     #[test]
@@ -4936,13 +5674,19 @@ mod tests {
         ui.set_offline(true);
         for slot in 0..2 {
             let values = (0..4000).map(|i| if slot == 0 || i % 40 < 20 { -0.5 } else { 0.5 }).collect();
-            ui.commit_waveform_traces_at(vec![crate::store::WaveTrace { v: values, dt: 1e-9, t0: 2e-6, label: format!("R{}", slot + 1) }], "source-change", slot).unwrap();
+            ui.commit_waveform_traces_at(
+                vec![crate::store::WaveTrace { v: values, dt: 1e-9, t0: 2e-6, label: format!("R{}", slot + 1) }],
+                "source-change",
+                slot,
+            )
+            .unwrap();
         }
         let original = [ui.ref_volts(0), ui.ref_volts(1)];
         line(&mut scpi, &mut ui, &cv, ":TRIG:SOUR R1;:TRIG:MODE EDGE;:TRIG:EDGE:LEV 0;:TIM:SCAL 1e-8;:TIM:OFFS 3e-6");
         let mut old = Program::new(":SINGLE;*OPC?;:RUN");
         assert!(scpi.poll_program(&mut ui, &cv, &mut old).is_none());
-        ui.step(0.2); assert_eq!(captures(&ui), 0.0);
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 0.0);
         assert!(scpi.poll_program(&mut ui, &cv, &mut old).is_none());
         // Use the UI acquisition router directly: a SCPI mark_changed call here
         // would mask a missing operation-token hook on the actual source change.
@@ -4954,8 +5698,10 @@ mod tests {
         assert!(scpi.poll_program(&mut ui, &cv, &mut new).is_none());
         ui.step(0.2);
         assert_eq!(scpi.poll_program(&mut ui, &cv, &mut new), Some(b"1;STOP".to_vec()));
-        assert_eq!(captures(&ui), 1.0); assert_eq!(ui.m.trig_ref, Some(1));
-        ui.step(0.2); assert_eq!(captures(&ui), 1.0, "the cancelled query's trailing RUN must never execute");
+        assert_eq!(captures(&ui), 1.0);
+        assert_eq!(ui.m.trig_ref, Some(1));
+        ui.step(0.2);
+        assert_eq!(captures(&ui), 1.0, "the cancelled query's trailing RUN must never execute");
         assert_eq!([ui.ref_volts(0), ui.ref_volts(1)], original);
     }
 
@@ -4982,7 +5728,9 @@ mod tests {
     #[test]
     fn generic_model_queries_preserve_statistics_configuration_and_pending_requests() {
         let (mut s, mut ui, cv) = session();
-        for _ in 0..4 { ui.step(0.05); }
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
         let statistics = ui.measurement_statistics_snapshot_for_test();
         assert!(statistics.iter().any(|&(count, _)| count >= 3), "seed statistics from genuine acquired demo frames");
         let configuration = crate::store::setup_text(&ui.m);
@@ -5003,7 +5751,11 @@ mod tests {
         s.clients.push(Client { s: stream, buf: pending.clone(), program: None });
         for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {
             assert!(!line(&mut s, &mut ui, &cv, query).is_empty(), "{query} must return its existing reply");
-            assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve every statistic bit-for-bit");
+            assert_eq!(
+                ui.measurement_statistics_snapshot_for_test(),
+                statistics,
+                "{query} must preserve every statistic bit-for-bit"
+            );
             assert_eq!(crate::store::setup_text(&ui.m), configuration, "{query} must not change configuration");
             assert_eq!(ui.workflow_state(), workflow, "{query} must not change acquisition/run state");
             assert_eq!(ui.m.hw_stamp, acquisition_stamp);
@@ -5013,18 +5765,22 @@ mod tests {
             assert_eq!((s.wav_src, s.wav_fmt, s.wav_mode), (WaveId::Ref(2), 1, 2));
         }
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 0.000005");
-        assert!(ui.measurement_statistics_snapshot_for_test().is_empty(), "a successful setting still invalidates statistics");
+        assert!(
+            ui.measurement_statistics_snapshot_for_test().is_empty(),
+            "a successful setting still invalidates statistics"
+        );
         assert!((ui.m.time_per_div() as f64 - 5e-6).abs() < 1e-12);
         assert_eq!(s.err, errors);
         assert_eq!(s.clients[0].buf, pending);
     }
 
-
     #[test]
     fn unsupported_write_only_queries_preserve_records_statistics_and_error_queue() {
         for run in [RunState::Run, RunState::Stop] {
             let (mut s, mut ui, cv) = session();
-            for _ in 0..4 { ui.step(0.05); }
+            for _ in 0..4 {
+                ui.step(0.05);
+            }
             ui.m.run = run;
             ui.m.trig_mode = TrigMode::Normal;
             ui.m.trig_level = 0.125;
@@ -5038,17 +5794,32 @@ mod tests {
             assert_eq!(s.err.len(), 2);
             for query in ["RUN?", ":STOP?", ":SING?", ":SINGLE?", "*CLS?", "*RST?", ":CLE?", ":CLEAR?"] {
                 let errors = s.err.clone();
-                assert!(line(&mut s, &mut ui, &cv, query).starts_with("-113,"), "{query} must answer Undefined header without acting");
+                assert!(
+                    line(&mut s, &mut ui, &cv, query).starts_with("-113,"),
+                    "{query} must answer Undefined header without acting"
+                );
                 assert_eq!(crate::store::setup_text(&ui.m), configuration, "{query} must not execute its action");
                 assert_eq!(ui.workflow_state(), workflow, "{query} must preserve Run/Stop and acquisition state");
-                assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{query} must preserve all acquired statistics");
-                assert_eq!(ui.record_volts(0).iter().map(|value| value.to_bits()).collect::<Vec<_>>(), record, "{query} must not clear data");
+                assert_eq!(
+                    ui.measurement_statistics_snapshot_for_test(),
+                    statistics,
+                    "{query} must preserve all acquired statistics"
+                );
+                assert_eq!(
+                    ui.record_volts(0).iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                    record,
+                    "{query} must not clear data"
+                );
                 assert_eq!(s.err.len(), errors.len() + 1);
                 assert_eq!(&s.err[..errors.len()], errors.as_slice(), "{query} must not clear existing errors");
                 assert!(s.err.last().unwrap().starts_with("-113,"), "unsupported query must report Undefined header");
             }
             let errors = s.err.clone();
-            assert_eq!(line(&mut s, &mut ui, &cv, ":AUTOSCALE?"), "0", "the existing supported status query stays valid");
+            assert_eq!(
+                line(&mut s, &mut ui, &cv, ":AUTOSCALE?"),
+                "0",
+                "the existing supported status query stays valid"
+            );
             assert_eq!(line(&mut s, &mut ui, &cv, "*OPC?"), "1");
             assert_eq!(s.err, errors);
             assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
@@ -5059,8 +5830,20 @@ mod tests {
         ui.set_offline(true);
         let mut values = vec![3.3; points];
         let bits = std::iter::once(false).chain((0..8).map(|bit| 0xa5u8 >> bit & 1 != 0)).chain(std::iter::once(true));
-        for (bit, high) in bits.enumerate() { values[100 + bit * 20..100 + (bit + 1) * 20].fill(if high { 3.3 } else { 0.0 }); }
-        ui.commit_waveform_traces(vec![crate::store::WaveTrace { v: values, dt: 1.0 / (115_200.0 * 20.0), t0: -0.008, label: "UART reference".into() }], "reference", true).unwrap();
+        for (bit, high) in bits.enumerate() {
+            values[100 + bit * 20..100 + (bit + 1) * 20].fill(if high { 3.3 } else { 0.0 });
+        }
+        ui.commit_waveform_traces(
+            vec![crate::store::WaveTrace {
+                v: values,
+                dt: 1.0 / (115_200.0 * 20.0),
+                t0: -0.008,
+                label: "UART reference".into(),
+            }],
+            "reference",
+            true,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -5078,7 +5861,10 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SOUR R10;:DEC:SOUR?"), "R1");
         assert_eq!(crate::store::setup_text(&ui.m), state);
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"));
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CS NONE;:DEC:SOUR4 NONE;:DEC:DIFF NONE;:DEC:CS?;:DEC:SOUR4?;:DEC:DIFF?"), "NONE;NONE;NONE");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DEC:CS NONE;:DEC:SOUR4 NONE;:DEC:DIFF NONE;:DEC:CS?;:DEC:SOUR4?;:DEC:DIFF?"),
+            "NONE;NONE;NONE"
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SEL 2;:DEC:SEL?;:DEC:SEL 1;:DEC:SOUR?"), "2;R1");
         assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
     }
@@ -5104,13 +5890,22 @@ mod tests {
     #[test]
     fn cphy_scpi_configures_three_refs_and_exports_the_published_16_bit_word() {
         let (mut s, mut ui, cv) = session();
-        let mut symbols = vec![3; 12]; symbols.extend([3,4,4,4,4,4,3]);
-        symbols.extend([0,2,2,4,1,0,0]); symbols.extend([4; 7]);
+        let mut symbols = vec![3; 12];
+        symbols.extend([3, 4, 4, 4, 4, 4, 3]);
+        symbols.extend([0, 2, 2, 4, 1, 0, 0]);
+        symbols.extend([4; 7]);
         let states = oos_dsp::cphy::states_for_symbols(0, &symbols);
-        let traces = (0..3).map(|wire| crate::store::WaveTrace {
-            v: states.iter().flat_map(|&state| std::iter::repeat(oos_dsp::cphy::wire_values(state)[wire]).take(20)).collect(),
-            dt: 5e-12, t0: -12e-9, label: format!("C-PHY {}", ['A','B','C'][wire]),
-        }).collect();
+        let traces = (0..3)
+            .map(|wire| crate::store::WaveTrace {
+                v: states
+                    .iter()
+                    .flat_map(|&state| std::iter::repeat(oos_dsp::cphy::wire_values(state)[wire]).take(20))
+                    .collect(),
+                dt: 5e-12,
+                t0: -12e-9,
+                label: format!("C-PHY {}", ['A', 'B', 'C'][wire]),
+            })
+            .collect();
         ui.commit_waveform_traces(traces, "C-PHY fixture", true).unwrap();
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:PROTO CPHY;:DEC:SOUR R1;:DEC:SOUR2 R2;:DEC:CS R3;:DEC:STAT ON;:DEC:PROTO?;:DEC:SOUR?;:DEC:SOUR2?;:DEC:CS?"), "C-PHY;R1;R2;R3");
         let events = line(&mut s, &mut ui, &cv, ":DEC:EVEN?");
@@ -5127,10 +5922,17 @@ mod tests {
     fn cphy_known_rate_roundtrips_per_decoder_setup_and_rejects_invalid_values() {
         let (mut s, mut ui, cv) = session();
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CPHY:RATE?"), "AUTO");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:PROTO CPHY;:DEC:CPHY:RATE 2.25e9;:DEC:CPHY:RATE?;:DEC:SRAT?"), "2.250000E+09;2.250000E+09");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DEC:PROTO CPHY;:DEC:CPHY:RATE 2.25e9;:DEC:CPHY:RATE?;:DEC:SRAT?"),
+            "2.250000E+09;2.250000E+09"
+        );
         let configured = crate::store::setup_text(&ui.m);
         assert_eq!(crate::store::parse_setup(&configured).unwrap().dec_cphy_rate, 2.25e9);
-        let old_setup = configured.lines().filter(|line| !line.trim_start().starts_with("dec_cphy_rate") && !line.contains(".dec_cphy_rate")).collect::<Vec<_>>().join("\n");
+        let old_setup = configured
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("dec_cphy_rate") && !line.contains(".dec_cphy_rate"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(crate::store::parse_setup(&old_setup).unwrap().dec_cphy_rate, 0.0, "old setups keep Auto");
         for bad in ["-1", "NaN", "inf", "1e13", "garbage"] {
             line(&mut s, &mut ui, &cv, &format!(":DEC:CPHY:RATE {bad}"));
@@ -5140,7 +5942,10 @@ mod tests {
             assert!(crate::store::set(&mut restored, "dec_cphy_rate", bad).is_err());
             assert_eq!(restored.dec_cphy_rate, 2.25e9);
         }
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:SEL 2;:DEC:CPHY:RATE?;:DEC:SEL 1;:DEC:CPHY:RATE?"), "AUTO;2.250000E+09");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DEC:SEL 2;:DEC:CPHY:RATE?;:DEC:SEL 1;:DEC:CPHY:RATE?"),
+            "AUTO;2.250000E+09"
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:CPHY:RATE AUTO;:DEC:CPHY:RATE?"), "AUTO");
         assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
     }
@@ -5148,7 +5953,9 @@ mod tests {
     #[test]
     fn write_only_actions_without_query_suffix_still_execute() {
         let (mut s, mut ui, cv) = session();
-        for _ in 0..4 { ui.step(0.05); }
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
         assert!(!ui.record_volts(0).is_empty());
         line(&mut s, &mut ui, &cv, ":STOP");
         assert_eq!(ui.m.run, RunState::Stop);
@@ -5174,8 +5981,7 @@ mod tests {
         let (mut s, mut ui, cv) = session();
         line(&mut s, &mut ui, &cv, ":LA:STAT ON;:TRIG:EDGE:SOUR D7");
         assert_eq!(ui.m.trig_line(), Some(7), "D7 must be the active digital source");
-        assert_eq!(line(&mut s, &mut ui, &cv,
-            ":TRIG:EDGE:SOUR?;:TRIG:SOUR?;:TRIG:SOUR2?"), "D7;D7;CHAN4");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR?;:TRIG:SOUR?;:TRIG:SOUR2?"), "D7;D7;CHAN4");
         assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
 
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR CHAN2");
@@ -5193,26 +5999,41 @@ mod tests {
 
     #[test]
     fn selected_catalog_rows_are_exported_and_setup_clear_accepts_an_empty_catalog() {
-        let (mut s, mut ui, cv)=session();
-        for amplitude in [2.0,0.5] {
-            let mut csv=String::from("Time (s),Volts\n");
-            for i in 0..1000 { csv.push_str(&format!("{:.12e},{}\n",i as f64*1e-6,amplitude*(i as f64*std::f64::consts::TAU/20.0).sin())); }
-            ui.load_waveform_auto(csv.as_bytes(),"power.csv").unwrap();
+        let (mut s, mut ui, cv) = session();
+        for amplitude in [2.0, 0.5] {
+            let mut csv = String::from("Time (s),Volts\n");
+            for i in 0..1000 {
+                csv.push_str(&format!(
+                    "{:.12e},{}\n",
+                    i as f64 * 1e-6,
+                    amplitude * (i as f64 * std::f64::consts::TAU / 20.0).sin()
+                ));
+            }
+            ui.load_waveform_auto(csv.as_bytes(), "power.csv").unwrap();
         }
-        ui.set_offline(true);ui.m.meas_full_record=true;ui.m.meas.clear();ui.m.meas2.clear();
-        assert_eq!(line(&mut s,&mut ui,&cv,":SYST:SET cat = 90:R1:R2:3:4;:SYST:ERR?"),"0,\"No error\"");
-        let end=std::time::Instant::now()+Duration::from_secs(10);
-        let answer=loop {
-            let answer=line(&mut s,&mut ui,&cv,":MEAS:STRIP?");
-            let value=answer.rsplit(',').next().unwrap().parse::<f64>().unwrap();
-            if value.abs()<1e30 { assert!((value-0.5).abs()<0.01,"{answer}");break answer; }
-            assert!(std::time::Instant::now()<end,"{answer}");ui.step(0.0);std::thread::sleep(Duration::from_millis(1));
+        ui.set_offline(true);
+        ui.m.meas_full_record = true;
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:SET cat = 90:R1:R2:3:4;:SYST:ERR?"), "0,\"No error\"");
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        let answer = loop {
+            let answer = line(&mut s, &mut ui, &cv, ":MEAS:STRIP?");
+            let value = answer.rsplit(',').next().unwrap().parse::<f64>().unwrap();
+            if value.abs() < 1e30 {
+                assert!((value - 0.5).abs() < 0.01, "{answer}");
+                break answer;
+            }
+            assert!(std::time::Instant::now() < end, "{answer}");
+            ui.step(0.0);
+            std::thread::sleep(Duration::from_millis(1));
         };
-        assert!(answer.starts_with("CAT90,R1,R2,CHAN3,CHAN4,"),"{answer}");
-        assert_eq!(line(&mut s,&mut ui,&cv,":MEAS:READOUT?"),answer);
-        assert_eq!(captures(&ui),0.0,"SCPI row exports are not acquisitions");
-        assert_eq!(line(&mut s,&mut ui,&cv,":SYST:SET cat = ;:SYST:ERR?"),"0,\"No error\"");
-        assert!(ui.m.cat.is_empty());assert_eq!(line(&mut s,&mut ui,&cv,":MEAS:STRIP?"),"");
+        assert!(answer.starts_with("CAT90,R1,R2,CHAN3,CHAN4,"), "{answer}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:READOUT?"), answer);
+        assert_eq!(captures(&ui), 0.0, "SCPI row exports are not acquisitions");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:SET cat = ;:SYST:ERR?"), "0,\"No error\"");
+        assert!(ui.m.cat.is_empty());
+        assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STRIP?"), "");
     }
 
     #[test]
@@ -5221,15 +6042,22 @@ mod tests {
         let mut csv = String::from("Time (s),Volts\n");
         for i in 0..800 {
             let k = i % 400;
-            let v = match k { 0..=99 => -0.5, 100..=199 => -0.5 + (k - 100) as f64 / 99.0,
-                200..=299 => 0.5, _ => 0.5 - (k - 300) as f64 / 99.0 };
+            let v = match k {
+                0..=99 => -0.5,
+                100..=199 => -0.5 + (k - 100) as f64 / 99.0,
+                200..=299 => 0.5,
+                _ => 0.5 - (k - 300) as f64 / 99.0,
+            };
             csv.push_str(&format!("{:.12e},{v}\n", 0.001 + i as f64 * 1e-9));
         }
         ui.load_waveform_bytes(csv.as_bytes(), "row-levels.csv").unwrap();
-        ui.m.run = RunState::Stop; ui.m.meas_full_record = true;
+        ui.m.run = RunState::Stop;
+        ui.m.meas_full_record = true;
         let id = WaveId::Ref(0);
-        ui.m.meas = vec![(Meas::Rise, id), (Meas::TVmax, id)]; ui.m.meas2.clear();
-        ui.set_meas_refs(0, 0.2, 0.8); ui.set_meas_refs(1, 0.2, 0.8);
+        ui.m.meas = vec![(Meas::Rise, id), (Meas::TVmax, id)];
+        ui.m.meas2.clear();
+        ui.set_meas_refs(0, 0.2, 0.8);
+        ui.set_meas_refs(1, 0.2, 0.8);
         let shared = ui.meas_at(id, Meas::Rise);
         let own = ui.fact_meas(Meas::Rise, id);
         assert!(own < shared * 0.85, "row {own}, shared {shared}");
@@ -5257,7 +6085,14 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:GATING?"), "SCREEN");
         let vpp = |s: &mut Scpi, ui: &mut Ui| line(s, ui, &cv, ":MEAS:ITEM? VPP,R1").parse::<f64>().unwrap();
         let first = vpp(&mut s, &mut ui);
-        assert!((first - 0.5).abs() < 1e-6, "first screen Vpp {first}, timebase {:?}, delay {}, zoom {}, state {}", ui.m.time_per_div(), ui.m.delay, ui.m.zoom, ui.workflow_state());
+        assert!(
+            (first - 0.5).abs() < 1e-6,
+            "first screen Vpp {first}, timebase {:?}, delay {}, zoom {}, state {}",
+            ui.m.time_per_div(),
+            ui.m.delay,
+            ui.m.zoom,
+            ui.workflow_state()
+        );
         line(&mut s, &mut ui, &cv, ":TIM:OFFS 3e-6");
         assert!((vpp(&mut s, &mut ui) - 1.5).abs() < 1e-6, "SCREEN follows the stopped viewport");
 
@@ -5318,13 +6153,19 @@ mod tests {
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         client.write_all(b"*IDN?;*OPC?\n").unwrap();
-        for _ in 0..50 { s.poll(&mut ui, &cv); std::thread::sleep(Duration::from_millis(2)); }
+        for _ in 0..50 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let mut response = std::io::BufReader::new(client.try_clone().unwrap());
         let mut first = String::new();
         std::io::BufRead::read_line(&mut response, &mut first).unwrap();
         assert!(first.starts_with("OOS,") && first.ends_with(";1\n"), "{first:?}");
         client.write_all(b"*OPC?\n").unwrap();
-        for _ in 0..50 { s.poll(&mut ui, &cv); std::thread::sleep(Duration::from_millis(2)); }
+        for _ in 0..50 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let mut second = String::new();
         std::io::BufRead::read_line(&mut response, &mut second).unwrap();
         assert_eq!(second, "1\n", "compound replies must not leave a stray response for the next query");
@@ -5350,14 +6191,28 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":SIM:SSC:MODE CENTER;:SIM:SSC:DEV 0.007;:SIM:SSC:FREQ 40000;:SIM:JITT:DCD 4e-12;:SIM:JITT:CORR 2e-12;:SIM:JITT:CORN 2e6;:SIM:PATT PRBS-13");
         assert_eq!(line(&mut s, &mut ui, &cv, ":SIM:SSC:MODE?;:SIM:PATT?;:SIM:BUSY?"), "CENTER;PRBS13;0");
         for (command, expected) in [
-            (":SIM:SSC:DEV?", 0.007), (":SIM:SSC:FREQ?", 40000.0),
-            (":SIM:JITT:DCD?", 4e-12), (":SIM:JITT:CORR?", 2e-12), (":SIM:JITT:CORN?", 2e6),
+            (":SIM:SSC:DEV?", 0.007),
+            (":SIM:SSC:FREQ?", 40000.0),
+            (":SIM:JITT:DCD?", 4e-12),
+            (":SIM:JITT:CORR?", 2e-12),
+            (":SIM:JITT:CORN?", 2e6),
         ] {
             let actual: f64 = line(&mut s, &mut ui, &cv, command).parse().unwrap();
             assert!((actual - expected).abs() <= expected.abs() * 1e-6, "{command}: {actual}");
         }
-        assert!((0..NREF).all(|slot| ui.ref_volts(slot).is_empty()), "configuration must not replace sources until Play");
-        for command in [":SIM:SSC:MODE BAD", ":SIM:SSC:DEV NaN", ":SIM:SSC:FREQ 0", ":SIM:JITT:DCD -1", ":SIM:JITT:CORR inf", ":SIM:JITT:CORN 1e30", ":SIM:PATT PRBS8"] {
+        assert!(
+            (0..NREF).all(|slot| ui.ref_volts(slot).is_empty()),
+            "configuration must not replace sources until Play"
+        );
+        for command in [
+            ":SIM:SSC:MODE BAD",
+            ":SIM:SSC:DEV NaN",
+            ":SIM:SSC:FREQ 0",
+            ":SIM:JITT:DCD -1",
+            ":SIM:JITT:CORR inf",
+            ":SIM:JITT:CORN 1e30",
+            ":SIM:PATT PRBS8",
+        ] {
             line(&mut s, &mut ui, &cv, command);
             assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "{command}");
         }
@@ -5431,7 +6286,8 @@ mod tests {
                 triggered: true,
                 partial: false,
                 raw: None,
-                la: None, pairs: false
+                la: None,
+                pairs: false,
             };
             crate::store::wave_bin(&rec, &m)
         };
@@ -5541,7 +6397,12 @@ mod tests {
     #[test]
     fn reference_commands_and_a_raw_word_page() {
         let (mut s, mut ui, cv) = reference_session();
-        line(&mut s, &mut ui, &cv, ":REF:CURR 1;:REF:SOUR 1,CHAN2;:REF:VSC 1,0.2;:REF:VOFF 1,-0.05;:REF:LAB:CONT 1,lane");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            ":REF:CURR 1;:REF:SOUR 1,CHAN2;:REF:VSC 1,0.2;:REF:VOFF 1,-0.05;:REF:LAB:CONT 1,lane",
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":REF:CURR?;:REF:SOUR? 1;:REF:LAB:CONT? 1"), "1;CHAN2;lane");
         let vsc: f64 = line(&mut s, &mut ui, &cv, ":REF:VSC? 1").parse().unwrap();
         let voff: f64 = line(&mut s, &mut ui, &cv, ":REF:VOFF? 1").parse().unwrap();
@@ -5571,7 +6432,12 @@ mod tests {
     fn cursors_and_a_readout_round_trip() {
         let (mut s, mut ui, cv) = reference_session();
         line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-6;:TIM:MAIN:OFFS 0;:REF:VSC 1,1;:REF:VOFF 1,0");
-        line(&mut s, &mut ui, &cv, ":CURS:MODE MAN;:CURS:MAN:TYPE TIME;:CURS:MAN:SOUR R1;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            ":CURS:MODE MAN;:CURS:MAN:TYPE TIME;:CURS:MAN:SOUR R1;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6",
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?;:CURS:MAN:TYPE?;:CURS:MAN:SOUR?"), "MAN;TIME;R1");
         assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?"), "0.000000E+00");
         let dx: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:XDEL?").parse().unwrap();
@@ -5602,8 +6468,16 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":MEAS:CLE");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:STR?"), "");
 
-        line(&mut s, &mut ui, &cv, ":DVM:ENAB ON;:DVM:SOUR CHAN2;:DVM:MODE ACRMS;:COUN:ENAB ON;:COUN:MODE PER;:COUN:NDIG 6");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DVM:ENAB?;:DVM:SOUR?;:DVM:MODE?;:COUN:ENAB?;:COUN:MODE?;:COUN:NDIG?"), "1;CHAN2;ACRMS;1;PER;6");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            ":DVM:ENAB ON;:DVM:SOUR CHAN2;:DVM:MODE ACRMS;:COUN:ENAB ON;:COUN:MODE PER;:COUN:NDIG 6",
+        );
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DVM:ENAB?;:DVM:SOUR?;:DVM:MODE?;:COUN:ENAB?;:COUN:MODE?;:COUN:NDIG?"),
+            "1;CHAN2;ACRMS;1;PER;6"
+        );
         assert!(!line(&mut s, &mut ui, &cv, ":DVM:CURR?;:COUN:CURR?").is_empty());
         line(&mut s, &mut ui, &cv, ":COUN:TOT:CLE");
     }
@@ -5615,12 +6489,20 @@ mod tests {
         let mut client = TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
         client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         client.write_all(b":MEAS:STRIP?\n").unwrap();
-        for _ in 0..50 { scpi.poll(&mut ui, &canvas); std::thread::sleep(Duration::from_millis(2)); }
-        let mut byte = [0]; client.read_exact(&mut byte).unwrap();
+        for _ in 0..50 {
+            scpi.poll(&mut ui, &canvas);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut byte = [0];
+        client.read_exact(&mut byte).unwrap();
         assert_eq!(&byte, b"\n");
         client.write_all(b":MEAS:STRIP?;*OPC?\n*ESR?\n").unwrap();
-        for _ in 0..50 { scpi.poll(&mut ui, &canvas); std::thread::sleep(Duration::from_millis(2)); }
-        let mut reply = [0; 5]; client.read_exact(&mut reply).unwrap();
+        for _ in 0..50 {
+            scpi.poll(&mut ui, &canvas);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut reply = [0; 5];
+        client.read_exact(&mut reply).unwrap();
         assert_eq!(&reply, b";1\n0\n");
         assert_eq!(scpi.exec_message_checked(&mut ui, &canvas, ":MEAS:STRIP?"), Ok((Vec::new(), true)));
         assert_eq!(scpi.exec_message_checked(&mut ui, &canvas, ":STOP"), Ok((Vec::new(), false)));
@@ -5629,7 +6511,9 @@ mod tests {
     #[test]
     fn cursor_setters_preserve_genuine_statistics_and_pending_single() {
         let (mut scpi, mut ui, canvas) = session();
-        for _ in 0..4 { ui.step(0.05); }
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
         let statistics = ui.measurement_statistics_snapshot_for_test();
         assert!(statistics.iter().any(|&(count, _)| count >= 3));
         let record = ui.record_volts(0).to_vec();
@@ -5639,10 +6523,24 @@ mod tests {
         let source = ui.m.trigger_wave();
         let mut waiting = Program::new("*OPC?;:RUN");
         assert!(scpi.poll_program(&mut ui, &canvas, &mut waiting).is_none());
-        for command in [":CURS:MODE MAN", ":CURS:MAN:TYPE TIME", ":CURS:MAN:SOUR CHAN1",
-            ":CURS:MAN:CAX 0", ":CURS:MAN:CBX 1e-8", ":CURS:MAN:TYPE AMPL", ":CURS:MAN:CAY 0.2",
-            ":CURS:MAN:CBY -0.2", ":CURS:MODE XY", ":CURS:XY:AX 0", ":CURS:XY:AY 0.1",
-            ":CURS:XY:BX 1e-8", ":CURS:XY:BY -0.1", ":CURS:MODE TRAC", ":CURS:TRAC:SOUR2 CHAN1", ":CURS:MODE OFF"] {
+        for command in [
+            ":CURS:MODE MAN",
+            ":CURS:MAN:TYPE TIME",
+            ":CURS:MAN:SOUR CHAN1",
+            ":CURS:MAN:CAX 0",
+            ":CURS:MAN:CBX 1e-8",
+            ":CURS:MAN:TYPE AMPL",
+            ":CURS:MAN:CAY 0.2",
+            ":CURS:MAN:CBY -0.2",
+            ":CURS:MODE XY",
+            ":CURS:XY:AX 0",
+            ":CURS:XY:AY 0.1",
+            ":CURS:XY:BX 1e-8",
+            ":CURS:XY:BY -0.1",
+            ":CURS:MODE TRAC",
+            ":CURS:TRAC:SOUR2 CHAN1",
+            ":CURS:MODE OFF",
+        ] {
             line(&mut scpi, &mut ui, &canvas, command);
             assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{command}");
             assert_eq!(ui.record_volts(0), record, "{command}");
@@ -5658,11 +6556,23 @@ mod tests {
     fn waveform_word_is_little_endian_and_page_metadata_has_the_page_origin() {
         let (mut scpi, mut ui, canvas) = session();
         let volts = |code: u16| (code as f64 - 32768.0) * 8.0 / 60000.0;
-        ui.commit_waveform_traces(vec![crate::store::WaveTrace {
-            v: vec![0.0, volts(0x8123) as f32, volts(0x2345) as f32, 0.0],
-            dt: 5e-12, t0: -2e-9, label: "Known WORD codes".into(),
-        }], "wire-policy.csv", true).unwrap();
-        line(&mut scpi, &mut ui, &canvas, ":REF:VSC 1,1;:REF:VOFF 1,0;:WAV:SOUR R1;:WAV:MODE RAW;:WAV:FORM WORD;:WAV:STAR 2;:WAV:STOP 3");
+        ui.commit_waveform_traces(
+            vec![crate::store::WaveTrace {
+                v: vec![0.0, volts(0x8123) as f32, volts(0x2345) as f32, 0.0],
+                dt: 5e-12,
+                t0: -2e-9,
+                label: "Known WORD codes".into(),
+            }],
+            "wire-policy.csv",
+            true,
+        )
+        .unwrap();
+        line(
+            &mut scpi,
+            &mut ui,
+            &canvas,
+            ":REF:VSC 1,1;:REF:VOFF 1,0;:WAV:SOUR R1;:WAV:MODE RAW;:WAV:FORM WORD;:WAV:STAR 2;:WAV:STOP 3",
+        );
         assert_eq!(scpi.exec_line(&mut ui, &canvas, ":WAV:DATA?"), b"#9000000004\x23\x81\x45\x23");
         let preamble = line(&mut scpi, &mut ui, &canvas, ":WAV:PRE?");
         let values: Vec<_> = preamble.split(',').collect();
@@ -5678,12 +6588,18 @@ mod tests {
     #[test]
     fn query_error_stays_specific_when_the_bounded_error_queue_is_full() {
         let (mut scpi, mut ui, canvas) = session();
-        for _ in 0..ERR_MAX { scpi.push_err("-113,\"Old command error\"".into()); }
+        for _ in 0..ERR_MAX {
+            scpi.push_err("-113,\"Old command error\"".into());
+        }
         let error = line(&mut scpi, &mut ui, &canvas, ":REF:VSC? 10");
         assert!(error.starts_with("-230,"), "{error}");
         assert_eq!(scpi.err.len(), ERR_MAX);
         assert!(scpi.err.last().unwrap().starts_with("-350,"));
-        assert_eq!(line(&mut scpi, &mut ui, &canvas, "*ESR?;*ESR?"), "56;0", "command, execution and queue-overflow bits");
+        assert_eq!(
+            line(&mut scpi, &mut ui, &canvas, "*ESR?;*ESR?"),
+            "56;0",
+            "command, execution and queue-overflow bits"
+        );
         line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?");
         assert_eq!(line(&mut scpi, &mut ui, &canvas, "*ESR?"), "0", "reading old errors does not relatch ESR");
         let huge = format!(":{}?", "é".repeat(2000));
@@ -5711,7 +6627,12 @@ mod tests {
     fn manual_cursors_keep_time_and_voltage_together() {
         let (mut s, mut ui, cv) = session();
         line(&mut s, &mut ui, &cv, ":TIM:MAIN:SCAL 1e-6;:TIM:MAIN:OFFS 0;:CHAN1:SCAL 1;:CHAN1:OFFS 0");
-        line(&mut s, &mut ui, &cv, ":CURS:MODE MAN;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6;:CURS:MAN:CAY 0.5;:CURS:MAN:CBY -0.5");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            ":CURS:MODE MAN;:CURS:MAN:CAX 0;:CURS:MAN:CBX 1e-6;:CURS:MAN:CAY 0.5;:CURS:MAN:CBY -0.5",
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":CURS:MODE?"), "XY", "both axes are the screen's XY cursors");
         let ax: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CAX?").parse().unwrap();
         let bx: f64 = line(&mut s, &mut ui, &cv, ":CURS:MAN:CBX?").parse().unwrap();
@@ -5729,7 +6650,12 @@ mod tests {
     #[test]
     fn track_cursor_b_follows_its_own_channel() {
         let (mut s, mut ui, cv) = session();
-        line(&mut s, &mut ui, &cv, "*CLS;:CURS:MODE TRAC;:CURS:TRAC:SOUR1 CHAN1;:CURS:TRAC:SOUR2 CHAN2;:CURS:TRAC:CAX 0;:CURS:TRAC:CBX 1e-6");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            "*CLS;:CURS:MODE TRAC;:CURS:TRAC:SOUR1 CHAN1;:CURS:TRAC:SOUR2 CHAN2;:CURS:TRAC:CAX 0;:CURS:TRAC:CBX 1e-6",
+        );
         for _ in 0..4 {
             ui.step(0.05);
         }
@@ -5745,7 +6671,10 @@ mod tests {
     fn statistics_channel_labels_and_the_zoom_window_round_trip() {
         let (mut s, mut ui, cv) = reference_session();
         line(&mut s, &mut ui, &cv, ":CHAN1:LAB:CONT Vbus;:CHAN1:UNIT AMP;:CHAN1:VERN ON;:CHAN1:POS 0.2");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:LAB:CONT?;:CHAN1:LAB:SHOW?;:CHAN1:UNIT?;:CHAN1:VERN?"), "Vbus;1;AMP;1");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":CHAN1:LAB:CONT?;:CHAN1:LAB:SHOW?;:CHAN1:UNIT?;:CHAN1:VERN?"),
+            "Vbus;1;AMP;1"
+        );
         let pos: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:OFFS?").parse().unwrap();
         assert!((pos - 0.2).abs() < 1e-4, "{pos}");
         line(&mut s, &mut ui, &cv, ":CHAN1:LAB:SHOW OFF");
@@ -5858,7 +6787,10 @@ mod tests {
         let skew: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
         assert!((skew - 2e-8).abs() < 1e-12, "{skew}");
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 2e-5;:CHAN1:TCAL 1e-9");
-        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a slow time base refuses a deskew change");
+        assert!(
+            line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"),
+            "a slow time base refuses a deskew change"
+        );
         let held: f64 = line(&mut s, &mut ui, &cv, ":CHAN1:TCAL?").parse().unwrap();
         assert!((held - 2e-8).abs() < 1e-12, "{held}");
 
@@ -5871,13 +6803,19 @@ mod tests {
         line(&mut s, &mut ui, &cv, "*CLS;:MEAS:SET:PSA CHAN2;:MEAS:SET:PSB R1");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:DSA?;:MEAS:SET:DSB?;:MEAS:SOUR?"), "CHAN2;R1;CHAN2");
         line(&mut s, &mut ui, &cv, ":MEAS:SET:PSA MATH1");
-        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a measurement source is a channel or a reference");
+        assert!(
+            line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"),
+            "a measurement source is a channel or a reference"
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SOUR?"), "CHAN2");
 
         line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN 20;:MEAS:SET:MAX 80");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MIN?;:MEAS:SET:MAX?"), "20;80");
         line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX 10");
-        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the upper threshold must stay above the lower");
+        assert!(
+            line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"),
+            "the upper threshold must stay above the lower"
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX?"), "80");
 
         // the runt thresholds the same way (review U6)
@@ -5900,8 +6838,17 @@ mod tests {
         for _ in 0..20 {
             ui.step(0.05);
         }
-        line(&mut s, &mut ui, &cv, "*CLS;:MASK:SOUR CHAN1;:MASK:X 0.5;:MASK:Y 0.5;:MASK:ENAB ON;:MASK:CRE;:MASK:OPER RUN");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"", "the demo record must be there to build a mask");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            "*CLS;:MASK:SOUR CHAN1;:MASK:X 0.5;:MASK:Y 0.5;:MASK:ENAB ON;:MASK:CRE;:MASK:OPER RUN",
+        );
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":SYST:ERR?"),
+            "0,\"No error\"",
+            "the demo record must be there to build a mask"
+        );
         assert_eq!(line(&mut s, &mut ui, &cv, ":MASK:ENAB?;:MASK:SOUR?;:MASK:OPER?"), "1;CHAN1;RUN");
         let x: f64 = line(&mut s, &mut ui, &cv, ":MASK:X?").parse().unwrap();
         let y: f64 = line(&mut s, &mut ui, &cv, ":MASK:Y?").parse().unwrap();
@@ -5942,8 +6889,16 @@ mod tests {
     #[test]
     fn a_math_trace_sets_operator_scale_fft_and_filter() {
         let (mut s, mut ui, cv) = session();
-        line(&mut s, &mut ui, &cv, "*CLS;:MATH1:DISP ON;:MATH1:OPER ADD;:MATH1:SOUR1 CHAN1;:MATH1:SOUR2 CHAN2;:MATH1:SCAL 0.2;:MATH1:OFFS 1");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":MATH1:DISP?;:MATH1:OPER?;:MATH1:SOUR1?;:MATH1:SOUR2?"), "1;ADD;CHAN1;CHAN2");
+        line(
+            &mut s,
+            &mut ui,
+            &cv,
+            "*CLS;:MATH1:DISP ON;:MATH1:OPER ADD;:MATH1:SOUR1 CHAN1;:MATH1:SOUR2 CHAN2;:MATH1:SCAL 0.2;:MATH1:OFFS 1",
+        );
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":MATH1:DISP?;:MATH1:OPER?;:MATH1:SOUR1?;:MATH1:SOUR2?"),
+            "1;ADD;CHAN1;CHAN2"
+        );
         let scale: f64 = line(&mut s, &mut ui, &cv, ":MATH1:SCAL?").parse().unwrap();
         let offset: f64 = line(&mut s, &mut ui, &cv, ":MATH1:OFFS?").parse().unwrap();
         assert!((scale - 0.2).abs() < 1e-9 && (offset - 1.0).abs() < 1e-6, "{scale} {offset}");
@@ -5972,12 +6927,32 @@ mod tests {
         line(&mut s, &mut ui, &cv, "*CLS;:BUS1:MODE RS232;:BUS1:DISP ON;:BUS1:FORM ASC;:BUS1:EVEN ON");
         line(&mut s, &mut ui, &cv, ":BUS1:RS232:TX CHAN1;:BUS1:RS232:RX CHAN2;:BUS1:RS232:BAUD 9600;:BUS1:RS232:PAR EVEN;:BUS1:RS232:DBIT 8;:BUS1:THR 1.25");
         assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:MODE?;:BUS1:DISP?;:BUS1:FORM?;:BUS1:EVEN?"), "RS232;1;ASC;1");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:RS232:TX?;:BUS1:RS232:RX?;:BUS1:RS232:BAUD?;:BUS1:RS232:PAR?;:BUS1:RS232:DBIT?"), "CHAN1;CHAN2;9600;EVEN;8");
+        assert_eq!(
+            line(
+                &mut s,
+                &mut ui,
+                &cv,
+                ":BUS1:RS232:TX?;:BUS1:RS232:RX?;:BUS1:RS232:BAUD?;:BUS1:RS232:PAR?;:BUS1:RS232:DBIT?"
+            ),
+            "CHAN1;CHAN2;9600;EVEN;8"
+        );
         let thr: f64 = line(&mut s, &mut ui, &cv, ":BUS1:THR?").parse().unwrap();
         assert!((thr - 1.25).abs() < 1e-6, "{thr}");
         line(&mut s, &mut ui, &cv, ":BUS2:MODE SPI;:BUS2:DISP ON;:BUS2:SPI:SCLK:SOUR CHAN2;:BUS2:SPI:MOSI:SOUR CHAN1;:BUS2:SPI:SS:SOUR CHAN3;:BUS2:SPI:DBIT 12");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS2:MODE?;:BUS2:SPI:SCLK:SOUR?;:BUS2:SPI:MOSI:SOUR?;:BUS2:SPI:SS:SOUR?;:BUS2:SPI:DBIT?"), "SPI;CHAN2;CHAN1;CHAN3;12");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":BUS1:MODE?;:BUS1:RS232:BAUD?"), "RS232;9600", "the second bus must not replace the first");
+        assert_eq!(
+            line(
+                &mut s,
+                &mut ui,
+                &cv,
+                ":BUS2:MODE?;:BUS2:SPI:SCLK:SOUR?;:BUS2:SPI:MOSI:SOUR?;:BUS2:SPI:SS:SOUR?;:BUS2:SPI:DBIT?"
+            ),
+            "SPI;CHAN2;CHAN1;CHAN3;12"
+        );
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":BUS1:MODE?;:BUS1:RS232:BAUD?"),
+            "RS232;9600",
+            "the second bus must not replace the first"
+        );
         line(&mut s, &mut ui, &cv, ":BUS2:SPI:SS:SOUR OFF");
         assert_eq!(line(&mut s, &mut ui, &cv, ":BUS2:SPI:SS:SOUR?"), "OFF");
         let data = line(&mut s, &mut ui, &cv, ":BUS1:DATA?");
@@ -6002,11 +6977,17 @@ mod tests {
     fn display_type_persistence_brightness_and_grid() {
         let (mut s, mut ui, cv) = session();
         line(&mut s, &mut ui, &cv, "*CLS;:DISP:TYPE VECT;:DISP:GRAD:TIME 0.1;:DISP:WBR 50;:DISP:GRID HALF");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:TYPE?;:DISP:GRAD:TIME?;:DISP:WBR?;:DISP:GRID?"), "VECT;0.1;50;HALF");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DISP:TYPE?;:DISP:GRAD:TIME?;:DISP:WBR?;:DISP:GRID?"),
+            "VECT;0.1;50;HALF"
+        );
         line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME 0.2");
         assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?"), "0.1", "0.2 s snaps to the screen's 100 ms step");
         line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME INF;:DISP:TYPE DOTS;:DISP:GRID NONE;:DISP:WBR 7");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?;:DISP:TYPE?;:DISP:GRID?;:DISP:WBR?"), "INF;DOTS;NONE;10");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":DISP:GRAD:TIME?;:DISP:TYPE?;:DISP:GRID?;:DISP:WBR?"),
+            "INF;DOTS;NONE;10"
+        );
 
         line(&mut s, &mut ui, &cv, "*CLS;:DISP:GBR 40;:DISP:RUL OFF;:DISP:COL ON");
         assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GBR?;:DISP:RUL?;:DISP:COL?"), "40;0;1");
@@ -6017,9 +6998,15 @@ mod tests {
         assert_eq!(line(&mut s, &mut ui, &cv, ":DISP:GBR?"), "10");
 
         line(&mut s, &mut ui, &cv, "*CLS;:TIM:ROLL 0;:TIM:MODE XY;:TIM:XY:Z CHAN3");
-        assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:ROLL?;:TIM:MODE?;:TIM:XY:ENAB?;:TIM:XY:X?;:TIM:XY:Y?;:TIM:XY:Z?"), "0;XY;1;CHAN1;CHAN2;CHAN3");
+        assert_eq!(
+            line(&mut s, &mut ui, &cv, ":TIM:ROLL?;:TIM:MODE?;:TIM:XY:ENAB?;:TIM:XY:X?;:TIM:XY:Y?;:TIM:XY:Z?"),
+            "0;XY;1;CHAN1;CHAN2;CHAN3"
+        );
         line(&mut s, &mut ui, &cv, ":TIM:MODE ROLL");
-        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "roll is the auto-roll switch, not a timebase mode");
+        assert!(
+            line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"),
+            "roll is the auto-roll switch, not a timebase mode"
+        );
         line(&mut s, &mut ui, &cv, ":TIM:XY:X CHAN2");
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "the XY plot is CH1 against CH2");
         assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:MODE?;:TIM:XY:X?;:TIM:XY:Z?"), "XY;CHAN1;CHAN3");
@@ -6036,39 +7023,69 @@ mod tests {
     #[test]
     fn frozen_math_scpi_preserves_reference_ids_expression_parser_and_cycles() {
         let (mut scpi, mut ui, canvas) = reference_session();
-        ui.commit_waveform_traces_at(vec![crate::store::WaveTrace { v: vec![0.0,1.0,0.0,1.0],dt:1e-9,t0:2e-6,label:"math R2".into() }],"R2",1).unwrap();
-        line(&mut scpi,&mut ui,&canvas,":MATH1:OPER SUBT;:MATH1:SOUR1 R1;:MATH1:SOUR2 R2;:MATH2:OPER ADD;:MATH2:SOUR1 MATH1;:MATH2:SOUR2 R1");
-        assert_eq!(line(&mut scpi,&mut ui,&canvas,":MATH1:SOUR1?;:MATH1:SOUR2?;:MATH2:SOUR1?;:MATH2:SOUR2?"),"R1;R2;MATH1;R1");
-        assert_eq!((ui.m.math_ch(0).a,ui.m.math_ch(0).b),(MATH_REF_BASE,MATH_REF_BASE+1));
-        assert_eq!(ui.m.math_ch(1).a,NCH);
-        line(&mut scpi,&mut ui,&canvas,":MATH1:EXPR R1 - R2");
-        assert_eq!(ui.m.math_ch(0).op,MathOp::Expr);
-        assert_eq!(line(&mut scpi,&mut ui,&canvas,":MATH1:EXPR?"),"R1 - R2");
-        let old=ui.m.math_ch(0);
-        line(&mut scpi,&mut ui,&canvas,":MATH1:SOUR1 MATH1");assert_eq!(ui.m.math_ch(0),old);
-        assert!(line(&mut scpi,&mut ui,&canvas,":SYST:ERR?").starts_with("-224,"));
-        line(&mut scpi,&mut ui,&canvas,":MATH1:FFT:SOUR R2");assert_eq!(ui.m.math_ch(0).a,MATH_REF_BASE+1);
-        assert_eq!(line(&mut scpi,&mut ui,&canvas,":SYST:ERR?"),"0,\"No error\"");
+        ui.commit_waveform_traces_at(
+            vec![crate::store::WaveTrace { v: vec![0.0, 1.0, 0.0, 1.0], dt: 1e-9, t0: 2e-6, label: "math R2".into() }],
+            "R2",
+            1,
+        )
+        .unwrap();
+        line(
+            &mut scpi,
+            &mut ui,
+            &canvas,
+            ":MATH1:OPER SUBT;:MATH1:SOUR1 R1;:MATH1:SOUR2 R2;:MATH2:OPER ADD;:MATH2:SOUR1 MATH1;:MATH2:SOUR2 R1",
+        );
+        assert_eq!(
+            line(&mut scpi, &mut ui, &canvas, ":MATH1:SOUR1?;:MATH1:SOUR2?;:MATH2:SOUR1?;:MATH2:SOUR2?"),
+            "R1;R2;MATH1;R1"
+        );
+        assert_eq!((ui.m.math_ch(0).a, ui.m.math_ch(0).b), (MATH_REF_BASE, MATH_REF_BASE + 1));
+        assert_eq!(ui.m.math_ch(1).a, NCH);
+        line(&mut scpi, &mut ui, &canvas, ":MATH1:EXPR R1 - R2");
+        assert_eq!(ui.m.math_ch(0).op, MathOp::Expr);
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":MATH1:EXPR?"), "R1 - R2");
+        let old = ui.m.math_ch(0);
+        line(&mut scpi, &mut ui, &canvas, ":MATH1:SOUR1 MATH1");
+        assert_eq!(ui.m.math_ch(0), old);
+        assert!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?").starts_with("-224,"));
+        line(&mut scpi, &mut ui, &canvas, ":MATH1:FFT:SOUR R2");
+        assert_eq!(ui.m.math_ch(0).a, MATH_REF_BASE + 1);
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?"), "0,\"No error\"");
     }
 
     #[test]
     fn frozen_bus_scpi_preserves_reference_roles_and_inactive_slot_acquisition() {
-        let (mut scpi,mut ui,canvas)=reference_session();
-        ui.commit_waveform_traces_at(vec![crate::store::WaveTrace {v:vec![0.,1.,0.,1.],dt:1e-9,t0:0.,label:"clock".into()}],"R2",1).unwrap();
-        line(&mut scpi,&mut ui,&canvas,":BUS1:IIC:SDA:SOUR R1;:BUS1:IIC:SCLK:SOUR R2");
-        assert_eq!(line(&mut scpi,&mut ui,&canvas,":BUS1:IIC:SDA:SOUR?;:BUS1:IIC:SCLK:SOUR?"),"R1;R2");
-        assert_eq!((ui.m.dec_src,ui.m.dec_src2),(DEC_REF_BASE,DEC_REF_BASE+1));
-        line(&mut scpi,&mut ui,&canvas,":TRIG:EDGE:LEV 100;:SINGLE");
-        let before=ui.workflow_state();let source=ui.m.trigger_wave();let mut pending=Program::new("*OPC?");
-        assert!(scpi.poll_program(&mut ui,&canvas,&mut pending).is_none());
-        line(&mut scpi,&mut ui,&canvas,":BUS2:SPI:MOSI:SOUR R2;:BUS2:SPI:SCLK:SOUR R1;:BUS2:SPI:SS:SOUR OFF");
-        assert_eq!(line(&mut scpi,&mut ui,&canvas,":BUS2:SPI:MOSI:SOUR?;:BUS2:SPI:SCLK:SOUR?;:BUS2:SPI:SS:SOUR?"),"R2;R1;OFF");
-        assert_eq!(ui.m.dec_sel,0);assert_eq!(ui.m.trigger_wave(),source);assert_eq!(ui.workflow_state(),before);
-        assert!(scpi.poll_program(&mut ui,&canvas,&mut pending).is_none(),"inactive decoder configuration must not rearm the accepted acquisition context");
-        let old=ui.m.dec_slot(1);
-        line(&mut scpi,&mut ui,&canvas,":BUS2:SPI:MOSI:SOUR R10");
-        assert_eq!(ui.m.dec_slot(1).src,old.src);
-        assert!(line(&mut scpi,&mut ui,&canvas,":SYST:ERR?").starts_with("-224,"));
+        let (mut scpi, mut ui, canvas) = reference_session();
+        ui.commit_waveform_traces_at(
+            vec![crate::store::WaveTrace { v: vec![0., 1., 0., 1.], dt: 1e-9, t0: 0., label: "clock".into() }],
+            "R2",
+            1,
+        )
+        .unwrap();
+        line(&mut scpi, &mut ui, &canvas, ":BUS1:IIC:SDA:SOUR R1;:BUS1:IIC:SCLK:SOUR R2");
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":BUS1:IIC:SDA:SOUR?;:BUS1:IIC:SCLK:SOUR?"), "R1;R2");
+        assert_eq!((ui.m.dec_src, ui.m.dec_src2), (DEC_REF_BASE, DEC_REF_BASE + 1));
+        line(&mut scpi, &mut ui, &canvas, ":TRIG:EDGE:LEV 100;:SINGLE");
+        let before = ui.workflow_state();
+        let source = ui.m.trigger_wave();
+        let mut pending = Program::new("*OPC?");
+        assert!(scpi.poll_program(&mut ui, &canvas, &mut pending).is_none());
+        line(&mut scpi, &mut ui, &canvas, ":BUS2:SPI:MOSI:SOUR R2;:BUS2:SPI:SCLK:SOUR R1;:BUS2:SPI:SS:SOUR OFF");
+        assert_eq!(
+            line(&mut scpi, &mut ui, &canvas, ":BUS2:SPI:MOSI:SOUR?;:BUS2:SPI:SCLK:SOUR?;:BUS2:SPI:SS:SOUR?"),
+            "R2;R1;OFF"
+        );
+        assert_eq!(ui.m.dec_sel, 0);
+        assert_eq!(ui.m.trigger_wave(), source);
+        assert_eq!(ui.workflow_state(), before);
+        assert!(
+            scpi.poll_program(&mut ui, &canvas, &mut pending).is_none(),
+            "inactive decoder configuration must not rearm the accepted acquisition context"
+        );
+        let old = ui.m.dec_slot(1);
+        line(&mut scpi, &mut ui, &canvas, ":BUS2:SPI:MOSI:SOUR R10");
+        assert_eq!(ui.m.dec_slot(1).src, old.src);
+        assert!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?").starts_with("-224,"));
     }
 
     fn wfm_bytes() -> Vec<u8> {

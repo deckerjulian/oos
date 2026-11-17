@@ -44,7 +44,10 @@ impl MeasModule for Example {
         let peak = v.iter().map(|s| s.abs() as f64).fold(0.0, f64::max);
         let mean_abs = v.iter().map(|s| s.abs() as f64).sum::<f64>() / n;
         let ratio = |a: f64, b: f64| if b > 0.0 && !v.is_empty() { a / b } else { f64::NAN };
-        let values = ids.iter().map(|&id| (id, if id == CREST_FACTOR { ratio(peak, rms) } else { ratio(rms, mean_abs) })).collect();
+        let values = ids
+            .iter()
+            .map(|&id| (id, if id == CREST_FACTOR { ratio(peak, rms) } else { ratio(rms, mean_abs) }))
+            .collect();
         Values { values, quality: DERIVED }
     }
 

@@ -75,7 +75,10 @@ pub struct ModbusRtu;
 
 const PARITY_NAMES: [&str; 3] = ["None", "Even", "Odd"];
 
-const RTU_OPTIONS: [Opt; 2] = [Opt { name: "Baud", choices: &BAUD_NAMES, default: 4 }, Opt { name: "Parity", choices: &PARITY_NAMES, default: 1 }];
+const RTU_OPTIONS: [Opt; 2] = [
+    Opt { name: "Baud", choices: &BAUD_NAMES, default: 4 },
+    Opt { name: "Parity", choices: &PARITY_NAMES, default: 1 },
+];
 
 impl Protocol for ModbusRtu {
     fn key(&self) -> &'static str {
@@ -98,7 +101,8 @@ impl Protocol for ModbusRtu {
     }
     /// Read holding registers (function 3) of device 0x11, 19200 baud, even parity.
     fn demo(&self) -> Option<Demo> {
-        let f: Vec<u32> = x1::gen::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
+        let f: Vec<u32> =
+            x1::gen::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
         Some(uart_demo(&f, 8, Parity::Even, 19200.0, 2e-3))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {

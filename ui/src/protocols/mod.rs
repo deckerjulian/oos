@@ -27,10 +27,10 @@ mod dcc;
 mod debug;
 #[cfg(feature = "dec-dmx512")]
 mod dmx512;
-#[cfg(feature = "dec-i2s")]
-mod i2s;
 #[cfg(test)]
 pub mod example;
+#[cfg(feature = "dec-i2s")]
+mod i2s;
 #[cfg(feature = "dec-i3c")]
 mod i3c;
 #[cfg(feature = "dec-linecode")]
@@ -181,7 +181,8 @@ impl Shared {
 
 /// The baud rates of the Decode menu (`decode::BAUDS`), as the choices of a module's option row.
 #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-pub const BAUD_NAMES: [&str; 10] = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "460800", "921600"];
+pub const BAUD_NAMES: [&str; 10] =
+    ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "460800", "921600"];
 /// The default of a baud row: 115200, as the UART decoder.
 #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 pub const BAUD_DEFAULT: usize = 7;
@@ -268,7 +269,16 @@ impl Default for Setup {
     /// Main line on CH3 and a second one on CH4, 3.3 V logic; the demo UART line D8 and clock D10 for the LA; the
     /// trigger as it is.
     fn default() -> Setup {
-        Setup { src: [Some(2), Some(3), None, None], la: [Some(8), Some(10), None, None], thr: 1.65, trig: None, show: false, rows: &[], show_all: false, la_off: false }
+        Setup {
+            src: [Some(2), Some(3), None, None],
+            la: [Some(8), Some(10), None, None],
+            thr: 1.65,
+            trig: None,
+            show: false,
+            rows: &[],
+            show_all: false,
+            la_off: false,
+        }
     }
 }
 
@@ -480,7 +490,15 @@ mod tests {
             assert!(m.bit_time(&[0; OPTS]) > 0.0, "{}: bit time", m.name());
         }
         // the core decoders at their fixed places (`Proto::UART` ...)
-        for (p, key) in [(crate::model::Proto::UART, "Uart"), (crate::model::Proto::I2C, "I2c"), (crate::model::Proto::SPI, "Spi"), (crate::model::Proto::CAN, "Can"), (crate::model::Proto::LIN, "Lin"), (crate::model::Proto::PARALLEL, "Parallel"), (crate::model::Proto::CPHY, "Cphy")] {
+        for (p, key) in [
+            (crate::model::Proto::UART, "Uart"),
+            (crate::model::Proto::I2C, "I2c"),
+            (crate::model::Proto::SPI, "Spi"),
+            (crate::model::Proto::CAN, "Can"),
+            (crate::model::Proto::LIN, "Lin"),
+            (crate::model::Proto::PARALLEL, "Parallel"),
+            (crate::model::Proto::CPHY, "Cphy"),
+        ] {
             assert_eq!(p.key(), key);
         }
     }
@@ -492,14 +510,29 @@ mod tests {
             let Some(d) = demo(i as u8) else { continue };
             let dt = m.bit_time(&opt_fit(i as u8, opt_default(i as u8))) / 40.0;
             let n = (3.0 * d.period / dt) as usize;
-            let waves: Vec<Option<Vec<f32>>> = d.lines.iter().map(|l| l.as_ref().map(|f| (0..n).map(|k| f((k as f64 * dt).rem_euclid(d.period)) as f32).collect())).collect();
+            let waves: Vec<Option<Vec<f32>>> = d
+                .lines
+                .iter()
+                .map(|l| l.as_ref().map(|f| (0..n).map(|k| f((k as f64 * dt).rem_euclid(d.period)) as f32).collect()))
+                .collect();
             let s = m.setup();
-            let l = Lines { lines: std::array::from_fn(|k| waves[k].as_deref()), dt, thr: s.thr, hy: 0.1, opt: opt_fit(i as u8, opt_default(i as u8)), sh: Shared::default(), chans: [None; 4], src: [None; 4] };
+            let l = Lines {
+                lines: std::array::from_fn(|k| waves[k].as_deref()),
+                dt,
+                thr: s.thr,
+                hy: 0.1,
+                opt: opt_fit(i as u8, opt_default(i as u8)),
+                sh: Shared::default(),
+                chans: [None; 4],
+                src: [None; 4],
+            };
             let p = m.decode(&l).unwrap_or_else(|e| panic!("{}: {}", m.name(), e));
             assert!(!p.is_empty(), "{}: nothing decoded from its demo", m.name());
             // I2C: the master NACKs the last byte it reads before the stop, which the decoder flags like any NACK.
             use oos_dsp::decode::Kind;
-            let read_end = |k: usize| m.key() == "I2c" && p[k].kind == Kind::Data && p.get(k + 1).is_none_or(|n| n.kind == Kind::Stop);
+            let read_end = |k: usize| {
+                m.key() == "I2c" && p[k].kind == Kind::Data && p.get(k + 1).is_none_or(|n| n.kind == Kind::Stop)
+            };
             let bad = p.iter().enumerate().find(|&(k, x)| !x.ok && !read_end(k));
             assert!(bad.is_none(), "{}: errors in its own demo: {:?}", m.name(), bad);
         }

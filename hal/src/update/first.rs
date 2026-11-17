@@ -21,9 +21,9 @@
 //! cut by a power loss) is replaced by the rollback image when that one is whole, else by the stick's build.
 
 use super::card::{check_image, Card, Region, BOOT_LBA, RECOVERY_LBA, SECTOR};
-use std::borrow::Cow;
 use super::hash::{hex, Sha256};
 use super::pkg;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -60,7 +60,11 @@ pub fn check_model(vendor: Option<&[u8]>, any: bool) -> Result<String, String> {
     let t = &crate::target::ACTIVE;
     let name = vendor.and_then(|v| crate::model::decode_vendor(v).ok()).and_then(|v| v.model);
     let Some(n) = name else {
-        return if any { Ok("unknown (accepted by request)".into()) } else { Err(refusal("cannot read the model from /rigol/data/vendor.bin")) };
+        return if any {
+            Ok("unknown (accepted by request)".into())
+        } else {
+            Err(refusal("cannot read the model from /rigol/data/vendor.bin"))
+        };
     };
     let known = crate::model::lookup(&n).is_some();
     match t.variant(&n) {
@@ -69,11 +73,21 @@ pub fn check_model(vendor: Option<&[u8]>, any: bool) -> Result<String, String> {
             if ran.iter().any(|r| r.eq_ignore_ascii_case(&n)) {
                 Ok(n)
             } else {
-                Ok(format!("{} (hardware variant \"{}\": the same hardware as the {}, which OOS has run on)", n, v.name, ran.join(", ")))
+                Ok(format!(
+                    "{} (hardware variant \"{}\": the same hardware as the {}, which OOS has run on)",
+                    n,
+                    v.name,
+                    ran.join(", ")
+                ))
             }
         }
-        _ if any && known => Ok(format!("{} (OOS has not run on this hardware variant yet; accepted by request, {})", n, ANY_MODEL_FILE)),
-        Some(v) => Err(refusal(&format!("OOS has not run on a {} yet (hardware variant \"{}\": no unit of it has run OOS so far)", n, v.name))),
+        _ if any && known => {
+            Ok(format!("{} (OOS has not run on this hardware variant yet; accepted by request, {})", n, ANY_MODEL_FILE))
+        }
+        Some(v) => Err(refusal(&format!(
+            "OOS has not run on a {} yet (hardware variant \"{}\": no unit of it has run OOS so far)",
+            n, v.name
+        ))),
         None if known => Err(refusal(&format!("OOS has not run on a {} yet", n))),
         None => Err(format!("unknown model {} (not in the model table of the {}): nothing written", n, t.family_name)),
     }
@@ -109,7 +123,14 @@ fn kind(head: &[u8]) -> Option<&'static str> {
 }
 
 /// One region of the card into a file on the stick, its hash into `sums`.
-fn save_region(card: &mut Card, dir: &Path, name: &str, lba: u64, sectors: u64, sums: &mut String) -> Result<(), String> {
+fn save_region(
+    card: &mut Card,
+    dir: &Path,
+    name: &str,
+    lba: u64,
+    sectors: u64,
+    sums: &mut String,
+) -> Result<(), String> {
     let path = dir.join(name);
     let e = |x: std::io::Error| format!("{}: {}", path.display(), x);
     let mut f = std::fs::File::create(&path).map_err(e)?;
@@ -151,7 +172,11 @@ fn save_set(card: &mut Card, dir: &Path, serial: Option<&str>, log: &mut dyn FnM
     if dir.join(SUMS).exists() {
         let unit = std::fs::read_to_string(dir.join(UNIT)).unwrap_or_default();
         if let Some(s) = serial.filter(|s| *s != unit.trim()) {
-            return Err(format!("the rescue set on this stick is from unit '{}', this is {}: use another stick. Nothing written", unit.trim(), s));
+            return Err(format!(
+                "the rescue set on this stick is from unit '{}', this is {}: use another stick. Nothing written",
+                unit.trim(),
+                s
+            ));
         }
         log(&format!("rescue set in {} kept", dir.display()));
         return Ok(());
@@ -193,7 +218,10 @@ pub fn first_install(
     let io = |e: std::io::Error| format!("reading the card: {}", e);
     let magic = card.boot_magic().map_err(io)?;
     if &magic != b"KRNL" && &magic != b"OOSK" {
-        return Err(format!("boot magic is '{}', neither KRNL nor OOSK: nothing written", String::from_utf8_lossy(&magic)));
+        return Err(format!(
+            "boot magic is '{}', neither KRNL nor OOSK: nothing written",
+            String::from_utf8_lossy(&magic)
+        ));
     }
     log(&format!("selected now: {}", if &magic == b"KRNL" { "stock" } else { "OOS" }));
 
@@ -223,7 +251,12 @@ pub fn first_install(
         log("recovery already holds this image");
         None
     } else if what == "an OOS image" {
-        let valid = card.header(Region::Recovery).map_err(io)?.map(|h| card.read_image(Region::Recovery, h.len)).transpose().map_err(io)?;
+        let valid = card
+            .header(Region::Recovery)
+            .map_err(io)?
+            .map(|h| card.read_image(Region::Recovery, h.len))
+            .transpose()
+            .map_err(io)?;
         // the builds' time stamps (`YYYYMMDD-HHMMSS kernel ...`) sort as text
         let stamp = |b: &str| b.split_whitespace().next().unwrap_or("").to_string();
         let card_build = valid.as_ref().and_then(|(b, _)| super::inflate::image_build(b));
@@ -233,7 +266,9 @@ pub fn first_install(
             log(&format!("recovery holds build {}, the stick has the newer {}", c, stamp(&stick_build)));
         }
         match valid.as_ref().map(|(b, _)| check_image(b)) {
-            Some(Ok(_)) if older.is_some() && !opt.reinstall => Some((Cow::Borrowed(img), "recovery: the stick's newer build goes here")),
+            Some(Ok(_)) if older.is_some() && !opt.reinstall => {
+                Some((Cow::Borrowed(img), "recovery: the stick's newer build goes here"))
+            }
             Some(Ok(i)) if !opt.reinstall => {
                 log(&format!(
                     "recovery holds a valid OOS image ('{}', {} bytes, build {}), not older than the stick's: kept, only selected (oos-reinstall.txt on the stick writes the stick's build)",
@@ -248,8 +283,14 @@ pub fn first_install(
                 Some(h) => {
                     let (b, _) = card.read_image(Region::Slot, h.len).map_err(io)?;
                     match check_image(&b) {
-                        Ok(_) if !opt.reinstall => Some((Cow::Owned(b), "recovery holds a damaged OOS image: the rollback image goes back there")),
-                        _ => Some((Cow::Borrowed(img), "recovery holds a damaged OOS image: the stick's build goes here")),
+                        Ok(_) if !opt.reinstall => Some((
+                            Cow::Owned(b),
+                            "recovery holds a damaged OOS image: the rollback image goes back there",
+                        )),
+                        _ => Some((
+                            Cow::Borrowed(img),
+                            "recovery holds a damaged OOS image: the stick's build goes here",
+                        )),
                     }
                 }
                 None => Some((Cow::Borrowed(img), "recovery holds a damaged OOS image: the stick's build goes here")),

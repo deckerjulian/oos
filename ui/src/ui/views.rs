@@ -18,7 +18,27 @@ use crate::store;
 pub const VIEWS_MAX: usize = 4;
 /// Keys of a setup (store.rs) that belong to a view, besides `xy` and `full` (fields of the Ui).
 const KEYS: [&str; 21] = [
-    "windows", "ch_window", "math_window", "la_window", "meas", "meas2", "dvm", "counter", "cursor", "cur_a", "cur_b", "cur_c", "cur_d", "pane", "meas_labels", "trend_sel", "zoom", "zoom_tdiv", "zdelay", "hist", "view",
+    "windows",
+    "ch_window",
+    "math_window",
+    "la_window",
+    "meas",
+    "meas2",
+    "dvm",
+    "counter",
+    "cursor",
+    "cur_a",
+    "cur_b",
+    "cur_c",
+    "cur_d",
+    "pane",
+    "meas_labels",
+    "trend_sel",
+    "zoom",
+    "zoom_tdiv",
+    "zdelay",
+    "hist",
+    "view",
 ];
 /// The strip at each edge of the plot where a horizontal swipe switches views (px).
 pub(super) const EDGE: i32 = 18;
@@ -55,7 +75,12 @@ pub fn slot_checked(v: &str) -> Result<String, String> {
 /// The view of a model and the Ui's XY and full screen.
 fn snapshot_of(m: &Model, xy: bool, full: bool) -> String {
     let text = store::setup_text(m);
-    let mut parts: Vec<String> = text.lines().filter_map(|l| l.split_once(" = ")).filter(|(k, _)| KEYS.contains(k)).map(|(k, v)| format!("{}={}", k, v)).collect();
+    let mut parts: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once(" = "))
+        .filter(|(k, _)| KEYS.contains(k))
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
     parts.push(format!("xy={}", xy));
     parts.push(format!("full={}", full));
     parts.join("; ")
@@ -155,7 +180,8 @@ impl Ui {
     }
 
     pub(super) fn views_options(&self, it: Item) -> Option<Vec<String>> {
-        (it == Item::Views).then(|| (1..=VIEWS_MAX).map(|n| if n == 1 { "Off".to_string() } else { n.to_string() }).collect())
+        (it == Item::Views)
+            .then(|| (1..=VIEWS_MAX).map(|n| if n == 1 { "Off".to_string() } else { n.to_string() }).collect())
     }
 
     pub(super) fn views_adjust(&mut self, it: Item, d: i32) -> bool {

@@ -13,7 +13,11 @@ pub fn sample_rate(rate: u64, max_rate: u64) -> Vec<Write> {
     // divider's base is 62.5 MHz (ADC / 20)
     let max_nominal = crate::dho::clock::to_nominal_rate(max_rate as i128) as u64;
     let nominal = crate::dho::clock::to_nominal_rate(rate as i128) as u64;
-    let (r10d0, r10d8) = if slow_path(rate) { (0, (SLOW_BASE / nominal) as u32) } else { (0x8000 | ((max_nominal / nominal) as u32 & 0xff), 1) };
+    let (r10d0, r10d8) = if slow_path(rate) {
+        (0, (SLOW_BASE / nominal) as u32)
+    } else {
+        (0x8000 | ((max_nominal / nominal) as u32 & 0xff), 1)
+    };
     vec![(0x10d0, r10d0), (0x10d8, r10d8), (0x10d4, 0)]
 }
 
@@ -35,6 +39,9 @@ mod tests {
         assert_eq!(sample_rate(312_500_000, 1_250_000_000)[0], (0x10d0, 0x8004));
         assert_eq!(sample_rate(62_500_000, 1_250_000_000)[..2], [(0x10d0, 0), (0x10d8, 1)]);
         assert_eq!(sample_rate(31_250_000, 1_250_000_000)[1], (0x10d8, 2));
-        assert_eq!([1_250_000_000, 625_000_000, 125_000_000, 62_500_000, 1_000].map(slow_path), [false, false, false, true, true]);
+        assert_eq!(
+            [1_250_000_000, 625_000_000, 125_000_000, 62_500_000, 1_000].map(slow_path),
+            [false, false, false, true, true]
+        );
     }
 }

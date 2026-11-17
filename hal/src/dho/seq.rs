@@ -13,13 +13,23 @@ pub enum Step {
     Wr(Write),
     Afe(afe::Op),
     /// wait until (reg & bit) != 0, at most `ms`
-    Poll { reg: u32, bit: u32, ms: u64, what: &'static str },
+    Poll {
+        reg: u32,
+        bit: u32,
+        ms: u64,
+        what: &'static str,
+    },
     /// read-only diagnostic: log the values of these registers
     Peek(&'static [u32]),
     /// `frames` frames of `frame` bytes each; in the stream every frame is padded to `frame_stride(frame)` (8 bytes),
     /// the read takes the padding too and drops it
-    Read { frames: usize, frame: usize },
-    Sleep { us: u32 },
+    Read {
+        frames: usize,
+        frame: usize,
+    },
+    Sleep {
+        us: u32,
+    },
     Note(String),
 }
 
@@ -56,18 +66,71 @@ pub struct Chan {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Trig {
     Edge,
-    Pulse { pol: tpu::Polarity, when: tpu::When, lower: f64, upper: f64 },
-    Slope { when: tpu::When, lower: f64, upper: f64, lo: f64 },
-    Runt { pol: tpu::Polarity, when: tpu::When, lower: f64, upper: f64, lo: f64 },
-    Window { event: tpu::WindowEvent, time: f64, lo: f64 },
-    Timeout { time: f64 },
-    Delay { srcb: u32, eb: tpu::Edge, when: tpu::When, lower: f64, upper: f64, levelb: f64 },
+    Pulse {
+        pol: tpu::Polarity,
+        when: tpu::When,
+        lower: f64,
+        upper: f64,
+    },
+    Slope {
+        when: tpu::When,
+        lower: f64,
+        upper: f64,
+        lo: f64,
+    },
+    Runt {
+        pol: tpu::Polarity,
+        when: tpu::When,
+        lower: f64,
+        upper: f64,
+        lo: f64,
+    },
+    Window {
+        event: tpu::WindowEvent,
+        time: f64,
+        lo: f64,
+    },
+    Timeout {
+        time: f64,
+    },
+    Delay {
+        srcb: u32,
+        eb: tpu::Edge,
+        when: tpu::When,
+        lower: f64,
+        upper: f64,
+        levelb: f64,
+    },
     /// `pats` CH1..CH4, `la` D0..D15 (TPU pattern slots 4..19, trigger.md 10.8; all X without the LA)
-    Pattern { pats: [tpu::Pat; 4], la: [tpu::Pat; 16], levels: [f64; 4] },
-    Duration { pats: [tpu::Pat; 4], la: [tpu::Pat; 16], when: tpu::When, lower: f64, upper: f64, levels: [f64; 4] },
-    SetupHold { clk: u32, clk_edge: tpu::Edge, setup: f64, hold: f64, levelc: f64 },
-    Nth { count: u32, idle: f64 },
-    Video { std: tpu::VideoStd, sync: tpu::VideoSync, line: u32 },
+    Pattern {
+        pats: [tpu::Pat; 4],
+        la: [tpu::Pat; 16],
+        levels: [f64; 4],
+    },
+    Duration {
+        pats: [tpu::Pat; 4],
+        la: [tpu::Pat; 16],
+        when: tpu::When,
+        lower: f64,
+        upper: f64,
+        levels: [f64; 4],
+    },
+    SetupHold {
+        clk: u32,
+        clk_edge: tpu::Edge,
+        setup: f64,
+        hold: f64,
+        levelc: f64,
+    },
+    Nth {
+        count: u32,
+        idle: f64,
+    },
+    Video {
+        std: tpu::VideoStd,
+        sync: tpu::VideoSync,
+        line: u32,
+    },
     /// the TPU's UART receiver on the main source at the main level (docs/fork/hwuart.md)
     Uart(crate::dho::uarttrig::Uart),
     /// the TPU's SPI and I2C receivers on their own lines at the main level (docs/fork/hwserial.md)
@@ -181,8 +244,46 @@ impl Default for Settings {
     /// The warm hand-over of 2026-11-02: CH1 1 V/div, 200 us/div, Auto depth, edge CH1 rising 1.5 V, read the
     /// verified window (4000 points from 1,248,000).
     fn default() -> Settings {
-        let c = Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, probe: 1.0, bias: 0.0, skew: 0.0, couple: Couple::Dc, invert: false };
-        Settings { delay: 0.0, mode: acq::Mode::Normal, holdoff: HOLDOFF_MIN, mask: 1, tdiv: 200e-6, depth: 0, ch: [c; 4], afe: false, trig_src: 1, slope: tpu::Slope::Rising, level: 1.5, auto: true, auto_fast: false, single: false, trigger: Trig::Edge, window: Some((4000, -2000)), play4: true, blocks: 7, header: false, noise_reject: false, trig_couple: tpu::Coupling::Dc, frames: 1, compress: 1, la: None, segments: None, aux: auxout::AuxOut::TriggerOut, hwmask: None, hwzone: None }
+        let c = Chan {
+            scale: 1.0,
+            offset: 0.0,
+            bw: afe::bw::OFF,
+            probe: 1.0,
+            bias: 0.0,
+            skew: 0.0,
+            couple: Couple::Dc,
+            invert: false,
+        };
+        Settings {
+            delay: 0.0,
+            mode: acq::Mode::Normal,
+            holdoff: HOLDOFF_MIN,
+            mask: 1,
+            tdiv: 200e-6,
+            depth: 0,
+            ch: [c; 4],
+            afe: false,
+            trig_src: 1,
+            slope: tpu::Slope::Rising,
+            level: 1.5,
+            auto: true,
+            auto_fast: false,
+            single: false,
+            trigger: Trig::Edge,
+            window: Some((4000, -2000)),
+            play4: true,
+            blocks: 7,
+            header: false,
+            noise_reject: false,
+            trig_couple: tpu::Coupling::Dc,
+            frames: 1,
+            compress: 1,
+            la: None,
+            segments: None,
+            aux: auxout::AuxOut::TriggerOut,
+            hwmask: None,
+            hwzone: None,
+        }
     }
 }
 
@@ -223,14 +324,36 @@ impl State {
                 a.channel_mode(c, mode);
             }
         }
-        State { sh: scu::Shadows::HANDOVER, ts: tpu::Shadows::APP, afe: [0, 1, 2, 3].map(afe::Afe::new), adc: a, mode, gain: [1.0; 4], la_was_on: false, holdoff_set: false, aux: None, mask_cols: None, mask_run: None, s1190: 0, zone_tabs: [None, None], zone_run: None }
+        State {
+            sh: scu::Shadows::HANDOVER,
+            ts: tpu::Shadows::APP,
+            afe: [0, 1, 2, 3].map(afe::Afe::new),
+            adc: a,
+            mode,
+            gain: [1.0; 4],
+            la_was_on: false,
+            holdoff_set: false,
+            aux: None,
+            mask_cols: None,
+            mask_run: None,
+            s1190: 0,
+            zone_tabs: [None, None],
+            zone_run: None,
+        }
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
-    pub fn configure(&mut self, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Option<&adc::CalAdc>) -> Result<(Vec<Step>, hz::Params), String> {
+    pub fn configure(
+        &mut self,
+        s: &Settings,
+        cal: Option<&afe::Cal>,
+        cal_adc: Option<&adc::CalAdc>,
+    ) -> Result<(Vec<Step>, hz::Params), String> {
         // trigger source: a channel that is acquired, or LA line 9..24 (only with the LA on)
         let on_la = (9..=24).contains(&s.trig_src) && s.la.is_some();
-        if !(1..=15).contains(&s.mask) || (!on_la && (!(1..=4).contains(&s.trig_src) || s.mask & (1 << (s.trig_src - 1)) == 0)) {
+        if !(1..=15).contains(&s.mask)
+            || (!on_la && (!(1..=4).contains(&s.trig_src) || s.mask & (1 << (s.trig_src - 1)) == 0))
+        {
             return Err("channel mask 1..0xf with the trigger source enabled".into());
         }
         let mut st = Vec::new();
@@ -254,7 +377,10 @@ impl State {
             }
             st.push(Step::Note(format!("hardware average of {} (0x10b0 = {})", count, acq::avg_count_reg(count))));
         }
-        st.push(Step::Note(format!("mask {:#x}: ratio {}, {} Sa/s, {} points/channel, segment {:#x}, pre {} post {}", s.mask, p.ratio, p.rate, p.memsel, p.seg, p.pre, p.post)));
+        st.push(Step::Note(format!(
+            "mask {:#x}: ratio {}, {} Sa/s, {} points/channel, segment {:#x}, pre {} post {}",
+            s.mask, p.ratio, p.rate, p.memsel, p.seg, p.pre, p.post
+        )));
         let mode = adc::mode_of_mask(s.mask).unwrap();
         if mode != self.mode {
             let c = cal_adc.ok_or("a channel set different from the current ADC mode needs cal_adc.hex")?;
@@ -287,8 +413,24 @@ impl State {
                     Couple::Ac => Some(false),
                     Couple::Gnd => None,
                 };
-                let (ops, rec, code) = afe::configure_ch(&mut self.afe[c], cal, (k.scale / k.probe * 1e9) as i64, ((k.offset - bias) / k.probe * 1e9) as i64, k.bw, p.rate, s.mask, k.invert, dc);
-                st.push(Step::Note(format!("AFE CH{}: {} V/div, digital gain {:.5}, offset DAC {}", c + 1, k.scale, rec.gain, code)));
+                let (ops, rec, code) = afe::configure_ch(
+                    &mut self.afe[c],
+                    cal,
+                    (k.scale / k.probe * 1e9) as i64,
+                    ((k.offset - bias) / k.probe * 1e9) as i64,
+                    k.bw,
+                    p.rate,
+                    s.mask,
+                    k.invert,
+                    dc,
+                );
+                st.push(Step::Note(format!(
+                    "AFE CH{}: {} V/div, digital gain {:.5}, offset DAC {}",
+                    c + 1,
+                    k.scale,
+                    rec.gain,
+                    code
+                )));
                 self.gain[c] = rec.gain;
                 st.extend(ops.into_iter().map(Step::Afe));
             }
@@ -296,11 +438,17 @@ impl State {
         if s.afe {
             // read-path gain/offset from the digital gains of the AFE records (else they keep the stock values)
             st.push(Step::Note("read-path gain/offset".into()));
-            let gnd = s.ch.map(|k| (k.couple == Couple::Gnd).then(|| (k.offset / k.scale * readout::CODES_PER_DIV + readout::MID) as i32 as u32));
+            let gnd = s.ch.map(|k| {
+                (k.couple == Couple::Gnd)
+                    .then(|| (k.offset / k.scale * readout::CODES_PER_DIV + readout::MID) as i32 as u32)
+            });
             st.extend(crate::dho::wpu::analog_gnd(s.mask, self.gain, gnd).into_iter().map(Step::Wr));
         }
         if s.blocks & 7 != 7 {
-            st.push(Step::Note(format!("configuration blocks {:#x} (bit0 trigger, bit1 acquisition, bit2 auto trigger)", s.blocks)));
+            st.push(Step::Note(format!(
+                "configuration blocks {:#x} (bit0 trigger, bit1 acquisition, bit2 auto trigger)",
+                s.blocks
+            )));
         }
         if s.blocks & 1 != 0 {
             st.extend(self.trigger(s).into_iter().map(Step::Wr));
@@ -316,14 +464,23 @@ impl State {
             let deskew = s.la.as_ref().map(|_| la::deskew(la::timing(&p, s.mask).m));
             let skew = s.ch.map(|k| (k.skew * 1e15).round() as i64);
             let invert = (0..4).filter(|&c| s.ch[c].invert).fold(0, |a, c| a | 1 << c);
-            st.extend(acq::configure_la(&mut self.sh, &p, s.mask, invert, 0, s.mode, deskew, skew).into_iter().map(Step::Wr));
+            st.extend(
+                acq::configure_la(&mut self.sh, &p, s.mask, invert, 0, s.mode, deskew, skew).into_iter().map(Step::Wr),
+            );
             if std::mem::replace(&mut self.la_was_on, s.la.is_some()) && s.la.is_none() {
                 st.push(Step::Wr(la::wave_early(None)));
             }
             if s.la.is_some() {
                 let t = la::timing(&p, s.mask);
-                st.push(Step::Note(format!("LA on: m {}, {} Sa/s, {} LA samples, trigger at {}", t.m, t.rate, t.n, t.pre)));
-                st.extend(la::config(&mut self.sh, &p, s.mask, s.la.as_ref().is_some_and(|l| l.roll)).into_iter().map(Step::Wr));
+                st.push(Step::Note(format!(
+                    "LA on: m {}, {} Sa/s, {} LA samples, trigger at {}",
+                    t.m, t.rate, t.n, t.pre
+                )));
+                st.extend(
+                    la::config(&mut self.sh, &p, s.mask, s.la.as_ref().is_some_and(|l| l.roll))
+                        .into_iter()
+                        .map(Step::Wr),
+                );
             }
             if self.aux != Some(s.aux) {
                 st.push(Step::Note(format!("AUX OUT {:?}", s.aux)));
@@ -366,7 +523,13 @@ impl State {
         };
         let k = &s.ch[m.ch];
         // the software mask spreads over the screen: 10 divisions around the delay
-        let t = mask::Timing { points: p.memsel, pre: p.pre, rate: p.rate, mask: s.mask, screen: (s.delay - 5.0 * s.tdiv, 10.0 * s.tdiv) };
+        let t = mask::Timing {
+            points: p.memsel,
+            pre: p.pre,
+            rate: p.rate,
+            mask: s.mask,
+            screen: (s.delay - 5.0 * s.tdiv, 10.0 * s.tdiv),
+        };
         let cols = mask::table_map(&m.lo, &m.hi, &t, k.scale, k.offset, self.gain[m.ch], &m.map);
         let run = (slot, m.map.layout(p.memsel, s.mask).1, m.clear, m.stop_on_fail);
         if self.mask_run == Some(run) && self.mask_cols.as_ref() == Some(&cols) {
@@ -385,7 +548,13 @@ impl State {
         self.sh.s4020 = mask::scu_bits(self.sh.s4020, true, m.stop_on_fail);
         w.push((0x4020, self.sh.s4020));
         self.mask_run = Some(run);
-        let mut st = vec![Step::Note(format!("mask test CH{} slot {}, {} samples per column{}", m.ch + 1, slot, run.1, if clear { ", counters cleared" } else { "" }))];
+        let mut st = vec![Step::Note(format!(
+            "mask test CH{} slot {}, {} samples per column{}",
+            m.ch + 1,
+            slot,
+            run.1,
+            if clear { ", counters cleared" } else { "" }
+        ))];
         st.extend(w.into_iter().map(Step::Wr));
         st
     }
@@ -394,13 +563,21 @@ impl State {
     /// tables that changed, control, compression, slot (the counter cleared on a new slot, a new start or a clear
     /// request) and armed; off when it is not wanted, the mask test is wanted, or its channel is not acquired.
     fn zone_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        let want = s.hwzone.as_ref().filter(|z| s.hwmask.is_none() && !z.zones.is_empty()).and_then(|z| mask::slot(s.mask, z.ch).map(|sl| (z, sl)));
+        let want = s
+            .hwzone
+            .as_ref()
+            .filter(|z| s.hwmask.is_none() && !z.zones.is_empty())
+            .and_then(|z| mask::slot(s.mask, z.ch).map(|sl| (z, sl)));
         let Some((z, slot)) = want else {
             if self.zone_run.take().is_none() {
                 return vec![];
             }
             self.sh.s4020 = zone::scu_bit(self.sh.s4020, false);
-            let mut w = vec![Step::Note("zone trigger off".into()), Step::Wr((0x4020, self.sh.s4020)), Step::Wr((zone::CTRL, 0))];
+            let mut w = vec![
+                Step::Note("zone trigger off".into()),
+                Step::Wr((0x4020, self.sh.s4020)),
+                Step::Wr((zone::CTRL, 0)),
+            ];
             if self.mask_run.is_none() {
                 self.s1190 &= !mask::ctrl::SLOT_MASK;
                 w.extend([Step::Wr((mask::COMPRESS, mask::compress::OFF)), Step::Wr((mask::CTRL, self.s1190))]);
@@ -408,7 +585,12 @@ impl State {
             return w;
         };
         let k = &s.ch[z.ch];
-        let tabs: Vec<Vec<zone::Column>> = z.zones.iter().take(2).map(|x| zone::table(x, p.memsel, p.rate, p.pre, s.mask, k.scale, k.offset, self.gain[z.ch], &z.map)).collect();
+        let tabs: Vec<Vec<zone::Column>> = z
+            .zones
+            .iter()
+            .take(2)
+            .map(|x| zone::table(x, p.memsel, p.rate, p.pre, s.mask, k.scale, k.offset, self.gain[z.ch], &z.map))
+            .collect();
         let n = z.map.layout(p.memsel, s.mask).1;
         let run = (slot, n, zone::ctrl_word(&z.zones), z.clear);
         if self.zone_run == Some(run) && tabs.iter().enumerate().all(|(i, t)| self.zone_tabs[i].as_ref() == Some(t)) {
@@ -430,7 +612,13 @@ impl State {
         self.sh.s4020 = zone::scu_bit(self.sh.s4020, true);
         w.push((0x4020, self.sh.s4020));
         self.zone_run = Some(run);
-        let mut st = vec![Step::Note(format!("zone trigger CH{} slot {}, control {:#x}{}", z.ch + 1, slot, run.2, if clear { ", counter cleared" } else { "" }))];
+        let mut st = vec![Step::Note(format!(
+            "zone trigger CH{} slot {}, control {:#x}{}",
+            z.ch + 1,
+            slot,
+            run.2,
+            if clear { ", counter cleared" } else { "" }
+        ))];
         st.extend(w.into_iter().map(Step::Wr));
         st
     }
@@ -454,23 +642,72 @@ impl State {
         let tc = if src <= 4 { (src - 1) as usize } else { 0 };
         // the hysteresis comes from the scale of the source at the BNC, and multiplies the scale of each channel
         let noise = tpu::noise_hysteresis(nv(s.ch[tc].scale / s.ch[tc].probe), s.noise_reject);
-        let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert { scale: nv(s.ch[c].scale), offset: nv(s.ch[c].offset), g: self.gain[c], noise });
+        let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert {
+            scale: nv(s.ch[c].scale),
+            offset: nv(s.ch[c].offset),
+            g: self.gain[c],
+            noise,
+        });
         let edge = if s.slope == tpu::Slope::Falling { tpu::Edge::Falling } else { tpu::Edge::Rising };
         let mut w = match &s.trigger {
-            Trig::Edge => tpu::edge_coupled(ts, src, s.slope, s.trig_couple, nv(s.level), vt[tc].offset, vt[tc].scale, vt[tc].g, noise, 8_000_000),
-            Trig::Pulse { pol, when, lower, upper } => tpu::pulse(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), &vt),
-            Trig::Slope { when, lower, upper, lo } => tpu::slope(ts, src, edge, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt),
-            Trig::Runt { pol, when, lower, upper, lo } => tpu::runt(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt, true),
-            Trig::Window { event, time, lo } => tpu::window(ts, src, s.slope, *event, fs(*time), nv(s.level), nv(*lo), &vt, true),
-            Trig::Timeout { time } => tpu::timeout(ts, src, s.slope, fs(*time), nv(s.level), &vt),
-            Trig::Delay { srcb, eb, when, lower, upper, levelb } => tpu::delay(ts, src, edge, *srcb, *eb, *when, fs(*lower), fs(*upper), nv(s.level), nv(*levelb), &vt),
-            Trig::Pattern { pats, la, levels } => tpu::pattern(ts, &[&pats[..], &la[..]].concat(), tpu::Logic::And, &levels.map(nv), &vt),
-            Trig::Duration { pats, la, when, lower, upper, levels } => tpu::duration(ts, &[&pats[..], &la[..]].concat(), tpu::Logic::And, *when, fs(*lower), fs(*upper), &levels.map(nv), &vt),
-            Trig::SetupHold { clk, clk_edge, setup, hold, levelc } => {
-                tpu::setup_hold(ts, *clk, src, *clk_edge, tpu::DataLevel::H, tpu::ShEvent::Both, fs(*setup), fs(*hold), nv(*levelc), nv(s.level), &vt)
+            Trig::Edge => tpu::edge_coupled(
+                ts,
+                src,
+                s.slope,
+                s.trig_couple,
+                nv(s.level),
+                vt[tc].offset,
+                vt[tc].scale,
+                vt[tc].g,
+                noise,
+                8_000_000,
+            ),
+            Trig::Pulse { pol, when, lower, upper } => {
+                tpu::pulse(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), &vt)
             }
+            Trig::Slope { when, lower, upper, lo } => {
+                tpu::slope(ts, src, edge, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt)
+            }
+            Trig::Runt { pol, when, lower, upper, lo } => {
+                tpu::runt(ts, src, *pol, *when, fs(*lower), fs(*upper), nv(s.level), nv(*lo), &vt, true)
+            }
+            Trig::Window { event, time, lo } => {
+                tpu::window(ts, src, s.slope, *event, fs(*time), nv(s.level), nv(*lo), &vt, true)
+            }
+            Trig::Timeout { time } => tpu::timeout(ts, src, s.slope, fs(*time), nv(s.level), &vt),
+            Trig::Delay { srcb, eb, when, lower, upper, levelb } => {
+                tpu::delay(ts, src, edge, *srcb, *eb, *when, fs(*lower), fs(*upper), nv(s.level), nv(*levelb), &vt)
+            }
+            Trig::Pattern { pats, la, levels } => {
+                tpu::pattern(ts, &[&pats[..], &la[..]].concat(), tpu::Logic::And, &levels.map(nv), &vt)
+            }
+            Trig::Duration { pats, la, when, lower, upper, levels } => tpu::duration(
+                ts,
+                &[&pats[..], &la[..]].concat(),
+                tpu::Logic::And,
+                *when,
+                fs(*lower),
+                fs(*upper),
+                &levels.map(nv),
+                &vt,
+            ),
+            Trig::SetupHold { clk, clk_edge, setup, hold, levelc } => tpu::setup_hold(
+                ts,
+                *clk,
+                src,
+                *clk_edge,
+                tpu::DataLevel::H,
+                tpu::ShEvent::Both,
+                fs(*setup),
+                fs(*hold),
+                nv(*levelc),
+                nv(s.level),
+                &vt,
+            ),
             Trig::Nth { count, idle } => tpu::nth(ts, src, edge, *count, fs(*idle), nv(s.level), &vt),
-            Trig::Video { std, sync, line } => tpu::video(ts, src, *std, true, *sync, *line, nv(s.level), &vt, tpu::VideoClk::Fast),
+            Trig::Video { std, sync, line } => {
+                tpu::video(ts, src, *std, true, *sync, *line, nv(s.level), &vt, tpu::VideoClk::Fast)
+            }
             Trig::Uart(u) => tpu::uart(ts, src, u, nv(s.level), &vt),
             Trig::Spi(x) => tpu::spi(ts, x, nv(s.level), &vt),
             Trig::I2c(x) => tpu::i2c(ts, x, nv(s.level), &vt),
@@ -501,7 +738,8 @@ impl State {
     pub fn la_read_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
         let t = la::timing(p, s.mask);
         let (n, start) = la::window(&t);
-        let mut st = vec![Step::Note(format!("LA read-out: {} words from LA sample {} (trigger at {})", n, start, t.pre))];
+        let mut st =
+            vec![Step::Note(format!("LA read-out: {} words from LA sample {} (trigger at {})", n, start, t.pre))];
         // wait for the stop before touching the play engine (at least 1.5 ms)
         st.push(Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 30, what: "FSM stopped before the LA read" });
         st.extend(la::passthrough().into_iter().map(Step::Wr));
@@ -534,7 +772,10 @@ impl State {
     pub fn disarm_steps(&mut self) -> Vec<Step> {
         let mut w = Vec::new();
         scu::stop_sequence(&mut w, &mut self.sh);
-        let mut st = vec![Step::Note("disarm".into()), Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the disarm" }];
+        let mut st = vec![
+            Step::Note("disarm".into()),
+            Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the disarm" },
+        ];
         st.extend(w.into_iter().map(Step::Wr));
         st
     }
@@ -542,7 +783,10 @@ impl State {
     /// Restarts a hardware average (CLEAR, RUN after STOP, SINGLE, a complete hold average): wait for the FSM to stop,
     /// then the clear pulse (stock StopScope + setAvgClr). Between batches the read-out has already stopped the FSM.
     pub fn avg_clear_steps(&mut self) -> Vec<Step> {
-        let mut st = vec![Step::Note("average clear".into()), Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the average clear" }];
+        let mut st = vec![
+            Step::Note("average clear".into()),
+            Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 10, what: "FSM stopped before the average clear" },
+        ];
         st.extend(acq::avg_clear().into_iter().map(Step::Wr));
         st
     }
@@ -570,7 +814,14 @@ impl State {
         let mut st = Vec::new();
         let (n, start) = window(s, p);
         // the window counts words of all interleaved channels: n x ratio from point x ratio (Phase 0.5 step D)
-        let win = scu::Window { n: n * p.ratio, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: s.la.is_some(), avg: matches!(s.mode, acq::Mode::Average { .. }) };
+        let win = scu::Window {
+            n: n * p.ratio,
+            start: start * p.ratio,
+            ratio: p.ratio,
+            fsm: s.mask,
+            la: s.la.is_some(),
+            avg: matches!(s.mode, acq::Mode::Average { .. }),
+        };
         st.push(Step::Note(format!("read-out: {} points from memory point {} (trigger at {})", n, start, p.pre)));
         let mut ro = if s.play4 {
             let mut v = scu::passthrough();
@@ -623,7 +874,8 @@ impl State {
     /// pulse. Read the stamp from 0x40b0/0x40b4 after it (`seg::read_latched`).
     pub fn segment_stamp_steps(&mut self, s: &Settings, p: &hz::Params, k: u32) -> Vec<Step> {
         let (_, start) = window(s, p);
-        let win = scu::Window { n: STAMP_WORDS, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: false, avg: false };
+        let win =
+            scu::Window { n: STAMP_WORDS, start: start * p.ratio, ratio: p.ratio, fsm: s.mask, la: false, avg: false };
         let mut w = scu::passthrough();
         w.extend(scu::readout_play4(&win, &mut self.sh, k, 1));
         for x in w.iter_mut().filter(|x| x.0 == 0x1010) {
@@ -654,7 +906,15 @@ pub fn record_frames(s: &Settings, p: &hz::Params) -> u32 {
 pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
     // at least the record itself, twice over: slow time bases with the rate halved by the LA take seconds
     let record_ms = p.memsel as u64 * 1000 / p.rate.max(1);
-    vec![Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000.max(2 * record_ms + 500), what: "acquisition done" }, Step::Peek(&[0x4034, 0x4010, 0x4014])]
+    vec![
+        Step::Poll {
+            reg: 0x4080,
+            bit: scu::PLAYINFO_DONE,
+            ms: 2000.max(2 * record_ms + 500),
+            what: "acquisition done",
+        },
+        Step::Peek(&[0x4034, 0x4010, 0x4014]),
+    ]
 }
 
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
@@ -835,7 +1095,15 @@ pub fn volt_code(x: u16, (a, off): (f32, f32)) -> f32 {
 
 /// Volts of samples `a..b` of the channel at `word` of every group of `ratio` words in `bytes`, into `out` (cleared
 /// first): `volt_code` of each, in one loop.
-pub fn lane_volts_into(bytes: &[u8], ratio: usize, word: usize, a: usize, b: usize, (sa, off): (f32, f32), out: &mut Vec<f32>) {
+pub fn lane_volts_into(
+    bytes: &[u8],
+    ratio: usize,
+    word: usize,
+    a: usize,
+    b: usize,
+    (sa, off): (f32, f32),
+    out: &mut Vec<f32>,
+) {
     out.clear();
     out.extend((a..b).map(|i| {
         let j = 2 * (i * ratio + word);
@@ -920,7 +1188,12 @@ pub fn tdiv_fs(tdiv: f64) -> i128 {
 }
 
 /// Configure + acquire in one list (oos-fpgad plan/run).
-pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Option<&adc::CalAdc>) -> Result<(Vec<Step>, hz::Params), String> {
+pub fn plan(
+    st: &mut State,
+    s: &Settings,
+    cal: Option<&afe::Cal>,
+    cal_adc: Option<&adc::CalAdc>,
+) -> Result<(Vec<Step>, hz::Params), String> {
     let (mut v, p) = st.configure(s, cal, cal_adc)?;
     v.extend(st.acquire(s, &p));
     Ok((v, p))
@@ -933,14 +1206,35 @@ pub fn plan(st: &mut State, s: &Settings, cal: Option<&afe::Cal>, cal_adc: Optio
 /// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
 #[allow(clippy::too_many_arguments)]
-pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, log: impl FnMut(String)) -> Result<u32, String> {
+pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    armed: bool,
+    wait_ms: u64,
+    log: impl FnMut(String),
+) -> Result<u32, String> {
     acquire_batch_until(st, s, p, bar, c2h, dma, armed, wait_ms, log, || false)
 }
 
 /// `acquire_batch` whose wait for a trigger ends with `Err(NEW_SETTINGS)` as soon as `stop()` says so (checked every
 /// 10 ms): in NORMAL without a trigger the wait lasts 2 s, and new settings would wait for it.
 #[allow(clippy::too_many_arguments)]
-pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<u32, String> {
+pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    armed: bool,
+    wait_ms: u64,
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+) -> Result<u32, String> {
     acquire_batch_idle(st, s, p, bar, c2h, dma, armed, wait_ms, log, stop, || false)
 }
 
@@ -948,7 +1242,19 @@ pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut S
 /// between two looks at the frame count, and the count is read after every call, so the read waits at most one call.
 /// `idle` returns false when it has nothing to do (the wait then sleeps as without it).
 #[allow(clippy::too_many_arguments)]
-pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, armed: bool, wait_ms: u64, mut log: impl FnMut(String), stop: impl Fn() -> bool, mut idle: impl FnMut() -> bool) -> Result<u32, String> {
+pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    armed: bool,
+    wait_ms: u64,
+    mut log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+    mut idle: impl FnMut() -> bool,
+) -> Result<u32, String> {
     let nf = frames(s, p);
     let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
     execute_bus_until(&arm, bar, c2h, dma, &mut log, &stop)?;
@@ -970,7 +1276,16 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut St
 /// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
 /// (`frame_bytes` of `raw_settings(s)`).
 #[allow(clippy::too_many_arguments)]
-pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, index: u32, log: impl FnMut(String)) -> Result<(), String> {
+pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    index: u32,
+    log: impl FnMut(String),
+) -> Result<(), String> {
     execute_bus(&st.read_steps_at(&raw_settings(s), p, index, 1), bar, c2h, dma, log)
 }
 
@@ -983,20 +1298,39 @@ pub fn raw_settings(s: &Settings) -> Settings {
 /// decodes: the same writes as the arm `acquire_batch` would issue next, earlier. Read it with `acquire_batch(..,
 /// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`.
 #[cfg(target_os = "linux")]
-pub fn prearm(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<(), String> {
+pub fn prearm(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut crate::dho::bus::Bar1,
+    c2h: &mut std::fs::File,
+    log: impl FnMut(String),
+) -> Result<(), String> {
     execute(&st.arm_only_steps(s, p), bar, None, c2h, log).map(|_| ())
 }
 
 /// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`).
 #[cfg(target_os = "linux")]
-pub fn disarm(st: &mut State, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<(), String> {
+pub fn disarm(
+    st: &mut State,
+    bar: &mut crate::dho::bus::Bar1,
+    c2h: &mut std::fs::File,
+    log: impl FnMut(String),
+) -> Result<(), String> {
     execute(&st.disarm_steps(), bar, None, c2h, log).map(|_| ())
 }
 
 /// The LA read of the acquisition just read out (`la_read_steps`) on the unit: LA words, bit n = Dn, word `start` of
 /// `la::window` first.
 #[cfg(target_os = "linux")]
-pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate::dho::bus::Bar1, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u16>, String> {
+pub fn acquire_la(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut crate::dho::bus::Bar1,
+    c2h: &mut std::fs::File,
+    log: impl FnMut(String),
+) -> Result<Vec<u16>, String> {
     let (n, _) = la::window(&la::timing(p, s.mask));
     let steps = st.la_read_steps(s, p);
     match execute(&steps, bar, None, c2h, log) {
@@ -1014,12 +1348,25 @@ pub fn acquire_la(st: &mut State, s: &Settings, p: &hz::Params, bar: &mut crate:
 
 /// Runs steps that need only the register window and the C2H stream (no AFE step) on any `Bus`: the unit, or a model
 /// of it in the tests. The Read step goes into `dma` like `execute_into_until`.
-pub fn execute_bus<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Step], bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String)) -> Result<(), String> {
+pub fn execute_bus<B: crate::dho::bus::Bus, R: std::io::Read>(
+    steps: &[Step],
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    mut log: impl FnMut(String),
+) -> Result<(), String> {
     execute_bus_until(steps, bar, c2h, dma, &mut log, &|| false)
 }
 
 /// `execute_bus` whose polls end early with `Err(NEW_SETTINGS)` when `stop()` says so (checked every 10 ms).
-pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Step], bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, log: &mut impl FnMut(String), stop: &impl Fn() -> bool) -> Result<(), String> {
+pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(
+    steps: &[Step],
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    log: &mut impl FnMut(String),
+    stop: &impl Fn() -> bool,
+) -> Result<(), String> {
     for s in steps {
         plain_step(s, bar, c2h, dma, log, stop)?;
     }
@@ -1027,7 +1374,14 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(steps: &[Ste
 }
 
 /// One step of `execute_bus` / `execute_into_until` other than the AFE steps.
-fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, c2h: &mut R, dma: &mut crate::dho::bus::DmaBuf, log: &mut impl FnMut(String), stop: &impl Fn() -> bool) -> Result<(), String> {
+fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
+    s: &Step,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    log: &mut impl FnMut(String),
+    stop: &impl Fn() -> bool,
+) -> Result<(), String> {
     match s {
         Step::Wr((off, v)) => bar.wr(*off, *v),
         Step::Afe(_) => return Err("AFE step without AFE bus".into()),
@@ -1045,11 +1399,23 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, 
                 }
             }
             let ok = last & bit != 0;
-            log(format!("{} {} ({:#x} = {:#010x}, {:.1} ms)", what, if ok { "ok" } else { "TIMEOUT" }, reg, last, t.elapsed().as_secs_f64() * 1e3));
+            log(format!(
+                "{} {} ({:#x} = {:#010x}, {:.1} ms)",
+                what,
+                if ok { "ok" } else { "TIMEOUT" },
+                reg,
+                last,
+                t.elapsed().as_secs_f64() * 1e3
+            ));
             if !ok && *reg == 0x4080 {
                 // 0x4030 bit 20 = mask/zone read-back started, [3:0] = FSM state (5 = waiting for the column window)
                 let st = bar.rd(0x4030);
-                return Err(format!("no acquisition (0x4080 bit30 not set; 0x4030 = {:#010x}, readback {}, state {})", st, st >> 20 & 1, st & 0xf));
+                return Err(format!(
+                    "no acquisition (0x4080 bit30 not set; 0x4030 = {:#010x}, readback {}, state {})",
+                    st,
+                    st >> 20 & 1,
+                    st & 0xf
+                ));
             }
         }
         Step::Read { frames, frame } => {
@@ -1060,7 +1426,9 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, 
             let n = unpad_in(buf, *frame);
             dma.truncate(n);
         }
-        Step::Peek(regs) => log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", ")),
+        Step::Peek(regs) => {
+            log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", "))
+        }
         Step::Sleep { us } => std::thread::sleep(std::time::Duration::from_micros(*us as u64)),
         Step::Note(n) => log(n.clone()),
     }
@@ -1069,7 +1437,13 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(s: &Step, bar: &mut B, 
 
 /// Runs steps on the unit; returns the bytes of the Read step. `log` gets notes and poll results.
 #[cfg(target_os = "linux")]
-pub fn execute(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, log: impl FnMut(String)) -> Result<Vec<u8>, String> {
+pub fn execute(
+    steps: &[Step],
+    bar: &mut crate::dho::bus::Bar1,
+    afe_bus: Option<&mut afe::GpioAfe>,
+    c2h: &mut std::fs::File,
+    log: impl FnMut(String),
+) -> Result<Vec<u8>, String> {
     let mut dma = crate::dho::bus::DmaBuf::new();
     execute_into_until(steps, bar, afe_bus, c2h, &mut dma, log, || false)?;
     Ok(dma.into_vec())
@@ -1080,7 +1454,14 @@ pub const NEW_SETTINGS: &str = "stopped for new settings";
 
 /// `execute` whose polls end early with `Err(NEW_SETTINGS)` when `stop()` says so (checked every 10 ms).
 #[cfg(target_os = "linux")]
-pub fn execute_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<Vec<u8>, String> {
+pub fn execute_until(
+    steps: &[Step],
+    bar: &mut crate::dho::bus::Bar1,
+    afe_bus: Option<&mut afe::GpioAfe>,
+    c2h: &mut std::fs::File,
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+) -> Result<Vec<u8>, String> {
     let mut dma = crate::dho::bus::DmaBuf::new();
     execute_into_until(steps, bar, afe_bus, c2h, &mut dma, log, stop)?;
     Ok(dma.into_vec())
@@ -1089,7 +1470,15 @@ pub fn execute_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: O
 /// `execute` with the Read step into `dma` (kept across batches): the bytes are `dma.data()`, without padding. Polls
 /// end early like `execute_until`.
 #[cfg(target_os = "linux")]
-pub fn execute_into_until(steps: &[Step], bar: &mut crate::dho::bus::Bar1, afe_bus: Option<&mut afe::GpioAfe>, c2h: &mut std::fs::File, dma: &mut crate::dho::bus::DmaBuf, mut log: impl FnMut(String), stop: impl Fn() -> bool) -> Result<(), String> {
+pub fn execute_into_until(
+    steps: &[Step],
+    bar: &mut crate::dho::bus::Bar1,
+    afe_bus: Option<&mut afe::GpioAfe>,
+    c2h: &mut std::fs::File,
+    dma: &mut crate::dho::bus::DmaBuf,
+    mut log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+) -> Result<(), String> {
     use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
     for s in steps {
@@ -1119,7 +1508,8 @@ mod tests {
     fn code_map_reads_what_the_decode_reads() {
         let cal = [(1.0, 0.1), (0.5, -0.2), (2.0, 0.0), (0.2, 0.05)];
         for mask in 1u32..16 {
-            let bytes: Vec<u8> = (0..4 * 37 + 3u32).flat_map(|i| ((30_000 + i * 97 % 5000) as u16).to_le_bytes()).collect();
+            let bytes: Vec<u8> =
+                (0..4 * 37 + 3u32).flat_map(|i| ((30_000 + i * 97 % 5000) as u16).to_le_bytes()).collect();
             let d = decode_volts(&bytes, mask, cal);
             let m = code_map(mask, cal);
             for c in 0..4 {
@@ -1128,7 +1518,14 @@ mod tests {
                     continue;
                 };
                 let n = (bytes.len() / 2 + m.ratio - 1 - k) / m.ratio;
-                let v: Vec<f32> = (0..n).map(|i| volt_code(u16::from_le_bytes([bytes[2 * (i * m.ratio + k)], bytes[2 * (i * m.ratio + k) + 1]]), m.affine[c])).collect();
+                let v: Vec<f32> = (0..n)
+                    .map(|i| {
+                        volt_code(
+                            u16::from_le_bytes([bytes[2 * (i * m.ratio + k)], bytes[2 * (i * m.ratio + k) + 1]]),
+                            m.affine[c],
+                        )
+                    })
+                    .collect();
                 assert_eq!(v, d[c], "mask {} CH{}", mask, c + 1);
             }
         }
@@ -1146,17 +1543,47 @@ mod tests {
         assert_eq!(compress_word(u32::MAX), 0xc000_3fff);
         for memsel in [1_000u32, 14_064, 62_504, 70_312, 100_000, 999_992, 1_000_000, 10_000_000, 125_000_000] {
             for k in [0u32, 1, 2, 3, 4, 15, 16, 25, 64, 128, 200, 256, 1000, 16383, 20000, u32::MAX] {
-                let p = hz::Params { ratio: 1, rate: 1_250_000_000, memsel, dot_fs: 800_000, seg: 0, max_frames: 1, pre: memsel / 2, post: memsel / 2 };
+                let p = hz::Params {
+                    ratio: 1,
+                    rate: 1_250_000_000,
+                    memsel,
+                    dot_fs: 800_000,
+                    seg: 0,
+                    max_frames: 1,
+                    pre: memsel / 2,
+                    post: memsel / 2,
+                };
                 let s = Settings { compress: k, ..Settings::default() };
                 let (kk, n) = (compress_k(&s, &p), compressed_len(&s, &p));
-                assert!((1..=COMPRESS_K_MAX).contains(&kk) && n % 8 == 0 && n >= 8, "{} {}: k {} n {}", memsel, k, kk, n);
+                assert!(
+                    (1..=COMPRESS_K_MAX).contains(&kk) && n % 8 == 0 && n >= 8,
+                    "{} {}: k {} n {}",
+                    memsel,
+                    k,
+                    kk,
+                    n
+                );
                 assert!(n as u64 * kk as u64 <= memsel as u64, "{} at k {}: {} points x {}", memsel, k, n, kk);
                 // at most 8 points (4 pairs) short of the record
                 assert!(memsel as u64 - (n as u64 * kk as u64) < 8 * kk as u64, "{} at k {}", memsel, k);
             }
         }
         // the unit's cases: k 256 at 1 M asked 3912 points, now 3904; k 128 7816 -> 7808, k 4 250 000 unchanged
-        let at = |k: u32| compressed_len(&Settings { compress: k, ..Settings::default() }, &hz::Params { ratio: 1, rate: 1_250_000_000, memsel: 1_000_000, dot_fs: 800_000, seg: 0, max_frames: 1, pre: 500_000, post: 500_000 });
+        let at = |k: u32| {
+            compressed_len(
+                &Settings { compress: k, ..Settings::default() },
+                &hz::Params {
+                    ratio: 1,
+                    rate: 1_250_000_000,
+                    memsel: 1_000_000,
+                    dot_fs: 800_000,
+                    seg: 0,
+                    max_frames: 1,
+                    pre: 500_000,
+                    post: 500_000,
+                },
+            )
+        };
         assert_eq!((at(256), at(128), at(4)), (3904, 7808, 250_000));
     }
     #[test]
@@ -1185,7 +1612,15 @@ mod tests {
     }
 
     fn afe_writes(st: &[Step], reg: u8) -> Vec<u16> {
-        st.iter().filter_map(|x| if let Step::Afe(afe::Op::Afe { reg: r, val, .. }) = x { (*r == reg).then_some(*val) } else { None }).collect()
+        st.iter()
+            .filter_map(|x| {
+                if let Step::Afe(afe::Op::Afe { reg: r, val, .. }) = x {
+                    (*r == reg).then_some(*val)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     #[test]
@@ -1242,7 +1677,12 @@ mod tests {
         // the auto time waits out a long holdoff (trigger.md 2.6): 1 s are 250 M ticks of the 4 ns timer
         let t2 = |holdoff: f64| {
             let s = Settings { holdoff, ..Settings::default() };
-            writes(&State::handover(1, None).configure(&s, None, None).unwrap().0).iter().rev().find(|w| w.0 == 0x4064).unwrap().1
+            writes(&State::handover(1, None).configure(&s, None, None).unwrap().0)
+                .iter()
+                .rev()
+                .find(|w| w.0 == 0x4064)
+                .unwrap()
+                .1
         };
         assert_eq!((t2(HOLDOFF_MIN), t2(1.0)), (25_000_000, 250_000_000));
     }
@@ -1265,7 +1705,18 @@ mod tests {
     #[test]
     fn hysteresis_follows_the_table_below_2_mv() {
         let h = |scale: f64, probe: f64| tpu::noise_hysteresis(scale / probe * 1e9, false);
-        assert_eq!((h(1.0, 1.0), h(0.002, 1.0), h(0.00204, 1.0), h(0.001, 1.0), h(0.0005, 1.0), h(0.0002, 1.0), h(0.0001, 1.0)), (0.3, 0.5, 0.3, 1.0, 1.25, 1.15, 2.3));
+        assert_eq!(
+            (
+                h(1.0, 1.0),
+                h(0.002, 1.0),
+                h(0.00204, 1.0),
+                h(0.001, 1.0),
+                h(0.0005, 1.0),
+                h(0.0002, 1.0),
+                h(0.0001, 1.0)
+            ),
+            (0.3, 0.5, 0.3, 1.0, 1.25, 1.15, 2.3)
+        );
         assert_eq!(h(0.01, 10.0), 1.0, "the BNC scale counts");
         assert_eq!(h(0.002f32 as f64, 1.0), 0.5, "through f32");
         assert_eq!(tpu::noise_hysteresis(1e9, true), 0.7);
@@ -1286,7 +1737,10 @@ mod tests {
     fn holdoff_is_written_when_it_matters() {
         let mut st = State::handover(1, None);
         let has = |w: &[crate::dho::Write]| w.iter().any(|x| x.0 == 0x2084);
-        let base = Settings { trigger: Trig::Pulse { pol: tpu::Polarity::Pos, when: tpu::When::Gt, lower: 1e-6, upper: 2e-6 }, ..Settings::default() };
+        let base = Settings {
+            trigger: Trig::Pulse { pol: tpu::Polarity::Pos, when: tpu::When::Gt, lower: 1e-6, upper: 2e-6 },
+            ..Settings::default()
+        };
         assert!(!has(&st.trigger(&base)));
         let on = Settings { holdoff: 1e-3, ..base.clone() };
         assert!(has(&st.trigger(&on)));
@@ -1304,7 +1758,10 @@ mod tests {
     fn aux_out_is_written_once_and_on_change() {
         use auxout::{AuxOut, PassFail};
         let aux = |st: &mut State, s: &Settings| -> Vec<Write> {
-            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| w.0 == auxout::SELECT || w.0 == auxout::PASSFAIL).collect()
+            writes(&st.configure(s, None, None).unwrap().0)
+                .into_iter()
+                .filter(|w| w.0 == auxout::SELECT || w.0 == auxout::PASSFAIL)
+                .collect()
         };
         let mut st = State::handover(1, None);
         let base = Settings::default();
@@ -1324,9 +1781,19 @@ mod tests {
     #[test]
     fn hardware_mask_starts_reloads_clears_and_stops() {
         let only = |st: &mut State, s: &Settings| -> Vec<Write> {
-            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020).collect()
+            writes(&st.configure(s, None, None).unwrap().0)
+                .into_iter()
+                .filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020)
+                .collect()
         };
-        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map::default() };
+        let band = |h: f32| HwMask {
+            ch: 0,
+            lo: vec![-h; mask::COLUMNS],
+            hi: vec![h; mask::COLUMNS],
+            stop_on_fail: false,
+            clear: 0,
+            map: mask::Map::default(),
+        };
         let mut st = State::handover(1, None);
         let base = Settings { window: None, ..Settings::default() };
         let on = Settings { hwmask: Some(band(1.0)), ..base.clone() };
@@ -1337,7 +1804,10 @@ mod tests {
         assert_eq!(w[0], (0x4020, 0x2001));
         assert_eq!(w[1], (0x1194, 0x1c00_0000 | 158 << 8 | 98));
         assert_eq!(w[1001], (0x1194, 0));
-        assert_eq!(w[1002..1006], [(0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]);
+        assert_eq!(
+            w[1002..1006],
+            [(0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001)]
+        );
         assert_eq!(*w.last().unwrap(), (0x4020, 0xe001), "auto trigger keeps the mask bits");
         assert_eq!(st.mask_ctrl(), Some(0x0010_0000));
         // unchanged: nothing but the auto-trigger write
@@ -1348,9 +1818,22 @@ mod tests {
         assert_eq!(w[1003], (0x1190, 0x0010_0000));
         // a clear request: no table, the counters cleared
         let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, ..band(0.5) }), ..base.clone() });
-        assert_eq!(w, vec![(0x4020, 0x6001), (0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0xe001), (0x4020, 0xe001)]);
+        assert_eq!(
+            w,
+            vec![
+                (0x4020, 0x6001),
+                (0x1184, 0xc000_03ff),
+                (0x1190, 0x6010_0000),
+                (0x1190, 0x0010_0000),
+                (0x4020, 0xe001),
+                (0x4020, 0xe001)
+            ]
+        );
         // stop on fail sets bit 12
-        let w = only(&mut st, &Settings { hwmask: Some(HwMask { clear: 1, stop_on_fail: true, ..band(0.5) }), ..base.clone() });
+        let w = only(
+            &mut st,
+            &Settings { hwmask: Some(HwMask { clear: 1, stop_on_fail: true, ..band(0.5) }), ..base.clone() },
+        );
         assert_eq!(*w.last().unwrap(), (0x4020, 0xf001));
         // off: enable and stop cleared, compression back, slot dropped
         let w = only(&mut st, &base);
@@ -1369,7 +1852,10 @@ mod tests {
     #[test]
     fn hardware_zone_starts_hands_over_to_the_mask_and_stops() {
         let only = |st: &mut State, s: &Settings| -> Vec<Write> {
-            writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194 | 0x11d0 | 0x11d8 | 0x11dc | 0x4020)).collect()
+            writes(&st.configure(s, None, None).unwrap().0)
+                .into_iter()
+                .filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194 | 0x11d0 | 0x11d8 | 0x11dc | 0x4020))
+                .collect()
         };
         let bx = |inside| zone::Zone { poly: vec![(-1e-4, 0.5), (1e-4, 1.5)], inside };
         let z1 = HwZone { ch: 0, zones: vec![bx(true)], clear: 0, map: mask::Map::default() };
@@ -1381,15 +1867,40 @@ mod tests {
         assert_eq!(w.len(), 1 + 1001 + 1 + 1 + 2 + 1 + 1);
         assert_eq!(w[0], (0x4020, 0x2001));
         assert!(w[1..1001].iter().all(|x| x.0 == 0x11d8));
-        assert_eq!(w[1002..1008], [(0x11d0, 0x0500_0000), (0x1184, 0xc000_03ff), (0x1190, 0x6010_0000), (0x1190, 0x0010_0000), (0x4020, 0x2003), (0x4020, 0x2003)]);
+        assert_eq!(
+            w[1002..1008],
+            [
+                (0x11d0, 0x0500_0000),
+                (0x1184, 0xc000_03ff),
+                (0x1190, 0x6010_0000),
+                (0x1190, 0x0010_0000),
+                (0x4020, 0x2003),
+                (0x4020, 0x2003)
+            ]
+        );
         assert_eq!(st.zone_ctrl(), Some(0x0010_0000));
         assert_eq!(only(&mut st, &on), vec![(0x4020, 0x2003)]);
         // a second zone that must not be touched: its table, the new control word, no clear
         let two = Settings { hwzone: Some(HwZone { zones: vec![bx(true), bx(false)], ..z1.clone() }), ..base.clone() };
         let w = only(&mut st, &two);
-        assert!(w.iter().filter(|x| x.0 == 0x11dc).count() == 1001 && w.contains(&(0x11d0, 0x0700_0000)) && w.contains(&(0x1190, 0x0010_0000)) && !w.contains(&(0x1190, 0x6010_0000)));
+        assert!(
+            w.iter().filter(|x| x.0 == 0x11dc).count() == 1001
+                && w.contains(&(0x11d0, 0x0700_0000))
+                && w.contains(&(0x1190, 0x0010_0000))
+                && !w.contains(&(0x1190, 0x6010_0000))
+        );
         // the mask test wins: the zone logic off, the mask keeps the slot it sets
-        let mut m = Settings { hwmask: Some(HwMask { ch: 0, lo: vec![-1.0; mask::COLUMNS], hi: vec![1.0; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map::default() }), ..two.clone() };
+        let mut m = Settings {
+            hwmask: Some(HwMask {
+                ch: 0,
+                lo: vec![-1.0; mask::COLUMNS],
+                hi: vec![1.0; mask::COLUMNS],
+                stop_on_fail: false,
+                clear: 0,
+                map: mask::Map::default(),
+            }),
+            ..two.clone()
+        };
         let w = only(&mut st, &m);
         assert_eq!(&w[..2], [(0x4020, 0x2001), (0x11d0, 0)]);
         assert_eq!(st.zone_ctrl(), None);
@@ -1408,8 +1919,15 @@ mod tests {
     #[test]
     fn uart_trigger_is_written_with_the_trigger_block() {
         use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};
-        let u = Uart { baud: 115_200.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: false };
-        let s = Settings { trig_src: 2, mask: 0b11, slope: tpu::Slope::Falling, trigger: Trig::Uart(u), ..Settings::default() };
+        let u =
+            Uart { baud: 115_200.0, bits: 8, parity: Parity::None, stop: Stop::One, cond: Cond::Start, invert: false };
+        let s = Settings {
+            trig_src: 2,
+            mask: 0b11,
+            slope: tpu::Slope::Falling,
+            trigger: Trig::Uart(u),
+            ..Settings::default()
+        };
         let mut st = State::handover(0b11, None);
         let w = writes(&st.configure(&s, None, None).unwrap().0);
         let k = w.iter().position(|x| *x == (0x205c, 4)).expect("mux on the UART event");
@@ -1430,7 +1948,8 @@ mod tests {
         assert_eq!(w.iter().filter(|x| **x == (0x4018, 99)).count(), 2);
         assert!(matches!(st.last(), Some(&Step::Read { frames: 100, frame }) if frame == 2 * p.memsel as usize));
         // more than the ring is clamped, play-last stays at one frame
-        let (_, p2) = plan(&mut State::handover(1, None), &Settings { frames: 1_000_000, ..s.clone() }, None, None).unwrap();
+        let (_, p2) =
+            plan(&mut State::handover(1, None), &Settings { frames: 1_000_000, ..s.clone() }, None, None).unwrap();
         assert_eq!(frames(&Settings { frames: 1_000_000, ..s.clone() }, &p2), p2.max_frames);
         assert_eq!(frames(&Settings { play4: false, ..s }, &p2), 1);
     }
@@ -1480,7 +1999,11 @@ mod tests {
         let (st, pl) = plan(&mut state, &sl, None, None).unwrap();
         assert_eq!((pl.rate * 2, pl.memsel, pl.seg), (p.rate, p.memsel, 2 * p.seg));
         let w = writes(&st);
-        assert!(w.contains(&(0x10e4, 2 * pl.memsel)) && w.contains(&(0x4050, 2 * pl.pre)) && w.contains(&(0x12d4, 0x2336_2353)));
+        assert!(
+            w.contains(&(0x10e4, 2 * pl.memsel))
+                && w.contains(&(0x4050, 2 * pl.pre))
+                && w.contains(&(0x12d4, 0x2336_2353))
+        );
         assert!(w.iter().any(|x| x.0 == 0x4008 && x.1 & (1 << 26) != 0));
         let t = la::timing(&pl, 1);
         assert!(w.contains(&la::rate_block(t.rate)[2]) && w.contains(&(0x1100, 10 * t.n)));
@@ -1492,14 +2015,23 @@ mod tests {
         assert_eq!(state.sh.s4008 & (1 << 23 | 1 << 24 | 1 << 26), 1 << 23 | 1 << 26);
         // LA alone (no analog channel shown): the rate is not halved
         let mut state = State::handover(1, None);
-        let (_, pa) = plan(&mut state, &Settings { la: Some(la::Set { analog_shown: false, ..la::Set::default() }), ..s }, None, None).unwrap();
+        let (_, pa) = plan(
+            &mut state,
+            &Settings { la: Some(la::Set { analog_shown: false, ..la::Set::default() }), ..s },
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(pa.rate, p.rate);
     }
 
     #[test]
     fn frames_padded_to_8_bytes() {
         use super::{frame_stride, read_len, unpad};
-        assert_eq!((frame_stride(2500), frame_stride(1250), frame_stride(5000), frame_stride(500)), (2504, 1256, 5000, 504));
+        assert_eq!(
+            (frame_stride(2500), frame_stride(1250), frame_stride(5000), frame_stride(500)),
+            (2504, 1256, 5000, 504)
+        );
         assert_eq!(read_len(4, 2500), 10016);
         // three frames of 5 bytes at a stride of 8
         let mut b: Vec<u8> = vec![1, 2, 3, 4, 5, 0, 0, 0, 6, 7, 8, 9, 10, 0, 0, 0, 11, 12, 13, 14, 15, 0, 0, 0];
@@ -1549,7 +2081,14 @@ mod tests {
             Trig::Timeout { time: 1.2e-3 },
             Trig::Delay { srcb: 4, eb: Edge::Rising, when: When::Gt, lower: 40e-6, upper: 0.0, levelb: 1.65 },
             Trig::Pattern { pats, la: [Pat::X; 16], levels: [1.25, 0.0, 1.65, 1.65] },
-            Trig::Duration { pats: [Pat::H, Pat::X, Pat::X, Pat::X], la: [Pat::X; 16], when: When::Gt, lower: 200e-6, upper: 0.0, levels: [1.25; 4] },
+            Trig::Duration {
+                pats: [Pat::H, Pat::X, Pat::X, Pat::X],
+                la: [Pat::X; 16],
+                when: When::Gt,
+                lower: 200e-6,
+                upper: 0.0,
+                levels: [1.25; 4],
+            },
             Trig::SetupHold { clk: 4, clk_edge: Edge::Rising, setup: 2e-6, hold: 2e-6, levelc: 1.65 },
             Trig::Nth { count: 3, idle: 50e-6 },
             Trig::Video { std: VideoStd::Pal, sync: VideoSync::OddField, line: 1 },
@@ -1595,7 +2134,8 @@ mod tests {
 
     /// The bound of `volt32` against the f64 `volt` of code `x`: 4 f32 ulps of the larger of the two terms.
     fn f32_bound(x: u16, (scale, offset): (f64, f64)) -> f64 {
-        4.0 * f32::EPSILON as f64 * ((x as f64 - 32768.0).abs() / 7500.0 * scale.abs() + offset.abs()) + f32::MIN_POSITIVE as f64
+        4.0 * f32::EPSILON as f64 * ((x as f64 - 32768.0).abs() / 7500.0 * scale.abs() + offset.abs())
+            + f32::MIN_POSITIVE as f64
     }
 
     // Break it catches: a fused decode that maps a word to the wrong channel, drops the words of an incomplete last
@@ -1615,7 +2155,16 @@ mod tests {
                     for (i, (&g, &x)) in got[c].iter().zip(&w[c]).enumerate() {
                         let d = (g as f64 - want[i] as f64).abs();
                         worst = worst.max(d / (cal[c].0 / 7500.0));
-                        assert!(d <= f32_bound(x, cal[c]), "mask {:#x}, {} bytes, CH{} word {}: {} vs {}", mask, len, c + 1, i, g, want[i]);
+                        assert!(
+                            d <= f32_bound(x, cal[c]),
+                            "mask {:#x}, {} bytes, CH{} word {}: {} vs {}",
+                            mask,
+                            len,
+                            c + 1,
+                            i,
+                            g,
+                            want[i]
+                        );
                     }
                 }
             }
@@ -1695,7 +2244,13 @@ mod tests {
     // beyond the whole-memory limit, segments that leak into the live batch path.
     #[test]
     fn record_steps_clear_the_stamp_and_arm_n_frames() {
-        let seg = |n: u32, interval: f64| Settings { tdiv: 1e-6, depth: 1000, window: None, segments: Some(Segments { n, interval }), ..Settings::default() };
+        let seg = |n: u32, interval: f64| Settings {
+            tdiv: 1e-6,
+            depth: 1000,
+            window: None,
+            segments: Some(Segments { n, interval }),
+            ..Settings::default()
+        };
         let mut st = State::handover(1, None);
         let p = st.configure(&seg(100, 1e-3), None, None).unwrap().1;
         let w = writes(&st.record_steps(&seg(100, 1e-3), &p));
@@ -1715,7 +2270,15 @@ mod tests {
     // export never uses, a stamp play without the header.
     #[test]
     fn segment_reads_play_from_their_frame() {
-        let s = Settings { mask: 3, tdiv: 1e-6, depth: 1000, window: None, segments: Some(Segments { n: 500, interval: 0.0 }), header: true, ..Settings::default() };
+        let s = Settings {
+            mask: 3,
+            tdiv: 1e-6,
+            depth: 1000,
+            window: None,
+            segments: Some(Segments { n: 500, interval: 0.0 }),
+            header: true,
+            ..Settings::default()
+        };
         let mut a = State::handover(3, None);
         let p = a.configure(&s, None, None).unwrap().1;
         let mut b = State::handover(3, None);
@@ -1732,7 +2295,9 @@ mod tests {
         assert!(w.iter().any(|x| x.0 == 0x1010 && x.1 & 1 << 31 == 0));
         assert_eq!(&w[w.len() - 3..], &[(0x40b8, 0), (0x40b8, 1), (0x40b8, 0)]);
         assert!(st.iter().any(|x| matches!(x, Step::Read { frames: 1, frame: 272 })));
-        assert!(w.iter().position(|x| x.0 == 0x40b8).unwrap() > w.iter().position(|x| *x == (0x4004, a.sh.s4004)).unwrap());
+        assert!(
+            w.iter().position(|x| x.0 == 0x40b8).unwrap() > w.iter().position(|x| *x == (0x4004, a.sh.s4004)).unwrap()
+        );
     }
 
     // Break it catches: a disarm that is not the plain stop sequence every arm starts with.

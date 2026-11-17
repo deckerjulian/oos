@@ -44,7 +44,8 @@ pub fn tone(v: &[f32], dt: f64) -> Option<f64> {
         for _ in 0..2 {
             let (Some(p1), Some(p2)) = (sine_fit(&v[..h], dt, f), sine_fit(&v[h..2 * h], dt, f)) else { break };
             let expect = 2.0 * std::f64::consts::PI * f * h as f64 * dt;
-            let dphi = ((p2.1 - p1.1) - expect + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+            let dphi = ((p2.1 - p1.1) - expect + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI)
+                - std::f64::consts::PI;
             f += dphi / (2.0 * std::f64::consts::PI * h as f64 * dt);
         }
         if len == v.len() {
@@ -159,13 +160,18 @@ pub fn step_response(v: &[f32], dt: f64) -> Option<StepResponse> {
     let q = (n / 4) as isize;
     let seg: Vec<f64> = (e - q..e + q).map(at).collect();
     let c = q as usize; // the crossing in seg
-    // 10 / 90 % crossings around the edge, interpolated
+                        // 10 / 90 % crossings around the edge, interpolated
     let cross = |level: f64, from: usize, back: bool| -> Option<f64> {
         let lv = lo + level * amp;
         if back {
-            (1..=from).rev().find(|&i| seg[i - 1] < lv && seg[i] >= lv).map(|i| i as f64 - 1.0 + (lv - seg[i - 1]) / (seg[i] - seg[i - 1]))
+            (1..=from)
+                .rev()
+                .find(|&i| seg[i - 1] < lv && seg[i] >= lv)
+                .map(|i| i as f64 - 1.0 + (lv - seg[i - 1]) / (seg[i] - seg[i - 1]))
         } else {
-            (from..seg.len()).find(|&i| i > 0 && seg[i - 1] < lv && seg[i] >= lv).map(|i| i as f64 - 1.0 + (lv - seg[i - 1]) / (seg[i] - seg[i - 1]))
+            (from..seg.len())
+                .find(|&i| i > 0 && seg[i - 1] < lv && seg[i] >= lv)
+                .map(|i| i as f64 - 1.0 + (lv - seg[i - 1]) / (seg[i] - seg[i - 1]))
         }
     };
     let t10 = cross(0.1, c, true)?;
@@ -195,9 +201,23 @@ pub fn step_response(v: &[f32], dt: f64) -> Option<StepResponse> {
     if dc <= 0.0 {
         return None;
     }
-    let mag: Vec<(f64, f64)> = (0..=m / 2).map(|k| (k as f64 / (m as f64 * dt), 20.0 * ((re[k] * re[k] + im[k] * im[k]).sqrt() / dc).max(1e-12).log10())).collect();
-    let f3db = mag.windows(2).find(|w| w[0].1 >= -3.0 && w[1].1 < -3.0).map(|w| w[0].0 + (w[1].0 - w[0].0) * (w[0].1 + 3.0) / (w[0].1 - w[1].1));
-    Some(StepResponse { rise, overshoot, levels: (lo, hi), f3db, bw_from_rise: 0.35 / rise, mag, edge: seg.iter().map(|&x| x as f32).collect(), edge_at: c })
+    let mag: Vec<(f64, f64)> = (0..=m / 2)
+        .map(|k| (k as f64 / (m as f64 * dt), 20.0 * ((re[k] * re[k] + im[k] * im[k]).sqrt() / dc).max(1e-12).log10()))
+        .collect();
+    let f3db = mag
+        .windows(2)
+        .find(|w| w[0].1 >= -3.0 && w[1].1 < -3.0)
+        .map(|w| w[0].0 + (w[1].0 - w[0].0) * (w[0].1 + 3.0) / (w[0].1 - w[1].1));
+    Some(StepResponse {
+        rise,
+        overshoot,
+        levels: (lo, hi),
+        f3db,
+        bw_from_rise: 0.35 / rise,
+        mag,
+        edge: seg.iter().map(|&x| x as f32).collect(),
+        edge_at: c,
+    })
 }
 
 #[cfg(test)]
@@ -224,7 +244,8 @@ mod tests {
     fn tone_and_unalias() {
         // 400 MHz sampled at 312.5 MSa/s: alias at 87.5 MHz
         let dt = 1.0 / 312.5e6;
-        let v: Vec<f32> = (0..200_000).map(|k| (2.0 * std::f64::consts::PI * 400.0123e6 * k as f64 * dt).sin() as f32).collect();
+        let v: Vec<f32> =
+            (0..200_000).map(|k| (2.0 * std::f64::consts::PI * 400.0123e6 * k as f64 * dt).sin() as f32).collect();
         let fa = tone(&v, dt).unwrap();
         assert!((fa - 87.5123e6).abs() < 0.05, "alias {}", fa);
         let f = unalias(fa, 312.5e6, 410e6);

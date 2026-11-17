@@ -45,7 +45,10 @@ pub fn sine_fit(v: &[f32], dt: f64, f: f64) -> Option<(f64, f64, f64)> {
 
 /// Solves the 3x3 system `m x = r` by Cramer's rule; None if it is singular.
 fn solve3(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
-    let det = |m: [[f64; 3]; 3]| m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    let det = |m: [[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
     let d = det(m);
     if d.abs() < 1e-12 {
         return None;
@@ -285,7 +288,8 @@ const SWEEP_PHASE_R2: f64 = 0.8;
 /// trigger point. Returns its time from the trigger point, None without an edge.
 pub fn sync_start(v: &[f32], dt: f64, t0: f64, level: f32, hyst: f32, rising: bool, time: f64) -> Option<f64> {
     let end = t0 + v.len().saturating_sub(1) as f64 * dt;
-    let ts: Vec<f64> = crate::edges::edges(v, level, hyst).into_iter().filter(|e| e.rising == rising).map(|e| t0 + e.t * dt).collect();
+    let ts: Vec<f64> =
+        crate::edges::edges(v, level, hyst).into_iter().filter(|e| e.rising == rising).map(|e| t0 + e.t * dt).collect();
     let near = |a: &&f64, b: &&f64| a.abs().total_cmp(&b.abs());
     ts.iter().filter(|&&t| t + time <= end + dt).min_by(near).or_else(|| ts.iter().min_by(near)).copied()
 }
@@ -346,7 +350,8 @@ pub fn sweep_response(sw: &Sweep, rec: &SweepRecord, n: usize) -> SweepResult {
         if r.points.last().is_some_and(|p| fm <= p.f * 1.0005) {
             continue;
         }
-        let pt = if rec.envelope { envelope_point(rec, i0, i1, fm) } else { fit_point(sw, rec, i0, i1, fm, 0.5 * (a + b)) };
+        let pt =
+            if rec.envelope { envelope_point(rec, i0, i1, fm) } else { fit_point(sw, rec, i0, i1, fm, 0.5 * (a + b)) };
         match pt {
             Some(p) => r.points.push(p),
             None => r.outside += 1,
@@ -358,7 +363,10 @@ pub fn sweep_response(sw: &Sweep, rec: &SweepRecord, n: usize) -> SweepResult {
 /// Half the peak-to-peak value of the output and the input in samples i0..=i1.
 fn envelope_point(rec: &SweepRecord, i0: usize, i1: usize, f: f64) -> Option<SweepPoint> {
     let half = |v: &[f32]| {
-        let (lo, hi) = v[i0..=i1].iter().filter(|x| x.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &x| (l.min(x), h.max(x)));
+        let (lo, hi) = v[i0..=i1]
+            .iter()
+            .filter(|x| x.is_finite())
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &x| (l.min(x), h.max(x)));
         (hi > lo).then_some(0.5 * (hi - lo) as f64)
     };
     let out = half(rec.out)?;
@@ -419,7 +427,8 @@ fn fit_point(sw: &Sweep, rec: &SweepRecord, i0: usize, i1: usize, f: f64, tm: f6
             if ai.is_nan() || ai <= 0.0 {
                 return None;
             }
-            let ph = (ro >= SWEEP_PHASE_R2 && ri >= SWEEP_PHASE_R2).then(|| ((po - pi).to_degrees() + 180.0).rem_euclid(360.0) - 180.0);
+            let ph = (ro >= SWEEP_PHASE_R2 && ri >= SWEEP_PHASE_R2)
+                .then(|| ((po - pi).to_degrees() + 180.0).rem_euclid(360.0) - 180.0);
             (Some(ai), ph)
         }
         None => (None, None),
@@ -488,7 +497,10 @@ mod tests {
             assert!((f[k] / want - 1.0).abs() < 1e-9);
         }
         assert!((tdiv_for(1e3, 5.0) - 5e-4).abs() < 1e-12);
-        assert_eq!((fmt_hz(999.9999999999998), fmt_hz(3162.2776601683804), fmt_hz(1e5), fmt_hz(12.5)), ("1000".into(), "3162.28".into(), "100000".into(), "12.5".into()));
+        assert_eq!(
+            (fmt_hz(999.9999999999998), fmt_hz(3162.2776601683804), fmt_hz(1e5), fmt_hz(12.5)),
+            ("1000".into(), "3162.28".into(), "100000".into(), "12.5".into())
+        );
     }
 
     /// A generator running `sw` (amplitude 1 V peak, start phase 0.7 rad; the start frequency before the sweep, the
@@ -496,7 +508,12 @@ mod tests {
     /// 1 ms) at the start. The record runs from -10 % to 110 % of the sweep at `fs`, with 1 mV of noise.
     /// Returns (input, output, sync, time of sample 0, the low-pass's true response at f as (dB, degrees)).
     #[allow(clippy::type_complexity)]
-    fn free_sweep_bench(sw: &Sweep, fs: f64, fc: f64, g: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>, f64, Box<dyn Fn(f64) -> (f64, f64)>) {
+    fn free_sweep_bench(
+        sw: &Sweep,
+        fs: f64,
+        fc: f64,
+        g: f64,
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>, f64, Box<dyn Fn(f64) -> (f64, f64)>) {
         let dt = 1.0 / fs;
         let t0 = -0.1 * sw.time;
         let n = (1.2 * sw.time * fs) as usize;
@@ -563,7 +580,15 @@ mod tests {
         let rec = SweepRecord { out: &y, inp: Some(&x), dt: 1.0 / fs, t0: t0 - ts, envelope: false };
         let r = sweep_response(&sw, &rec, 60);
         let (eg, ep) = free_sweep_errors(&r, &truth, None);
-        println!("log sweep: {} points, gain error {:.3} dB, phase error {:.2} deg, left out {} {} {}", r.points.len(), eg, ep, r.too_fast, r.too_high, r.outside);
+        println!(
+            "log sweep: {} points, gain error {:.3} dB, phase error {:.2} deg, left out {} {} {}",
+            r.points.len(),
+            eg,
+            ep,
+            r.too_fast,
+            r.too_high,
+            r.outside
+        );
         assert!(r.points.len() >= 58 && r.too_fast + r.too_high + r.outside == 0, "{:?}", r);
         assert!(eg < 0.5 && ep < 3.0, "{} {}", eg, ep);
         assert!(r.points.iter().all(|p| p.phase.is_some()));
@@ -592,7 +617,14 @@ mod tests {
         let rec = SweepRecord { out: &y, inp: Some(&x), dt: 1.0 / fs, t0: t0 - ts, envelope: false };
         let r = sweep_response(&sw, &rec, 60);
         let (eg, ep) = free_sweep_errors(&r, &truth, None);
-        println!("lin sweep: {} points from {:.0} Hz, gain error {:.3} dB, phase error {:.2} deg, too fast {}", r.points.len(), r.points[0].f, eg, ep, r.too_fast);
+        println!(
+            "lin sweep: {} points from {:.0} Hz, gain error {:.3} dB, phase error {:.2} deg, too fast {}",
+            r.points.len(),
+            r.points[0].f,
+            eg,
+            ep,
+            r.too_fast
+        );
         // a linear sweep passes the low frequencies in a few periods: they are left out, the rest is right
         assert!(r.too_fast > 0 && r.points[0].f > 50.0 && r.points[0].f < 200.0, "{:?}", r.points[0]);
         assert!(r.points.len() + r.too_fast >= 58);
@@ -605,7 +637,16 @@ mod tests {
         let sw = Sweep { start: 20.0, stop: 20e3, time: 2.0, log: true };
         let fs = 2e6;
         let (x, y, sync, t0, truth) = free_sweep_bench(&sw, fs, 1e3, 2.0);
-        let pairs = |v: &[f32]| v.chunks(200).flat_map(|c| [c.iter().copied().fold(f32::INFINITY, f32::min), c.iter().copied().fold(f32::NEG_INFINITY, f32::max)]).collect::<Vec<f32>>();
+        let pairs = |v: &[f32]| {
+            v.chunks(200)
+                .flat_map(|c| {
+                    [
+                        c.iter().copied().fold(f32::INFINITY, f32::min),
+                        c.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                    ]
+                })
+                .collect::<Vec<f32>>()
+        };
         let (x, y, sync) = (pairs(&x), pairs(&y), pairs(&sync));
         let dt = 100.0 / fs;
         let ts = sync_start(&sync, dt, t0, 1.5, 0.3, true, sw.time).unwrap();
@@ -634,14 +675,25 @@ mod tests {
         let r = sweep_response(&sw, &SweepRecord { out: &v, inp: None, dt: 1.0 / fs, t0: 0.0, envelope: false }, 30);
         assert!(r.too_fast > 0 && r.too_high > 0 && !r.points.is_empty(), "{:?}", r);
         // half the sweep in the record: the rest is outside
-        let r = sweep_response(&Sweep { time: 0.2, ..sw }, &SweepRecord { out: &v, inp: None, dt: 1.0 / fs, t0: 0.0, envelope: false }, 30);
+        let r = sweep_response(
+            &Sweep { time: 0.2, ..sw },
+            &SweepRecord { out: &v, inp: None, dt: 1.0 / fs, t0: 0.0, envelope: false },
+            30,
+        );
         assert!(r.outside > 0, "{:?}", r);
-        assert!(!Sweep { start: 0.0, ..sw }.valid() && !Sweep { stop: 10.0, ..sw }.valid() && !Sweep { time: 0.0, ..sw }.valid());
+        assert!(
+            !Sweep { start: 0.0, ..sw }.valid()
+                && !Sweep { stop: 10.0, ..sw }.valid()
+                && !Sweep { time: 0.0, ..sw }.valid()
+        );
         // the sync edge: the one with the whole sweep after it, nearest the trigger point
         let s: Vec<f32> = (0..1000).map(|k| if (100..110).contains(&(k % 300)) { 1.0 } else { 0.0 }).collect();
         // rising edges at -400.5, -100.5 and 199.5, the record ends at 499
         let at = |rising: bool, time: f64| sync_start(&s, 1.0, -500.0, 0.5, 0.1, rising, time).unwrap();
-        assert_eq!((at(true, 450.0), at(true, 850.0), at(true, 1200.0), at(false, 450.0)), (-100.5, -400.5, -100.5, -90.5));
+        assert_eq!(
+            (at(true, 450.0), at(true, 850.0), at(true, 1200.0), at(false, 450.0)),
+            (-100.5, -400.5, -100.5, -90.5)
+        );
         assert_eq!(sync_start(&[0.0; 100], 1.0, 0.0, 0.5, 0.1, true, 10.0), None);
     }
 }

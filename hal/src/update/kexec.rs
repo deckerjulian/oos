@@ -128,7 +128,11 @@ pub fn initrd(ramdisk: &[u8], package: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<
     b.resize(ramdisk.len().div_ceil(4) * 4, 0);
     let k = format!("{}\n", super::hash::hex(key));
     let n = |p: &'static str| p.trim_start_matches('/');
-    b.extend_from_slice(&newc(&[(n(PACKAGE), 0o100600, package), (n(KEY_FILE), 0o100600, k.as_bytes()), (n(DT_FILE), 0o100600, dt)]));
+    b.extend_from_slice(&newc(&[
+        (n(PACKAGE), 0o100600, package),
+        (n(KEY_FILE), 0o100600, k.as_bytes()),
+        (n(DT_FILE), 0o100600, dt),
+    ]));
     b
 }
 
@@ -205,7 +209,16 @@ mod sys {
         let i = memfd("oos-kexec-initrd", initrd)?;
         let c = std::ffi::CString::new(cmdline).map_err(|_| "command line with a NUL")?;
         let len = c.as_bytes_with_nul().len();
-        let r = unsafe { libc::syscall(SYS_KEXEC_FILE_LOAD, k.as_raw_fd(), i.as_raw_fd(), len as libc::c_ulong, c.as_ptr(), 0 as libc::c_ulong) };
+        let r = unsafe {
+            libc::syscall(
+                SYS_KEXEC_FILE_LOAD,
+                k.as_raw_fd(),
+                i.as_raw_fd(),
+                len as libc::c_ulong,
+                c.as_ptr(),
+                0 as libc::c_ulong,
+            )
+        };
         if r != 0 {
             return Err(format!("kexec_file_load: {}", std::io::Error::last_os_error()));
         }
@@ -234,7 +247,15 @@ mod sys {
             let p = |n: &str| dir.join(n).display().to_string();
             let from = super::segments_from(&kernel_log());
             let o = std::process::Command::new(super::TOOL)
-                .args(["-c", &format!("--mem-min=0x{:x}", from), "-l", &p("Image"), &format!("--initrd={}", p("initrd")), &format!("--dtb={}", p("tree.dtb")), &format!("--command-line={}", cmdline)])
+                .args([
+                    "-c",
+                    &format!("--mem-min=0x{:x}", from),
+                    "-l",
+                    &p("Image"),
+                    &format!("--initrd={}", p("initrd")),
+                    &format!("--dtb={}", p("tree.dtb")),
+                    &format!("--command-line={}", cmdline),
+                ])
                 .output()
                 .map_err(|e| format!("{}: {}", super::TOOL, e))?;
             if !o.status.success() {
@@ -250,7 +271,9 @@ mod sys {
 
     /// Forget a loaded kernel (either way it was loaded: both fill the same slot).
     pub fn unload() -> Result<(), String> {
-        let r = unsafe { libc::syscall(SYS_KEXEC_FILE_LOAD, -1, -1, 0 as libc::c_ulong, std::ptr::null::<u8>(), KEXEC_FILE_UNLOAD) };
+        let r = unsafe {
+            libc::syscall(SYS_KEXEC_FILE_LOAD, -1, -1, 0 as libc::c_ulong, std::ptr::null::<u8>(), KEXEC_FILE_UNLOAD)
+        };
         if r != 0 {
             return Err(format!("kexec unload: {}", std::io::Error::last_os_error()));
         }
@@ -281,7 +304,8 @@ mod tests {
         let mut out = Vec::new();
         loop {
             assert_eq!(&b[..6], b"070701");
-            let f = |i: usize| u32::from_str_radix(std::str::from_utf8(&b[6 + i * 8..14 + i * 8]).unwrap(), 16).unwrap();
+            let f =
+                |i: usize| u32::from_str_radix(std::str::from_utf8(&b[6 + i * 8..14 + i * 8]).unwrap(), 16).unwrap();
             let (mode, size, nlen) = (f(1), f(6) as usize, f(11) as usize);
             let name = String::from_utf8(b[110..110 + nlen - 1].to_vec()).unwrap();
             // every header starts at a multiple of 4, so aligning within `b` is aligning in the archive
@@ -301,7 +325,10 @@ mod tests {
         let a = newc(&[("oos-kexec.oosupd", 0o100600, b"package bytes"), ("x", 0o100644, b"")]);
         assert_eq!(a.len() % 4, 0);
         let r = read_newc(&a);
-        assert_eq!(r, vec![("oos-kexec.oosupd".into(), 0o100600, b"package bytes".to_vec()), ("x".into(), 0o100644, vec![])]);
+        assert_eq!(
+            r,
+            vec![("oos-kexec.oosupd".into(), 0o100600, b"package bytes".to_vec()), ("x".into(), 0o100644, vec![])]
+        );
     }
 
     #[test]

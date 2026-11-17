@@ -58,7 +58,9 @@ const NOP: u32 = 4;
 const FINISH: u32 = 9;
 
 fn be32(b: &[u8], at: usize) -> Result<u32, String> {
-    b.get(at..at + 4).map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]])).ok_or_else(|| "device tree cut short".to_string())
+    b.get(at..at + 4)
+        .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
+        .ok_or_else(|| "device tree cut short".to_string())
 }
 
 fn cstr(b: &[u8], at: usize) -> Result<&str, String> {
@@ -171,7 +173,18 @@ impl Fdt {
         let off_strings = off_struct + st.len();
         let total = off_strings + strings.len();
         let mut b = Vec::with_capacity(total);
-        for v in [MAGIC, total as u32, off_struct as u32, off_strings as u32, off_rsv as u32, 17, 16, self.boot_cpu, strings.len() as u32, st.len() as u32] {
+        for v in [
+            MAGIC,
+            total as u32,
+            off_struct as u32,
+            off_strings as u32,
+            off_rsv as u32,
+            17,
+            16,
+            self.boot_cpu,
+            strings.len() as u32,
+            st.len() as u32,
+        ] {
             b.extend_from_slice(&v.to_be_bytes());
         }
         for &(a, s) in self.rsv.iter().chain(std::iter::once(&(0, 0))) {
@@ -317,8 +330,12 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
         }
     }
     // the reservations the loader added, except the one of its ramdisk
-    let added: Vec<(u64, u64)> =
-        r.rsv.iter().filter(|x| !o.rsv.contains(x) && !initrd.is_some_and(|(a, e)| x.0 < e && a < x.0 + x.1)).copied().collect();
+    let added: Vec<(u64, u64)> = r
+        .rsv
+        .iter()
+        .filter(|x| !o.rsv.contains(x) && !initrd.is_some_and(|(a, e)| x.0 < e && a < x.0 + x.1))
+        .copied()
+        .collect();
     let rsv_n = added.len();
     for x in added {
         if !t.rsv.contains(&x) {
@@ -346,7 +363,18 @@ mod tests {
         let t = Fdt {
             rsv: vec![(0x460_0000, 0x17000)],
             boot_cpu: 0,
-            root: node("", &[("compatible", b"rigol,dho900\0"), ("#address-cells", &[0, 0, 0, 2])], vec![node("chosen", &[("bootargs", b"console=ttyS2\0")], vec![]), node("gpu@ff9a0000", &[("status", b"okay\0"), ("phandle", &[0, 0, 0, 7]), ("compatible", b"x\0")], vec![])]),
+            root: node(
+                "",
+                &[("compatible", b"rigol,dho900\0"), ("#address-cells", &[0, 0, 0, 2])],
+                vec![
+                    node("chosen", &[("bootargs", b"console=ttyS2\0")], vec![]),
+                    node(
+                        "gpu@ff9a0000",
+                        &[("status", b"okay\0"), ("phandle", &[0, 0, 0, 7]), ("compatible", b"x\0")],
+                        vec![],
+                    ),
+                ],
+            ),
         };
         let b = t.to_bytes();
         assert_eq!(Fdt::parse(&b).unwrap(), t);
@@ -356,17 +384,63 @@ mod tests {
     #[test]
     fn the_loaders_changes_go_into_the_new_tree() {
         // the image that started, what the loader made of it, the new image (another phandle numbering, a new node)
-        let old = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a\0")], vec![]), node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]), node("gone", &[], vec![])]);
-        let run = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a b\0"), ("linux,initrd-start", &[0, 0, 0, 0, 4, 0xbf, 0, 0]), ("linux,initrd-end", &[0, 0, 0, 0, 5, 0x17, 0x59, 0x44])], vec![]), node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,width", &[2, 88])], vec![])]), node("memory", &[("reg", &[1])], vec![])]);
-        let new = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a\0")], vec![]), node("route", &[("phandle", &[0, 0, 0, 6])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]), node("gone", &[], vec![]), node("gpu", &[("status", b"okay\0")], vec![])]);
-        let (m, n) = with_loader_changes(&tree(new, vec![]), &tree(old, vec![]), &tree(run, vec![(0x460_0000, 0x17000), (0x4bf_0000, 0x58_5944)])).unwrap();
+        let old = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node("chosen", &[("bootargs", b"a\0")], vec![]),
+                node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]),
+                node("gone", &[], vec![]),
+            ],
+        );
+        let run = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node(
+                    "chosen",
+                    &[
+                        ("bootargs", b"a b\0"),
+                        ("linux,initrd-start", &[0, 0, 0, 0, 4, 0xbf, 0, 0]),
+                        ("linux,initrd-end", &[0, 0, 0, 0, 5, 0x17, 0x59, 0x44]),
+                    ],
+                    vec![],
+                ),
+                node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,width", &[2, 88])], vec![])]),
+                node("memory", &[("reg", &[1])], vec![]),
+            ],
+        );
+        let new = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node("chosen", &[("bootargs", b"a\0")], vec![]),
+                node("route", &[("phandle", &[0, 0, 0, 6])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]),
+                node("gone", &[], vec![]),
+                node("gpu", &[("status", b"okay\0")], vec![]),
+            ],
+        );
+        let (m, n) = with_loader_changes(
+            &tree(new, vec![]),
+            &tree(old, vec![]),
+            &tree(run, vec![(0x460_0000, 0x17000), (0x4bf_0000, 0x58_5944)]),
+        )
+        .unwrap();
         let m = Fdt::parse(&m).unwrap();
         let chosen = m.root.kid("chosen").unwrap();
         assert_eq!(chosen.prop("bootargs"), Some(&b"a b\0"[..]));
-        assert_eq!((chosen.prop("linux,initrd-start"), chosen.prop("linux,initrd-end")), (None, None), "the running ramdisk is not the new one");
+        assert_eq!(
+            (chosen.prop("linux,initrd-start"), chosen.prop("linux,initrd-end")),
+            (None, None),
+            "the running ramdisk is not the new one"
+        );
         let dsi = m.root.kid("route").unwrap().kid("dsi").unwrap();
         assert_eq!((dsi.prop("logo,width"), dsi.prop("logo,mode")), (Some(&[2u8, 88][..]), None));
-        assert_eq!(m.root.kid("route").unwrap().prop("phandle"), Some(&[0u8, 0, 0, 6][..]), "the new tree's numbering stays");
+        assert_eq!(
+            m.root.kid("route").unwrap().prop("phandle"),
+            Some(&[0u8, 0, 0, 6][..]),
+            "the new tree's numbering stays"
+        );
         assert!(m.root.kid("memory").is_some() && m.root.kid("gone").is_none() && m.root.kid("gpu").is_some());
         assert_eq!(m.rsv, vec![(0x460_0000, 0x17000)], "nor its reservation");
         assert_eq!(n, 6);
@@ -376,7 +450,9 @@ mod tests {
     fn a_phandle_change_is_refused() {
         let old = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 1])], vec![])]);
         let run = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 2])], vec![])]);
-        assert!(with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).is_err());
+        assert!(
+            with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).is_err()
+        );
         // a change to a node the new tree does not have
         let run = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 1]), ("x", &[1])], vec![])]);
         let new = node("", &[], vec![]);

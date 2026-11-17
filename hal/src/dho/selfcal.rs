@@ -42,7 +42,8 @@ pub trait CalHw {
 }
 
 /// Bandwidth codes of the four vertical passes (filters S20M, 155 M, 315 M, (3, 3, 7)) -> block groups 0..3.
-pub const PASS_BW: [u32; 4] = [crate::dho::afe::bw::S20M, crate::dho::afe::bw::M155, crate::dho::afe::bw::M315, crate::dho::afe::bw::M350];
+pub const PASS_BW: [u32; 4] =
+    [crate::dho::afe::bw::S20M, crate::dho::afe::bw::M155, crate::dho::afe::bw::M315, crate::dho::afe::bw::M350];
 
 /// Results of a self-calibration run (kept in memory until saved).
 #[derive(Default)]
@@ -58,13 +59,26 @@ pub struct Results {
 
 /// The whole user self-cal for `chans`: AFE zero (optional), then the four vertical passes per channel.
 /// `progress(done, total, text)` after every step.
-pub fn run_all(hw: &mut dyn CalHw, cal: &Cal, chans: &[usize], zero: bool, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<Results, String> {
+pub fn run_all(
+    hw: &mut dyn CalHw,
+    cal: &Cal,
+    chans: &[usize],
+    zero: bool,
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<Results, String> {
     run_all_with(hw, cal, None, chans, zero, progress)
 }
 
 /// `run_all` with the ADC core calibration first when `adc` (the active cal_adc) is given (the vertical
 /// levels depend on the core gains).
-pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::dho::adc::CalAdc>, chans: &[usize], zero: bool, progress: &mut dyn FnMut(usize, usize, &str)) -> Result<Results, String> {
+pub fn run_all_with(
+    hw: &mut dyn CalHw,
+    cal: &Cal,
+    adc: Option<&crate::dho::adc::CalAdc>,
+    chans: &[usize],
+    zero: bool,
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<Results, String> {
     let mut adc_new = None;
     if let Some(base) = adc {
         let r = adc_cores(hw, base, chans, progress)?;
@@ -108,8 +122,13 @@ pub fn run_all_with(hw: &mut dyn CalHw, cal: &Cal, adc: Option<&crate::dho::adc:
                 if hw.cancelled() {
                     return Err("cancelled".into());
                 }
-                progress(done, total, &format!("CH{} pass {} of 4, configuration {} of {}", ch + 1, var + 1, k + 1, tuples.len()));
-                let m = vertical_entry(hw, &mut a, cal, *g, &zt).ok_or_else(|| format!("CH{} {:?}: no measurement", ch + 1, g))?;
+                progress(
+                    done,
+                    total,
+                    &format!("CH{} pass {} of 4, configuration {} of {}", ch + 1, var + 1, k + 1, tuples.len()),
+                );
+                let m = vertical_entry(hw, &mut a, cal, *g, &zt)
+                    .ok_or_else(|| format!("CH{} {:?}: no measurement", ch + 1, g))?;
                 if let Some(e) = table.iter().find(|e| e.g == *g) {
                     r.worst = r.worst.max((m.scale / e.scale - 1.0).abs());
                 }
@@ -243,7 +262,12 @@ fn spans(hw: &mut dyn CalHw, a: &mut Afe, hi: i32, lo: i32) -> Option<([f64; 8],
 /// the 8 core gains in single-channel mode, then the 8 core offsets of every ADC mode of the set. Needs every input
 /// of the set disconnected. The fine gains (0x1058) are set to 0 and their payload fields cleared [A: OOS corrects
 /// with the core gains only]. Returns the new payload.
-pub fn adc_cores(hw: &mut dyn CalHw, base: &crate::dho::adc::CalAdc, chans: &[usize], progress: &mut dyn FnMut(usize, usize, &str)) -> Result<crate::dho::adc::CalAdc, String> {
+pub fn adc_cores(
+    hw: &mut dyn CalHw,
+    base: &crate::dho::adc::CalAdc,
+    chans: &[usize],
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<crate::dho::adc::CalAdc, String> {
     use crate::dho::adc::CalAdc;
     const TUPLE: [i32; 7] = [0, 1, 1, 1, 0, 3, 0];
     let (gchans, modes) = adc_plan(chans);
@@ -421,7 +445,9 @@ impl CalHw for Unit<'_> {
     }
     fn adc_mean(&mut self, _ch: usize) -> Option<f64> {
         // channel-only ADC mode: all 8 cores sample the channel [A: stock averages cores k and k+4]
-        let m = crate::dho::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))?;
+        let m = crate::dho::adc::measure(self.bar, &mut |ms| {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64))
+        })?;
         Some(m.iter().sum::<f64>() / 8.0)
     }
     fn sleep_ms(&mut self, ms: u32) {
@@ -445,7 +471,8 @@ impl CalHw for Unit<'_> {
         self.adc_new = Some(c);
     }
     fn configure(&mut self, ch: usize, bw: u32) -> Result<Afe, String> {
-        let mut st = crate::dho::seq::Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Default::default() };
+        let mut st =
+            crate::dho::seq::Settings { mask: 1 << ch, trig_src: ch as u32 + 1, afe: true, ..Default::default() };
         st.ch[ch].bw = bw;
         let adc = self.adc_new.as_ref().or(self.cal_adc);
         let (steps, _) = self.state.configure(&st, Some(self.cal), adc)?;
@@ -462,7 +489,15 @@ fn run(hw: &mut dyn CalHw, a: &mut Afe, f: impl FnOnce(&mut Afe, &mut Vec<Op>)) 
 
 /// The binary search of every zero trim (self-cal.md 3.2): index x in 0..=hi from `start`, `steps` halvings; the
 /// comparator reads 1 -> the upper bound moves to x, 0 -> the lower bound moves to x. The last x is written once more.
-pub fn search(hw: &mut dyn CalHw, a: &mut Afe, hi: i32, start: i32, steps: u32, write: &mut dyn FnMut(&mut Afe, &mut Vec<Op>, i32), bit: u32) -> i32 {
+pub fn search(
+    hw: &mut dyn CalHw,
+    a: &mut Afe,
+    hi: i32,
+    start: i32,
+    steps: u32,
+    write: &mut dyn FnMut(&mut Afe, &mut Vec<Op>, i32),
+    bit: u32,
+) -> i32 {
     let ch = a.ch;
     let (mut lo, mut up, mut x) = (0, hi, start);
     for _ in 0..steps {
@@ -526,10 +561,18 @@ pub const ZERO_CONFIGS: [[i32; 7]; 3] = [[0, 0, 2, 0, 0, 3, 1], [0, 1, 2, 1, 0, 
 fn zero_first(hw: &mut dyn CalHw, a: &mut Afe, mode: u32) -> (i32, i32) {
     run(hw, a, |a, o| a.cz_self_check(o, mode, true));
     let bit = if mode == 0x4000 { 2 } else { 1 };
-    let x = search(hw, a, 2047, 1023, 14, &mut |a, o, x| {
-        let (s, m) = first_code(x);
-        a.cz_first(o, mode, s, m)
-    }, bit);
+    let x = search(
+        hw,
+        a,
+        2047,
+        1023,
+        14,
+        &mut |a, o, x| {
+            let (s, m) = first_code(x);
+            a.cz_first(o, mode, s, m)
+        },
+        bit,
+    );
     run(hw, a, |a, o| a.cz_self_check(o, mode, false));
     first_code(x)
 }
@@ -545,14 +588,22 @@ fn zero_pn(hw: &mut dyn CalHw, a: &mut Afe, mux: bool) -> (i32, i32) {
     // result is (P, 0) or (0, N)
     let (mut p, mut n) = (0, 0);
     let code = |x: i32, p: i32, n: i32| if mux { mux_code(x, p, n) } else { pn_code(x, p, n) };
-    let x = search(hw, a, 255, 127, 8, &mut |a, o, x| {
-        (p, n) = code(x, p, n);
-        if mux {
-            a.cz_mux(o, p, n)
-        } else {
-            a.cz_sga(o, p, n)
-        }
-    }, 3);
+    let x = search(
+        hw,
+        a,
+        255,
+        127,
+        8,
+        &mut |a, o, x| {
+            (p, n) = code(x, p, n);
+            if mux {
+                a.cz_mux(o, p, n)
+            } else {
+                a.cz_sga(o, p, n)
+            }
+        },
+        3,
+    );
     code(x, p, n)
 }
 
@@ -674,7 +725,13 @@ pub struct Entry {
 
 /// Measures one configuration: (scale, zero) from the two DAC codes for +-3 divisions; IG 0 paths verify the zero
 /// within 32448..33088 (up to 20 rounds, the last result is kept).
-pub fn vertical_entry(hw: &mut dyn CalHw, a: &mut Afe, cal: &Cal, g: [i32; 7], zero_trims: &[i32; 20]) -> Option<Entry> {
+pub fn vertical_entry(
+    hw: &mut dyn CalHw,
+    a: &mut Afe,
+    cal: &Cal,
+    g: [i32; 7],
+    zero_trims: &[i32; 20],
+) -> Option<Entry> {
     let ch = a.ch;
     // the configuration exactly as normal operation sets it (incl. the bandwidth trims of the path) [A: with
     // the trims of the channel's current scale the unit showed up to 0.03 div of zero error]
@@ -727,7 +784,10 @@ pub fn vertical_entry(hw: &mut dyn CalHw, a: &mut Afe, cal: &Cal, g: [i32; 7], z
 pub fn rebuild_scales(block: &mut [Rec], keys: &[i64], entries: &[Entry]) {
     for (i, r) in block.iter_mut().enumerate() {
         let k = keys[i] as f64;
-        let Some(e) = entries.iter().filter(|e| e.scale > k).min_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap()) else { continue };
+        let Some(e) = entries.iter().filter(|e| e.scale > k).min_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap())
+        else {
+            continue;
+        };
         r.key = keys[i];
         r.g[..7].copy_from_slice(&e.g);
         r.gain = e.scale / k;
@@ -809,14 +869,22 @@ mod tests {
 
     impl Model {
         fn new(slope: f64, zero: f64) -> Model {
-            let thr = [(0x23, 1500), (0x26, 600), (0x35, 70), (0x29, 70), (0x07, 40), (0x27, 180), (0x06, 30)].into_iter().collect();
+            let thr = [(0x23, 1500), (0x26, 600), (0x35, 70), (0x29, 70), (0x07, 40), (0x27, 180), (0x06, 30)]
+                .into_iter()
+                .collect();
             Model { regs: [0; 0x40], last: 0, thr, slope, zero, writes: 0 }
         }
         /// The search index the last trim write stands for.
         fn index(&self) -> i32 {
             let r = self.regs[self.last as usize] as i32;
             match self.last {
-                0x23 | 0x26 => if r >> 10 & 1 == 1 { 1023 - (r & 0x3ff) } else { 1024 + (r & 0x3ff) },
+                0x23 | 0x26 => {
+                    if r >> 10 & 1 == 1 {
+                        1023 - (r & 0x3ff)
+                    } else {
+                        1024 + (r & 0x3ff)
+                    }
+                }
                 0x35 => (0..=224).find(|&x| vga_code(x) == (r & 0x1ff)).unwrap_or(0),
                 0x07 => r & 0x7f,
                 // net offset of the P/N pair on the search index scale: 127 - P + N
@@ -841,7 +909,11 @@ mod tests {
         }
         fn afe_read(&mut self, _ch: usize, _reg: u8) -> u16 {
             let above = self.thr.get(&self.last).is_some_and(|&t| self.index() > t);
-            if above { 0b1110 } else { 0 }
+            if above {
+                0b1110
+            } else {
+                0
+            }
         }
         fn adc_mean(&mut self, _ch: usize) -> Option<f64> {
             Some((ADC_ZERO + self.slope * (self.regs[0x28] as f64 - self.zero)).clamp(0.0, 65535.0))
@@ -854,7 +926,10 @@ mod tests {
 
     #[test]
     fn code_maps() {
-        assert_eq!((first_code(0), first_code(1023), first_code(1024), first_code(2047)), ((1, 1023), (1, 0), (0, 0), (0, 1023)));
+        assert_eq!(
+            (first_code(0), first_code(1023), first_code(1024), first_code(2047)),
+            ((1, 1023), (1, 0), (0, 0), (0, 1023))
+        );
         assert_eq!((vga_code(63), vga_code(64), vga_code(86), vga_code(87), vga_code(224)), (63, 105, 127, 169, 511));
         assert_eq!(pn_code(0, 5, 6), (127, 6));
         assert_eq!(pn_code(200, 5, 6), (5, 72));
@@ -908,8 +983,23 @@ mod tests {
                 rebuild_scales(&mut fresh, &keys, &entries);
                 for i in 0..801 {
                     let (a, b) = (&fresh[i], &block[i]);
-                    assert_eq!((a.key, &a.g[..7], a.zero), (b.key, &b.g[..7], b.zero), "block {}/{} row {}", var, ch, i);
-                    assert!((a.gain - b.gain).abs() < 1e-9 * b.gain.max(1.0), "block {}/{} row {}: {} vs {}", var, ch, i, a.gain, b.gain);
+                    assert_eq!(
+                        (a.key, &a.g[..7], a.zero),
+                        (b.key, &b.g[..7], b.zero),
+                        "block {}/{} row {}",
+                        var,
+                        ch,
+                        i
+                    );
+                    assert!(
+                        (a.gain - b.gain).abs() < 1e-9 * b.gain.max(1.0),
+                        "block {}/{} row {}: {} vs {}",
+                        var,
+                        ch,
+                        i,
+                        a.gain,
+                        b.gain
+                    );
                 }
             }
         }
@@ -987,7 +1077,9 @@ mod tests {
             let mut m = [0.0; 8];
             for n in 0..8 {
                 // 25 ADC codes per DAC code around 32760, per-core gain and offset
-                let v = 32768.0 + (self.dac - 32760.0) * 25.0 * (1.0 + self.gain_err[n] + self.g[n] as f64 / 2048.0) + 16.0 * (self.off_err[n] + self.o[n] as f64);
+                let v = 32768.0
+                    + (self.dac - 32760.0) * 25.0 * (1.0 + self.gain_err[n] + self.g[n] as f64 / 2048.0)
+                    + 16.0 * (self.off_err[n] + self.o[n] as f64);
                 m[self.order[n]] = v.clamp(0.0, 65520.0);
             }
             Some(m)
@@ -996,7 +1088,12 @@ mod tests {
 
     #[test]
     fn adc_cores_converge_on_a_permuted_core_model() {
-        let Some(cal) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_adc.hex")).ok().and_then(|d| crate::dho::adc::CalAdc::from_file_bytes(&d)) else { return };
+        let Some(cal) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_adc.hex"))
+            .ok()
+            .and_then(|d| crate::dho::adc::CalAdc::from_file_bytes(&d))
+        else {
+            return;
+        };
         let mut hw = Cores {
             dac: 32768.0,
             order: [0, 2, 1, 3, 4, 6, 5, 7],
@@ -1009,7 +1106,9 @@ mod tests {
         assert_eq!(core_order(&mut hw).unwrap(), [0, 2, 1, 3, 4, 6, 5, 7]);
         let out = adc_cores(&mut hw, &cal, &[1], &mut |_, _, _| {}).unwrap();
         // gains: every core's effective gain within 0.1 % of the others; offsets: within 1.5 LSB of mid-scale
-        let eff: Vec<f64> = (0..8).map(|n| hw.gain_err[n] + out.get16(crate::dho::adc::CalAdc::gain_at(1, n)) as f64 / 2048.0).collect();
+        let eff: Vec<f64> = (0..8)
+            .map(|n| hw.gain_err[n] + out.get16(crate::dho::adc::CalAdc::gain_at(1, n)) as f64 / 2048.0)
+            .collect();
         let (mn, mx) = eff.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
         assert!(mx - mn < 0.002, "gain spread {:?}", eff);
         // offsets centre every core on absolute mid-scale (incl. the channel's rest error) within 1.5 LSB
