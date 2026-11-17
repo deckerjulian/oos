@@ -568,7 +568,7 @@ impl Ui {
         let (y, h) = (bottom.y + 3, CHIP_H);
         let ph = h;
         let n = n_ch();
-        let mut right = bottom.right() - 4;
+        let right = bottom.right() - 4;
         // the hardware Panel button is gone from this bar: F6 (and the desktop window) still toggle the panel
         let panel: Option<Rect> = None;
         // the room the Panel button had goes to the time base and the trigger

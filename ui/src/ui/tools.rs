@@ -337,7 +337,7 @@ impl Ui {
         })
     }
 
-    pub(crate) fn meas_value(&self, it: Item) -> Option<String> {
+    pub(super) fn meas_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
             Item::MeasIdle => if m.meas_idle > 0.0 { si_short(m.meas_idle, "s") } else { "period".into() },
@@ -388,7 +388,7 @@ impl Ui {
         })
     }
 
-    pub(crate) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
+    pub(super) fn meas_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
             Item::MeasPop => {
                 if d.rem_euclid(2) != 0 {
@@ -497,7 +497,7 @@ impl Ui {
     }
 
     /// A shared level in percent (0..100), or in volts when the levels are volts. Hysteresis is a level item too.
-    pub(crate) fn meas_level_get(&self, it: Item) -> f64 {
+    pub(super) fn meas_level_get(&self, it: Item) -> f64 {
         let l = &self.m.meas_lv;
         if it == Item::MeasHyst { return if l.absolute { l.vhyst } else { l.hyst * 100.0 }; }
         let (fall, i) = level_slot(it);
@@ -506,7 +506,7 @@ impl Ui {
     }
 
     /// Sets a shared level (percent 1..99 or volts). False when the value would break low < mid < high.
-    pub(crate) fn meas_level_set(&mut self, it: Item, v: f64) -> bool {
+    pub(super) fn meas_level_set(&mut self, it: Item, v: f64) -> bool {
         if !v.is_finite() { return false; }
         let absolute = self.m.meas_lv.absolute;
         if it == Item::MeasHyst {

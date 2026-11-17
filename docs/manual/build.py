@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Builds the OOS Plus SCPI Programming Manual (PDF).
 
     python docs/manual/build.py [out.pdf]

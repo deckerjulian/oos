@@ -668,7 +668,7 @@ mod tests {
         let mut u = ui();
         u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0)), (Meas::Vrms, WaveId::Ch(1))];
         u.m.cursor = CursorMode::Time;
-        let mut shot = |u: &mut Ui, name: &str| {
+        let shot = |u: &mut Ui, name: &str| {
             let mut cv = Canvas::new(W, H);
             u.render(&mut cv);
             let _ = std::fs::write(dir.join(name), crate::store::png_of(&cv));

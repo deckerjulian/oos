@@ -3,7 +3,7 @@
 //! Offline shows a loaded file with the zoom overview as its navigator, the references in lanes and the measurements
 //! docked. SIM docks a panel at the right of the lanes; its rows call the items of the SIM menu (`adjust`, `activate`,
 //! `select_option`), so nothing about generating is decided here.
-use super::studio::{chip, icon_arrow, icon_play, icon_stop, StudioDrag, StudioView};
+use super::studio::{chip, icon_arrow, icon_play, icon_stop, StudioView};
 use super::*;
 use oos_dsp::serial;
 
