@@ -1118,18 +1118,25 @@ pub fn phase_noise(trend: &[f32], period: f64, f_lo: f64, f_hi: f64) -> f64 {
         return f64::NAN;
     }
     let mut marked = vec![false; spec.len()];
+    // a line is as wide as the window of the spectrum makes it: two bins to either side belong to it
     for (f, _) in pj_lines(df, &spec, spec.len()) {
-        if let Some(m) = marked.get_mut((f / df).round() as usize) {
-            *m = true;
+        let k = (f / df).round() as usize;
+        for j in k.saturating_sub(2)..=(k + 2).min(spec.len() - 1) {
+            marked[j] = true;
         }
     }
     let (lo, hi) = (f_lo.min(f_hi), f_lo.max(f_hi));
     // the window of bin k is the run of bins j within ±0.05 decade of it: a sliding range over prefix sums, whose
     // ends only move up with k (a window summed afresh per bin took 1.7 s for 131k unit intervals)
+    // a marked line is left out of the averages of its neighbours too: with it in, the bins beside a tone each took a
+    // share of it, and a clean clock with one tone read more than half the tone as noise
     let mut prefix = Vec::with_capacity(spec.len() + 1);
+    let mut kept = Vec::with_capacity(spec.len() + 1);
     prefix.push(0.0);
-    for &x in &spec {
-        prefix.push(prefix[prefix.len() - 1] + x);
+    kept.push(0usize);
+    for (k, &x) in spec.iter().enumerate() {
+        prefix.push(prefix[prefix.len() - 1] + if marked[k] { 0.0 } else { x });
+        kept.push(kept[kept.len() - 1] + usize::from(!marked[k]));
     }
     let last = spec.len() - 1;
     let step = 10f64.powf(0.05);
@@ -1155,7 +1162,7 @@ pub fn phase_noise(trend: &[f32], period: f64, f_lo: f64, f_hi: f64) -> f64 {
             b += 1;
         }
         // bin k itself is always inside, so the window is never empty
-        let v = (prefix[b + 1] - prefix[a]) / (b + 1 - a) as f64;
+        let v = (prefix[b + 1] - prefix[a]) / (kept[b + 1] - kept[a]).max(1) as f64;
         acc += v * v;
         any = true;
     }
@@ -1375,7 +1382,11 @@ pub fn diff_crossover(a: &[f32], b: &[f32]) -> f64 {
     if s.is_empty() { f64::NAN } else { s.iter().sum::<f64>() / s.len() as f64 }
 }
 
-/// Mean 20 log10 of |midpoint of a non-transition bit| / |midpoint of the nearest preceding transition bit|.
+/// Mean 20 log10 of |midpoint of the nearest preceding transition bit| / |midpoint of a non-transition bit|: the
+/// transition level over the steady level, as the name says, so de-emphasis of 3.5 dB reads +3.5 dB.
+/// A transition bit is the one that starts at an edge. An edge lies on the boundary of two unit intervals, so its
+/// interval is the nearest boundary, not the floor: the floor took the bit before the edge about as often as the
+/// bit after it, and the ratio came out near zero.
 pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     if !(c.period > 0.0) || !(dt > 0.0) || v.len() < 2 || c.edges.is_empty() {
         return f64::NAN;
@@ -1400,7 +1411,7 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     };
     let mut occupied = Vec::new();
     for &e in &c.edges {
-        occupied.push(c.ui_at(e).floor() as i64);
+        occupied.push(c.ui_at(e).round() as i64);
     }
     occupied.sort_unstable();
     occupied.dedup();
@@ -1414,8 +1425,8 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
             if volt.is_finite() {
                 last = volt;
             }
-        } else if last.is_finite() && last != 0.0 && volt.is_finite() {
-            ratios.push(20.0 * (volt.abs() / last.abs()).log10());
+        } else if last.is_finite() && last != 0.0 && volt.is_finite() && volt != 0.0 {
+            ratios.push(20.0 * (last.abs() / volt.abs()).log10());
         }
     }
     if ratios.is_empty() { f64::NAN } else { ratios.iter().sum::<f64>() / ratios.len() as f64 }

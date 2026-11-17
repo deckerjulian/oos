@@ -15,6 +15,11 @@ Fixed:
     frequency spread (7100 ppm for 5000 ppm); it is taken of the averaged series when a modulation line is found.
     SSC Modulation Rate was a line of the spectrum, which is a fifth off when the record holds one modulation
     period, as a SIM record does; with fewer than four periods the rate is fitted (278 kHz for 300 kHz).
+  - T/nT Ratio took the bit before an edge as the transition bit about as often as the bit after it, so 3.5 dB of
+    de-emphasis read 0.9 dB. It takes the bit that starts at the edge and reads the transition level over the steady
+    one, as its name says: +3.5 dB.
+  - Phase Noise leaves a periodic tone out, but the bins beside a tone each took a share of it: a clean clock with a
+    20 ns tone read 8.5 ns of noise. The tone's whole line is left out of the averages (62 ps now).
   - a value in dB is written without a prefix ("0.83 dB", not "831 mdB").
 - Double pulse (host-tested against a built double-pulse record, not yet verified on hardware): Ipeak and the diode
   recovery took the largest current of the whole second pulse, which is the end of the inductor's ramp, so Ipeak and

@@ -63,7 +63,7 @@ static DEFS: [Def; 29] = [
     module(DC_COMMON, "DC Common Mode", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Mean of the two sources added together and halved."),
     module(AC_COMMON, "AC Common Mode (Pk-Pk)", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Peak-to-peak of the common mode after the high-pass."),
     module(DIFF_CROSS, "Differential Crossover", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Mean voltage where the two sources cross."),
-    module(TNT, "T/nT Ratio", "dB", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "Mid-interval level of a steady bit against the last transition, in dB."),
+    module(TNT, "T/nT Ratio", "dB", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "Mid-interval level of the last transition bit over that of a steady bit, in dB: the de-emphasis."),
     module(BIT_RATE, "NRZ Clock Rate", "b/s", Square, &[0], &[(JITTER, "TIMING")], "Rate of the recovered NRZ clock. Assumes one bit per symbol; not PAM or C-PHY throughput."),
     module(SSC_DEV, "SSC Freq Dev", "ppm", Slope, &[0], &[(JITTER, "TIMING")], "Peak-to-peak spread of the cycle frequency, in parts per million."),
     module(SSC_RATE, "SSC Modulation Rate", "Hz", Slope, &[0], &[(JITTER, "TIMING")], "How fast that frequency spread repeats."),

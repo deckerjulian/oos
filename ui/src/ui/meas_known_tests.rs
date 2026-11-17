@@ -152,7 +152,7 @@ fn the_module_measurements_read_known_signals() {
     });
     let (vds, id) = (sw(10.0, 0.1, true), sw(2.0, 0.0, false));
     bad.extend(show("switch", 1e-9, &[(109, "RDS(on)", 0.05), (105, "dv/dt rise", 9.9e5), (106, "dv/dt fall", -9.9e5), (107, "di/dt rise", 2e5), (108, "di/dt fall", -2e5),
-        (102, "E on", Q), (103, "E off", Q), (104, "E cond", 0.1 * 2.0 * 490e-6), (100, "Turn On Time", Q), (101, "Turn Off Time", Q)], &[vds, id], &|_| {}));
+        (102, "E on", 31.95e-6), (103, "E off", 31.95e-6), (104, "E cond", 0.1 * 2.0 * 490e-6), (100, "Turn On Time", Q), (101, "Turn Off Time", Q)], &[vds, id], &|_| {}));
     // input capacitance: the voltage ramps from 0 to 10 V in 1 ms into 1 uF, so 10 mA flows while it does
     let cv = wave(4000, 1e-6, |t| ((t - 1e-3) / 1e-3).clamp(0.0, 1.0) * 10.0);
     let ci = wave(4000, 1e-6, |t| if (1e-3..2e-3).contains(&t) { 0.01 } else { 0.0 });
@@ -184,7 +184,7 @@ fn the_module_measurements_read_known_signals() {
     });
     bad.extend(show("dpt", 1e-12, &[(170, "Vpeak", 120.0), (171, "Ipeak", 12.0), (172, "Td(on)", 2.1e-6), (173, "Tr", 0.8e-6), (174, "Ton", 2.9e-6), (175, "Td(off)", 3.1e-6),
         (176, "Tf", 0.8e-6), (177, "Toff", 3.9e-6), (178, "dv/dt", 50e6), (179, "di/dt", 10e6), (184, "Irrm", 2.0), (181, "Trr", 0.95e-6), (182, "Qrr", 0.995e-6),
-        (185, "Diode d/dt", 4e6), (183, "Err", 100.0 * 0.995e-6), (186, "Qoss", Q), (180, "Tdt", Q)], &[vds, id, gate], &|_| {}));
+        (185, "Diode d/dt", 4e6), (183, "Err", 100.0 * 0.995e-6), (186, "Qoss", 12.8e-6), (180, "Tdt", Q)], &[vds, id, gate], &|_| {}));
     // skew, setup and hold work in nanoseconds: a 10 MHz clock, a second one 3 ns later, and data that rises 4 ns before
     // each rising clock edge and falls 6 ns after it
     let ns = 0.1e-9;
@@ -235,7 +235,95 @@ fn the_jitter_and_eye_measurements_read_what_sim_put_in() {
     // down-spread: the rate swings over the whole deviation, at the modulation rate; a SIM record holds one period of it
     bad.extend(run("ssc 0.5 % 300 kHz", Lane { ssc: true, ssc_hz: 300e3, ..clean_lane() }, 0.1, &[(81, 5000.0), (82, 300e3)]));
     bad.extend(run("ssc 0.25 % 600 kHz", Lane { ssc: true, ssc_hz: 600e3, ssc_deviation: 0.0025, ..clean_lane() }, 0.1, &[(81, 2500.0), (82, 600e3)]));
-    bad.extend(run("deemph 3.5 dB", Lane { deemph_db: 3.5, ..clean_lane() }, 0.06, &[]));
+    bad.extend(run("deemph 3.5 dB", Lane { deemph_db: 3.5, ..clean_lane() }, 0.1, &[(76, 3.5)]));
     bad.extend(run("bw 400 MHz", Lane { bw: 400e6, ..clean_lane() }, 0.06, &[]));
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The rows that the other two tests left without a worked value.
+#[test]
+fn the_remaining_rows_read_built_signals() {
+    let mut bad = Vec::new();
+    // PAM4: the four levels 0, 1/3, 2/3 and 1 V in a fixed order that visits each equally, 1 us a symbol
+    let pam = wave(40_000, 10e-9, |t| [0.0, 2.0, 1.0, 3.0, 3.0, 0.0, 2.0, 1.0, 1.0, 3.0, 0.0, 2.0][((t / 1e-6) as usize) % 12] / 3.0);
+    bad.extend(show("pam", 2e-3, &[(222, "PAM Level 0", 0.0), (223, "PAM Level 1", 1.0 / 3.0), (224, "PAM Level 2", 2.0 / 3.0), (225, "PAM Level 3", 1.0),
+        (226, "PAM Level Separation", 1.0 / 3.0)], &[pam], &|_| {}));
+    // the unit interval estimates on PRBS7 at 1 us a bit
+    let bits = prbs7(2000);
+    let d = nrz(&bits, 1e-6, 100e-9, 10e-9, |_| 0.0);
+    bad.extend(show("ui", 1e-12, &[(217, "Estimated UI", 1e-6), (218, "PLL UI", 1e-6), (219, "Weighted UI", 1e-6), (221, "Ones", 2000.0 * 64.0 / 127.0), (220, "Folded RMS", Q)], &[d], &|_| {}));
+    // a ramp of 100 V/s that is 0.5 V at the trigger point (the middle of the record)
+    let ramp = wave(20_000, 1e-6, |t| 0.5 + 100.0 * (t - 10e-3));
+    bad.extend(show("line", 1e-9, &[(209, "Linear Slope", 100.0), (210, "Linear Intercept", -0.5)], &[ramp], &|_| {}));
+    // bursts: five cycles of 50 kHz, then 1.9 ms of nothing (a burst ends where the signal rests for more than 50 us);
+    // the burst runs from its first rise to its last fall, 90 us
+    let burst = wave(20_000, 1e-6, |t| { let p = (t - 200e-6).rem_euclid(2e-3); if p < 100e-6 && (p * 50e3).rem_euclid(1.0) < 0.5 { 1.0 } else { 0.0 } });
+    bad.extend(show("burst", 1e-9, &[(26, "Burst Width", 90e-6)], &[burst], &|_| {}));
+    // setup and hold on both clock edges: a 10 MHz clock, data that rises 4 ns before every clock edge and falls 6 ns after
+    let ns = 0.1e-9;
+    let pulse = move |start: f64, len: f64, period: f64| wave(20_000, ns, move |t| {
+        let p = (t - start).rem_euclid(period);
+        if p < 0.5e-9 { p / 0.5e-9 } else if p < len { 1.0 } else if p < len + 0.5e-9 { 1.0 - (p - len) / 0.5e-9 } else { 0.0 }
+    });
+    let (clk, data) = (pulse(20e-9, 50e-9, 100e-9), pulse(16e-9, 10e-9, 50e-9));
+    bad.extend(show("ddr", 1e-12, &[(240, "Setup fall", 4e-9), (241, "Hold fall", 6e-9), (242, "Setup DDR", 4e-9), (243, "Hold DDR", 6e-9), (244, "Setup + Hold DDR", 0.0)],
+        &[data, clk], &|_| {}));
+    // a rail with 50 mV of 50 Hz and 10 mV of 100 kHz on it, with the two frequencies set
+    let rail = wave(200_000, 1e-6, |t| 5.0 + 0.05 * (2.0 * PI * 50.0 * t).sin() + 0.01 * (2.0 * PI * 100e3 * t).sin());
+    bad.extend(show("ripple", 1e-6, &[(114, "Line Ripple", 0.1), (115, "Switching Ripple", 0.02)], &[rail], &|u| { u.m.pw_fline = 50.0; u.m.pw_fsw = 100e3; }));
+    // turn-on: the input steps at 1 ms; the rail climbs to 5.4 V at 1.5 ms and settles at 5 V
+    let vin = wave(5000, 1e-6, |t| if t >= 1e-3 { 12.0 } else { 0.0 });
+    let out = wave(5000, 1e-6, |t| if t < 1e-3 { 0.0 } else if t < 1.5e-3 { (t - 1e-3) / 0.5e-3 * 5.4 } else { 5.0 + 0.4 * (-(t - 1.5e-3) / 0.2e-3).exp() });
+    bad.extend(show("turn-on", 1e-6, &[(152, "Turn-on Overshoot", 5.4)], &[out, vin], &|_| {}));
+    // an inductor of 1 mH with 0.5 ohm of loss in series and no copper resistance set: the loss is 0.5 * Irms^2
+    let mi = |t: f64| { let p = (t * 1e3).rem_euclid(1.0); if p < 0.5 { -0.25 + p } else { 0.25 - (p - 0.5) } };
+    let lv = wave(20_000, 1e-6, move |t| (if (t * 1e3).rem_euclid(1.0) < 0.5 { 1.0 } else { -1.0 }) + 0.5 * mi(t));
+    let li = wave(20_000, 1e-6, mi);
+    bad.extend(show("core", 1e-6, &[(112, "Magnetic Loss", 0.5 * 0.25 * 0.25 / 3.0), (110, "Inductance", Q), (111, "Magnetic Property", Q)], &[lv.clone(), li.clone()], &|u| u.m.mag_rcu = 0.0));
+    // the same with the 0.5 ohm declared as copper: nothing is left
+    bad.extend(show("copper", 5e-4, &[(112, "Magnetic Loss", 0.0)], &[lv, li], &|u| u.m.mag_rcu = 0.5));
+    // motor angle: the phases 30 degrees ahead; the first phase is a sine, so the vector is at 30 - 90 = 300 degrees
+    let w = 2.0 * PI * 50.0;
+    let ph = |k: f64| wave(20_000, 10e-6, move |t| (w * (t - 0.1) + PI / 6.0 - k * 2.0 * PI / 3.0).sin());
+    bad.extend(show("angle", 0.5, &[(134, "Angle", 300.0)], &[ph(0.0), ph(1.0), ph(2.0)], &|_| {}));
+    // jitter rows on a 1 Mb/s clock: a tone of 20 ns at a quarter of the bit rate, and a tone inside a set phase-noise band
+    let clock: Vec<bool> = (0..4000).map(|k| k % 2 == 0).collect();
+    let quarter = nrz(&clock, 1e-6, 100e-9, 10e-9, |t| 20e-9 * (2.0 * PI * 250e3 * t).sin());
+    bad.extend(show("srj", 1e-12, &[(50, "SRJ", 40e-9)], &[quarter], &|_| {}));
+    // phase noise is the random part between two offsets: a tone is left out of it, and white jitter of 5 ns RMS
+    // spread over the 500 kHz a 1 Mb/s clock can show leaves 5 ns * sqrt(0.4) between 50 and 250 kHz
+    let tone = nrz(&clock, 1e-6, 100e-9, 10e-9, |t| 20e-9 * (2.0 * PI * 10e3 * t).sin());
+    bad.extend(show("pn tone", 1e-9, &[(42, "Phase Noise", 0.0)], &[tone], &|u| { u.m.eye_pn_lo = 2e3; u.m.eye_pn_hi = 50e3; }));
+    let mut seed2 = 0x9e3779b97f4a7c15u64;
+    let jit: Vec<f64> = (0..=clock.len()).map(|_| {
+        let mut u = || { seed2 ^= seed2 << 13; seed2 ^= seed2 >> 7; seed2 ^= seed2 << 17; (seed2 >> 11) as f64 / (1u64 << 53) as f64 };
+        let (a, b) = (u().max(1e-12), u());
+        5e-9 * (-2.0 * a.ln()).sqrt() * (2.0 * PI * b).cos()
+    }).collect();
+    let white = nrz(&clock, 1e-6, 100e-9, 10e-9, move |t| jit[(t / 1e-6).round() as usize]);
+    bad.extend(show_within("pn white", 0.15, 1e-12, &[(42, "Phase Noise", 5e-9 * 0.4f64.sqrt()), (44, "RJ-dd", Q)], &[white], &|u| { u.m.eye_pn_lo = 50e3; u.m.eye_pn_hi = 250e3; }));
+    // data-dependent jitter: every edge that follows a single bit comes 30 ns late, the others on time
+    let late: Vec<f64> = (0..=bits.len()).map(|k| if k >= 2 && k < bits.len() && bits[k - 1] != bits[k - 2] && bits[k] != bits[k - 1] { 30e-9 } else { 0.0 }).collect();
+    let ddj = nrz(&bits, 1e-6, 100e-9, 10e-9, move |t| late[(t / 1e-6).round() as usize]);
+    bad.extend(show("ddj", 1e-12, &[(48, "DDJ", 30e-9), (45, "DJ-dd", Q)], &[ddj], &|_| {}));
+    // eye height at a bit-error rate of 1e-12: the levels less 7.03 sigma each, on 20 mV of noise
+    let mut seed = 88172645463325252u64;
+    let mut gauss = move || {
+        let mut u = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; (seed >> 11) as f64 / (1u64 << 53) as f64 };
+        let (a, b) = (u().max(1e-12), u());
+        (-2.0 * a.ln()).sqrt() * (2.0 * PI * b).cos()
+    };
+    let quiet = nrz(&prbs7(4000), 1e-6, 100e-9, 20e-9, |_| 0.0);
+    let noisy = (quiet.0.iter().map(|x| x + (0.02 * gauss()) as f32).collect::<Vec<f32>>(), quiet.1);
+    bad.extend(show("ber", 1e-12, &[(63, "Eye Height@BER", 1.0 - 2.0 * 7.034 * 0.02)], &[noisy], &|_| {}));
+    // de-emphasis of 3.5 dB, built by hand: a bit that repeats the one before it is driven at 10^(-3.5/20) of the swing
+    let de = 10f64.powf(-3.5 / 20.0);
+    let level: Vec<f64> = (0..bits.len()).map(|k| (if bits[k] { 0.5 } else { -0.5 }) * if k > 0 && bits[k] == bits[k - 1] { de } else { 1.0 }).collect();
+    let emph = wave(200_000, 10e-9, |t| {
+        let k = ((t / 1e-6) as usize).min(level.len() - 1);
+        let into = t - k as f64 * 1e-6;
+        if k > 0 && into < 100e-9 { level[k - 1] + (level[k] - level[k - 1]) * into / 100e-9 } else { level[k] }
+    });
+    bad.extend(show_within("deemph", 0.1, 1e-12, &[(76, "T/nT Ratio", 3.5)], &[emph], &|_| {}));
     assert!(bad.is_empty(), "{bad:#?}");
 }
