@@ -56,8 +56,9 @@ agents can be given work (ADR 0034) and whether a second person can be given wri
   for the same. It is removed by hand then, and `tools/repo-settings.sh` says as long as it is there.
 - The files are not in force by being merged. After the merge an administrator runs `tools/repo-settings.sh --apply`
   once, and again after every change of them; run without `--apply`, it shows whether GitHub still matches.
-- Not tried yet: the two rulesets on GitHub. They are written from GitHub's documentation of rulesets; if GitHub
-  refuses a field, the file is corrected in the pull request that applies it.
+- Tried on 2026-11-17: GitHub took the two rulesets as written, and both are in force. It fills in three fields
+  the files did not name (`require_extra_approval_for_unattributed_changes`, `required_reviewers`,
+  `do_not_enforce_on_create`); the files name them now, so the comparison is exact.
 - Worth a second look when a second maintainer joins: `CODEOWNERS` gets their paths, and a required approval for
   everyone becomes possible.
 

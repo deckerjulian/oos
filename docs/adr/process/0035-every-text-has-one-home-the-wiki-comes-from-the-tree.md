@@ -54,8 +54,8 @@ belongs to which change, and `docs/architecture.md` drew the structure in text a
   the README into them, so the README becomes the entry page, is work that follows, page by page.
 - A change that a user sees touches `wiki/` in the same pull request, and review can ask for it.
 - The wiki's own history gets one commit per publication, made by the workflow; its older history stays.
-- Not tried yet: that the workflow's token may push to the wiki's repository. GitHub's documentation does not say.
-  If it may not, the workflow needs a token of the maintainer, and this record is corrected.
+- Tried on 2026-11-17: the workflow's own token may push to the wiki's repository; the first publication from the
+  tree is the wiki's commit of that day.
 - Whether GitHub draws every diagram as written has to be looked at on the page; Mermaid's own C4 diagram types are
   not used because they are experimental.
 

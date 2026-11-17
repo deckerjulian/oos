@@ -75,9 +75,10 @@ does not see timing, calibrated values, or what the hardware does.
   request, and it cannot administer the repository.
 - A merge by GitHub happens while nobody watches. The run on main after it, and the weekly runs, are what shows a
   problem; a red main is fixed first (ADR 0031).
-- Not tried yet: all of it on GitHub. The script was run without writing on five open pull requests and gave the
-  expected answers. How the agents' pull requests name their author, and whether a merge asked for with the
-  maintainer's token starts the workflows on main, is seen at the first use.
+- Tried on 2026-11-17: the statuses and the labels, on Dependabot's first pull request: `owner` passed (only the
+  commits of actions), `unit` passed, `waited` was pending, and the labels were set. Not tried yet: auto-merge
+  itself, how the agents' pull requests name their author, and whether a merge asked for with the maintainer's token
+  starts the workflows on main.
 
 ## References
 
