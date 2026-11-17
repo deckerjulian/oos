@@ -1025,6 +1025,8 @@ fn the_measurements_read_a_known_pulse_train() {
         ("Cycle Amplitude", 1.0), ("Cycle Top", 1.0), ("Cycle Base", 0.0), ("Cycle Peak-to-Peak", 1.0), ("Cycle Maximum", 1.0),
         ("Cycle Minimum", 0.0), ("High Time", 292e-6), ("Low Time", 692e-6),
         ("Delay rise-rise", 100e-6), ("Delay fall-fall", 100e-6), ("Phase rise-rise", 36.0), ("Phase fall-fall", 36.0),
+        ("Delay rise-fall", 400e-6), ("Delay fall-rise", -200e-6), ("Phase rise-fall", 144.0), ("Phase fall-rise", 288.0),
+        ("Median", 0.0), ("Mode", 0.0), ("Duration N-Periods", 6e-3), ("Time of Maximum", -4.79e-3), ("Time of Minimum", -5e-3),
     ];
     let mut bad = Vec::new();
     let mut seen = 0;
@@ -1104,4 +1106,12 @@ fn fresh_live(layout: Layout) -> Ui {
     u.relayout();
     for _ in 0..8 { u.step(0.04); u.wait_sim_generation(); }
     u
+}
+
+#[test]
+#[ignore]
+fn meas_defs_dump() {
+    for (m, def) in crate::measures::all() {
+        if matches!(def.kind, crate::measures::Kind::Module) { println!("DEF|{m}|{}|{}|{}|{:?}|{}", def.id, def.name, def.unit, def.roles, def.blurb); }
+    }
 }

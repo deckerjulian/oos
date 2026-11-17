@@ -111,6 +111,16 @@ impl MeasRow {
         } else if self.unit.is_empty() && v.fract() == 0.0 && v.abs() < 1e6 {
             // a count (edges, pulses, ones): a whole number is written as one
             format!("{}", v as i64)
+        } else if matches!(self.unit, "" | "ppm" | "rpm" | "rpm/s") {
+            // a ratio, and the units that are not SI: no prefix ("498 m" for a power factor of 0.498, "nppm", "krpm")
+            let a = v.abs();
+            let number = if a != 0.0 && !(1e-4..1e7).contains(&a) {
+                if a < 1e-4 { "0".to_string() } else { format!("{:.*e}", digits - 1, v) }
+            } else {
+                let decimals = (digits as i32 - 1 - if a > 0.0 { a.log10().floor() as i32 } else { 0 }).clamp(0, 6) as usize;
+                format!("{:.*}", decimals, v)
+            };
+            if self.unit.is_empty() { number } else { format!("{} {}", number, self.unit) }
         } else {
             si_digits(v, self.unit, digits)
         }

@@ -379,8 +379,30 @@ fn vpeak_window(out: &mut Pulse, vds: &[f32], t0: f64, t1: f64, dt: f64, vbus: f
     }
 }
 
+/// The first peak of `y` over the samples `i0..i1` above `base`: the highest value before the signal falls back by a
+/// quarter of its height over `base` (at least `floor`). None when it never falls back: then there is no peak of its
+/// own, only a slope. In the second pulse the inductor current goes on rising after the turn-on, so the largest value
+/// of the pulse is the end of that ramp, not the turn-on peak.
+fn first_peak(y: impl Fn(usize) -> f64, i0: usize, i1: usize, base: f64, floor: f64) -> Option<(f64, f64)> {
+    let (mut m, mut km) = (f64::NEG_INFINITY, i0);
+    for k in i0..i1 {
+        let v = y(k);
+        if !v.is_finite() {
+            continue;
+        }
+        if v > m {
+            (m, km) = (v, k);
+        } else if m > base && v < m - (0.25 * (m - base)).max(floor) {
+            return Some((m, km as f64));
+        }
+    }
+    None
+}
+
 fn ipeak_window(out: &mut Pulse, id: &[f32], t0: f64, t1: f64, dt: f64, il: f64) {
-    if let Some((v, t)) = max_in(id, t0, t1) {
+    let (i0, i1) = (bound(t0).min(id.len()), (t1.ceil() as usize).clamp(bound(t0).min(id.len()), id.len()));
+    let first = if il.is_finite() { first_peak(|k| id[k] as f64, i0, i1, il, 0.02 * il.abs()) } else { None };
+    if let Some((v, t)) = first.or_else(|| max_in(id, t0, t1)) {
         out.ipeak = Some(v);
         out.marks.ipeak = Some(t * dt);
         if il.is_finite() {
@@ -444,10 +466,17 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
     let i0 = bound(t0).min(i1);
     let mut peak = 0.0;
     let mut t_peak = t0;
-    for (k, &y) in rev[i0..i1].iter().enumerate() {
-        if y.is_finite() && y > peak {
-            peak = y;
-            t_peak = (i0 + k) as f64;
+    // the recovery peak is the first one; with the load current as the reference, what follows it is the ramp of the
+    // inductor, which ends higher
+    let floor = if il.is_finite() { 0.02 * il.abs() } else { 0.0 };
+    if let Some((v, t)) = first_peak(|k| rev[k], i0, i1, 0.0, floor) {
+        (peak, t_peak) = (v, t);
+    } else {
+        for (k, &y) in rev[i0..i1].iter().enumerate() {
+            if y.is_finite() && y > peak {
+                peak = y;
+                t_peak = (i0 + k) as f64;
+            }
         }
     }
     if !(peak > 0.0) {

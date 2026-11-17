@@ -7,6 +7,12 @@ it also ran on a DHO924S (2026-11-16).
 
 Fixed:
 
+- Double pulse (host-tested against a built double-pulse record, not yet verified on hardware): Ipeak and the diode
+  recovery took the largest current of the whole second pulse, which is the end of the inductor's ramp, so Ipeak and
+  Irrm read too high and Trr, Qrr and the diode slope had no value; they use the first peak after the turn-on. The
+  descriptions of Td(off), Tf and Toff said "voltage rise"; they are measured on the current fall, and say so.
+- A ratio and the units that are not SI are written without a prefix: a power factor of 0.498 read "498 m", a speed
+  "3.00 krpm", a frequency deviation "217 nppm".
 - Measurements (host-tested against a pulse train of known values, not yet verified on hardware): Positive and Negative
   Duty Cycle and the six Cycle rows (amplitude, top, base, peak-to-peak, maximum, minimum) had no value when the view
   held one cycle between two falling edges, which is the default view of the 1 kHz probe signal; a count (edges,

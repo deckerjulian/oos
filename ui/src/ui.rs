@@ -69,6 +69,8 @@ mod scpi_coverage_tests;
 mod sheet_tests;
 mod walk_tests;
 #[cfg(test)]
+mod meas_known_tests;
+#[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
 mod fix_tests;
