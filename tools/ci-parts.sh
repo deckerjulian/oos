@@ -13,7 +13,7 @@
 #
 # What reaches what: the crates depend on each other as hal <- ui, hal <- fpgad, dsp <- ui; keys/ is compiled into
 # hal, the tests of hal read rootfs/. A change of how the checks run (this file, tools/check.sh, the workflow,
-# rustfmt.toml, the list of decoders) reaches everything, and so does a name nothing here knows outside the paths
+# rustfmt.toml, the script that reads the decoders out of ui/Cargo.toml) reaches everything, and so does a name nothing here knows outside the paths
 # that hold no code for the host checks (documents, tools that have their own tests in the job `files`, the image).
 # In doubt: everything. Touches no scope and no network.
 set -eu

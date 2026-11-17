@@ -34,6 +34,7 @@ class Parts(unittest.TestCase):
         self.assertEqual(parts("keys/update.pub"), parts("hal/src/lib.rs"), "keys/ is compiled into hal")
         self.assertEqual(parts("dsp/src/fft.rs"), (UI | {"test:dsp"}, True), "dsp reaches ui")
         self.assertEqual(parts("ui/src/scpi.rs"), (UI, True))
+        self.assertEqual(parts("ui/Cargo.toml"), (UI, True), "the decoder list reaches what ui reaches")
         self.assertEqual(parts("fpgad/src/main.rs"), ({"fmt", "test:fpgad", "target"}, True), "fpgad reaches nothing")
 
     def test_what_reaches_less(self):

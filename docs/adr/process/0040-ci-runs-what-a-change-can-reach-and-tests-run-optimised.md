@@ -21,7 +21,8 @@ optional decoder, 14 of them) took about 150 s of compiling. A change of a host 
 - **A pull request runs the parts its changed files can reach** (`tools/ci-parts.sh`, its own tests in
   `tools/tests/test_ci_parts.py`). The crates depend on each other as hal <- ui, hal <- fpgad, dsp <- ui; `keys/` is
   built into hal; the tests of hal read `rootfs/`. A change of how the checks run (the workflow, `tools/check.sh`,
-  `tools/ci-parts.sh`, `rustfmt.toml`, the list of decoders), or of a file outside the known paths, runs everything.
+  `tools/ci-parts.sh`, `rustfmt.toml`, the script that reads the decoders out of `ui/Cargo.toml`), or of a file
+  outside the known paths, runs everything; a change of `ui/Cargo.toml` itself runs what ui reaches.
   Documents, the host tools (their tests run in the job `files` for every pull request), the image and the GPU
   helper build nothing. The comparison runs when a crate or one of its own scripts changed.
 - **`decoders:each` is cut in two halves** that run next to each other (`decoders:each/1`, `decoders:each/2`).

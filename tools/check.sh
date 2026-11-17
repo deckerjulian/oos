@@ -205,13 +205,16 @@ layer_decoders() {
             fail "decoders: core only, target"
     fi
     case ${1:-each} in each | each/*)
-        all=$(ui/tools/decoder-features.sh list)
+        # one name a line (the list comes as one line)
+        all=$(ui/tools/decoder-features.sh list | tr -s ' \t' '\n\n' | grep -v '^$')
         n=$(printf '%s\n' "$all" | wc -l)
         half=$(((n + 1) / 2))
         case $1 in
         each/1) all=$(printf '%s\n' "$all" | head -n "$half") ;;
         each/2) all=$(printf '%s\n' "$all" | tail -n +"$((half + 1))") ;;
         esac
+        [ -n "$all" ] || fail "decoders: no optional decoder in ${1:-each}"
+        say "decoders alone: $(echo $all)"
         for d in $all; do
             (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
                 fail "decoders: dec-$d alone"
