@@ -258,7 +258,9 @@ fn studio_badge_popup_configures_unpins_floats_and_removes() {
     let vpp = MeasKey::One(Meas::Vpp, WaveId::Ch(0));
     let open = |u: &mut Ui, key: MeasKey| {
         let r = u.studio_badges().into_iter().find(|(k, _)| *k == key).unwrap().1;
+        // the first tap shows the measurement on the waveform, the next one on the same badge opens its menu
         tap_in(u, r);
+        if u.studio.popup.is_none() { assert_eq!(u.studio.mark, Some(key)); tap_in(u, r); }
         assert_eq!(u.studio.popup, Some(key));
         u.studio_popup_rect().unwrap()
     };

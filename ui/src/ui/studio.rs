@@ -115,6 +115,11 @@ pub(super) struct Studio {
     pub hide_badges: bool,
     /// the badge whose action popup is open
     pub popup: Option<MeasKey>,
+    /// the measurement a tap on its badge shows on the waveform (its level, span or shaded area); the next tap on
+    /// the same badge opens its menu, and closing that menu takes the mark away
+    pub mark: Option<MeasKey>,
+    /// the menu of the marked badge was opened: the mark goes when it closes
+    pub mark_menu: bool,
     pub view: StudioView,
     /// the View menu is open
     pub view_menu: bool,
@@ -1505,7 +1510,8 @@ impl Ui {
         for (key, r) in self.studio_badges().into_iter().filter(|_| !self.studio_classic()) {
             let Some(m) = self.studio_index(key).and_then(|i| rows.get(i)) else { continue };
             let col = self.wave_color(m.src);
-            chip(cv, r, BTN, if self.studio.popup == Some(key) { ACCENT } else { BTN_BORDER });
+            let marked = self.studio.mark == Some(key);
+            chip(cv, r, if marked { mix(BTN, ACCENT, 40) } else { BTN }, if self.studio.popup == Some(key) || marked { ACCENT } else { BTN_BORDER });
             let cy = r.y + r.h / 2;
             // the source is a bar of its colour at the edge of the badge; a badge in the bar is pinned by being there
             cv.round(Rect::new(r.x + 3, r.y + 4, 4, r.h - 8), 2, col, 255);
@@ -1657,7 +1663,16 @@ impl Ui {
             return true;
         }
         if let Some((key, _)) = self.studio_badges().into_iter().find(|(_, r)| r.contains(x, y)) {
-            self.studio.popup = Some(key);
+            // the first tap shows what the measurement measures on the waveform; a tap on the badge that is shown
+            // opens its menu (a measurement with nothing to draw goes straight to the menu)
+            let drawable = matches!(key, MeasKey::One(k, id) if self.meas_mark_exists(k, id));
+            if self.studio.mark == Some(key) || !drawable {
+                self.studio.popup = Some(key);
+                self.studio.mark_menu = self.studio.mark == Some(key);
+            } else {
+                self.studio.mark = Some(key);
+                self.studio.mark_menu = false;
+            }
         }
         true
     }

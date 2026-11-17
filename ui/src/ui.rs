@@ -3060,6 +3060,7 @@ impl Ui {
         self.now += dt_wall;
         self.meas_hold_tick();
         self.studio_hold_tick();
+        self.meas_mark_tick();
         self.workspace_hold_tick();
         self.update_poll();
         self.wlan_poll();
@@ -3780,10 +3781,12 @@ impl Ui {
             }
             cv.no_clip();
             for &lane in &self.wins { self.draw_grid(l.under, lane); }
+            self.draw_lane_chrome(l.under);
         } else {
             for &w in &self.wins {
                 self.draw_grid(l.under, w);
             }
+            self.draw_lane_chrome(l.under);
         }
         if self.view_on() {
             // the analysers and XY draw their own picture: under what goes over it
@@ -4028,6 +4031,35 @@ impl Ui {
         Some((r.vpd, r.offset, "V", self.wave_color(WaveId::Ref(i))))
     }
 
+    /// Stacked lanes: where one ends and the next begins, and whose it is. A bar in the source's colour runs down
+    /// the left edge of each lane, and a solid line fills the gap between two lanes.
+    fn draw_lane_chrome(&self, cv: &mut Canvas) {
+        if !self.stacked() || self.wins.len() < 2 { return; }
+        let sources = self.trace_sources();
+        for (i, lane) in self.wins.iter().enumerate() {
+            let col = match sources.get(i) {
+                Some(workspace::Trace::Channel(c)) => CH_COLORS[*c],
+                Some(workspace::Trace::Reference(r)) => self.wave_color(WaveId::Ref(*r)),
+                Some(workspace::Trace::Math(k)) => MATH_COLORS[*k % MATH_COLORS.len()],
+                None => continue,
+            };
+            cv.fill(Rect::new(lane.x, lane.y, 3, lane.h), mix(BG, col, 190));
+            if let Some(next) = self.wins.get(i + 1) {
+                let gap = (next.y - lane.bottom()).max(1);
+                cv.fill(Rect::new(lane.x, lane.bottom(), lane.w, gap), mix(BG, TEXT, 90));
+            }
+        }
+    }
+
+    /// The scale of the math channel drawn in this lane: volts per division, offset in volts, unit, colour.
+    fn math_axis_source(&self) -> Option<(f32, f32, &'static str, Rgb)> {
+        let k = (0..NMATH).find(|&k| self.m.math_shown(k) && self.math_win_of(k) == self.cur_win)?;
+        let c = self.m.math_ch(k);
+        if c.op == MathOp::Fft { return None; }
+        let vpd = *math_scales().get(c.scale)? as f32;
+        Some((vpd, c.offset * vpd, c.op.unit(), MATH_COLORS[k % MATH_COLORS.len()]))
+    }
+
     /// Axis labels inside the plot: volts of the active channel along the left edge (not on the top and bottom
     /// lines, where the status line and the time labels are), times along the bottom edge. A volt label is left out
     /// rather than drawn over another label, the status line, the time labels, the mask pill or the decode band; it
@@ -4039,14 +4071,20 @@ impl Ui {
         // with no channel to label, the shown ref gives the axis (R1 in the lane or window that holds it)
         let axis = match c {
             Some(c) => { let ch = &self.m.ch[c]; Some((ch.volts_per_div(), ch.offset, ch.unit.name(), CH_COLORS[c])) }
-            None => self.ref_axis_source(),
+            None => self.ref_axis_source().or_else(|| if self.stacked() { self.math_axis_source() } else { None }),
         };
+        // a lane is one source with its own scale: its labels are not given up for a status line or time labels
+        // that are not in it, and its top and bottom values are always there
+        let lanes = self.stacked() && self.wins.len() > 1;
+        let last_lane = self.cur_win + 1 >= self.wins.len() || self.studio_lane_has_own_time();
         if let Some((base_vpd, base_offset, unit, color)) = axis {
             let (factor, center) = self.zoom_vertical_transform(a);
             let vpd = base_vpd / factor;
             let offset = base_offset - center * base_vpd;
             let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
-            let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
+            let mut taken: Vec<Rect> = Vec::new();
+            if !lanes || (self.cur_win == 0 && self.m.layout != Layout::Studio) { taken.push(Rect::new(a.x, a.y, a.w, 20)); }
+            if !lanes || last_lane { taken.push(Rect::new(a.x, a.y + a.h - 22, a.w, 22)); }
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
@@ -4064,10 +4102,18 @@ impl Ui {
             }
             // labels right at the left edge of the graticule, centred on their division line
             let x = a.x + 6;
-            for j in 1..VDIV as i32 {
-                let y = a.y + (j as f32 * a.h as f32 / VDIV).round() as i32;
+            // a lane: the values of its top and bottom edge first (its full scale), then the centre, the quarters and
+            // the rest for as long as they fit between them
+            let order: Vec<i32> = if lanes { vec![0, VDIV as i32, 4, 2, 6, 1, 3, 5, 7] } else { (1..VDIV as i32).collect() };
+            for j in order {
+                let line = a.y + (j as f32 * a.h as f32 / VDIV).round() as i32;
+                // an edge label sits just inside its edge
+                let y = if j == 0 { a.y + f.s.size - 2 } else if j == VDIV as i32 { a.y + a.h - 6 - if last_lane { 26 } else { 0 } } else { line };
                 let v = (VDIV / 2.0 - j as f32) * vpd - offset;
                 let s = axis_label(v, vpd, offset, span, unit);
+                // an offset that is not on the steps of the scale (a fitted math channel) would spell every digit:
+                // three significant ones say as much
+                let s = if lanes && s.chars().count() > 9 { si_short(v as f64, unit) } else { s };
                 let r = Rect::new(x - 3, y + 4 - f.s.size, f.s.width(&s) + 6, f.s.size + 4);
                 if taken.iter().any(|t| overlaps(*t, r)) {
                     continue;
