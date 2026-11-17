@@ -8,7 +8,7 @@
 #   type/...        by the word before the colon of its title: CI, Docs, Tests, Process, Build or Image, Lints or
 #                   Refactor. Other titles name a part of OOS; whether such a change is a fix or a feature is set by
 #                   a person (type/fix, type/feat).
-#   agent           opened by a bot or for an agent: Dependabot, or a copilot/ branch of this repository
+#   agent           opened by a bot: Dependabot, or the development agent (tools/as-agent.sh)
 #   risk/hardware   changes what is only proven on a scope (the paths of tools/pr-gate.sh)
 #
 #   tools/pr-labels.sh NUMBER        one pull request
@@ -45,11 +45,7 @@ one() {
 	Build | Image | Kernel) labels="$labels type/build" ;;
 	Lints | Refactor) labels="$labels type/refactor" ;;
 	esac
-	# an agent's pull request is opened in the name of the person who gave the task, on a copilot/ branch
-	if [ "$(printf '%s' "$pr" | jq -r .user.type)" = Bot ] || [ "$(printf '%s' "$pr" |
-		jq -r '(.head.repo.full_name == .base.repo.full_name) and (.head.ref | startswith("copilot/"))')" = true ]; then
-		labels="$labels agent"
-	fi
+	[ "$(printf '%s' "$pr" | jq -r .user.type)" != Bot ] || labels="$labels agent"
 	! printf '%s\n' "$files" | grep -Eq "$hardware" || labels="$labels risk/hardware"
 	# shellcheck disable=SC2086
 	set -- $labels
