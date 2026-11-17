@@ -15,6 +15,8 @@ pub(super) const T2: &[&str] = &[
     "SIM:DEFault", "SIM:ADDRef", "SIM:LOAD", "SIM:LIVE",
     "*SAV", "*RCL", "SYSTem:SETup", "SAVE:SETup", "LOAD:SETup", "SAVE:DESTination", "SAVE:SLOT",
     "SAVE:WAVeform", "SAVE:IMAGe", "SAVE:FFRame", "LOAD:FFRame", "SAVE:SESSion", "LOAD:SESSion",
+    // callouts: a text on a point of a signal
+    "CALLout:ADD", "CALLout:REMove", "CALLout:CLEar", "CALLout:COUNt", "CALLout:LIST",
     "TIMebase:DELay:SOURce", "TIMebase:DELay:VZOom", "TIMebase:DELay:VZOom:RESet", "TIMebase:DELay:FIT", "TIMebase:DELay:CENTer",
     "BANDwidth:STATe", "BANDwidth:SOURce", "BANDwidth:FREQuency", "BANDwidth:BINS",
     "SYSTem:LOG", "SYSTem:LOG:INTerval", "SYSTem:LOG:FILE", "SYSTem:LOG:INFO",
@@ -262,6 +264,35 @@ impl Ui {
                     Ok(()) => { self.mark_changed(); DONE }
                     Err(e) => Err(bad(&e)),
                 }
+            }
+            "CALLout:ADD" => {
+                // <source>,<time in seconds>,<text>: the note sits on the source at that time
+                if q { return Some(Err(undefined(key))); }
+                let mut it = arg.splitn(3, ',');
+                let (Some(src), Some(time), Some(text)) = (it.next(), it.next(), it.next()) else { return Some(Err(bad("source,time,text"))) };
+                let (Some(src), Some(time)) = (parse_wave(src.trim()), time.trim().parse::<f64>().ok().filter(|t| t.is_finite())) else { return Some(Err(bad(arg))) };
+                let text: String = text.trim().trim_matches('"').trim().chars().take(super::callout::CALLOUT_LEN).collect();
+                if text.is_empty() { return Some(Err(bad("empty text"))); }
+                if self.callouts.len() >= super::callout::CALLOUT_MAX { return Some(Err(conflict("no room for another note"))); }
+                self.callouts.push(super::callout::Callout { src, t: time, text });
+                self.mark_changed();
+                DONE
+            }
+            "CALLout:REMove" => {
+                if q { return Some(Err(undefined(key))); }
+                match arg.trim().parse::<usize>().ok().filter(|n| (1..=self.callouts.len()).contains(n)) {
+                    Some(n) => { self.callouts.remove(n - 1); self.mark_changed(); DONE }
+                    None => Err(bad(arg)),
+                }
+            }
+            "CALLout:CLEar" => { if q { return Some(Err(undefined(key))); } self.callouts.clear(); self.mark_changed(); DONE }
+            "CALLout:COUNt" => { if !q { return Some(Err(undefined(key))); } t(self.callouts.len().to_string()) }
+            "CALLout:LIST" => {
+                if !q { return Some(Err(undefined(key))); }
+                t(self.callouts.iter().map(|c| {
+                    let src = match c.src { WaveId::Ch(k) => format!("CHAN{}", k + 1), WaveId::Ref(k) => format!("R{}", k + 1) };
+                    format!("{},{:e},{}", src, c.t, c.text)
+                }).collect::<Vec<_>>().join("\n"))
             }
             "SYSTem:SETup" => {
                 if q { return Some(Ok(Some(crate::scpi::block(self.setup_text_full().as_bytes())))); }

@@ -1219,3 +1219,57 @@ fn a_session_saves_and_loads_the_whole_bench() {
     assert!(v.refs[2].is_some());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A callout: held on a lane, "Add note here", typed; it sits on the signal at that time, follows the view, is part of
+/// the setup text, is edited by a tap on its text and removed by emptying it.
+#[test]
+fn a_note_is_added_from_the_hold_menu_and_stays_on_its_signal() {
+    let mut u = fresh(Layout::Studio);
+    let lane = u.source_area(WaveId::Ch(0)).unwrap();
+    // the helper holds a finger a third into the plot, opens the hold menu there and taps the row
+    let x = u.wins[0].x + u.wins[0].w / 3;
+    pick_ctx(&mut u, super::studioctx::CtxRow::NoteHere(WaveId::Ch(0)));
+    assert!(u.wlan.osk.is_some() && u.callouts.len() == 1, "a note and the keyboard for it");
+    for c in "runt".chars() { u.osk_type(c); }
+    u.osk_ok();
+    u.step(0.04);
+    assert_eq!(u.callouts[0].text, "runt");
+    let (tdiv, delay) = u.view();
+    let want = delay as f64 + ((x - lane.x) as f64 / lane.w as f64 - 0.5) * HDIV as f64 * tdiv as f64;
+    assert!((u.callouts[0].t - want).abs() < tdiv as f64 * 0.02, "at the time that was held: {} for {}", u.callouts[0].t, want);
+    let ((px, py), r) = u.callout_place(0).expect("on the screen");
+    assert!((px - x).abs() <= 2 && lane.contains(px, py) && lane.contains(r.x, r.y), "on its lane at the held column: {px} {py} {r:?}");
+    // the view moves: the note moves with the signal, and leaves with it
+    u.m.delay += tdiv;
+    u.settings_changed();
+    for _ in 0..3 { u.step(0.04); }
+    let ((moved, _), _) = u.callout_place(0).expect("still in view");
+    assert!((x - moved - lane.w / HDIV as i32).abs() <= 3, "one division to the left: {x} -> {moved}");
+    u.m.delay += tdiv * 20.0;
+    u.settings_changed();
+    for _ in 0..3 { u.step(0.04); }
+    assert!(u.callout_place(0).is_none(), "out of view, not drawn");
+    u.m.delay -= tdiv * 21.0;
+    u.settings_changed();
+    for _ in 0..3 { u.step(0.04); }
+    // part of the setup, and so of a session
+    let setup = u.setup_text_full();
+    assert!(setup.contains("callout1 = CH1,") && setup.trim_end().ends_with(",runt"), "{}", setup.lines().last().unwrap_or(""));
+    let mut v = fresh(Layout::Studio);
+    v.apply_setup_text(&setup).unwrap();
+    assert_eq!(v.callouts, u.callouts);
+    // a tap on the text edits it; an empty text removes the note
+    let (_, r) = u.callout_place(0).unwrap();
+    finger_tap(&mut u, r.x + r.w / 2, r.y + r.h / 2, 0);
+    assert!(u.wlan.osk.as_ref().is_some_and(|o| o.text == "runt"), "the keyboard on the note's text");
+    if let Some(o) = u.wlan.osk.as_mut() { o.text.clear(); }
+    u.osk_ok();
+    u.step(0.04);
+    assert!(u.callouts.is_empty(), "emptied: removed");
+    if let Ok(dir) = std::env::var("OOS_WALK") {
+        let mut cv = Canvas::new(v.scr.w, v.scr.h);
+        for _ in 0..3 { v.step(0.04); }
+        v.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join("callout.png"), &crate::store::png_of(&cv));
+    }
+}

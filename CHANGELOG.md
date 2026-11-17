@@ -35,6 +35,11 @@ Fixed:
 
 Added:
 
+- Callouts in Studio (host-tested, not yet verified on hardware): hold on a trace > **Add note here** pins a short
+  text to that time on that signal, with a line from the text to the point. It moves with the signal, is edited by a
+  tap on its text, removed by emptying it, and is part of the setup text and of a session. Remote, for scripts and
+  agents: `:CALLout:ADD <source>,<time>,<text>`, `:CALLout:REMove <n>`, `:CALLout:CLEar`, `:CALLout:COUNt?`,
+  `:CALLout:LIST?`.
 - Sessions (host-tested, not yet verified on hardware): Storage > **Save session** writes the setup, the record on
   the screen and every loaded reference slot with its samples into one file (`session-NNN.oss`); **Load session**
   stops the scope and shows it again, measured and decoded from what was loaded. Reference slots the file does not

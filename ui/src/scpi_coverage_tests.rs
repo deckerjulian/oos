@@ -440,6 +440,20 @@ fn storage_zoom(t: &mut T) {
     assert_eq!(t.ui.shot_request.as_deref(), Some(ip.to_string_lossy().as_ref()));
     t.go(":SAVE:IMAG");
     t.go(":SAVE:FFR");
+    // callouts: placed by source and time, listed, removed
+    t.go(":CALL:CLE");
+    assert_eq!(t.raw(":CALL:COUN?"), "0");
+    t.go(":CALL:ADD CHAN1,-2.5e-4,\"runt here\"");
+    t.go(":CALL:ADD CHAN1,1e-4,second");
+    assert_eq!(t.raw(":CALL:COUN?"), "2");
+    assert_eq!(t.raw(":CALL:LIST?"), "CHAN1,-2.5e-4,runt here\nCHAN1,1e-4,second");
+    t.no(":CALL:ADD CHAN9,0,x", "-224");
+    t.no(":CALL:ADD CHAN1,0,\"\"", "-224");
+    t.go(":CALL:REM 1");
+    assert_eq!(t.raw(":CALL:LIST?"), "CHAN1,1e-4,second");
+    t.no(":CALL:REM 5", "-224");
+    t.go(":CALL:CLE");
+    assert_eq!(t.raw(":CALL:COUN?"), "0");
     // a session: saved, the bench changed, loaded back
     let sess = t.ui.store_dir.join("bench.oss");
     t.go(&format!(":SAVE:SESS \"{}\"", sess.display()));

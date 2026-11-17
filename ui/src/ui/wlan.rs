@@ -426,6 +426,8 @@ pub(super) enum OskFor {
     Search,
     /// the formula of a math channel
     MathExpr(usize),
+    /// the text of a callout (`callout.rs`)
+    Callout(usize),
     /// System > Date and time (time.rs): another NTP server, a POSIX time zone, the clock by hand
     NtpServer,
     Tz,
@@ -564,6 +566,7 @@ impl Osk {
             OskFor::Pass(_) => wlan::PASS_LEN.1,
             OskFor::Label(_) | OskFor::RefLabel(_) | OskFor::BusLabel | OskFor::Search => LABEL_MAX,
             OskFor::MathExpr(_) => oos_dsp::expr::EXPR_MAX,
+            OskFor::Callout(_) => super::callout::CALLOUT_LEN,
             OskFor::NtpServer => crate::sysconf::SERVER_MAX,
             OskFor::Tz => crate::clock::TZ_MAX,
             OskFor::DateTime => 19,
@@ -720,6 +723,11 @@ impl Ui {
                 }
                 self.wlan.osk = None;
             }
+            OskFor::Callout(i) => {
+                let t = o.text.clone();
+                self.wlan.osk = None;
+                self.callout_text_done(i, &t);
+            }
             OskFor::Search => {
                 let t = o.text.trim().to_string();
                 if self.studio.panel.query_osk { self.panel_set_query(&t); } else { self.sheet_set_search(&t); }
@@ -824,6 +832,7 @@ impl Ui {
             OskFor::Name => "Name of the network".to_string(),
             OskFor::Label(c) => format!("Name of CH{} (empty: CH{})", c + 1, c + 1),
             OskFor::RefLabel(i) => format!("Name of R{} (empty: R{})", i + 1, i + 1),
+            OskFor::Callout(_) => "Note on the signal (empty: remove it)".to_string(),
             OskFor::BusLabel => "Name of the bus (empty: I2C)".to_string(),
             OskFor::Search => "Find a measurement".to_string(),
             OskFor::MathExpr(k) => format!("Formula of M{}: CH1-4, t, pi, sin cos tan sqrt abs ln log exp min max", k + 1),

@@ -27,6 +27,11 @@ Part of the [SCPI reference](README.md).
 | `:DISPlay:LOWer` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `TRACES` | Display and layout > Lower, Trend chart | OOS extension |
 | `:DISPlay:TRENd1` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `AUTO` | Display and layout > Lower, Trend chart | OOS extension |
 | `:DISPlay:TRENd2` | Set / Query | Option text of the menu row (lower pane; content of the trend chart). | `AUTO` | Display and layout > Lower, Trend chart | OOS extension |
+| `:CALLout:ADD` | Action | `<source>,<time>,<text>` A note on `CHAN1`..`CHAN4` or `R1`..`R10` at a time in seconds (0 is the trigger); the text has up to 32 characters, with or without quotes; 8 notes at most | - | hold on a trace > Add note here | OOS extension |
+| `:CALLout:REMove` | Action | `<n>` Remove note `n` of the list (1-based) | - | tap the note, empty its text | OOS extension |
+| `:CALLout:CLEar` | Action | Remove every note | - | - | OOS extension |
+| `:CALLout:COUNt` | Query | Number of notes | `0` | - | OOS extension |
+| `:CALLout:LIST` | Query | Rows `source,time,text`, one per line | - | - | OOS extension |
 
 ### Views
 
