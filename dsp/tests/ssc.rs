@@ -37,9 +37,9 @@ fn hinted_ui_rate_twice_the_clock_cycle_rate_keeps_ssc_depth_and_hertz() {
 
 fn data_clock(modulated: bool) -> Clock {
     let bits = oos_dsp::hss::prbs_bits(7, 60_002).unwrap();
-    let edges = bits.windows(2).enumerate().filter_map(|(i, bits)| {
-        (bits[0] != bits[1]).then(|| edge_time(i + 1, modulated))
-    }).collect();
+    let edges = bits.windows(2).enumerate()
+        .filter(|&(_, bits)| bits[0] != bits[1])
+        .map(|(i, _)| edge_time(i + 1, modulated)).collect();
     clock(edges)
 }
 

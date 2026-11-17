@@ -13,7 +13,7 @@ use oos_dsp::power;
 fn load(name: &str) -> Vec<f32> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     let b = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect()
+    b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 
 fn close(x: f64, want: f64, rel: f64) -> bool {

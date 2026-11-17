@@ -371,7 +371,7 @@ pub fn modbus_ascii(v: &[f32], dt: f64, baud: f64, bits: u32, parity: Parity, th
         let body = &ch[i + 1..j];
         let mut bad = !body.len().is_multiple_of(2);
         let mut bytes: Vec<Byte> = Vec::new();
-        for p in body.chunks_exact(2) {
+        for p in body.as_chunks::<2>().0 {
             match (hex(p[0].value), hex(p[1].value)) {
                 (Some(h), Some(l)) => bytes.push(((h << 4 | l) as u8, p[0].t0, p[1].t1, p[0].ok && p[1].ok)),
                 _ => bad = true,
@@ -668,8 +668,9 @@ pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
     let mut pend: Option<DsPend> = None;
     let mut read_ready: Option<f64> = None;
     // a transaction: (read, t0, bytes)
-    let mut xfers: Vec<(bool, f64, Vec<(u8, f64, f64)>)> = Vec::new();
-    let mut cur: Option<(bool, f64, Vec<(u8, f64, f64)>)> = None;
+    type Transfer = (bool, f64, Vec<(u8, f64, f64)>);
+    let mut xfers: Vec<Transfer> = Vec::new();
+    let mut cur: Option<Transfer> = None;
     for p in i2c {
         match p.kind {
             Kind::Addr { read } => {
