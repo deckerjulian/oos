@@ -251,10 +251,6 @@ pub fn ip_text(v: u32) -> String {
     format!("{}.{}.{}.{}", v >> 24, (v >> 16) & 255, (v >> 8) & 255, v & 255)
 }
 
-fn pkt(t0: f64, t1: f64, kind: Kind, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    Packet { t0, t1, kind, value, value2, ok }
-}
-
 fn bits_to_bytes(bits: &[(f64, bool)]) -> Vec<(f64, f64, u8)> {
     let mut out = Vec::new();
     for chunk in bits.chunks(8) {
@@ -284,19 +280,19 @@ fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
     let t1 = bytes[i + 6].1;
     let dst_hi = b(0) << 24 | b(1) << 16 | b(2) << 8 | b(3);
     let dst_lo = b(4) << 8 | b(5);
-    out.push(pkt(t0, t1, Kind::Field("MAC"), dst_hi, Some(dst_lo), true));
+    out.push(Packet::field("MAC", t0, t1, dst_hi, true).with_value2(dst_lo));
     let s0 = bytes[i + 7].0;
     let s1 = bytes[i + 12].1;
     let src_hi = b(6) << 24 | b(7) << 16 | b(8) << 8 | b(9);
     let src_lo = b(10) << 8 | b(11);
-    out.push(pkt(s0, s1, Kind::Field("SRC"), src_hi, Some(src_lo), true));
+    out.push(Packet::field("SRC", s0, s1, src_hi, true).with_value2(src_lo));
     let et = (b(12) << 8 | b(13)) as u16;
-    out.push(pkt(bytes[i + 13].0, bytes[i + 14].1, Kind::Field("TYPE"), et as u32, None, true));
+    out.push(Packet::field("TYPE", bytes[i + 13].0, bytes[i + 14].1, et as u32, true));
     if et == 0x0800 && i + 35 < bytes.len() {
         let sip = b(26) << 24 | b(27) << 16 | b(28) << 8 | b(29);
         let dip = b(30) << 24 | b(31) << 16 | b(32) << 8 | b(33);
-        out.push(pkt(bytes[i + 27].0, bytes[i + 30].1, Kind::Field("IP"), sip, None, true));
-        out.push(pkt(bytes[i + 31].0, bytes[i + 34].1, Kind::Field("DIP"), dip, None, true));
+        out.push(Packet::field("IP", bytes[i + 27].0, bytes[i + 30].1, sip, true));
+        out.push(Packet::field("DIP", bytes[i + 31].0, bytes[i + 34].1, dip, true));
     }
 }
 
@@ -333,7 +329,7 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
     let b = if e.len() > 1 { decode_from(1) } else { Vec::new() };
     let bits = if b.len() > a.len() { b } else { a };
     let bytes = bits_to_bytes(&bits);
-    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| pkt(s, e, Kind::Data, v as u32, None, true)).collect();
+    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
     ethernet_fields(&bytes, &mut out);
     out
 }
@@ -382,7 +378,7 @@ pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, _thr: f32, hyst: f32) -> Vec<Packe
         t += ui;
     }
     let bytes = bits_to_bytes(&bits);
-    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| pkt(s, e, Kind::Data, v as u32, None, true)).collect();
+    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
     ethernet_fields(&bytes, &mut out);
     out
 }
