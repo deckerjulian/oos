@@ -215,7 +215,7 @@ impl Inputs {
             if n <= 0 {
                 break;
             }
-            for ev in buf[..n as usize].chunks_exact(24) {
+            for ev in buf[..n as usize].as_chunks::<24>().0 {
                 let typ = u16::from_ne_bytes([ev[16], ev[17]]);
                 let code = u16::from_ne_bytes([ev[18], ev[19]]);
                 let val = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);

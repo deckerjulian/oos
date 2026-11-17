@@ -724,7 +724,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let hdmi_base = disp.buffers();
     let mut hdmi_gpu: Option<bool> = None;
     // the frame in the GPU's work: its ticket, the panel buffer it fills, and the monitor's frame with its buffer
-    let mut gpu_pending: Option<(gpu::Ticket, usize, Option<(gpu::Ticket, usize)>)> = None;
+    type GpuPending = (gpu::Ticket, usize, Option<(gpu::Ticket, usize)>);
+    let mut gpu_pending: Option<GpuPending> = None;
     // the first read at once (a complete start-up shows no screen at all)
     let mut start_up_t = Instant::now().checked_sub(std::time::Duration::from_millis(300)).unwrap_or_else(Instant::now);
     while !ui.quit && !input::stop_requested() {
@@ -744,10 +745,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
         for line_or_ev in inp.poll(wait_ms) {
             match line_or_ev {
                 input::In::Ev(ev) => ui.handle(ev),
-                input::In::Cmd(line) => match cmd::run(&mut ui, &line) {
-                    cmd::Out::Shot(p) => ui.shot_request = Some(p),
-                    _ => {}
-                },
+                input::In::Cmd(line) => {
+                    if let cmd::Out::Shot(p) = cmd::run(&mut ui, &line) {
+                        ui.shot_request = Some(p);
+                    }
+                }
             }
         }
         // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
@@ -784,11 +786,11 @@ fn device_main(mut ui: Ui, args: &[String]) {
             });
             remote_now = Some(want);
         }
-        if mdns_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
+        if mdns_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             mdns_t = Some(Instant::now());
             let c = mdns_services(ui.mdns_config(web_port, scpi_port), web.port(), vxi.service_port(), hislip.port());
             if mdns_now.as_ref() != Some(&c) {
-                if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
+                if mdns_now.as_ref().is_none_or(|o| o.name != c.name) {
                     hostname::set(&c.name);
                 }
                 mdns.set(c.clone());
@@ -812,7 +814,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
         ui.step(dt);
         let t1 = Instant::now();
         ui.set_hdmi_present(hdmi.is_some());
-        let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
+        let hdmi_frame = hdmi.is_some() && (frame_n + 1).is_multiple_of(2);
         ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
         // System > Graphics: the helper follows the setting
         if ui.sys.gpu != gpu_want {
@@ -859,7 +861,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
                 // given to the GPU), else it would show a picture up to half a second old
                 let hdmi_cpu = hdmi.is_some() && hdmi_gpu == Some(false);
-                let read = shot || web.picture_wanted() || frame_n % 15 == 0 || hdmi_cpu;
+                let read = shot || web.picture_wanted() || frame_n.is_multiple_of(15) || hdmi_cpu;
                 // 1. this frame's layers, while the GPU still puts the last one together
                 let tl = Instant::now();
                 gl.draw(&mut ui, cv.w, cv.h, false);
@@ -1042,7 +1044,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 }
             }
         }
-        if net_t.map_or(true, |t| t.elapsed().as_secs() >= 5) {
+        if net_t.is_none_or(|t| t.elapsed().as_secs() >= 5) {
             let (first, all) = ipv4_addresses();
             (ui.net_if, ui.net) = first;
             ui.net_ifs = all;
@@ -1050,7 +1052,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             ui.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
             net_t = Some(Instant::now());
         }
-        if eth_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
+        if eth_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             eth_t = Some(Instant::now());
             eth_watch(&mut ui, eth_t0.elapsed().as_secs_f64());
         }

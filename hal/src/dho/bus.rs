@@ -184,14 +184,14 @@ impl Drop for Bar1 {
 #[cfg(target_os = "linux")]
 impl Bus for Bar1 {
     fn wr(&mut self, off: u32, v: u32) {
-        assert!(off < 0x8000 && off % 4 == 0);
+        assert!(off < 0x8000 && off.is_multiple_of(4));
         unsafe { std::ptr::write_volatile(self.regs.add((off >> 2) as usize), v) };
         if self.gap_us > 0 {
             std::thread::sleep(std::time::Duration::from_micros(self.gap_us));
         }
     }
     fn rd(&mut self, off: u32) -> u32 {
-        assert!(off < 0x8000 && off % 4 == 0);
+        assert!(off < 0x8000 && off.is_multiple_of(4));
         unsafe { std::ptr::read_volatile(self.regs.add((off >> 2) as usize)) }
     }
 }

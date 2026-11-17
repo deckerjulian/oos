@@ -147,14 +147,15 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
                 Ok(b) => {
                     buf = b;
                     seq += 1;
-                    let words: Vec<u16> = buf.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+                    let words: Vec<u16> =
+                        buf.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
                     // log: does each cycle give new data? (changed words against the previous frame)
                     let changed = if prev.len() == words.len() {
                         words.iter().zip(&prev).filter(|(a, b)| a != b).count()
                     } else {
                         words.len()
                     };
-                    if seq <= 20 || seq % 30 == 0 {
+                    if seq <= 20 || seq.is_multiple_of(30) {
                         let sum: u64 = words.iter().map(|&w| w as u64).sum();
                         let (mn, mx) =
                             (words.iter().min().copied().unwrap_or(0), words.iter().max().copied().unwrap_or(0));

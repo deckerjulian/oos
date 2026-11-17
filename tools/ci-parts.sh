@@ -71,6 +71,7 @@ if [ $rust = 1 ]; then
 	[ $fpgad = 0 ] || { name="$name, fpgad" layers="$layers test:fpgad"; }
 	[ $((ui + fpgad)) = 0 ] || { name="$name, target" layers="$layers target"; }
 	add "$name" "$layers" small
+	add clippy clippy clippy
 fi
 if [ $ui = 1 ]; then
 	add "decoders, core" decoders:core core
