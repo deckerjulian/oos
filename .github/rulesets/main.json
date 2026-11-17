@@ -44,6 +44,19 @@
           {
             "context": "test",
             "integration_id": 15368
+          },
+          {
+            "context": "compare",
+            "integration_id": 15368
+          },
+          {
+            "context": "waited"
+          },
+          {
+            "context": "owner"
+          },
+          {
+            "context": "unit"
           }
         ],
         "do_not_enforce_on_create": false

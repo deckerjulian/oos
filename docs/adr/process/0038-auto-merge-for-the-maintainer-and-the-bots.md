@@ -75,6 +75,11 @@ does not see timing, calibrated values, or what the hardware does.
   request, and it cannot administer the repository.
 - A merge by GitHub happens while nobody watches. The run on main after it, and the weekly runs, are what shows a
   problem; a red main is fixed first (ADR 0031).
+- **Switched on, 2026-11-17, on the maintainer's instruction:** `test`, `compare`, `waited`, `owner` and `unit` are
+  the required checks of main; the ruleset `main-review` is removed, as decided above; the repository allows
+  auto-merge. The workflow `Auto-merge` still waits for the maintainer's token; until then auto-merge is asked for
+  by hand, pull request by pull request (`gh pr merge --auto --squash`). If the workflow `Gate` should fail, the
+  statuses can be written by hand with `tools/pr-gate.sh NUMBER`.
 - Tried on 2026-11-17: the statuses and the labels, on Dependabot's first pull request: `owner` passed (only the
   commits of actions), `unit` passed, `waited` was pending, and the labels were set. Not tried yet: auto-merge
   itself, how the agents' pull requests name their author, and whether a merge asked for with the maintainer's token

@@ -6,7 +6,8 @@
 # protects main).
 #
 #   tools/repo-settings.sh            compare: say where GitHub differs from the files; changes nothing
-#   tools/repo-settings.sh --apply    set GitHub to what the files say (needs admin rights on the repository)
+#   tools/repo-settings.sh --apply    set GitHub to what the files say (needs admin rights on the repository); a
+#                                     ruleset that is in no file is removed
 #
 # Needs gh (logged in) and jq. OOS_REPO names another repository (default dekajoule/oos). Touches no scope.
 set -eu
@@ -64,9 +65,18 @@ for f in .github/rulesets/*.json; do
 		echo "  set"
 	fi
 done
-jq -r '.[].name' "$tmp/list" | while read -r n; do
-	[ -n "$(grep -l "\"name\": \"$n\"" .github/rulesets/*.json)" ] || echo "ruleset $n: on GitHub, in no file"
-done
+jq -r '.[] | "\(.id) \(.name)"' "$tmp/list" >"$tmp/names"
+while read -r id n; do
+	[ -z "$(grep -l "\"name\": \"$n\"" .github/rulesets/*.json)" ] || continue
+	echo "ruleset $n: on GitHub, in no file"
+	if [ $apply = 1 ]; then
+		gh api --method DELETE "repos/$repo/rulesets/$id" >/dev/null
+		echo "  removed"
+	else
+		echo 1 >"$tmp/extra"
+	fi
+done <"$tmp/names"
+[ ! -f "$tmp/extra" ] || differs=1
 
 if gh api "repos/$repo/branches/main/protection" >/dev/null 2>&1; then
 	echo "note: main also has a branch protection rule of the older kind; it is not in a file and is left alone"
