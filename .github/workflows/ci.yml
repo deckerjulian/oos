@@ -14,8 +14,13 @@ jobs:
         with:
           # the sign-off check reads every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
+      # the commits of a standing agent (a copilot/ branch of this repository) carry no sign-off: the person who
+      # merges signs off the squashed commit (ADR 0034)
       - name: Every commit is signed off (ADR 0026)
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          !(github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.event.pull_request.head.ref, 'copilot/'))
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -46,3 +51,23 @@ jobs:
       - name: Clippy (ADR 0017, not yet enforced)
         continue-on-error: true
         run: tools/check.sh clippy
+  # A standing agent does not change the rules, the checks, what decides how the scope starts, or the register
+  # sequences (ADR 0034). This job runs from the workflow file of the pull request itself: it helps the reviewer, it
+  # does not replace the look at what a pull request changes under .github/.
+  agent-paths:
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'copilot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the pull request merged into its base: the first parent of that commit is the base
+          fetch-depth: 2
+      - name: No file an agent must not change (tools/agent-paths.sh)
+        run: |
+          if ! git diff --name-only HEAD^1 HEAD | tools/agent-paths.sh > /tmp/paths; then
+            sed 's/^/::error::an agent must not change /' /tmp/paths
+            exit 1
+          fi

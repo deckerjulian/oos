@@ -1,0 +1,70 @@
+# Starts the three standing agents (docs/adr/process/0034): once a week each, or by hand. A start is an issue that is
+# assigned to GitHub Copilot's cloud agent with one of the profiles in .github/agents; the agent answers with one pull
+# request, which a person reviews and merges.
+#
+# GitHub starts an agent only for a person, not for a workflow's own token: the secret COPILOT_TASK_TOKEN holds a
+# fine-grained token of the maintainer for this repository (metadata: read; actions, contents, issues and pull
+# requests: read and write). Without the secret the job says so and does nothing. No code of the tree runs here.
+name: Standing agents
+on:
+  schedule:
+    - cron: '17 5 * * 1' # Monday: code-steward
+    - cron: '17 5 * * 3' # Wednesday: docs-steward
+    - cron: '17 5 * * 5' # Friday: forum-scout
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Which agent
+        type: choice
+        options: [code-steward, docs-steward, forum-scout]
+        required: true
+      task:
+        description: What to do (empty, and the agent chooses as its profile says)
+        type: string
+permissions: {}
+jobs:
+  start:
+    if: github.repository == 'dekajoule/oos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Start one task
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_TASK_TOKEN }}
+          AGENT: ${{ inputs.agent }}
+          TASK: ${{ inputs.task }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::no secret COPILOT_TASK_TOKEN: nothing started (see the head of this file)"
+            exit 0
+          fi
+          if [ -z "$AGENT" ]; then
+            case $SCHEDULE in
+              *' 1') AGENT=code-steward ;;
+              *' 3') AGENT=docs-steward ;;
+              *' 5') AGENT=forum-scout ;;
+              *) echo "::error::no agent for the schedule '$SCHEDULE'"; exit 1 ;;
+            esac
+          fi
+          # one task of an agent at a time: its last issue is closed by its pull request or by the maintainer
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label agent --search "in:title [$AGENT]" \
+            --json number --jq length)
+          if [ "$open" != 0 ]; then
+            echo "::notice::$AGENT still has an open task: nothing started"
+            exit 0
+          fi
+          gh label create agent --repo "$GITHUB_REPOSITORY" --color ededed --force \
+            --description "A task of a standing agent (ADR 0034)" > /dev/null
+          [ -n "$TASK" ] || TASK="Choose the work as your profile describes and open one pull request."
+          body="A run of the standing agent \`$AGENT\` (ADR 0034, profile \`.github/agents/$AGENT.agent.md\`).
+
+          $TASK
+
+          The agent opens one pull request. A person reviews and merges it."
+          jq -n --arg title "[$AGENT] run of $(date -u +%Y-%m-%d)" --arg body "$body" --arg agent "$AGENT" \
+            --arg repo "$GITHUB_REPOSITORY" '{
+              title: $title, body: $body, labels: ["agent"], assignees: ["copilot-swe-agent[bot]"],
+              agent_assignment: {target_repo: $repo, base_branch: "main", custom_agent: $agent}
+            }' |
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues" --input - --jq '"started: \(.html_url)"'
