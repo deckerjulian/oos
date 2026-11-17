@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 mod import;
 mod png;
+#[cfg(test)]
+mod settings_snapshot;
 pub use import::*;
 pub use png::*;
 
