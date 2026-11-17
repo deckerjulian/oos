@@ -1197,6 +1197,8 @@ enum Drag {
     Bus,
     /// a list: by its content or its scroll bar (ui/scroll.rs)
     Scroll(scroll::List, scroll::Grip),
+    /// a divider between two columns of the event table (ui/tables.rs)
+    TableCol(usize),
 }
 
 struct Pinch {
@@ -1736,6 +1738,8 @@ pub struct Ui {
     /// table window over the plot, first row shown
     table: Option<tables::TableKind>,
     table_top: usize,
+    /// where the second and the third column of the event table start, from its left edge, once a divider was dragged
+    table_cols: Option<[i32; 2]>,
 }
 
 /// One line of the measurement strip when it is docked on the left or the right.
@@ -1871,6 +1875,7 @@ impl Ui {
             dec_cache: Default::default(),
             table: None,
             table_top: 0,
+            table_cols: None,
             zone_sel: 0,
             zone_arm: None,
             zone_path: Vec::new(),
@@ -10736,13 +10741,19 @@ impl Ui {
             None
         };
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
-        let grip = if ph == Phase::Down && !self.m.touch_lock && self.dialog.is_none() && !self.power_dlg && self.wlan.osk.is_none() { self.scroll_grip(x, y) } else { None };
+        let free = ph == Phase::Down && !self.m.touch_lock && self.dialog.is_none() && !self.power_dlg && self.wlan.osk.is_none();
+        let column = if free { self.table_col_grip(x, y) } else { None };
+        let grip = if free && column.is_none() { self.scroll_grip(x, y) } else { None };
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
                 *t = TouchState { down: true, x0: x, y0: y, x, y, t0: self.now, held: false, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+                    return;
+                }
+                if let Some(k) = column {
+                    t.drag = Drag::TableCol(k);
                     return;
                 }
                 if let Some((l, g)) = grip {
@@ -10777,6 +10788,10 @@ impl Ui {
                 }
                 t.x = x;
                 t.y = y;
+                if let Drag::TableCol(k) = t.drag {
+                    self.table_col_set(k, x);
+                    return;
+                }
                 if let Drag::Scroll(l, g) = t.drag {
                     let y0 = t.y0;
                     self.scroll_move(l, g, y0, y);

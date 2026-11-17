@@ -1291,3 +1291,40 @@ fn walk_sim_panel_picture() {
     u.render(&mut cv);
     let _ = crate::store::write(&std::path::Path::new(&dir).join("sim-panel.png"), &crate::store::png_of(&cv));
 }
+
+/// The docked event table: its title and count are the title of the view, its columns fit their content, and a
+/// divider between two columns follows a finger.
+#[test]
+fn the_docked_event_table_has_its_count_in_the_title_and_columns_that_can_be_dragged() {
+    let mut u = fresh_live(Layout::Studio);
+    u.m.ch[2].on = true;
+    u.m.dec_on = true;
+    u.m.dec_src = 2;
+    for _ in 0..12 { u.step(0.04); }
+    u.table_toggle(super::tables::TableKind::Decode);
+    u.relayout();
+    for _ in 0..12 { u.step(0.04); }
+    let mut cv = Canvas::new(u.scr.w, u.scr.h);
+    u.render(&mut cv);
+    let title = u.table_title();
+    assert!(title.starts_with("Decoder events \u{b7} ") && !title.ends_with(" 0"), "{title}");
+    let (r, rows) = (u.dock_content(super::dock::VKind::Table).expect("the table is a view"), u.table_rows(super::tables::TableKind::Decode));
+    assert!(u.head_h(r) < 10, "no title row inside the docked table");
+    let before = u.table_col_x(&rows, r.w);
+    assert!(before[0] < before[1] && before[1] < before[2] && before[2] < r.w - 30, "{before:?}");
+    // a finger on the second divider, moved 60 pixels to the right
+    let (x, y) = (r.x + before[2] - 8, r.y + 40);
+    assert_eq!(u.table_col_grip(x, y), Some(2));
+    u.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    for k in 1..=6 { u.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x + k * 10, y }); u.step(0.04); }
+    u.handle(Ev::Touch { id: 0, phase: Phase::Up, x: x + 60, y });
+    u.step(0.04);
+    let after = u.table_col_x(&rows, r.w);
+    // (the fitted widths were those of every row, the fixed ones are those of the rows on the screen: a few pixels)
+    assert!((after[1] - before[1]).abs() <= 6 && after[2] == before[2] + 60, "the text column moved with the finger, the middle one stayed: {before:?} {after:?}");
+    assert_eq!(u.table_top, 0, "dragging a divider does not scroll the rows");
+    if let Ok(dir) = std::env::var("OOS_WALK") {
+        u.render(&mut cv);
+        let _ = crate::store::write(&std::path::Path::new(&dir).join("table.png"), &crate::store::png_of(&cv));
+    }
+}

@@ -122,7 +122,7 @@ fn the_decode_table_and_the_sim_panel_have_strips_too() {
     let mut u = studio();
     u.table = Some(tables::TableKind::Search);
     u.step(0.05);
-    assert!(u.dock_content(VKind::Table).is_some() && u.dock_name(VKind::Table) == "Search events");
+    assert!(u.dock_content(VKind::Table).is_some() && u.dock_name(VKind::Table).starts_with("Search "), "the view is named by its table and count: {}", u.dock_name(VKind::Table));
     assert!(Ui::dock_strip(leaf(&u, VKind::Table)).h >= 24);
     u.table = None;
     u.studio_set_view(StudioView::Sim);

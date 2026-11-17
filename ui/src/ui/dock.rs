@@ -942,7 +942,7 @@ impl Ui {
                 tables::PANE_BUS => "Bus",
                 _ => "Pane",
             }.to_string(),
-            VKind::Table => if self.table == Some(tables::TableKind::Search) { "Search events".to_string() } else { "Decode table".to_string() },
+            VKind::Table => { let t = self.table_title(); if t.is_empty() { "Table".to_string() } else { t } }
             VKind::Sim => "SIM".to_string(),
             VKind::Hist => "Histogram".to_string(),
             VKind::Xy => "XY".to_string(),

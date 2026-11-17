@@ -1076,9 +1076,10 @@ impl Ui {
         if t.badge.w > 0 && hit(t.badge) {
             self.return_to_live();
         } else if t.simbtn.w > 0 && hit(t.simbtn) {
-            // SIM: the simulation mode (Live goes back); the SIM sheet, with Add to ref, is in the Menu
-            if self.menu_open { self.close_menu(); }
-            self.sim_activate(Item::SimPlay);
+            // SIM: the sheet with the signal's settings first. Play starts the simulation with them and Add to ref puts
+            // the signal beside the live channels; both are at the foot of the sheet. (It used to start playing whatever
+            // preset was chosen last, before any setting could be seen.)
+            self.toggle_menu(MenuId::Sim);
         } else if t.vbox.w > 0 && hit(t.vbox) {
             self.view_box_tap(x, y);
         } else if hit(t.run) {

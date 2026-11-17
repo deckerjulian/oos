@@ -196,7 +196,72 @@ impl Ui {
 
     /// Height of the head of the table: the title. The rows scroll by the scroll bar, so a narrow view needs no row of
     /// Up / Dn controls under it.
-    pub(super) fn head_h(&self, _r: Rect) -> i32 { HEAD_H }
+    pub(super) fn head_h(&self, _r: Rect) -> i32 { if self.dock_on() { 6 } else { HEAD_H } }
+
+    /// The title of the open table with its count. Docked it is the title of the view, so it costs no row of its own.
+    pub(super) fn table_title(&self) -> String {
+        let Some(k) = self.table else { return String::new() };
+        let total = self.table_total(k);
+        match k {
+            TableKind::Decode => if self.decode_busy() { "Decoder events - Computing".into() } else { format!("Decoder events \u{b7} {}", total) },
+            TableKind::Search => if self.m.trig_ref.is_some() && self.reference_search_busy() { "Search \u{b7} computing\u{2026}".into() }
+                else { format!("Search {} \u{b7} {}", self.trigger_source_label(), total) },
+            TableKind::Segments => format!("Segments \u{b7} {}", total),
+        }
+    }
+
+    /// Where the columns of the table start, from its left edge: the time, who, the text. They fit what the rows on
+    /// the screen hold, until a divider is dragged; then they stay where they were put, inside a table of width `w`.
+    pub(super) fn table_col_x(&self, rows: &[EventRow], w: i32) -> [i32; 3] {
+        let f = self.fonts();
+        if let Some([b, c]) = self.table_cols {
+            let b = b.clamp(40, (w - 80).max(40));
+            return [12, b, c.clamp(b + 30, (w - 30).max(b + 30))];
+        }
+        let time = rows.iter().map(|e| f.s.width(&si(e.t, "s"))).max().unwrap_or(60);
+        let who = rows.iter().map(|e| f.s.width(&e.who)).max().unwrap_or(60);
+        let b = 12 + time + 18;
+        [12, b, (b + who + 18).min((w - 60).max(b + 30))]
+    }
+
+    /// The rows of the table that are on the screen, and its rectangle.
+    fn table_shown(&self) -> Option<(Rect, Vec<EventRow>)> {
+        let k = self.table?;
+        let total = self.table_total(k);
+        let (r, fit) = self.table_rect(total);
+        let top = self.table_top.min(total.saturating_sub(fit));
+        let rows = if k == TableKind::Search {
+            self.search_events().iter().copied().enumerate().skip(top).take(fit).map(|(i, t)| self.search_row(i, t)).collect()
+        } else {
+            self.table_rows(k).into_iter().skip(top).take(fit).collect()
+        };
+        Some((r, rows))
+    }
+
+    /// A finger on a divider between two columns (within 12 pixels of it, on the rows): which one.
+    pub(super) fn table_col_grip(&self, x: i32, y: i32) -> Option<usize> {
+        let (r, rows) = self.table_shown()?;
+        if !r.contains(x, y) || y < r.y + self.head_h(r) || x >= r.right() - scroll::BAR_W - 6 { return None; }
+        let cols = self.table_col_x(&rows, r.w);
+        (1..3).find(|&k| (x - (r.x + cols[k] - 8)).abs() <= 12)
+    }
+
+    /// The divider `k` (1: before who, 2: before the text) follows the finger.
+    pub(super) fn table_col_set(&mut self, k: usize, x: i32) {
+        let Some((r, rows)) = self.table_shown() else { return };
+        let now = self.table_col_x(&rows, r.w);
+        let mut cols = [now[1], now[2]];
+        let at = x - r.x + 8;
+        if k == 1 {
+            let moved = at.clamp(40, (r.w - 80).max(40));
+            // the text column keeps its distance, so the middle column is moved, not squeezed
+            cols[1] += moved - cols[0];
+            cols[0] = moved;
+        } else {
+            cols[1] = at.clamp(cols[0] + 30, (r.w - 30).max(cols[0] + 30));
+        }
+        self.table_cols = Some(cols);
+    }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
         let Some(k) = self.table else { return };
@@ -210,13 +275,10 @@ impl Ui {
         } else { rows = rows.into_iter().skip(top).take(fit).collect(); }
         cv.round(r, 6, CARD_BORDER, 255);
         cv.round(r.inset(1), 5, BAR, 240);
-        let title = match k {
-            TableKind::Decode => if self.decode_busy() { "Decoder events - Computing".into() } else { format!("Decoder events \u{b7} {}", total) },
-            TableKind::Search => if self.m.trig_ref.is_some() && self.reference_search_busy() { "Search · computing…".into() }
-                else { format!("Search {} · {}", self.trigger_source_label(), total) },
-            TableKind::Segments => format!("Segments \u{b7} {}", rows.len()),
-        };
-        cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
+        // docked, the title and its count are in the title strip of the view
+        if !self.dock_on() {
+            cv.text(&f.sb, r.x + 12, r.y + 25, &self.table_title(), TEXT);
+        }
         let close = self.table_close(r);
         if close.w > 0 {
             btn(cv, close, BTN, BTN_BORDER);
@@ -231,12 +293,23 @@ impl Ui {
             else { "nothing found in this record" };
             cv.text(&f.s, r.x + 12, r.y + self.head_h(r) + 18, empty, DIM);
         }
+        let cols = self.table_col_x(&rows, r.w);
+        let end = r.right() - scroll::BAR_W - 8;
         for (i, e) in rows.iter().enumerate() {
             let y = r.y + self.head_h(r) + i as i32 * ROW_H;
             cv.hline(r.x + 8, r.x + r.w - 9, y, LINE);
-            cv.text(&f.s, r.x + 12, y + 18, &si(e.t, "s"), LABEL);
-            cv.text(&f.s, r.x + 110, y + 18, &e.who, DIM);
-            cv.text(&f.sb, r.x + 220, y + 18, &e.text, if e.ok { TEXT } else { RED });
+            // each column is cut at the next one: a column made narrow hides the end of its text, not its neighbour
+            for (k, (font, text, color)) in [(&f.s, si(e.t, "s"), LABEL), (&f.s, e.who.clone(), DIM), (&f.sb, e.text.clone(), if e.ok { TEXT } else { RED })].into_iter().enumerate() {
+                let right = if k < 2 { r.x + cols[k + 1] - 10 } else { end };
+                cv.set_clip(Rect::new(r.x + cols[k], y, (right - r.x - cols[k]).max(1), ROW_H));
+                cv.text(font, r.x + cols[k], y + 18, &text, color);
+                cv.no_clip();
+            }
+        }
+        // the dividers: where a column can be taken and moved
+        if !rows.is_empty() {
+            let (y0, y1) = (r.y + self.head_h(r) + 2, r.y + self.head_h(r) + rows.len() as i32 * ROW_H - 2);
+            for k in 1..3 { cv.vline(r.x + cols[k] - 8, y0, y1, LINE); }
         }
     }
 

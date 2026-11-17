@@ -257,6 +257,9 @@ fn sim_is_in_the_top_bar_when_live_and_live_when_viewing_a_record() {
     u.close_menu();
     // the SIM button: Live shows and SIM goes; a tap on Live returns
     tap(&mut u, t.simbtn);
+    // the button opens the SIM sheet; Play at its foot starts the simulation
+    assert!(u.menu_open && u.menu == MenuId::Sim, "the SIM sheet");
+    u.activate(Item::SimPlay);
     u.wait_sim_generation();
     for _ in 0..8 { u.step(0.05); }
     assert!(u.record_mode());

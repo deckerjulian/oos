@@ -164,6 +164,9 @@ fn a_narrow_top_bar_shortens_labels_and_drops_nothing() {
     // in the SIM mode (Live, the preset chip) the bar still fits
     let t = u.studio_top();
     tap(&mut u, t.simbtn);
+    // the button opens the SIM sheet; Play at its foot starts the simulation
+    assert!(u.menu_open && u.menu == MenuId::Sim, "the SIM sheet");
+    u.activate(Item::SimPlay);
     u.wait_sim_generation();
     for _ in 0..6 { frame(&mut u); }
     check_top(&u);
@@ -228,7 +231,7 @@ fn the_sim_sheet_adds_a_signal_to_a_ref_without_entering_the_sim_mode() {
 }
 
 #[test]
-fn the_sim_button_runs_the_simulation_mode_and_live_returns() {
+fn the_sim_button_opens_the_sheet_whose_play_runs_the_simulation_and_live_returns() {
     let mut u = studio();
     assert!(!u.record_mode());
     let t = u.studio_top();
@@ -236,6 +239,9 @@ fn the_sim_button_runs_the_simulation_mode_and_live_returns() {
     // no ref is shown, so the SIM sheet's signal plays (a shown ref plays instead: batch 24)
     u.sim_preset_set("SATA I");
     tap(&mut u, t.simbtn);
+    // the button opens the SIM sheet; Play at its foot starts the simulation
+    assert!(u.menu_open && u.menu == MenuId::Sim, "the SIM sheet");
+    u.activate(Item::SimPlay);
     u.wait_sim_generation();
     for _ in 0..8 { frame(&mut u); }
     assert!(u.record_mode() && u.session_is_sim, "the SIM button enters the simulation mode");

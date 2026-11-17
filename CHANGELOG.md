@@ -72,6 +72,10 @@ Added:
   - the caption of a SIM or reference session ends before the word beside the corner button; the volts of the
     Histogram view stand beside its axis, clear of the handle of the divider; "Generating ..." is an information
     message, not a warning;
+  - the **SIM** button of Studio opens the SIM sheet (Play and Add to ref are at its foot); it used to start playing
+    the last preset before a setting could be seen;
+  - a docked event table (decoder events, search, segments) has its title and count in the title strip of the view,
+    which gives one more row; its columns fit their content, and a divider between two columns can be dragged;
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it
