@@ -4158,6 +4158,8 @@ impl Ui {
             }
             // what a lane has at its right edge: the corner buttons with their words, and the trigger tag with its value
             let mut right_obstacles: Vec<Rect> = Vec::new();
+            // the trigger tag with its value: a scale label at its height would say the level a second time beside it
+            let mut trigger_tag: Option<Rect> = None;
             if lanes {
                 if self.m.layout == Layout::Studio {
                     for b in [self.full_btn().0, self.zoom_btn().0] { right_obstacles.push(Rect::new(b.x - 62, b.y - 2, b.w + 66, b.h + 4)); }
@@ -4167,7 +4169,7 @@ impl Ui {
                     let y = self.y_of_volts(ts, self.trig_level_shown()).clamp(a.y + (a.h / 2).min(9), a.y + a.h - (a.h / 2).min(9));
                     let x1 = self.trigger_tag_x(a.x + a.w - MARK_W, y);
                     let left = x1 - 8 - f.sb.width(&si_short(self.trig_level_shown() as f64, self.m.unit(ts)));
-                    right_obstacles.push(Rect::new(left, y - 11, a.x + a.w - left, 22));
+                    trigger_tag = Some(Rect::new(left, y - 11, a.x + a.w - left, 22));
                 }
             }
             // labels right at the left edge of the graticule, centred on their division line
@@ -4190,6 +4192,7 @@ impl Ui {
                 let mut x = if lanes { a.x + a.w - 6 - w } else { x };
                 let mut r = Rect::new(x - 3, y + 4 - f.s.size, w + 6, f.s.size + 4);
                 if lanes {
+                    if trigger_tag.is_some_and(|t| overlaps(t, r)) { continue; }
                     for _ in 0..2 {
                         if let Some(o) = right_obstacles.iter().find(|o| overlaps(**o, r)) {
                             x = o.x - 6 - w;

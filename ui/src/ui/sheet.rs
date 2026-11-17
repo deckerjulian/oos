@@ -516,6 +516,15 @@ impl Ui {
         format!("Store as R{} (next free)", i + 1)
     }
 
+    /// A text in two parts at the space nearest its middle (the second is empty without a space).
+    pub(super) fn two_lines(v: &str) -> (&str, &str) {
+        let mid = v.len() / 2;
+        match v.char_indices().filter(|&(_, ch)| ch == ' ').min_by_key(|&(i, _)| i.abs_diff(mid)) {
+            Some((i, _)) => (&v[..i], &v[i + 1..]),
+            None => (v, ""),
+        }
+    }
+
     pub(super) fn sheet_label(&self, it: Item) -> String {
         match it {
             Item::SrcOn => {
@@ -738,7 +747,14 @@ impl Ui {
                 let v = self.value(it);
                 let font = if f.m.width(&v) > c.w - 8 { &f.s } else { &f.m };
                 cv.set_clip(c);
-                cv.text_in(font, Rect::new(c.x, c.y, c.w - 6, c.h), 2, &v, TEXT);
+                if font.width(&v) > c.w - 8 {
+                    // too long even then: two lines, broken at the space nearest the middle, so the start is not cut off
+                    let (a, b) = Self::two_lines(&v);
+                    cv.text_in(font, Rect::new(c.x, c.y + 2, c.w - 6, c.h / 2), 2, a, TEXT);
+                    cv.text_in(font, Rect::new(c.x, c.y + c.h / 2 - 2, c.w - 6, c.h / 2), 2, b, TEXT);
+                } else {
+                    cv.text_in(font, Rect::new(c.x, c.y, c.w - 6, c.h), 2, &v, TEXT);
+                }
                 cv.no_clip();
             }
             RowKind::Link => {

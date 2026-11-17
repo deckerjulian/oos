@@ -543,3 +543,9 @@ fn minimal_opens_the_sheets_and_a_tap_on_a_row_changes_the_setting() {
     // the strip dock stays reachable from the Measure page
     assert!(u.sheet_spec(MenuId::Measure).unwrap().tabs[0].rows.contains(&Item::StripDock));
 }
+
+#[test]
+fn a_long_info_line_breaks_in_two_instead_of_losing_its_start() {
+    assert_eq!(Ui::two_lines("SCPI 5555, VXI-11, SSH 22 (password or key)"), ("SCPI 5555, VXI-11, SSH", "22 (password or key)"));
+    assert_eq!(Ui::two_lines("nospace"), ("nospace", ""));
+}

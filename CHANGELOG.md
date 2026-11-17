@@ -19,6 +19,8 @@ Added:
   - an analyser view whose source is off shows a **Turn on CHn** button in its middle, and an empty Bode plot a
     **Start sweep** button; the spectrum beside the waveform keeps its width for the plot (the peak list is behind
     its menu button); Minimal greys Overlay and Stacked out while an analyser has the plot;
+  - a long information line of a sheet (Network > Other access) breaks in two instead of losing its first letters; a
+    lane no longer repeats the trigger level as a scale label beside the trigger tag;
   - a channel whose record reaches the end of the ADC range is named in red in the plot and gets a red pill border;
     `:CHANnel<n>:CLIPping?` answers 1 or 0;
   - Studio: a channel that is off has a small pill, a tap switches it on; the badge of a channel pill switches it
