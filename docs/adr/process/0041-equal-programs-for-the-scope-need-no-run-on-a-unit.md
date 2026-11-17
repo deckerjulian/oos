@@ -12,9 +12,10 @@ path, not by effect: #112 changed only `[profile.test]` in `fpgad/Cargo.toml` an
 on a host reads and no build for the scope does, and still waited for a run on a unit. Tests, comments and lint fixes
 in those paths wait the same way.
 
-Built twice from the same sources, oos-ui and oos-fpgad come out byte for byte the same when the folder is the same
-(tried on 2026-11-17: main and #112, built one after the other in one folder, gave the same SHA-256 for both). Built in
-two folders they differ: Cargo puts the absolute path of each crate into the names of its symbols.
+Built twice from the same sources, oos-ui, oos-fpgad and oos-update come out byte for byte the same when the
+folder is the same (tried on 2026-11-17: main and #112, built one after the other in one folder, gave the same
+SHA-256 for each). Built in two folders they differ: Cargo puts the absolute path of each crate into the names of its
+symbols.
 
 ## Decision
 

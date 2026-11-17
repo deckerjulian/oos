@@ -234,7 +234,7 @@ jobs:
           else
             echo "nothing differs"
           fi
-  # Whether the programs that run on the scope change at all (ADR 0041): oos-ui and oos-fpgad for the scope, built
+  # Whether the programs that run on the scope change at all (ADR 0041): oos-ui, oos-fpgad and oos-update, built
   # from the pull request and from its base in this one folder, compared byte for byte. Equal programs let the status
   # `unit` pass without a run on a unit (tools/pr-gate.sh); a pull request whose programs differ keeps the artifact
   # `scope-binaries-differ`, and needs the run. Only for a pull request that touches a path of a crate that a unit
