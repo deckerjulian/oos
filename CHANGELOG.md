@@ -7,6 +7,15 @@ it also ran on a DHO924S (2026-11-16).
 
 Fixed:
 
+- Eye and jitter (host-tested on SIM signals and built signals of known jitter, not yet verified on hardware):
+  - Eye Width read short of what the jitter allows: about 5 % of a unit interval on a jitter-free signal in the
+    measurement's 96-column picture. The picture's own spread at the crossing is taken out; with 20 ps of random
+    jitter on a 1 ns interval it reads 873 ps for 880 ps.
+  - SSC Freq Dev took the span of every single interval's rate, so the timing error of two edges counted as
+    frequency spread (7100 ppm for 5000 ppm); it is taken of the averaged series when a modulation line is found.
+    SSC Modulation Rate was a line of the spectrum, which is a fifth off when the record holds one modulation
+    period, as a SIM record does; with fewer than four periods the rate is fitted (278 kHz for 300 kHz).
+  - a value in dB is written without a prefix ("0.83 dB", not "831 mdB").
 - Double pulse (host-tested against a built double-pulse record, not yet verified on hardware): Ipeak and the diode
   recovery took the largest current of the whole second pulse, which is the end of the inductor's ramp, so Ipeak and
   Irrm read too high and Trr, Qrr and the diode slope had no value; they use the first peak after the turn-on. The

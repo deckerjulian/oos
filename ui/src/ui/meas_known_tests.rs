@@ -64,10 +64,14 @@ fn nrz(bits: &[bool], ui: f64, edge: f64, dt: f64, shift: impl Fn(f64) -> f64) -
 
 /// Each row within 6 % of its value, or within `floor` of it (for a value that is zero).
 fn show(group: &str, floor: f64, rows: &[(u16, &str, f64)], refs: &[(Vec<f32>, f64)], prep: &dyn Fn(&mut Ui)) -> Vec<String> {
+    show_within(group, 0.06, floor, rows, refs, prep)
+}
+
+fn show_within(group: &str, rel: f64, floor: f64, rows: &[(u16, &str, f64)], refs: &[(Vec<f32>, f64)], prep: &dyn Fn(&mut Ui)) -> Vec<String> {
     let mut bad = Vec::new();
     for &(id, name, want) in rows {
         let (v, text) = read(refs, id, prep);
-        let ok = want.is_nan() || (v - want).abs() <= want.abs() * 0.06 + floor;
+        let ok = want.is_nan() || (v - want).abs() <= want.abs() * rel + floor;
         println!("MK|{group}|{id}|{name}|{text}|{v:e}|{}|{}", if want.is_nan() { "-".into() } else { format!("{want:e}") }, if want.is_nan() { "?" } else if ok { "ok" } else { "BAD" });
         if !ok { bad.push(format!("{group} {name}: {text} (want {want:e})")); }
     }
@@ -96,7 +100,7 @@ fn the_module_measurements_read_known_signals() {
     let d = nrz(&bits, 1e-6, 100e-9, 10e-9, |_| 0.0);
     let dn = (d.0.iter().map(|x| 1.0 - x).collect::<Vec<f32>>(), d.1);
     bad.extend(show("nrz", 0.01, &[(15, "Unit Interval", 1e-6), (16, "NRZ Data Rate", 1e6), (80, "NRZ Clock Rate", 1e6), (70, "Bit High", 1.0), (71, "Bit Low", 0.0),
-        (72, "Bit Amplitude", 1.0), (62, "Eye High", 1.0), (65, "Eye Low", 0.0), (60, "Eye Height", 1.0), (61, "Eye Width", Q), (63, "Eye Height@BER", Q),
+        (72, "Bit Amplitude", 1.0), (62, "Eye High", 1.0), (65, "Eye Low", 0.0), (60, "Eye Height", 1.0), (61, "Eye Width", 1e-6), (63, "Eye Height@BER", Q),
         (64, "Eye Width@BER", Q), (66, "Q-Factor", Q), (73, "DC Common Mode", 0.5), (74, "AC Common Mode (Pk-Pk)", 0.0), (75, "Differential Crossover", 0.5),
         (76, "T/nT Ratio", Q), (41, "TIE", Q), (40, "Jitter Summary", Q), (43, "TJ@BER", Q), (44, "RJ-dd", Q), (45, "DJ-dd", Q), (48, "DDJ", Q), (49, "DCD", Q),
         (81, "SSC Freq Dev", Q), (82, "SSC Modulation Rate", Q)], &[d, dn], &|_| {}));
@@ -105,6 +109,26 @@ fn the_module_measurements_read_known_signals() {
     let j = nrz(&clock, 1e-6, 100e-9, 10e-9, |t| 20e-9 * (2.0 * PI * 10e3 * t).sin());
     bad.extend(show("jitter", 1e-12, &[(41, "TIE", 40e-9), (46, "SJ@Freq", 20e-9 / 2f64.sqrt()), (47, "PJ", 20e-9 / 2f64.sqrt()), (40, "Jitter Summary", Q), (43, "TJ@BER", Q), (44, "RJ-dd", Q), (45, "DJ-dd", Q),
         (42, "Phase Noise", Q), (49, "DCD", Q), (48, "DDJ", Q), (50, "SRJ", Q), (51, "J2", Q), (15, "Unit Interval", 1e-6)], &[j], &|_| {}));
+    // spread spectrum, built by hand: the same clock with its edges moved by 80 ns * sin(2 pi 5 kHz t). The rate of a
+    // clock is minus the slope of that shift, so it swings by 2 * 80 ns * 2 pi * 5 kHz = 5027 ppm, 5000 times a second
+    let fm = nrz(&clock, 1e-6, 100e-9, 10e-9, |t| 80e-9 * (2.0 * PI * 5e3 * t).sin());
+    bad.extend(show("ssc", 1e-12, &[(81, "SSC Freq Dev", 2.0 * 80e-9 * 2.0 * PI * 5e3 * 1e6), (82, "SSC Modulation Rate", 5e3)], &[fm], &|_| {}));
+    // noise on the levels: PRBS7 with 20 mV RMS added to every sample. The picture joins samples by lines, which
+    // averages some of it away, so the opening reads a little wide: Q within 20 %, the height within 6 %
+    let mut seed = 88172645463325252u64;
+    let mut gauss = move || {
+        let mut u = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; (seed >> 11) as f64 / (1u64 << 53) as f64 };
+        let (a, b) = (u().max(1e-12), u());
+        (-2.0 * a.ln()).sqrt() * (2.0 * PI * b).cos()
+    };
+    let quiet = nrz(&prbs7(4000), 1e-6, 100e-9, 20e-9, |_| 0.0);
+    let noisy = (quiet.0.iter().map(|x| x + (0.02 * gauss()) as f32).collect::<Vec<f32>>(), quiet.1);
+    bad.extend(show("noise", 1e-12, &[(60, "Eye Height", 1.0 - 6.0 * 0.02)], &[noisy.clone()], &|_| {}));
+    let (q, text) = read(&[noisy.clone()], 66, &|_| {});
+    println!("MK|noise|66|Q-Factor|{text}|{q:e}|2.5e1|{}", if (q / 25.0 - 1.0).abs() < 0.2 { "ok" } else { "BAD" });
+    if (q / 25.0 - 1.0).abs() >= 0.2 { bad.push(format!("noise Q-Factor: {text} (want 25)")); }
+    let (hb, text) = read(&[noisy], 63, &|_| {});
+    println!("MK|noise|63|Eye Height@BER|{text}|{hb:e}|-|?");
     // duty-cycle distortion: every high bit of the clock pattern is 40 ns longer
     let dcd = nrz(&clock, 1e-6, 100e-9, 10e-9, |t| if ((t / 1e-6).round() as i64) % 2 == 0 { -20e-9 } else { 20e-9 });
     bad.extend(show("dcd", 1e-12, &[(49, "DCD", -40e-9), (41, "TIE", 40e-9)], &[dcd], &|_| {}));
@@ -172,5 +196,46 @@ fn the_module_measurements_read_known_signals() {
     bad.extend(show("skew", 1e-12, &[(19, "Skew rise-rise", 3e-9), (236, "Skew fall-fall", 3e-9)], &[clk.clone(), late], &|_| {}));
     // source A is the data, source B the clock; the third row counts violations
     bad.extend(show("setup", 1e-12, &[(30, "Setup Time", 4e-9), (31, "Hold Time", 6e-9), (239, "Setup + Hold", 0.0)], &[data, clk], &|_| {}));
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A SIM lane with nothing wrong with it: 1 Gb/s PRBS7, +-0.4 V, no jitter, no noise. Each test turns one thing on.
+fn clean_lane() -> oos_dsp::serial::Lane {
+    oos_dsp::serial::Lane { name: "known", bits_per_s: 1e9, prbs: 7, v_high: 0.4, v_low: -0.4, rise: 100e-12, noise_rms: 0.0, bw: 3e9, deemph_db: 0.0, ssc: false,
+        ssc_center: false, ssc_deviation: 0.005, ssc_hz: 33e3, dcd_pp: 0.0, corr_rj_rms: 0.0, corr_rj_hz: 1e6, rj_rms: 0.0, pj_peak: 0.0, pj_hz: 0.0, seed: 6 }
+}
+
+fn sim(lane: &oos_dsp::serial::Lane) -> (Vec<f32>, f64) {
+    (oos_dsp::serial::try_generate(lane).unwrap(), oos_dsp::serial::dt_of(lane))
+}
+
+/// The statistical measurements on SIM signals: one impairment of a known size at a time.
+#[test]
+fn the_jitter_and_eye_measurements_read_what_sim_put_in() {
+    let mut bad = Vec::new();
+    let all: &[(u16, &str)] = &[(15, "Unit Interval"), (41, "TIE"), (44, "RJ-dd"), (45, "DJ-dd"), (43, "TJ@BER"), (40, "Jitter Summary"), (51, "J2"), (42, "Phase Noise"),
+        (46, "SJ@Freq"), (47, "PJ"), (48, "DDJ"), (49, "DCD"), (50, "SRJ"), (60, "Eye Height"), (63, "Eye Height@BER"), (61, "Eye Width"), (64, "Eye Width@BER"),
+        (66, "Q-Factor"), (76, "T/nT Ratio"), (81, "SSC Freq Dev"), (82, "SSC Modulation Rate")];
+    let run = |group: &str, lane: oos_dsp::serial::Lane, rel: f64, want: &[(u16, f64)]| {
+        let rows: Vec<(u16, &str, f64)> = all.iter().map(|&(id, name)| (id, name, want.iter().find(|w| w.0 == id).map_or(Q, |w| w.1))).collect();
+        show_within(group, rel, 1e-12, &rows, &[sim(&lane)], &|_| {})
+    };
+    use oos_dsp::serial::Lane;
+    bad.extend(run("clean", clean_lane(), 0.06, &[(15, 1e-9), (61, 1e-9), (64, 1e-9)]));
+    // random jitter of 20 ps: the eye closes by six sigma, J2 is 5.61 sigma and the total at 1e-12 is 14.07 sigma. The
+    // dual-Dirac fit of 4000 edges gives part of the random jitter to the deterministic side, so its split is looser
+    // than its sum.
+    bad.extend(run("rj 20 ps", Lane { rj_rms: 20e-12, ..clean_lane() }, 0.12, &[(61, 880e-12), (51, 5.61 * 20e-12), (43, 14.07 * 20e-12), (40, 14.07 * 20e-12),
+        (64, 1e-9 - 14.07 * 20e-12)]));
+    bad.extend(run("rj split", Lane { rj_rms: 20e-12, ..clean_lane() }, 0.25, &[(44, 20e-12)]));
+    bad.extend(run("noise 10 mV", Lane { noise_rms: 10e-3, ..clean_lane() }, 0.06, &[(15, 1e-9)]));
+    bad.extend(run("dcd 50 ps", Lane { dcd_pp: 50e-12, ..clean_lane() }, 0.06, &[]));
+    // a tone of 30 ps peak: 21.2 ps RMS
+    bad.extend(run("pj 30 ps 2 MHz", Lane { pj_peak: 30e-12, pj_hz: 2e6, ..clean_lane() }, 0.15, &[(46, 30e-12 / 2f64.sqrt()), (47, 30e-12 / 2f64.sqrt())]));
+    // down-spread: the rate swings over the whole deviation, at the modulation rate; a SIM record holds one period of it
+    bad.extend(run("ssc 0.5 % 300 kHz", Lane { ssc: true, ssc_hz: 300e3, ..clean_lane() }, 0.1, &[(81, 5000.0), (82, 300e3)]));
+    bad.extend(run("ssc 0.25 % 600 kHz", Lane { ssc: true, ssc_hz: 600e3, ssc_deviation: 0.0025, ..clean_lane() }, 0.1, &[(81, 2500.0), (82, 600e3)]));
+    bad.extend(run("deemph 3.5 dB", Lane { deemph_db: 3.5, ..clean_lane() }, 0.06, &[]));
+    bad.extend(run("bw 400 MHz", Lane { bw: 400e6, ..clean_lane() }, 0.06, &[]));
     assert!(bad.is_empty(), "{bad:#?}");
 }

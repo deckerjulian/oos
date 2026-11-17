@@ -111,7 +111,7 @@ impl MeasRow {
         } else if self.unit.is_empty() && v.fract() == 0.0 && v.abs() < 1e6 {
             // a count (edges, pulses, ones): a whole number is written as one
             format!("{}", v as i64)
-        } else if matches!(self.unit, "" | "ppm" | "rpm" | "rpm/s") {
+        } else if matches!(self.unit, "" | "ppm" | "rpm" | "rpm/s" | "dB") {
             // a ratio, and the units that are not SI: no prefix ("498 m" for a power factor of 0.498, "nppm", "krpm")
             let a = v.abs();
             let number = if a != 0.0 && !(1e-4..1e7).contains(&a) {
