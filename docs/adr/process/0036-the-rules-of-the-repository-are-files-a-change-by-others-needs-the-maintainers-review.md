@@ -56,6 +56,8 @@ agents can be given work (ADR 0034) and whether a second person can be given wri
   for the same. It is removed by hand then, and `tools/repo-settings.sh` says as long as it is there.
 - The files are not in force by being merged. After the merge an administrator runs `tools/repo-settings.sh --apply`
   once, and again after every change of them; run without `--apply`, it shows whether GitHub still matches.
+- 2026-11-17: `main-review` is removed again and its review is asked by the status `owner` (ADR 0038); `main` holds
+  five required checks. `CODEOWNERS` stays: GitHub asks the owner for a review by itself.
 - Tried on 2026-11-17: GitHub took the two rulesets as written, and both are in force. It fills in three fields
   the files did not name (`require_extra_approval_for_unattributed_changes`, `required_reviewers`,
   `do_not_enforce_on_create`); the files name them now, so the comparison is exact.
