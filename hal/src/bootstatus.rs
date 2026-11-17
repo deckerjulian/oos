@@ -120,6 +120,14 @@ pub fn parse(text: &str) -> View {
     v
 }
 
+/// Seconds since the kernel started.
+fn uptime() -> f64 {
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
+        .unwrap_or(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,12 +168,4 @@ mod tests {
         // tabs and newlines in a detail do not break the format
         assert_eq!(parse(&line(1.0, "fail", "X", "a\tb\nc")).stages[0].detail, "a b c");
     }
-}
-
-/// Seconds since the kernel started.
-fn uptime() -> f64 {
-    std::fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
-        .unwrap_or(0.0)
 }

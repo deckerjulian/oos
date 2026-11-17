@@ -124,7 +124,7 @@ mod tests {
         assert!(hits(&tri, &v, t0, dt));
         // pass: must hit b2, must not hit b
         let nb = Zone { inside: false, ..b };
-        assert!(pass(&[b2.clone(), nb.clone()], &[v.clone()], t0, dt));
+        assert!(pass(&[b2.clone(), nb.clone()], std::slice::from_ref(&v), t0, dt));
         assert!(!pass(&[Zone { inside: false, ..b2 }, nb], &[v], t0, dt));
         // nothing usable: pass
         assert!(pass(&[Zone::default()], &[], t0, dt));

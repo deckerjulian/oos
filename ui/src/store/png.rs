@@ -282,7 +282,7 @@ pub fn png(w: u32, h: u32, px: &[u32]) -> Vec<u8> {
     let mut raw = vec![0u8; stride * h as usize];
     for (out, row) in raw.chunks_exact_mut(stride).zip(px.chunks(w as usize)) {
         // out[0] = 0: filter type None
-        for (o, &p) in out[1..].chunks_exact_mut(3).zip(row) {
+        for (o, &p) in out[1..].as_chunks_mut::<3>().0.iter_mut().zip(row) {
             o.copy_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
         }
     }

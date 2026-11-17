@@ -36,7 +36,7 @@ mod reference {
     }
 
     pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
-        let w: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+        let w: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
         let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
         let mut out: [Vec<u16>; 4] = Default::default();
         match oos_hal::dho::hz::ratio(mask) {
@@ -69,7 +69,12 @@ mod reference {
     }
 
     fn lane<const G: usize>(bytes: &[u8], k: usize, (scale, offset): (f64, f64)) -> Vec<f32> {
-        bytes.chunks_exact(G).map(|g| volt(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), scale, offset)).collect()
+        bytes
+            .as_chunks::<G>()
+            .0
+            .iter()
+            .map(|g| volt(u16::from_le_bytes([g[2 * k], g[2 * k + 1]]), scale, offset))
+            .collect()
     }
 
     /// The fork's fused decode in f64 (before the f32 one), whole groups only: enough for the timing.

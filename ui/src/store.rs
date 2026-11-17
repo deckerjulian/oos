@@ -1624,7 +1624,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     for _ in 0..nch {
         let c = f.u32(off)? as usize;
         off += 4;
-        if c < 1 || c > NCH {
+        if !(1..=NCH).contains(&c) {
             return Err(format!("channel {}", c));
         }
         if b.len().saturating_sub(off) < 4 * n {
@@ -1689,7 +1689,7 @@ pub fn latest_name(dir: &Path, prefix: &str, ext: &str) -> Option<PathBuf> {
         let want = format!("{}-", prefix);
         if let Some(rest) = s.strip_prefix(&want).and_then(|r| r.strip_suffix(&format!(".{}", ext))) {
             if let Ok(n) = rest.parse::<u32>() {
-                if best.as_ref().map_or(true, |(b, _)| n >= *b) {
+                if best.as_ref().is_none_or(|(b, _)| n >= *b) {
                     best = Some((n, e.path()));
                 }
             }
@@ -1726,7 +1726,7 @@ pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
     let mut x = None;
     let mut y = None;
     let mut inv = None;
-    if lines.peek().map_or(false, |l| l.starts_with("# OOS mask")) {
+    if lines.peek().is_some_and(|l| l.starts_with("# OOS mask")) {
         lines.next();
         for line in lines.by_ref() {
             let line = line.trim();
@@ -1742,7 +1742,7 @@ pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
             match k.trim() {
                 "src" => {
                     let n: usize = v.trim().parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-                    if n < 1 || n > NCH {
+                    if !(1..=NCH).contains(&n) {
                         return Err(format!("mask src {}", n));
                     }
                     src = Some(n - 1);
@@ -2552,7 +2552,7 @@ mod tests {
                 break;
             }
         }
-        (out, (b.p + 7) / 8)
+        (out, b.p.div_ceil(8))
     }
 
     #[test]
@@ -2619,7 +2619,7 @@ mod tests {
         let mut cv = Canvas::new(10, 4);
         assert_eq!(ppm_into(&b, &mut cv), Some((2, 1)));
         assert_eq!(
-            (cv.px[(1 * 10 + 4) as usize], cv.px[(1 * 10 + 5) as usize]),
+            (cv.px[(10 + 4) as usize], cv.px[(10 + 5) as usize]),
             (crate::gfx::rgb(255, 0, 0), crate::gfx::rgb(0, 0, 255))
         );
         assert!(ppm_into(b"P5\n1 1\n255\n\0", &mut cv).is_none());
@@ -2695,10 +2695,8 @@ mod tests {
     /// Cross-check with an independent decoder when the host has Python with Pillow (skipped otherwise).
     #[test]
     fn png_opens_in_pillow() {
-        let has_pillow = std::process::Command::new("python3")
-            .args(["-c", "import PIL"])
-            .output()
-            .map_or(false, |o| o.status.success());
+        let has_pillow =
+            std::process::Command::new("python3").args(["-c", "import PIL"]).output().is_ok_and(|o| o.status.success());
         if !has_pillow {
             return eprintln!("python3 with Pillow not found: check skipped");
         }

@@ -1517,7 +1517,7 @@ impl Scpi {
                     if query {
                         return Some(t(&e(m.holdoff as f64)));
                     }
-                    m.holdoff = num(arg).filter(|&h| (0.0..=10.0).contains(&h))? as f32;
+                    m.holdoff = num(arg).filter(|&h| (0.0..=10.0).contains(&h))?;
                     return Some(None);
                 }
                 if nodes.len() == 2 && kw(last, "SWEep") {
@@ -5899,7 +5899,7 @@ mod tests {
             .map(|wire| crate::store::WaveTrace {
                 v: states
                     .iter()
-                    .flat_map(|&state| std::iter::repeat(oos_dsp::cphy::wire_values(state)[wire]).take(20))
+                    .flat_map(|&state| std::iter::repeat_n(oos_dsp::cphy::wire_values(state)[wire], 20))
                     .collect(),
                 dt: 5e-12,
                 t0: -12e-9,

@@ -126,7 +126,7 @@ fn signal(seed: usize, count: usize) -> Vec<f32> {
         .map(|i| {
             noise = noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let phase = (i as f64 + seed as f64 * 7.3) / (113.0 + seed as f64 * 13.0);
-            let wave = if seed % 2 == 0 {
+            let wave = if seed.is_multiple_of(2) {
                 phase.fract() as f32 * 2.0 - 1.0
             } else {
                 (phase * std::f64::consts::TAU).sin() as f32

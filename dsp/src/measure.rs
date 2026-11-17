@@ -490,11 +490,11 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         lpct,
         hpct,
         est_ui: f64::NAN,
-        median: median_samples(&f),
-        mode: hist_mode(&f, vmin, vmax),
+        median: median_samples(f),
+        mode: hist_mode(f, vmin, vmax),
         lin_slope,
         lin_int,
-        pam: crate::linecode::pam4_levels(&f, vmin, vmax),
+        pam: crate::linecode::pam4_levels(f, vmin, vmax),
         bits: f64::NAN,
         pll_ui: f64::NAN,
         ui_wtd: f64::NAN,
@@ -880,7 +880,7 @@ pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     delay(a, b, p) / a.period() * 360.0
 }
 
-fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
+fn edge_list(a: &Analysis, rising: bool) -> &[f64] {
     if rising {
         &a.rises
     } else {

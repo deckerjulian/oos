@@ -263,7 +263,7 @@ impl Ui {
                 }
             }
         };
-        if len < 2 || len > MAX_POINTS || !t0.is_finite() || !dt.is_finite() || dt <= 0.0 {
+        if !(2..=MAX_POINTS).contains(&len) || !t0.is_finite() || !dt.is_finite() || dt <= 0.0 {
             return Err("Invalid waveform source");
         }
         let (lo, hi) = self.measurement_bounds(len, t0, dt);
@@ -369,9 +369,8 @@ impl Ui {
         let finished = {
             let mut state = self.azr.catalog_measurements.borrow_mut();
             state.worker.as_mut().and_then(|worker| {
-                worker.receive.try_recv().ok().map(|answer| {
+                worker.receive.try_recv().ok().inspect(|_answer| {
                     worker.busy = false;
-                    answer
                 })
             })
         };
@@ -415,7 +414,7 @@ impl Ui {
             let current =
                 cat_from(id).and_then(|cat| self.catalog_snapshot(cat, [a, b, c, d]).ok().map(|(key, _)| key));
             let mut state = self.azr.catalog_measurements.borrow_mut();
-            state.pending.retain(|(key, stored)| *stored != row || Some(&*key) == current.as_ref());
+            state.pending.retain(|(key, stored)| *stored != row || Some(key) == current.as_ref());
         }
         let next = self.azr.catalog_measurements.borrow().pending.front().cloned();
         if let Some((_, (id, a, b, c, d))) = next {

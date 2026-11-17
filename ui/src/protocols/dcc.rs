@@ -99,7 +99,7 @@ impl Protocol for Dcc {
         // 128-step speed byte: direction in bit 7, speed + 1 below (0 = stop, 1 = emergency stop)
         let speed = |fwd: bool, s: u8| if fwd { 0x80 | (s + 1) } else { s + 1 };
         // accessory n (1..) on board (n - 1) / 4 + 1, output pair (n - 1) % 4
-        let acc = |n: u16| (0x80 | ((n - 1) / 4) as u8 + 1, ((n - 1) % 4) as u8);
+        let acc = |n: u16| (0x80 | (((n - 1) / 4) as u8 + 1), ((n - 1) % 4) as u8);
         let mut v = Vec::new();
         for (addr, fwd, s) in [(1u8, true, 20u8), (2, true, 35), (3, true, 40), (4, false, 25), (5, true, 50)] {
             v.push(fr(0xFF, vec![0x00]));

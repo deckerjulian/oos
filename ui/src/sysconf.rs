@@ -304,7 +304,7 @@ impl SysConf {
     /// `net.allow` as rcS and `netacl` read it: the settings file's line (the last one, also an empty one), else the
     /// image default, else empty (no list).
     pub fn net_allow(&self) -> String {
-        let own = self.extra.iter().filter_map(|l| value(l, "net.allow")).last();
+        let own = self.extra.iter().filter_map(|l| value(l, "net.allow")).next_back();
         own.or(self.image_net_allow.as_deref()).unwrap_or("").to_string()
     }
 
@@ -398,7 +398,7 @@ pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
             let (k, v) = l.split_once('=')?;
             (k.trim() == key).then(|| uncomment(v))
         })
-        .last()
+        .next_back()
 }
 
 /// `env` if set (an environment variable's value), else the value of `key` in `conf`.

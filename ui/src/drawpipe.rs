@@ -957,7 +957,7 @@ mod tests {
                 * (1.0 + c as f64 * 0.5)
                 * std::f64::consts::TAU)
                 .sin()
-                + if k % 5 == 0 { 0.05 } else { 0.0 }
+                + if k.is_multiple_of(5) { 0.05 } else { 0.0 }
         };
         for (mask, n) in [(1u32, 100_000u32), (3, 70_312)] {
             let mut m = model(1e-5, mask == 3, false);

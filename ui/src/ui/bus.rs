@@ -385,9 +385,8 @@ impl Ui {
         );
         let mut cache = self.trace_bus.borrow_mut();
         let answer = cache.worker.as_mut().and_then(|w| {
-            w.rx.try_recv().ok().map(|answer| {
+            w.rx.try_recv().ok().inspect(|_answer| {
                 w.busy = false;
-                answer
             })
         });
         if let Some((finished, packets)) = answer {
@@ -455,7 +454,7 @@ fn bus_tag(kind: DecKind) -> Option<&'static str> {
     }
 }
 
-fn cut<'a>(t0: f64, dt: f64, v: &'a [f32], lo: f64, hi: f64) -> Option<(f64, f64, &'a [f32])> {
+fn cut(t0: f64, dt: f64, v: &[f32], lo: f64, hi: f64) -> Option<(f64, f64, &[f32])> {
     if v.len() < 2 || !(dt > 0.0) || !(hi > lo) {
         return None;
     }

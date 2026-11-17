@@ -859,7 +859,7 @@ fn noise_and_garbage_never_panic() {
         while v.len() < n {
             let lvl = (r() % 1000) as f32 / 1000.0 * 4.0 - 0.5;
             let len = 1 + (r() % [3, 30, 300, 3000][round % 4]) as usize;
-            v.extend(std::iter::repeat(lvl).take(len));
+            v.extend(std::iter::repeat_n(lvl, len));
         }
         v.truncate(n);
         add_noise(&mut v, 0.3, round as u64 + 1);
@@ -901,7 +901,7 @@ fn noise_and_garbage_never_panic() {
             .map(|i| {
                 let k = kinds[(r() % kinds.len() as u32) as usize];
                 let value = if matches!(k, Kind::Addr { .. }) { 0x18 + r() % 8 } else { r() % 256 };
-                Packet { t0: i as f64, t1: i as f64 + 0.5, kind: k, value, value2: None, ok: r() % 2 == 0 }
+                Packet { t0: i as f64, t1: i as f64 + 0.5, kind: k, value, value2: None, ok: r().is_multiple_of(2) }
             })
             .collect();
         let _ = ds2482(&pk);

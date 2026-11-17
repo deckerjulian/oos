@@ -350,7 +350,7 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
         frame.clear();
     };
     for c in &ch {
-        if frame.last().map_or(false, |l| c.t0 - l.2 >= 0.8 * t35) {
+        if frame.last().is_some_and(|l| c.t0 - l.2 >= 0.8 * t35) {
             flush(&mut frame, &mut out);
         }
         frame.push((c.value as u8, c.t0, c.t1, c.ok));
@@ -390,9 +390,9 @@ pub fn modbus_ascii(
             j += 1;
         }
         let body = &ch[i + 1..j];
-        let mut bad = body.len() % 2 != 0;
+        let mut bad = !body.len().is_multiple_of(2);
         let mut bytes: Vec<Byte> = Vec::new();
-        for p in body.chunks_exact(2) {
+        for p in body.as_chunks::<2>().0 {
             match (hex(p[0].value), hex(p[1].value)) {
                 (Some(h), Some(l)) => bytes.push(((h << 4 | l) as u8, p[0].t0, p[1].t1, p[0].ok && p[1].ok)),
                 _ => bad = true,
@@ -1018,7 +1018,7 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         let sv = |r: std::ops::Range<usize>| seq[r].iter().fold(0u32, |a, b| a << 1 | b.0 as u32);
         let gray = sv(0..3);
         let cnt = (gray ^ gray >> 1 ^ gray >> 2) & 7;
-        let par_ok = (gray.count_ones() + seq[3].0 as u32) % 2 == 0;
+        let par_ok = (gray.count_ones() + seq[3].0 as u32).is_multiple_of(2);
         out.push(pk(Kind::Field("SBC"), seq[0].1, seq[3].2, cnt, None, par_ok && cnt == stuff_cnt % 8));
         let rx = sv(4..4 + crc_len);
         let mut input = raw.clone();
@@ -1081,7 +1081,7 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
         return out;
     }
     let st = states(v, thr, hyst);
-    let high = |x: f64| st.get(x as usize).copied().flatten().map_or(true, |b| b != invert);
+    let high = |x: f64| st.get(x as usize).copied().flatten() != Some(invert);
     let e = edges(v, thr, hyst);
     let fall: Vec<f64> = e.iter().filter(|x| x.rising == invert).map(|x| x.t).collect();
     let rise: Vec<f64> = e.iter().filter(|x| x.rising != invert).map(|x| x.t).collect();
@@ -1216,7 +1216,7 @@ pub mod gen {
             match parity {
                 Parity::None => {}
                 Parity::Even => self.level(ones % 2 == 1, tb),
-                Parity::Odd => self.level(ones % 2 == 0, tb),
+                Parity::Odd => self.level(ones.is_multiple_of(2), tb),
             }
             self.level(true, stop as f64 * tb);
         }

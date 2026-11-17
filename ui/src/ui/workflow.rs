@@ -452,7 +452,7 @@ mod tests {
     }
 
     fn square(delay: usize) -> Vec<f32> {
-        (0..1600).map(|i| if ((i + 8000 - delay) / 80) % 2 == 0 { -0.5 } else { 0.5 }).collect()
+        (0..1600).map(|i| if ((i + 8000 - delay) / 80).is_multiple_of(2) { -0.5 } else { 0.5 }).collect()
     }
 
     #[test]

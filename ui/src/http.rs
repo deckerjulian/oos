@@ -388,10 +388,7 @@ impl Shots {
 
     /// Whether the encoder should get the screen now.
     fn wanted(st: &ShotState, now: Instant, watched: bool) -> bool {
-        (!st.waiting.is_empty() || watched)
-            && !st.busy
-            && st.next.is_none()
-            && st.at.map_or(true, |t| now - t >= st.gap)
+        (!st.waiting.is_empty() || watched) && !st.busy && st.next.is_none() && st.at.is_none_or(|t| now - t >= st.gap)
     }
 
     /// Right before the frame loop renders the next screen (which clears and draws all of it): the shown screen goes to
@@ -1532,7 +1529,7 @@ mod tests {
     /// Runs the page's script under Node with a small stand-in for the browser (skipped without `node`) and returns the
     /// picture addresses it asked for: first before and then after `setfmt('bmp')`, and what it kept in localStorage.
     fn run_page_script(script: &str, preset: &str, storage_throws: bool) -> Option<String> {
-        if !std::process::Command::new("node").arg("--version").output().map_or(false, |o| o.status.success()) {
+        if !std::process::Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success()) {
             eprintln!("node not found: page script check skipped");
             return None;
         }
@@ -1845,7 +1842,7 @@ setTimeout(() => {
             h.before_gpu_frame();
             assert!(cv.px == before, "the canvas keeps the last picture read back");
             frame += 1;
-            if frame % 3 == 0 {
+            if frame.is_multiple_of(3) {
                 cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
                 read_back.push(cv.px.clone());
                 h.picture_read_back(&cv);

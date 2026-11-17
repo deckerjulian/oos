@@ -852,7 +852,7 @@ mod tests {
     }
 
     fn square(amp: f32, n: usize, half: usize) -> Vec<f32> {
-        (0..n).map(|i| if (i / half) % 2 == 0 { amp } else { -amp }).collect()
+        (0..n).map(|i| if (i / half).is_multiple_of(2) { amp } else { -amp }).collect()
     }
 
     #[test]

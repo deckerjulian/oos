@@ -275,9 +275,8 @@ impl Ui {
             if let Some(record) = candidate { self.decoder_candidate_key(m, record)? } else { self.decoder_key(m)? };
         let mut cache = self.azr.reference_decode.borrow_mut();
         let finished = cache.worker.as_mut().and_then(|w| {
-            w.output.try_recv().ok().map(|result| {
+            w.output.try_recv().ok().inspect(|_result| {
                 w.busy = false;
-                result
             })
         });
         if let Some(result) = finished {
@@ -709,7 +708,7 @@ mod tests {
         for wire in 0..3 {
             let values = states
                 .iter()
-                .flat_map(|&state| std::iter::repeat(oos_dsp::cphy::wire_values(state)[wire]).take(20))
+                .flat_map(|&state| std::iter::repeat_n(oos_dsp::cphy::wire_values(state)[wire], 20))
                 .collect();
             ui.refs[wire] = Some(reference(values, dt, t0, 0.1));
         }

@@ -395,7 +395,7 @@ mod tests {
                     m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
                     m.trig_level = 0.0;
                     m.ch[0].offset = 0.0;
-                    let mut v = oos_dsp::sim::sample(|t| sig(t), -(len as f64 / 2.0) * dt + 0.37 * dt, dt, len);
+                    let mut v = oos_dsp::sim::sample(sig, -(len as f64 / 2.0) * dt + 0.37 * dt, dt, len);
                     if name == "square" {
                         oos_dsp::sim::add_noise(&mut v, 0.05, 3);
                     }

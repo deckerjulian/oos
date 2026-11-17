@@ -2928,12 +2928,10 @@ impl Ui {
     }
 
     fn eye_tap(&mut self, x: i32, y: i32) -> bool {
-        if self.eye_open() {
-            if self.eye_pane_close().contains(x, y) {
-                self.view_exit();
-                self.relayout();
-                return true;
-            }
+        if self.eye_open() && self.eye_pane_close().contains(x, y) {
+            self.view_exit();
+            self.relayout();
+            return true;
         }
         false
     }
@@ -4857,8 +4855,8 @@ impl Ui {
         cv.set_clip(lane);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
-        let label;
-        if c.op == MathOp::Fft {
+
+        let label = if c.op == MathOp::Fft {
             let Some(w) = self.math_record(k).ok().flatten() else {
                 cv.no_clip();
                 return None;
@@ -4889,14 +4887,14 @@ impl Ui {
                 }
                 prev = Some((x, y));
             }
-            label = format!(
+            format!(
                 "M{} FFT {} {}  {} dB/div  {}/div",
                 k + 1,
                 src_name(c.a),
                 c.win.name(),
                 dbdiv,
                 si_short(span / HDIV as f64, "Hz")
-            );
+            )
         } else {
             let result = self.math_record(k);
             let rec = result.as_ref().ok().and_then(|w| w.as_ref());
@@ -4938,8 +4936,8 @@ impl Ui {
                 prev = Some((x, y));
             }
             let name = if c.op == MathOp::Expr { self.m.math_expr[k].clone() } else { c.op.formula(c.a, c.b) };
-            label = format!("M{} = {}  {}/div", k + 1, name, Self::math_scale_text_of(&c));
-        }
+            format!("M{} = {}  {}/div", k + 1, name, Self::math_scale_text_of(&c))
+        };
         cv.no_clip();
         Some(label)
     }
@@ -5544,10 +5542,10 @@ impl Ui {
                 let (ta, tb) = self.cursor_times();
                 let d = tb - ta;
                 vec![
-                    ("X1".into(), si(ta as f64, "s")),
-                    ("X2".into(), si(tb as f64, "s")),
-                    ("\u{394}X".into(), si(d as f64, "s")),
-                    ("1/\u{394}X".into(), si(1.0 / d.abs() as f64, "Hz")),
+                    ("X1".into(), si(ta, "s")),
+                    ("X2".into(), si(tb, "s")),
+                    ("\u{394}X".into(), si(d, "s")),
+                    ("1/\u{394}X".into(), si(1.0 / d.abs(), "Hz")),
                 ]
             }
             CursorMode::Volt => {
@@ -9458,8 +9456,8 @@ impl Ui {
                         _ => {}
                     }
                 }
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::WlanNet) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::WlanNet) => {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
@@ -9472,7 +9470,7 @@ impl Ui {
                     self.close_picker();
                     self.time_pick(it, k);
                 }
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::WlanForgetNet) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::WlanForgetNet) => {
                     self.close_picker();
                     self.wlan_forget_pick(k);
                 }
@@ -9480,7 +9478,7 @@ impl Ui {
                     self.close_picker();
                     self.ssh_remove_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.map_or(false, |p| p.it == Item::RefImport) => {
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
                     let p = self.ref_files.get(k).cloned();
                     self.close_picker();
                     if let Some(p) = p {
@@ -10651,7 +10649,7 @@ impl Ui {
                         Item::RunStop => self.m.run == RunState::Run,
                         _ => false,
                     };
-                    let added = on || picked.as_ref().map_or(false, |p| p.1);
+                    let added = on || picked.as_ref().is_some_and(|p| p.1);
                     let txt = match picked {
                         Some((o, _)) => o,
                         None if row.it == Item::QuickRun => format!("Quick \u{b7} {}", self.m.quick.short()),
@@ -11368,7 +11366,7 @@ impl Ui {
     }
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
-        let covered = self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let covered = self.dlg_layout().is_some_and(|d| d.r.contains(x, y));
         let in_plot = ph == Phase::Down
             && self.grid.contains(x, y)
             && !covered
@@ -11687,7 +11685,7 @@ impl Ui {
                         self.settings_changed();
                     }
                     Drag::Zone(_) => {
-                        let shape = self.zone_arm.map_or(false, |a| a.1);
+                        let shape = self.zone_arm.is_some_and(|a| a.1);
                         let last = self.zone_path.last().copied().unwrap_or((x, y));
                         if !shape {
                             self.zone_path.truncate(1);
@@ -11853,7 +11851,7 @@ impl Ui {
 
     /// Turns the drawn screen path into zone `k` (waveform coordinates of its source channel).
     fn finish_zone(&mut self, k: usize) {
-        let shape = self.zone_arm.map_or(false, |a| a.1);
+        let shape = self.zone_arm.is_some_and(|a| a.1);
         self.zone_arm = None;
         let path = std::mem::take(&mut self.zone_path);
         let a = self.area;
@@ -11920,12 +11918,12 @@ impl Ui {
             return;
         }
         cv.set_clip(self.grid);
-        if self.zone_arm.map_or(false, |a| a.1) {
+        if self.zone_arm.is_some_and(|a| a.1) {
             for w in self.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
             }
         }
-        if self.zone_arm.map_or(false, |a| !a.1) && self.zone_path.len() == 2 {
+        if self.zone_arm.is_some_and(|a| !a.1) && self.zone_path.len() == 2 {
             let ((x0, y0), (x1, y1)) = (self.zone_path[0], self.zone_path[1]);
             for (p, q) in [((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))] {
                 cv.line(p.0, p.1, q.0, q.1, ACCENT);

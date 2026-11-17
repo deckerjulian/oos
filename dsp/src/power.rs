@@ -141,7 +141,7 @@ pub fn class_a_limit(order: u32) -> f64 {
         9 => 0.40,
         11 => 0.33,
         13 => 0.21,
-        8..=40 if order % 2 == 0 => 0.23 * 8.0 / order as f64,
+        8..=40 if order.is_multiple_of(2) => 0.23 * 8.0 / order as f64,
         15..=39 => 0.15 * 15.0 / order as f64,
         _ => f64::INFINITY,
     }
