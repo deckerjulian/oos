@@ -53,6 +53,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | proposed |
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | proposed |
 | [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | proposed |
+| [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | proposed |
 
 ## Reading order for agents
 

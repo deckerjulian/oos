@@ -46,6 +46,16 @@ jobs:
       - name: Clippy (ADR 0017, not yet enforced)
         continue-on-error: true
         run: tools/check.sh clippy
+      - name: Numbers that only go down (ADR 0037, not yet enforced)
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # a number the pull request raised in the file is a notice for the reviewer, whatever the check says
+          if [ -n "$BASE" ]; then
+            tools/ratchet.sh --base "$BASE" | sed 's/^/::notice::tools\/ratchet.txt, /'
+          fi
+          tools/check.sh ratchet
   # What a pull request does to the pictures and to the register sequences, against the commit it is merged onto
   # (ADR 0014, ADR 0032). It reports; it fails only when the comparison cannot be made, or when the pull request says
   # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.

@@ -11,7 +11,7 @@
 # ui/tools/layout-check.sh and tools/plan-matrix.sh (tools/compare-base.sh runs both against a commit before the
 # change, and so does CI for a pull request), tools/perf-guard.sh, tools/device-test.py.
 #
-# Layers: fmt clippy text syntax test target decoders sim. A compiler warning fails a layer like an error (ADR 0017).
+# Layers: fmt clippy text syntax test target decoders ratchet sim. A compiler warning fails a layer like an error (ADR 0017).
 # Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim
 # also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
 set -e
@@ -19,8 +19,9 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
-layers="fmt clippy text syntax test target decoders sim"
-# fmt and clippy join with the rollout of ADR 0016 and ADR 0017; sim needs Docker and builds that CI's check job lacks
+layers="fmt clippy text syntax test target decoders ratchet sim"
+# fmt and clippy join with the rollout of ADR 0016 and ADR 0017, ratchet with ADR 0037; sim needs Docker and builds
+# that CI's check job lacks
 enforced="text syntax test target decoders"
 
 tmp=$(mktemp -d)
@@ -181,6 +182,11 @@ layer_decoders() {
         (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
             fail "decoders: dec-$d alone"
     done
+}
+
+# the numbers that only go down: the size of the large files, switched-off lints, `unsafe` (ADR 0037)
+layer_ratchet() {
+    tools/ratchet.sh || fail "ratchet: see docs/adr/process/0037-numbers-that-only-go-down.md"
 }
 
 # The simulations: the scripts of the image in arm64 containers and virtual machines, without a scope. Each needs what
