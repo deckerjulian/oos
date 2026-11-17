@@ -49,7 +49,9 @@ impl Ui {
         cv.round(tile, 6, if added { ACCENT } else { BTN_BORDER }, 255);
         cv.round(tile.inset(1), 5, if added { mix(BTN, ACCENT, 28) } else { BTN }, 255);
         let col = if off { DIM } else if added { ACCENT } else { TEXT };
-        super::caticons::draw_cat_icon(cv, f, Rect::new(tile.x + tile.w / 2 - 36, tile.y + 6, 72, 36), cat, col, if off { DIM } else { ACCENT });
+        // an added tile has its value at the left: the figure moves over and the value ends before it
+        let pic = if added { Rect::new(tile.x + tile.w / 2 - 8, tile.y + 6, 60, 36) } else { Rect::new(tile.x + tile.w / 2 - 36, tile.y + 6, 72, 36) };
+        super::caticons::draw_cat_icon(cv, f, pic, cat, col, if off { DIM } else { ACCENT });
         let lines = super::meascatalog::wrap_lines(&f.s, info.name, tile.w - 10);
         for (i, l) in lines.iter().take(2).enumerate() {
             cv.text_in(&f.s, Rect::new(tile.x + 4, tile.y + 42 + i as i32 * 15, tile.w - 8, 16), 1, l, col);
@@ -60,7 +62,14 @@ impl Ui {
             // its value now, as the list has it
             let rows = self.meas_rows();
             if let Some(row) = self.studio_index(self.add_key(cat)).and_then(|i| rows.get(i)) {
-                if row.v.is_finite() { cv.text(&f.sb, tile.x + 26, tile.y + 17, &row.text(), ACCENT); }
+                if row.v.is_finite() {
+                    let (text, room) = (row.text(), pic.x - 3 - (tile.x + 26));
+                    let font = if f.sb.width(&text) <= room { &f.sb } else { &f.s };
+                    let outer = cv.save_clip();
+                    cv.clip_within(Rect::new(tile.x + 26, tile.y + 2, room.max(1), 22));
+                    cv.text(font, tile.x + 26, tile.y + 17, &text, ACCENT);
+                    cv.restore_clip(outer);
+                }
             }
         }
         // the "i": a circle with a stem

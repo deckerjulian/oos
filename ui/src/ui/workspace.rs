@@ -343,6 +343,7 @@ mod tests {
     #[test]
     fn pair_header_has_real_source_status_and_picker_routes_without_extra_rows() {
         let mut ui = mixed();
+        ui.m.layout = Layout::Default; // the header of the stock dialog; the sheet pins the sources under its tabs
         ui.select_workspace_source(WaveId::Ref(1));
         ui.meas_src = WaveId::Ref(1);
         ui.meas_src_b = WaveId::Ch(1);

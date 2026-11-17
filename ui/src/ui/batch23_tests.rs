@@ -77,7 +77,7 @@ fn check_top(u: &Ui) {
     for (name, r) in &rects { assert!(r.x >= top.x && r.right() <= top.right() && r.y >= top.y && r.bottom() <= top.bottom(), "{name} {r:?} in {top:?}"); }
     for p in rects.windows(2) { assert!(p[0].1.right() <= p[1].1.x, "{} {:?} overlaps {} {:?}", p[0].0, p[0].1, p[1].0, p[1].1); }
     let labels = &super::studio::TOP_LABELS[t.tier];
-    for (r, label) in [(t.add, labels[3]), (t.cursors, labels[5]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
+    for (r, label) in [(t.add, labels[3]), (t.display, labels[6]), (t.storage, labels[7]), (t.view, labels[8])] {
         assert!(r.w > 0 && f.mb.width(label) <= r.w - 4, "{label:?} in {r:?}");
     }
     assert!(t.acq.right() <= t.add.x, "the caption stays left of the buttons");

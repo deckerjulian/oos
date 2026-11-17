@@ -776,7 +776,11 @@ impl Ui {
                 btn(cv, set, BTN, ACCENT);
                 cv.text_in(&f.s, set, 1, "Set", TEXT);
             }
-            if let Some(b) = b {
+            let whole = meta(c).name;
+            if b.is_some() && f.s.width(whole) <= text.w {
+                // one line while the name fits beside the figure
+                cv.text_in(&f.s, text, 0, whole, TEXT);
+            } else if let Some(b) = b {
                 cv.text_in(&f.s, Rect::new(text.x, text.y, text.w, text.h / 2), 0, a, TEXT);
                 cv.text_in(&f.s, Rect::new(text.x, text.y + text.h / 2, text.w, text.h / 2), 0, b, TEXT);
             } else {
@@ -1135,7 +1139,7 @@ mod integration_tests {
 
     #[test]
     fn catalog_keeps_all_sixty_measurements_all_pairs_and_back_routes() {
-        let mut ui=Ui::new(Source::Demo{t:0.0}); ui.m.meas.clear();
+        let mut ui=Ui::new(Source::Demo{t:0.0}); ui.m.meas.clear(); ui.m.layout=Layout::Default;
         ui.key(key::MEASURE); let all=ui.catalog_lay().all; tap(&mut ui,all);
         assert_eq!((ui.menu,ui.parent),(MenuId::MeasLegacy,Some(MenuId::MeasAdd)));
         let mut found=HashSet::new();

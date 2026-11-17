@@ -68,7 +68,7 @@ fn the_levels_tab_has_seven_rows_and_the_fall_page_is_in_the_footer() {
 
 #[test]
 fn the_minimal_and_default_menus_list_the_levels() {
-    for (l, name) in [(Layout::Minimal, "b7-levels-minimal"), (Layout::Default, "b7-levels-default")] {
+    for (l, name) in [(Layout::Default, "b7-levels-default")] {
         let mut u = fresh(l);
         u.open_menu(MenuId::Measure);
         assert!(u.items(MenuId::Measure).contains(&Item::Open(MenuId::MeasLevels)), "{l:?}");

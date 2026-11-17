@@ -154,6 +154,8 @@ impl Ui {
     pub(super) fn table_buttons(&self, r: Rect) -> [Rect; 3] {
         // a narrow view: the controls have a row of their own under the title
         let b = |i: i32| if self.table_narrow(r) { Rect::new(r.x + r.w - 46 * i, r.y + HEAD_H, 44, 40) } else { Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, HEAD_H - 4) };
+        // docked, the title strip of the view closes it: one close button, and Up / Dn take its place
+        if self.dock_on() { return [b(2), b(1), Rect::new(r.x, r.y, 0, 0)]; }
         [b(3), b(2), b(1)]
     }
 
@@ -181,7 +183,7 @@ impl Ui {
                 else { format!("Search {} · {}", self.trigger_source_label(), total) },
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
-        for (b, t) in self.table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
+        for (b, t) in self.table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]).filter(|(b, _)| b.w > 0) {
             btn(cv, *b, BTN, BTN_BORDER);
             cv.text_in(&f.mb, *b, 1, t, TEXT);
         }

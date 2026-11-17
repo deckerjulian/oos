@@ -206,7 +206,7 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     u.tap(160, 20);
     assert!(!u.menu_open);
     // File loading and simulation are direct actions beside the usual tools.
-    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]);
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Load file", "SIM", "Display", "Storage", "System"]);
     let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
     u.tap(load.x + 5, load.y + 5);
     assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
@@ -224,8 +224,9 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
     u.open_wave_request = false;
     // Measurement choices remain one tap away, without going through acquisition or another menu.
-    let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
-    u.tap(r.x + 5, r.y + 5);
+    // Measure is a key of the front panel: it opens the measurement choices
+    assert!(u.measure_btn().is_none());
+    u.key(key::MEASURE);
     assert!(u.menu_open && u.menu == MenuId::MeasAdd);
 }
 

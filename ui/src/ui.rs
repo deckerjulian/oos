@@ -5355,6 +5355,10 @@ impl Ui {
             // stock OOS buttons; Load and SIM stay in the Sources menu and Menu > Analysis
             all.retain(|(b, _)| !matches!(b, TopBtn::Load | TopBtn::Menu(MenuId::Sim)));
         }
+        if self.m.compact() {
+            // Measure and Cursor are keys of the front panel (Measure opens Add measurements), and entries of the Menu
+            all.retain(|(b, _)| !matches!(b, TopBtn::Menu(MenuId::Measure | MenuId::Cursor)));
+        }
         if self.record_mode() {
             all.insert(0, (TopBtn::Live, "Live"));
         }
@@ -5571,6 +5575,8 @@ impl Ui {
                 r.x = 6 + (left - tw) / 2;
             } else {
                 r.y = d.y + d.h + 6;
+                // never over the bottom bar: above the dialog when there is room, else where it was
+                if r.y + r.h > self.frame().bottom.y { r.y = if d.y - r.h - 6 >= body.y { d.y - r.h - 6 } else { body.y + 4 }; }
             }
         }
         if Self::toast_is_info(s) {
@@ -6018,10 +6024,12 @@ impl Ui {
             MenuId::MeasFall => vec![Item::MeasSepFall, Item::MeasFallLow, Item::MeasFallMid, Item::MeasFallHigh],
             MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
             MenuId::Measure => { let mut v = vec![Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasStat), Item::MeasLabels, Item::StripDock, Item::MeasClear]; if self.m.layout == Layout::Studio {
-                // the sheet has the levels on a tab of their own; the other layouts open them from one row
                 v.retain(|i| *i != Item::StripDock);
                 let g = v.iter().position(|i| *i == Item::MeasGate).unwrap_or(0);
                 v.insert(g + 1, Item::BadgeStyle);
+            }
+            if self.sheets_on() {
+                // the sheet has the levels on a tab of their own; the stock layout opens them from one row
                 let at = v.iter().position(|i| *i == Item::Open(MenuId::MeasLevels)).unwrap_or(0);
                 v.splice(at..=at, self.items(MenuId::MeasLevels));
             }
@@ -11686,6 +11694,7 @@ mod tests {
     fn measure_tap_lists_and_hold_adds() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.layout = Layout::Default; // the stock top bar with its Measure button
         let rest = vec![
             Item::MeasSrc, Item::MeasSrcB, Item::MeasCopyTo, Item::MeasGate, Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::Open(MenuId::MeasLevels), Item::MeasIdle, Item::MeasTsetup, Item::MeasThold, Item::MeasOutside, Item::MeasN, Item::MeasEdges, Item::Open(MenuId::MeasStat), Item::MeasLabels, Item::StripDock, Item::MeasClear,
         ];

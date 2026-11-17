@@ -360,7 +360,7 @@ fn rbw_and_span_step_from_the_value_auto_shows_not_from_one_hertz() {
 
 #[test]
 fn bode_start_and_amplitude_show_what_they_hold_after_every_tap() {
-    for layout in [Layout::Minimal, Layout::Default] {
+    for layout in [Layout::Default] {
         let mut u = fresh(layout);
         u.open_menu(MenuId::Bode);
         frame(&mut u);

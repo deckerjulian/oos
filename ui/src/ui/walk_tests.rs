@@ -42,6 +42,7 @@ fn points(u: &Ui, row: &super::sheet::SheetRowGeo) -> Vec<(i32, i32)> {
             (0..n).map(|k| (row.ctrl.x + row.ctrl.w * (2 * k + 1) / (2 * n), row.ctrl.y + row.ctrl.h / 2)).collect()
         }
         RowKind::Number => { let (a, b, c) = Ui::value_parts(row.ctrl); vec![mid(a), mid(b), mid(c)] }
+        RowKind::Info => Vec::new(),
         _ => vec![mid(row.ctrl)],
     }
 }
@@ -88,6 +89,7 @@ fn walk_every_sheet_row() {
                         let g = u.sheet_geo().unwrap();
                         let pts = if i < g.rows.len() { what = format!("{:?} {:?}", g.rows[i].it, g.rows[i].kind); points(&u, &g.rows[i]) } else { let f = &g.foot[i - g.rows.len()]; what = format!("{:?} Foot", f.0); vec![mid(f.1)] };
                         n_points = pts.len();
+                        if pts.is_empty() { any = true; break; }
                         let before = sig(&mut u);
                         tap(&mut u, pts[p].0, pts[p].1);
                         let after = sig(&mut u);
@@ -128,5 +130,19 @@ fn walk_the_bars() {
             println!("== {layout:?} y={y}");
             for (a, b, w) in runs { println!("   x {a:4}..{b:4}  {w}"); }
         }
+    }
+}
+
+#[test]
+#[ignore]
+fn walk_list_classic() {
+    if std::env::var("OOS_WALK").is_err() { return; }
+    let mut u = fresh(Layout::Studio);
+    for menu in [MenuId::Remote] {
+        u.open_menu(menu);
+        let items = u.items(menu);
+        println!("## {menu:?} ({} items)", items.len());
+        for it in items { println!("   {:?} | {} | {:?} | {}", it, u.item_label(it), u.sheet_row_kind(it), u.value(it)); }
+        u.close_menu();
     }
 }

@@ -456,7 +456,8 @@ impl Ui {
         let view = place(labels[8]);
         let storage = place(labels[7]);
         let display = place(labels[6]);
-        let cursors = place(labels[5]);
+        // Cursor is a key of the front panel, and Add has Cursors: no button of its own
+        let cursors = Rect::new(display.x, CHIP_Y, 0, CHIP_H);
         // Add replaces the old "+ Add" and Meas buttons: one button, the menu has both
         let measure = Rect::new(-20, CHIP_Y, 0, CHIP_H);
         let add = place(labels[3]);
@@ -470,8 +471,7 @@ impl Ui {
     /// Measure and Cursors as the top-bar buttons (`top_buttons`); the others are Studio's own.
     pub(super) fn studio_top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let t = self.studio_top();
-        vec![(TopBtn::Menu(MenuId::Cursor), "Cursors", t.cursors),
-             (TopBtn::Menu(MenuId::Display), "Display", t.display), (TopBtn::Menu(MenuId::Storage), "Storage", t.storage)]
+        vec![(TopBtn::Menu(MenuId::Display), "Display", t.display), (TopBtn::Menu(MenuId::Storage), "Storage", t.storage)]
     }
 
     pub(super) fn draw_studio_top(&self, cv: &mut Canvas) {
@@ -526,7 +526,7 @@ impl Ui {
         let displaying = open(MenuId::Display);
         let storing = open(MenuId::Storage);
         let labels = &TOP_LABELS[t.tier];
-        for (r, label, on) in [(t.add, labels[3], adding), (t.cursors, labels[5], cursors), (t.display, labels[6], displaying), (t.storage, labels[7], storing), (t.view, labels[8], self.studio.view_menu)] {
+        for (r, label, on) in [(t.add, labels[3], adding || cursors), (t.cursors, labels[5], cursors), (t.display, labels[6], displaying), (t.storage, labels[7], storing), (t.view, labels[8], self.studio.view_menu)].into_iter().filter(|(r, ..)| r.w > 0) {
             btn(cv, r, BTN, if on { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, label, if on { ACCENT } else { TEXT });
         }
@@ -1029,7 +1029,7 @@ impl Ui {
             if self.studio.add_menu { self.studio.add_menu = false; } else { self.studio_add_open(); }
         } else if hit(t.measure) {
             self.open_meas_list();
-        } else if hit(t.cursors) {
+        } else if t.cursors.w > 0 && hit(t.cursors) {
             self.studio_cursors_tap();
         } else if hit(t.display) {
             self.toggle_menu(MenuId::Display);

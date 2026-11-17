@@ -271,9 +271,9 @@ fn sim_is_in_the_top_bar_when_live_and_live_when_viewing_a_record() {
 fn a_short_top_bar_shortens_labels_instead_of_dropping_buttons() {
     let u = studio();
     let t = u.studio_top();
-    assert!(t.cursors.w > 0 && t.view.w > 0 && t.add.w > 0, "Add is the one button for Add and Meas");
+    assert!(t.cursors.w == 0 && t.view.w > 0 && t.add.w > 0, "Add is the one button for Add, Meas and Cursors (Cursor is a key)");
     assert!(t.acq.w >= 120 || t.add.w < u.fonts().mb.width("Add") + 20);
-    assert!(t.add.right() < t.cursors.x);
+    assert!(t.add.right() < t.display.x);
 }
 
 fn tap_cell(u: &mut Ui, it: Item) {

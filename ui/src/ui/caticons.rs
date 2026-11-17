@@ -87,7 +87,8 @@ impl Ic<'_> {
     }
     fn tag(&mut self, s: &str) {
         let w = self.f.s.width(s);
-        if w > self.r.w - 2 { return; } // a tag that does not fit is left out rather than cut
+        // a tag that does not fit is left out rather than cut, and so is one that would cover most of a small figure
+        if w > self.r.w - 2 || w > self.r.w * 3 / 5 { return; }
         let (x, y) = (self.r.right() - w - 1, self.r.y + self.f.s.size * 3 / 4);
         let c = self.acc;
         self.cv.text(&self.f.s, x, y, s, c);

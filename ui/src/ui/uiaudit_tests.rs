@@ -34,8 +34,7 @@ fn repro_add_measurements() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         u.m.text_size = ts;
         for _ in 0..10 { u.step(0.05); }
-        let r = u.measure_btn().unwrap();
-        tap_at(&mut u, r.x + r.w / 2, r.y + r.h / 2);
+        u.key(key::MEASURE);
         note(&format!("ts={n} menu={:?} count={}", u.menu, u.measurement_count()));
         shot_to(&mut u, &std::path::Path::new(&out).join(format!("audit-repro-ts{n}.png")));
         u.cat_sel = Cat::Area as u16;
@@ -50,8 +49,7 @@ fn repro_add_measurements_scroll() {
     let out = std::env::var("OOS_SHOTS").unwrap_or("/tmp".into());
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     for _ in 0..10 { u.step(0.05); }
-    let r = u.measure_btn().unwrap();
-    tap_at(&mut u, r.x + r.w / 2, r.y + r.h / 2);
+    u.key(key::MEASURE);
     let up = Rect::new(965, 288, 40, 42);
     tap_at(&mut u, up.x + 5, up.y + 5);
     note(&format!("scroll after Up at top = {}", u.cat_scroll));
@@ -74,8 +72,7 @@ fn repro_add_measurements_open_groups() {
     let out = std::env::var("OOS_SHOTS").unwrap_or("/tmp".into());
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     for _ in 0..10 { u.step(0.05); }
-    let r = u.measure_btn().unwrap();
-    tap_at(&mut u, r.x + r.w / 2, r.y + r.h / 2);
+    u.key(key::MEASURE);
     u.cat_open = [u16::MAX; 6];
     shot_to(&mut u, &std::path::Path::new(&out).join("audit-repro-open.png"));
     for _ in 0..2 { tap_at(&mut u, 985, 530); }
