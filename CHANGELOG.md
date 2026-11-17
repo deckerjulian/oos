@@ -24,8 +24,9 @@ Added:
 Changed:
 
 - The waveform is drawn with the Batch path by default (Acquire > Draw path): from 100 ns to 500 us/div it draws 1.2 to
-  1.6 times as many of the acquired frames at about 30 frames a second (unit). `acq.pipeline = frames` in system.conf
-  starts with Standard; the path at start-up comes from system.conf, not from the last setup (ADR 0029).
+  3.4 times as many of the acquired frames, 5269 instead of 1563 a second with one channel at 100 ns/div (unit).
+  `acq.pipeline = frames` in system.conf starts with Standard; the path at start-up comes from system.conf, not from
+  the last setup (ADR 0029).
 - system.conf: of two lines with the same key the last one wins, and `#` starts a comment only at the start of a line
   or after a space or tab, as `oos-conf` reads it.
 - `trig.serial_hw`, `acq.frame0`, `zone.batch` and `mask.map.*` are also taken from the image defaults
