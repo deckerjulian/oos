@@ -717,6 +717,8 @@ enum Item {
     MeasGate,
     /// Studio: the badge row under the lanes as Studio chips or as the classic strip
     BadgeStyle,
+    /// Studio: the zoom controls as a pull-down tab over the zoom view, or in the title bar of the waveform
+    ZoomBar,
     MeasTsetup,
     MeasThold,
     CurMode,
@@ -4477,6 +4479,19 @@ impl Ui {
     /// Name, volts per division, and the record's sample rate, beside the trace.
     fn draw_ref_badge(&self, cv: &mut Canvas, area: Rect, y: i32, col: Rgb, slot: usize, r: &RefWave) {
         let f = self.fonts();
+        // Studio lanes: the same small outlined badge a channel has at the left of its lane. The name, the scale and
+        // the signal are on the reference's pill in the bottom bar, so nothing covers the trace
+        if self.m.layout == Layout::Studio && self.stacked() {
+            // at the middle of the lane, where a channel's badge sits when its ground line is centred: clear of the
+            // volt labels at the top and the time labels at the bottom
+            let _ = y;
+            // right of the volt labels, which a reference has down its whole lane
+            let b = Rect::new(area.x + 52, (area.y + area.h / 2 - 12).max(area.y + 2), 44, 24);
+            cv.round(b, 4, col, 255);
+            cv.round(b.inset(1), 3, BG, 255);
+            cv.text_in(&f.sb, b, 1, &format!("R{}", slot + 1), col);
+            return;
+        }
         let maximum = (area.w - 16).clamp(36, 300);
         let (name, readout) = self.ref_badge_lines(slot, r, maximum);
         let text_w = f.sb.width(&name).max(f.s.width(&readout));
@@ -5506,7 +5521,7 @@ impl Ui {
         let tcol = if acq_open { ACCENT } else { TEXT };
         cv.set_clip(Rect::new(x0, top.y, (room - x0).max(1), top.h));
         if live_acq {
-            let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
+            let (sr, depth) = self.live_rate_depth();
             let (bold, main, mode) = Self::top_acq(f, x0, room, sr, depth as f64, self.acq_name());
             let x = cv.text(if bold { &f.mb } else { &f.m }, x0, 25, &main, tcol);
             if let Some(m) = mode {
@@ -6010,11 +6025,14 @@ impl Ui {
             MenuId::Channel(c) => vec![Item::ChOn(c), Item::ChScale(c), Item::ChOffset(c), Item::ChCoupling(c), Item::ChBw(c), Item::ChProbe(c), Item::ChInvert(c), Item::ChFine, Item::ChLabel(c), Item::Open(MenuId::ChMore(c))],
             MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand],
             MenuId::Horizontal => {
-                if self.m.zoom {
+                let mut v = if self.m.zoom {
                     vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
                 } else {
                     vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::AutoDeskew, Item::ClearDeskew, Item::Zoom, Item::AutoRoll]
-                }
+                };
+                // Studio: where the zoom controls are is a setting of the zoom, on its tab
+                if self.m.layout == Layout::Studio { let at = v.iter().position(|i| *i == Item::AutoRoll).unwrap_or(v.len()); v.insert(at, Item::ZoomBar); }
+                v
             }
             MenuId::Trigger => self.trigger_items(),
             // the Horizontal Menu key opens Acquire; time base and zoom one level down

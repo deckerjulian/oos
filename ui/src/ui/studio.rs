@@ -152,6 +152,8 @@ pub(super) struct Studio {
     pub cur_badge: bool,
     /// moving one cursor moves the other with it
     pub cur_linked: bool,
+    /// the traces share one graticule instead of a lane each (the plot's menu: Overlay traces)
+    pub overlay: bool,
     /// the first pinned measurement shown as a badge (the Meas tab pages through them)
     pub badge_first: usize,
     /// the docking tree and the floating views (`dock.rs`)
@@ -682,7 +684,8 @@ impl Ui {
             let active = self.selected_workspace_source() == Some(WaveId::Ref(i));
             chip(cv, r, BTN, if active { ACCENT } else { col });
             cv.circle(r.x + 5, r.y + 5, 3, GREEN);
-            self.studio_pill_text(cv, r, &format!("R{}", i + 1), &self.studio_ref_detail(i), col);
+            let scale = self.refs[i].as_ref().map_or(String::new(), |w| format!("{}/div", si_short(w.vpd as f64, "V")));
+            self.studio_source_pill(cv, r, &format!("R{}", i + 1), &scale, &self.studio_ref_detail(i), col);
         }
         for k in 0..NMATH {
             let r = b.math[k];
@@ -794,16 +797,47 @@ impl Ui {
     /// The text of a ref or math pill: its name, and under it a small line (the signal, the operation) when it fits.
     /// A narrow pill drops that line, and a narrower one the letter of its name ("R10" becomes "10").
     fn studio_pill_text(&self, cv: &mut Canvas, r: Rect, name: &str, detail: &str, col: Rgb) {
+        self.studio_source_pill(cv, r, name, detail, "", col);
+    }
+
+    /// A ref or math pill drawn as a channel pill is: the filled badge with its name, beside it what it shows (the
+    /// scale, the operation) and under that a small line (the signal), then the chevron. A narrow pill keeps the
+    /// badge alone, and a narrower one drops the letter of its name ("R10" becomes "10").
+    fn studio_source_pill(&self, cv: &mut Canvas, r: Rect, name: &str, main: &str, detail: &str, col: Rgb) {
         let f = self.fonts();
-        let name = if f.sb.width(name) + 4 <= r.w { name } else { &name[1..] };
         cv.set_clip(r.inset(1));
-        if detail.is_empty() || f.sb.size + f.s.size > TWO_LINE_MAX || f.s.width(detail) > r.w - 6 {
-            cv.text_in(&f.sb, r, 1, name, col);
+        if r.w < 70 {
+            let name = if f.sb.width(name) + 12 <= r.w { name } else { &name[1..] };
+            let bw = (f.sb.width(name) + 8).min(r.w - 4).max(8);
+            let badge = Rect::new(r.x + (r.w - bw) / 2, r.y + 8, bw, 18);
+            cv.round(badge, 4, col, 255);
+            cv.text_in(&f.sb, badge, 1, name, DARK_TEXT);
+            cv.no_clip();
+            return;
+        }
+        let badge = Rect::new(r.x + 8, r.y + 5, 42, 20);
+        cv.round(badge, 4, col, 255);
+        cv.text_in(&f.sb, badge, 1, name, DARK_TEXT);
+        let chev = r.w >= 110;
+        let (tx, tw) = (badge.right() + 8, (r.right() - if chev { 20 } else { 4 } - badge.right() - 8).max(1));
+        cv.set_clip(Rect::new(badge.right() + 2, r.y, (tw + 6).min(r.right() - badge.right() - 2).max(1), r.h));
+        let two_lines = !detail.is_empty() && f.mb.size + f.s.size <= TWO_LINE_MAX && f.s.width(detail) <= tw;
+        // a main line too long for the pill gives way to the small line, which is the signal's name
+        // a scale loses its "/div" before it is cut
+        let main = if f.mb.width(main) > tw { main.trim_end_matches("/div") } else { main };
+        let main_fits = f.mb.width(main) <= tw;
+        if two_lines && main_fits {
+            cv.text(&f.mb, tx, r.y + 13, main, TEXT);
+            cv.text(&f.s, tx, r.y + 25, detail, mix(BAR, col, 170));
+        } else if main_fits && !main.is_empty() {
+            cv.text_in(&f.mb, Rect::new(tx, r.y, tw, r.h), 0, main, TEXT);
+        } else if !detail.is_empty() {
+            cv.text_in(&f.s, Rect::new(tx, r.y, tw, r.h), 0, detail, mix(BAR, col, 200));
         } else {
-            cv.text(&f.sb, r.x + (r.w - f.sb.width(name)) / 2, r.y + 13, name, col);
-            cv.text(&f.s, r.x + (r.w - f.s.width(detail)) / 2, r.y + 25, detail, mix(BAR, col, 170));
+            cv.text_in(&f.s, Rect::new(tx, r.y, tw, r.h), 0, main, TEXT);
         }
         cv.no_clip();
+        if chev { chevron_down(cv, r.right() - 16, r.y + r.h / 2 - 2, DIM); }
     }
 
     /// The badges are hidden and there are some to show: the bottom bar keeps a button for them.
@@ -1223,8 +1257,19 @@ impl Ui {
         match key { MeasKey::One(_, id) | MeasKey::Pair(_, id, _) | MeasKey::Cat(_, id, _, _, _) => id }
     }
 
-    /// The measurements shown as badges: those pinned, or the first three until the user pins one. Only those of a
-    /// source that is live: no "CH1 ----" while CH1 is off and a ref is the signal.
+    /// The measurements of the badge row. Until the user pins or unpins one, the row is not held to the first
+    /// three: the others follow them for as long as there is room, and the "+N" chip counts the rest. Once the user
+    /// has chosen, the row is the pinned ones only.
+    pub(super) fn studio_badge_keys(&self) -> Vec<MeasKey> {
+        let pinned = self.studio_pinned();
+        if self.studio.pinned.is_some() { return pinned; }
+        let rest: Vec<MeasKey> = self.studio_keys().into_iter()
+            .filter(|k| !pinned.contains(k) && self.studio_source_live(Self::studio_key_source(*k))).collect();
+        pinned.into_iter().chain(rest).collect()
+    }
+
+    /// The measurements that are pinned: those the user pinned, or the first three until one is pinned. Only those
+    /// of a source that is live: no "CH1 ----" while CH1 is off and a ref is the signal.
     pub(super) fn studio_pinned(&self) -> Vec<MeasKey> {
         let keys: Vec<MeasKey> = self.studio_keys().into_iter().filter(|k| self.studio_source_live(Self::studio_key_source(*k))).collect();
         match &self.studio.pinned {
@@ -1372,10 +1417,10 @@ impl Ui {
         let limit = self.studio_row_limit();
         let mut x = row.x + 4 + self.studio_search_w();
         let mut out = Vec::new();
-        let first = self.studio.badge_first.min(self.studio_pinned().len().saturating_sub(1));
+        let first = self.studio.badge_first.min(self.studio_badge_keys().len().saturating_sub(1));
         // when they do not all fit, the last place is for the "+N" chip
         let limit = if self.studio_badges_overflow_n(first) > 0 { limit - OVERFLOW_W - 5 } else { limit };
-        for key in self.studio_pinned().into_iter().skip(first) {
+        for key in self.studio_badge_keys().into_iter().skip(first) {
             let Some(r) = self.studio_index(key).and_then(|i| rows.get(i)).filter(|r| !self.meas_row_hidden(r)) else { continue };
             let w = 16 + f.s.width(&self.studio_badge_name(key, &r.name)) + 8 + f.sb.width(&r.text()).max(f.sb.width("0.000 MHz")) + 10;
             if x + w > limit { break; }
@@ -1391,7 +1436,7 @@ impl Ui {
         let f = self.fonts();
         let rows = self.meas_rows();
         let limit = self.studio_row_limit();
-        let keys: Vec<MeasKey> = self.studio_pinned().into_iter().skip(first).collect();
+        let keys: Vec<MeasKey> = self.studio_badge_keys().into_iter().skip(first).collect();
         // how many fit before `limit`; when not all do, the "+N" chip takes the last place, which leaves one badge fewer
         let fits = |limit: i32| {
             let mut x = self.studio_row().x + 4 + self.studio_search_w();
@@ -1414,7 +1459,7 @@ impl Ui {
     pub(super) fn studio_badges_more(&self) -> Option<(Rect, usize)> {
         if !self.studio_badges_visible() { return None; }
         if self.studio_classic() { return self.classic_more(); }
-        let first = self.studio.badge_first.min(self.studio_pinned().len().saturating_sub(1));
+        let first = self.studio.badge_first.min(self.studio_badge_keys().len().saturating_sub(1));
         let n = self.studio_badges_overflow_n(first);
         let last = self.studio_badges().last().map(|(_, r)| r.right() + 5)?;
         let row = self.studio_row();

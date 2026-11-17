@@ -265,7 +265,7 @@ impl Ui {
         Some(match it {
             Item::MeasIdle | Item::MeasN | Item::MeasTsetup | Item::MeasThold => Kind::Value,
             Item::MeasLow | Item::MeasMid | Item::MeasHigh | Item::MeasHyst | Item::MeasFallLow | Item::MeasFallMid | Item::MeasFallHigh => Kind::Value,
-            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::BadgeStyle | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
+            Item::MeasOutside | Item::MeasEdges | Item::MeasRefs | Item::MeasGate | Item::BadgeStyle | Item::ZoomBar | Item::MeasLvType | Item::MeasBaseTop | Item::MeasSepFall => Kind::Choice,
             Item::MeasPop | Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => Kind::Choice,
             Item::MeasStatReset => Kind::Action,
             _ => return None,
@@ -291,6 +291,7 @@ impl Ui {
             Item::MeasFallHigh => "Fall high",
             Item::MeasGate => "Gate",
             Item::BadgeStyle => "Badge style",
+            Item::ZoomBar => "Zoom bar",
             Item::MeasPop => "Population",
             Item::MeasShowSd => "Show \u{3c3}",
             Item::MeasShowMin => "Show min",
@@ -325,6 +326,7 @@ impl Ui {
             Item::MeasSepFall => if m.meas_lv.sep_fall { "Separate".into() } else { "Same as rise".into() },
             Item::MeasGate => self.measurement_gate_label().into(),
             Item::BadgeStyle => (if m.studio_classic { "Classic" } else { "Studio" }).into(),
+            Item::ZoomBar => (if m.studio_zoom_tab { "Pull-down tab" } else { "Title bar" }).into(),
             Item::MeasPop => if m.meas_pop_current { "Current".into() } else { "Accumulated".into() },
             Item::MeasShowSd => (if m.meas_show[0] { "On" } else { "Off" }).into(),
             Item::MeasShowMin => (if m.meas_show[1] { "On" } else { "Off" }).into(),
@@ -345,6 +347,7 @@ impl Ui {
             Item::MeasSepFall => vec!["Same as rise".into(), "Separate".into()],
             Item::MeasGate => vec!["Screen".into(), "Full record".into()],
             Item::BadgeStyle => vec!["Studio".into(), "Classic".into()],
+            Item::ZoomBar => vec!["Pull-down tab".into(), "Title bar".into()],
             Item::MeasPop => vec!["Accumulated".into(), "Current".into()],
             Item::MeasShowSd | Item::MeasShowMin | Item::MeasShowMax => vec!["Off".into(), "On".into()],
             _ => return None,
@@ -372,6 +375,9 @@ impl Ui {
             }
             Item::BadgeStyle => {
                 if d.rem_euclid(2) != 0 { self.m.studio_classic = !self.m.studio_classic; self.relayout(); }
+            }
+            Item::ZoomBar => {
+                if d.rem_euclid(2) != 0 { self.m.studio_zoom_tab = !self.m.studio_zoom_tab; self.zoom_tab_set(false); self.settings_changed(); self.relayout(); }
             }
             Item::MeasIdle => {
                 let cur = if self.m.meas_idle > 0.0 { self.m.meas_idle } else { 0.0 };
