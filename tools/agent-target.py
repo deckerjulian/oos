@@ -6,8 +6,9 @@
     tools/agent-target.py        the title of the task on the first line, then the text of its issue
 
 1. A lint. `cargo clippy --all-targets` runs in every crate. Findings in the paths that are only proven on a scope
-   (hal/src/dho, hal/src/update, ui/src/board, fpgad, which the status `unit` of a pull request holds for the
-   label unit-tested) are left for last: a task there needs the maintainer at a unit. Among the rest, the crate
+   (hal/src/dho, hal/src/update, ui/src/board, fpgad, boot, kernel, rootfs: the paths for which the status `unit`
+   of a pull request waits for the label unit-tested) are left for last: a task there needs the maintainer at a
+   unit. Among the rest, the crate
    with the fewest findings that has any is taken, so one crate gets clean before the next is started, and in it
    the lint with the most findings. A lint with more than 80 findings is given file by file, the files with the
    most first, up to 80.

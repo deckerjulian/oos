@@ -46,8 +46,10 @@ What GitHub offers, read in its documentation on 2026-11-17 (not all of it tried
 - **Two agents, each with one kind of task, and the task is given to them:**
   - `cleaner`: mechanical clean-up that changes no behaviour. Once a week `tools/agent-target.py` chooses the task
     by counting: the lint with the most findings in the crate that is closest to clean, and when no finding is left,
-    one part to be moved out of the largest file. The issue says what is covered, when it is done, and that
-    behaviour stays as it is.
+    one part to be moved out of the largest file. Findings and files in the paths that are only proven on a scope
+    (those the status `unit` of ADR 0038 waits for) come last, since a task there waits for the maintainer at a
+    unit (added 2026-11-17, after the first task landed in `fpgad/`). The issue says what is covered, when it is
+    done, and that behaviour stays as it is.
   - `docs-follower`: the texts for one merged change. It is started after a merge to main that changed code and no
     text, with the commit named in its issue. Clean-up, tests and changes of the pipeline do not start it.
 - **No agent chooses its own work, fixes an error or adds a feature by itself.** An error an agent finds is a
