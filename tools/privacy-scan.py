@@ -52,6 +52,8 @@ FINE = {
     "mail": re.compile(r"@(?:users\.noreply\.github\.com|example\.(?:com|org|net|invalid)|noreply\.[a-z.]+)$|^noreply@"
                        r"|^git@|^sk-[a-z0-9-]+@openssh\.com$"),
 }
+# the head of a hunk: where its added lines start in the new file
+HUNK = re.compile(r"^@@ -\S+ \+(\d+)")
 # the key itself: a long run of base64, as the lines of a key in PEM or OpenSSH form are
 KEY_BODY = re.compile(r"[A-Za-z0-9+/]{40,}")
 TRAILER = re.compile(r"^(?:Signed-off-by|Co-authored-by|Reviewed-by|Tested-by|Reported-by):", re.I)
@@ -103,14 +105,44 @@ def scan(rng):
         for i, line in enumerate(message):
             after = message[i + 1] if i + 1 < len(message) else ""
             hits += [(short, "message", rule, value) for rule, value in find(line, allow, True, after)]
-        path = None
-        diff = git("show", "--format=", "--unified=0", "--no-color", commit).splitlines()
-        for i, line in enumerate(diff):
-            if line.startswith("+++ "):
-                path = line[6:] if line.startswith("+++ b/") else None
-            elif line.startswith("+") and path and not path.startswith(SKIP):
-                after = diff[i + 1][1:] if i + 1 < len(diff) and diff[i + 1].startswith("+") else ""
-                hits += [(short, path, rule, value) for rule, value in find(line[1:], allow, following=after)]
+        hits += [(short, path, rule, value) for path, rule, value in scan_diff(commit, allow)]
+    return hits
+
+
+def scan_diff(commit, allow):
+    """(path, rule, value) for the lines a commit adds. A key's head and the key itself are read together even when
+    only one of them is new: a head added above a key already in the file, or a key added below a head."""
+    hits = []
+    path, number, files = None, 0, {}
+
+    def line_of(n):  # line n (from 1) of the file at this commit
+        if path not in files:
+            try:
+                files[path] = git("show", f"{commit}:{path}").splitlines()
+            except subprocess.CalledProcessError:
+                files[path] = []
+        return files[path][n - 1] if 0 < n <= len(files[path]) else ""
+
+    diff = git("show", "--format=", "--unified=0", "--no-color", commit).splitlines()
+    added = [line.startswith("+") and not line.startswith("+++ ") for line in diff]
+    for i, line in enumerate(diff):
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("@@") and HUNK.match(line):
+            number = int(HUNK.match(line).group(1))
+        elif added[i] and path:
+            text = line[1:]
+            if not path.startswith(SKIP):
+                next_added = i + 1 < len(diff) and added[i + 1]
+                after = diff[i + 1][1:] if next_added else ""
+                if not next_added and RULES["key"].search(text):
+                    after = line_of(number + 1)
+                hits += [(path, rule, value) for rule, value in find(text, allow, following=after)]
+                if not (i > 0 and added[i - 1]) and KEY_BODY.search(text):
+                    head = RULES["key"].search(line_of(number - 1))
+                    if head and ("key", head.group(0)) not in allow:
+                        hits.append((path, "key", head.group(0)))
+            number += 1
     return hits
 
 
