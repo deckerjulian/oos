@@ -1842,7 +1842,7 @@ impl Default for Model {
             color_grade: false,
             // samples joined as lines by default
             dots: false,
-            layout: Layout::Minimal,
+            layout: Layout::Default,
             studio_view: "waveform".into(),
             studio_dock: String::new(),
             studio_ov: 0,

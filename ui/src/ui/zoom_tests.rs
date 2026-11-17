@@ -4,6 +4,7 @@ use super::*;
 
 fn mixed() -> Ui {
     let mut ui = Ui::new(Source::Demo { t: 0.0 });
+    ui.m.layout = crate::model::Layout::Minimal; // the workspace gestures of the Minimal bars
     ui.m.run = RunState::Stop;
     ui.m.tscale = tscales().iter().position(|&s| s >= 1e-6).unwrap();
     ui.m.tfine = 1.0;
@@ -244,7 +245,7 @@ fn desktop_modifier_events_pan_and_control_zoom_time_without_vertical_changes() 
 
 #[test]
 fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
-    let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.mdepth=0;
+    let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.layout=crate::model::Layout::Minimal;ui.m.mdepth=0;
     ui.m.ch[0].on=true;ui.m.ch[1].on=true;ui.m.ch[0].offset=-1.25;ui.m.ch[1].offset=-1.25;
     ui.m.tscale=tscales().iter().position(|&s|(s-200e-9).abs()<1e-14).unwrap();ui.m.delay=819.2e-9;
     ui.m.hist=Hist::Horizontal;

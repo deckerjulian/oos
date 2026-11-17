@@ -51,7 +51,7 @@ fn default_layout_cards_open_their_menus() {
 #[test]
 fn layout_is_a_display_setting_kept_in_the_setup() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
-    assert_eq!(u.m.layout, Layout::Minimal, "OOS-plus starts with its own bars");
+    assert_eq!(u.m.layout, Layout::Default, "a new setup starts with the stock bars");
     assert!(!u.m.dots, "samples are joined by default");
     assert!(u.items(MenuId::Display).contains(&Item::Layout));
     for layout in LAYOUTS {
@@ -70,7 +70,7 @@ fn layout_is_a_display_setting_kept_in_the_setup() {
 fn the_display_menu_steps_through_the_three_layouts() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     let seen: Vec<_> = (0..3).map(|_| { u.adjust(Item::Layout, 1); u.m.layout }).collect();
-    assert_eq!(seen, [Layout::Studio, Layout::Default, Layout::Minimal]);
+    assert_eq!(seen, [Layout::Minimal, Layout::Studio, Layout::Default]);
     assert_eq!(u.options(Item::Layout), ["Default", "Minimal", "Studio"]);
     u.select_option(Item::Layout, "Studio");
     assert_eq!(u.m.layout, Layout::Studio);
@@ -258,7 +258,9 @@ fn studio_badge_popup_configures_unpins_floats_and_removes() {
     let vpp = MeasKey::One(Meas::Vpp, WaveId::Ch(0));
     let open = |u: &mut Ui, key: MeasKey| {
         let r = u.studio_badges().into_iter().find(|(k, _)| *k == key).unwrap().1;
+        // the first tap shows the measurement on the waveform, the next one on the same badge opens its menu
         tap_in(u, r);
+        if u.studio.popup.is_none() { assert_eq!(u.studio.mark, Some(key)); tap_in(u, r); }
         assert_eq!(u.studio.popup, Some(key));
         u.studio_popup_rect().unwrap()
     };

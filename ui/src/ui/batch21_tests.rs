@@ -486,6 +486,8 @@ fn the_classic_badge_strip_has_a_row_per_source_with_even_columns() {
     shot(&mut u, "classic-badges");
     let (key, r) = u.studio_badges()[0];
     tap(&mut u, r);
+    // a measurement that can be drawn is shown on the waveform first; the next tap opens the popup
+    if u.studio.popup.is_none() { assert_eq!(u.studio.mark, Some(key)); tap(&mut u, r); }
     assert_eq!(u.studio.popup, Some(key), "a tap on a pair opens the badge popup");
     u.studio.popup = None;
     // no internal names: the amplitude shows its display name

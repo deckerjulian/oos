@@ -281,6 +281,7 @@ mod tests {
 
     fn ui() -> Ui {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
+        u.m.layout = crate::model::Layout::Minimal; // the Minimal cards
         u.m.meas_full_record = false; // screen gating: these tests check the visible-window gate (the default is the whole record)
         u
     }

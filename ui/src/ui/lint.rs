@@ -14,6 +14,7 @@ pub(super) const SCREENS: [Screen; 3] = [Screen::PANEL, Screen { w: 1280, h: 800
 fn demo_on(scr: Screen) -> Ui {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
     u.scr = scr;
+    u.m.layout = crate::model::Layout::Minimal; // the Minimal bars
     u
 }
 
@@ -203,6 +204,8 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
 #[test]
 fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = crate::model::Layout::Minimal;
+    u.relayout();
     u.tap(160, 20);
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
@@ -436,6 +439,8 @@ fn screen_in_order_on(scr: Screen) {
 #[test]
 fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::new(Source::Demo { t: 0.0 });
+    u.m.layout = crate::model::Layout::Minimal;
+    u.relayout();
     u.m.bar_compact = true;
     u.tap(80, BOTTOM.y + 15);
     let (x, y) = fix_tests::row_xy(&u, "Logic analyser"); u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
