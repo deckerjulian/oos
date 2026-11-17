@@ -1,6 +1,6 @@
 # ADR 0016: Rust code is formatted by rustfmt with the tree's settings, and CI checks it
 
-- Status: proposed (accepted when the one formatting commit is in main, see Consequences)
+- Status: accepted (2026-11-17, with the one formatting commit, pull request 95; the layer `fmt` is enforced)
 - Date: 2026-11-15
 - Category: process
 
