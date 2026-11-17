@@ -2617,7 +2617,7 @@ mod automatic_setup_tests {
     }
 
     fn square(samples: usize, samples_per_ui: usize) -> Vec<f32> {
-        (0..samples).map(|i| if i / samples_per_ui % 2 == 0 { -1.0 } else { 1.0 }).collect()
+        (0..samples).map(|i| if (i / samples_per_ui).is_multiple_of(2) { -1.0 } else { 1.0 }).collect()
     }
 
     #[test]

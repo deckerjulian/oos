@@ -3,9 +3,9 @@
 9 allow hal
 77 allow ui
 2954 lines ui/src/board/dho/hw.rs
-2797 lines ui/src/model.rs
+2795 lines ui/src/model.rs
 5102 lines ui/src/scpi.rs
-12631 lines ui/src/ui.rs
+12629 lines ui/src/ui.rs
 3301 lines ui/src/ui/lint.rs
 0 unsafe dsp
 4 unsafe fpgad

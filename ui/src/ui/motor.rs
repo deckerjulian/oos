@@ -420,7 +420,7 @@ impl Ui {
         let shaft = if m.inv_ang == InvAngle::Hall {
             motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
         } else {
-            let ix = m.inv_qi.map(|q| bit(q));
+            let ix = m.inv_qi.map(&bit);
             motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
         };
         let roles = [self.m.inv_tq, self.m.inv_ev, self.m.inv_ei];
@@ -488,7 +488,7 @@ impl Ui {
         let shaft = if m.inv_ang == InvAngle::Hall {
             motor::shaft_hall(&col(m.inv_ha), &col(m.inv_hb), &col(m.inv_hc), dt, t0, m.inv_poles.max(1))
         } else {
-            let ix = m.inv_qi.map(|q| col(q));
+            let ix = m.inv_qi.map(&col);
             motor::shaft_quad(&col(m.inv_qa), &col(m.inv_qb), ix.as_deref(), dt, t0, m.inv_cpr, m.inv_swap)
         };
         if shaft.rad.is_empty() {

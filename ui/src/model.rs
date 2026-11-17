@@ -229,7 +229,7 @@ pub const HW_MIN_TDIV: f32 = 1e-9;
 pub fn tscales() -> Vec<f32> {
     // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn with the
     // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-    decades(-11, 4, false).into_iter().filter(|&x| x >= 0.49e-10 && x <= 1000.1).map(|x| x as f32).collect()
+    decades(-11, 4, false).into_iter().filter(|&x| (0.49e-10..=1000.1).contains(&x)).map(|x| x as f32).collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -2362,57 +2362,57 @@ impl Model {
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
         DecCfg {
-            on: self.dec_on.clone(),
-            src: self.dec_src.clone(),
-            baud: self.dec_baud.clone(),
-            canrate: self.dec_canrate.clone(),
-            canh: self.dec_canh.clone(),
-            fdrate: self.dec_fdrate.clone(),
-            arate: self.dec_arate.clone(),
-            tick: self.dec_tick.clone(),
-            nibbles: self.dec_nibbles.clone(),
-            uspeed: self.dec_uspeed.clone(),
+            on: self.dec_on,
+            src: self.dec_src,
+            baud: self.dec_baud,
+            canrate: self.dec_canrate,
+            canh: self.dec_canh,
+            fdrate: self.dec_fdrate,
+            arate: self.dec_arate,
+            tick: self.dec_tick,
+            nibbles: self.dec_nibbles,
+            uspeed: self.dec_uspeed,
             cphy_rate: self.dec_cphy_rate,
-            src4: self.dec_src4.clone(),
-            la_in: self.dec_la_in.clone(),
-            la: self.dec_la.clone(),
-            diff: self.dec_diff.clone(),
-            thr: self.dec_thr.clone(),
-            ascii: self.dec_ascii.clone(),
-            proto: self.dec_proto.clone(),
-            src2: self.dec_src2.clone(),
-            cs: self.dec_cs.clone(),
-            mode: self.dec_mode.clone(),
-            bits: self.dec_bits.clone(),
-            parity: self.dec_parity.clone(),
+            src4: self.dec_src4,
+            la_in: self.dec_la_in,
+            la: self.dec_la,
+            diff: self.dec_diff,
+            thr: self.dec_thr,
+            ascii: self.dec_ascii,
+            proto: self.dec_proto,
+            src2: self.dec_src2,
+            cs: self.dec_cs,
+            mode: self.dec_mode,
+            bits: self.dec_bits,
+            parity: self.dec_parity,
             opt: self.dec_opt,
         }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
-        self.dec_on = c.on.clone();
-        self.dec_src = c.src.clone();
-        self.dec_baud = c.baud.clone();
-        self.dec_canrate = c.canrate.clone();
-        self.dec_canh = c.canh.clone();
-        self.dec_fdrate = c.fdrate.clone();
-        self.dec_arate = c.arate.clone();
-        self.dec_tick = c.tick.clone();
-        self.dec_nibbles = c.nibbles.clone();
-        self.dec_uspeed = c.uspeed.clone();
+        self.dec_on = c.on;
+        self.dec_src = c.src;
+        self.dec_baud = c.baud;
+        self.dec_canrate = c.canrate;
+        self.dec_canh = c.canh;
+        self.dec_fdrate = c.fdrate;
+        self.dec_arate = c.arate;
+        self.dec_tick = c.tick;
+        self.dec_nibbles = c.nibbles;
+        self.dec_uspeed = c.uspeed;
         self.dec_cphy_rate = c.cphy_rate;
-        self.dec_src4 = c.src4.clone();
-        self.dec_la_in = c.la_in.clone();
-        self.dec_la = c.la.clone();
-        self.dec_diff = c.diff.clone();
-        self.dec_thr = c.thr.clone();
-        self.dec_ascii = c.ascii.clone();
-        self.dec_proto = c.proto.clone();
-        self.dec_src2 = c.src2.clone();
-        self.dec_cs = c.cs.clone();
-        self.dec_mode = c.mode.clone();
-        self.dec_bits = c.bits.clone();
-        self.dec_parity = c.parity.clone();
+        self.dec_src4 = c.src4;
+        self.dec_la_in = c.la_in;
+        self.dec_la = c.la;
+        self.dec_diff = c.diff;
+        self.dec_thr = c.thr;
+        self.dec_ascii = c.ascii;
+        self.dec_proto = c.proto;
+        self.dec_src2 = c.src2;
+        self.dec_cs = c.cs;
+        self.dec_mode = c.mode;
+        self.dec_bits = c.bits;
+        self.dec_parity = c.parity;
         self.dec_opt = c.opt;
     }
 
@@ -2570,11 +2570,9 @@ impl Model {
                 changed = true;
             }
         }
-        for s in [&mut self.z_src] {
-            if s.is_some_and(|c| c >= n) {
-                *s = None;
-                changed = true;
-            }
+        if self.z_src.is_some_and(|c| c >= n) {
+            self.z_src = None;
+            changed = true;
         }
         for e in &mut self.meas {
             if let WaveId::Ch(c) = e.1 {

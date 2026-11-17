@@ -518,7 +518,7 @@ fn dcc_want(fr: &[DccFrame]) -> Vec<(Kind, u32, bool)> {
         for &d in &f.data {
             want.push((Kind::Data, d as u32, true));
         }
-        want.push((Kind::Crc, x as u32, f.xor.map_or(true, |g| g == dcc_xor(&payload))));
+        want.push((Kind::Crc, x as u32, f.xor.is_none_or(|g| g == dcc_xor(&payload))));
     }
     want
 }

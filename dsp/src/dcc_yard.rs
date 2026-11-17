@@ -7,20 +7,15 @@
 //! Contributed by Arjen Halma (pull request #3). Checked against generated packets only, not yet against a track.
 
 /// Rail / command-station status derived from packets on the bus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TrackStatus {
     /// No valid DCC packets seen yet
+    #[default]
     Off,
     /// Idle or normal traffic; track is live
     Active,
     /// Emergency stop (broadcast or loco e-stop)
     Estop,
-}
-
-impl Default for TrackStatus {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 impl TrackStatus {

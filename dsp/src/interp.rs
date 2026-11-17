@@ -77,7 +77,9 @@ fn table_norm() -> &'static [f32] {
     static T: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
     T.get_or_init(|| {
         table()
-            .chunks_exact(2 * A)
+            .as_chunks::<{ 2 * A }>()
+            .0
+            .iter()
             .flat_map(|w| {
                 let s: f64 = w.iter().map(|&x| x as f64).sum();
                 w.iter().map(move |&x| (x as f64 / s) as f32)

@@ -503,7 +503,7 @@ fn xxtea_encode(v: &mut [u32], k: &[u32; 4]) {
 }
 
 fn words(b: &[u8]) -> Vec<u32> {
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
 }
 fn bytes(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -514,7 +514,7 @@ fn u32_at(b: &[u8], o: usize) -> Option<u32> {
 
 /// The payload of vendor.bin under the outer key `k`; `None` if the checksum says it is the wrong key or no such file.
 pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
-    if file.len() < 8 || file.len() % 4 != 0 {
+    if file.len() < 8 || !file.len().is_multiple_of(4) {
         return None;
     }
     let mut w = words(file);
@@ -543,7 +543,7 @@ pub fn decode_vendor(file: &[u8]) -> Result<Vendor, String> {
 /// items [u32 4][u32 id][u32 n][n bytes]; item bytes = [crc32][len][string length][len bytes XXTEA with the item key],
 /// crc32 over the string-length word and the encrypted bytes.
 pub fn decode_vendor_with(file: &[u8], k: &Keys) -> Result<Vendor, String> {
-    if file.len() < 8 || file.len() % 4 != 0 {
+    if file.len() < 8 || !file.len().is_multiple_of(4) {
         return Err(format!("{} bytes, not a vendor file", file.len()));
     }
     let payload = vendor_payload(file, &k.file).ok_or("checksum wrong")?;

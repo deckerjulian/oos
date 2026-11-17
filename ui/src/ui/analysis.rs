@@ -1531,9 +1531,9 @@ impl Ui {
         let (v_id, i_id) = (self.m.pw_v, self.m.pw_i);
         let (fline, fsw, reference) = (self.m.pw_fline, self.m.pw_fsw, self.m.pw_ref);
         let taken = match mode {
-            PowerMode::Ripple => self.take_waves(&rec, &[v_id], &[Some(i_id), self.m.pw_vin]),
-            PowerMode::Rail => self.take_waves(&rec, &[v_id], &[self.m.pw_vin, self.m.pw_clk]),
-            _ => self.take_waves(&rec, &[v_id, i_id], &[]),
+            PowerMode::Ripple => self.take_waves(rec, &[v_id], &[Some(i_id), self.m.pw_vin]),
+            PowerMode::Rail => self.take_waves(rec, &[v_id], &[self.m.pw_vin, self.m.pw_clk]),
+            _ => self.take_waves(rec, &[v_id, i_id], &[]),
         };
         let taken = match taken {
             Ok(t) => t,

@@ -801,7 +801,7 @@ impl Ui {
     /// Ok(true) adds a row; Ok(false) preserves an existing row and its statistics.
     pub(crate) fn meas_add(&mut self, k: Meas, src: WaveId) -> Result<bool, &'static str> {
         let e = (k, src);
-        if self.m.meas.iter().any(|item| *item == e) {
+        if self.m.meas.contains(&e) {
             return Ok(false);
         }
         if !self.meas_make_room() {
@@ -819,7 +819,7 @@ impl Ui {
             return Err("Source A and B are the same source");
         }
         let e = (k, a, b);
-        if self.m.meas2.iter().any(|item| *item == e) {
+        if self.m.meas2.contains(&e) {
             return Ok(false);
         }
         if !self.meas_make_room() {

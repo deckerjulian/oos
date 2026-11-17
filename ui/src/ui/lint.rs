@@ -2539,7 +2539,7 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
 fn gallery() {
     let Ok(base) = std::env::var("OOS_GALLERY") else { return };
     let only = std::env::var("OOS_TEXT_SIZE").ok();
-    for ts in TEXT_SIZES.into_iter().filter(|t| only.as_deref().map_or(true, |o| o == t.name())) {
+    for ts in TEXT_SIZES.into_iter().filter(|t| only.as_deref().is_none_or(|o| o == t.name())) {
         gallery_at(&std::path::PathBuf::from(&base).join(ts.name().to_lowercase()), ts);
     }
 }

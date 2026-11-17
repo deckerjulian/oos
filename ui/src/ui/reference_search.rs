@@ -269,9 +269,8 @@ impl Ui {
             cache.requested_key = key.clone();
         }
         let completed = cache.worker.as_mut().and_then(|worker| {
-            worker.output.try_recv().ok().map(|result| {
+            worker.output.try_recv().ok().inspect(|_result| {
                 worker.busy = false;
-                result
             })
         });
         if let Some(result) = completed {

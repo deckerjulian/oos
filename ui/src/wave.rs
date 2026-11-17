@@ -1412,7 +1412,7 @@ pub(crate) fn autoset_summary(v: &[f32], dt: f64) -> Stats {
 /// Neighbouring points are averaged first, the min/max pairs of a dense record become its middle. Noise and spikes
 /// have no steady spacing.
 pub fn periodic(v: &[f32], dt: f64) -> Option<f64> {
-    let p: Vec<f32> = v.chunks_exact(2).map(|x| (x[0] + x[1]) / 2.0).collect();
+    let p: Vec<f32> = v.as_chunks::<2>().0.iter().map(|x| (x[0] + x[1]) / 2.0).collect();
     let (lo, hi) = (p.iter().copied().fold(f32::MAX, f32::min), p.iter().copied().fold(f32::MIN, f32::max));
     if !(hi > lo) {
         return None;

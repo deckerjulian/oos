@@ -101,7 +101,7 @@ fn source(args: &[String]) -> Source {
     }
     if let Some(path) = arg(args, "--replay") {
         let raw = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {}", path, e));
-        let words: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let words: Vec<u16> = raw.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         // :WAV:PRE? = format,type,points,count,xinc,xorigin,xref,yinc,yorigin,yref
         let pre = arg(args, "--pre").unwrap_or_else(|| "1,2,4000,1,8e-10,0,0,1.3333e-4,-11250,32768".into());
         let p: Vec<f64> = pre.trim().split(',').map(|s| s.trim().parse().unwrap_or(0.0)).collect();

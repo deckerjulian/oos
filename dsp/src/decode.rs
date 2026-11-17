@@ -109,7 +109,7 @@ pub fn uart(
         let par_ok = match parity {
             Parity::None => true,
             p => match level(s + (1.5 + bits as f64) * spb) {
-                Some(pb) => ((ones + pb as u32) % 2 == 0) == (p == Parity::Even),
+                Some(pb) => (ones + pb as u32).is_multiple_of(2) == (p == Parity::Even),
                 None => {
                     complete = false;
                     false
@@ -234,7 +234,7 @@ pub fn spi(
         if e.rising != sample_rising {
             continue;
         }
-        let selected = cs_s.as_ref().map_or(true, |s| !at(s, e.t));
+        let selected = cs_s.as_ref().is_none_or(|s| !at(s, e.t));
         if !selected {
             n = 0;
             continue;
@@ -262,120 +262,6 @@ pub fn spi(
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sim::{i2c_logic, sample, spi_logic, uart_logic, I2cXfer};
-
-    #[test]
-    fn uart_8n1_and_parity() {
-        let baud = 115200.0;
-        let dt = 1.0 / baud / 10.0;
-        let msg = b"OOS 0.1";
-        let l = uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3);
-        let v = sample(|t| l.v(t), 0.0, dt, 1200);
-        let p = uart(&v, dt, baud, 8, Parity::None, 1.65, 0.2, false);
-        assert_eq!(p.iter().map(|x| x.value as u8).collect::<Vec<_>>(), msg);
-        assert!(p.iter().all(|x| x.ok));
-        // even parity, 7 bits
-        let l = uart_logic(b"AZ", baud, 7, Some(true), 0.5, 0.0, 3.3);
-        let v = sample(|t| l.v(t), 0.0, dt, 400);
-        let p = uart(&v, dt, baud, 7, Parity::Even, 1.65, 0.2, false);
-        assert_eq!(p.iter().map(|x| (x.value, x.ok)).collect::<Vec<_>>(), [(b'A' as u32, true), (b'Z' as u32, true)]);
-        // decoded as odd parity: parity errors
-        assert!(uart(&v, dt, baud, 7, Parity::Odd, 1.65, 0.2, false).iter().all(|x| !x.ok));
-        // wrong baud rate: framing errors
-        assert!(uart(
-            &sample(|t| uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3).v(t), 0.0, dt, 1200),
-            dt,
-            baud * 1.5,
-            8,
-            Parity::None,
-            1.65,
-            0.2,
-            false
-        )
-        .iter()
-        .any(|x| !x.ok));
-    }
-
-    #[test]
-    fn i2c_write_then_read() {
-        let rate = 100e3;
-        let dt = 0.25e-6;
-        let (sda, scl) = i2c_logic(
-            &[
-                I2cXfer { addr: 0x50, read: false, data: vec![0x00, 0x12], repeated: false, stop: false },
-                I2cXfer { addr: 0x50, read: true, data: vec![0xab, 0xcd], repeated: true, stop: true },
-            ],
-            rate,
-            0.0,
-            3.3,
-        );
-        let a = sample(|t| sda.v(t), 0.0, dt, 2400);
-        let c = sample(|t| scl.v(t), 0.0, dt, 2400);
-        let p = i2c(&a, &c, 1.65, 0.3);
-        let k: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, x.value, x.ok)).collect();
-        assert_eq!(
-            k,
-            [
-                (Kind::Start, 0, true),
-                (Kind::Addr { read: false }, 0x50, true),
-                (Kind::Data, 0x00, true),
-                (Kind::Data, 0x12, true),
-                (Kind::RepStart, 0, true),
-                (Kind::Addr { read: true }, 0x50, true),
-                (Kind::Data, 0xab, true),
-                (Kind::Data, 0xcd, false), // master NACKs the last read byte
-                (Kind::Stop, 0, true),
-            ]
-        );
-    }
-
-    /// Clock and data can sit at different levels. A threshold that fits the data misses a smaller clock.
-    #[test]
-    fn i2c_separate_thresholds() {
-        let rate = 100e3;
-        let dt = 0.25e-6;
-        let (sda, scl) = i2c_logic(
-            &[I2cXfer { addr: 0x50, read: false, data: vec![0x42], repeated: false, stop: true }],
-            rate,
-            0.0,
-            3.3,
-        );
-        let a = sample(|t| sda.v(t), 0.0, dt, 1600);
-        let c: Vec<f32> = sample(|t| scl.v(t), 0.0, dt, 1600).into_iter().map(|v| v / 3.3).collect();
-        let p = i2c_at(&a, &c, 1.65, 0.2, 0.4, 0.1);
-        let k: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, x.value, x.ok)).collect();
-        assert_eq!(
-            k,
-            [
-                (Kind::Start, 0, true),
-                (Kind::Addr { read: false }, 0x50, true),
-                (Kind::Data, 0x42, true),
-                (Kind::Stop, 0, true),
-            ]
-        );
-        assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
-    }
-
-    #[test]
-    fn spi_all_modes() {
-        let words = [(0x9f, 0xff), (0x00, 0xef), (0x5a, 0x40)];
-        for mode in 0..4u8 {
-            let [cs, clk, mosi, miso] = spi_logic(&words, 8, mode, 1e6, 0.0, 3.3);
-            let dt = 25e-9;
-            let s = |l: &crate::sim::Logic| sample(|t| l.v(t), 0.0, dt, 2400);
-            let (vc, vk, vo, vi) = (s(&cs), s(&clk), s(&mosi), s(&miso));
-            let p = spi(&vk, &vo, Some(&vi), Some(&vc), mode, 8, true, 1.65, 0.3, 1e9);
-            assert_eq!(p.iter().map(|x| (x.value, x.value2.unwrap())).collect::<Vec<_>>(), words, "mode {}", mode);
-            // without CS: frames from the clock alone
-            let p = spi(&vk, &vo, None, None, mode, 8, true, 1.65, 0.3, 100.0);
-            assert_eq!(p.iter().map(|x| x.value).collect::<Vec<_>>(), [0x9f, 0x00, 0x5a], "mode {} no CS", mode);
-        }
-    }
 }
 
 /// CRC-15/CAN (polynomial 0x4599) over a bit stream (SOF .. last data bit, unstuffed).
@@ -648,7 +534,7 @@ pub fn i2s(sck: &[f32], ws: Option<&[f32]>, sd: &[f32], bits: u32, thr: f32, hys
         }
     }
     // the last word has no WS edge after it: keep it when complete
-    if cur.map_or(false, |c| c.3 >= bits) {
+    if cur.is_some_and(|c| c.3 >= bits) {
         let t1 = ce.last().copied().unwrap_or(0.0);
         flush(&mut cur, t1, &mut out);
     }
@@ -679,7 +565,7 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         let first_pos = !b.rising; // positive before the middle edge
                                    // the bus must really be driven (beyond the hysteresis), not idle at 0 V where the comparator keeps its state
         let driven =
-            |t: f64, lv: bool| v.get(t as usize).map_or(false, |&x| if lv { x > thr + hyst } else { x < thr - hyst });
+            |t: f64, lv: bool| v.get(t as usize).is_some_and(|&x| if lv { x > thr + hyst } else { x < thr - hyst });
         let held = |from: f64, to: f64, lv: bool| (0..=6).all(|i| driven(from + (to - from) * i as f64 / 6.0, lv));
         if !held(mid - 1.3 * us, mid - 0.15 * us, first_pos) || !held(mid + 0.15 * us, mid + 1.3 * us, !first_pos) {
             continue;
@@ -717,4 +603,118 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         busy_until = start + 17.0 * us - 0.5 * us;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::{i2c_logic, sample, spi_logic, uart_logic, I2cXfer};
+
+    #[test]
+    fn uart_8n1_and_parity() {
+        let baud = 115200.0;
+        let dt = 1.0 / baud / 10.0;
+        let msg = b"OOS 0.1";
+        let l = uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3);
+        let v = sample(|t| l.v(t), 0.0, dt, 1200);
+        let p = uart(&v, dt, baud, 8, Parity::None, 1.65, 0.2, false);
+        assert_eq!(p.iter().map(|x| x.value as u8).collect::<Vec<_>>(), msg);
+        assert!(p.iter().all(|x| x.ok));
+        // even parity, 7 bits
+        let l = uart_logic(b"AZ", baud, 7, Some(true), 0.5, 0.0, 3.3);
+        let v = sample(|t| l.v(t), 0.0, dt, 400);
+        let p = uart(&v, dt, baud, 7, Parity::Even, 1.65, 0.2, false);
+        assert_eq!(p.iter().map(|x| (x.value, x.ok)).collect::<Vec<_>>(), [(b'A' as u32, true), (b'Z' as u32, true)]);
+        // decoded as odd parity: parity errors
+        assert!(uart(&v, dt, baud, 7, Parity::Odd, 1.65, 0.2, false).iter().all(|x| !x.ok));
+        // wrong baud rate: framing errors
+        assert!(uart(
+            &sample(|t| uart_logic(msg, baud, 8, None, 1.0, 0.0, 3.3).v(t), 0.0, dt, 1200),
+            dt,
+            baud * 1.5,
+            8,
+            Parity::None,
+            1.65,
+            0.2,
+            false
+        )
+        .iter()
+        .any(|x| !x.ok));
+    }
+
+    #[test]
+    fn i2c_write_then_read() {
+        let rate = 100e3;
+        let dt = 0.25e-6;
+        let (sda, scl) = i2c_logic(
+            &[
+                I2cXfer { addr: 0x50, read: false, data: vec![0x00, 0x12], repeated: false, stop: false },
+                I2cXfer { addr: 0x50, read: true, data: vec![0xab, 0xcd], repeated: true, stop: true },
+            ],
+            rate,
+            0.0,
+            3.3,
+        );
+        let a = sample(|t| sda.v(t), 0.0, dt, 2400);
+        let c = sample(|t| scl.v(t), 0.0, dt, 2400);
+        let p = i2c(&a, &c, 1.65, 0.3);
+        let k: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, x.value, x.ok)).collect();
+        assert_eq!(
+            k,
+            [
+                (Kind::Start, 0, true),
+                (Kind::Addr { read: false }, 0x50, true),
+                (Kind::Data, 0x00, true),
+                (Kind::Data, 0x12, true),
+                (Kind::RepStart, 0, true),
+                (Kind::Addr { read: true }, 0x50, true),
+                (Kind::Data, 0xab, true),
+                (Kind::Data, 0xcd, false), // master NACKs the last read byte
+                (Kind::Stop, 0, true),
+            ]
+        );
+    }
+
+    /// Clock and data can sit at different levels. A threshold that fits the data misses a smaller clock.
+    #[test]
+    fn i2c_separate_thresholds() {
+        let rate = 100e3;
+        let dt = 0.25e-6;
+        let (sda, scl) = i2c_logic(
+            &[I2cXfer { addr: 0x50, read: false, data: vec![0x42], repeated: false, stop: true }],
+            rate,
+            0.0,
+            3.3,
+        );
+        let a = sample(|t| sda.v(t), 0.0, dt, 1600);
+        let c: Vec<f32> = sample(|t| scl.v(t), 0.0, dt, 1600).into_iter().map(|v| v / 3.3).collect();
+        let p = i2c_at(&a, &c, 1.65, 0.2, 0.4, 0.1);
+        let k: Vec<(Kind, u32, bool)> = p.iter().map(|x| (x.kind, x.value, x.ok)).collect();
+        assert_eq!(
+            k,
+            [
+                (Kind::Start, 0, true),
+                (Kind::Addr { read: false }, 0x50, true),
+                (Kind::Data, 0x42, true),
+                (Kind::Stop, 0, true),
+            ]
+        );
+        assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
+    }
+
+    #[test]
+    fn spi_all_modes() {
+        let words = [(0x9f, 0xff), (0x00, 0xef), (0x5a, 0x40)];
+        for mode in 0..4u8 {
+            let [cs, clk, mosi, miso] = spi_logic(&words, 8, mode, 1e6, 0.0, 3.3);
+            let dt = 25e-9;
+            let s = |l: &crate::sim::Logic| sample(|t| l.v(t), 0.0, dt, 2400);
+            let (vc, vk, vo, vi) = (s(&cs), s(&clk), s(&mosi), s(&miso));
+            let p = spi(&vk, &vo, Some(&vi), Some(&vc), mode, 8, true, 1.65, 0.3, 1e9);
+            assert_eq!(p.iter().map(|x| (x.value, x.value2.unwrap())).collect::<Vec<_>>(), words, "mode {}", mode);
+            // without CS: frames from the clock alone
+            let p = spi(&vk, &vo, None, None, mode, 8, true, 1.65, 0.3, 100.0);
+            assert_eq!(p.iter().map(|x| x.value).collect::<Vec<_>>(), [0x9f, 0x00, 0x5a], "mode {} no CS", mode);
+        }
+    }
 }

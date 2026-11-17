@@ -174,7 +174,7 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
     if out.dropped > 0 && out.note.is_empty() {
         out.note = "cycle did not close";
     }
-    if slopes.len() >= 1 {
+    if !slopes.is_empty() {
         out.l = Some(slopes.iter().sum::<f64>() / slopes.len() as f64);
         out.i_lo = lo_s.iter().sum::<f64>() / lo_s.len() as f64;
         out.i_hi = hi_s.iter().sum::<f64>() / hi_s.len() as f64;

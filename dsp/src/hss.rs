@@ -592,13 +592,13 @@ mod tests {
         let mut state = (1u64 << 7) - 1;
         for _ in 0..127 {
             assert!(seen.insert(state));
-            let feedback = ((state >> 0) & 1) ^ ((state >> 1) & 1);
+            let feedback = (state & 1) ^ ((state >> 1) & 1);
             state = ((state >> 1) | (feedback << 6)) & 127;
         }
         let bits = prbs_bits(31, 4).unwrap();
         assert_eq!(bits, vec![1, 1, 1, 1]);
         let state = (1u64 << 31) - 1;
-        let feedback = ((state >> 0) & 1) ^ ((state >> 3) & 1);
+        let feedback = (state & 1) ^ ((state >> 3) & 1);
         assert_eq!(feedback, 0);
     }
 
@@ -674,10 +674,8 @@ mod tests {
         let crossings: Vec<f64> = wave
             .windows(2)
             .enumerate()
-            .filter_map(|(i, p)| {
-                ((p[0] < 0.0 && p[1] >= 0.0) || (p[0] > 0.0 && p[1] <= 0.0))
-                    .then(|| (i as f64 - p[0] / (p[1] - p[0])) * dt)
-            })
+            .filter(|&(_i, p)| (p[0] < 0.0 && p[1] >= 0.0) || (p[0] > 0.0 && p[1] <= 0.0))
+            .map(|(i, p)| (i as f64 - p[0] / (p[1] - p[0])) * dt)
             .collect();
         assert_eq!(crossings.len(), 4);
         assert!((crossings[1] - crossings[0] - 960e-12).abs() < dt);
@@ -712,7 +710,7 @@ mod tests {
         // formula, and distinguishes the old approximately doubled corner.
         let power = |bins: &[usize]| -> f64 {
             let mut sum = 0.0;
-            for block in jitter.chunks_exact(1024) {
+            for block in jitter.as_chunks::<1024>().0 {
                 for &bin in bins {
                     let mut real = 0.0;
                     let mut imag = 0.0;

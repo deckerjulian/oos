@@ -323,7 +323,7 @@ fn eye_folds_data_on_a_strobe_clock() {
         let t = i as f64 * dt;
         let k = ((t + 0.5 * ui) / ui).floor() as usize;
         dq.push(if bits[k.min(bits.len() - 1)] { 1.0 } else { 0.0 });
-        dqs.push(if (t / ui).floor() as usize % 2 == 0 { 1.0 } else { 0.0 });
+        dqs.push(if ((t / ui).floor() as usize).is_multiple_of(2) { 1.0 } else { 0.0 });
     }
     let clk = eye::recover_clock(&dqs, dt, 0.5, 0.1, None).unwrap();
     assert!(close(clk.period, ui, ui * 1e-6), "{}", clk.period);

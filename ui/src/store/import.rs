@@ -253,7 +253,7 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let curve = b[s..].windows(6).position(|w| w == b":CURVE").map(|p| s + p).ok_or("that file holds no waveform")?;
     let mut kv = std::collections::HashMap::<String, String>::new();
     let pre = String::from_utf8_lossy(&b[s..curve]);
-    for part in pre.split(|c| c == ';' || c == '\n') {
+    for part in pre.split([';', '\n']) {
         let part = part.trim().trim_start_matches(':');
         let part = part.split_once(':').map(|(_, r)| r.trim()).unwrap_or(part);
         let mut it = part.split_whitespace();
@@ -477,10 +477,10 @@ pub(super) fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let ris = f.u32(i + 52)? as usize;
     let nbytes = f.u32(i + 60)? as usize;
     let count = f.u32(i + 116)? as usize;
-    if desc < 188 || desc > 8192 || count < 2 || count > MAX_WAVEFORM_SAMPLES {
+    if !(188..=8192).contains(&desc) || !(2..=MAX_WAVEFORM_SAMPLES).contains(&count) {
         return Err("that file holds no waveform".into());
     }
-    let bpp = if count > 0 && nbytes % count == 0 && matches!(nbytes / count, 1 | 2 | 4) {
+    let bpp = if count > 0 && nbytes.is_multiple_of(count) && matches!(nbytes / count, 1 | 2 | 4) {
         nbytes / count
     } else {
         match f.u16(i + 32)? {
@@ -568,9 +568,9 @@ pub(super) fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
                 return Err("truncated waveform".into());
             }
             let data = p + dsize;
-            if matches!(kind, 1 | 2 | 3) && bpp == 4 && bsize >= 8 && bsize % 4 == 0 {
+            if matches!(kind, 1..=3) && bpp == 4 && bsize >= 8 && bsize.is_multiple_of(4) {
                 let n = (bsize / 4).min(if npts >= 2 { npts } else { bsize / 4 });
-                if n >= 2 && n <= MAX_WAVEFORM_SAMPLES {
+                if (2..=MAX_WAVEFORM_SAMPLES).contains(&n) {
                     let v = (0..n).map(|k| f.f32(data + k * 4)).collect::<Result<Vec<f32>, String>>()?;
                     if kind == 1 {
                         normal = Some(v);
@@ -679,15 +679,15 @@ pub(super) fn traces_from_columns(
     if n > 0 && cols[n - 1].abs() >= 1e29 {
         n -= 1;
     }
-    let body = if n >= nvars && n % nvars == 0 {
+    let body = if n >= nvars && n.is_multiple_of(nvars) {
         &cols[..n]
-    } else if n > nvars && (n - 1) % nvars == 0 {
+    } else if n > nvars && (n - 1).is_multiple_of(nvars) {
         &cols[1..n]
     } else {
         return Err("that file holds no waveform".into());
     };
     let rows = body.len() / nvars;
-    if rows < 2 || rows > MAX_WAVEFORM_SAMPLES {
+    if !(2..=MAX_WAVEFORM_SAMPLES).contains(&rows) {
         return Err(if rows < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
     }
     let t0 = body[0];
@@ -825,7 +825,7 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             i += 1;
         }
         let points = if npts >= 2 { npts } else { (b.len() - i) / (nvars * 8) };
-        if points < 2 || points > MAX_WAVEFORM_SAMPLES {
+        if !(2..=MAX_WAVEFORM_SAMPLES).contains(&points) {
             return Err(if points < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
         }
         if i + points * nvars * 8 > b.len() {
@@ -853,7 +853,7 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             for r in 0..rows {
                 cols.extend_from_slice(&nums[r * stride + 1..r * stride + 1 + nvars]);
             }
-        } else if nums.len() >= nvars * 2 && nums.len() % nvars == 0 {
+        } else if nums.len() >= nvars * 2 && nums.len().is_multiple_of(nvars) {
             cols = nums;
         } else {
             return Err("that file holds no waveform".into());
@@ -916,7 +916,7 @@ pub(super) fn parse_wfmx(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let points: usize = xml_text(&head, "Points").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let t0: f64 = xml_text(&head, "XOrg").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let dt: f64 = xml_text(&head, "XInc").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
-    if points < 2 || points > MAX_WAVEFORM_SAMPLES || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
+    if !(2..=MAX_WAVEFORM_SAMPLES).contains(&points) || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
         return Err("that file holds no waveform".into());
     }
     let payload = wfmx_payload(b, points)?;

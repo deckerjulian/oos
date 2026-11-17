@@ -211,7 +211,7 @@ impl Logic {
         Logic { seg: Vec::new(), lo, hi, tr }
     }
     pub fn push(&mut self, t: f64, level: bool) {
-        if self.seg.last().map_or(true, |&(_, l)| l != level) {
+        if self.seg.last().is_none_or(|&(_, l)| l != level) {
             self.seg.push((t, level));
         }
     }
@@ -219,7 +219,7 @@ impl Logic {
         // (level, time of the last change, previous level)
         let i = self.seg.partition_point(|&(s, _)| s <= t);
         if i == 0 {
-            let l = self.seg.first().map_or(false, |&(_, l)| l);
+            let l = self.seg.first().is_some_and(|&(_, l)| l);
             return (l, f64::NEG_INFINITY, l);
         }
         let (s, l) = self.seg[i - 1];

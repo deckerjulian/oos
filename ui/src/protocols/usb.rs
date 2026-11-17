@@ -52,7 +52,7 @@ impl Protocol for Usb {
     }
     /// ID: the device address or a PID.
     fn trigger_match(&self, what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Id).then(|| matches!(p.kind, Kind::Field("ADDR" | "PID")) && p.value == value)
+        (what == BusWhat::Id).then_some(matches!(p.kind, Kind::Field("ADDR" | "PID")) && p.value == value)
     }
     /// The demo device's address.
     fn trigger_default(&self) -> (BusWhat, u32) {

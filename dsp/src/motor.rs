@@ -9,17 +9,12 @@ use crate::power::{freq_of, mean_finite, whole_cycles};
 use std::f64::consts::PI;
 
 /// Sign of the mean shaft speed. Stopped is below 1 rpm.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Direction {
     Forward,
     Reverse,
+    #[default]
     Stopped,
-}
-
-impl Default for Direction {
-    fn default() -> Self {
-        Direction::Stopped
-    }
 }
 
 /// Shaft motion over one record. `rpm` is mechanical. `synchronous` is the stator field, not the shaft.
@@ -413,7 +408,7 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u
 /// Torque (mean times the N·m scale), mechanical power and system efficiency.
 /// Electrical power is the mean of v·i. The ratio is empty when that mean is 0.
 pub fn mechanical(shaft: Shaft, torque: Option<&[f32]>, scale: f64, vin: Option<&[f32]>, iin: Option<&[f32]>) -> Mech {
-    let torque = torque.and_then(|t| mean_finite(t)).map(|m| m * scale);
+    let torque = torque.and_then(mean_finite).map(|m| m * scale);
     let p_elec = match (vin, iin) {
         (Some(v), Some(i)) => mean_product(v, i),
         _ => None,

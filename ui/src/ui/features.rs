@@ -59,7 +59,7 @@ impl Ui {
     /// Whether the decoder `p` is offered.
     pub(super) fn proto_on(&self, p: Proto) -> bool {
         let k = p.key();
-        !self.sys.decoders_off.iter().any(|x| *x == k)
+        !self.sys.decoders_off.contains(&k)
     }
 
     /// A `decoders.off` that leaves out every decoder (a hand-edited system.conf) keeps the one in use, as System >

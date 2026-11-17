@@ -317,7 +317,7 @@ fn cross(a: (f32, f32), b: (f32, f32), c: (f32, f32), d: (f32, f32)) -> Option<(
     }
     let t = ((c.0 - a.0) * sy - (c.1 - a.1) * sx) / den;
     let u = ((c.0 - a.0) * ry - (c.1 - a.1) * rx) / den;
-    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| ((a.0 + t * rx, a.1 + t * ry), t))
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(((a.0 + t * rx, a.1 + t * ry), t))
 }
 
 /// Strokes the letters (polylines) so that they weave: at every crossing one letter passes over the other, which

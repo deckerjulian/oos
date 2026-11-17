@@ -96,7 +96,7 @@ pub(super) fn vertical_t(v: &[f32], t0: f64, dt: f64, t_lo: f64, t_hi: f64, _lo:
         }
         // sit on the high end of the span (pk-pk max / amplitude top)
         let d = (x as f64 - hi).abs();
-        if best.map_or(true, |(s, _)| d < s) {
+        if best.is_none_or(|(s, _)| d < s) {
             best = Some((d, t));
         }
     }
