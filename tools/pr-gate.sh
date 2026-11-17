@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-# pr-gate.sh - three answers about a pull request that decide whether it may be merged without a person pressing the
+# pr-gate.sh - four answers about a pull request that decide whether it may be merged without a person pressing the
 # button (docs/adr/process/0038), written to its newest commit as statuses:
 #
 #   waited   it has been open as long as ADR 0031 asks: 72 hours with a decision record, else 24. No wait at all for
@@ -21,7 +21,7 @@
 #
 #   tools/pr-gate.sh NUMBER        one pull request
 #   tools/pr-gate.sh --all         every open one (the waits run out without an event)
-#   tools/pr-gate.sh --dry NUMBER  print the three answers, write nothing
+#   tools/pr-gate.sh --dry NUMBER  print the four answers, write nothing
 #
 # Reads the pull request through GitHub's API and never its code. Needs gh (GH_TOKEN) and jq. OOS_REPO,
 # OOS_MAINTAINER and OOS_AGENT name another repository, maintainer and agent (defaults: $GITHUB_REPOSITORY, its owner

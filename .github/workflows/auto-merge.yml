@@ -6,8 +6,8 @@
 # It does nothing until the repository allows auto-merge, the variable AUTO_MERGE is `on`, the variable
 # AGENT_APP_CLIENT_ID and the secret AGENT_APP_KEY name the App and hold its private key. The merge is asked for with
 # a token of the App, because a merge made with the workflow's own token would start no workflow on main; the App
-# can write contents and pull requests of this one repository and nothing else. The required checks `waited`,
-# `owner`, `unit` and `review` decide when the merge happens.
+# can write contents and pull requests of this one repository and nothing else. The required checks `test`,
+# `compare`, `waited`, `owner`, `unit` and `review` decide when the merge happens.
 #
 # No code of the pull request runs here; the job reads its title and commit messages.
 name: Auto-merge

@@ -60,7 +60,7 @@ agents can be given work (ADR 0034) and whether a second person can be given wri
   that is ready for review, once per pull request (not on every push, not on drafts; the effort is the lowest). It
   comments; it neither approves nor blocks. A status that holds a pull request until its comments are answered is
   looked at when the first reviews have been seen.
-- 2026-11-17, ADR 0039: the status `review` is required. Copilot still reviews once per pull request; for a pull
+- 2026-11-17, ADR 0039: the status `review` is required; `main` holds six required checks. Copilot still reviews once per pull request; for a pull
   request of the development agent the agent asks for that review under the maintainer's account.
 - 2026-11-17: `main-review` is removed again and its review is asked by the status `owner` (ADR 0038); `main` holds
   five required checks. `CODEOWNERS` stays: GitHub asks the owner for a review by itself.

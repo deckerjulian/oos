@@ -1,6 +1,6 @@
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""tools/pr-gate.sh and tools/pr-labels.sh against a stand-in for `gh` that answers from files: the three statuses and
+"""tools/pr-gate.sh and tools/pr-labels.sh against a stand-in for `gh` that answers from files: the four statuses and
 the labels for pull requests made up here. No network; needs sh and jq, and skips itself without jq."""
 import datetime
 import json
