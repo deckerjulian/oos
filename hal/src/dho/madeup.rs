@@ -196,7 +196,8 @@ pub fn payloads(of: [usize; 4]) -> Vec<(&'static str, Vec<u8>)> {
 
 /// Writes the set into `dir` (made if it is missing) through `calfile::save` and returns the paths. Refused: the
 /// places a scope keeps its calibration in (`/rigol`, `/oos`), and a folder that holds a file of the same name
-/// which is not of this set, so the files of a real unit are never replaced by invented ones.
+/// which is not byte for byte the file this set writes, so the files of a real unit, or of another set, are never
+/// replaced.
 pub fn write(dir: &str) -> std::io::Result<Vec<String>> {
     let refuse = |m: String| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, m));
     let path = std::path::absolute(dir)?;
@@ -210,19 +211,20 @@ pub fn write(dir: &str) -> std::io::Result<Vec<String>> {
     if [&path, &real].iter().any(|p| p.starts_with("/rigol") || p.starts_with("/oos")) {
         return refuse(format!("{}: a made-up calibration set is never written where a scope keeps its own", dir));
     }
-    // nothing is written before every file that is there is known to be of a set
-    for name in FILES {
+    // nothing is written before every file that is there is known to be the one this set writes
+    let set: Vec<_> = payloads([0, 1, 2, 3]).into_iter().map(|(n, p)| (n, calfile::build(&p, STAMP), p)).collect();
+    for (name, bytes, _) in &set {
         let file = path.join(name);
-        if std::fs::read(&file).is_ok_and(|old| calfile::stamp(&old) != Some(STAMP)) {
-            return refuse(format!("{} is not a file of a made-up set: nothing written", file.display()));
+        if std::fs::read(&file).is_ok_and(|old| old != *bytes) {
+            return refuse(format!("{} is not the file of this made-up set: nothing written", file.display()));
         }
     }
     let mut out = Vec::new();
-    for (name, payload) in payloads([0, 1, 2, 3]) {
+    for (name, bytes, payload) in &set {
         let file = path.join(name);
         // a file that is already as it should be stays: a second run leaves the folder alone
-        if std::fs::read(&file).ok() != Some(calfile::build(&payload, STAMP)) {
-            calfile::save(dir, name, &payload, STAMP)?;
+        if std::fs::read(&file).ok().as_ref() != Some(bytes) {
+            calfile::save(dir, name, payload, STAMP)?;
         }
         out.push(file.display().to_string());
     }
@@ -344,6 +346,15 @@ mod tests {
         let d = temp("foreign");
         let dir = d.to_str().unwrap();
         calfile::save(dir, "cal_la.hex", &[1; 8], (2026, 11, 3, 21, 5, 9)).unwrap();
+        let before = std::fs::read(d.join("cal_la.hex")).unwrap();
+        assert_eq!(write(dir).unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::read(d.join("cal_la.hex")).unwrap(), before);
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1, "nothing was written next to it");
+        std::fs::remove_dir_all(&d).unwrap();
+        // one with the set's stamp but other bytes (another unit's file re-stamped, an older set) stays as well
+        let d = temp("same-stamp");
+        let dir = d.to_str().unwrap();
+        calfile::save(dir, "cal_la.hex", &[1; 8], STAMP).unwrap();
         let before = std::fs::read(d.join("cal_la.hex")).unwrap();
         assert_eq!(write(dir).unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(std::fs::read(d.join("cal_la.hex")).unwrap(), before);

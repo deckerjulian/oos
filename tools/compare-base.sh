@@ -80,18 +80,19 @@ for t in "$tree" "$root"; do
 	(cd "$t/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $t"
 done
 if [ -z "$cal" ]; then
-	# no files of a unit: the made-up set, written new by this tree's oos-fpgad and read by both sides. An oos-fpgad
-	# that does not know the command prints its help and writes nothing.
+	# no files of a unit: the made-up set, written new by this tree's oos-fpgad and read by both sides. A failure
+	# stops the comparison: without the set the calibrated values would silently not be compared.
 	cal=$work/made-up-cal
 	rm -rf "$cal"
-	if fpgad/target/release/oos-fpgad made-up-cal "$cal" >/dev/null 2>&1 && [ -f "$cal/cal_adc.hex" ]; then
-		cal_note="with the made-up calibration set"
-	else
-		rm -rf "$cal"
-		cal=$work/no-cal
-		mkdir -p "$cal"
-		cal_note="without calibration files"
-	fi
+	fpgad/target/release/oos-fpgad made-up-cal "$cal" >"$work/made-up-cal.txt" 2>&1 ||
+		stop "the made-up calibration set could not be written: $(tail -n 1 "$work/made-up-cal.txt")"
+	# every file the command names is there and not empty
+	grep '^/' "$work/made-up-cal.txt" >"$work/made-up-files.txt"
+	[ -s "$work/made-up-files.txt" ] || stop "oos-fpgad made-up-cal named no file"
+	while read -r f; do
+		[ -s "$f" ] || stop "the made-up calibration set lacks $f"
+	done <"$work/made-up-files.txt"
+	cal_note="with the made-up calibration set"
 fi
 echo "== register sequences, $cal_note"
 OOS_CAL_DIR=$cal "$tree/tools/plan-matrix.sh" "$tree/fpgad/target/release/oos-fpgad" >"$work/registers-base.txt"
