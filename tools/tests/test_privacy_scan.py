@@ -45,7 +45,8 @@ class Rules(unittest.TestCase):
                      # a key's head alone, as a test of a check for keys writes it
                      'write("-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\\n")',
                      # made-up values of the tests
-                     "DHO9A" + "000000001", "DHO9S" + "000000000", "aa:bb:cc:00:00:01", "02:11:22:33:44:5A", "root@example.invalid",
+                     "DHO9A" + "000000001", "DHO9S" + "000000000", "aa:bb:cc:00:00:01", "02:11:22:33:44:5A",
+                     "root@example.invalid",
                      "sk-ssh-ed25519@" + "openssh.com"):
             self.assertEqual(self.rules(text), [], text)
 
