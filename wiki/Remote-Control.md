@@ -1,0 +1,34 @@
+# Remote control
+
+> **OOS has no authentication.** Everything here is open to anyone who can reach the scope. Keep it on a trusted bench network and never connect it directly to the internet.
+
+| Interface | Port | Purpose |
+|---|---|---|
+| Web remote | 8080 | live screen, keys and touch in the browser, saves screenshots and CSV |
+| SCPI over TCP | 5555 | Rigol-style command subset |
+| VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
+| LXI identification | 8080 | `/lxi/identification` |
+| MCP | 8080 | `POST /mcp`, tools `scpi` and `screenshot` |
+| Telnet | 23 | root shell, no password |
+
+## Web remote
+
+Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to swipe. It works on a phone too.
+
+**From 0.1.6** the web remote, SCPI and VXI-11 no longer slow the scope down: on a DHO924S its screen stays at 30 frames a second with two browsers open (0.1.5: 16 with one), and the browser gets about 13 new pictures a second over Ethernet instead of 4 to 5. A script that keeps an SCPI connection open costs no frames either.
+
+**From 0.1.7** **System > Network > Remote services** switches the web remote, SCPI, VXI-11 and telnet on or off, each on its own. **From 0.1.8** the live picture can be a JPEG made by the scope's video encoder (the button JPEG next to PNG): about 75 KB a picture against 115 KB, at a third of the processor time.
+
+## Ethernet
+
+**From 0.1.12 the scope has a name:** `http://dho924s-123456.local:8080` (model and serial number) reaches it on any computer that speaks mDNS (macOS, Linux with Avahi, Windows 10 and later), also when it only has a link-local address on a cable straight to the computer. Computers that browse find the web remote, SCPI and VXI-11 (DNS-SD). **System > Network > Remote services** switches mDNS off and changes the Name, which is also the host name the scope sends to DHCP, so a router lists it. When another device has the name already, the scope takes `<name>-2`.
+
+The scope takes an address by DHCP. Without a DHCP answer it takes a link-local address, 169.254.x.y (from 0.1.9; before, 192.168.177.64), and without a cable none at all. **System > Network** shows the speed of the link. From 0.1.6, a link that comes up at 10 Mbit/s gets one more negotiation by itself (**10 Mbit retry**, on by default). If your scope still ends at 10 Mbit/s after a cold start, please report it with `/tmp/oos-ui.log`.
+
+## WLAN
+
+Put an RTL8188EU stick into the front USB port, then **System > Network > Find WLAN networks**, tap a network and enter the password on the on-screen keyboard ([[First Steps]] has how to correct inside it). Everything open on Ethernet is then open on that network too. On the DHO924S of the author the scope has joined a home network with a password and worked over it for days.
+
+## SCPI
+
+[[SCPI and VXI-11]] describes the ways in, the syntax and every command family, with Python examples. From 0.1.9 also the counter: `:COUNter:ENABle|SOURce|MODE|NDIGits`, `:COUNter:CURRent?`, `:COUNter:TOTalize:CLEar`.

@@ -58,6 +58,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | proposed |
 | [0033](process/0033-development-on-linux-macos-and-wsl.md) | process | OOS is developed on Linux, macOS and Windows with WSL; there is no native Windows build | proposed |
 | [0034](process/0034-standing-agents-get-their-task-from-a-machine-a-person-merges.md) | process | Standing agents get their task from a machine and open one pull request; a person merges | proposed |
+| [0035](process/0035-every-text-has-one-home-the-wiki-comes-from-the-tree.md) | process | Every text has one home; the wiki is published from the tree, and a change brings its texts along | proposed |
 
 ## Reading order for agents
 
