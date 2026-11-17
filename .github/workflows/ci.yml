@@ -174,8 +174,13 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal
+      # Both sides are built the same way, so the comparison does not need the release's slow link step: without it a
+      # build of oos-ui takes a third of the time (measured on 2026-11-17: 20 s instead of 68 s on a laptop).
       - name: Pictures and register sequences against the base (tools/compare-base.sh)
         id: compare
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'off'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
         run: |
           rc=0
           tools/compare-base.sh HEAD^1 || rc=$?
