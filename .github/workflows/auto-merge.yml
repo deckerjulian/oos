@@ -1,12 +1,13 @@
 # Asks GitHub to merge a pull request by itself once every required check has passed (docs/adr/process/0038), for
-# pull requests from branches of this repository by the maintainer and by Dependabot. A pull request from a fork and
-# one of an agent (a copilot/ branch) never get it here: the maintainer merges those.
+# pull requests from branches of this repository by the maintainer, by the maintainer's development agent (the App
+# dekajoule-oos-agent, ADR 0039) and by Dependabot. A pull request from a fork never gets it here: the maintainer
+# merges those.
 #
-# It does nothing until three things are set by the maintainer: the repository allows auto-merge, the variable
-# AUTO_MERGE is `on`, and the secret MAINTAINER_TOKEN holds a token of the maintainer (contents and pull requests:
-# read and write). The token is the maintainer's because a merge made with the workflow's own token would start no
-# workflow on main. Switch it on only after `waited`, `owner` and `unit` are required checks of main: before that,
-# a pull request would be merged as soon as `test` is green.
+# It does nothing until the repository allows auto-merge, the variable AUTO_MERGE is `on`, the variable
+# AGENT_APP_CLIENT_ID and the secret AGENT_APP_KEY name the App and hold its private key. The merge is asked for with
+# a token of the App, because a merge made with the workflow's own token would start no workflow on main; the App
+# can write contents and pull requests of this one repository and nothing else. The required checks `waited`,
+# `owner`, `unit` and `review` decide when the merge happens.
 #
 # No code of the pull request runs here; the job reads its title and commit messages.
 name: Auto-merge
@@ -20,21 +21,29 @@ jobs:
       github.repository == 'dekajoule/oos' && vars.AUTO_MERGE == 'on' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
-      !startsWith(github.event.pull_request.head.ref, 'copilot/') &&
-      contains(fromJSON('["dekajoule", "dependabot[bot]"]'), github.event.pull_request.user.login)
+      contains(fromJSON('["dekajoule", "dekajoule-oos-agent[bot]", "dependabot[bot]"]'),
+        github.event.pull_request.user.login)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: A token of the App
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - name: Ask for the merge
         env:
-          GH_TOKEN: ${{ secrets.MAINTAINER_TOKEN }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
           TITLE: ${{ github.event.pull_request.title }}
-          # the sign-off of the person who answers for the merge (ADR 0026, ADR 0034): "Name <address>"
+          # the sign-off of the person who answers for the merge (ADR 0026, ADR 0038): "Name <address>"
           SIGNOFF: ${{ vars.MAINTAINER_SIGNOFF }}
         run: |
-          if [ -z "$GH_TOKEN" ] || [ -z "$SIGNOFF" ]; then
-            echo "::notice::no MAINTAINER_TOKEN or MAINTAINER_SIGNOFF: nothing asked"
+          if [ -z "$SIGNOFF" ]; then
+            echo "::notice::no MAINTAINER_SIGNOFF: nothing asked"
             exit 0
           fi
           # the squashed commit: the title, the messages of the commits, and the sign-off if none of them has it

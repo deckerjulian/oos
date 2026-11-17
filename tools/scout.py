@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""scout.py: what is new where OOS is talked about and worked on, as one issue (docs/adr/process/0034).
+"""scout.py: what is new where OOS is talked about and worked on, as one issue (docs/adr/process/0039).
 
     tools/scout.py            open the issue, if there is something new
     tools/scout.py --print    print it, change nothing

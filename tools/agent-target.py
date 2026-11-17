@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""agent-target.py: the next task of the cleaner (docs/adr/process/0034), chosen by counting, not by the agent.
+"""agent-target.py: a clean-up task for the development agent (docs/adr/process/0039), chosen by counting.
 
     tools/agent-target.py        the title of the task on the first line, then the text of its issue
 

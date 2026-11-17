@@ -1,7 +1,8 @@
 # ADR 0038: A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered
 
 - Status: accepted (2026-11-17, by the maintainer, with the pipeline as a whole and without the waiting time of
-  ADR 0031; an objection is an issue and can still change it)
+  ADR 0031), amended by ADR 0039 (the development agent's pull requests are merged like the maintainer's; `review`
+  is required)
 - Date: 2026-11-17
 - Category: process
 
