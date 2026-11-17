@@ -146,6 +146,8 @@ layer_text() {
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
     # every relative link and every named file of the documents exists
     python3 -I tools/link-check.py || fail "text: a document names something that is not there (tools/link-check.py)"
+    # what a remote command or a setting lacks (docs, the comparison's queries): counted, not yet enforced
+    python3 -I tools/scpi-coverage.py || true
 }
 
 # every tracked Python file, every shell script by its first line (shell_scripts), and the workflow files as YAML
