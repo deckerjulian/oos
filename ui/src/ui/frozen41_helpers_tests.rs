@@ -142,8 +142,7 @@ fn independent_track_sources_use_refs_native_channels_deskew_and_real_units() {
 
 #[test]
 fn track_b_source_setup_roundtrip_accepts_legacy_channel_and_rejects_invalid_ids() {
-    let mut model = Model::default();
-    model.cur_b_source = Some(WaveId::Ref(3));
+    let mut model = Model { cur_b_source: Some(WaveId::Ref(3)), ..Default::default() };
     let restored = crate::store::parse_setup(&crate::store::setup_text(&model)).unwrap();
     assert_eq!(restored.cur_b_source, model.cur_b_source);
     crate::store::set(&mut model, "cur_b_ch", "1").unwrap();

@@ -288,7 +288,7 @@ mod tests {
         assert!(rms(&bs, &a) < 0.03, "band-stop error {}", rms(&bs, &a));
     }
     use crate::sim::sample;
-    use std::f64::consts::PI;
+    use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
     #[test]
     fn integral_and_derivative() {
@@ -317,15 +317,15 @@ mod tests {
         let v = sample(|t| (2.0 * PI * 100.0 * df * t).sin(), 0.0, dt, n);
         for w in [Window::Rect, Window::Hann, Window::Hamming, Window::Blackman, Window::Flattop] {
             let (_, s) = spectrum(&v, dt, w);
-            assert!((s[100] - 0.70711).abs() < 0.002, "{:?} {}", w, s[100]);
+            assert!((s[100] - FRAC_1_SQRT_2).abs() < 0.002, "{:?} {}", w, s[100]);
         }
         // between two bins: Flattop stays within 0.1 %, Hann reads low (scalloping)
         let v = sample(|t| (2.0 * PI * 100.5 * df * t).sin(), 0.0, dt, n);
         let fl = spectrum(&v, dt, Window::Flattop).1;
-        assert!((fl[100].max(fl[101]) - 0.70711).abs() < 0.0015, "{}", fl[100].max(fl[101]));
+        assert!((fl[100].max(fl[101]) - FRAC_1_SQRT_2).abs() < 0.0015, "{}", fl[100].max(fl[101]));
         let hn = spectrum(&v, dt, Window::Hann).1;
         assert!(hn[100].max(hn[101]) < 0.62);
-        assert!((dbv(0.70711) + 3.0103).abs() < 1e-3);
+        assert!((dbv(FRAC_1_SQRT_2) + 3.0103).abs() < 1e-3);
     }
 
     #[test]
@@ -344,8 +344,8 @@ mod tests {
         let fc = 10e3;
         let v = sample(|t| (2.0 * PI * fc * t).sin(), 0.0, dt, 200_000);
         let amp = |x: &[f32]| x[100_000..].iter().fold(0.0f32, |m, &y| m.max(y.abs()));
-        assert!((amp(&unary(Op1::Lowpass(fc), &v, dt)) - 0.7071).abs() < 0.01);
-        assert!((amp(&unary(Op1::Highpass(fc), &v, dt)) - 0.7071).abs() < 0.01);
+        assert!((amp(&unary(Op1::Lowpass(fc), &v, dt)) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
+        assert!((amp(&unary(Op1::Highpass(fc), &v, dt)) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
         // a decade above / below: -20 dB
         let v10 = sample(|t| (2.0 * PI * 10.0 * fc * t).sin(), 0.0, dt, 200_000);
         assert!((amp(&unary(Op1::Lowpass(fc), &v10, dt)) - 0.0995).abs() < 0.005);

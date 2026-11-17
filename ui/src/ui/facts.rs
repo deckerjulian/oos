@@ -13,6 +13,9 @@ use oos_dsp::motor::{self, Theta};
 use oos_dsp::power;
 use oos_dsp::spectrum;
 
+/// The waves `grid` takes on one time grid: (t0, dt, the required waves, the optional ones).
+type Grid = (f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>);
+
 pub(crate) enum Fact {
     Num(f64),
     Word(&'static str),
@@ -40,7 +43,7 @@ impl Ui {
         self.pair_at(14, data, clk)
     }
 
-    fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<(f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>)> {
+    fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<Grid> {
         self.on_rec(|rec| {
             let t = self.take_waves(rec, req, opt).ok()?;
             Some((t.t0, t.dt, t.v, t.opt))

@@ -35,9 +35,12 @@ struct Worker {
     rx: mpsc::Receiver<Answer>,
     busy: bool,
 }
+/// A math channel's last result and the key it was computed for.
+type Cached = Option<(u64, Result<Arc<Signal>, &'static str>)>;
+
 #[derive(Default)]
 pub(super) struct State {
-    cache: [Option<(u64, Result<Arc<Signal>, &'static str>)>; NMATH],
+    cache: [Cached; NMATH],
     worker: Option<Worker>,
     /// (operation, source A, source B, scale) of each channel at the last tick, and which channels wait to be refitted
     sig: [Option<(String, usize, usize, usize)>; NMATH],

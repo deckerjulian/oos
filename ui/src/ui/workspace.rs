@@ -1280,7 +1280,7 @@ impl Ui {
                 match gesture.panel {
                     Panel::Eye => {
                         self.workspace.eye_float =
-                            Some(Rect::new(left, top, r.w.max(320).min(W), r.h.max(180).min(BOTTOM.y - top)));
+                            Some(Rect::new(left, top, r.w.clamp(320, W), r.h.max(180).min(BOTTOM.y - top)));
                         self.relayout();
                     }
                     Panel::Measurements => {

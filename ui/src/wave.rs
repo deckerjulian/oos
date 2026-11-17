@@ -208,17 +208,14 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
         // the cable is what the channel sees, nothing else
         return if g.mask & 1 << ch != 0 { g.v(t) * g.probe[ch] as f64 } else { 0.0 };
     }
-    match (cfg.bus, ch) {
-        // a protocol module: its demo lines on the channels of its setup
-        (Some(Proto::Module(i)), _) => {
-            if let Some(d) = crate::protocols::demo(i) {
-                let s = crate::protocols::get(i).setup();
-                if let Some(f) = (0..4).find(|&r| s.src[r] == Some(ch)).and_then(|r| d.lines[r].as_ref()) {
-                    return f(t.rem_euclid(d.period));
-                }
+    // a protocol module: its demo lines on the channels of its setup
+    if let Some(Proto::Module(i)) = cfg.bus {
+        if let Some(d) = crate::protocols::demo(i) {
+            let s = crate::protocols::get(i).setup();
+            if let Some(f) = (0..4).find(|&r| s.src[r] == Some(ch)).and_then(|r| d.lines[r].as_ref()) {
+                return f(t.rem_euclid(d.period));
             }
         }
-        _ => {}
     }
     match ch {
         0 => {
@@ -899,7 +896,7 @@ impl Source {
 }
 
 /// Applies coupling, bandwidth limit and inversion to a record channel (display path).
-pub fn condition(m: &Model, c: usize, v: &mut Vec<f32>, dt: f64) {
+pub fn condition(m: &Model, c: usize, v: &mut [f32], dt: f64) {
     let ch = &m.ch[c];
     match ch.coupling {
         Coupling::Gnd => v.iter_mut().for_each(|x| *x = 0.0),

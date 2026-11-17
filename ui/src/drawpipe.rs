@@ -182,8 +182,11 @@ pub struct CodeLayout {
     pub affine: [(f32, f32); NCH],
     pub volt: fn(u16, (f32, f32)) -> f32,
     /// volts of samples a..b of one channel (bytes, stride, word, a, b, affine, out): the board's decode loop
-    pub volts: fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>),
+    pub volts: VoltsFn,
 }
+
+/// The board's decode loop: (bytes, stride, word, a, b, affine, out).
+pub type VoltsFn = fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>);
 
 impl CodeLayout {
     /// Channel `c` of the read-out `bytes` (empty when not in it).
@@ -589,7 +592,7 @@ impl Pipe {
         decode: DecodeInto,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
-        let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
+        let frames = raw.bytes().len().checked_div(fb).map_or(0, |n| frames.min(n));
         let next = AtomicUsize::new(first.min(frames));
         let b = Arc::new(Batch {
             lease: Lease { raw: Some(raw), home: self.home.clone() },
@@ -901,8 +904,10 @@ mod tests {
     }
 
     fn model(tdiv: f64, two: bool, dots: bool) -> Model {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+            ..Default::default()
+        };
         (m.trig_level, m.dots) = (0.0, dots);
         for c in 0..NCH {
             (m.ch[c].on, m.ch[c].offset) = (c == 0 || c == 1 && two, 0.0);

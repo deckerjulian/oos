@@ -552,9 +552,7 @@ mod tests {
     #[test]
     fn auto_set_up_places_the_channels_per_window() {
         use crate::wave::{place, Stats};
-        let mut m = Model::default();
-        m.win_layout = WinLayout::Rows;
-        m.ch_win = [0, 1, 1, 0];
+        let mut m = Model { win_layout: WinLayout::Rows, ch_win: [0, 1, 1, 0], ..Default::default() };
         let s = Stats { vmin: -1.0, vmax: 1.0, ..Stats::default() };
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
         // CH1 alone in window 1: its 2 Vpp fill about 80 % of 8 div, centred

@@ -652,7 +652,9 @@ pub fn bathtub(s: &[f64], j: &Jitter, period: f64, points: usize) -> Bathtub {
         if modelled {
             // the right tail of the left crossing, the left tail of the right crossing
             let p = beyond(t - j.right.0, j.right.1) + beyond(j.left.0 + period - t, j.left.1);
-            b.model.push((p.min(1.0).max(1e-300).log10() as f32).max(BATHTUB_FLOOR));
+            // NaN counts as 1, as before the clamp
+            let p = if p.is_nan() { 1.0 } else { p.clamp(1e-300, 1.0) };
+            b.model.push((p.log10() as f32).max(BATHTUB_FLOOR));
         }
     }
     b.seen = (1.0 - j.pp / period).max(0.0);

@@ -147,8 +147,11 @@ pub(in crate::ui) struct State {
     worker: Option<Worker>,
     stats_epoch: u64,
     stats: Vec<(Row, u64, Key, u64)>,
-    small: Vec<(WaveId, usize, u64, u64, Arc<Vec<f32>>)>,
+    small: Vec<Small>,
 }
+
+/// A wave kept for the small measurements: (wave, pointer, frame count, statistics epoch, samples).
+type Small = (WaveId, usize, u64, u64, Arc<Vec<f32>>);
 pub(in crate::ui) struct Reading {
     pub value: f64,
     pub computing: bool,

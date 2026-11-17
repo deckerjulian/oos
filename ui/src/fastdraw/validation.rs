@@ -181,9 +181,7 @@ fn record_trigger_origin_matches_full_oracle_for_admissible_near_edges() {
     for (pre, direction) in [(60, Slope::Rise), (50_000, Slope::Fall), (99_940, Slope::Either)] {
         let values: Vec<f32> =
             (0..100_000).map(|i| ((i as f64 - pre as f64) * std::f64::consts::TAU / 239.0).sin() as f32).collect();
-        let mut model = Model::default();
-        model.slope = direction;
-        model.trig_level = 0.0;
+        let model = Model { slope: direction, trig_level: 0.0, ..Default::default() };
         let frame = std::sync::Arc::new(Frame {
             seq: 1,
             dt: 1e-9,
