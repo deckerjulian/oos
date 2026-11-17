@@ -11,6 +11,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); needs the calibration files (`OOS_CAL_DIR=local/cal`) |
 | `compare-base.sh [BASE]` | no | the pictures (`ui/tools/layout-check.sh`) and the register sequences (`plan-matrix.sh`) of the working tree against those of a commit before the change, built in a tree of its own; the proof that a change leaves behaviour as it was (ADR 0014, ADR 0032); CI runs it for every pull request |
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |
+| `repo-settings.sh [--apply]` | no; GitHub only with `--apply` | compares the settings of the repository on GitHub with `.github/rulesets/`, `.github/repo-settings.json` (ADR 0036); `--apply` sets them |
 | `scpi_validate.py --web-port 18080` | no; a desktop build on this computer | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `sim_validate.py --web-port 18080` | no; a desktop build on this computer | replaces R8 to validate full-cycle SSC, advanced jitter configuration, background generation/cancellation and safe generation limits; writes evidence to `local/sim-validation.json` |
 | `tests/` | no | the tests of the Python host tools, run by `check.sh test` |

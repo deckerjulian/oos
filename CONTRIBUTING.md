@@ -74,7 +74,10 @@ its history matters (ADR 0026).
 The same way for everyone, the maintainer included
 ([ADR 0031](docs/adr/process/0031-every-change-enters-main-through-a-pull-request.md)):
 
-- Nobody pushes to main. Every change is a pull request, merged squashed once CI is green.
+- Nobody pushes to main. Every change is a pull request, merged squashed once CI is green. The rules that hold this
+  are files: `.github/rulesets/` and `.github/CODEOWNERS`
+  ([ADR 0036](docs/adr/process/0036-the-rules-of-the-repository-are-files-a-change-by-others-needs-the-maintainers-review.md)).
+  A pull request that is not the maintainer's needs the maintainer's approving review.
 - A pull request that changes behaviour, a rule or many files stays open at least 24 hours, so others see it coming.
   Fixes for a red main, security fixes and documentation corrections can go in as soon as CI is green.
 - A decision record comes in as `proposed` and stays open at least 72 hours for discussion before it is merged as
