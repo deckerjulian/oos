@@ -78,6 +78,10 @@
 //!   oos-fpgad compress-check <raw.bin> <compressed.bin> --k K [--mask 1]
 //!                                          offline (runs anywhere): which min/max pair layout explains the compressed
 //!                                          read of the same record (oos_hal::dho::pairs, docs/fork/compress.md)
+//!   oos-fpgad made-up-cal <dir>            offline (runs anywhere): writes a made-up calibration set into <dir>, every
+//!                                          file `plan` and the dry runs read, with invented values that mean nothing
+//!                                          for a scope (docs/protocols/self-cal.md 16). For comparing two builds
+//!                                          without the files of a unit: OOS_CAL_DIR=<dir>. Refused under /rigol, /oos
 //! A channel set different from --app-mask switches the ADC mode; --afe and a mode switch read the calibration from
 //! OOS_CAL_DIR (default /rigol/data).
 
@@ -293,6 +297,7 @@ fn main() {
         "selfcal" => Some(selfcal(a)),
         "roll" => Some(roll(a)),
         "compress-check" => Some(compcheck::run(a).map(|text| print!("{}", text))),
+        "made-up-cal" => Some(made_up_cal(a)),
         c if TOOL_CMDS.contains(&c) => Some(tool(cmd, a)),
         _ => None,
     };
@@ -398,6 +403,17 @@ fn main() {
     }
     #[cfg(not(target_os = "linux"))]
     eprintln!("oos-fpgad: run needs the unit (Linux)");
+}
+
+/// A made-up calibration set in the folder named (`oos_hal::dho::madeup`); no hardware access.
+fn made_up_cal(a: &[String]) -> Result<(), String> {
+    let dir = a.first().ok_or("made-up-cal <dir>")?;
+    let files = oos_hal::dho::madeup::write(dir).map_err(|e| e.to_string())?;
+    for f in &files {
+        println!("{}", f);
+    }
+    println!("{} files with invented values: for comparing builds on a computer, never for a scope", files.len());
+    Ok(())
 }
 
 fn num(s: &str) -> Result<u32, String> {
