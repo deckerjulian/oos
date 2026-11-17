@@ -101,24 +101,8 @@ fn lower_priority() {
     // seconds, and a viewer waiting for a picture got 304 or 503 instead
     #[cfg(target_os = "linux")]
     if !cfg!(test) {
-        // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
-        unsafe {
-            let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-            // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
-            let p: libc::sched_param = std::mem::zeroed();
-            // the system call itself: musl's sched_setscheduler() is a stub that always fails
-            if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
-                libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
-            }
-            let little = little_cores();
-            if !little.is_empty() {
-                let mut set: libc::cpu_set_t = std::mem::zeroed();
-                for c in little {
-                    libc::CPU_SET(c, &mut set);
-                }
-                libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
-            }
-        }
+        let tid = crate::system::idle_current_thread(WEB_NICE);
+        let _ = crate::system::pin_thread(tid, &little_cores());
     }
 }
 
@@ -153,16 +137,7 @@ pub fn little_core_list() -> Vec<usize> {
 /// The calling thread onto `cores` (nothing when it is empty).
 pub fn pin_to(cores: &[usize]) {
     #[cfg(target_os = "linux")]
-    if !cores.is_empty() {
-        // SAFETY: a local CPU set for the calling thread
-        unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for &c in cores {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-        }
-    }
+    let _ = crate::system::pin_current_thread(cores);
     #[cfg(not(target_os = "linux"))]
     let _ = cores;
 }
@@ -171,20 +146,7 @@ pub fn pin_to(cores: &[usize]) {
 /// measurements in the background (`ui::MeasWorker`); the threads it starts after this stay there too.
 pub fn to_little_cores() {
     #[cfg(target_os = "linux")]
-    {
-        let little = little_cores();
-        if little.is_empty() {
-            return;
-        }
-        // SAFETY: a local CPU set for the calling thread
-        unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in little {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-        }
-    }
+    let _ = crate::system::pin_current_thread(&little_cores());
 }
 
 /// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
@@ -200,14 +162,7 @@ pub fn pin_to_big_cores() {
     if big.is_empty() || little.is_empty() {
         return;
     }
-    // SAFETY: a local CPU set for the calling thread
-    unsafe {
-        let mut set: libc::cpu_set_t = std::mem::zeroed();
-        for c in big {
-            libc::CPU_SET(c, &mut set);
-        }
-        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-    }
+    let _ = crate::system::pin_current_thread(&big);
 }
 
 /// The fastest the live picture is made: 20 a second.

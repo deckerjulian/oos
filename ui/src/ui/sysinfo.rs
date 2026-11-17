@@ -60,13 +60,7 @@ fn memory() -> Option<(u64, u64)> {
 
 /// (free, total) bytes of the file system holding `path`.
 fn disk(path: &str) -> Option<(u64, u64)> {
-    let c = std::ffi::CString::new(path).ok()?;
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        return None;
-    }
-    let fr = s.f_frsize as u64;
-    Some((s.f_bavail as u64 * fr, s.f_blocks as u64 * fr))
+    crate::system::fs_stats(path).ok()
 }
 
 /// Current clock of CPU `n` in Hz (cpufreq).
