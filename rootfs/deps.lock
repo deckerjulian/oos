@@ -18,4 +18,4 @@ hostapd          2.11     2b3facb632fd4f65e32f4bf82a76b4b72c501f995a4f62e330219f
 # libnl is not built here: wpa_supplicant links Alpine 3.22's libnl3-static. These are the two files Alpine builds
 # that package from; rootfs/build-wlan-tools.sh fetches them for the release and stops when Alpine's version differs.
 libnl            3.11.0   2a56e1edefa3e68a7c00879496736fdbf62fc94ed3232c0baba127ecfa76874d  https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-3.11.0.tar.gz
-libnl-musl-patch 3.11.0   d787017fdf108c98bf2d0010004cc38040ed7f0734265b197117ffdb4f140f97  https://gitlab.alpinelinux.org/alpine/aports/-/raw/3.22-stable/main/libnl3/libnl3-musl.patch
+libnl-musl-patch 3.11.0   d787017fdf108c98bf2d0010004cc38040ed7f0734265b197117ffdb4f140f97  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/libnl3/libnl3-musl.patch
