@@ -7,6 +7,9 @@
 
 use crate::edges::{edges, states};
 
+pub(crate) mod crc;
+pub use crc::can_crc15;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// UART character / SPI word / I2C data byte
@@ -53,6 +56,28 @@ pub struct Packet {
     pub value2: Option<u32>,
     /// UART: stop bit and parity ok; I2C: acknowledged
     pub ok: bool,
+}
+
+impl Packet {
+    /// A packet of `kind` without a second value.
+    pub fn new(kind: Kind, t0: f64, t1: f64, value: u32, ok: bool) -> Packet {
+        Packet { t0, t1, kind, value, value2: None, ok }
+    }
+
+    /// A labelled protocol field (`Kind::Field`).
+    pub fn field(label: &'static str, t0: f64, t1: f64, value: u32, ok: bool) -> Packet {
+        Packet::new(Kind::Field(label), t0, t1, value, ok)
+    }
+
+    /// A value-less event tag (label starting with '!').
+    pub fn tag(label: &'static str, t0: f64, t1: f64, ok: bool) -> Packet {
+        Packet::field(label, t0, t1, 0, ok)
+    }
+
+    /// The packet with a second value.
+    pub fn with_value2(self, value2: u32) -> Packet {
+        Packet { value2: Some(value2), ..self }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,14 +145,7 @@ pub fn uart(
         if !complete || stop.is_none() {
             break;
         }
-        out.push(Packet {
-            t0: s,
-            t1: s + (2.0 + nb) * spb,
-            kind: Kind::Data,
-            value: val,
-            value2: None,
-            ok: stop == Some(true) && par_ok,
-        });
+        out.push(Packet::new(Kind::Data, s, s + (2.0 + nb) * spb, val, stop == Some(true) && par_ok));
         busy_until = s + (1.0 + nb + 0.5) * spb;
     }
     out
@@ -156,18 +174,11 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
         match k {
             1 | 2 if at(&scl_s, t) => {
                 if k == 1 {
-                    out.push(Packet {
-                        t0: t,
-                        t1: t,
-                        kind: if in_frame { Kind::RepStart } else { Kind::Start },
-                        value: 0,
-                        value2: None,
-                        ok: true,
-                    });
+                    out.push(Packet::new(if in_frame { Kind::RepStart } else { Kind::Start }, t, t, 0, true));
                     in_frame = true;
                     first = true;
                 } else {
-                    out.push(Packet { t0: t, t1: t, kind: Kind::Stop, value: 0, value2: None, ok: true });
+                    out.push(Packet::new(Kind::Stop, t, t, 0, true));
                     in_frame = false;
                 }
                 nbits = 0;
@@ -184,16 +195,9 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
                 } else {
                     let ack = !b;
                     let p = if first {
-                        Packet {
-                            t0,
-                            t1: t,
-                            kind: Kind::Addr { read: bits & 1 == 1 },
-                            value: bits >> 1,
-                            value2: None,
-                            ok: ack,
-                        }
+                        Packet::new(Kind::Addr { read: bits & 1 == 1 }, t0, t, bits >> 1, ack)
                     } else {
-                        Packet { t0, t1: t, kind: Kind::Data, value: bits, value2: None, ok: ack }
+                        Packet::new(Kind::Data, t0, t, bits, ack)
                     };
                     out.push(p);
                     first = false;
@@ -257,16 +261,11 @@ pub fn spi(
         n += 1;
         last = e.t;
         if n == bits {
-            out.push(Packet { t0, t1: e.t, kind: Kind::Data, value: a, value2: mi.as_ref().map(|_| b), ok: true });
+            out.push(Packet { value2: mi.as_ref().map(|_| b), ..Packet::new(Kind::Data, t0, e.t, a, true) });
             n = 0;
         }
     }
     out
-}
-
-/// CRC-15/CAN (polynomial 0x4599) over a bit stream (SOF .. last data bit, unstuffed).
-pub fn can_crc15(bits: &[bool]) -> u16 {
-    crate::decode_ext::crc_msb(bits.iter().copied(), 15, 0x4599, 0) as u16
 }
 
 /// CAN 2.0A/B data and remote frames at `bitrate`. `invert` = false: logic level as on the RX/TX pin (dominant low,
@@ -388,22 +387,15 @@ fn can_frame(
     let (_, _, _) = next()?;
     let ack = next()?;
     let ack_del = next()?;
-    let pk = |kind, a: usize, b: usize, value: u32, ok: bool| Packet {
-        t0: bits[a].1,
-        t1: bits[b].2,
-        kind,
-        value,
-        value2: None,
-        ok,
-    };
-    let mut out = vec![Packet { t0: bits[0].1, t1: bits[0].2, kind: Kind::Start, value: 0, value2: None, ok: true }];
+    let pk = |kind, a: usize, b: usize, value: u32, ok: bool| Packet::new(kind, bits[a].1, bits[b].2, value, ok);
+    let mut out = vec![Packet::new(Kind::Start, bits[0].1, bits[0].2, 0, true)];
     let id_end = if ext { 31 } else { 11 };
     out.push(pk(Kind::Id { ext, rtr }, 1, id_end, id, true));
     for i in 0..n {
         out.push(pk(Kind::Data, data_at + 8 * i, data_at + 8 * i + 7, val(data_at + 8 * i..data_at + 8 * i + 8), true));
     }
     out.push(pk(Kind::Crc, crc_at, crc_at + 14, crc_rx as u32, crc_rx == crc_calc));
-    out.push(Packet { t0: ack.1, t1: ack.2, kind: Kind::Ack, value: 0, value2: None, ok: !ack.0 });
+    out.push(Packet::new(Kind::Ack, ack.1, ack.2, 0, !ack.0));
     Some((out, ack_del.2))
 }
 
@@ -447,7 +439,7 @@ pub fn lin(v: &[f32], dt: f64, baud: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     for (k, &(b0, b1)) in breaks.iter().enumerate() {
         let end = breaks.get(k + 1).map_or(f64::INFINITY, |b| b.0);
         let fr: Vec<&Packet> = bytes.iter().filter(|p| p.t0 > b1 && p.t0 < end).collect();
-        out.push(Packet { t0: b0, t1: b1, kind: Kind::Break, value: 0, value2: None, ok: true });
+        out.push(Packet::new(Kind::Break, b0, b1, 0, true));
         if fr.len() < 2 || fr[0].value != 0x55 {
             continue;
         }
@@ -491,7 +483,7 @@ pub fn i2s(sck: &[f32], ws: Option<&[f32]>, sd: &[f32], bits: u32, thr: f32, hys
             if n > 0 {
                 // MSB-aligned word of `bits`; shorter slots are padded with zeros
                 let v = if n < bits { v << (bits - n) } else { v };
-                out.push(Packet { t0, t1, kind: Kind::Sample { right }, value: v, value2: None, ok: n >= bits });
+                out.push(Packet::new(Kind::Sample { right }, t0, t1, v, n >= bits));
             }
         }
     };
@@ -592,14 +584,7 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         ok &= ones % 2 == 1;
-        out.push(Packet {
-            t0: mid - 1.5 * us,
-            t1: start + 17.0 * us,
-            kind: Kind::Word { cmd: first_pos },
-            value: val,
-            value2: None,
-            ok,
-        });
+        out.push(Packet::new(Kind::Word { cmd: first_pos }, mid - 1.5 * us, start + 17.0 * us, val, ok));
         busy_until = start + 17.0 * us - 0.5 * us;
     }
     out

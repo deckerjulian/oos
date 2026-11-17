@@ -8,32 +8,10 @@
 //! sample indices, `ok` = the check of the field (CRC, parity, framing) passed. Fields without an own `Kind` use
 //! `Kind::Field(label)`. Signal generators for tests and the demo source are in `gen`.
 
+pub use crate::decode::crc::{can_fd_crc, flexray_frame_crc, flexray_header_crc, modbus_crc, ow_crc8};
 use crate::decode::{can_crc15, uart, Kind, Packet, Parity};
 use crate::edges::{edges, states, Edge};
 use crate::trigger::Slope;
-
-fn pk(kind: Kind, t0: f64, t1: f64, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    Packet { t0, t1, kind, value, value2, ok }
-}
-
-/// A value-less event tag (label starting with '!').
-fn tag(label: &'static str, t0: f64, t1: f64, ok: bool) -> Packet {
-    pk(Kind::Field(label), t0, t1, 0, None, ok)
-}
-
-/// Bitwise CRC, MSB first, without reflection or final XOR (`poly` may include the x^len term).
-pub(crate) fn crc_msb(bits: impl IntoIterator<Item = bool>, len: u32, poly: u32, init: u32) -> u32 {
-    let mask = if len >= 32 { u32::MAX } else { (1u32 << len) - 1 };
-    let mut crc = init & mask;
-    for b in bits {
-        let top = (crc >> (len - 1)) & 1 == 1;
-        crc = (crc << 1) & mask;
-        if top != b {
-            crc ^= poly & mask;
-        }
-    }
-    crc
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Parallel bus
@@ -99,7 +77,7 @@ pub fn parallel(data: &[&[f32]], clk: Option<&[f32]>, edge: Slope, thr: f32, hys
     for (k, &(t, i)) in at.iter().enumerate() {
         let (v, ok) = word(i);
         let t1 = at.get(k + 1).map_or((n - 1) as f64, |a| a.0);
-        out.push(pk(Kind::Data, t, t1.max(t), v, None, ok));
+        out.push(Packet::new(Kind::Data, t, t1.max(t), v, ok));
     }
     out
 }
@@ -215,21 +193,21 @@ pub fn dmx512(v: &[f32], dt: f64, thr: f32, hyst: f32, invert: bool) -> Vec<Pack
     let chars = uart(v, dt, DMX_BAUD, 8, Parity::None, thr, hyst, invert);
     for (k, &(b0, b1, m1)) in brk.iter().enumerate() {
         let end = brk.get(k + 1).map_or(f64::INFINITY, |b| b.0);
-        out.push(pk(Kind::Break, b0, b1, 0, None, true));
+        out.push(Packet::new(Kind::Break, b0, b1, 0, true));
         let Some(m1) = m1 else { continue };
-        out.push(pk(Kind::Field("MAB"), b1, m1, ((m1 - b1) / us).round() as u32, None, m1 - b1 >= 8.0 * us - 1.0));
+        out.push(Packet::field("MAB", b1, m1, ((m1 - b1) / us).round() as u32, m1 - b1 >= 8.0 * us - 1.0));
         let slots: Vec<Byte> = chars
             .iter()
             .filter(|c| c.t0 >= b1 - 0.5 && c.t0 < end)
             .map(|c| (c.value as u8, c.t0, c.t0 + 11.0 * spb, c.ok && mark(c.t0 + 10.5 * spb) == Some(true)))
             .collect();
         let Some(&(sc, s0, s1, sok)) = slots.first() else { continue };
-        out.push(pk(Kind::Field("SC"), s0, s1, sc as u32, None, sok));
+        out.push(Packet::field("SC", s0, s1, sc as u32, sok));
         if sc == RDM_SC {
             rdm(&slots, &mut out);
         } else {
             for (i, s) in slots.iter().enumerate().skip(1) {
-                out.push(pk(Kind::Data, s.1, s.2, s.0 as u32, Some(i as u32), s.3));
+                out.push(Packet::new(Kind::Data, s.1, s.2, s.0 as u32, s.3).with_value2(i as u32));
             }
         }
     }
@@ -246,14 +224,8 @@ fn field_be(out: &mut Vec<Packet>, s: &[Byte], label: &'static str, a: usize, n:
     }
     let v = s[a..a + n].iter().fold(0u64, |acc, x| acc << 8 | x.0 as u64);
     let fok = s[a..a + n].iter().all(|x| x.3);
-    out.push(pk(
-        Kind::Field(label),
-        s[a].1,
-        s[a + n - 1].2,
-        v as u32,
-        if n > 4 { Some((v >> 32) as u32) } else { None },
-        ok && fok,
-    ));
+    let value2 = (n > 4).then_some((v >> 32) as u32);
+    out.push(Packet { value2, ..Packet::field(label, s[a].1, s[a + n - 1].2, v as u32, ok && fok) });
     true
 }
 
@@ -276,7 +248,7 @@ fn rdm(s: &[Byte], out: &mut Vec<Packet>) {
     ];
     let trunc = |out: &mut Vec<Packet>| {
         let l = s.last().unwrap_or(&(0, 0.0, 0.0, false));
-        out.push(tag("!ERR", l.1, l.2, false));
+        out.push(Packet::tag("!ERR", l.1, l.2, false));
     };
     for &(label, a, n, ok) in &layout {
         if !field_be(out, s, label, a, n, ok) {
@@ -284,7 +256,7 @@ fn rdm(s: &[Byte], out: &mut Vec<Packet>) {
         }
     }
     for x in s.iter().skip(24).take(pdl) {
-        out.push(pk(Kind::Data, x.1, x.2, x.0 as u32, None, x.3));
+        out.push(Packet::new(Kind::Data, x.1, x.2, x.0 as u32, x.3));
     }
     let cs_at = if len >= 24 { len } else { 24 + pdl };
     if cs_at + 2 > s.len() {
@@ -292,23 +264,11 @@ fn rdm(s: &[Byte], out: &mut Vec<Packet>) {
     }
     let rx = (b(cs_at) << 8 | b(cs_at + 1)) as u32;
     let sum = s[..cs_at].iter().map(|x| x.0 as u32).sum::<u32>() & 0xffff;
-    out.push(pk(Kind::Crc, s[cs_at].1, s[cs_at + 1].2, rx, None, rx == sum && s[cs_at].3 && s[cs_at + 1].3));
+    out.push(Packet::new(Kind::Crc, s[cs_at].1, s[cs_at + 1].2, rx, rx == sum && s[cs_at].3 && s[cs_at + 1].3));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Modbus
-
-/// CRC-16/MODBUS (Modbus over serial line V1.02, 6.2.2): init 0xFFFF, reflected polynomial 0xA001; sent low byte first.
-pub fn modbus_crc(bytes: &[u8]) -> u16 {
-    let mut crc: u16 = 0xffff;
-    for &b in bytes {
-        crc ^= b as u16;
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 { crc >> 1 ^ 0xa001 } else { crc >> 1 };
-        }
-    }
-    crc
-}
 
 /// Modbus ASCII LRC: two's complement of the 8-bit sum.
 pub fn modbus_lrc(bytes: &[u8]) -> u8 {
@@ -339,13 +299,13 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
             return;
         }
         if n < 4 {
-            out.push(tag("!ERR", frame[0].1, frame[n - 1].2, false));
+            out.push(Packet::tag("!ERR", frame[0].1, frame[n - 1].2, false));
         } else {
             let bytes: Vec<u8> = frame.iter().map(|x| x.0).collect();
             let rx = bytes[n - 2] as u32 | (bytes[n - 1] as u32) << 8;
             let ok = rx == modbus_crc(&bytes[..n - 2]) as u32 && frame[n - 2].3 && frame[n - 1].3;
             modbus_adu(&frame[..n - 2], out);
-            out.push(pk(Kind::Crc, frame[n - 2].1, frame[n - 1].2, rx, None, ok));
+            out.push(Packet::new(Kind::Crc, frame[n - 2].1, frame[n - 1].2, rx, ok));
         }
         frame.clear();
     };
@@ -384,7 +344,7 @@ pub fn modbus_ascii(
             i += 1;
             continue;
         }
-        out.push(pk(Kind::Start, ch[i].t0, ch[i].t1, 0, None, ch[i].ok));
+        out.push(Packet::new(Kind::Start, ch[i].t0, ch[i].t1, 0, ch[i].ok));
         let mut j = i + 1;
         while j < ch.len() && ch[j].value != 0x0d && ch[j].value != b':' as u32 {
             j += 1;
@@ -400,15 +360,15 @@ pub fn modbus_ascii(
         }
         let n = bytes.len();
         if bad || n < 3 {
-            out.push(tag("!ERR", ch[i].t1, body.last().map_or(ch[i].t1, |c| c.t1), false));
+            out.push(Packet::tag("!ERR", ch[i].t1, body.last().map_or(ch[i].t1, |c| c.t1), false));
         } else {
             let raw: Vec<u8> = bytes.iter().map(|x| x.0).collect();
             modbus_adu(&bytes[..n - 1], &mut out);
             let ok = modbus_lrc(&raw[..n - 1]) == raw[n - 1] && bytes[n - 1].3;
-            out.push(pk(Kind::Crc, bytes[n - 1].1, bytes[n - 1].2, raw[n - 1] as u32, None, ok));
+            out.push(Packet::new(Kind::Crc, bytes[n - 1].1, bytes[n - 1].2, raw[n - 1] as u32, ok));
         }
         if j + 1 < ch.len() && ch[j].value == 0x0d && ch[j + 1].value == 0x0a {
-            out.push(pk(Kind::Stop, ch[j].t0, ch[j + 1].t1, 0, None, ch[j].ok && ch[j + 1].ok));
+            out.push(Packet::new(Kind::Stop, ch[j].t0, ch[j + 1].t1, 0, ch[j].ok && ch[j + 1].ok));
             i = j + 2;
         } else {
             i = j.max(i + 1);
@@ -420,20 +380,19 @@ pub fn modbus_ascii(
 /// Address + PDU of a Modbus frame (without the check).
 fn modbus_adu(b: &[Byte], out: &mut Vec<Packet>) {
     let Some(a) = b.first() else { return };
-    out.push(pk(Kind::Addr { read: false }, a.1, a.2, a.0 as u32, None, a.3));
+    out.push(Packet::new(Kind::Addr { read: false }, a.1, a.2, a.0 as u32, a.3));
     let Some(f) = b.get(1) else { return };
     let func = f.0;
-    out.push(pk(Kind::Field("FUNC"), f.1, f.2, func as u32, None, f.3));
+    out.push(Packet::field("FUNC", f.1, f.2, func as u32, f.3));
     let d = &b[2..];
     let words = |out: &mut Vec<Packet>, from: usize| {
         let mut i = from;
         while i + 1 < d.len() {
-            out.push(pk(
+            out.push(Packet::new(
                 Kind::Data,
                 d[i].1,
                 d[i + 1].2,
                 (d[i].0 as u32) << 8 | d[i + 1].0 as u32,
-                None,
                 d[i].3 && d[i + 1].3,
             ));
             i += 2;
@@ -485,29 +444,12 @@ fn modbus_adu(b: &[Byte], out: &mut Vec<Packet>) {
 
 fn bytes_from(out: &mut Vec<Packet>, d: &[Byte], from: usize) {
     for x in d.iter().skip(from) {
-        out.push(pk(Kind::Data, x.1, x.2, x.0 as u32, None, x.3));
+        out.push(Packet::new(Kind::Data, x.1, x.2, x.0 as u32, x.3));
     }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // 1-Wire
-
-/// Dallas/Maxim 1-Wire CRC-8 (x^8 + x^5 + x^4 + 1, reflected 0x8C, init 0), as in the ROM code and scratchpads.
-pub fn ow_crc8(bytes: &[u8]) -> u8 {
-    let mut c = 0u8;
-    for &b in bytes {
-        let mut x = b;
-        for _ in 0..8 {
-            let mix = (c ^ x) & 1;
-            c >>= 1;
-            if mix != 0 {
-                c ^= 0x8c;
-            }
-            x >>= 1;
-        }
-    }
-    c
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum OwPhase {
@@ -546,11 +488,11 @@ impl OwNet {
         self.dirs.clear();
         self.code.clear();
         self.phase = OwPhase::Rom;
-        self.out.push(tag("!RESET", t0, t1, true));
+        self.out.push(Packet::tag("!RESET", t0, t1, true));
     }
 
     fn presence(&mut self, t0: f64, t1: f64, ok: bool) {
-        self.out.push(tag("!PRESENCE", t0, t1, ok));
+        self.out.push(Packet::tag("!PRESENCE", t0, t1, ok));
     }
 
     fn bit(&mut self, b: bool, t0: f64, t1: f64) {
@@ -564,7 +506,7 @@ impl OwNet {
             self.bits.clear();
             if id && cmp {
                 // no device answered: the search ends
-                self.out.push(tag("!ERR", ts, t1, false));
+                self.out.push(Packet::tag("!ERR", ts, t1, false));
                 self.phase = OwPhase::Func;
                 return;
             }
@@ -592,7 +534,7 @@ impl OwNet {
         self.bits.clear();
         match self.phase {
             OwPhase::Rom => {
-                self.out.push(pk(Kind::Field("ROM"), t0, t1, v as u32, None, true));
+                self.out.push(Packet::field("ROM", t0, t1, v as u32, true));
                 self.phase = match v {
                     0x33 | 0x0f | 0x55 | 0x69 => OwPhase::Code,
                     0xf0 | 0xec => OwPhase::Search,
@@ -609,7 +551,7 @@ impl OwNet {
                     self.phase = OwPhase::Func;
                 }
             }
-            _ => self.out.push(pk(Kind::Data, t0, t1, v as u32, None, true)),
+            _ => self.out.push(Packet::new(Kind::Data, t0, t1, v as u32, true)),
         }
     }
 
@@ -617,17 +559,13 @@ impl OwNet {
     fn rom_code(&mut self) {
         let c = std::mem::take(&mut self.code);
         let b = |i: usize| c[i].0 as u32;
-        self.out.push(pk(Kind::Field("FAM"), c[0].1, c[0].2, b(0), None, true));
-        self.out.push(pk(
-            Kind::Field("SER"),
-            c[1].1,
-            c[6].2,
-            b(1) | b(2) << 8 | b(3) << 16 | b(4) << 24,
-            Some(b(5) | b(6) << 8),
-            true,
-        ));
+        self.out.push(Packet::field("FAM", c[0].1, c[0].2, b(0), true));
+        self.out.push(
+            Packet::field("SER", c[1].1, c[6].2, b(1) | b(2) << 8 | b(3) << 16 | b(4) << 24, true)
+                .with_value2(b(5) | b(6) << 8),
+        );
         let bytes: Vec<u8> = c.iter().map(|x| x.0).collect();
-        self.out.push(pk(Kind::Crc, c[7].1, c[7].2, b(7), None, ow_crc8(&bytes[..7]) == bytes[7]));
+        self.out.push(Packet::new(Kind::Crc, c[7].1, c[7].2, b(7), ow_crc8(&bytes[..7]) == bytes[7]));
     }
 }
 
@@ -672,7 +610,7 @@ pub fn onewire(v: &[f32], dt: f64, thr: f32, hyst: f32, overdrive: bool) -> Vec<
         } else if w < zero {
             net.bit(w < one, f, r.max(f + slot * us));
         } else {
-            net.out.push(tag("!ERR", f, r, false));
+            net.out.push(Packet::tag("!ERR", f, r, false));
         }
     }
     net.out
@@ -781,17 +719,17 @@ pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
         match (cmd, par) {
             (0xf0, _) => {
                 ptr = DS_STATUS;
-                net.out.push(tag("!DRST", t0, t1, true));
+                net.out.push(Packet::tag("!DRST", t0, t1, true));
             }
             (0xe1, Some(p)) => ptr = p,
             (0xd2, Some(c)) => {
                 ptr = 0xc3;
-                net.out.push(pk(Kind::Field("CFG"), t0, t1, (c & 0x0f) as u32, None, c >> 4 == !c & 0x0f));
+                net.out.push(Packet::field("CFG", t0, t1, (c & 0x0f) as u32, c >> 4 == !c & 0x0f));
             }
             (0xc3, Some(c)) => {
                 ptr = 0xd2;
                 let ch = [0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87].iter().position(|&x| x == c);
-                net.out.push(pk(Kind::Field("CH"), t0, t1, ch.unwrap_or(0) as u32, None, ch.is_some()));
+                net.out.push(Packet::field("CH", t0, t1, ch.unwrap_or(0) as u32, ch.is_some()));
             }
             (0xb4, _) => {
                 ptr = DS_STATUS;
@@ -831,13 +769,6 @@ pub const FD_LEN: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 
 /// Sample point (fraction of the bit) where the bit rate switches (BRS bit, CRC delimiter); assumed by `can_fd`
 /// and used by `gen::can_fd_bits`.
 pub const FD_SP: f64 = 0.75;
-
-/// CAN FD CRC (ISO 11898-1:2015): CRC-17 (0x3685B) for up to 16 data bytes, CRC-21 (0x302899) above, register
-/// initialised with a 1 in the MSB; over SOF .. data field including the dynamic stuff bits, then the stuff count.
-pub fn can_fd_crc(bits: &[bool], len: u32) -> u32 {
-    let poly = if len == 21 { 0x30_2899 } else { 0x3_685b };
-    crc_msb(bits.iter().copied(), len, poly, 1 << (len - 1))
-}
 
 /// Bit timing reader: one bit at a time from the current position, resynchronised on edges near the bit end.
 struct BitClock<'a> {
@@ -934,7 +865,8 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         raw.push(b.0);
         if stuff {
             if Some(b.0) == last {
-                return Some((vec![pk(Kind::Start, sof, bits[0].2, 0, None, true), tag("!ERR", b.1, b.2, false)], b.2));
+                let start = Packet::new(Kind::Start, sof, bits[0].2, 0, true);
+                return Some((vec![start, Packet::tag("!ERR", b.1, b.2, false)], b.2));
             }
             run = 1;
             last = Some(b.0);
@@ -984,23 +916,21 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         }
     }
     let val = |r: std::ops::Range<usize>| bits[r].iter().fold(0u32, |a, b| a << 1 | b.0 as u32);
-    let span = |kind, a: usize, b: usize, value: u32, value2, ok| pk(kind, bits[a].1, bits[b].2, value, value2, ok);
+    let span = |kind, a: usize, b: usize, value: u32, ok| Packet::new(kind, bits[a].1, bits[b].2, value, ok);
     let rtr = !fd && bits[if ext { 32 } else { 12 }].0;
     let id = if ext { val(1..12) << 18 | val(14..32) } else { val(1..12) };
     let dlc = val(dlc_at..dlc_at + 4);
     let nb = (data_end - dlc_at - 4) / 8;
-    let mut out = vec![
-        span(Kind::Start, 0, 0, 0, None, true),
-        span(Kind::Id { ext, rtr }, 1, if ext { 31 } else { 11 }, id, None, true),
-    ];
+    let mut out =
+        vec![span(Kind::Start, 0, 0, 0, true), span(Kind::Id { ext, rtr }, 1, if ext { 31 } else { 11 }, id, true)];
     if fd {
-        out.push(span(Kind::Field("BRS"), brs_at, brs_at, bits[brs_at].0 as u32, None, true));
-        out.push(span(Kind::Field("ESI"), brs_at + 1, brs_at + 1, bits[brs_at + 1].0 as u32, None, true));
+        out.push(span(Kind::Field("BRS"), brs_at, brs_at, bits[brs_at].0 as u32, true));
+        out.push(span(Kind::Field("ESI"), brs_at + 1, brs_at + 1, bits[brs_at + 1].0 as u32, true));
     }
-    out.push(span(Kind::Field("DLC"), dlc_at, dlc_at + 3, dlc, Some(nb as u32), true));
+    out.push(span(Kind::Field("DLC"), dlc_at, dlc_at + 3, dlc, true).with_value2(nb as u32));
     for i in 0..nb {
         let a = dlc_at + 4 + 8 * i;
-        out.push(span(Kind::Data, a, a + 7, val(a..a + 8), None, true));
+        out.push(span(Kind::Data, a, a + 7, val(a..a + 8), true));
     }
     let dd = |_: bool| if fast { (td, 0.4 * td) } else { (tn, 0.4 * tn) };
     let ds = if fast { 0.65 * td } else { 0.65 * tn };
@@ -1022,12 +952,12 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         let gray = sv(0..3);
         let cnt = (gray ^ gray >> 1 ^ gray >> 2) & 7;
         let par_ok = (gray.count_ones() + seq[3].0 as u32).is_multiple_of(2);
-        out.push(pk(Kind::Field("SBC"), seq[0].1, seq[3].2, cnt, None, par_ok && cnt == stuff_cnt % 8));
+        out.push(Packet::field("SBC", seq[0].1, seq[3].2, cnt, par_ok && cnt == stuff_cnt % 8));
         let rx = sv(4..4 + crc_len);
         let mut input = raw.clone();
         input.extend(seq[..4].iter().map(|b| b.0));
         let calc = can_fd_crc(&input, crc_len as u32);
-        out.push(pk(Kind::Crc, seq[4].1, seq[3 + crc_len].2, rx, None, rx == calc && fixed_ok));
+        out.push(Packet::new(Kind::Crc, seq[4].1, seq[3 + crc_len].2, rx, rx == calc && fixed_ok));
     } else {
         // a stuff bit after the last CRC bit
         if run == 5 {
@@ -1036,7 +966,7 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
         let crc_at = data_end;
         let calc = can_crc15(&bits[..crc_at].iter().map(|b| b.0).collect::<Vec<_>>());
         let rx = val(crc_at..crc_at + 15);
-        out.push(span(Kind::Crc, crc_at, crc_at + 14, rx, None, rx == calc as u32));
+        out.push(span(Kind::Crc, crc_at, crc_at + 14, rx, rx == calc as u32));
     }
     // CRC delimiter (back to the nominal rate at its sample point), ACK slot, ACK delimiter
     if fast {
@@ -1046,25 +976,12 @@ fn can_fd_frame(clk: &mut BitClock, tn: f64, td: f64) -> Option<(Vec<Packet>, f6
     }
     let ack = clk.bit(0.65 * tn, nominal)?;
     let del = clk.bit(0.65 * tn, nominal)?;
-    out.push(pk(Kind::Ack, ack.1, ack.2, 0, None, !ack.0));
+    out.push(Packet::new(Kind::Ack, ack.1, ack.2, 0, !ack.0));
     Some((out, del.2))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // FlexRay
-
-/// FlexRay header CRC-11 (FlexRay Protocol Specification V3.0.1, 4.5.2): polynomial 0x385, init 0x1A, over the
-/// 20 bits sync frame indicator, startup frame indicator, frame ID, payload length (`bits20`, MSB first).
-pub fn flexray_header_crc(bits20: u32) -> u32 {
-    crc_msb((0..20).rev().map(|i| (bits20 >> i) & 1 == 1), 11, 0x385, 0x1a)
-}
-
-/// FlexRay frame CRC-24 (V3.0.1, 4.5.3): polynomial 0x5D6DCB, init 0xFEDCBA (channel A) / 0xABCDEF (channel B),
-/// over header and payload bytes, MSB first.
-pub fn flexray_frame_crc(bytes: &[u8], channel_b: bool) -> u32 {
-    let init = if channel_b { 0xab_cdef } else { 0xfe_dcba };
-    crc_msb(bytes.iter().flat_map(|&b| (0..8).rev().map(move |i| (b >> i) & 1 == 1)), 24, 0x5d_6dcb, init)
-}
 
 /// FlexRay frames (FlexRay Protocol Specification V3.0.1) on one channel at `rate` (normally 10 Mbit/s), as on the
 /// transceiver RxD pin (idle high; `invert` = low) or a BP − BM difference from `diff` (idle 0 V reads as high).
@@ -1142,25 +1059,24 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
         }
         busy = exp + spb;
         let fv = |a: usize, n: usize| bits[a..a + n].iter().fold(0u32, |acc, b| acc << 1 | b.0 as u32);
-        let fld =
-            |kind, a: usize, n: usize, value2, ok| pk(kind, bits[a].1, bits[a + n - 1].1 + spb, fv(a, n), value2, ok);
-        out.push(pk(Kind::Field("TSS"), f, r, tss.round() as u32, None, (2.5..=15.5).contains(&tss)));
-        out.push(fld(Kind::Field("IND"), 0, 5, None, !bits[0].0));
+        let fld = |kind, a: usize, n: usize, ok| Packet::new(kind, bits[a].1, bits[a + n - 1].1 + spb, fv(a, n), ok);
+        out.push(Packet::field("TSS", f, r, tss.round() as u32, (2.5..=15.5).contains(&tss)));
+        out.push(fld(Kind::Field("IND"), 0, 5, !bits[0].0));
         let id = fv(5, 11);
-        out.push(fld(Kind::Id { ext: false, rtr: false }, 5, 11, None, id != 0));
+        out.push(fld(Kind::Id { ext: false, rtr: false }, 5, 11, id != 0));
         let words = fv(16, 7);
-        out.push(fld(Kind::Field("LEN"), 16, 7, Some(2 * words), true));
-        out.push(fld(Kind::Field("HCRC"), 23, 11, None, fv(23, 11) == flexray_header_crc(fv(3, 20))));
-        out.push(fld(Kind::Field("CYC"), 34, 6, None, true));
+        out.push(fld(Kind::Field("LEN"), 16, 7, true).with_value2(2 * words));
+        out.push(fld(Kind::Field("HCRC"), 23, 11, fv(23, 11) == flexray_header_crc(fv(3, 20))));
+        out.push(fld(Kind::Field("CYC"), 34, 6, true));
         let nfull = bits.len() / 8;
         for k in 5..nfull.min(nbytes - 3) {
-            out.push(fld(Kind::Data, 8 * k, 8, None, true));
+            out.push(fld(Kind::Data, 8 * k, 8, true));
         }
         // a frame cut by the record end is not an error
         let end = v.len() as f64;
         if lost {
             if exp + 0.75 * spb < end {
-                out.push(tag("!ERR", exp - 0.75 * spb, exp + 0.75 * spb, false));
+                out.push(Packet::tag("!ERR", exp - 0.75 * spb, exp + 0.75 * spb, false));
             }
             continue;
         }
@@ -1174,10 +1090,10 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
         } else {
             None
         };
-        out.push(fld(Kind::Crc, 8 * (nbytes - 3), 24, ch, ch.is_some()));
+        out.push(Packet { value2: ch, ..fld(Kind::Crc, 8 * (nbytes - 3), 24, ch.is_some()) });
         // FES: low bit from the end of the last byte, then high
         if exp + spb < end && (high(exp - 0.5 * spb) || !high(exp + 0.5 * spb)) {
-            out.push(tag("!ERR", exp - spb, exp + spb, false));
+            out.push(Packet::tag("!ERR", exp - spb, exp + spb, false));
         }
     }
     out
