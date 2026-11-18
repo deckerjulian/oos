@@ -194,6 +194,8 @@ Fixed:
   samples) with a clock edge at that instant; such a frame holds no data.
 - Update: an image whose device tree nests deeper than 64 levels is refused with a message; oos-update ended on
   one (from about 30 000 levels the stack overflowed).
+- Update: an image whose device tree section (RSCE) names a table longer than the section is refused; one with
+  entries of no length was read up to 2^32 times before the install went on.
 
 ## 0.1.13
 

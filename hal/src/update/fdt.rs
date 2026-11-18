@@ -212,6 +212,15 @@ pub fn rsce_file<'a>(blob: &'a [u8], name: &str) -> Result<&'a [u8], String> {
     }
     let (toff, eblk) = (blob[9] as usize, blob[10] as usize);
     let n = be32_le(blob, 12)? as usize;
+    // the table lies inside the container: n entries of eblk blocks from block toff; entries of no blocks would all
+    // be the first one, so there is one at most
+    let fits = match eblk {
+        0 => n <= 1,
+        _ => (toff as u64 + n as u64 * eblk as u64) * 512 <= blob.len() as u64,
+    };
+    if !fits {
+        return Err(format!("RSCE: a table of {} entries does not fit its container", n));
+    }
     for i in 0..n {
         let at = (toff + i * eblk) * 512;
         let row = blob.get(at..at + 268).ok_or("RSCE: entry out of bounds")?;

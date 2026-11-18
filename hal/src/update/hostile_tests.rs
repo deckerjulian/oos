@@ -10,7 +10,7 @@ use super::fdt::{rsce_file, Fdt, Node};
 use super::inflate::{cpio_file, gunzip, image_build, inflate};
 use super::tests::{bootimg, bootimg_build, bootimg_second, package, pk, SEED};
 use super::*;
-use crate::hostile::{known, run, KNOWN};
+use crate::hostile::run;
 
 /// `pkg::verify` and `pkg::verify_header` (an update package from the web page or a stick): return for any bytes;
 /// a package they take carries one of the signed headers and the image that header names, whatever was changed
@@ -65,13 +65,20 @@ fn hostile_unhex_takes_a_plus_sign() {
     assert!(pkg::parse_keys(&format!("{}+f\n", "00".repeat(31))).is_empty());
 }
 
+// Break it catches: a table longer than its container, read entry by entry up to 2^32 times (#181)
 #[test]
-#[ignore = "fdt::rsce_file walks a table of any length: entries of no blocks are read up to 2^32 times, #181"]
-pub(crate) fn hostile_known_rsce_table_not_bounded() {
+fn hostile_rsce_table_not_bounded() {
     let mut b = rsce(fdt::TREE, b"tree");
+    assert_eq!(rsce_file(&b, fdt::TREE), Ok(&b"tree"[..]));
     b[10] = 0; // entries of no blocks: every entry is the first
+    assert_eq!(rsce_file(&b, fdt::TREE), Ok(&b"tree"[..]), "one entry of no blocks is still the first");
     b[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(rsce_file(&b, fdt::TREE).is_err(), "a table of 2^32 - 1 entries in a container of {} bytes", b.len());
+    b[12..16].copy_from_slice(&2u32.to_le_bytes());
+    assert!(rsce_file(&b, fdt::TREE).is_err(), "two entries of no blocks");
+    // entries of one block: a table of three from block 1 ends at byte 2048, past the end of the container
+    (b[10], b[12]) = (1, 3);
+    assert!(rsce_file(&b, fdt::TREE).is_err(), "a table of three blocks from block 1 in {} bytes", b.len());
 }
 
 /// `card::image_header`, `card::check_image`, `kexec::parts`, `kexec::tree_at` and `inflate::image_build` (the boot
@@ -175,12 +182,6 @@ fn rsce(name: &str, file: &[u8]) -> Vec<u8> {
     b
 }
 
-/// An RSCE container whose table makes `rsce_file` read the same entry again and again: entries of no blocks, and
-/// more of them than the test waits for (the finding `rsce-table-not-bounded`).
-fn rsce_reads_one_entry_for_ever(b: &[u8]) -> bool {
-    b.len() >= 16 && b[10] == 0 && u32::from_le_bytes([b[12], b[13], b[14], b[15]]) > 4096
-}
-
 /// A tree of `depth` nodes, each inside the one before.
 fn nested(depth: usize) -> Vec<u8> {
     let mut b = Vec::new();
@@ -222,11 +223,9 @@ fn hostile_device_trees() {
                 other => return Err(format!("written out it reads as {:?}", other.map(|t| t.root.name))),
             }
         }
-        if !(rsce_reads_one_entry_for_ever(b) && known(KNOWN, "rsce-table-not-bounded")) {
-            if let Ok(f) = rsce_file(b, fdt::TREE) {
-                if f.as_ptr_range().start < b.as_ptr_range().start || f.as_ptr_range().end > b.as_ptr_range().end {
-                    return Err(format!("a file of {} bytes outside the container", f.len()));
-                }
+        if let Ok(f) = rsce_file(b, fdt::TREE) {
+            if f.as_ptr_range().start < b.as_ptr_range().start || f.as_ptr_range().end > b.as_ptr_range().end {
+                return Err(format!("a file of {} bytes outside the container", f.len()));
             }
         }
         for (new, was, now) in [(b, &old[..], &running[..]), (&old[..], b, &running[..]), (&old[..], &old[..], b)] {
