@@ -69,7 +69,7 @@ pub const TEST: [Setting; 2] = [
 /// `true`/`false` in a setup (`on`/`off`/`1`/`0` read too); None or Stop in the menu. No command asks or sets it.
 const STOP_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
-    load: |t| crate::store::p_bool(t).map(Val::Bool),
+    load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| (v.index() != 0).to_string(),
     take: |_| None,
     labels: &["None", "Stop"],
