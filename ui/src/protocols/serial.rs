@@ -7,7 +7,7 @@
 //! in the shared rows brings them along (`legacy`). Checked against generated frames.
 
 use super::*;
-use oos_dsp::decode as x1;
+use oos_dsp::decode;
 use oos_dsp::decode::Parity;
 
 /// The baud rate of option row `k`.
@@ -24,7 +24,7 @@ fn parity_index(p: Parity) -> usize {
 
 /// Demo traffic: the words as 3.3 V UART frames with one stop bit, five idle bits around them, then `idle` seconds.
 fn uart_demo(words: &[u32], bits: u32, parity: Parity, baud: f64, idle: f64) -> Demo {
-    let mut w = x1::gen::Wave::new(0.0, 3.3, 20e-9);
+    let mut w = decode::gen::Wave::new(0.0, 3.3, 20e-9);
     w.level(true, 5.0 / baud);
     for &b in words {
         w.uart(b, bits, parity, 1, baud);
@@ -56,7 +56,7 @@ impl Protocol for Uart9 {
         1.0 / baud(opt, 0)
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::uart9(l.main(), l.dt, baud(&l.opt, 0), l.thr, l.hy, false))
+        Ok(decode::uart9(l.main(), l.dt, baud(&l.opt, 0), l.thr, l.hy, false))
     }
     /// Every word starts a frame, as for the plain UART.
     fn trigger_match(&self, what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
@@ -97,12 +97,12 @@ impl Protocol for ModbusRtu {
         1.0 / baud(opt, 0)
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::modbus_rtu(l.main(), l.dt, baud(&l.opt, 0), PARITIES[l.opt[1]], l.thr, l.hy, false))
+        Ok(decode::modbus_rtu(l.main(), l.dt, baud(&l.opt, 0), PARITIES[l.opt[1]], l.thr, l.hy, false))
     }
     /// Read holding registers (function 3) of device 0x11, 19200 baud, even parity.
     fn demo(&self) -> Option<Demo> {
         let f: Vec<u32> =
-            x1::gen::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
+            decode::gen::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
         Some(uart_demo(&f, 8, Parity::Even, 19200.0, 2e-3))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
@@ -140,7 +140,7 @@ impl Protocol for ModbusAscii {
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let parity = if l.opt[2] == 1 { Parity::Odd } else { Parity::Even };
-        Ok(x1::modbus_ascii(l.main(), l.dt, baud(&l.opt, 0), 7 + l.opt[1] as u32, parity, l.thr, l.hy, false))
+        Ok(decode::modbus_ascii(l.main(), l.dt, baud(&l.opt, 0), 7 + l.opt[1] as u32, parity, l.thr, l.hy, false))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, old.bits.clamp(7, 8) as usize - 7, usize::from(old.parity == Parity::Odd), 0])

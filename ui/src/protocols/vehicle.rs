@@ -7,8 +7,7 @@
 //! (`legacy`). Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode as x1;
-use oos_dsp::decode as x3;
+use oos_dsp::decode;
 use oos_dsp::decode::Kind;
 
 /// Demo traffic on one line: `a` and then `idle` seconds.
@@ -48,7 +47,7 @@ impl Protocol for CanFd {
         1.0 / crate::decode::CAN_RATES[opt[0]]
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::can_fd(
+        Ok(decode::can_fd(
             l.main(),
             l.dt,
             crate::decode::CAN_RATES[l.opt[0]],
@@ -60,8 +59,9 @@ impl Protocol for CanFd {
     }
     /// A CAN FD frame with ID 123, bit rate switch and 12 bytes, 500 kbit/s and 2 Mbit/s.
     fn demo(&self) -> Option<Demo> {
-        let fd = x1::gen::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
-        Some(one_line(x1::gen::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), 40e-6))
+        let fd =
+            decode::gen::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
+        Some(one_line(decode::gen::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), 40e-6))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.canrate, old.fdrate, usize::from(old.canh), 0])
@@ -84,7 +84,7 @@ impl Protocol for FlexRay {
         0.1e-6
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::flexray(l.main(), l.dt, 10e6, l.thr, l.hy, false))
+        Ok(decode::flexray(l.main(), l.dt, 10e6, l.thr, l.hy, false))
     }
     /// The frame ID of the demo.
     fn trigger_default(&self) -> (BusWhat, u32) {
@@ -92,7 +92,7 @@ impl Protocol for FlexRay {
     }
     /// A static frame (ID 2A, cycle 5) with 8 payload bytes on RxD.
     fn demo(&self) -> Option<Demo> {
-        let fr = x1::gen::FrFrame {
+        let fr = decode::gen::FrFrame {
             ppi: false,
             nf: true,
             sync: false,
@@ -102,7 +102,7 @@ impl Protocol for FlexRay {
             payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
             channel_b: false,
         };
-        Some(one_line(oos_dsp::sim::bits_logic(&x1::gen::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), 10e-6))
+        Some(one_line(oos_dsp::sim::bits_logic(&decode::gen::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), 10e-6))
     }
 }
 
@@ -138,7 +138,7 @@ impl Protocol for Sent {
         4.0 * tick(opt).unwrap_or(crate::decode::SENT_TICKS[0])
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x3::sent(l.main(), l.dt, tick(&l.opt), l.opt[1] + 1, l.thr, l.hy))
+        Ok(decode::sent(l.main(), l.dt, tick(&l.opt), l.opt[1] + 1, l.thr, l.hy))
     }
     /// The tick the sync pulse gave; the data as its nibbles.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -160,9 +160,10 @@ impl Protocol for Sent {
     }
     /// Two fast-channel frames of 6 data nibbles with a pause pulse, 3 us tick, 5 V.
     fn demo(&self) -> Option<Demo> {
-        let sf = |status: u8, data: [u8; 6]| x3::gen::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
+        let sf =
+            |status: u8, data: [u8; 6]| decode::gen::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
         Some(one_line(
-            x3::gen::sent(
+            decode::gen::sent(
                 &[sf(0x0, [0x7, 0xf, 0x3, 0x8, 0x0, 0xc]), sf(0x4, [0x7, 0xf, 0x4, 0x8, 0x0, 0xb])],
                 3e-6,
                 0.0,

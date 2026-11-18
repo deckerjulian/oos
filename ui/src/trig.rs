@@ -44,14 +44,14 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
 
 /// `decode` with the threshold and hysteresis given.
 pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
-    use oos_dsp::decode as x1;
+    use oos_dsp::decode;
     let get = |c: usize| ch.get(c).copied().filter(|v| !v.is_empty()).ok_or("source channel off");
     let opt = |c: Option<usize>| -> Result<Option<&[f32]>, &'static str> { c.map(get).transpose() };
     // RS-485 / differential: A - B, threshold around 0 V like the pair's receiver
     let diff;
     let line: &[f32] = match (m.dec_proto.diff_ok(), m.dec_diff) {
         (true, Some(b)) => {
-            diff = x1::diff(get(m.dec_src)?, get(b)?);
+            diff = decode::diff(get(m.dec_src)?, get(b)?);
             &diff
         }
         _ => get(m.dec_src)?,

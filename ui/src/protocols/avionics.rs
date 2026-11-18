@@ -7,7 +7,7 @@
 //! ARINC rate in the shared row brings it along (`legacy`). Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode as x3;
+use oos_dsp::decode;
 use oos_dsp::decode::Kind;
 
 /// The ARINC 429 bit rates (`decode::ARINC_RATES`).
@@ -45,7 +45,7 @@ impl Protocol for Arinc429 {
         arinc_rate(opt).is_none().then(|| 200.0 / crate::decode::ARINC_RATES[1])
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x3::arinc429(l.main(), l.dt, arinc_rate(&l.opt), l.thr, l.hy))
+        Ok(decode::arinc429(l.main(), l.dt, arinc_rate(&l.opt), l.thr, l.hy))
     }
     /// The label in octal.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -69,7 +69,7 @@ impl Protocol for Arinc429 {
     }
     /// Three high-speed words, 8 bit times apart, +-5 V.
     fn demo(&self) -> Option<Demo> {
-        use x3::gen;
+        use decode::gen;
         let w = [
             gen::arinc429_word(0o203, 0, 0x0_2710, 3, false),
             gen::arinc429_word(0o310, 1, 0x2_5a5a, 3, false),

@@ -6,7 +6,7 @@
 //! names of the old setups. Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode as x2;
+use oos_dsp::decode;
 use oos_dsp::decode::Kind;
 
 pub struct Swd;
@@ -25,7 +25,7 @@ impl Protocol for Swd {
         0.5e-6
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x2::swd(l.need(1, "SWCLK source missing")?, l.main(), l.thr, l.hy))
+        Ok(decode::swd(l.need(1, "SWCLK source missing")?, l.main(), l.thr, l.hy))
     }
     /// The ACK of a transfer is a field with its three bits, not an I2C style acknowledge.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -33,7 +33,7 @@ impl Protocol for Swd {
     }
     /// SWDIO on CH3, SWCLK on CH4 at 1 MHz: line reset, JTAG-to-SWD, line reset, a read of the DP IDCODE.
     fn demo(&self) -> Option<Demo> {
-        use x2::gen::SwdOp;
+        use decode::gen::SwdOp;
         let ops = [
             SwdOp::LineReset,
             SwdOp::JtagToSwd,
@@ -42,7 +42,7 @@ impl Protocol for Swd {
             SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false },
             SwdOp::Idle(4),
         ];
-        let (clk, dio) = x2::gen::swd(&ops, 1e6, 0.0, 3.3);
+        let (clk, dio) = decode::gen::swd(&ops, 1e6, 0.0, 3.3);
         let end = |l: &oos_dsp::sim::Logic| l.seg.last().map_or(1e-3, |s| s.0);
         let period = end(&dio).max(end(&clk)) + 20e-6;
         Some(Demo { period, lines: [Some(Box::new(move |t| dio.v(t))), Some(Box::new(move |t| clk.v(t))), None, None] })
@@ -66,7 +66,7 @@ impl Protocol for Jtag {
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let tdi = l.need(2, "TDI source missing")?;
-        Ok(x2::jtag(l.need(1, "TCK source missing")?, l.main(), tdi, l.lines[3], None, l.thr, l.hy))
+        Ok(decode::jtag(l.need(1, "TCK source missing")?, l.main(), tdi, l.lines[3], None, l.thr, l.hy))
     }
     /// TMS, TCK, TDI, TDO on CH1 to CH4.
     fn setup(&self) -> Setup {

@@ -7,7 +7,7 @@
 
 use super::*;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode::{self as x3, UsbSpeed, USB_FULL, USB_LOW};
+use oos_dsp::decode::{self, UsbSpeed, USB_FULL, USB_LOW};
 
 pub struct Usb;
 
@@ -36,7 +36,7 @@ impl Protocol for Usb {
         (sh.usb_speed == UsbSpeed::Auto).then_some(200.0 / USB_LOW)
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x3::usb(l.main(), l.lines[2], l.dt, l.sh.usb_speed, l.thr, l.hy))
+        Ok(decode::usb(l.main(), l.lines[2], l.dt, l.sh.usb_speed, l.thr, l.hy))
     }
     /// The speed of the SYNC, PID names, bytes.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -44,7 +44,7 @@ impl Protocol for Usb {
             Kind::Field("SYNC") => {
                 format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" })
             }
-            Kind::Field("PID") if p.ok => x3::usb_pid_name(p.value as u8).to_string(),
+            Kind::Field("PID") if p.ok => decode::usb_pid_name(p.value as u8).to_string(),
             Kind::Field("PID") => format!("PID {:02X} !", p.value),
             Kind::Data => format!("{:02X}", p.value),
             _ => return None,
@@ -65,7 +65,7 @@ impl Protocol for Usb {
     /// Full speed: SOF; SETUP GET_DESCRIPTOR(device) to address 5, ACK; IN, the first 8 bytes of the device descriptor
     /// in DATA1, ACK.
     fn demo(&self) -> Option<Demo> {
-        use x3::gen as g3;
+        use decode::gen as g3;
         let up = |b: Vec<u8>| g3::UsbItem::packet(&b, USB_FULL);
         let ip = || g3::UsbItem::Idle(4.0 / USB_FULL);
         let items = [
