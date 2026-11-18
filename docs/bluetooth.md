@@ -28,11 +28,11 @@ System > Network > Bluetooth:
 | Find devices | listens for 10 s, then lists the mice and keyboards heard in that time (and other devices that give a name), the strongest first; a tap pairs, trusts and connects it. A keyboard shows a passkey on the scope: type it on the keyboard, then Enter. A device leaves the list when it is paired or bluetoothd forgets it (BlueZ's `TemporaryTimeout`, by default 30 s after the scan; assumed, not yet verified on hardware) |
 | Paired devices | a tap connects a paired device, or disconnects a connected one |
 | Forget device | removes a pairing |
-| Bluetooth details | the adapter and every paired device |
+| Bluetooth details | the adapter and every paired device (the pickers of Paired devices and Forget device show the first 18: a picker does not scroll) |
 
 While a Bluetooth stick is there, the top bar has a box `BT` beside the WLAN box: its dot is green while a mouse or
-keyboard is connected through it (counted from `/sys/class/input`, bus `0005`, one per address), and a tap
-opens the page. A paired device is trusted, so it connects again by itself when it wakes up, also after a power
+keyboard is connected through it (counted from `/sys/class/input`, bus `0005`, one per address; this sysfs layout is
+assumed from the kernel's input core, not yet read on the unit), and a tap opens the page. A paired device is trusted, so it connects again by itself when it wakes up, also after a power
 cycle. Its input reaches oos-ui like a USB mouse or keyboard (`ui/src/hid.rs`; what the mouse and the keys do:
 the wiki, First Steps).
 

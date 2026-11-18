@@ -293,7 +293,7 @@ impl Ui {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
         if self.bt_stick {
-            let open = self.menu_open && self.menu == MenuId::Bluetooth;
+            let open = self.menu_open && self.menu_root() == MenuId::Bluetooth;
             self.draw_chip(cv, self.bt_box(), "BT", self.bt_inputs > 0, open);
         }
         if self.usb {

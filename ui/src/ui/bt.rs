@@ -350,8 +350,9 @@ impl Ui {
         self.bt.found.iter().filter(|d| now(d)).collect()
     }
 
+    /// Every paired device, for the details. Its pickers show the first `LIST_MAX` (a picker does not scroll).
     fn bt_paired(&self) -> Vec<&Device> {
-        self.bt.link.devices.iter().filter(|d| d.paired).take(LIST_MAX).collect()
+        self.bt.link.devices.iter().filter(|d| d.paired).collect()
     }
 
     fn bt_line(d: &Device) -> String {
@@ -371,7 +372,9 @@ impl Ui {
     pub(super) fn bt_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
             Item::BtFound => self.bt_found().into_iter().map(Self::bt_line).collect(),
-            Item::BtPairedPick | Item::BtForgetPick => self.bt_paired().into_iter().map(Self::bt_line).collect(),
+            Item::BtPairedPick | Item::BtForgetPick => {
+                self.bt_paired().into_iter().take(LIST_MAX).map(Self::bt_line).collect()
+            }
             _ => return None,
         })
     }
@@ -444,6 +447,38 @@ impl Ui {
             ));
         }
         v
+    }
+
+    /// For the layout lint: a stick with more paired and heard devices than a picker has lines, all with long names.
+    #[cfg(test)]
+    pub(super) fn bt_crowded_for_tests(&mut self) {
+        let dev = |k: usize, paired: bool| Device {
+            path: format!("/org/bluez/hci0/dev_{}_{}", paired, k),
+            address: String::new(),
+            name: format!("A Rather Long Wireless Keyboard Name {}", k),
+            icon: "input-keyboard".into(),
+            paired,
+            trusted: paired,
+            connected: paired && k.is_multiple_of(2),
+            rssi: if paired { None } else { Some(-100) },
+            named: true,
+        };
+        let mut devices: Vec<Device> = (0..LIST_MAX + 2).map(|k| dev(k, true)).collect();
+        devices.extend((0..LIST_MAX + 2).map(|k| dev(k, false)));
+        self.bt.link = Link {
+            stick: true,
+            daemon: true,
+            adapter: Some(Adapter {
+                path: "/org/bluez/hci0".into(),
+                name: "dho924s-000000000000".into(),
+                powered: true,
+                discovering: false,
+            }),
+            devices,
+        };
+        self.bt_stick = true;
+        self.bt_inputs = 2;
+        self.bt_report(Report::Scanned);
     }
 }
 

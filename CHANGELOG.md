@@ -17,7 +17,7 @@ Added:
   power cycle).
 - System > Network > Bluetooth ([bluetooth.md](docs/bluetooth.md#on-the-scope)): find, pair, connect, disconnect and
   forget mice and keyboards; a keyboard's passkey is shown on the scope. While a Bluetooth stick is there, a `BT` box
-  in the top bar beside WLAN's: green while a device is connected, a tap opens the page (unit).
+  in the top bar beside the WLAN box: green while a device is connected, a tap opens the page (unit).
 - WLAN on the TP-Link Archer TX10UB Nano (Realtek RTL8851BU, 2.4 and 5 GHz; [wlan.md](docs/wlan.md), ADR 0027):
   `rtw89` of Linux 6.18.63 is built as modules beside the 6.12 kernel, and `oos-wlan` picks it by the stick's id
   (unit: a saved WPA2 network joined on 5 GHz, DHCP, about 84 Mbit/s sent).
