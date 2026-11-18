@@ -645,13 +645,9 @@ fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
                 .collect::<Result<_, String>>()?;
         }
         "z_src" => m.z_src = if v.trim() == "off" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
-        "hist" => m.hist = p_enum(v, &[Hist::Off, Hist::Vertical, Hist::Horizontal])?,
-        "mask_on" => m.mask_on = p_bool(v)?,
         "mask_src" => m.mask_src = p_idx(v, NCH)?,
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,
-        "mask_stop" => m.mask_stop = p_bool(v)?,
-        "mask_inv" => m.mask_inv = p_bool(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
         "text_size" => m.text_size = p_enum(v, &TEXT_SIZES)?,
         "la" => m.la = crate::ui::la::LaSet::parse(v)?,
@@ -702,9 +698,6 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let [width, space] = w[..] else { return Err("spec_acpr: width spacing".into()) };
             m.spec_acpr_w = width.parse::<f64>().map_err(|e| e.to_string())?;
             m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
-        }
-        "bode_mode" => {
-            m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?
         }
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();

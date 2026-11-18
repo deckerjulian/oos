@@ -296,6 +296,17 @@ Additional OOS families accept item names defined by their analysis page/source 
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
+The mode of the Bode page, its command and its key in a setup file. It is declared once, in `ui/src/settings/bode.rs`;
+this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails
+when the two differ. A value the command does not take is refused with `-224`. The sweep and the generator are written
+by hand.
+
+<!-- settings:bode:begin -->
+| Command | Takes | Setup key | Bode menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
+<!-- settings:bode:end -->
+
 ## Cursors, DVM and counter
 
 | Command | Meaning |
@@ -390,6 +401,19 @@ The exact path is an example; it is not valid on a scope unless that file exists
 Built-in generator commands use `:SOURce[<n>]:...` for a generator available on the model: `OUTPut[:STATe]`, `FUNCtion`, `FREQuency`, `VOLTage[:AMPLitude]`, `VOLTage:OFFSet`, `FUNCtion:SQUare:DUTY`, `FUNCtion:RAMP:SYMMetry`, `ARB:DATA`, `ARB:CAPTure`, `MOD[:STATe]`, `MOD:TYPe`, `MOD:AM:DEPTh`, `MOD:FM:DEViation`, `MOD:PM:DEViation`, and `MOD:<type>:INTernal:FREQuency|FUNCtion`. These configure the actual generator when hardware operation is enabled. Unsupported models report hardware missing.
 
 Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THReshold[?]`, `:LA:POINts?`, `:LA:PREamble?`, `:LA:DATA?`. DATA is an IEEE block of little-endian u16 words, bit n representing Dn. LA availability is model-dependent.
+
+The switch of the logic analyser, its command and its place in a setup file. It is declared once, in
+`ui/src/settings/la.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/`), and a test fails when the two differ. On a model without the LA port every `:LA` command is refused with
+`-241`; a value the command does not take is refused with `-224`. The LA keeps its settings in one setup line,
+`la = <on> <lines> <preset D0-7> <preset D8-15> <user D0-7> <user D8-15> <height>`; the lines and the thresholds
+(above) are written by hand.
+
+<!-- settings:la:begin -->
+| Command | Takes | Setup key | Logic analyser menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:LA:STATe[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `la` (on) | LA | The logic analyser, where the model has the LA port: its 16 lines are recorded with the channels. `ENABle` is another name of `STATe`. |
+<!-- settings:la:end -->
 
 `:IDENtify?` returns the app's signal identification. Calibration commands `:CALibrate:STARt 0..4[,ZERO]`, `:CALibrate:STATus?`, `:CALibrate:CANCel` operate the self-calibration workflow; start requires the appropriate disconnected-input setup. They are not passive diagnostic reads.
 
@@ -564,5 +588,29 @@ Track cursor B now has its own CH/ref source: `:CURSor:TRACk:SOURce1[?]` and `:S
 
 Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:X[?]`, `:Y[?]`, `:CREate`, `:RESet`, `:OPERate[?]`, `:FAILed?`, `:PASSed?`, `:TOTal?`. Mask sources are physical CH roles, not reference or Math inputs. A mask needs accepted channel data; enabling a page or querying a counter does not prove a valid mask or physical pass/fail result.
 
+The switches of the mask test, their command and their keys in a setup file. They are declared once, in
+`ui/src/settings/mask.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+command does not take is refused with `-224`. The source and the tolerances are written by hand.
+
+<!-- settings:mask:begin -->
+| Command | Takes | Setup key | Mask menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MASK:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `mask_on` | Mask test | The pass/fail test of the source against the mask. A mask needs accepted channel data; enabling it does not prove a valid mask or a physical pass/fail result. |
+| none | a choice of the Mask menu that no remote command sets | `mask_stop` | On fail | What a failed waveform does: None goes on, Stop stops the acquisition. |
+| none | a choice of the Mask menu that no remote command sets | `mask_inv` | Invert | Turns the mask round: the band becomes the forbidden region, and a waveform passes where it stays outside it. |
+<!-- settings:mask:end -->
+
 Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:HISTogram:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
+
+The histogram's direction, its command and its key in a setup file. It is declared once, in
+`ui/src/settings/histogram.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+command does not take is refused with `-224`. `:HISTogram:ENABle` and the source are written by hand.
+
+<!-- settings:histogram:begin -->
+| Command | Takes | Setup key | Display menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:HISTogram:TYPE[?]` | `HORizontal`, `VERTical`; the query answers `HOR` or `VERT` (`VERT` while it is off) | `hist` | Histogram | The waveform histogram of the Display menu: off, vertical or horizontal. |
+<!-- settings:histogram:end -->
 

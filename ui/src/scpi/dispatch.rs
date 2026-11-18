@@ -819,28 +819,9 @@ impl Scpi {
             if kw(nodes[1], "DATA") && query {
                 return t(&ui.bode_text());
             }
-            if kw(nodes[1], "MODE") {
-                const MODES: [(&str, oos_dsp::bode::Mode); 3] = [
-                    ("LOOP", oos_dsp::bode::Mode::Loop),
-                    ("PSRR", oos_dsp::bode::Mode::Psrr),
-                    ("IMPedance", oos_dsp::bode::Mode::Z),
-                ];
-                if query {
-                    let name = match ui.m.bode_mode {
-                        oos_dsp::bode::Mode::Loop => "LOOP",
-                        oos_dsp::bode::Mode::Psrr => "PSRR",
-                        oos_dsp::bode::Mode::Z => "IMP",
-                    };
-                    return t(name);
-                }
-                match MODES.iter().find(|(k, _)| kw(arg, k)) {
-                    Some((_, m)) => {
-                        ui.m.bode_mode = *m;
-                        ui.mark_changed();
-                    }
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
+            // the mode of the settings table (settings/bode.rs)
+            if let Some(row) = crate::settings::command(&crate::settings::bode::SLICES, &nodes[1..]) {
+                return self.setting_cmd(ui, row, query, arg);
             }
             if kw(nodes[1], "GENerator") {
                 // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)

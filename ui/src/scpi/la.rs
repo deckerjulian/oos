@@ -1,9 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:LA`: `STATe`, `DIGital<n>:DISPlay`, `POD<n>:THReshold` and the record of the last acquisition (`POINts?`,
-//! `PREamble?`, `DATA?`). A new `:LA` command goes into `la_cmd` here, with its line in docs/scpi.md and its query in
-//! ui/tests/scpi.txt (AGENTS.md).
+//! `:LA`: `STATe` (a row of settings/la.rs), `DIGital<n>:DISPlay`, `POD<n>:THReshold` and the record of the last
+//! acquisition (`POINts?`, `PREamble?`, `DATA?`). A new `:LA` setting of a setup file is a row of that table, another
+//! command goes into `la_cmd` here, with its line in docs/scpi.md; either with its query in ui/tests/scpi.txt
+//! (AGENTS.md).
 
 use super::{block, kw, parse_bool, suffix, Scpi};
 use crate::ui::Ui;
@@ -26,20 +27,12 @@ impl Scpi {
             s.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             None
         };
-        let (k, idx) = suffix(n[0]);
-        if n.len() == 1 && (kw(n[0], "STATe") || kw(n[0], "ENABle")) {
-            if query {
-                return t(if ui.m.la.on { "1" } else { "0" }.into());
-            }
-            match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.la.on = on;
-                    ui.mark_changed();
-                    return None;
-                }
-                None => return bad(self),
-            }
+        // the switch of the settings table (settings/la.rs); ENABle is another name of STATe
+        let row_nodes: &[&str] = if n.len() == 1 && kw(n[0], "ENABle") { &["STATe"] } else { n };
+        if let Some(row) = crate::settings::command(&crate::settings::la::SLICES, row_nodes) {
+            return self.setting_cmd(ui, row, query, arg);
         }
+        let (k, idx) = suffix(n[0]);
         if n.len() == 2 && kw(k, "DIGital") && kw(n[1], "DISPlay") {
             let Some(line) = idx.filter(|&i| i < 16) else { return bad(self) };
             if query {

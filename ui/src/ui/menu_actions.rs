@@ -564,11 +564,6 @@ impl Ui {
                 m.z_src = if i == 0 { None } else { Some(i - 1) };
                 self.dirty_map = true;
             }
-            Item::Histogram => {
-                let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
-                let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
-                m.hist = all[cycle(i, 3, d)];
-            }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
@@ -740,12 +735,6 @@ impl Ui {
                 let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
                 self.store_dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
             }
-            Item::MaskOn => {
-                self.m.mask_on = !self.m.mask_on;
-                if self.m.mask_on && self.mask.is_none() {
-                    self.create_mask();
-                }
-            }
             Item::MaskSrc => {
                 // a mask belongs to its channel: the new source needs a new one
                 self.m.mask_src = src_step(self.m.mask_src, NCH, d);
@@ -759,11 +748,6 @@ impl Ui {
             }
             Item::MaskY => {
                 self.m.mask_y = ((self.m.mask_y + d as f32 * 0.04) * 100.0).round().clamp(4.0, 400.0) / 100.0;
-                self.build_mask();
-            }
-            Item::MaskAction => self.m.mask_stop = !self.m.mask_stop,
-            Item::MaskInvert => {
-                self.m.mask_inv = !self.m.mask_inv;
                 self.build_mask();
             }
             Item::RefSrc => self.ref_src = src_step(self.ref_src, NCH, d),

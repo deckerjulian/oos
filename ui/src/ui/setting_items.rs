@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 40] = [
+const ITEMS: [(Item, &str); 46] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -49,6 +49,12 @@ const ITEMS: [(Item, &str); 40] = [
     (Item::ChFine, "fine_v"),
     (Item::ChExpand, "v_expand_gnd"),
     (Item::AcqDrawPath, "draw_path"),
+    (Item::MaskOn, "mask_on"),
+    (Item::MaskAction, "mask_stop"),
+    (Item::MaskInvert, "mask_inv"),
+    (Item::Histogram, "hist"),
+    (Item::BodeMode, "bode_mode"),
+    (Item::LaOn, "la on"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -88,6 +94,7 @@ impl Ui {
 
     pub(super) fn setting_adjust(&mut self, it: Item, d: i32) -> bool {
         let Some((s, n)) = row(it) else { return false };
+        let before = (s.get)(&self.m, n);
         s.step(&mut self.m, n, d);
         match it {
             // only the inputs the model has switch on
@@ -97,9 +104,14 @@ impl Ui {
                     self.m.floor_live_tdiv();
                 }
             }
+            // only a model with the LA port switches it on
+            Item::LaOn => self.m.la.on &= crate::ui::la::available(),
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar | Item::AcqDrawPath => self.dirty_map = true,
+            // a switched-on test without a mask builds one from the source
+            Item::MaskOn if self.m.mask_on && self.mask.is_none() => self.create_mask(),
+            Item::MaskInvert => self.build_mask(),
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,
             // the hardware switches of the Acquire menu leave the rest as it is (no `settings_changed`), as before
@@ -107,6 +119,15 @@ impl Ui {
             Item::AcqAvgHw => {
                 if self.m.avg_hw && !board().avg_hw(&self.m) {
                     self.toast("HW average needs a count of 2..1024 and ordinary records: software average");
+                }
+                return true;
+            }
+            // the points of the last sweep are of the other mode; the Bode page leaves the rest as it is (no
+            // `settings_changed`), as before the table
+            Item::BodeMode => {
+                if (s.get)(&self.m, n) != before {
+                    self.bode.points.clear();
+                    self.bode.cursor = 0;
                 }
                 return true;
             }
@@ -126,7 +147,8 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Acquire menu (in Average mode with segments, so their
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the LA menu, in the
+    /// Acquire menu (in Average mode with segments, so their
     /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
     /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
     /// limits show).
@@ -135,7 +157,7 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))

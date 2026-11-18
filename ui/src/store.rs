@@ -364,7 +364,7 @@ fn analysis_more_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     );
     kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
-    kv("bode_mode", name(m.bode_mode));
+    crate::settings::write(&crate::settings::bode::MODE, m, 0, kv);
     kv(
         "eye_more",
         format!(
@@ -493,13 +493,12 @@ fn zone_mask_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         );
     }
     kv("z_src", m.z_src.map_or("off".to_string(), |c| (c + 1).to_string()));
-    kv("hist", name(m.hist));
-    kv("mask_on", m.mask_on.to_string());
+    crate::settings::write(&crate::settings::histogram::HIST, m, 0, kv);
+    crate::settings::write(&crate::settings::mask::ON, m, 0, kv);
     kv("mask_src", m.mask_src.to_string());
     kv("mask_x", m.mask_x.to_string());
     kv("mask_y", m.mask_y.to_string());
-    kv("mask_stop", m.mask_stop.to_string());
-    kv("mask_inv", m.mask_inv.to_string());
+    crate::settings::write(&crate::settings::mask::TEST, m, 0, kv);
     kv("quick", name(m.quick));
     kv("text_size", name(m.text_size));
     kv("la", m.la.to_text());

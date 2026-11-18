@@ -116,16 +116,10 @@ impl Ui {
         }
         let v: &[&str] = match it {
             Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
-            Item::MeasStats
-            | Item::MeasLabels
-            | Item::Zoom
-            | Item::AutoRoll
-            | Item::DecOn
-            | Item::SearchOn
-            | Item::MaskOn
-            | Item::MaskInvert => &["Off", "On"],
+            Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn => {
+                &["Off", "On"]
+            }
             Item::MaskSrc => return ch_names(),
-            Item::MaskAction => &["None", "Stop"],
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
@@ -192,7 +186,6 @@ impl Ui {
             Item::ZoneSrc => return ch_names(),
             Item::ZoneMode => &["Intersect", "Not intersect"],
             Item::ZInput => return opt_ch_names("Off"),
-            Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::AuxOut => {
                 return AuxOut::choices(board().mask_hw() || board().zone_hw())
                     .iter()
