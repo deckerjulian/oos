@@ -17,7 +17,7 @@
 use super::magnetic::{missing_wave, WaveSamp};
 use super::*;
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
-use page::{populate_eye_facts, FactSettings};
+use page::{populate_eye_facts, FactInput, FactSettings};
 
 pub(super) mod automatic;
 mod draw;

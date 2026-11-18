@@ -299,14 +299,7 @@ fn compute(mut job: Job) -> Result<Computed, String> {
     let (measured, model, eye_model) = populate_eye_facts(
         &mut page,
         job.settings,
-        &clock,
-        &tie,
-        &trend,
-        &jitter,
-        &meas,
-        &data,
-        dt,
-        &means,
+        FactInput { clk: &clock, tie: &tie, trend: &trend, j: &jitter, meas: &meas, wave: &data, dt, means: &means },
         rail_wave.as_ref().map(|wave| (wave.as_slice(), dt)),
         clock_wave.as_ref().map(|wave| (data.as_slice(), wave.as_slice(), dt)),
     );
