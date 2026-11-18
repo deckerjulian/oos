@@ -108,21 +108,14 @@ fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Params, String>
 }
 
 impl State {
-    /// State after a warm hand-over: the stock values, ADC in the mode of `app_mask`.
-    pub fn handover(app_mask: u32, cal_adc: Option<&adc::CalAdc>) -> State {
-        let mode = adc::mode_of_mask(app_mask).unwrap_or(0);
-        let mut a = adc::Adc::default();
-        if let Some(c) = cal_adc {
-            a.parameter(c, 0);
-            if mode != 0 {
-                a.channel_mode(c, mode);
-            }
-        }
+    /// State from the shadows of the SCU, the AFEs, the ADC and its mode; the TPU shadows are the stock edge values, and
+    /// nothing else has been written by OOS yet.
+    pub fn new(sh: scu::Shadows, afe: [afe::Afe; 4], adc: adc::Adc, mode: usize) -> State {
         State {
-            sh: scu::Shadows::HANDOVER,
+            sh,
             ts: tpu::Shadows::APP,
-            afe: [0, 1, 2, 3].map(afe::Afe::new),
-            adc: a,
+            afe,
+            adc,
             mode,
             gain: [1.0; 4],
             la_was_on: false,
@@ -134,6 +127,19 @@ impl State {
             zone_tabs: [None, None],
             zone_run: None,
         }
+    }
+
+    /// State after a warm hand-over: the stock values, ADC in the mode of `app_mask`.
+    pub fn handover(app_mask: u32, cal_adc: Option<&adc::CalAdc>) -> State {
+        let mode = adc::mode_of_mask(app_mask).unwrap_or(0);
+        let mut a = adc::Adc::default();
+        if let Some(c) = cal_adc {
+            a.parameter(c, 0);
+            if mode != 0 {
+                a.channel_mode(c, mode);
+            }
+        }
+        State::new(scu::Shadows::HANDOVER, [0, 1, 2, 3].map(afe::Afe::new), a, mode)
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).

@@ -54,7 +54,7 @@ use regs::*;
 use crate::dho::adc;
 use crate::dho::afe::{self, AfeBus};
 use crate::dho::bus::Bus;
-use crate::dho::{scu, seq, tpu, Write};
+use crate::dho::{scu, seq, Write};
 
 /// Shadows of the write-only registers the boot modifies (all start at 0 except the ADC ones, which `regs::adc_init`
 /// sets to their start values).
@@ -789,34 +789,20 @@ impl<B: Bus> Ctx<'_, B> {
         // Hand-over to seq: shadows start at 0 [A]; TPU shadows = the stock edge values (the TPU is write-only and
         // tpu::edge rewrites the registers from them) [A]; ADC mode unknown so that the first configure writes the input
         // mode + ADC parameters of the mode (cold-boot.md 2, "first ADC configuration") [A].
-        let state = seq::State {
-            sh: scu::Shadows {
-                s4004: self.sh.s4004,
-                s4008: self.sh.s4008,
-                s400c: 0,
-                s1000: self.sh.s1000,
-                s1010: self.sh.s1010,
-                s4080: 0,
-                s1004: 0,
-                s4020: 0,
-                s1080: 0,
-                s1084: 0,
-                s40b8: 0,
-            },
-            ts: tpu::Shadows::APP,
-            afe: afes,
-            adc: a,
-            mode: usize::MAX,
-            gain: [1.0; 4],
-            la_was_on: false,
-            holdoff_set: false,
-            aux: None,
-            mask_cols: None,
-            mask_run: None,
-            s1190: 0,
-            zone_tabs: [None, None],
-            zone_run: None,
+        let sh = scu::Shadows {
+            s4004: self.sh.s4004,
+            s4008: self.sh.s4008,
+            s400c: 0,
+            s1000: self.sh.s1000,
+            s1010: self.sh.s1010,
+            s4080: 0,
+            s1004: 0,
+            s4020: 0,
+            s1080: 0,
+            s1084: 0,
+            s40b8: 0,
         };
+        let state = seq::State::new(sh, afes, a, usize::MAX);
         Ok(Outcome {
             state,
             sh: self.sh,
