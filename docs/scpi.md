@@ -402,6 +402,19 @@ Built-in generator commands use `:SOURce[<n>]:...` for a generator available on 
 
 Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THReshold[?]`, `:LA:POINts?`, `:LA:PREamble?`, `:LA:DATA?`. DATA is an IEEE block of little-endian u16 words, bit n representing Dn. LA availability is model-dependent.
 
+The switch of the logic analyser, its command and its place in a setup file. It is declared once, in
+`ui/src/settings/la.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/`), and a test fails when the two differ. On a model without the LA port every `:LA` command is refused with
+`-241`; a value the command does not take is refused with `-224`. The LA keeps its settings in one setup line,
+`la = <on> <lines> <preset D0-7> <preset D8-15> <user D0-7> <user D8-15> <height>`; the lines and the thresholds
+(above) are written by hand.
+
+<!-- settings:la:begin -->
+| Command | Takes | Setup key | Logic analyser menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:LA:STATe[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `la` (on) | LA | The logic analyser, where the model has the LA port: its 16 lines are recorded with the channels. `ENABle` is another name of `STATe`. |
+<!-- settings:la:end -->
+
 `:IDENtify?` returns the app's signal identification. Calibration commands `:CALibrate:STARt 0..4[,ZERO]`, `:CALibrate:STATus?`, `:CALibrate:CANCel` operate the self-calibration workflow; start requires the appropriate disconnected-input setup. They are not passive diagnostic reads.
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.

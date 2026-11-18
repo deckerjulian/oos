@@ -11,7 +11,7 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 11] = [
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 12] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
@@ -23,6 +23,7 @@ const GROUPS: [(&[&[Setting]], &str, &str, &str); 11] = [
     (&mask::SLICES, ":MASK", "mask", "Mask"),
     (&histogram::SLICES, ":HISTogram", "histogram", "Display"),
     (&bode::SLICES, ":BODE", "bode", "Bode"),
+    (&la::SLICES, ":LA", "la", "Logic analyser"),
 ];
 
 /// Every row with the SCPI root of its group, the first channel for `<n>`.

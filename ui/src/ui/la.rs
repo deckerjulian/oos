@@ -254,9 +254,7 @@ impl Ui {
 
     pub(super) fn la_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::LaOn | Item::LaShow | Item::LaThr(_) | Item::LaHeight | Item::LaLine(_) | Item::LaPat(_) => {
-                Kind::Choice
-            }
+            Item::LaShow | Item::LaThr(_) | Item::LaHeight | Item::LaLine(_) | Item::LaPat(_) => Kind::Choice,
             Item::LaUser(_) => Kind::Value,
             _ => return None,
         })
@@ -266,7 +264,6 @@ impl Ui {
         Some(match it {
             Item::Open(MenuId::La) => "Logic analyser",
             Item::Open(MenuId::LaLines) => "Line select",
-            Item::LaOn => "LA",
             Item::LaShow => "Lines",
             Item::LaThr(0) => "Thr D0-7",
             Item::LaThr(_) => "Thr D8-15",
@@ -284,7 +281,6 @@ impl Ui {
         let l = &self.m.la;
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::LaOn => onoff(l.on),
             Item::LaShow => GROUPS.iter().take(3).find(|g| g.1 == l.show).map_or(GROUPS[3].0, |g| g.0).into(),
             Item::LaThr(p) => PRESETS[l.preset[p.min(1)].min(USER)].0.into(),
             Item::LaUser(p) => format!("{:.2} V", l.user[p.min(1)]),
@@ -335,7 +331,7 @@ impl Ui {
     pub(super) fn la_options(&self, it: Item) -> Option<Vec<String>> {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::LaOn | Item::LaLine(_) => names(&["Off", "On"]),
+            Item::LaLine(_) => names(&["Off", "On"]),
             Item::LaShow => GROUPS.iter().map(|g| g.0.to_string()).collect(),
             Item::LaThr(_) => PRESETS.iter().map(|p| p.0.to_string()).collect(),
             Item::LaHeight => HEIGHTS.iter().map(|h| h.0.to_string()).collect(),
@@ -388,7 +384,6 @@ impl Ui {
         }
         let l = &mut self.m.la;
         match it {
-            Item::LaOn => l.on = !l.on && available(),
             Item::LaShow => {
                 let i = GROUPS.iter().take(3).position(|g| g.1 == l.show).unwrap_or(3);
                 let k = cycle(i, GROUPS.len(), d);

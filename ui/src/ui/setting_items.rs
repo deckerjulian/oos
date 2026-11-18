@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 45] = [
+const ITEMS: [(Item, &str); 46] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -54,6 +54,7 @@ const ITEMS: [(Item, &str); 45] = [
     (Item::MaskInvert, "mask_inv"),
     (Item::Histogram, "hist"),
     (Item::BodeMode, "bode_mode"),
+    (Item::LaOn, "la on"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -103,6 +104,8 @@ impl Ui {
                     self.m.floor_live_tdiv();
                 }
             }
+            // only a model with the LA port switches it on
+            Item::LaOn => self.m.la.on &= crate::ui::la::available(),
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar | Item::AcqDrawPath => self.dirty_map = true,
@@ -144,7 +147,8 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the Acquire menu (in Average mode with segments, so their
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the LA menu, in the
+    /// Acquire menu (in Average mode with segments, so their
     /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
     /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
     /// limits show).
@@ -153,7 +157,7 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))
