@@ -471,9 +471,9 @@ mod tests {
     }
 
     // Issue #193 (found in a fork, checked on main): a running tree with a seed for the kernel's address randomisation
-    // passed it on to the kexec start, and kexec-tools refused the tree. Break it catches: a seed other than 0 in the
-    // merged tree, from the loader or from the new image; the property dropped instead of wiped (kexec-tools fills a
-    // seed of 0 with a fresh one).
+    // passed it on to the kexec start, and kexec-tools refused the tree. The test fails when the merged tree keeps a
+    // seed other than 0 (from the loader or from the new image), or when the seed is dropped instead of set to 0
+    // (kexec-tools only fills in a seed that is there and 0).
     #[test]
     fn the_kaslr_seed_is_wiped_to_0() {
         let seed: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
