@@ -26,7 +26,7 @@ impl J {
             _ => None,
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn num(&self) -> Option<f64> {
         match self {
             J::Num(n) => Some(*n),

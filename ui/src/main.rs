@@ -281,7 +281,6 @@ fn lan_port(args: &[String], name: &str, d: u16) -> u16 {
 /// The name responder's services as System > Network sets them, made to match the listeners that are really up:
 /// VXI-11 only where it listens, HiSLIP where it does, and LXI discovery (`_lxi._tcp`) beside the web server, both
 /// pointing at the identification page.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn mdns_services(mut c: mdns::Config, web: Option<u16>, vxi: Option<u16>, hislip: Option<u16>) -> mdns::Config {
     if vxi.is_none() {
         c.services.retain(|s| s.kind != "_vxi-11._tcp");
@@ -362,7 +361,6 @@ impl GpuLayers {
 
 /// The monitor's picture on the GPU (Display > HDMI with Graphics = GPU), right after the panel's: Mirror and
 /// Waveform take the panel's layers again without a new upload (quad 0); Layout draws the monitor's own layers.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 fn hdmi_gpu_frame(
     ui: &mut Ui,
@@ -590,7 +588,6 @@ fn save_shot(ui: &mut Ui, cv: &Canvas, p: String, n: &mut u32) {
 #[cfg(target_os = "linux")]
 const SETUP_FILE: &str = "/tmp/oos-ui.setup";
 /// Power-on pictures, first found wins: a picture copied by rcS from removable media, then the image's own.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const SPLASH: [&str; 2] = ["/tmp/oos-splash.ppm", "/etc/oos/splash.ppm"];
 
 /// Power off / restart through the front-panel MCU, as the stock system does (board.md 4/8.3): file systems synced
@@ -1108,7 +1105,6 @@ fn eth_watch(ui: &mut Ui, now: f64) {
 
 /// The HDMI workspace: a settings line on top, below it the waveform area of the panel (plot and measurement rows,
 /// without the bars and menus) scaled to the monitor with its aspect ratio.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     hc.clear(HDMI_BG);
     let body = ui.frame().body;

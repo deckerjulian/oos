@@ -16,7 +16,8 @@ pub struct Glyph {
 
 pub struct Font {
     pub size: i32,
-    #[cfg_attr(not(test), allow(dead_code))] // read by the layout tests
+    /// read by the layout tests only
+    #[cfg(test)]
     pub descent: i32,
     pub glyphs: Vec<Glyph>,
     pub alpha: &'static [u8],
@@ -81,7 +82,8 @@ impl Fonts {
         let mut v = Vec::new();
         for _ in 0..count {
             let size = u16le(b, o) as i32;
-            // o + 2: the ascent, not used
+            // o + 2: the ascent, not used; o + 4: the descent, for the layout tests
+            #[cfg(test)]
             let descent = u16le(b, o + 4) as i32;
             let n = u16le(b, o + 6) as usize;
             let alen = u32le(b, o + 8) as usize;
@@ -101,7 +103,13 @@ impl Fonts {
             }
             let alpha = &b[o..o + alen];
             o += alen;
-            v.push(Font { size, descent, glyphs, alpha });
+            v.push(Font {
+                size,
+                #[cfg(test)]
+                descent,
+                glyphs,
+                alpha,
+            });
         }
         let mut it = v.into_iter();
         let mut next = || it.next().unwrap();

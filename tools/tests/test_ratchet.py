@@ -51,6 +51,18 @@ class Ratchet(unittest.TestCase):
         self.assertNotIn("lines hal/src/lib.rs", n)
         self.assertEqual(self.ratchet()[0], 0)
 
+    def test_only_lint_attributes_count_as_allow(self):
+        (self.repo / "ui" / "src" / "lib.rs").write_text(
+            "#![allow(clippy::x)]\n"
+            "#[cfg_attr(not(test), allow(dead_code))]\n"
+            "pub struct Lock(#[allow(dead_code)] u8);\n"
+            "fn net_allow() {}\n"
+            "fn g() { set_net_allow(\"x\"); allow(1); }\n"
+            "#[cfg_attr(test, must_use)]\n"
+            "// #[allow(dead_code)] in a comment\n")
+        self.assertEqual(self.ratchet("--init")[0], 0)
+        self.assertEqual(self.numbers()["allow ui"], "3", "the three attributes, not the calls or the comment")
+
     def test_up_fails_and_a_test_costs_nothing(self):
         self.ratchet("--init")
         self.write_big(code=2100, tests=900)
@@ -88,6 +100,11 @@ class Ratchet(unittest.TestCase):
         (self.repo / "dsp" / "src" / "lib.rs").write_text("#[allow(unused)]\npub fn f() {}\n")
         code, out = self.ratchet()
         self.assertEqual(code, 1)
+        self.assertIn("up: allow dsp 0 -> 1", out)
+        # inside a block comment of one line it is no attribute; after a closed one it is code again
+        (self.repo / "dsp" / "src" / "lib.rs").write_text(
+            "/* #[allow(unused)] */ pub fn f() {}\n/* note */ #[allow(dead_code)]\npub fn g() {}\n")
+        code, out = self.ratchet()
         self.assertIn("up: allow dsp 0 -> 1", out)
 
     def test_init_only_once(self):
