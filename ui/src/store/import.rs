@@ -125,10 +125,11 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
         }
         rows += 1;
     }
-    let dt = match times {
-        [a, b] if rows >= 2 && b > a => b - a,
-        _ => return Err("that file holds no waveform".into()),
-    };
+    // the time base the binary readers ask for: a time of inf gives an infinite step or start
+    let dt = times[1] - times[0];
+    if !oosw_timing_ok(rows, dt, times[0]) {
+        return Err("that file holds no waveform".into());
+    }
     let ntrace = columns.len();
     Ok(columns
         .into_iter()

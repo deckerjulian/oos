@@ -43,11 +43,6 @@ pub(crate) const KNOWN: &[Known] = &[
         repro: files::hostile_known_setup_refused_line_half_applied,
     },
     Known {
-        name: "csv-time-not-finite",
-        what: "store::parse_wave takes a CSV whose time column holds inf: dt or t0 is infinite",
-        repro: files::hostile_known_csv_time_not_finite,
-    },
-    Known {
         name: "sysconf-list-word-with-hash",
         what: "sysconf::SysConf::parse takes a word of features.off that starts with '#': written out it is a comment",
         repro: conf::hostile_known_sysconf_list_word_with_hash,

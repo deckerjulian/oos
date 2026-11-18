@@ -178,6 +178,8 @@ Fixed:
 - Bode with a generator on the USB port: a device that answers with transfers of no data and never ends the answer
   no longer holds the generator's thread for ever. After 16 such transfers the read fails, and the Bode page says
   that `*IDN?` failed.
+- Waveform import: a CSV whose time column gives an infinite time step or start (`inf` as a time) is refused, as an
+  `OOSW` file with such a time base is. It became a reference with an infinite time step.
 
 ## 0.1.13
 
