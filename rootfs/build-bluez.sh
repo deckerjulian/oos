@@ -64,4 +64,5 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e DBUS=
 	chown "$OUT_OWNER" /out/dbus-daemon /out/bluetoothd /out/btmon /out/*.COPYING
 	ls -l /out/dbus-daemon /out/bluetoothd /out/btmon
 '
-dep_stamp "$out/bluetoothd" dbus bluez expat glib pcre2 gettext "$here/build-bluez.sh"
+dep_stamp "$out/bluetoothd" dbus bluez expat glib glib-patch-1 glib-patch-2 pcre2 gettext gettext-patch-1 gettext-patch-2 \
+	gettext-patch-3 "$here/build-bluez.sh"

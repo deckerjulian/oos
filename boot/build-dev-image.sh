@@ -77,8 +77,8 @@ if [ ! -x "$o/wpa_cli" ] || dep_stale "$o/wpa_supplicant" "$root/rootfs/build-wl
 	"$root/rootfs/build-wlan-tools.sh"
 fi
 # Bluetooth: dbus-daemon, bluetoothd and btmon (docs/bluetooth.md)
-if [ ! -x "$o/btmon" ] || [ ! -x "$o/dbus-daemon" ] || dep_stale "$o/bluetoothd" dbus bluez expat glib pcre2 gettext \
-	"$root/rootfs/build-bluez.sh"; then
+if [ ! -x "$o/btmon" ] || [ ! -x "$o/dbus-daemon" ] || dep_stale "$o/bluetoothd" dbus bluez expat glib glib-patch-1 \
+	glib-patch-2 pcre2 gettext gettext-patch-1 gettext-patch-2 gettext-patch-3 "$root/rootfs/build-bluez.sh"; then
 	"$root/rootfs/build-bluez.sh"
 fi
 # /oos is checked before it is mounted
