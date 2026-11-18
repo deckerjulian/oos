@@ -712,12 +712,24 @@ impl Ui {
             })
     }
 
+    /// Helper threads of the fast path (`fast_draw_all`): none in batch mode, where the deposit workers keep the small
+    /// cores busy: a helper there waited for a core, and the frame loop for the helper (issue #186). In batch mode the
+    /// queue holds only the newest frame of each batch, one or two a screen.
+    pub(super) fn fast_helpers(&self) -> usize {
+        if self.m.draw_batch && self.src.is_hw() {
+            0
+        } else {
+            crate::fastdraw::helpers()
+        }
+    }
+
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
     /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
     /// Returns the frames that counted as triggered.
     pub(super) fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>) -> usize {
         let frames: Vec<std::sync::Arc<crate::board::Frame>> = frames.into_iter().map(std::sync::Arc::new).collect();
         let (w, h) = (self.ph.w, self.ph.h);
+        let helpers = self.fast_helpers();
         let m = &self.m;
         // the statistics of every frame for the voltage measurements, once the measurements of the record have set
         // up their rows
@@ -728,7 +740,7 @@ impl Ui {
                 && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k))
         });
         let t0 = std::time::Instant::now();
-        let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
+        let placed = crate::fastdraw::par_map(helpers, &frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
         let mut trig = 0;
         for (p, f) in placed.iter().zip(&frames) {
@@ -762,8 +774,7 @@ impl Ui {
                 self.acc_t[c] = vec![0; w * (h + 1)];
             }
         }
-        let bands =
-            if frames.len() < 2 || on.is_empty() { 1 } else { (crate::fastdraw::helpers() + 1).div_ceil(on.len()) };
+        let bands = if frames.len() < 2 || on.is_empty() { 1 } else { (helpers + 1).div_ceil(on.len()) };
         let band_cols = w.div_ceil(bands).max(1);
         let mut jobs: Vec<(usize, usize, &mut [u16])> = Vec::new();
         for (c, acc) in self.acc_t.iter_mut().enumerate() {
@@ -771,7 +782,7 @@ impl Ui {
                 jobs.extend(acc.chunks_mut(band_cols * (h + 1)).enumerate().map(|(b, band)| (c, b * band_cols, band)));
             }
         }
-        crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
+        crate::fastdraw::par_each(helpers, jobs, |(c, c_lo, band)| {
             for (f, p) in frames.iter().zip(&placed) {
                 fast_deposit_t(m, (w, h), c, band, c_lo, f, &p.plan);
             }
@@ -797,7 +808,7 @@ impl Ui {
             .filter(|(c, _)| on.contains(c))
             .map(|(c, (a, b))| (c, a, b))
             .collect();
-        crate::fastdraw::par_each(pairs, |(c, map, acc)| {
+        crate::fastdraw::par_each(helpers, pairs, |(c, map, acc)| {
             crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1)
         });
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);

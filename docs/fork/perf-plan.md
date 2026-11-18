@@ -257,7 +257,9 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   mailbox under the lock. Now the workers and the helper fold their maps into one set on their own cores (the set
   taken out of the shared mailbox and added outside the lock: the UI never waits, and finds the set being folded at
   the next screen), the UI swaps that set in for minimum persistence (no pixel touched) or adds the maps of the
-  channels on (one map per channel), and a set is cleared only in the maps it used. Pictures equal to before (guards above, and the merge of 12 batches while the workers
+  channels on (one map per channel), and a set is cleared only in the maps it used. In batch mode the fast path draws
+  the few queued frames (the newest of older batches) on the frame loop alone: its helpers would wait for the small
+  cores the workers keep busy. Pictures equal to before (guards above, and the merge of 12 batches while the workers
   fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div` (host M3, 16 frames of 250 kB
   a step, 4 workers): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum persistence and 0.03-0.13 ms
   (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame loop per step 1 / 2 / 4 channels

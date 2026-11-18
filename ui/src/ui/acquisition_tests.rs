@@ -1013,11 +1013,16 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
                 fast_deposit(&ui.m, w, h, c, &mut want.map[c], &f, &p.plan);
             }
         }
-        ui.ph.clear();
-        assert_eq!(ui.fast_draw_all(frames.clone()), 40);
-        for c in 0..NCH {
-            assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
-            assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
+        // the frames mode with its helpers, the batch mode on the frame loop's thread alone (its helpers would wait for
+        // the small cores the deposit workers keep busy)
+        for batch in [false, true] {
+            ui.m.draw_batch = batch;
+            ui.ph.clear();
+            assert_eq!(ui.fast_draw_all(frames.clone()), 40);
+            for c in 0..NCH {
+                assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
+                assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{} batch {}: maps differ", tdiv, c + 1, batch);
+            }
         }
         // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
         shared.lock().unwrap().queue.extend((1..=41).map(frame));
@@ -1088,10 +1093,16 @@ fn fast_path_bands_draw_as_the_whole_map() {
                 let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
                 fast_deposit(&ui.m, w, h, 0, &mut want, &f, &p.plan);
             }
-            ui.ph.clear();
-            ui.fast_draw_all(frames);
-            assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
-            assert!(ui.ph.map[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
+            // the frames mode with its helpers, the batch mode on the frame loop's thread alone
+            for batch in [false, true] {
+                ui.m.draw_batch = batch;
+                assert_eq!(ui.fast_helpers() == 0, batch);
+                ui.ph.clear();
+                ui.fast_draw_all(frames.clone());
+                let what = format!("{} s/div dots {} batch {}", tdiv, dots, batch);
+                assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{}: little drawn", what);
+                assert!(ui.ph.map[0] == want, "{}: maps differ", what);
+            }
         }
     }
 }
