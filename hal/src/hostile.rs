@@ -157,3 +157,70 @@ fn hostile_wlan_answers() {
         Ok(())
     });
 }
+
+/// `dbus::Message::decode`, `dbus::total_len` and `bluez::objects` (what bluetoothd sends on the system bus: replies,
+/// errors, the agent's calls and the managed objects): return for any bytes; a length is at most `dbus::MAX_LEN`; a
+/// message that decodes encodes to one that decodes the same (the sender is not sent back); every device of the
+/// objects has its path.
+#[test]
+fn hostile_dbus_messages() {
+    use crate::bluez;
+    use crate::dbus::{self, Message, Value};
+    let s = |t: &str| Value::Str(t.into());
+    let var = |v: Value| Value::Variant(Box::new(v));
+    let dict = |kv: Vec<(&str, Value)>| {
+        Value::Array(
+            "{sv}".into(),
+            kv.into_iter().map(|(k, v)| Value::Entry(Box::new(s(k)), Box::new(var(v)))).collect(),
+        )
+    };
+    let ifaces = |name: &str, props: Value| {
+        Value::Array("{sa{sv}}".into(), vec![Value::Entry(Box::new(s(name)), Box::new(props))])
+    };
+    let objects = Value::Array(
+        "{oa{sa{sv}}}".into(),
+        vec![
+            Value::Entry(
+                Box::new(Value::Path("/org/bluez/hci0".into())),
+                Box::new(ifaces(
+                    "org.bluez.Adapter1",
+                    dict(vec![("Alias", s("scope")), ("Powered", Value::Bool(true))]),
+                )),
+            ),
+            Value::Entry(
+                Box::new(Value::Path("/org/bluez/hci0/dev_1".into())),
+                Box::new(ifaces(
+                    "org.bluez.Device1",
+                    dict(vec![("Name", s("Keys")), ("Icon", s("input-keyboard")), ("RSSI", Value::I16(-60))]),
+                )),
+            ),
+        ],
+    );
+    let mut reply = Message::call("org.bluez", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", vec![]);
+    reply.kind = 2;
+    reply.reply_serial = Some(3);
+    reply.body = vec![objects];
+    let mut call = Message::call("x", "/oos/agent", "org.bluez.Agent1", "DisplayPasskey", vec![]);
+    call.body = vec![Value::Path("/org/bluez/hci0/dev_1".into()), Value::U32(123456), Value::U16(2)];
+    let mut error = Message::error(&call, "org.bluez.Error.Failed", "no");
+    error.serial = 9;
+    let seeds: Vec<Vec<u8>> = [reply, call, error].iter().map(Message::encode).collect();
+    let seeds: Vec<&[u8]> = seeds.iter().map(Vec::as_slice).collect();
+    run("dbus::Message::decode", &seeds, 1, |b| {
+        if let Ok(head) = <[u8; 16]>::try_from(b.get(..16).unwrap_or_default()) {
+            if dbus::total_len(&head).is_ok_and(|n| n > dbus::MAX_LEN) {
+                return Err("a length over MAX_LEN".into());
+            }
+        }
+        let Ok(m) = Message::decode(b) else { return Ok(()) };
+        let again = Message::decode(&m.encode()).map_err(|e| format!("decoded, encoded and refused: {e}"))?;
+        if again != (Message { sender: None, ..m.clone() }) {
+            return Err(format!("decoded, encoded and decoded otherwise: {m:?} -> {again:?}"));
+        }
+        let (_, devices) = bluez::objects(&m.body);
+        if devices.iter().any(|d| d.path.is_empty()) {
+            return Err("a device without its path".into());
+        }
+        Ok(())
+    });
+}
