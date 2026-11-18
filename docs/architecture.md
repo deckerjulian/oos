@@ -3,8 +3,8 @@
 How the pieces of OOS fit together: from the SD card over the kernel to the Rust crates and the GUI. The register-level
 details are in `protocols/`.
 
-The three diagrams follow the C4 levels: the scope and who uses it, the programs of the image, and the parts inside
-the programs. They are drawn from the code; the files are named under each.
+The diagrams follow the C4 levels: the scope and who uses it, the programs of the image, the parts inside the
+programs, and the layers inside `oos-ui`. They are drawn from the code; the files are named under each.
 
 ## The scope and who uses it
 
@@ -180,6 +180,47 @@ Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the softwa
 selected type, the software trigger finds the point again in the data). Only `Demo` gives a trigger type starting
 values when it is chosen, values that trigger on its signals; with every other source a new type keeps what the user
 set (width, pattern, levels), and the lower level of Slope, Runt and Window stays at or below the upper one.
+
+### Layers inside oos-ui
+
+Every module of `oos-ui` is in one layer, and a layer names only the layers below it that its row allows
+([ADR 0049](adr/code/0049-the-layers-inside-oos-ui.md), which has the table with every module). An arrow reads "may
+name" and carries on down the arrows, with two limits: a transport names only the interpreters and base, and the
+store does not name the board.
+
+```mermaid
+flowchart TB
+    subgraph uiL["oos-ui (ui/src/)"]
+        main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
+        transport["transport<br/>http, vxi11, hislip, announce<br/>frame the messages of a computer"]
+        command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
+        screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
+        store["store<br/>store<br/>setup and waveform files"]
+        signal["signal<br/>wave, trig, protocols, measures, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
+        settings["settings<br/>settings<br/>one row per setting"]
+        board["board<br/>board<br/>the one door to the hardware"]
+        model["model<br/>model, math, zone, decode<br/>what the user has set"]
+        base["base<br/>gfx, font, layout, clock, sysconf, system, net, netacl, mdns, ssh and ten more<br/>no state of the scope"]
+    end
+    hal["oos_hal::dho (hal/src/dho/)<br/>the registers of the DHO800/DHO900 board"]
+    main -- "wires up" --> transport
+    transport -- "programs, ADR 0022" --> command
+    transport --> base
+    command -- "Ui, handed over by the frame loop" --> screen
+    screen --> store
+    store --> signal
+    store --> settings
+    signal -- "Board, Frame" --> board
+    settings --> model
+    board --> model
+    model --> base
+    board -- "board/dho/ only" --> hal
+```
+
+Drawn from: `tools/layers.py` (`UI_LAYERS`, which places every module and is what `tools/layers.py --list` checks
+the paths against), `ui/src/main.rs` (the modules and the frame loop), `ui/src/board/mod.rs`. The code does not hold
+the arrows everywhere yet: the paths against them are counted in `tools/layers.txt` and may only become fewer
+(ADR 0037, ADR 0049). A new module gets its row in `UI_LAYERS` before the checks pass.
 
 ### oos-fpgad: bring-up and service tool
 
