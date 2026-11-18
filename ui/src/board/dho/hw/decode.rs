@@ -198,11 +198,11 @@ impl crate::drawpipe::RawBatch for oos_hal::dho::bus::DmaBuf {
 /// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
 /// (start + j - trigger index) / LA rate from the hardware trigger point (la.md 3.3; the trigger index is [A] until
 /// test T1).
-pub fn la_record(words: Vec<u16>, s: &Settings, p: &hz::Params) -> crate::ui::la::LaRec {
+pub fn la_record(words: Vec<u16>, s: &Settings, p: &hz::Params) -> crate::logic::LaRec {
     let t = oos_hal::dho::la::timing(p, s.mask);
     let (_, start) = oos_hal::dho::la::window(&t);
     let dt = 1.0 / t.rate.max(1) as f64;
-    crate::ui::la::LaRec { words: Arc::new(words), t0: (start as f64 - t.pre as f64) * dt, dt }
+    crate::logic::LaRec { words: Arc::new(words), t0: (start as f64 - t.pre as f64) * dt, dt }
 }
 
 /// hal bandwidth code of a BWS entry.

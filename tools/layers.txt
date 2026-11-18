@@ -2,7 +2,7 @@
 0 dsp-hw
 0 hal-up
 0 ui-base-up
-47 ui-board-up
+39 ui-board-up
 0 ui-command-up
 21 ui-model-up
 4 ui-screen-up
