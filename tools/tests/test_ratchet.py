@@ -101,6 +101,11 @@ class Ratchet(unittest.TestCase):
         code, out = self.ratchet()
         self.assertEqual(code, 1)
         self.assertIn("up: allow dsp 0 -> 1", out)
+        # inside a block comment of one line it is no attribute; after a closed one it is code again
+        (self.repo / "dsp" / "src" / "lib.rs").write_text(
+            "/* #[allow(unused)] */ pub fn f() {}\n/* note */ #[allow(dead_code)]\npub fn g() {}\n")
+        code, out = self.ratchet()
+        self.assertIn("up: allow dsp 0 -> 1", out)
 
     def test_init_only_once(self):
         self.assertEqual(self.ratchet("--init")[0], 0)

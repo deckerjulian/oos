@@ -7,7 +7,8 @@
 #                  2000. A test module inside the file (`#[cfg(test)] mod name {` to its closing brace, both at the
 #                  start of a line) is not counted, so a test never costs room.
 #   allow CRATE    the lines of a crate that switch a lint off with an attribute (`#[allow(`, `#![allow(`,
-#                  `#[cfg_attr(COND, allow(`) before any comment on the line; a call like `net_allow(` is no lint
+#                  `#[cfg_attr(COND, allow(`) in code: not after `//`, not inside a `/* ... */` that opens and closes on
+#                  the line (after a closed one it is code again); a call like `net_allow(` is no lint
 #   unsafe CRATE   the lines of a crate with `unsafe` in the code
 #
 #   tools/ratchet.sh                 measure and compare with tools/ratchet.txt; exit 1 when a number differs
@@ -37,9 +38,10 @@ measure() {
 	done
 	for c in hal dsp ui fpgad; do
 		git ls-files -- "$c" | grep '\.rs$' >"$tmp/rs"
-		# an `allow` attribute before any comment on the line
+		# an `allow` attribute in code: block comments of one line taken out first, then before any `//`
 		# shellcheck disable=SC2046
-		echo "$(cat $(cat "$tmp/rs") | grep -cE '^([^/]|/[^/])*#!?\[(allow|cfg_attr\(.*[^A-Za-z0-9_]allow)\(') allow $c"
+		echo "$(cat $(cat "$tmp/rs") | sed -E 's#/\*([^*]|\*+[^*/])*\*+/##g' |
+			grep -cE '^([^/]|/[^/])*#!?\[(allow|cfg_attr\(.*[^A-Za-z0-9_]allow)\(') allow $c"
 		# `unsafe` before any comment on the line
 		# shellcheck disable=SC2046
 		echo "$(cat $(cat "$tmp/rs") | grep -cE '^([^/]|/[^/])*\<unsafe\>') unsafe $c"
