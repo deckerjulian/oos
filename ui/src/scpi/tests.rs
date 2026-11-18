@@ -287,16 +287,24 @@ fn a_query_is_answered_after_the_client_closed_its_side() {
     let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
     client.write_all(b"*IDN?\n").unwrap();
     client.shutdown(std::net::Shutdown::Write).unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    for _ in 0..50 {
+    // a hang guard, not a time the test depends on: the session is polled until the client reads the end of the
+    // connection, however long the host takes (it was 50 polls, 100 ms, and failed under load)
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    client.set_nonblocking(true).unwrap();
+    let mut got = Vec::new();
+    let mut chunk = [0u8; 256];
+    loop {
         s.poll(&mut ui, &cv);
-        if s.clients.is_empty() {
-            break;
+        match std::io::Read::read(&mut client, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => got.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("{e}"),
         }
+        assert!(std::time::Instant::now() < deadline, "no end of the connection");
         std::thread::sleep(Duration::from_millis(2));
     }
-    let mut answer = String::new();
-    std::io::Read::read_to_string(&mut client, &mut answer).unwrap();
+    let answer = String::from_utf8_lossy(&got);
     assert!(answer.starts_with("OOS,"), "{answer:?}");
 }
 
