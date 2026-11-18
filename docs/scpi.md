@@ -474,19 +474,9 @@ The switch of the logic analyser, its command and its place in a setup file. It 
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
-The settings of `:SYSTem` that a setup file keeps, their commands and their keys. They are declared once, in
-`ui/src/settings/system.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
-command does not take is refused with `-224`. The graphics choice and the AUX OUT (below) are written by hand.
-
-<!-- settings:system:begin -->
-| Command | Takes | Setup key | Acquire menu | What it does |
-| --- | --- | --- | --- | --- |
-| `:SYSTem:PIPeline[?]` | `BATCh`, `FRAMes` or `STANdard`, any word that starts with `BATC`, `FRAM` or `STAN`, in any case; the query answers `BATC` or `FRAM` | `draw_path` | Draw path | The draw path of the Acquire menu: Batch, the default ([ADR 0029](adr/code/0029-batch-is-the-default-draw-path.md)), or Frames, the standard path; `STANdard` is an alias of `FRAMes`. Which path runs is the `pipeline` part of `:SYSTem:STATe?`. |
-<!-- settings:system:end -->
-
 | Command | Meaning |
 | --- | --- |
+| `:SYSTem:PIPeline[?]` | The draw path of earlier versions, kept for scripts that set or ask it: Batch is the only one (ADR 0059). The query answers `BATC`; `BATCh` (any word that starts with `BATC`, in any case) is taken and changes nothing; `FRAMes` and `STANdard`, the removed frames path, are refused with `-224`. Not in a setup file. |
 | `:SYSTem:GRAPhics[?] CPU|GPU` | System > Graphics, the choice; `:SYSTem:STATe?` shows the GPU's times (`gpu layers ...`) only while it really draws. |
 | `:SYSTem:AOUTput[?] TOUT|PFAil|OFF` | The rear AUX OUT: trigger out (the default), pass/fail where the board has the mask or the zone unit, or constant low (`OFF`, an OOS choice); all three verified on the unit (DHO924S, 2026-11-16, [auxout.md](fork/auxout.md)). The query answers `TOUT`, `PFA` or `OFF`; the interpreter refuses a choice the board does not offer with `-224`. |
 

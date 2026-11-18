@@ -364,6 +364,18 @@ fn setup_errors_and_unknown_keys() {
     assert!(parse_setup("delay").is_err());
 }
 
+// Break it catches: a setup of a version with a choice of draw paths (`draw_path`, before Batch was the only one,
+// ADR 0059) that no longer loads, or whose key is written again
+#[test]
+fn an_old_draw_path_key_is_passed_over() {
+    for v in ["standard", "batch", "bogus"] {
+        let m = parse_setup(&format!("ch2.on = true\ndraw_path = {v}\n")).unwrap();
+        assert!(m.ch[1].on);
+        assert_eq!(parse_setup_lenient(&format!("draw_path = {v}\n")).1, Vec::<String>::new());
+        assert!(!setup_text(&m).contains("draw_path"));
+    }
+}
+
 /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
 #[test]
 fn setup_aux_out() {

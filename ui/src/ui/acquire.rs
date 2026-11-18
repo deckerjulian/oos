@@ -60,8 +60,8 @@ impl Ui {
 
     /// The per-frame polls and ticks, and the wall time.
     fn step_polls(&mut self, dt_wall: f64) {
-        // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
-        crate::drawpipe::set_enabled(self.m.draw_batch && self.src.is_hw());
+        // the deposit workers (drawpipe.rs) draw the hardware's batches; the other sources have no batches
+        crate::drawpipe::set_enabled(self.src.is_hw());
         // System > Features: what is left out runs nothing
         self.features_enforce();
         self.poll_reference_measurements();

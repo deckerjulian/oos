@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 75] = [
+const ITEMS: [(Item, &str); 74] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -48,7 +48,6 @@ const ITEMS: [(Item, &str); 75] = [
     (Item::CntDigits, "counter digits"),
     (Item::ChFine, "fine_v"),
     (Item::ChExpand, "v_expand_gnd"),
-    (Item::AcqDrawPath, "draw_path"),
     (Item::MaskOn, "mask_on"),
     (Item::MaskAction, "mask_stop"),
     (Item::MaskInvert, "mask_inv"),
@@ -137,7 +136,7 @@ impl Ui {
             Item::LaOn => self.m.la.on &= crate::ui::la::available(),
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
-            Item::Dots | Item::BottomBar | Item::AcqDrawPath => self.dirty_map = true,
+            Item::Dots | Item::BottomBar => self.dirty_map = true,
             // a switched-on test without a mask builds one from the source
             Item::MaskOn if self.m.mask_on && self.mask.is_none() => self.create_mask(),
             Item::MaskInvert => self.build_mask(),

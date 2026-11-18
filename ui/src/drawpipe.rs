@@ -17,8 +17,7 @@
 //! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
 //! A batch whose workers are still busy, frames of older settings and maps of an older mapping are dropped and
 //! counted (`Counters`). Where the fast path does not apply (no view), the acquisition thread queues every frame as in
-//! `frames` mode. Batch is the default draw path (ADR 0029); `acq.pipeline = frames` in system.conf or
-//! OOS_PIPELINE=frames starts with the old path, kept as the way back.
+//! `frames` mode. Batch is the only draw path of the hardware (ADR 0059); the other sources have no batches.
 
 use crate::board::Frame;
 use crate::fastdraw::EdgeSeek;
@@ -308,14 +307,6 @@ impl Counters {
 pub enum Mode {
     Frames,
     Batch,
-}
-
-/// OOS_PIPELINE, else the `acq.pipeline` line of system.conf: `frames` (or `standard`) for the old path, else batch.
-pub fn mode_from(env: Option<&str>, conf: &str) -> Mode {
-    match crate::sysconf::setting_of(env, conf, "acq.pipeline") {
-        Some("frames" | "standard") => Mode::Frames,
-        _ => Mode::Batch,
-    }
 }
 
 /// A read-out buffer of the board (the acquisition thread's DMA target), lent to the workers.
@@ -959,19 +950,14 @@ fn any_count(b: &[u16]) -> bool {
 /// Workers where the cores are all alike (the host): two.
 const WORKERS: usize = 2;
 
-/// Batch mode switched on (Acquire > Draw path = Batch, `:SYSTem:PIPeline`, the start unless `acq.pipeline = frames`).
+/// The workers on: the source is the hardware (`Ui::step`). The other sources (demo, replay, live, SIM) put their
+/// records on the screen without the queue of hardware frames, and start no workers.
 static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The workers, started the first time batch mode is on and kept afterwards.
+/// The workers, started the first time the hardware is the source and kept afterwards.
 static PIPE: OnceLock<Pipe> = OnceLock::new();
 
-/// Whether the scope starts with batch mode: yes unless `acq.pipeline = frames` (or OOS_PIPELINE=frames).
-pub fn configured() -> bool {
-    let env = std::env::var("OOS_PIPELINE").ok();
-    mode_from(env.as_deref(), &crate::sysconf::fork_text()) == Mode::Batch
-}
-
-/// Batch mode on or off while the scope runs. Off: the workers stay, idle, and forget their view, so no frame of
-/// the old settings is merged when it comes on again.
+/// The workers on or off while the scope runs (`ENABLED`). Off: they stay, idle, and forget their view, so no frame
+/// of the old settings is merged when they come on again.
 pub fn set_enabled(on: bool) {
     let was = ENABLED.swap(on, std::sync::atomic::Ordering::Relaxed);
     if was && !on {
@@ -1567,17 +1553,6 @@ mod tests {
         assert!(!pipe.accepting());
     }
 
-    #[test]
-    fn pipeline_mode_from_env_and_system_conf() {
-        assert_eq!(mode_from(None, ""), Mode::Batch, "Batch is the default (ADR 0029)");
-        assert_eq!(mode_from(None, "ntp = off\nacq.pipeline = frames   # old path\n"), Mode::Frames);
-        assert_eq!(mode_from(None, "acq.pipeline = standard\n"), Mode::Frames);
-        assert_eq!(mode_from(None, "acq.pipeline = batch\n"), Mode::Batch);
-        assert_eq!(mode_from(Some("frames"), "acq.pipeline = batch\n"), Mode::Frames);
-        assert_eq!(mode_from(Some("batch"), "acq.pipeline = frames\n"), Mode::Batch);
-        assert_eq!(mode_from(None, "acq.pipeline = bogus\n"), Mode::Batch);
-    }
-
     /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames
     /// mode's per-frame work on the UI thread (`decode` + `draw_frame`), and the rate of 1, 2 and 4 workers (the
     /// helper runs the same code per frame). Run by tools/perf-guard.sh.
@@ -1689,7 +1664,6 @@ mod tests {
                 ui.m.run = RunState::Run;
                 ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-5).abs() < 1e-8).unwrap();
                 ui.m.trig_level = 0.0;
-                ui.m.draw_batch = batch;
                 for c in 0..NCH {
                     (ui.m.ch[c].on, ui.m.ch[c].offset) = (mask & (1 << c) != 0, 0.0);
                 }

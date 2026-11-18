@@ -667,7 +667,7 @@ fn power_on_picture(ui: &mut Ui, disp: &mut drm::Display, start_up: Option<&str>
     }
 }
 
-/// The settings of the last run in this boot, those of the scope itself, the draw path and the SSH folder.
+/// The settings of the last run in this boot, those of the scope itself and the SSH folder.
 #[cfg(target_os = "linux")]
 fn restore_settings(ui: &mut Ui) {
     // settings survive a restart of oos-ui within one boot (rcS restarts it on the hardware after the cold boot)
@@ -684,9 +684,6 @@ fn restore_settings(ui: &mut Ui) {
     }
     // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
     ui.load_system(sysconf::default_path());
-    // the draw path starts as system.conf says, Batch unless `acq.pipeline = frames` (ADR 0029): the setups saved
-    // before Batch was the default hold `draw_path = standard` and would keep every unit on Standard
-    ui.m.draw_batch = drawpipe::configured();
     ui.set_ssh_dir(ssh::dir());
 }
 

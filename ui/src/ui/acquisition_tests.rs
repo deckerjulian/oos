@@ -1350,7 +1350,6 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
         ui.m.run = RunState::Run;
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-6).unwrap();
         ui.m.trig_level = 0.0;
-        ui.m.draw_batch = true;
         for c in 0..NCH {
             (ui.m.ch[c].on, ui.m.ch[c].offset) = (mask & (1 << c) != 0, 0.0);
         }
