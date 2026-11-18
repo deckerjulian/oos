@@ -97,6 +97,8 @@ Changed:
 
 Fixed:
 
+- SCPI and the web page come up when their port was still taken at the start (by the oos-ui before, ending): the
+  port is tried again every second. Before, both stayed off until the next start, while mDNS still announced them.
 - Update: an image with a larger initramfs (a 48 MB package) stopped in a kernel panic at the restart into it
   ("unknown-block(0,0)"); a power cycle brought the previous build back, nothing was written. The restart now places
   the new initramfs above 1 GiB through kexec-tools, also when the device tree stays the same (unit). An update to such
