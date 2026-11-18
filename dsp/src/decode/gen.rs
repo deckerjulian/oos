@@ -9,7 +9,9 @@
 //! decoder itself goes into the file of its family in `decode/`, and its protocol module is registered in
 //! `ui/src/protocols/mod.rs` (ADR 0002).
 
-use crate::decode::{dcc_xor, modbus_crc, modbus_lrc, Parity, DCC_ONE_HALF, DCC_ZERO_HALF, DMX_BAUD, RDM_SC};
+use crate::decode::{
+    dcc_xor, modbus_crc, modbus_lrc, rdm_checksum, Parity, DCC_ONE_HALF, DCC_ZERO_HALF, DMX_BAUD, RDM_SC,
+};
 use crate::sim::{Levels, Logic};
 
 mod debug;
@@ -83,8 +85,7 @@ pub fn rdm_packet(dst: u64, src: u64, tn: u8, port: u8, mc: u8, subdev: u16, cc:
     b.extend(pid.to_be_bytes());
     b.push(pd.len() as u8);
     b.extend_from_slice(pd);
-    let sum = b.iter().map(|&x| x as u32).sum::<u32>() as u16;
-    b.extend(sum.to_be_bytes());
+    b.extend(rdm_checksum(b.iter().copied()).to_be_bytes());
     b
 }
 

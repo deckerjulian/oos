@@ -122,6 +122,9 @@ Fixed:
   the span of the rate averaged over 1/32 of the modulation period, which reads a sine 0.2 % and a triangle 3 % under
   its span. The rate was the nearest spectral bin; it is now interpolated between bins, and with fewer than four
   modulation periods in the record fitted with a sine (33 kHz with three periods read 29.3 kHz, now 33.0 kHz).
+- Double pulse: Ipeak and Irrm are the turn-on peak, not the end of the inductor's ramp later in the second pulse, so
+  Trr, Qrr and the diode's d/dt have values. The descriptions of Td(off), Tf and Toff name the current fall they
+  measure, not a voltage rise.
 - Measurements without an SI unit take no SI prefix: a ratio reads `0.498`, not `498 m`, a count `1`, not `1.00`, and
   `ppm`, `rpm` and `rpm/s` are plain decimals (`1500 rpm`, not `1.50 krpm`).
 - The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
