@@ -30,11 +30,6 @@ pub(crate) const KNOWN: &[Known] = &[
         what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
         repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
     },
-    Known {
-        name: "sysconf-list-word-with-hash",
-        what: "sysconf::SysConf::parse takes a word of features.off that starts with '#': written out it is a comment",
-        repro: conf::hostile_known_sysconf_list_word_with_hash,
-    },
     #[cfg(feature = "dec-qspi")]
     Known {
         name: "qspi-zero-frame",

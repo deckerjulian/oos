@@ -4,7 +4,7 @@
 //! Hostile input for the readers of settings a person, a stick or the network writes: `system.conf`, `net.allow`,
 //! time zone strings (also from a DHCP lease), a date typed on the screen, public keys from a stick, JSON of MCP.
 
-use super::{is_known, run};
+use super::run;
 use crate::clock::{Local, Tz};
 use crate::netacl::{canonical, Acl};
 use crate::sysconf::{server_ok, SysConf, DHCP};
@@ -44,10 +44,6 @@ fn hostile_system_conf() {
         if !c.net_name.is_empty() && !crate::mdns::name_ok(&c.net_name) {
             return Err(format!("took the name {:?}", c.net_name));
         }
-        let hash = c.features_off.iter().chain(&c.decoders_off).any(|w| w.starts_with('#'));
-        if hash && is_known("sysconf-list-word-with-hash") {
-            return Ok(());
-        }
         // a line this version does not know is kept as it is, but for a carriage return at its end
         let written = c.text().replace("\r\n", "\n");
         let (again, bad) = SysConf::parse(&written);
@@ -66,11 +62,15 @@ fn hostile_system_conf() {
     });
 }
 
+// Break it catches: a word of a list that becomes a comment once the list is written out (#181)
 #[test]
-#[ignore = "SysConf::parse takes a word of features.off that starts with '#', a comment once written, #181"]
-pub(super) fn hostile_known_sysconf_list_word_with_hash() {
+fn hostile_sysconf_list_word_with_hash() {
     let (c, _) = SysConf::parse("features.off =#eye bode\n");
     assert_eq!(SysConf::parse(&c.text()).0.features_off, c.features_off, "written as {:?}", c.text());
+    // the word is left out and named, the others stand: the file still loads
+    let (c, bad) = SysConf::parse("features.off =#eye bode\ndecoders.off = Uart\u{3000}#x Spi\n");
+    assert_eq!((c.features_off, c.decoders_off), (vec!["bode".to_string()], vec!["Uart".to_string(), "Spi".into()]));
+    assert_eq!(bad.len(), 2, "{bad:?}");
 }
 
 /// `Acl::parse`, `Acl::from_value` and `canonical` (`net.allow`: who may send commands and updates): return for any

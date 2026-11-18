@@ -245,7 +245,9 @@ hardware:** the responder on the scope, the host name in the DHCP request.
 
 `key = value` lines, written by oos-ui when a setting changes (one step, then a sync: the scope is switched off at the
 mains). Without `/oos` the file is `/tmp/oos-system.conf` and is lost at power-off. A value that does not parse keeps
-its default and is named in `/tmp/oos-ui.log`; lines of other keys stay in the file.
+its default and is named in `/tmp/oos-ui.log`; lines of other keys stay in the file. In the lists `features.off` and
+`decoders.off` a word that starts with `#` is no id: it is left out and named in the log, the other words stand
+(written out after its space it would start a comment).
 
 ```
 # OOS system settings: key = value (oos-ui, System menu)
