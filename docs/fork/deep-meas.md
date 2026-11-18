@@ -68,7 +68,7 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
 - `ui/src/deepmeas.rs`: opt-in parsing, `want` (Max alone needs nothing, Single sets `every`, Peak and channel off
   refuse, the software DVM asks), `hold` (only running, not Single, pair records of deep frames within the budget),
   budget and rate.
-- `ui/src/board/dho/hw.rs` `deep_raw_window_for_the_measurements`: 10 M at 1 ms/div: window holds screen and trigger
+- `ui/src/board/dho/hw/tests.rs` `deep_raw_window_for_the_measurements`: 10 M at 1 ms/div: window holds screen and trigger
   point, within 24 MiB, decodes to a raw frame with the right trigger point; none for 2 channels at 10 M, 25 M, the
   short-time-base window read, 1 M, Peak.
 - `ui/src/ui.rs` `deep_raw_records_carry_the_measurements_between_pair_records`: nothing on pairs before the first

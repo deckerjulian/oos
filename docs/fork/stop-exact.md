@@ -61,7 +61,7 @@ Single scan only).
   after a Clear in STOP; RUN releases it.
 - `ui/src/ui.rs` `run_after_stop_takes_no_frame_from_before`: a frame queued in STOP (the batch in progress) is not
   the first record of the next RUN; the first frame after the RUN is.
-- `ui/src/board/dho/hw.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
+- `ui/src/board/dho/hw/tests.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
   raw, nothing armed ahead, deep measurements on; with prearm on, such a batch is not armed ahead, so the replay
   stays possible; prearm stays for shallow records and without deep measurements.
 

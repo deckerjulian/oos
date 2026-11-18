@@ -2,7 +2,7 @@
 
 Trigger > Protocol beyond condition and value, for UART, SPI and I2C. Model: `SerialTrig` (`m.ser`), setup keys
 `ser.*`. Menu: `ui/src/ui/sertrig.rs`. Software trigger: `ui/src/trig.rs` (`matches`, `points`). Hardware:
-`ui/src/board/dho/hw.rs` (`uart_of`, `spi_of`, `i2c_of`, with `trig.serial_hw = on`; `hwuart.md`, `hwserial.md`).
+`ui/src/board/dho/hw/serial.rs` (`uart_of`, `spi_of`, `i2c_of`, with `trig.serial_hw = on`; `hwuart.md`, `hwserial.md`).
 SCPI: `ui/src/scpi/ser.rs`.
 
 The value (`trig_bus_val`) is now 40 bits wide (five I2C data bytes); the keypad takes ten hex digits.
