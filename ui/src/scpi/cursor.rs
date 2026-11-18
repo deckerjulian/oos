@@ -11,86 +11,25 @@ use crate::ui::Ui;
 
 impl Scpi {
     pub(super) fn cursor_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if n.is_empty() || (n.len() == 1 && kw(n0, "MODE")) {
             if n.is_empty() {
                 self.push_err("-113,\"Undefined header\" :CURSor".into());
                 return None;
             }
-            if query {
-                let s = match ui.m.cursor {
-                    CursorMode::Off => "OFF",
-                    CursorMode::Time | CursorMode::Volt => "MAN",
-                    CursorMode::Track => "TRAC",
-                    CursorMode::Xy => "XY",
-                };
-                return t(s);
-            }
-            let a = arg.trim();
-            ui.m.cursor = if kw(a, "OFF") {
-                CursorMode::Off
-            } else if kw(a, "MANual") {
-                if ui.m.cursor == CursorMode::Volt {
-                    CursorMode::Volt
-                } else {
-                    CursorMode::Time
-                }
-            } else if kw(a, "TRACk") {
-                CursorMode::Track
-            } else if a.eq_ignore_ascii_case("XY") {
-                CursorMode::Xy
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            return None;
+            return self.cursor_mode(ui, query, arg);
         }
         if n.len() == 2 && kw(n0, "MEASure") && kw(n[1], "INDicator") {
             return self.meas_indicator(ui, query, arg);
         }
         if n.len() == 2 && kw(n0, "MANual") && kw(n[1], "TYPE") {
-            if query {
-                return t(if ui.m.cursor == CursorMode::Volt { "AMPL" } else { "TIME" });
-            }
-            if kw(arg, "TIME") {
-                if ui.m.cursor != CursorMode::Xy {
-                    ui.m.cursor = CursorMode::Time;
-                }
-            } else if kw(arg, "AMPLitude") {
-                if ui.m.cursor != CursorMode::Xy {
-                    ui.m.cursor = CursorMode::Volt;
-                }
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            }
-            return None;
+            return self.cursor_type(ui, query, arg);
         }
         if n.len() == 2
             && (kw(n0, "MANual") || kw(n0, "TRACk"))
             && (kw(n[1], "SOURce") || kw(n[1], "SOURce1") || kw(n[1], "SOURce2"))
         {
-            let second = kw(n[1], "SOURce2");
-            let track = kw(n0, "TRACk");
-            if query {
-                return t(&wave_tok(if second && track { ui.cursor_b_source() } else { ui.cursor_source() }));
-            }
-            let Some(source) = parse_wave(arg) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let ok = if second && track {
-                ui.set_cursor_b_source(source)
-            } else if second {
-                source == ui.cursor_source()
-            } else {
-                ui.set_cursor_source(source)
-            };
-            if !ok {
-                self.push_err("-224,\"Cursor source is unavailable or unsupported\"".into());
-            }
-            return None;
+            return self.cursor_src(ui, n, query, arg);
         }
         if n.len() != 2 {
             self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
@@ -117,6 +56,92 @@ impl Scpi {
             self.push_err(format!("-113,\"Undefined header\" :CURSor:{}", n.join(":")));
             return None;
         }
+        self.cursor_readout(ui, n)
+    }
+
+    /// `:CURSor:MODE`: OFF, MANual, TRACk or XY.
+    fn cursor_mode(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            let s = match ui.m.cursor {
+                CursorMode::Off => "OFF",
+                CursorMode::Time | CursorMode::Volt => "MAN",
+                CursorMode::Track => "TRAC",
+                CursorMode::Xy => "XY",
+            };
+            return t(s);
+        }
+        let a = arg.trim();
+        ui.m.cursor = if kw(a, "OFF") {
+            CursorMode::Off
+        } else if kw(a, "MANual") {
+            if ui.m.cursor == CursorMode::Volt {
+                CursorMode::Volt
+            } else {
+                CursorMode::Time
+            }
+        } else if kw(a, "TRACk") {
+            CursorMode::Track
+        } else if a.eq_ignore_ascii_case("XY") {
+            CursorMode::Xy
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        None
+    }
+
+    /// `:CURSor:MANual:TYPE`: TIME or AMPLitude.
+    fn cursor_type(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(if ui.m.cursor == CursorMode::Volt { "AMPL" } else { "TIME" });
+        }
+        if kw(arg, "TIME") {
+            if ui.m.cursor != CursorMode::Xy {
+                ui.m.cursor = CursorMode::Time;
+            }
+        } else if kw(arg, "AMPLitude") {
+            if ui.m.cursor != CursorMode::Xy {
+                ui.m.cursor = CursorMode::Volt;
+            }
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        }
+        None
+    }
+
+    /// `:CURSor:MANual|TRACk:SOURce[1|2]`: the waveform a cursor reads (`n` without the root).
+    fn cursor_src(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = n[0];
+        let second = kw(n[1], "SOURce2");
+        let track = kw(n0, "TRACk");
+        if query {
+            return t(&wave_tok(if second && track { ui.cursor_b_source() } else { ui.cursor_source() }));
+        }
+        let Some(source) = parse_wave(arg) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let ok = if second && track {
+            ui.set_cursor_b_source(source)
+        } else if second {
+            source == ui.cursor_source()
+        } else {
+            ui.set_cursor_source(source)
+        };
+        if !ok {
+            self.push_err("-224,\"Cursor source is unavailable or unsupported\"".into());
+        }
+        None
+    }
+
+    /// The read-outs under `:CURSor:MANual|TRACk|XY` (`AXValue?` to `YDELta?`, `n` without the root).
+    fn cursor_readout(&mut self, ui: &Ui, n: &[&str]) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let which = n[1];
         let miss = || Some(b"9.9E37".to_vec());
         let (ta, tb) = (ui.cursor_time_at(ui.m.cur_a), ui.cursor_time_at(ui.m.cur_b));
         let y_of = |a: bool| {
