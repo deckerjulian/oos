@@ -44,7 +44,7 @@ pub enum PairKind {
 }
 
 /// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); crate::model::PAIRS_N] = [
+pub const PAIRS: [(&str, PairKind, bool, bool); PAIRS_N] = [
     ("Delay rise-rise", PairKind::Delay, true, true),
     ("Delay fall-fall", PairKind::Delay, false, false),
     ("Delay rise-fall", PairKind::Delay, true, false),

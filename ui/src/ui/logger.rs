@@ -7,7 +7,7 @@ use super::*;
 use std::io::Write;
 
 /// Interval steps (s).
-pub const LOG_STEPS: [f64; crate::model::LOG_STEPS_N] = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0];
+pub const LOG_STEPS: [f64; LOG_STEPS_N] = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0];
 /// A log ends here: a stick left in for a year must not fill up.
 const LOG_ROWS_MAX: u64 = 1_000_000;
 
