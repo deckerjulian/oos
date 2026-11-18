@@ -524,9 +524,6 @@ impl Ui {
         (31.0 - rest).clamp(5.0, 28.0)
     }
 
-    /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
-    /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
-    /// screen. The trigger stays where the last record had it (software trigger included).
     /// The channels of `rec` into the main picture and, with zoom, into the zoom picture; every point adds `w`.
     /// `detail` is the zoom window read from the capture memory, `zw` the Z input's weights of `rec`: a deskewed
     /// channel is drawn from its own view of the record, without them.
@@ -552,6 +549,9 @@ impl Ui {
         }
     }
 
+    /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
+    /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
+    /// screen. The trigger stays where the last record had it (software trigger included).
     fn stop_replay(&mut self) {
         let ok = self.src.is_hw()
             && board().slow_mode(&self.m) == crate::board::Slow::Off
