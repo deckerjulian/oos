@@ -79,6 +79,10 @@ A decision that touches two categories goes where its consequences are largest a
 | [0057](system/0057-bluetooth-input-through-bluez.md) | system | Bluetooth mice and keyboards through BlueZ on a system bus of their own | accepted |
 | [0058](code/0058-a-protocol-decoder-is-described-and-run-in-oos-dsp-and-shown-in-oos-ui.md) | code | A protocol decoder is described and run in oos-dsp (`ModuleInfo`, `oos_dsp::protocols::MODULES`) and shown in oos-ui (`Protocol`, the presentation only) (amends ADR 0002) | accepted |
 | [0059](code/0059-batch-is-the-only-draw-path.md) | code | Batch is the only draw path; the frames path and its switch are removed (supersedes ADR 0029) | accepted |
+| [0060](code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md) | code | A menu page is declared once, in a table of pages; a new page is one file and one line | proposed |
+| [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | proposed |
+| [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | proposed |
+| [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries (amends ADR 0007) | proposed |
 
 ## Reading order for agents
 
