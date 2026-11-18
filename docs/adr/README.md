@@ -67,6 +67,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | accepted |
 | [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only (amends ADR 0017) | proposed |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | proposed |
+| [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit, and the comparison with the base covers the live paths | proposed |
 
 ## Reading order for agents
 
