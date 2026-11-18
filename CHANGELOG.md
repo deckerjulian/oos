@@ -12,8 +12,7 @@ Added:
 - `oos-fpgad made-up-cal DIR` writes a made-up calibration set: every calibration file the register sequences read,
   with invented values that mean nothing for a scope. `tools/compare-base.sh` uses it when there are no files of a
   unit, so CI now also compares the register values that calibration changes.
-- `tools/device-deploy.sh` checks every uploaded file with SHA-256 (unit, over telnet); `device-deploy-ssh.sh` is
-  gone.
+- `tools/device-deploy.sh` checks every uploaded file with SHA-256 (unit); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
 - `tools/device-test.py --changed BASE` runs only the device tests a change reaches (documents and CI: the six smoke
   tests). A failed test runs again (`--retries`); one that passes then is reported as FLAKY. A failure that a known

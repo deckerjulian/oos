@@ -35,6 +35,32 @@ fn state() -> Option<State> {
     State::load(Path::new(update::STATE_PATH)).ok()
 }
 
+/// What a tap of System > Start OOS again does.
+#[derive(Debug, PartialEq)]
+enum Again {
+    /// an update job runs: refused
+    Busy,
+    /// OOS starts at every power-on already: refused
+    Persist,
+    /// the first tap, or one after the 5 s ran out: asks
+    Ask,
+    /// the second tap within 5 s: `oos-update` with these arguments (what `oos-boot-oos-again` runs)
+    Run(&'static [&'static str]),
+}
+
+/// The step of a tap at `now`, with the second tap open until `until` (0: no first tap yet).
+fn again_step(busy: bool, persist: bool, now: f64, until: f64) -> Again {
+    if busy {
+        Again::Busy
+    } else if persist {
+        Again::Persist
+    } else if until == 0.0 || now > until {
+        Again::Ask
+    } else {
+        Again::Run(&["arm"])
+    }
+}
+
 impl Ui {
     /// Dialog lines of System > Update.
     pub(super) fn update_lines(&self) -> Vec<String> {
@@ -105,19 +131,19 @@ impl Ui {
     /// that `recovery` holds an image the loader takes and only then writes the magic of `boot` (docs/boot.md). The
     /// dialog of the job says what it did.
     pub(super) fn boot_again_tap(&mut self) {
-        if self.update_busy() {
-            return self.toast("An update job is running");
+        let persist = state().is_some_and(|s| s.persist);
+        match again_step(self.update_busy(), persist, self.now, self.upd.again_until) {
+            Again::Busy => self.toast("An update job is running"),
+            Again::Persist => self.toast("Boot mode is Persist: OOS starts at every power-on"),
+            Again::Ask => {
+                self.upd.again_until = self.now + 5.0;
+                self.toast("Tap again: OOS starts at the next power-on, once more");
+            }
+            Again::Run(args) => {
+                self.upd.again_until = 0.0;
+                self.update_spawn(args, "Start OOS again");
+            }
         }
-        if state().is_some_and(|s| s.persist) {
-            return self.toast("Boot mode is Persist: OOS starts at every power-on");
-        }
-        // armed only between the first tap and 5 s later (none before a first tap, also at `now` 0)
-        if self.upd.again_until == 0.0 || self.now > self.upd.again_until {
-            self.upd.again_until = self.now + 5.0;
-            return self.toast("Tap again: OOS starts at the next power-on, once more");
-        }
-        self.upd.again_until = 0.0;
-        self.update_spawn(&["arm"], "Start OOS again");
     }
 
     /// System > Roll back update: first tap asks, second (within 5 s) runs it.
@@ -306,6 +332,20 @@ mod tests {
         u.now += 6.0;
         u.boot_again_tap();
         assert!(u.upd.job.is_none() && u.toast.as_ref().unwrap().0.starts_with("Tap again"));
+    }
+
+    #[test]
+    fn start_oos_again_runs_arm_on_the_second_tap_and_refuses_when_it_must() {
+        assert_eq!(again_step(false, false, 3.0, 0.0), Again::Ask, "no first tap yet");
+        assert_eq!(again_step(false, false, 3.0, 5.0), Again::Run(&["arm"]), "the second tap within 5 s");
+        assert_eq!(again_step(false, false, 5.0, 5.0), Again::Run(&["arm"]), "at the last moment");
+        assert_eq!(again_step(false, false, 5.1, 5.0), Again::Ask, "after the 5 s");
+        assert_eq!(again_step(true, false, 3.0, 5.0), Again::Busy, "an update job runs");
+        assert_eq!(again_step(false, true, 3.0, 5.0), Again::Persist, "Boot mode Persist");
+        assert_eq!(again_step(true, true, 3.0, 5.0), Again::Busy, "a running job first");
+        // what the shell's `oos-boot-oos-again` runs, so the two do the same
+        let script = include_str!("../../../rootfs/initramfs/bin/oos-boot-oos-again");
+        assert!(script.lines().any(|l| l.trim() == "exec oos-update arm"), "{script}");
     }
 
     #[test]
