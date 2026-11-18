@@ -763,4 +763,43 @@ mod tests {
         let recs = names(&buf[..n]);
         assert!(recs.iter().any(|r| r.1 == SRV && srv_port(&r.2) == 5555), "{recs:?}");
     }
+
+    /// `answer` (a query to the announcer on UDP 5353), ADR 0047: returns for any bytes, as an mDNS query and as one
+    /// of a one-shot resolver; an answer is a response the reader of the scope's own responder takes, with a record
+    /// in it, and for a one-shot resolver with its questions.
+    #[test]
+    fn hostile_queries() {
+        let (id, services) = sample();
+        let q = |names: &[&str], typ: u16| {
+            let mut m = Vec::new();
+            for v in [7, 0, names.len() as u16, 0, 0, 0] {
+                put_u16(&mut m, v);
+            }
+            for name in names {
+                put_name(&mut m, name);
+                put_u16(&mut m, typ);
+                put_u16(&mut m, IN | 0x8000);
+            }
+            m
+        };
+        let files = [
+            q(&["_hislip._tcp.local"], PTR),
+            q(&["_services._dns-sd._udp.local", "oos.local"], ANY),
+            q(&["OOS DHO924S oos._http._tcp.local"], SRV),
+        ];
+        let seeds: Vec<&[u8]> = files.iter().map(|f| f.as_slice()).collect();
+        crate::hostile::run("announce::answer", &seeds, 1, |b| {
+            for legacy in [false, true] {
+                let Some((pkt, _)) = answer(b, &id, &services, legacy) else { continue };
+                let Some(m) = crate::mdns::parse(&pkt) else {
+                    return Err(format!("an answer of {} bytes that is no message", pkt.len()));
+                };
+                let asked = crate::mdns::parse(b).map_or(0, |q| q.qs.len());
+                if !m.is_response() || m.an.len() + m.ar.len() == 0 || (legacy && m.qs.len() != asked) {
+                    return Err(format!("an answer with {} questions and {} records", m.qs.len(), m.an.len()));
+                }
+            }
+            Ok(())
+        });
+    }
 }
