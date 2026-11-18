@@ -755,10 +755,10 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
     // green while a mouse or keyboard is connected through the stick
     StatusBox {
         label: "BT",
-        shown: |u| u.bt_stick,
+        shown: |u| u.bt.stick,
         width: |_| 46,
         chip: true,
-        draw: |u, cv, r, label| u.draw_chip(cv, r, label, u.bt_inputs > 0),
+        draw: |u, cv, r, label| u.draw_chip(cv, r, label, u.bt.inputs > 0),
         page: MenuId::Bluetooth,
     },
     StatusBox {
