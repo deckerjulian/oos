@@ -345,7 +345,7 @@ fn interlace(cv: &mut Canvas, area: Rect, paths: &[Vec<(f32, f32)>], hw: f32, c:
                     }
                 }
             }
-            xs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            xs.sort_by(|a, b| a.1.total_cmp(&b.1));
             let upper = xs.iter().map(|x| x.0 .1).fold(f32::INFINITY, f32::min);
             for (n, (p, _)) in xs.iter().enumerate() {
                 let j_over = if i == 0 && j == 1 { p.1 > upper } else { n % 2 == 0 };
@@ -354,7 +354,7 @@ fn interlace(cv: &mut Canvas, area: Rect, paths: &[Vec<(f32, f32)>], hw: f32, c:
                 let path = &paths[over];
                 let near = (0..path.len()).min_by(|&a, &b| {
                     let d = |k: usize| (path[k].0 - p.0).hypot(path[k].1 - p.1);
-                    d(a).partial_cmp(&d(b)).unwrap()
+                    d(a).total_cmp(&d(b))
                 });
                 let Some(k0) = near else { continue };
                 let reach = 3.0 * hw;
@@ -467,6 +467,16 @@ mod tests {
         let mut u = crate::ui::testkit::demo_ui();
         u.start_up_begin(None);
         u
+    }
+
+    /// A point of NaN in a letter: the point nearest a crossing was chosen with `partial_cmp(..).unwrap()`, which
+    /// panicked.
+    #[test]
+    fn interlace_passes_over_a_nan_point() {
+        let mut cv = Canvas::new(64, 64);
+        let a = vec![(4.0, 4.0), (60.0, 60.0), (f32::NAN, f32::NAN)];
+        let b = vec![(4.0, 60.0), (60.0, 4.0)];
+        interlace(&mut cv, Rect::new(0, 0, 64, 64), &[a, b], 2.0, TEXT);
     }
 
     #[test]

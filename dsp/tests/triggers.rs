@@ -272,3 +272,23 @@ fn video_pal() {
     eprintln!("all lines {}", all);
     assert!((612..=620).contains(&all), "{}", all);
 }
+
+/// Samples near the ends of the f32 range give crossings of NaN time (their differences overflow). The trigger types
+/// that merge the edges of two thresholds or channels sorted them with `partial_cmp(..).unwrap()` and panicked.
+#[test]
+fn edge_times_of_nan_do_not_panic() {
+    let v = [-3e38f32, 3.4e38, -3e38, 3.4e38, -3e38, 3.4e38];
+    let i = inp1(&v, 1e-6, 0.0);
+    let (lo, hi) = (0.0, 3e38);
+    for trig in [
+        Trigger::Slope { src: 0, slope: Slope::Either, lo, hi, when: When::Gt(0.0) },
+        Trigger::Runt { src: 0, pol: Pol::Pos, lo, hi, when: None },
+        Trigger::Window { src: 0, lo, hi, when: WinWhen::Exit },
+        Trigger::Pattern { bits: [Bit::H, Bit::X, Bit::X, Bit::X], levels: [hi; 4] },
+        Trigger::Video { src: 0, std: VideoStd::Pal, sync: VideoSync::AllLines, level: hi },
+    ] {
+        let t = find_all(&trig, &i);
+        let finite: Vec<f64> = t.iter().copied().filter(|x| x.is_finite()).collect();
+        assert!(finite.windows(2).all(|w| w[0] <= w[1]), "{trig:?} {t:?}");
+    }
+}

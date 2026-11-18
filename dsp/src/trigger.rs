@@ -278,7 +278,7 @@ fn transition(inp: &Input, src: usize, slope: Slope, lo: f32, hi: f32, when: Whe
     let mut ev: Vec<(f64, bool, bool)> = Vec::new(); // (t, is_hi, rising)
     ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
     ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let (mut up, mut down) = (None, None);
     for (t, is_hi, rising) in ev {
         match (is_hi, rising) {
@@ -312,7 +312,7 @@ fn runt(inp: &Input, src: usize, pol: Pol, lo: f32, hi: f32, when: Option<When>)
     let mut ev: Vec<(f64, bool, bool)> = Vec::new();
     ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
     ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     // positive runt: rises through lo, never reaches hi, falls back through lo (negative: mirrored)
     let (open_hi, start_rising) = if pol == Pol::Pos { (false, true) } else { (true, false) };
     let mut start: Option<f64> = None;
@@ -341,7 +341,7 @@ fn window(inp: &Input, src: usize, lo: f32, hi: f32, when: WinWhen) -> Vec<f64> 
     let mut ev: Vec<(f64, bool, bool)> = Vec::new();
     ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
     ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut entered: Option<f64> = None;
     for (t, is_hi, rising) in ev {
         // entering: up through lo or down through hi; leaving: the opposite
@@ -406,7 +406,7 @@ fn pattern(inp: &Input, bits: [Bit; CHANNELS], levels: [f32; CHANNELS], duration
         state[c] = Some(e.first().map_or(inp.ch[c][0] > levels[c], |f| !f.rising));
         ev.extend(e.iter().map(|x| (x.t, c, x.rising)));
     }
-    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let level_ok = |s: &[Option<bool>; CHANNELS], skip: Option<usize>| {
         (0..4).all(|c| {
             Some(c) == skip
@@ -526,6 +526,6 @@ fn video(inp: &Input, src: usize, std: VideoStd, sync: VideoSync, level: f32) ->
         }
         prev = k;
     }
-    out.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    out.sort_by(f64::total_cmp);
     out
 }

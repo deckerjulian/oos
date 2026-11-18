@@ -10,6 +10,14 @@ fn ui() -> Ui {
     crate::ui::testkit::demo_ui()
 }
 
+/// A wanted scale of NaN: the nearest scale was chosen with `partial_cmp(..).unwrap()`, which panicked; every distance
+/// is NaN now and the first scale is taken.
+#[test]
+fn nearest_scale_of_nan_takes_the_first() {
+    assert_eq!((nearest_vdiv(f32::NAN), nearest_tscale(f64::NAN)), (VSCALES[0], 0));
+    assert_eq!(nearest_vdiv(0.21), 0.2);
+}
+
 #[test]
 fn advanced_sim_controls_are_reachable_and_use_explicit_units() {
     let mut u = ui();

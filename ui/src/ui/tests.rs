@@ -427,6 +427,37 @@ fn analysers_on_the_demo_signal() {
     assert_eq!(ui.m.trig_src, 0);
 }
 
+/// Identify finding with a baud rate of NaN: the nearest rate of the decoder was chosen with
+/// `partial_cmp(..).unwrap()`, which panicked; every distance is NaN now and the first rate is taken.
+#[test]
+fn identify_finding_of_nan_baud_applies() {
+    use super::*;
+    use oos_dsp::identify::{DecoderHint, Finding, SignalKind, TriggerHint};
+
+    let mut ui = crate::ui::testkit::demo_ui();
+    let uart = |baud| DecoderHint::Uart {
+        ch: 0,
+        baud,
+        bits: 8,
+        parity: oos_dsp::decode::Parity::None,
+        thr: 1.0,
+        invert: false,
+    };
+    let finding = |baud| Finding {
+        channels: vec![0],
+        kind: SignalKind::Noise { rms: 0.0 },
+        confidence: 1.0,
+        summary: "UART".into(),
+        trigger: TriggerHint::None,
+        decoder: Some(uart(baud)),
+    };
+    ui.azr.findings = vec![finding(f64::NAN), finding(9700.0)];
+    ui.activate(Item::IdFind(0));
+    assert_eq!((ui.m.dec_proto, ui.m.dec_baud), (Proto::UART, 0));
+    ui.activate(Item::IdFind(1));
+    assert_eq!(crate::decode::BAUDS[ui.m.dec_baud], 9600.0);
+}
+
 /// Screenshots of the new views for a visual check: `OOS_SHOTS=<dir> cargo test shots -- --ignored`.
 #[test]
 #[ignore]
