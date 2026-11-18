@@ -70,7 +70,7 @@ port not confirmed), DHO800 and DHO900 (LA port, front panel). The table is `VAR
 | Hardware variant | Models | OOS has run on |
 |---|---|---|
 | DHO800, 4 channels | DHO804, DHO814, DHO824 | DHO804 (user report, several releases) |
-| DHO800, 2 channels | DHO802, DHO812 | - |
+| DHO800, 2 channels | DHO802, DHO812 | DHO802 (user report, 0.1.13, issue #19) |
 | DHO900 with generator | DHO914S, DHO924S | DHO924S (the developer's unit) |
 | DHO900 without generator | DHO914, DHO924 | - |
 | DHO900 EDU | DHO914-EDU, DHO924-EDU | - |
@@ -250,7 +250,7 @@ Without a generator (model table or `afg = no`) nothing opens the generator line
 
 Still open for models other than the DHO924S:
 - EXT trigger input of the 2-channel models: not implemented.
-- DHO800: a DHO804 runs OOS (user report); front panel, LEDs and display have not been checked in detail.
+- DHO800: a DHO804 and a DHO802 run OOS (user reports); front panel, LEDs and display have not been checked in detail.
 - Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
 ## 6. Related findings (other Rigol series)

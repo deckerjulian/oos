@@ -45,7 +45,11 @@ const VARIANTS: [Variant; 5] = [
         models: &["DHO804", "DHO814", "DHO824"],
         ran_on: &[("DHO804", "user report, several releases")],
     },
-    Variant { name: "DHO800, 2 channels", models: &["DHO802", "DHO812"], ran_on: &[] },
+    Variant {
+        name: "DHO800, 2 channels",
+        models: &["DHO802", "DHO812"],
+        ran_on: &[("DHO802", "user report, 0.1.13, issue #19")],
+    },
     Variant {
         name: "DHO900 with generator",
         models: &["DHO914S", "DHO924S"],

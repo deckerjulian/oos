@@ -75,6 +75,9 @@ Removed:
 
 Changed:
 
+- The DHO802 and DHO812 count as verified ([models.md](docs/models.md) 2.1): a user installed OOS 0.1.13 on a DHO802
+  from the USB stick and it started, answered SCPI and the web page (issue #19). The first install from the stock
+  system now takes both models without `oos-any-model.txt`.
 - Batch draw path: at 10 us/div the screen shows about 29 pictures a second with one,
   two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
   cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
@@ -117,9 +120,11 @@ Fixed:
 - SSC Freq Dev and SSC Modulation Rate are measured on the modulation (issue #196). The deviation was the span of
   single cycles, mostly their timing error (about 9,400 ppm for a 5,000 ppm test clock, now about 5,500); it is now
   the span of the rate averaged over 1/32 of the modulation period, which reads a sine 0.2 % and a triangle 3 % under
-  its span. The
-  rate was the nearest spectral bin; it is now interpolated between bins, and with fewer than four modulation
-  periods in the record fitted with a sine (33 kHz with three periods read 29.3 kHz, now 33.0 kHz).
+  its span. The rate was the nearest spectral bin; it is now interpolated between bins, and with fewer than four
+  modulation periods in the record fitted with a sine (33 kHz with three periods read 29.3 kHz, now 33.0 kHz).
+- The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
+  the ADC, so the level is a level on the AC trace as drawn. Only the demo, which triggers before it takes the mean
+  out, still hides it (on the unit: assumed, not yet checked).
 - Eye Width no longer reads short by the picture's own spread (issue #195): a crossing without jitter lights two
   columns of the eye and read half a column of jitter, 6 % of the unit interval in a 96-column eye. That spread is
   now taken out, so a signal without jitter reads 1 UI and one with 20 ps RJ on 1 ns reads 880 ps.

@@ -5,7 +5,7 @@ OOS goes on the scope's SD card, next to the stock system. Read the
 
 | Way | Opens the scope | Your original card | You need | State |
 |---|---|---|---|---|
-| **[From a USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | `DHO800_DHO900_OOS_Install.GEL` of a release | run on a DHO924S with a modified stock system |
+| **[From a USB stick](#from-a-usb-stick)** | no | OOS goes on it, beside stock | `DHO800_DHO900_OOS_Install.GEL` of a release | run on a DHO924S (modified stock) and a DHO802 (unmodified, user report) |
 | **[On a second card](#on-a-second-card)** | yes | stays untouched in a drawer | `oos-<version>.img` of a release | run on a DHO924S |
 | **[Over ADB](#over-adb)** | no | OOS goes on it, beside stock | a build of your own ([[Building]]) | run on a DHO924S with a modified stock system |
 
@@ -37,16 +37,16 @@ The stock system's own update (**Storage > Upgrade**) installs OOS onto the card
 
 **Read this before you start**
 
-- **This has run on one DHO924S only, whose stock system is a modified one**; an unmodified stock system has not run it
-  yet. Try it on a card you can take out if you can.
+- **This has run on a DHO924S with a modified stock system and, by a user report, on a DHO802 with an unmodified one**
+  (0.1.13). Try it on a card you can take out if you can.
 - **There is no second card to fall back on.** A refused image is harmless, the loader starts the stock copy. But if
   the kernel hangs before the first script of the image runs, every power-on hangs the same way. The card then has to
   come out, so **the scope has to be opened after all.** Read
   [docs/install-usb.md](https://github.com/dekajoule/oos/blob/main/docs/install-usb.md) first.
 - **Models.** The install goes ahead by itself on the models whose hardware OOS has run on: DHO804, DHO814, DHO824 (a
-  DHO804 runs OOS) and DHO914S, DHO924S (from 0.1.6; up to 0.1.5 only the DHO924S). On any other model it stops,
-  writes nothing, and `oos-install.log` says so: put an empty file `oos-any-model.txt` next to the `.GEL` file to go on
-  anyway.
+  DHO804 runs OOS), DHO802, DHO812 (a DHO802 runs OOS; from the release after 0.1.13) and DHO914S, DHO924S (from 0.1.6;
+  up to 0.1.5 only the DHO924S). On any other model it stops, writes nothing, and `oos-install.log` says so: put an
+  empty file `oos-any-model.txt` next to the `.GEL` file to go on anyway.
 - **What it writes.** `recovery`, the first 32 MiB of `backup` and, as its very last step, the 4 bytes of `boot` that
   select OOS. A failure or power cut before that step leaves a card that starts stock as before, and running the same
   install again finishes the job. No stock update step runs, and the FPGA flash and `/rigol` are not touched.
@@ -90,7 +90,7 @@ sudo python3 boot/card-install.py restore /dev/rdiskM --backup OOS-rescue/recove
 ## Over ADB
 
 The same install from a computer, with `adb` and a scope that answers on its network port 55555 with root access
-(known from a modified stock system only). It needs a build of your own ([[Building]]), and the points under
+(known from a modified stock system, and from an unmodified DHO802 by a user report). It needs a build of your own ([[Building]]), and the points under
 [From a USB stick](#from-a-usb-stick) hold for it as well. The commands:
 [docs/install-usb.md](https://github.com/dekajoule/oos/blob/main/docs/install-usb.md), Over ADB.
 
