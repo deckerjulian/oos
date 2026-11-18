@@ -7,11 +7,12 @@
 //! passkey comes from the pairing agent and is shown in a dialog until the pairing ends. A paired device's input
 //! reaches the UI through evdev like a USB one (crate::hid, ui/pointer.rs).
 
+use super::service::Service;
 use super::*;
 use oos_hal::bluez::{Adapter, Bluez, Device, Prompt};
 use oos_hal::dbus::Message;
 use std::cell::RefCell;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 /// How often bluetoothd's state is read while the page is open.
@@ -60,8 +61,7 @@ pub(super) struct BtUi {
     prompt_lines: Option<Vec<String>>,
     /// what the last Find devices found, in the order of the picker (`Report::Scanned`)
     found: Vec<Device>,
-    tx: Option<Sender<Job>>,
-    rx: Option<Receiver<Report>>,
+    service: Service<Job, Report>,
 }
 
 fn short(name: &str) -> String {
@@ -246,15 +246,10 @@ impl Ui {
     pub(super) fn bt_poll(&mut self) {
         let in_menu = self.menu_open
             && (self.menu == MenuId::Bluetooth || self.pick.is_some_and(|p| p.menu == MenuId::Bluetooth));
-        if in_menu && self.bt.tx.is_none() && !cfg!(test) {
-            let (tx, jobs) = channel();
-            let (out, rx) = channel();
-            if std::thread::Builder::new().name("bt".into()).spawn(move || worker(jobs, out)).is_ok() {
-                self.bt.tx = Some(tx);
-                self.bt.rx = Some(rx);
-            }
+        if in_menu {
+            self.bt.service.start("bt", worker);
         }
-        while let Some(r) = self.bt.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        while let Some(r) = self.bt.service.take() {
             self.bt_report(r);
         }
     }
@@ -311,7 +306,7 @@ impl Ui {
         if let Some(m) = self.bt_blocked() {
             return self.toast(m);
         }
-        if self.bt.tx.as_ref().is_some_and(|tx| tx.send(j).is_ok()) {
+        if self.bt.service.send(j) {
             self.bt.busy = Some(what);
             self.toast(&format!("{} ...", what));
         } else {

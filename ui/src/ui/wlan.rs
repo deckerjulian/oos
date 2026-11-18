@@ -7,10 +7,11 @@
 //! the radio in the frame loop. Passwords come from the on-screen keyboard (`Osk`) and only their derived key leaves
 //! this file.
 
+use super::service::Service;
 use super::*;
 use oos_hal::wlan::{self, Ctrl, Net, Saved, Security, Status};
 use std::path::Path;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 /// How long a join may take before it counts as failed.
@@ -61,8 +62,7 @@ pub(super) struct WlanUi {
     /// a scan or join is running (the text is for the status dialog)
     pub busy: Option<&'static str>,
     pub osk: Option<Osk>,
-    tx: Option<Sender<Job>>,
-    rx: Option<Receiver<Report>>,
+    service: Service<Job, Report>,
 }
 
 fn short(name: &str) -> String {
@@ -190,15 +190,10 @@ impl Ui {
     pub(super) fn wlan_poll(&mut self) {
         let in_menu =
             self.menu_open && (self.menu == MenuId::Network || self.pick.is_some_and(|p| p.menu == MenuId::Network));
-        if in_menu && self.wlan.tx.is_none() && !cfg!(test) {
-            let (tx, jobs) = channel();
-            let (out, rx) = channel();
-            if std::thread::Builder::new().name("wlan".into()).spawn(move || worker(jobs, out)).is_ok() {
-                self.wlan.tx = Some(tx);
-                self.wlan.rx = Some(rx);
-            }
+        if in_menu {
+            self.wlan.service.start("wlan", worker);
         }
-        while let Some(r) = self.wlan.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        while let Some(r) = self.wlan.service.take() {
             self.wlan_report(r);
         }
     }
@@ -228,7 +223,7 @@ impl Ui {
     }
 
     fn wlan_send(&mut self, j: Job, what: &'static str) {
-        let sent = self.wlan.tx.as_ref().is_some_and(|tx| tx.send(j).is_ok());
+        let sent = self.wlan.service.send(j);
         if sent {
             self.wlan.busy = Some(what);
             self.toast(&format!("{} ...", what));
