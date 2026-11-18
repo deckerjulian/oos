@@ -1,6 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+//! The tests of the update: packages built and signed here, then checked, installed to a card image in memory, tried
+//! and rolled back, as `update::apply` and the first install do it on a unit. A new case of the update gets its test
+//! here; the made-up keys and boot images come from the helpers at the top.
+
 use super::card::*;
 use super::*;
 use std::path::PathBuf;

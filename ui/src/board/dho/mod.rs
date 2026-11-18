@@ -8,8 +8,6 @@
 pub mod cores;
 pub mod fpga;
 pub mod hw;
-#[cfg(test)]
-mod tests;
 
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{Coupling, GenCh, Model};

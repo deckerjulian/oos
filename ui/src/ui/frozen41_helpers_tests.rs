@@ -1,4 +1,8 @@
+// Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+//! Tests of FORCE and of the track sources against the mock hardware: a forced trigger in live, stored and SIM
+//! sessions, and the B-source of a track saved and read back. New cases of these tools go here.
 
 use super::*;
 use std::{
