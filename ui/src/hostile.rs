@@ -25,11 +25,6 @@ pub(crate) use gen::*;
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
 pub(crate) const KNOWN: &[Known] = &[
-    Known {
-        name: "mdns-answer-it-cannot-read",
-        what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
-        repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
-    },
     #[cfg(feature = "dec-qspi")]
     Known {
         name: "qspi-zero-frame",
