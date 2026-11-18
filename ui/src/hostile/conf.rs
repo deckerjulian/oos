@@ -87,12 +87,16 @@ fn hostile_net_allow() {
     ];
     run("netacl::parse", &seeds, 1, |b| {
         let text = String::from_utf8_lossy(b);
-        let words = text.split([' ', ',', '\t']).filter(|w| !w.is_empty()).count();
+        let words: Vec<&str> = text.split([' ', ',', '\t']).filter(|w| !w.is_empty()).collect();
+        let onlink = words.iter().filter(|w| **w == crate::netacl::ONLINK6).count();
         let (acl, bad) = Acl::parse(&text);
         let shown = acl.to_string();
         let taken = shown.split(' ').filter(|w| !w.is_empty() && *w != crate::netacl::ONLINK6).count();
-        if taken + bad.len() > words || bad.iter().any(|w| !text.contains(w.as_str())) {
-            return Err(format!("{words} words gave {taken} prefixes and the bad words {bad:?}"));
+        if taken + bad.len() + onlink != words.len() || bad.iter().any(|w| !words.contains(&w.as_str())) {
+            return Err(format!(
+                "{} words gave {taken} prefixes, {onlink} onlink6 and the bad words {bad:?}",
+                words.len()
+            ));
         }
         for w in shown.split(' ').filter(|w| !w.is_empty() && *w != crate::netacl::ONLINK6) {
             let Some((a, n)) = w.split_once('/') else { return Err(format!("a prefix without its length: {w}")) };
