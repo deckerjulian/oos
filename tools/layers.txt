@@ -1,0 +1,3 @@
+0 board
+0 dsp-hw
+0 hal-up

@@ -6,10 +6,10 @@
     ratchet_numbers.enforce(root, "tools/<tool>.txt", now, lower)  0 or 1: --enforce, and --lower when `lower`
 
 A file of numbers is one `<count> <key>` per line, as tools/ratchet.txt; the tool that keeps it is the script of the
-same name next to it (`tools/code-metrics.txt` is kept by `tools/code-metrics.py`). Used by tools/scpi-coverage.py
-and tools/code-metrics.py, which load it by its path with importlib (they run as `python3 -I`, which puts no folder
-of theirs on the path). Not `numbers.py`: that name would hide the module `numbers` of the standard library from a
-script with tools/ on its path. Python's standard library; reads and writes that file only.
+same name next to it (`tools/code-metrics.txt` is kept by `tools/code-metrics.py`). Used by tools/scpi-coverage.py,
+tools/code-metrics.py and tools/layers.py, which load it by its path with importlib (they run as `python3 -I`, which
+puts no folder of theirs on the path). Not `numbers.py`: that name would hide the module `numbers` of the standard
+library from a script with tools/ on its path. Python's standard library; reads and writes that file only.
 """
 import os
 
