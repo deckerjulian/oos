@@ -288,7 +288,6 @@ fn edge_times_of_nan_do_not_panic() {
         Trigger::Video { src: 0, std: VideoStd::Pal, sync: VideoSync::AllLines, level: hi },
     ] {
         let t = find_all(&trig, &i);
-        let finite: Vec<f64> = t.iter().copied().filter(|x| x.is_finite()).collect();
-        assert!(finite.windows(2).all(|w| w[0] <= w[1]), "{trig:?} {t:?}");
+        assert!(t.iter().all(|x| x.is_finite()) && t.windows(2).all(|w| w[0] <= w[1]), "{trig:?} {t:?}");
     }
 }

@@ -266,7 +266,8 @@ pub fn peaks(spec: &[f64], count: usize) -> Vec<(usize, f64)> {
 mod tests {
     use super::*;
 
-    /// A NaN bin is no peak and makes no neighbour one, so the sort of the peaks sees no NaN.
+    /// A NaN bin is no peak and makes no neighbour one (every comparison with NaN is false), so the sort of the peaks
+    /// never sees a NaN.
     #[test]
     fn peaks_pass_over_nan_bins() {
         let spec = [9.0, 9.0, 1.0, 5.0, 1.0, f64::NAN, 1.0, 3.0, 1.0, 7.0, f64::NAN, 0.0];
