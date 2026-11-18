@@ -607,11 +607,11 @@ pub mod whole {
     #[inline]
     fn word_extremes(w: &[u16], stride: usize, word: usize, a: usize, b: usize) -> (u16, u16) {
         let (mut lo, mut hi) = (u16::MAX, u16::MIN);
-        #[allow(unused_mut)]
-        let mut i = a;
+        // the samples from `a` on that NEON left over
         #[cfg(target_arch = "aarch64")]
-        {
+        let a = {
             use core::arch::aarch64::*;
+            let mut i = a;
             // SAFETY: NEON is aarch64 baseline; every load reads 8 groups that lie inside `w` (checked by `end`)
             unsafe {
                 let (mut vl, mut vh) = (vdupq_n_u16(u16::MAX), vdupq_n_u16(0));
@@ -649,12 +649,12 @@ pub mod whole {
                 }
                 (lo, hi) = (lo.min(vminvq_u16(vl)), hi.max(vmaxvq_u16(vh)));
             }
-        }
-        while i < b {
+            i
+        };
+        for i in a..b {
             let x = w[i * stride + word];
             lo = lo.min(x);
             hi = hi.max(x);
-            i += 1;
         }
         (lo, hi)
     }
