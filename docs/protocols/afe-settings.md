@@ -58,7 +58,8 @@ A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads the 16-
 uses its last group for the ones it lacks. The 64-byte layout was reported from a DHO804's factory file (issue #37, a
 user report; not seen on the developer's unit): its first 56 bytes are the usual record, the two s32 after them are not
 used. `hal::dho::afe::vertical_stride` takes 64 bytes a record for a payload that is a whole number of 64-byte groups and
-not of 56-byte ones. A file whose scale keys (row 0 of block 0 onwards) do not rise is not used.
+not of 56-byte ones. A file whose scale keys (row 0 of block 0 onwards) do not rise, or that holds a gain code outside
+the ranges of the table below, is not used: the scope then starts uncalibrated.
 
 In `cal_afe_bandwidth.hex`, ints 4/10/16 of each channel are replaced by 110/97/97 after loading. The stock system also
 saves them back to the file. Under OOS these ints have no effect (5.4).

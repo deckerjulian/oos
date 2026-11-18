@@ -113,6 +113,12 @@ impl Cal {
                 "cal_vertical.hex: scale keys out of order",
             ));
         }
+        if !cal.codes_in_range() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cal_vertical.hex: a gain code out of range",
+            ));
+        }
         Ok((cal, from))
     }
 
@@ -144,6 +150,20 @@ impl Cal {
     /// Whether the scale keys of the first block rise from a positive start, as the rows of every unit's file do.
     pub fn keys_in_order(&self) -> bool {
         self.keys.first().is_some_and(|&k| k > 0) && self.keys.windows(2).all(|w| w[0] <= w[1])
+    }
+
+    /// Whether every record of every block the file holds has its seven gain codes in their ranges (afe-settings.md 2:
+    /// input gain, VGA, ATT, SGA, SGAR, MUXR 0..3, MUX 0..7). The input gain indexes the LSB table, the others become
+    /// register fields: a code out of range would index past the table or write a field that does not exist.
+    pub fn codes_in_range(&self) -> bool {
+        const MAX: [i32; 7] = [3, 3, 3, 3, 3, 7, 3];
+        let stride = vertical_stride(self.vertical.len() - HDR);
+        let groups = ((self.vertical.len() - HDR) / (GROUP_RECS * stride)).max(1);
+        (0..groups).all(|var| {
+            (0..4).all(|ch| {
+                (0..801).all(|i| self.rec(var, ch, i).g[..7].iter().zip(MAX).all(|(&v, max)| (0..=max).contains(&v)))
+            })
+        })
     }
 
     /// Scale key (nV/div) of row `i` of every block.
@@ -930,7 +950,7 @@ mod tests {
         let keys = scale_ladder();
         let rec = |var: usize, ch: usize, i: usize| super::Rec {
             key: keys[i],
-            g: [(i / 200) as i32, 1, 2, 3, var as i32, 5, ch as i32, 0],
+            g: [(i / 201) as i32, 1, 2, 3, var as i32, 5, ch as i32, 0],
             gain: 1.0 + i as f64 / 1000.0,
             zero: 32000 + i as i32,
             last: 7,
@@ -952,7 +972,7 @@ mod tests {
             assert_eq!(c.rec(0, ch, i), rec(0, ch, i));
             assert_eq!(c.rec(3, ch, i), rec(0, ch, i), "the one group stands in for the others");
         }
-        assert!(c.keys_in_order());
+        assert!(c.keys_in_order() && c.codes_in_range());
         let c = file(4, 56);
         for (var, ch, i) in [(0, 0, 0), (2, 1, 400), (3, 3, 800)] {
             assert_eq!(c.rec(var, ch, i), rec(var, ch, i));
@@ -970,6 +990,11 @@ mod tests {
         assert_eq!(vertical_stride(4 * GROUP_RECS * 56), 56);
         assert_eq!(vertical_stride(3 * GROUP_RECS * 56), 56);
         assert_eq!(vertical_stride(GROUP_RECS * 56 + 5), 56, "no whole number: 56 as before");
+        // a garbled code with the keys still in order: input gain 4 indexes past the LSB table (Copilot on #247)
+        let mut c = file(4, 56);
+        let o = HDR + (2 * 4 * 801 + 801 + 100) * 56 + 8;
+        c.vertical[o..o + 4].copy_from_slice(&4i32.to_le_bytes());
+        assert!(c.keys_in_order() && !c.codes_in_range());
     }
 
     #[derive(Default)]
