@@ -9,14 +9,8 @@ use oos_dsp::decode;
 pub struct UsbPd;
 
 impl Protocol for UsbPd {
-    fn key(&self) -> &'static str {
-        "UsbPd"
-    }
-    fn name(&self) -> &'static str {
-        "USB PD"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("CC"), None, None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::USB_PD
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         3.33e-6

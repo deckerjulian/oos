@@ -10,14 +10,8 @@ use oos_dsp::decode;
 pub struct I3c;
 
 impl Protocol for I3c {
-    fn key(&self) -> &'static str {
-        "I3c"
-    }
-    fn name(&self) -> &'static str {
-        "I3C"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SDA"), Some("SCL"), None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::I3C
     }
     /// A bit at 10 MHz (SDR).
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {

@@ -7,8 +7,8 @@
 //! [`MODULES`]. That is all: the Decode menu (protocol list, source rows named after the roles, option rows), saved
 //! setups, the protocol trigger (bit time, what a frame start is, the starting value), the packet labels on the trace
 //! and in the event table, the demo traffic of the host build and the protocol's own view in the pane under the plot
-//! all come from the trait. The decoder itself usually lives in `oos-dsp` (decode + a generator for its tests) and the
-//! module calls it.
+//! all come from the trait. The decoder itself lives in `oos-dsp`, with its [`ModuleInfo`] (key, name, the lines it
+//! takes) next to it and listed in `oos_dsp::protocols::MODULES`; the module names that info and calls the decoder.
 //!
 //! Every decoder is a module. The seven core protocols (`core.rs`: UART, I2C, SPI, CAN, LIN, Parallel, C-PHY) are
 //! always built and keep the first places, since the hardware trigger types and SCPI name them (`Proto::UART` ...).
@@ -17,6 +17,7 @@
 
 use crate::model::{BusWhat, Slope};
 use oos_dsp::decode::Packet;
+use oos_dsp::protocols::ModuleInfo;
 
 #[cfg(feature = "dec-avionics")]
 mod avionics;
@@ -338,24 +339,12 @@ pub struct Section {
     pub rows: Vec<String>,
 }
 
-/// A protocol module. Only `key`, `name`, `bit_time` and `decode` are required; everything else has a default that
+/// A protocol module. Only `info`, `bit_time` and `decode` are required; everything else has a default that
 /// fits a single-line serial protocol.
 pub trait Protocol: Sync {
-    /// Stable name in saved setups and over SCPI: letters and digits only, never changed once released.
-    fn key(&self) -> &'static str;
-
-    /// Name in the Decode menu, in the event table and on the decoder's label.
-    fn name(&self) -> &'static str;
-
-    /// Names of the source rows: main, second, third (optional), fourth (optional). `None` = the row is not shown.
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("Source"), None, None, None]
-    }
-
-    /// Whether the main line may be a differential pair (RS-485 style A - B).
-    fn diff_ok(&self) -> bool {
-        false
-    }
+    /// What oos-dsp says of the decoder: its stable key, its name, the lines it takes and whether the main one may
+    /// be a differential pair, next to the decoder in its family's file (`oos_dsp::protocols::MODULES`).
+    fn info(&self) -> &'static ModuleInfo;
 
     /// The option rows of the Decode menu.
     fn options(&self) -> &'static [Opt] {
@@ -445,6 +434,18 @@ pub trait Protocol: Sync {
     }
 }
 
+impl dyn Protocol {
+    /// The stable key of the module ([`ModuleInfo::key`]).
+    pub fn key(&self) -> &'static str {
+        self.info().key
+    }
+
+    /// The name of the module ([`ModuleInfo::name`]).
+    pub fn name(&self) -> &'static str {
+        self.info().name
+    }
+}
+
 /// Module `i` of [`MODULES`].
 pub fn get(i: u8) -> &'static dyn Protocol {
     MODULES[i as usize]
@@ -486,7 +487,7 @@ mod tests {
             for o in m.options() {
                 assert!(o.default < o.choices.len(), "{}: {} default", m.name(), o.name);
             }
-            assert!(m.roles()[0].is_some(), "{}: no main role", m.name());
+            assert!(m.info().roles[0].is_some(), "{}: no main role", m.name());
             assert!(m.bit_time(&[0; OPTS]) > 0.0, "{}: bit time", m.name());
         }
         // the core decoders at their fixed places (`Proto::UART` ...)
@@ -592,6 +593,17 @@ mod tests {
         // a build with fewer decoders has fewer keys than the list, and fewer than the texts count
         let whole = cfg!(feature = "decoders");
         let keys: Vec<&str> = mods.iter().map(|m| m.key()).collect();
+        // a module is a decoder of oos-dsp, in the order of its registry; the whole build has every one of them
+        let dsp = &oos_dsp::protocols::MODULES;
+        for m in &mods {
+            let registered = dsp.iter().any(|&i| std::ptr::eq(i, m.info()));
+            assert!(registered, "{}: its ModuleInfo is not in oos_dsp::protocols::MODULES", m.key());
+        }
+        let order: Vec<&str> = dsp.iter().map(|i| i.key).filter(|k| keys.contains(k)).collect();
+        assert_eq!(keys, order, "MODULES: not in the order of oos_dsp::protocols::MODULES");
+        for i in dsp.iter().filter(|_| whole) {
+            assert!(keys.contains(&i.key), "{}: in oos_dsp::protocols::MODULES, no module in ui/src/protocols", i.key);
+        }
         exempt_once("NO_DEMO", &NO_DEMO.map(|x| x.0), &keys, whole);
         stored_names("decoder-keys.txt", &mods.iter().map(|m| m.key().to_string()).collect::<Vec<_>>(), whole);
         if whole {

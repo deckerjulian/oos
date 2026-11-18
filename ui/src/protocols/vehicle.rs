@@ -30,14 +30,8 @@ const CANFD_OPTIONS: [Opt; 3] = [
 pub struct CanFd;
 
 impl Protocol for CanFd {
-    fn key(&self) -> &'static str {
-        "CanFd"
-    }
-    fn name(&self) -> &'static str {
-        "CAN-FD"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::CAN_FD
     }
     fn options(&self) -> &'static [Opt] {
         &CANFD_OPTIONS
@@ -71,14 +65,8 @@ impl Protocol for CanFd {
 pub struct FlexRay;
 
 impl Protocol for FlexRay {
-    fn key(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn name(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::FLEXRAY
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         0.1e-6
@@ -124,11 +112,8 @@ fn tick(opt: &[usize; OPTS]) -> Option<f64> {
 pub struct Sent;
 
 impl Protocol for Sent {
-    fn key(&self) -> &'static str {
-        "Sent"
-    }
-    fn name(&self) -> &'static str {
-        "SENT"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SENT
     }
     fn options(&self) -> &'static [Opt] {
         &SENT_OPTIONS

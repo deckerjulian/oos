@@ -9,11 +9,8 @@ use oos_dsp::decode;
 pub struct Spdif;
 
 impl Protocol for Spdif {
-    fn key(&self) -> &'static str {
-        "Spdif"
-    }
-    fn name(&self) -> &'static str {
-        "S/PDIF"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SPDIF
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         0.15e-6

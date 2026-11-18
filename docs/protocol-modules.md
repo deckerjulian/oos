@@ -1,13 +1,16 @@
 # Protocol modules: adding a decoder
 
-A protocol module is one Rust file with a type that implements `protocols::Protocol`, and one line that registers it.
-Everything around the decoder comes from that one type:
+A protocol decoder is a module in `oos-dsp` and one in `oos-ui`. In `oos-dsp`, next to the decoder in the file of its
+family, an `oos_dsp::protocols::ModuleInfo` says what it is: its stable key, its name, its family, the lines it takes
+and whether the main one may be a differential pair; `oos_dsp::protocols::MODULES` lists them. In `oos-ui`, a type
+that implements `protocols::Protocol` names that info and brings everything the scope shows around it, with one line
+that registers it:
 
 | What | Where it shows | Hook (default) |
 |---|---|---|
-| name, stable key | Decode > Protocol, event table, decoder label, saved setups, SCPI setups | `name`, `key` (required) |
-| source rows | Decode menu: one row per role, named after it ("SDA", "CC", "Data" ...) | `roles` (one "Source") |
-| differential input | the "B line (A-B)" row for an RS-485 style pair | `diff_ok` (off) |
+| name, stable key | Decode > Protocol, event table, decoder label, saved setups, SCPI setups | `info` (required): `name`, `key` of its `ModuleInfo` |
+| source rows | Decode menu: one row per role, named after it ("SDA", "CC", "Data" ...) | `info`: `roles` (one "Source") |
+| differential input | the "B line (A-B)" row for an RS-485 style pair | `info`: `diff_ok` (off) |
 | shared rows | Decode menu rows several protocols use (Baud, Bits, Parity, SPI mode, CAN rate, USB speed ...), saved under their own setup keys | `shared` (none), `bit_time_sh`, `frame_span_sh` |
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
 | the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
@@ -21,7 +24,7 @@ Everything around the decoder comes from that one type:
 | demo traffic | the host build's simulated signals, on the channels of `setup` | `demo` (none) |
 | own view | Display > Second pane > Bus view: a status line and columns of rows, with a memory across records | `view` (none) |
 
-Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a single-line serial protocol on CH3.
+Only `info`, `bit_time` and `decode` are required. The defaults fit a single-line serial protocol on CH3.
 
 ## Steps
 
@@ -31,6 +34,8 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
    a function that returns an `oos_dsp::sim::Logic`); its tests go into the family's module of `dsp/tests/decode/`
    (`dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` fails for a family without one). Packet times are
    fractional sample indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
+   Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`), and at the
+   end of `MODULES` in `dsp/src/protocols.rs` its line.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.

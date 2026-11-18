@@ -13,14 +13,8 @@ const PERIOD: f64 = 4.0 / 48e3;
 const T0: f64 = 4.0 / (48e3 * 32.0);
 
 impl Protocol for I2s {
-    fn key(&self) -> &'static str {
-        "I2s"
-    }
-    fn name(&self) -> &'static str {
-        "I2S"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SD"), Some("SCK"), Some("WS"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::I2S
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]

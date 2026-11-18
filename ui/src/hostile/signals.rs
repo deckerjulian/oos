@@ -17,7 +17,7 @@ fn hostile_decoder_records() {
         let opt = opt_fit(i, opt_default(i));
         let dt = m.bit_time(&opt) / 8.0;
         // the role slots the module uses, at their places (USB and Parallel leave slots 1 and 3 empty)
-        let mut slots: Vec<usize> = (0..4).filter(|&k| m.roles()[k].is_some()).collect();
+        let mut slots: Vec<usize> = (0..4).filter(|&k| m.info().roles[k].is_some()).collect();
         if slots.is_empty() {
             slots.push(0);
         }

@@ -24,14 +24,8 @@ fn arinc_rate(opt: &[usize; OPTS]) -> Option<f64> {
 pub struct Arinc429;
 
 impl Protocol for Arinc429 {
-    fn key(&self) -> &'static str {
-        "Arinc429"
-    }
-    fn name(&self) -> &'static str {
-        "ARINC 429"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::ARINC429
     }
     fn options(&self) -> &'static [Opt] {
         &ARINC_OPTIONS
@@ -87,11 +81,8 @@ impl Protocol for Arinc429 {
 pub struct Mil1553;
 
 impl Protocol for Mil1553 {
-    fn key(&self) -> &'static str {
-        "Mil1553"
-    }
-    fn name(&self) -> &'static str {
-        "1553"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MIL1553
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         1e-6

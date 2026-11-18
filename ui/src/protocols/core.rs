@@ -23,14 +23,8 @@ const fn idle_fall(idle: f32) -> Option<DemoTrig> {
 pub struct Uart;
 
 impl Protocol for Uart {
-    fn key(&self) -> &'static str {
-        "Uart"
-    }
-    fn name(&self) -> &'static str {
-        "UART"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::UART
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Baud, Row::Bits, Row::Parity, Row::Fmt]
@@ -53,14 +47,8 @@ impl Protocol for Uart {
 pub struct I2c;
 
 impl Protocol for I2c {
-    fn key(&self) -> &'static str {
-        "I2c"
-    }
-    fn name(&self) -> &'static str {
-        "I2C"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SDA"), Some("SCL"), None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::I2C
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         2.5e-6
@@ -102,14 +90,8 @@ impl Protocol for I2c {
 pub struct Spi;
 
 impl Protocol for Spi {
-    fn key(&self) -> &'static str {
-        "Spi"
-    }
-    fn name(&self) -> &'static str {
-        "SPI"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("MOSI"), Some("Clock"), Some("CS"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SPI
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::SpiMode, Row::Bits]
@@ -164,14 +146,8 @@ impl Protocol for Spi {
 pub struct Can;
 
 impl Protocol for Can {
-    fn key(&self) -> &'static str {
-        "Can"
-    }
-    fn name(&self) -> &'static str {
-        "CAN"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::CAN
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::CanRate, Row::CanH]
@@ -212,14 +188,8 @@ impl Protocol for Can {
 pub struct Lin;
 
 impl Protocol for Lin {
-    fn key(&self) -> &'static str {
-        "Lin"
-    }
-    fn name(&self) -> &'static str {
-        "LIN"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::LIN
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Baud]
@@ -250,14 +220,8 @@ impl Protocol for Lin {
 pub struct Parallel;
 
 impl Protocol for Parallel {
-    fn key(&self) -> &'static str {
-        "Parallel"
-    }
-    fn name(&self) -> &'static str {
-        "Parallel"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("D0"), None, Some("Clock"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::PARALLEL
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]
@@ -292,14 +256,8 @@ impl Protocol for Parallel {
 pub struct Cphy;
 
 impl Protocol for Cphy {
-    fn key(&self) -> &'static str {
-        "Cphy"
-    }
-    fn name(&self) -> &'static str {
-        "C-PHY"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("A"), Some("B"), Some("C"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::cphy::CPHY
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::CphyRate]

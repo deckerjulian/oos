@@ -60,7 +60,7 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
     // "none")
     let Proto::Module(i) = m.dec_proto;
     let p = crate::protocols::get(i);
-    let r = p.roles();
+    let r = p.info().roles;
     let lines = [
         Some(line),
         if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },

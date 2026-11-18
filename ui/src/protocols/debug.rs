@@ -12,14 +12,8 @@ use oos_dsp::decode::Kind;
 pub struct Swd;
 
 impl Protocol for Swd {
-    fn key(&self) -> &'static str {
-        "Swd"
-    }
-    fn name(&self) -> &'static str {
-        "SWD"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SWDIO"), Some("SWCLK"), None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SWD
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         0.5e-6
@@ -52,14 +46,8 @@ impl Protocol for Swd {
 pub struct Jtag;
 
 impl Protocol for Jtag {
-    fn key(&self) -> &'static str {
-        "Jtag"
-    }
-    fn name(&self) -> &'static str {
-        "JTAG"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::JTAG
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         0.5e-6

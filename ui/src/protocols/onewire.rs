@@ -11,11 +11,8 @@ use oos_dsp::decode;
 pub struct OneWire;
 
 impl Protocol for OneWire {
-    fn key(&self) -> &'static str {
-        "OneWire"
-    }
-    fn name(&self) -> &'static str {
-        "1-Wire"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::ONE_WIRE
     }
     /// The shortest standard-speed slot.
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
@@ -44,14 +41,8 @@ impl Protocol for OneWire {
 pub struct Ds2482;
 
 impl Protocol for Ds2482 {
-    fn key(&self) -> &'static str {
-        "Ds2482"
-    }
-    fn name(&self) -> &'static str {
-        "DS2482"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SDA"), Some("SCL"), None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::DS2482
     }
     /// An I2C bit at 400 kHz.
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {

@@ -9,14 +9,8 @@ use oos_dsp::decode;
 pub struct Dmx512;
 
 impl Protocol for Dmx512 {
-    fn key(&self) -> &'static str {
-        "Dmx512"
-    }
-    fn name(&self) -> &'static str {
-        "DMX512"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::DMX512
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         4e-6

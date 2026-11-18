@@ -86,9 +86,10 @@ when a user notices it.
 
 ### A new protocol decoder
 
-- **Declare it** as a type that implements `Protocol` in a file of `ui/src/protocols/`, with its line in `MODULES`
-  (`ui/src/protocols/mod.rs`). The Decode menu, setups, the protocol trigger, the labels, the demo traffic and its
-  view follow. [docs/protocol-modules.md](docs/protocol-modules.md) walks through it.
+- **Declare it** as a `ModuleInfo` next to its decoder in `oos-dsp`, with its line at the end of `MODULES`
+  (`dsp/src/protocols.rs`), and as a type that implements `Protocol` in a file of `ui/src/protocols/` that names
+  it, with its line in `MODULES` (`ui/src/protocols/mod.rs`). The Decode menu, setups, the protocol trigger, the
+  labels, the demo traffic and its view follow. [docs/protocol-modules.md](docs/protocol-modules.md) walks through it.
 - **Also touch** the decoder in the file of its family under `dsp/src/decode/`, its generator in
   `dsp/src/decode/gen.rs` or `dsp/src/decode/gen/` and its tests in the family's module of `dsp/tests/decode/`; for a
   new file of `ui/src/protocols/` its `mod` line and its feature `dec-<file>` in `ui/Cargo.toml` (the feature and the
@@ -97,8 +98,12 @@ when a user notices it.
 - **Generate** its line of `ui/tests/golden/decoder-keys.txt` with
   `(cd ui && OOS_BLESS=1 cargo test --locked -q protocols::tests)`. The list only gains lines: a key never changes.
 - **The check:** `ui/src/protocols/mod.rs::every_decoder_is_complete` fails on a decoder without its key in the list,
-  its name in the wiki, demo traffic (or the reason in `NO_DEMO`), its case on the demo screen or the feature of its
-  file, and on a number of decoders in the texts that is not the number registered;
+  its `ModuleInfo` in the registry of `oos-dsp` (or out of its order), its name in the wiki, demo traffic (or the
+  reason in `NO_DEMO`), its case on the demo screen or the feature of its file, on a decoder of `oos-dsp` without a
+  module, and on a number of decoders in the texts that is not the number registered;
+  `dsp/src/protocols.rs::every_declared_module_is_registered` on a `ModuleInfo` that is not in the registry of
+  `oos-dsp`, `dsp/src/protocols.rs::modules_are_well_formed` on a key or a name used twice or an info that is not in
+  the file of its family;
   `ui/src/protocols/mod.rs::modules_are_well_formed` on a key or a name used twice;
   `ui/src/protocols/mod.rs::modules_decode_their_demo` on demo traffic the module does not decode;
   `dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` on a family of `dsp/src/decode/` without tests.

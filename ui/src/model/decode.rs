@@ -50,13 +50,13 @@ impl Proto {
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         let Proto::Module(i) = self;
-        crate::protocols::get(i).roles()
+        crate::protocols::get(i).info().roles
     }
 
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
         let Proto::Module(i) = self;
-        crate::protocols::get(i).diff_ok()
+        crate::protocols::get(i).info().diff_ok
     }
 }
 
