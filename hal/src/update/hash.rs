@@ -377,13 +377,14 @@ pub fn hex(b: &[u8]) -> String {
     s
 }
 
-/// Bytes from hex (even length, no separators); None on anything else.
+/// Bytes from hex (even length, only the digits 0-9, a-f and A-F); None on anything else.
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
-    if !s.len().is_multiple_of(2) {
+    // `from_str_radix` takes a sign too: "+f" would be 0x0f
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect()
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect()
 }
 
 #[cfg(test)]

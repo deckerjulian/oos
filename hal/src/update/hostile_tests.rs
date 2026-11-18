@@ -48,12 +48,7 @@ fn hostile_trusted_keys() {
     run("update::pkg::parse_keys", &seeds, 1, |b| {
         let text = String::from_utf8_lossy(b);
         let keys = pkg::parse_keys(&text);
-        // the finding `unhex-takes-a-plus-sign`: a line of 64 characters with a plus sign among its digits
         let key_of = |l: &'_ str| l.split('#').next().and_then(|l| l.split_whitespace().next()).map(str::to_string);
-        let plus = text.lines().filter_map(key_of).any(|w| w.len() == 64 && w.contains('+'));
-        if plus && known(KNOWN, "unhex-takes-a-plus-sign") {
-            return Ok(());
-        }
         let words: Vec<String> = text.lines().filter_map(key_of).map(|w| w.to_ascii_lowercase()).collect();
         match keys.iter().find(|k| !words.contains(&hash::hex(&k[..]))) {
             Some(k) => Err(format!("a key that is no first word of a line outside its comment: {}", hash::hex(k))),
@@ -63,9 +58,9 @@ fn hostile_trusted_keys() {
     });
 }
 
+// Break it catches: a plus sign taken for a hex digit (#181)
 #[test]
-#[ignore = "hash::unhex takes a plus sign for a hex digit ('+f' is 0x0f), #181"]
-pub(crate) fn hostile_known_unhex_takes_a_plus_sign() {
+fn hostile_unhex_takes_a_plus_sign() {
     assert_eq!(hash::unhex("+f"), None);
     assert!(pkg::parse_keys(&format!("{}+f\n", "00".repeat(31))).is_empty());
 }
