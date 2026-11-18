@@ -15,7 +15,7 @@ fn word(b: &[u8], o: usize) -> Option<u32> {
 }
 
 fn wide(b: &[u8], o: usize) -> Option<u64> {
-    b.get(o..o + 8).map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+    b.get(o..)?.first_chunk().copied().map(u64::from_le_bytes)
 }
 
 fn half(b: &[u8], o: usize) -> Option<u16> {
