@@ -135,7 +135,7 @@ class PullRequests(unittest.TestCase):
 
     def run_tool(self, tool):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
-                   OOS_REPO="owner/oos")
+                   OOS_REPO="owner/oos", OOS_API_TRIES="1")
         out = subprocess.run(["sh", str(ROOT / "tools" / tool), "--dry", "7"], env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         return out.stdout
@@ -207,6 +207,9 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["review"], "success", "every comment of Copilot's resolved; others' do not count")
         self.copilot("### Looks good\n\n**No open issues** 🎉\n", commit="older")
         self.assertEqual(self.gate()["review"], "success", "one review per pull request, of whichever commit")
+        self.copilot("### Needs a closer look\n\n**2 open issues**\n", open_threads=0)
+        (self.dir / "graphql_datareposito.json").unlink()
+        self.assertEqual(self.gate()["review"], "pending", "threads that could not be read are not none")
 
     def test_hold(self):
         self.pull(["ui/src/ui.rs"], labels=["hold"])
