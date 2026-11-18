@@ -74,11 +74,7 @@ fn dcc_resyncs_phase_slip_before_preamble() {
     let mut v = vec![orphan_level as f32; orphan_n];
     v.extend_from_slice(&body);
     let p = dcc(&v, dt, 1.65, 0.3);
-    assert!(
-        !p.iter().any(|x| x.kind == Kind::Field("!ERR")),
-        "phase slip must not emit !ERR, got {:?}",
-        kv(&p)
-    );
+    assert!(!p.iter().any(|x| x.kind == Kind::Field("!ERR")), "phase slip must not emit !ERR, got {:?}", kv(&p));
     assert_eq!(kv(&p), dcc_want(&fr));
 }
 
@@ -90,7 +86,7 @@ fn dcc_false_start_in_preamble_is_not_broken() {
     bits.push(false);
     bits.extend(std::iter::repeat_n(true, 8));
     bits.push(true);
-    bits.extend(gen::dcc_bits(&[idle.clone()]));
+    bits.extend(gen::dcc_bits(std::slice::from_ref(&idle)));
     let mut l = Logic::new(0.0, 3.3, 1e-6);
     let mut t = 20e-6;
     let mut level = true;
@@ -109,10 +105,6 @@ fn dcc_false_start_in_preamble_is_not_broken() {
     let dt = DCC_ONE_HALF / 8.0;
     let v = l.sample(dt, 200e-6);
     let p = dcc(&v, dt, 1.65, 0.3);
-    assert!(
-        !p.iter().any(|x| x.kind == Kind::Field("!ERR")),
-        "false start must not emit !ERR, got {:?}",
-        kv(&p)
-    );
+    assert!(!p.iter().any(|x| x.kind == Kind::Field("!ERR")), "false start must not emit !ERR, got {:?}", kv(&p));
     assert_eq!(kv(&p), dcc_want(&[idle]));
 }
