@@ -149,13 +149,7 @@ impl Ui {
     }
 
     pub(crate) fn ref_vscale_set(&mut self, slot: usize, vpd: f32) -> bool {
-        if slot >= NREF || !vpd.is_finite() || vpd <= 0.0 {
-            return false;
-        }
-        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
-        self.ref_sel = slot;
-        r.vpd = vpd;
-        true
+        self.ref_edit(slot, vpd.is_finite() && vpd > 0.0, |r| r.vpd = vpd)
     }
 
     pub(crate) fn ref_voffset(&self, slot: usize) -> Option<f32> {
@@ -163,13 +157,7 @@ impl Ui {
     }
 
     pub(crate) fn ref_voffset_set(&mut self, slot: usize, offset: f32) -> bool {
-        if slot >= NREF || !offset.is_finite() {
-            return false;
-        }
-        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
-        self.ref_sel = slot;
-        r.offset = offset;
-        true
+        self.ref_edit(slot, offset.is_finite(), |r| r.offset = offset)
     }
 
     pub(crate) fn ref_color(&self, slot: usize) -> Option<usize> {
@@ -177,13 +165,7 @@ impl Ui {
     }
 
     pub(crate) fn ref_color_set(&mut self, slot: usize, color: usize) -> bool {
-        if slot >= NREF || color >= REF_COLORS.len() {
-            return false;
-        }
-        let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
-        self.ref_sel = slot;
-        r.color = color;
-        true
+        self.ref_edit(slot, color < REF_COLORS.len(), |r| r.color = color)
     }
 
     /// `:REFerence:RESet`: offset back to zero, scale back to the source channel.
@@ -204,12 +186,17 @@ impl Ui {
     }
 
     pub(crate) fn ref_label_set(&mut self, slot: usize, label: String) -> bool {
-        if slot >= NREF {
+        self.ref_edit(slot, true, |r| r.label = label)
+    }
+
+    /// With a `valid` value and a reference in `slot`: selects the slot, changes the reference with `set`, true.
+    fn ref_edit(&mut self, slot: usize, valid: bool, set: impl FnOnce(&mut RefWave)) -> bool {
+        if slot >= NREF || !valid {
             return false;
         }
         let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
         self.ref_sel = slot;
-        r.label = label;
+        set(r);
         true
     }
 
