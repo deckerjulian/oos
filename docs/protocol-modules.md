@@ -16,7 +16,7 @@ that registers it:
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
 | the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
 | field text | the labels on the trace and in the event table | `text` (the generic text of each kind) |
-| protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger` (the generic rule) |
+| protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger`, the protocol's own rule (none: `ModuleInfo::trigger_match` uses the generic rule of `dsp/src/protocols.rs`) |
 | trigger start value | what Trigger > Bus looks for when it is switched on | `info`: `trigger_default` (Frame) |
 | trigger timing | sampling (a twentieth of a bit) and the search window | `bit_time` (required), `frame_span` (200 bits) |
 | hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `start_edge` (falling), `start_role` (the main line) |
