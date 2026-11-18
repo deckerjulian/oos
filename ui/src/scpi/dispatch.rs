@@ -318,6 +318,20 @@ impl Scpi {
             }
             if kw(k0, "CHANnel") && (nodes.len() == 2 || nodes.len() == 3) {
                 let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
+                // the channel settings of the table (settings/channel.rs), of channel c; a value a row does not take
+                // is refused with -224 or falls through to the later branches (-113), each as before the table
+                if let Some(row) = crate::settings::command(&crate::settings::channel::SLICES, &nodes[1..]) {
+                    if query {
+                        return Some(t(&row.query(m, c)));
+                    }
+                    if !row.take(m, c, arg) {
+                        if !crate::settings::channel::REFUSES.contains(&row.key) {
+                            return None;
+                        }
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    }
+                    return Some(None);
+                }
                 let n1 = nodes[1];
                 if nodes.len() == 3 && kw(nodes[1], "LABel") && kw(nodes[2], "CONTent") {
                     if query {
@@ -351,48 +365,11 @@ impl Scpi {
                 if nodes.len() != 2 {
                     return None;
                 }
-                if kw(n1, "VERNier") {
-                    // One fine-adjust switch for every channel: the screen has a single control.
-                    if query {
-                        return Some(t(if m.fine_v { "1" } else { "0" }));
-                    }
-                    return match parse_bool(arg) {
-                        Some(on) => {
-                            // off keeps a fine scale until the next coarse step, as the Channel menu's switch does
-                            m.fine_v = on;
-                            Some(None)
-                        }
-                        None => {
-                            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                            Some(None)
-                        }
-                    };
-                }
-                if kw(n1, "EXPand") {
-                    // One switch for every channel: scale around ground, or around the screen center.
-                    // The manual spells this GND|CENTer on math. This screen keeps it on the channel.
-                    if query {
-                        return Some(t(if m.v_expand_gnd { "GND" } else { "CENT" }));
-                    }
-                    if kw(arg, "GND") {
-                        m.v_expand_gnd = true;
-                    } else if kw(arg, "CENTer") {
-                        m.v_expand_gnd = false;
-                    } else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    }
-                    return Some(None);
-                }
                 let expand_gnd = m.v_expand_gnd;
                 let slow_deskew = m.time_per_div() > 10e-6;
                 let fine = m.fine_v;
                 let ch = &mut m.ch[c];
-                if kw(n1, "DISPlay") {
-                    if query {
-                        return Some(t(if ch.on { "1" } else { "0" }));
-                    }
-                    ch.on = parse_bool(arg)?;
-                } else if kw(n1, "SCALe") {
+                if kw(n1, "SCALe") {
                     if query {
                         return Some(t(&e(ch.volts_per_div() as f64)));
                     }
@@ -407,28 +384,6 @@ impl Scpi {
                         return Some(t(&e(ch.offset as f64)));
                     }
                     ch.offset = num(arg)?;
-                } else if kw(n1, "UNITs") {
-                    if query {
-                        return Some(t(match ch.unit {
-                            AmpUnit::V => "VOLT",
-                            AmpUnit::A => "AMP",
-                            AmpUnit::W => "WATT",
-                            AmpUnit::U => "UNKN",
-                        }));
-                    }
-                    let a = arg.trim();
-                    ch.unit = if kw(a, "VOLTage") {
-                        AmpUnit::V
-                    } else if kw(a, "AMPere") {
-                        AmpUnit::A
-                    } else if kw(a, "WATT") {
-                        AmpUnit::W
-                    } else if kw(a, "UNKNown") {
-                        AmpUnit::U
-                    } else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return Some(None);
-                    };
                 } else if kw(n1, "COUPling") {
                     if query {
                         return Some(t(ch.coupling.name()));
@@ -440,38 +395,11 @@ impl Scpi {
                         "DC50" if board().couplings().contains(&Coupling::Dc50) => Coupling::Dc50,
                         _ => return None,
                     };
-                } else if kw(n1, "BWLimit") {
-                    if query {
-                        return Some(t(match ch.bw {
-                            BW_20M => "20M".to_string(),
-                            BW_FULL => "OFF".to_string(),
-                            0 => "AUTO".to_string(),
-                            i => BWS[i].0.replace(' ', "").to_ascii_uppercase(),
-                        }
-                        .as_str()));
-                    }
-                    // OFF (full), 20M, AUTO, GND or a filter like 100M / 100MHZ / 1GHZ
-                    let a = arg.trim().to_ascii_uppercase().replace(' ', "");
-                    ch.bw = match a.as_str() {
-                        "OFF" | "FULL" => BW_FULL,
-                        "AUTO" => 0,
-                        "GND" => 3,
-                        "20M" | "20MHZ" => BW_20M,
-                        _ => BWS.iter().position(|b| {
-                            b.0.replace(' ', "").to_ascii_uppercase() == a
-                                || b.0.replace(' ', "").to_ascii_uppercase() == format!("{}HZ", a)
-                        })?,
-                    };
                 } else if kw(n1, "PROBe") {
                     if query {
                         return Some(t(&e(ch.probe as f64)));
                     }
                     ch.probe = num(arg).filter(|&p| p > 0.0)?;
-                } else if kw(n1, "INVert") {
-                    if query {
-                        return Some(t(if ch.invert { "1" } else { "0" }));
-                    }
-                    ch.invert = parse_bool(arg)?;
                 } else if kw(n1, "BIAS") {
                     // The screen's zero correction, subtracted from the channel reading.
                     // The DHO programmer manual has no header for it.
@@ -521,9 +449,9 @@ impl Scpi {
                 // through to the later branches, which answer -113, as before the table
                 if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {
                     if query {
-                        return Some(t(&row.query(m)));
+                        return Some(t(&row.query(m, 0)));
                     }
-                    return row.take(m, arg).then_some(None);
+                    return row.take(m, 0, arg).then_some(None);
                 }
                 if nodes.len() == 3 && kw(nodes[1], "EDGE") {
                     if kw(last, "SOURce") {
@@ -589,9 +517,9 @@ impl Scpi {
             if kw(n0, "ACQuire") {
                 if let Some(row) = crate::settings::command(&crate::settings::acquisition::SLICES, &nodes[1..]) {
                     if query {
-                        return Some(t(&row.query(m)));
+                        return Some(t(&row.query(m, 0)));
                     }
-                    if !row.take(m, arg) {
+                    if !row.take(m, 0, arg) {
                         if !crate::settings::acquisition::REFUSES.contains(&row.key) {
                             return None;
                         }

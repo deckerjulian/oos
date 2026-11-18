@@ -152,9 +152,9 @@ impl Scpi {
             let mut m = ui.m.clone();
             m.math_select(k);
             if query {
-                return t(&row.query(&m));
+                return t(&row.query(&m, 0));
             }
-            if !row.take(&mut m, arg) {
+            if !row.take(&mut m, 0, arg) {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             }

@@ -207,13 +207,13 @@ pub fn setup_text(m: &Model) -> String {
     }
     for (c, ch) in m.ch.iter().enumerate() {
         let p = |k: &str| format!("ch{}.{}", c + 1, k);
-        kv(&p("on"), ch.on.to_string());
+        crate::settings::write(&crate::settings::channel::ON, m, c, &mut kv);
         kv(&p("vdiv"), VSCALES[ch.vscale].to_string());
         if ch.vfine != 1.0 {
             kv(&p("vfine"), ch.vfine.to_string());
         }
         if ch.unit != AmpUnit::V {
-            kv(&p("unit"), ch.unit.name().to_string());
+            crate::settings::write(&crate::settings::channel::UNIT, m, c, &mut kv);
         }
         if ch.bias != 0.0 {
             kv(&p("bias"), ch.bias.to_string());
@@ -223,9 +223,9 @@ pub fn setup_text(m: &Model) -> String {
         }
         kv(&p("offset"), ch.offset.to_string());
         kv(&p("coupling"), name(ch.coupling));
-        kv(&p("bw"), BWS[ch.bw].0.to_string());
+        crate::settings::write(&crate::settings::channel::BW, m, c, &mut kv);
         kv(&p("probe"), ch.probe.to_string());
-        kv(&p("invert"), ch.invert.to_string());
+        crate::settings::write(&crate::settings::channel::INVERT, m, c, &mut kv);
     }
     kv("active", m.active.to_string());
     if let Some(source) = m.cur_b_source {
@@ -248,27 +248,27 @@ pub fn setup_text(m: &Model) -> String {
             .collect(),
     );
     kv("trig_level", m.trig_level.to_string());
-    crate::settings::write(&crate::settings::trigger::EDGE, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::EDGE, m, 0, &mut kv);
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
-    crate::settings::write(&crate::settings::trigger::REJECT, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::REJECT, m, 0, &mut kv);
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
-    crate::settings::write(&crate::settings::trigger::SECOND, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::SECOND, m, 0, &mut kv);
     kv("trig_when", name(m.trig_when));
-    crate::settings::write(&crate::settings::trigger::TIMES, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::TIMES, m, 0, &mut kv);
     kv("video_line", m.video_line.to_string());
     kv("pat", m.pat.iter().map(|&b| name(b)).collect::<Vec<_>>().join(" "));
     kv("pat_levels", list(&m.pat_levels));
-    crate::settings::write(&crate::settings::trigger::WINDOW, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::WINDOW, m, 0, &mut kv);
     kv("nth_n", m.nth_n.to_string());
-    crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, &mut kv);
-    crate::settings::write(&crate::settings::acquisition::MODE, m, &mut kv);
+    crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::acquisition::MODE, m, 0, &mut kv);
     kv("segments", m.segments.to_string());
-    crate::settings::write(&crate::settings::acquisition::SEG_HW, m, &mut kv);
+    crate::settings::write(&crate::settings::acquisition::SEG_HW, m, 0, &mut kv);
     kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
-    crate::settings::write(&crate::settings::display::VIEW, m, &mut kv);
+    crate::settings::write(&crate::settings::display::VIEW, m, 0, &mut kv);
     kv("windows", name(m.win_layout));
     kv("density", name(m.density));
     kv("split_pane", m.split_pane.to_string());
@@ -305,18 +305,18 @@ pub fn setup_text(m: &Model) -> String {
     kv("cur_d", m.cur_d.to_string());
     kv("touch_lock", m.touch_lock.to_string());
     kv("aux_out", name(m.aux_out));
-    kv("fine_v", m.fine_v.to_string());
+    crate::settings::write(&crate::settings::channel::FINE, m, 0, &mut kv);
     kv("fine_t", m.fine_t.to_string());
     if m.tfine != 1.0 {
         kv("tfine", m.tfine.to_string());
     }
-    kv("v_expand_gnd", m.v_expand_gnd.to_string());
+    crate::settings::write(&crate::settings::channel::EXPAND, m, 0, &mut kv);
     kv("h_expand", format!("{:?}", m.h_expand));
     kv("math", name(m.math));
     kv("math_a", m.math_a.to_string());
     kv("math_b", m.math_b.to_string());
     kv("math_scale", m.math_scale.to_string());
-    crate::settings::write(&crate::settings::math::FC, m, &mut kv);
+    crate::settings::write(&crate::settings::math::FC, m, 0, &mut kv);
     kv("math_lin", format!("{} {}", m.math_lin.0, m.math_lin.1));
     for (k, e) in m.math_expr.iter().enumerate().filter(|(_, e)| !e.is_empty()) {
         kv(&format!("math_expr{}", k + 1), e.clone());
@@ -324,7 +324,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("log_ivl", m.log_ivl.to_string());
     kv("spec_margin", m.spec_margin.to_string());
     kv("math_offset", m.math_offset.to_string());
-    crate::settings::write(&crate::settings::math::WINDOW_BW, m, &mut kv);
+    crate::settings::write(&crate::settings::math::WINDOW_BW, m, 0, &mut kv);
     // the "math*" keys are the selected math channel; the others as mN.* (N = 1..8)
     kv("math_sel", m.math_sel.to_string());
     for (k, c) in m.maths.iter().enumerate().filter(|(k, _)| *k != m.math_sel) {
@@ -353,7 +353,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("auto_roll", m.auto_roll.to_string());
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
-    crate::settings::write(&crate::settings::display::DRAW, m, &mut kv);
+    crate::settings::write(&crate::settings::display::DRAW, m, 0, &mut kv);
     kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
@@ -690,13 +690,13 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
     }
     if let Some((c, field)) = k.strip_prefix("ch").and_then(|r| r.split_once('.')) {
         let c = c.parse::<usize>().ok().filter(|c| (1..=NCH).contains(c)).ok_or("unknown channel")? - 1;
+        // the fields of the settings table (settings/channel.rs)
+        if let Some(s) = crate::settings::find(&format!("ch<n>.{}", field)) {
+            return s.load(m, c, v);
+        }
         let ch = &mut m.ch[c];
         match field {
-            "on" => ch.on = p_bool(v)?,
             "vfine" => ch.vfine = p_f32(v)?.clamp(1.0, 2.5),
-            "unit" => {
-                ch.unit = *AmpUnit::ALL.iter().find(|u| u.name() == v.trim()).ok_or_else(|| format!("no unit {}", v))?
-            }
             "bias" => ch.bias = p_f32(v)?,
             "skew" => ch.skew = p_f32(v)?.clamp(-SKEW_MAX, SKEW_MAX),
             // the keyboard takes ten characters; a hand-edited file gets no more
@@ -714,20 +714,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             "vscale" => ch.vscale = (p_idx(v, VSCALES.len() - 1)? + 2).min(VSCALES.len() - 1),
             "offset" => ch.offset = p_f32(v)?,
             "coupling" => ch.coupling = p_enum(v, &COUPLINGS)?,
-            "bw" => {
-                ch.bw = BWS.iter().position(|b| b.0 == v.trim()).ok_or_else(|| format!("unknown bandwidth {}", v))?
-            }
             // setups before 2026-11-03
             "bw20" => ch.bw = if p_bool(v)? { BW_20M } else { BW_FULL },
             "probe" => ch.probe = p_f32(v)?,
-            "invert" => ch.invert = p_bool(v)?,
             _ => {} // unknown keys of newer versions are ignored
         }
         return Ok(());
     }
     // the keys of the settings table (settings.rs); the fields of a line are read with the line, below
     if let Some(s) = crate::settings::find(k).filter(|s| s.line().is_none()) {
-        return s.load(m, v);
+        return s.load(m, 0, v);
     }
     let ntime = tscales().len();
     match k {
@@ -865,10 +861,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "cur_d" => m.cur_d = p_f32(v)?,
         "touch_lock" => m.touch_lock = p_bool(v)?,
         "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
-        "fine_v" => m.fine_v = p_bool(v)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
-        "v_expand_gnd" => m.v_expand_gnd = p_bool(v)?,
         "h_expand" => m.h_expand = p_enum(v, &HEXPANDS)?,
         "math" => m.math = p_enum(v, &MATH_OPS)?,
         "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,

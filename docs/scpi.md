@@ -63,13 +63,10 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 
 | Command | Parameters / reply |
 | --- | --- |
-| `:CHANnel<n>:DISPlay[?]` | Boolean. |
 | `:CHANnel<n>:SCALe[?]` | Volts/div; setter chooses the nearest supported scale. Probe factor applies. |
 | `:CHANnel<n>:OFFSet[?]` | Volts. |
 | `:CHANnel<n>:COUPling[?]` | `DC|AC|GND`; `DC50` only on a board supporting it. |
-| `:CHANnel<n>:BWLimit[?]` | `OFF|20M|AUTO` or a supported filter name. OOS filtering extends stock choices. |
 | `:CHANnel<n>:PROBe[?]` | Positive attenuation factor. |
-| `:CHANnel<n>:INVert[?]` | Boolean. |
 | `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. |
 | `:TIMebase[:MAIN]:OFFSet[?]` | Horizontal delay in seconds; `POSition` is an alias. |
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
@@ -98,6 +95,26 @@ Example: arm an edge on a loaded reference, without changing its samples:
 ```
 
 Choose a level inside the actual waveform range. Use `*OPC?` only when willing to wait for this arm. Return to live inputs with a primary `CHANn` trigger selection or the UI's Live action.
+
+### Channel settings
+
+The settings of the Channel menu, their `:CHANnel<n>` commands and their keys in a setup file. They are declared once,
+in `ui/src/settings/channel.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A command sets
+channel `<n>`, a key `ch<n>.*` channel n; `fine_v` and `v_expand_gnd` hold for every channel. A value `:UNITs`,
+`:VERNier` or `:EXPand` does not take is refused with `-224`, one of the others with `-113`. The scale, offset,
+coupling, probe, bias, deskew and label (above and below) are written by hand.
+
+<!-- settings:channel:begin -->
+| Command | Takes | Setup key | Channel menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:CHANnel<n>:DISPlay[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `ch<n>.on` | Display | Shows the channel. The menu switches on only the inputs the model has. |
+| `:CHANnel<n>:BWLimit[?]` | `OFF|20M|AUTO` or a supported filter name | `ch<n>.bw` | Bandwidth | The channel's bandwidth limit. OOS filtering extends stock choices. |
+| `:CHANnel<n>:INVert[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `ch<n>.invert` | Invert | Inverts the channel. |
+| `:CHANnel<n>:VERNier[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `fine_v` | Fine scale | Fine vertical control, one switch for every channel: the scale steps through the rows of the calibration instead of 1-2-5. Off keeps a fine scale until the next coarse step. |
+| `:CHANnel<n>:UNITs[?]` | `VOLTage`, `AMPere`, `WATT`, `UNKNown` | `ch<n>.unit` | Unit | Supported channel unit. Use the configured unit when interpreting cursor/readout values. |
+| `:CHANnel<n>:EXPand[?]` | `GND`, `CENTer`; the query answers `GND` or `CENT` | `v_expand_gnd` | Expand around | Vertical expansion reference supported by the model, one switch for every channel: a change of scale keeps the ground line or the screen centre in place. |
+<!-- settings:channel:end -->
 
 ### Trigger settings
 
@@ -434,11 +451,8 @@ These commands are implemented by the same model and acquisition router above. T
 | Command | Parameters / behavior |
 | --- | --- |
 | `:CHANnel<n>:POSition[?]` | Vertical position in divisions, converted through that channel's current scale. |
-| `:CHANnel<n>:UNITs[?]` | Supported channel unit. Use the configured unit when interpreting cursor/readout values. |
-| `:CHANnel<n>:VERNier[?]` | Boolean fine vertical control. |
 | `:CHANnel<n>:TCALibrate[?]` | Channel deskew in seconds; native transfer metadata remains unchanged. |
 | `:CHANnel<n>:BIAS[?]` | Software channel zero-bias correction. This is not a calibration procedure. |
-| `:CHANnel<n>:EXPand[?]` | Vertical expansion reference supported by the model. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
 | `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps; the interpreter sets a larger one than 100000 to 100000, `OFF` or `0` switches it off, another value is refused with `-113`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |

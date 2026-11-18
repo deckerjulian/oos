@@ -11,13 +11,14 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 6] = [
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 7] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
     (&math::SLICES, ":MATH<n>", "math", "Math"),
     (&meters::DVM_SLICES, ":DVM", "dvm", "DVM and counter"),
     (&meters::COUNTER_SLICES, ":COUNter", "counter", "DVM and counter"),
+    (&channel::SLICES, ":CHANnel<n>", "channel", "Channel"),
 ];
 
 /// Every row with the SCPI root of its group, the first channel for `<n>`.
@@ -27,14 +28,24 @@ fn rows() -> impl Iterator<Item = (&'static Setting, String)> {
     })
 }
 
-/// A value other than the default: one step of the menu, the other way at the end of a range.
-fn changed(s: &Setting) -> Model {
+/// The instances of a row: the channels of a `ch<n>` row, one of the others.
+fn instances(s: &Setting) -> std::ops::Range<usize> {
+    0..if s.key.starts_with("ch<n>") { crate::model::NCH } else { 1 }
+}
+
+/// A value of instance n other than the default: one step of the menu, the other way at the end of a range. The
+/// other instances keep theirs.
+fn changed(s: &Setting, n: usize) -> Model {
+    let d = Model::default();
     let mut m = Model::default();
-    s.step(&mut m, 1);
-    if (s.get)(&m) == (s.get)(&Model::default()) {
-        s.step(&mut m, -2);
+    s.step(&mut m, n, 1);
+    if (s.get)(&m, n) == (s.get)(&d, n) {
+        s.step(&mut m, n, -2);
     }
-    assert_ne!((s.get)(&m), (s.get)(&Model::default()), "{}: a step changes nothing", s.key);
+    assert_ne!((s.get)(&m, n), (s.get)(&d, n), "{}: a step changes nothing", s.key);
+    for k in instances(s).filter(|&k| k != n) {
+        assert_eq!((s.get)(&m, k), (s.get)(&d, k), "{}: a step of {} changes {}", s.key, n, k);
+    }
     m
 }
 
@@ -61,7 +72,7 @@ fn every_row_is_complete() {
         let n = s.options().len();
         if let Ty::Steps(list) = s.ty {
             assert!(list.len() >= 2 && list.is_sorted(), "{}: steps in order", s.key);
-            assert!(list.contains(&((s.get)(&Model::default()).index() as u32)), "{}: the default a step", s.key);
+            assert!(list.contains(&((s.get)(&Model::default(), 0).index() as u32)), "{}: the default a step", s.key);
         } else if s.is_number() {
             assert_eq!(n, 0, "{}: a number has no options", s.key);
         } else {
@@ -73,31 +84,40 @@ fn every_row_is_complete() {
 #[test]
 fn a_changed_value_survives_the_setup_file() {
     for s in all() {
-        let m = changed(s);
-        let back = crate::store::parse_setup(&crate::store::setup_text(&m)).expect("the setup loads");
-        assert_eq!((s.get)(&back), (s.get)(&m), "{}", s.key);
-        // the line of the fields of a setup line is written by hand
-        if s.line().is_some() {
-            continue;
+        for n in instances(s) {
+            let m = changed(s, n);
+            let back = crate::store::parse_setup(&crate::store::setup_text(&m)).expect("the setup loads");
+            assert_eq!((s.get)(&back, n), (s.get)(&m, n), "{} {}", s.key, n);
+            // the line of the fields of a setup line is written by hand
+            if s.line().is_some() {
+                continue;
+            }
+            let line = format!("{} = {}", s.key_at(n), s.store(&m, n));
+            assert!(crate::store::setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
         }
-        let line = format!("{} = {}", s.key, s.store(&m));
-        assert!(crate::store::setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
     }
 }
 
 #[test]
 fn a_changed_value_set_over_scpi_reads_back() {
-    for (s, root) in rows() {
-        let Scpi::Cmd(c) = s.scpi else { continue };
-        let m = changed(s);
-        let want = s.query(&m);
-        let (mut sc, mut ui, cv) = scpi_session();
-        assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{} {}", root, c, want)), "");
-        // the query in the short form of the root (`:DISP`)
-        let short: String = root.chars().filter(|c| !c.is_ascii_lowercase()).collect();
-        assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{}?", short, c)), want, "{}", s.key);
-        assert_eq!((s.get)(&ui.m), (s.get)(&m), "{}", s.key);
-        assert!(q(&mut sc, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("0,"), "{}", s.key);
+    for (slices, root, _, _) in GROUPS {
+        for s in slices.iter().flat_map(|g| g.iter()) {
+            let Scpi::Cmd(c) = s.scpi else { continue };
+            for n in instances(s) {
+                let m = changed(s, n);
+                let want = s.query(&m, n);
+                let root = root.replace("<n>", &(n + 1).to_string());
+                let (mut sc, mut ui, cv) = scpi_session();
+                assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{} {}", root, c, want)), "");
+                // the query in the short form of the root (`:DISP`)
+                let short: String = root.chars().filter(|c| !c.is_ascii_lowercase()).collect();
+                assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{}?", short, c)), want, "{} {}", s.key, n);
+                for k in instances(s) {
+                    assert_eq!((s.get)(&ui.m, k), (s.get)(&m, k), "{} {} {}", s.key, n, k);
+                }
+                assert!(q(&mut sc, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("0,"), "{}", s.key);
+            }
+        }
     }
 }
 

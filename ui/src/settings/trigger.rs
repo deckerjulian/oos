@@ -32,8 +32,8 @@ pub const EDGE: [Setting; 3] = [
         #[cfg(test)]
         doc: "The edge that triggers; also of the slope, timeout and Nth edge triggers, and A of the delay trigger.",
         accept: None,
-        get: |m| Val::Index(SLOPES.iter().position(|&s| s == m.slope).unwrap_or(0)),
-        put: |m, v| m.slope = SLOPES[v.index()],
+        get: |m, _| Val::Index(SLOPES.iter().position(|&s| s == m.slope).unwrap_or(0)),
+        put: |m, _, v| m.slope = SLOPES[v.index()],
     },
     Setting {
         key: "trig_mode",
@@ -52,8 +52,8 @@ pub const EDGE: [Setting; 3] = [
         doc: "Auto draws without a trigger after a while, Normal only on a trigger, Single once; the menu's Single \
               also starts the acquisition.",
         accept: None,
-        get: |m| Val::Index(TRIG_MODES.iter().position(|&t| t == m.trig_mode).unwrap_or(0)),
-        put: |m, v| m.trig_mode = TRIG_MODES[v.index()],
+        get: |m, _| Val::Index(TRIG_MODES.iter().position(|&t| t == m.trig_mode).unwrap_or(0)),
+        put: |m, _, v| m.trig_mode = TRIG_MODES[v.index()],
     },
     Setting {
         key: "holdoff",
@@ -63,8 +63,8 @@ pub const EDGE: [Setting; 3] = [
         #[cfg(test)]
         doc: "The time after a trigger in which no other one is taken; 0 is off. The menu steps 1-2-5 from 100 ns.",
         accept: Some((0.0, 10.0)),
-        get: |m| Val::F32(m.holdoff),
-        put: |m, v| m.holdoff = v.secs(),
+        get: |m, _| Val::F32(m.holdoff),
+        put: |m, _, v| m.holdoff = v.secs(),
     },
 ];
 
@@ -78,8 +78,8 @@ pub const REJECT: [Setting; 3] = [
         #[cfg(test)]
         doc: "A wider hysteresis of the trigger comparator (the values by scale: docs/protocols/trigger.md 2.3).",
         accept: None,
-        get: |m| Val::Bool(m.trig_nrej),
-        put: |m, v| m.trig_nrej = v.index() != 0,
+        get: |m, _| Val::Bool(m.trig_nrej),
+        put: |m, _, v| m.trig_nrej = v.index() != 0,
     },
     Setting {
         key: "auto_nrej",
@@ -92,8 +92,8 @@ pub const REJECT: [Setting; 3] = [
         #[cfg(test)]
         doc: "The auto set-up sets noise reject from the noise on the flat levels of the trigger signal.",
         accept: None,
-        get: |m| Val::Bool(m.auto_nrej),
-        put: |m, v| m.auto_nrej = v.index() != 0,
+        get: |m, _| Val::Bool(m.auto_nrej),
+        put: |m, _, v| m.auto_nrej = v.index() != 0,
     },
     Setting {
         key: "trig_coup",
@@ -113,8 +113,8 @@ pub const REJECT: [Setting; 3] = [
         doc: "A filter in the trigger path of the edge trigger; the trace keeps the channel's coupling \
               (docs/protocols/trigger.md 2.5).",
         accept: None,
-        get: |m| Val::Index(TRIG_COUPS.iter().position(|&c| c == m.trig_coup).unwrap_or(0)),
-        put: |m, v| m.trig_coup = TRIG_COUPS[v.index()],
+        get: |m, _| Val::Index(TRIG_COUPS.iter().position(|&c| c == m.trig_coup).unwrap_or(0)),
+        put: |m, _, v| m.trig_coup = TRIG_COUPS[v.index()],
     },
 ];
 
@@ -131,8 +131,8 @@ pub const SECOND: [Setting; 2] = [
         #[cfg(test)]
         doc: "The edge of B (delay trigger) or of the clock (setup/hold trigger).",
         accept: None,
-        get: |m| Val::Index(SLOPES.iter().position(|&s| s == m.trig_slope2).unwrap_or(0)),
-        put: |m, v| m.trig_slope2 = SLOPES[v.index()],
+        get: |m, _| Val::Index(SLOPES.iter().position(|&s| s == m.trig_slope2).unwrap_or(0)),
+        put: |m, _, v| m.trig_slope2 = SLOPES[v.index()],
     },
     Setting {
         key: "trig_pol",
@@ -152,8 +152,8 @@ pub const SECOND: [Setting; 2] = [
         #[cfg(test)]
         doc: "The polarity of the pulse (pulse and runt triggers).",
         accept: None,
-        get: |m| Val::Index((m.trig_pol == Pol::Neg) as usize),
-        put: |m, v| m.trig_pol = [Pol::Pos, Pol::Neg][v.index()],
+        get: |m, _| Val::Index((m.trig_pol == Pol::Neg) as usize),
+        put: |m, _, v| m.trig_pol = [Pol::Pos, Pol::Neg][v.index()],
     },
 ];
 
@@ -171,8 +171,8 @@ pub const TIMES: [Setting; 4] = [
         doc: "The time the condition compares with, the lower limit of Inside and Outside; the timeout of the timeout \
               trigger.",
         accept: None,
-        get: |m| Val::F32(m.trig_t1),
-        put: |m, v| m.trig_t1 = v.secs(),
+        get: |m, _| Val::F32(m.trig_t1),
+        put: |m, _, v| m.trig_t1 = v.secs(),
     },
     Setting {
         key: "trig_t2",
@@ -185,8 +185,8 @@ pub const TIMES: [Setting; 4] = [
         #[cfg(test)]
         doc: "The upper time limit of Inside and Outside.",
         accept: None,
-        get: |m| Val::F32(m.trig_t2),
-        put: |m, v| m.trig_t2 = v.secs(),
+        get: |m, _| Val::F32(m.trig_t2),
+        put: |m, _, v| m.trig_t2 = v.secs(),
     },
     Setting {
         key: "video_std",
@@ -203,8 +203,8 @@ pub const TIMES: [Setting; 4] = [
         #[cfg(test)]
         doc: "The video standard of the video trigger.",
         accept: None,
-        get: |m| Val::Index((m.video_std == VideoStd::Ntsc) as usize),
-        put: |m, v| m.video_std = [VideoStd::Pal, VideoStd::Ntsc][v.index()],
+        get: |m, _| Val::Index((m.video_std == VideoStd::Ntsc) as usize),
+        put: |m, _, v| m.video_std = [VideoStd::Pal, VideoStd::Ntsc][v.index()],
     },
     Setting {
         key: "video_sync",
@@ -227,8 +227,8 @@ pub const TIMES: [Setting; 4] = [
         #[cfg(test)]
         doc: "What the video trigger fires on: every line, line n, odd or even fields, every field.",
         accept: None,
-        get: |m| Val::Index(VSYNCS.iter().position(|&s| s == m.video_sync).unwrap_or(0)),
-        put: |m, v| m.video_sync = VSYNCS[v.index()],
+        get: |m, _| Val::Index(VSYNCS.iter().position(|&s| s == m.video_sync).unwrap_or(0)),
+        put: |m, _, v| m.video_sync = VSYNCS[v.index()],
     },
 ];
 
@@ -253,8 +253,8 @@ pub const WINDOW: [Setting; 2] = [
         #[cfg(test)]
         doc: "When the window trigger fires: the signal enters the window, leaves it, or stays inside.",
         accept: None,
-        get: |m| Val::Index(WIN_MODES.iter().position(|&w| w == m.win_mode).unwrap_or(0)),
-        put: |m, v| m.win_mode = WIN_MODES[v.index()],
+        get: |m, _| Val::Index(WIN_MODES.iter().position(|&w| w == m.win_mode).unwrap_or(0)),
+        put: |m, _, v| m.win_mode = WIN_MODES[v.index()],
     },
     Setting {
         key: "nth_idle",
@@ -267,8 +267,8 @@ pub const WINDOW: [Setting; 2] = [
         #[cfg(test)]
         doc: "The quiet time before the edges the Nth edge trigger counts.",
         accept: None,
-        get: |m| Val::F32(m.nth_idle),
-        put: |m, v| m.nth_idle = v.secs(),
+        get: |m, _| Val::F32(m.nth_idle),
+        put: |m, _, v| m.nth_idle = v.secs(),
     },
 ];
 
@@ -285,8 +285,8 @@ pub const SETUP_HOLD: [Setting; 2] = [
         #[cfg(test)]
         doc: "The setup time the setup/hold trigger checks the data against the clock edge.",
         accept: None,
-        get: |m| Val::F32(m.setup),
-        put: |m, v| m.setup = v.secs(),
+        get: |m, _| Val::F32(m.setup),
+        put: |m, _, v| m.setup = v.secs(),
     },
     Setting {
         key: "hold",
@@ -299,8 +299,8 @@ pub const SETUP_HOLD: [Setting; 2] = [
         #[cfg(test)]
         doc: "The hold time the setup/hold trigger checks the data against after the clock edge.",
         accept: None,
-        get: |m| Val::F32(m.hold),
-        put: |m, v| m.hold = v.secs(),
+        get: |m, _| Val::F32(m.hold),
+        put: |m, _, v| m.hold = v.secs(),
     },
 ];
 

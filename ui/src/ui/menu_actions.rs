@@ -362,24 +362,16 @@ impl Ui {
         }
         let m = &mut self.m;
         match it {
-            Item::ChOn(c) => {
-                m.ch[c].on = !m.ch[c].on && c < n_ch();
-                if m.ch[c].on && m.run == RunState::Run {
-                    m.floor_live_tdiv();
-                }
-            }
             Item::ChCoupling(c) => {
                 let all = board().couplings();
                 let i = all.iter().position(|&x| x == m.ch[c].coupling).unwrap_or(0);
                 m.ch[c].coupling = all[cycle(i, all.len(), d)];
             }
-            Item::ChBw(c) => m.ch[c].bw = cycle(m.ch[c].bw, BWS.len(), d),
             Item::ChProbe(c) => {
                 let all = [1.0, 10.0, 100.0];
                 let i = all.iter().position(|&x| x == m.ch[c].probe).unwrap_or(0);
                 m.ch[c].probe = all[cycle(i, 3, d)];
             }
-            Item::ChInvert(c) => m.ch[c].invert = !m.ch[c].invert,
             Item::ChScale(c) => {
                 let old = m.ch[c].volts_per_div();
                 if m.fine_v {
@@ -400,20 +392,14 @@ impl Ui {
                     m.ch[c].offset *= m.ch[c].volts_per_div() / old;
                 }
             }
-            Item::ChUnit(c) => {
-                let i = AmpUnit::ALL.iter().position(|&u| u == m.ch[c].unit).unwrap_or(0);
-                m.ch[c].unit = AmpUnit::ALL[cycle(i, AmpUnit::ALL.len(), d)];
-            }
             Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
-            Item::ChExpand => m.v_expand_gnd = !m.v_expand_gnd,
             Item::HFine => m.fine_t = !m.fine_t,
             Item::HExpandI => {
                 let all = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
                 let i = all.iter().position(|&x| x == m.h_expand).unwrap_or(0);
                 m.h_expand = all[cycle(i, all.len(), d)];
             }
-            Item::ChFine => m.fine_v = !m.fine_v,
             Item::LogOn => {
                 if self.log.file.is_some() {
                     self.log_stop("Log ended");
