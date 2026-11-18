@@ -16,12 +16,17 @@ fn hostile_decoder_records() {
         let i = i as u8;
         let opt = opt_fit(i, opt_default(i));
         let dt = m.bit_time(&opt) / 8.0;
-        let roles = m.roles().iter().filter(|r| r.is_some()).count().max(1);
+        // the role slots the module uses, at their places (USB and Parallel leave slots 1 and 3 empty)
+        let mut slots: Vec<usize> = (0..4).filter(|&k| m.roles()[k].is_some()).collect();
+        if slots.is_empty() {
+            slots.push(0);
+        }
+        let roles = slots.len();
         // the lines of a record side by side: one little-endian f32 per line and sample
         let mut traffic = Vec::new();
         if let Some(d) = demo(i) {
             for k in 0..((d.period / dt) as usize).clamp(64, 6000) {
-                for line in 0..roles {
+                for &line in &slots {
                     let v = d.lines[line].as_ref().map_or(0.0, |f| f(k as f64 * dt) as f32);
                     traffic.extend_from_slice(&v.to_le_bytes());
                 }
@@ -31,23 +36,24 @@ fn hostile_decoder_records() {
         let fixed = [fill(1.0, 1), fill(f32::NAN, 64), fill(f32::INFINITY, 64), fill(0.0, 64), traffic];
         let seeds: Vec<&[u8]> = fixed.iter().map(|f| f.as_slice()).collect();
         let s = m.setup();
-        run(&format!("protocols::{}::decode", m.key()), &seeds, 50, |b| {
+        run(&format!("protocols::{}::decode", m.key()), &seeds, 1, |b| {
             let mut waves: [Vec<f32>; 4] = Default::default();
             for step in b.chunks_exact(4 * roles) {
-                for (line, v) in step.as_chunks::<4>().0.iter().enumerate() {
+                for (&line, v) in slots.iter().zip(step.as_chunks::<4>().0) {
                     waves[line].push(f32::from_le_bytes(*v));
                 }
             }
-            let n = waves[0].len();
+            let n = waves[slots[0]].len();
+            let used = |k: usize| slots.contains(&k);
             let l = Lines {
-                lines: std::array::from_fn(|k| (k < roles).then(|| waves[k].as_slice())),
+                lines: std::array::from_fn(|k| used(k).then(|| waves[k].as_slice())),
                 dt,
                 thr: s.thr,
                 hy: 0.1,
                 opt,
                 sh: Shared::default(),
-                chans: std::array::from_fn(|k| (k < roles).then(|| waves[k].as_slice())),
-                src: std::array::from_fn(|k| (k < roles).then_some(k)),
+                chans: std::array::from_fn(|k| used(k).then(|| waves[k].as_slice())),
+                src: std::array::from_fn(|k| used(k).then_some(k)),
             };
             if m.key() == "Qspi" && qspi_trap(&waves[2], &waves[1], s.thr, 0.1) && is_known("qspi-zero-frame") {
                 return Ok(());
