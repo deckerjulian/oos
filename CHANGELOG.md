@@ -117,6 +117,9 @@ Changed:
 
 Fixed:
 
+- The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
+  the ADC, so the level is a level on the AC trace as drawn. Only the demo, which triggers before it takes the mean
+  out, still hides it (on the unit: assumed, not yet checked).
 - Eye Width no longer reads short by the picture's own spread (issue #195): a crossing without jitter lights two
   columns of the eye and read half a column of jitter, 6 % of the unit interval in a 96-column eye. That spread is
   now taken out, so a signal without jitter reads 1 UI and one with 20 ps RJ on 1 ns reads 880 ps.
