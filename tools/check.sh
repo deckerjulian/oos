@@ -232,12 +232,14 @@ layer_decoders() {
     esac
 }
 
-# the numbers that only go down: the size of the large files, switched-off lints, `unsafe`, and what a remote command
-# or a setting lacks (docs/scpi.md, the comparison's queries; tools/scpi-coverage.txt) (ADR 0037)
+# the numbers that only go down: the size of the large files, switched-off lints, `unsafe`, what a remote command
+# or a setting lacks (docs/scpi.md, the comparison's queries; tools/scpi-coverage.txt), long functions, `.unwrap()`
+# and modules without a header (tools/code-metrics.txt) (ADR 0037, issue 120)
 layer_ratchet() {
     tools/ratchet.sh || fail "ratchet: see docs/adr/process/0037-numbers-that-only-go-down.md"
     python3 -I tools/scpi-coverage.py --enforce ||
         fail "ratchet: tools/scpi-coverage.py --list names what is missing (ADR 0037)"
+    python3 -I tools/code-metrics.py --enforce || fail "ratchet: tools/code-metrics.py --list names them (ADR 0037)"
 }
 
 # The simulations: the scripts of the image in arm64 containers and virtual machines, without a scope. Each needs what
