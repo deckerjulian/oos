@@ -290,7 +290,7 @@ The cost is a test build of oos-ui in each tree, to be measured in that pull req
 
 **Stage 4, what leaves `live`.** For a pull request titled `Refactor:` or `Lints:` that says `Behaviour: unchanged`,
 where the comparison ran the live run on both sides and found nothing: `ui/src/board/` without the scope's port and
-`fpga.rs`, `hal/src/dho/roll.rs`, `hal/src/dho/seg.rs`. `hal/src/dho/seq/exec.rs` needs no entry then. Only then is
+`fpga.rs`, `hal/src/dho/roll.rs`, `hal/src/dho/seg.rs`, `hal/src/dho/seq/exec.rs`. Only then is
 `spawn` split into functions (goal S2), each step proven by the comparison.
 
 **Later, not part of goal T1:** the switches as options of the loop, so the opt-in paths run on a host (arming
@@ -344,8 +344,8 @@ The target of T1, the acquisition loop and the roll stream, is reached with stag
    check. It can follow stage 3 without changing what is built before.
 2. **The scene tells the simulator the vertical scale and the time axis** (3.2). Which block should it read from the
    registers first?
-3. **`hal/src/dho/seq/exec.rs` and `live`.** Issue #120 proposes to add it. With this plan it would enter now and
-   leave in stage 4; or stay out, with the run on a unit asked for by the plan in stage 1a.
+3. **`hal/src/dho/seq/exec.rs` and `live`.** It is in `$live` of `tools/pr-gate.sh` since #170, so stage 1a needs
+   its run on a unit by the gate as well as by this plan; it leaves in stage 4 with the files named there.
 4. **Stage 1 on the unit:** one run of the tip of 1b for both pull requests, or one each.
 5. **The measure** of section 7: the list of 28 paths, and 17 as the target.
 6. **`boot::sim::Unit`** stays apart from the new model. Joining them would let a host run start at power-on; not
