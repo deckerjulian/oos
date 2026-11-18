@@ -111,6 +111,12 @@ with the other preferences and across restarts; Default set-up and Recall keep i
 
 Names of channels and references, math formulas and WLAN passwords are typed on the on-screen keyboard. The arrows either side of Space move the insertion point one character, and a tap into the entry puts it where you tap. Typing and Delete work at the insertion point, so a wrong character in a long password is fixed without typing the rest again. Show / Hide shows the password.
 
+## Mouse and keyboard
+
+A USB mouse and keyboard work in the front port; Bluetooth ones through a stick ([docs/bluetooth.md](https://github.com/dekajoule/oos/blob/main/docs/bluetooth.md)). The mouse is the finger: a left click is a tap, a drag with the left button a touch drag, a right click the context menu, the wheel pans; with Shift it changes V/div, with Ctrl it zooms, with Alt it moves the trigger level. A white pointer shows while the mouse is in use and goes after 5 s at rest.
+
+The keys stand in for the front panel: Space Run/Stop, S Single, A Auto, C Clear, M the measurement page, U Cursor, 1 to 4 the channels, F Math, R Reference, L the logic analyser, G the generator, T the trigger menu, H the horizontal menu, Q Quick, Z the horizontal knob's push, Enter the multi knob's push, the arrows the vertical and horizontal positions, Page Up and Down the trigger level, Escape closes a menu, F12 saves a screenshot. While the on-screen keyboard is open the keys type into it (US layout).
+
 ## Saving
 
 Setups are kept on OOS's own persistent area `/oos` and survive a power cycle; `/oos` holds 16 MiB for calibration and

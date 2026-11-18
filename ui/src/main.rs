@@ -32,6 +32,7 @@ mod font;
 mod framestats;
 mod gfx;
 mod gpu;
+mod hid;
 mod hislip;
 mod hostname;
 mod http;
@@ -894,6 +895,12 @@ impl Device {
         for line_or_ev in self.inp.poll(wait_ms) {
             match line_or_ev {
                 input::In::Ev(ev) => self.ui.handle(ev),
+                input::In::Hid(e) => {
+                    // a key that stands for a front-panel key: its command, as from the control FIFO
+                    if let Some(c) = self.ui.hid(e) {
+                        cmd::run(&mut self.ui, c);
+                    }
+                }
                 input::In::Cmd(line) => {
                     if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &line) {
                         self.ui.shot_request = Some(p);

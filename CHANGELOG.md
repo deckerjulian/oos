@@ -7,6 +7,10 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- USB and Bluetooth mice and keyboards ([First Steps](wiki/First-Steps.md#mouse-and-keyboard)): the mouse is the
+  finger, with a pointer while it is in use that moves in even steps; the keys stand in for the front panel and type
+  into the on-screen keyboard. oos-ui takes them for itself, so no key reaches the console shell behind the screen
+  (unit, with a BLE keyboard and touchpad).
 - Bluetooth through a USB stick ([bluetooth.md](docs/bluetooth.md), ADR 0057): a TP-Link Archer TX10UB Nano is
   switched out of its driver-CD mode, its Realtek 8851BU gets its firmware, and BlueZ runs on a system bus of its own;
   pairings are kept on the data partition. The page that pairs mice and keyboards comes with oos-ui (unit: a BLE

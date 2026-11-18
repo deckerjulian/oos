@@ -77,7 +77,7 @@ OWN_FOLDER = ("main", "lib", "mod")  # files that are the module of their folder
 # being named, and it may name everything.
 UI_LAYERS = (
     ("base", "ui-base-up", "",
-     "clock drm ethlink font gfx hostname json layout mdns net net6 netacl placement remote sntp ssh sysconf system"
+     "clock drm ethlink font gfx hid hostname json layout mdns net net6 netacl placement remote sntp ssh sysconf system"
      " usbtmc vpu"),
     ("model", "ui-model-up", "base", "decode math model zone"),
     ("settings", "ui-settings-up", "base model", "settings"),
