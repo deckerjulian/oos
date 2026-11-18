@@ -143,7 +143,7 @@ struct SharedList {
     /// counts the changes (`set`)
     changes: AtomicU64,
     /// tests: every peer is taken to be this address (a test connects over loopback, which is always allowed)
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     peers_as: std::sync::Mutex<Option<IpAddr>>,
 }
 
@@ -160,7 +160,7 @@ impl Shared {
 
     /// The peer of a connection (`TcpStream::peer_addr`, or the address `accept` gave); none is refused.
     pub fn permits_peer(&self, peer: std::io::Result<SocketAddr>) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testkit"))]
         if let Some(ip) = *self.0.peers_as.lock().unwrap_or_else(PoisonError::into_inner) {
             return self.permits(ip);
         }
@@ -174,7 +174,7 @@ impl Shared {
     }
 
     /// Tests: every peer is taken to be `ip` (None: its own address again).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn peers_as(&self, ip: Option<IpAddr>) {
         *self.0.peers_as.lock().unwrap() = ip;
     }

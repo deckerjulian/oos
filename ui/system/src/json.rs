@@ -26,7 +26,7 @@ impl J {
             _ => None,
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn num(&self) -> Option<f64> {
         match self {
             J::Num(n) => Some(*n),

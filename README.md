@@ -4,8 +4,8 @@ OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.1
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
 > **Experimental software. Read the [disclaimer](#disclaimer) before you install it.**
-> OOS has run on a DHO924S and, by a user report, on a DHO804; several functions have never run on real hardware
-> ([status](#status)). Measurements made with OOS are not calibrated to any standard.
+> OOS has run on a DHO924S and, by user reports, on a DHO804 and a DHO802; several functions have never run on real
+> hardware ([status](#status)). Measurements made with OOS are not calibrated to any standard.
 
 <table>
 <tr><td><img src="docs/images/channels.png" alt="Two channels: a 10:1 probe on the calibration signal and the built-in generator"></td>
@@ -120,7 +120,7 @@ Details and limits: [docs/models.md](docs/models.md).
 
 | Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger | Runs OOS |
 |---|---|---|---|---|---|---|
-| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | not yet |
+| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | a DHO802 runs it (user report) |
 | DHO804 / DHO814 / DHO824 | 70 / 100 / 250 MHz | 4 | - | - | - | a DHO804 runs it (user report) |
 | DHO914 / DHO924 | 125 / 250 MHz | 4 | yes | - | - | not yet |
 | DHO914-EDU / DHO924-EDU | 125 / 250 MHz | 4 | yes | - | - | not yet |

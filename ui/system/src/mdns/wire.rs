@@ -27,7 +27,7 @@ fn label_bytes(l: &str) -> &[u8] {
 }
 
 /// A name uncompressed, its labels as they are (at most 63 bytes each).
-pub(crate) fn write_name(n: &[String], out: &mut Vec<u8>) {
+pub fn write_name(n: &[String], out: &mut Vec<u8>) {
     for l in n {
         let b = label_bytes(l);
         out.push(b.len() as u8);
@@ -70,7 +70,7 @@ fn type_bitmap(types: &[u16]) -> Vec<u8> {
     v
 }
 
-pub(crate) fn txt_bytes(t: &[String]) -> Vec<u8> {
+pub fn txt_bytes(t: &[String]) -> Vec<u8> {
     if t.is_empty() {
         // an empty TXT record is one empty string (RFC 6763 §6.1)
         return vec![0];
@@ -205,7 +205,7 @@ impl Msg {
     }
 
     /// Opcode 0, a standard query or its answer; mDNS ignores the others (RFC 6762 §18.3).
-    pub(crate) fn standard(&self) -> bool {
+    pub fn standard(&self) -> bool {
         (self.flags >> 11) & 0xf == 0
     }
 }
@@ -300,7 +300,7 @@ pub fn parse(b: &[u8]) -> Option<Msg> {
 }
 
 /// `parse`, with where the questions end and where the last record ends (bytes after it are not looked at).
-pub(crate) fn parse_ends(b: &[u8]) -> Option<(Msg, usize, usize)> {
+pub fn parse_ends(b: &[u8]) -> Option<(Msg, usize, usize)> {
     let counts = [u16_at(b, 4)?, u16_at(b, 6)?, u16_at(b, 8)?, u16_at(b, 10)?];
     let mut m =
         Msg { id: u16_at(b, 0)?, flags: u16_at(b, 2)?, qs: Vec::new(), an: Vec::new(), ns: Vec::new(), ar: Vec::new() };

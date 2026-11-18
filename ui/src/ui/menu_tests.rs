@@ -36,16 +36,16 @@ fn layout_plot_size_and_touch_targets() {
     // sticks: their boxes beside the network box, the buttons move over and stay on the bar
     (ui.usb, ui.wlan_stick) = (true, true);
     for (_, _, r) in ui.top_buttons() {
-        assert!(r.x > ui.run_pill().x + ui.run_pill().w && r.x + r.w <= ui.usb_box().x, "{:?}", r);
+        assert!(r.x > ui.run_pill().x + ui.run_pill().w && r.x + r.w <= ui.status_box("USB").unwrap().x, "{:?}", r);
     }
-    let u = ui.usb_box();
-    assert!(u.x + u.w < ui.wlan_box().x && ui.wlan_box().x + ui.wlan_box().w < ui.net_box().x);
+    let (u, w) = (ui.status_box("USB").unwrap(), ui.status_box("WLAN").unwrap());
+    assert!(u.x + u.w < w.x && w.x + w.w < ui.net_box().x);
     ui.tap(u.x + 5, 10);
     assert!(ui.menu_open && ui.menu_root() == MenuId::Storage);
     ui.tap(u.x + 5, 10);
-    ui.tap(ui.wlan_box().x + 5, 10);
+    ui.tap(w.x + 5, 10);
     assert!(ui.menu_open && ui.menu_root() == MenuId::Network);
-    ui.tap(ui.wlan_box().x + 5, 10);
+    ui.tap(w.x + 5, 10);
     (ui.usb, ui.wlan_stick) = (false, false);
     for n in 0..=NCH {
         for c in 0..NCH {

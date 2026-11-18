@@ -724,15 +724,20 @@ fn models_are_verified_per_hardware_variant() {
     };
     assert_eq!(check("DHO924S", false).unwrap(), "DHO924S");
     assert_eq!(check("DHO804", false).unwrap(), "DHO804");
-    for (m, ran) in [("DHO824", "DHO804"), ("DHO814", "DHO804"), ("DHO914S", "DHO924S")] {
+    assert_eq!(check("DHO802", false).unwrap(), "DHO802");
+    for (m, ran) in [("DHO824", "DHO804"), ("DHO814", "DHO804"), ("DHO812", "DHO802"), ("DHO914S", "DHO924S")] {
         let ok = check(m, false).unwrap();
         assert!(ok.starts_with(m) && ok.contains(ran) && ok.contains("same hardware"), "{}", ok);
     }
-    assert_eq!(first::verified_models(), ["DHO804", "DHO814", "DHO824", "DHO914S", "DHO924S"]);
-    for m in ["DHO802", "DHO812", "DHO914", "DHO924", "DHO914-EDU", "DHO924-EDU"] {
+    assert_eq!(first::verified_models(), ["DHO804", "DHO814", "DHO824", "DHO802", "DHO812", "DHO914S", "DHO924S"]);
+    for m in ["DHO914", "DHO924", "DHO914-EDU", "DHO924-EDU"] {
         let e = check(m, false).unwrap_err();
         assert!(e.contains(&format!("OOS has not run on a {} yet", m)), "{}", e);
-        assert!(e.contains("Nothing written") && e.contains("DHO804, DHO814, DHO824, DHO914S, DHO924S"), "{}", e);
+        assert!(
+            e.contains("Nothing written") && e.contains("DHO804, DHO814, DHO824, DHO802, DHO812, DHO914S, DHO924S"),
+            "{}",
+            e
+        );
         assert!(
             e.contains(first::ANY_MODEL_FILE) && e.contains(first::ANY_MODEL_FLAG) && e.contains("open the scope"),
             "{}",

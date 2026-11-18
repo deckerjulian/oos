@@ -189,9 +189,15 @@ impl Ui {
         true
     }
 
+    /// Whether the trigger level lies on the trace as drawn, so a marker at it means something. Channel AC coupling
+    /// does not change that on the scope: the AFE couples before the ADC (afe-settings.md 3.3), the TPU and the trace
+    /// read the same samples (trigger.md 2.4) and the level code counts from the channel offset as the trace does
+    /// (trigger.md 2.3; assumed, as the inversion that is verified, afe-settings.md 3.5). Replay and Live take the AC
+    /// out before their software trigger. Only the demo triggers on its signals before `wave::condition` takes the
+    /// mean out, so there a level is not on an AC trace. Trigger coupling is the caller's matter.
     pub(super) fn trigger_absolute_level_visible(&self, secondary: bool) -> bool {
         let id = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
-        !matches!(id, WaveId::Ch(c) if self.m.ch[c].coupling == Coupling::Ac)
+        !(self.src.is_demo() && matches!(id, WaveId::Ch(c) if self.m.ch[c].coupling == Coupling::Ac))
     }
 
     pub(super) fn trigger_level_y(&self, level: f32, secondary: bool) -> Option<i32> {
