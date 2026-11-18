@@ -267,6 +267,56 @@ mod imp {
         Ok(())
     }
 
+    /// Per quad: (offset, count) of the commands of under and over (count NONE: pixels), images (offset, rows).
+    type Recs = [[(u32, u32); 3]; MAX_QUADS];
+
+    /// The message of quad `q`: its layers' places and changed bands `under` and `over` (offset, y0, y1), its jobs
+    /// from `first`, and the places of its recorded layers `rec`.
+    fn quad_msg(
+        q: &Quad,
+        under: (u32, i32, i32),
+        over: (u32, i32, i32),
+        first: u32,
+        n_jobs: u32,
+        rec: &[(u32, u32); 3],
+    ) -> QuadMsg {
+        let ((uo, uy0, uy1), (oo, oy0, oy1)) = (under, over);
+        let (lw, lh) = q.size;
+        let mut m = QuadMsg {
+            under_off: uo,
+            over_off: oo,
+            lw,
+            lh,
+            sx: q.src.x,
+            sy: q.src.y,
+            sw: q.src.w,
+            sh: q.src.h,
+            dx: q.dst.x,
+            dy: q.dst.y,
+            dw: q.dst.w,
+            dh: q.dst.h,
+            filter: q.filter as u32,
+            first_job: first,
+            n_jobs,
+            reuse: q.reuse as u32,
+            under_y0: uy0,
+            under_y1: uy1,
+            over_y0: oy0,
+            over_y1: oy1,
+            under_n: NONE,
+            over_n: NONE,
+            img_off: rec[2].0,
+            img_rows: if rec[2].1 == NONE { 0 } else { rec[2].1 },
+        };
+        if q.under.is_some_and(|c| c.rec.is_some()) && !q.reuse {
+            (m.under_off, m.under_n) = rec[0];
+        }
+        if q.over.is_some_and(|c| c.rec.is_some()) && !q.reuse {
+            (m.over_off, m.over_n) = rec[1];
+        }
+        m
+    }
+
     impl Gpu {
         /// Starts the helper; it answers once it has a GPU context (a few hundred ms).
         pub fn start(helper: &str) -> Result<Gpu, String> {
@@ -425,7 +475,34 @@ mod imp {
             }
             // recorded layers (`Canvas::record`): their commands, images and new fonts from the top of the half down,
             // apart from the blocks below that keep their places from frame to frame
-            let mut tail = at + ARENA / 2;
+            let tail = at + ARENA / 2;
+            let (recs, tail) = self.put_records(quads, base, tail, &mut f)?;
+            let end = tail;
+            at = self.put_quads(quads, half, at, end, &recs, &mut f)?;
+            // a memory target is always read back: its place in the arena is kept free
+            if read || memory {
+                at = (at + 63) & !63;
+                if at + (tw * th * 4) as usize > end {
+                    return Err("no room to read back".into());
+                }
+                f.readback = read as u32;
+                f.readback_off = at as u32;
+            }
+            let t1 = std::time::Instant::now();
+            self.sock.write_all(bytes(&f)).map_err(|e| format!("frame: {}", e))?;
+            self.times.copy = (t1 - t0).as_secs_f32() * 1e3;
+            Ok(Ticket { readback: read.then_some((f.readback_off as usize, tw, th)), sent: t1, monitor: half == 1 })
+        }
+
+        /// Recorded layers (`Canvas::record`) into the arena from `tail` down: the fonts new to the glyph atlas, then
+        /// per quad its images and the commands of under and over; their places and the new `tail` come back.
+        fn put_records(
+            &mut self,
+            quads: &[Quad],
+            base: *mut u8,
+            mut tail: usize,
+            f: &mut FrameMsg,
+        ) -> Result<(Recs, usize), String> {
             let mut alloc = |len: usize| -> Result<usize, String> {
                 tail = tail.checked_sub(len).ok_or("frame too large for the arena")? & !63;
                 Ok(tail)
@@ -498,7 +575,21 @@ mod imp {
                     img0 += r.img.len() as u32;
                 }
             }
-            let end = tail;
+            Ok((recs, tail))
+        }
+
+        /// The pixel layers, maps and tables of the quads from `at` on (up to `end`), each block copied only where it
+        /// differs from the last frame of this half; the quads and jobs into `f`, and the next free place back.
+        fn put_quads(
+            &mut self,
+            quads: &[Quad],
+            half: usize,
+            mut at: usize,
+            end: usize,
+            recs: &Recs,
+            f: &mut FrameMsg,
+        ) -> Result<usize, String> {
+            let base = self.arena;
             let mut blocks: Vec<(usize, usize)> = Vec::new();
             // the blocks so far lie where they lay in the last frame of this half
             let same = |blocks: &Vec<(usize, usize)>, prev: &Vec<(usize, usize)>| {
@@ -590,55 +681,11 @@ mod imp {
                     f.j[f.n_jobs as usize] = j;
                     f.n_jobs += 1;
                 }
-                let (lw, lh) = q.size;
-                f.q[qi] = QuadMsg {
-                    under_off: uo,
-                    over_off: oo,
-                    lw,
-                    lh,
-                    sx: q.src.x,
-                    sy: q.src.y,
-                    sw: q.src.w,
-                    sh: q.src.h,
-                    dx: q.dst.x,
-                    dy: q.dst.y,
-                    dw: q.dst.w,
-                    dh: q.dst.h,
-                    filter: q.filter as u32,
-                    first_job: first,
-                    n_jobs: f.n_jobs - first,
-                    reuse: q.reuse as u32,
-                    under_y0: uy0,
-                    under_y1: uy1,
-                    over_y0: oy0,
-                    over_y1: oy1,
-                    under_n: NONE,
-                    over_n: NONE,
-                    img_off: recs[qi][2].0,
-                    img_rows: if recs[qi][2].1 == NONE { 0 } else { recs[qi][2].1 },
-                };
-                if q.under.is_some_and(|c| c.rec.is_some()) && !q.reuse {
-                    (f.q[qi].under_off, f.q[qi].under_n) = recs[qi][0];
-                }
-                if q.over.is_some_and(|c| c.rec.is_some()) && !q.reuse {
-                    (f.q[qi].over_off, f.q[qi].over_n) = recs[qi][1];
-                }
+                f.q[qi] = quad_msg(q, (uo, uy0, uy1), (oo, oy0, oy1), first, f.n_jobs - first, &recs[qi]);
                 f.n_quads += 1;
             }
             self.blocks[half] = blocks;
-            // a memory target is always read back: its place in the arena is kept free
-            if read || memory {
-                at = (at + 63) & !63;
-                if at + (tw * th * 4) as usize > end {
-                    return Err("no room to read back".into());
-                }
-                f.readback = read as u32;
-                f.readback_off = at as u32;
-            }
-            let t1 = std::time::Instant::now();
-            self.sock.write_all(bytes(&f)).map_err(|e| format!("frame: {}", e))?;
-            self.times.copy = (t1 - t0).as_secs_f32() * 1e3;
-            Ok(Ticket { readback: read.then_some((f.readback_off as usize, tw, th)), sent: t1, monitor: half == 1 })
+            Ok(at)
         }
 
         /// Waits for a frame `submit` sent; with `back` its picture (asked for when it was sent) comes into it.
