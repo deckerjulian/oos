@@ -1013,11 +1013,14 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
                 fast_deposit(&ui.m, w, h, c, &mut want.map[c], &f, &p.plan);
             }
         }
-        ui.ph.clear();
-        assert_eq!(ui.fast_draw_all(frames.clone()), 40);
-        for c in 0..NCH {
-            assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
-            assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
+        // with the helpers, and on the frame loop's thread alone (batch mode while the deposit workers have batches)
+        for helpers in [crate::fastdraw::helpers(), 0] {
+            ui.ph.clear();
+            assert_eq!(ui.fast_draw_all(frames.clone(), helpers), 40);
+            for c in 0..NCH {
+                assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
+                assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{} helpers {}: maps differ", tdiv, c + 1, helpers);
+            }
         }
         // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
         shared.lock().unwrap().queue.extend((1..=41).map(frame));
@@ -1088,10 +1091,15 @@ fn fast_path_bands_draw_as_the_whole_map() {
                 let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
                 fast_deposit(&ui.m, w, h, 0, &mut want, &f, &p.plan);
             }
-            ui.ph.clear();
-            ui.fast_draw_all(frames);
-            assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
-            assert!(ui.ph.map[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
+            // with the helpers, and on the frame loop's thread alone (batch mode while the deposit workers have
+            // batches)
+            for helpers in [crate::fastdraw::helpers(), 0] {
+                ui.ph.clear();
+                ui.fast_draw_all(frames.clone(), helpers);
+                let what = format!("{} s/div dots {} helpers {}", tdiv, dots, helpers);
+                assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{}: little drawn", what);
+                assert!(ui.ph.map[0] == want, "{}: maps differ", what);
+            }
         }
     }
 }
@@ -1326,4 +1334,48 @@ fn hardware_average_bypasses_the_blend_and_restarts() {
     // 1 us/div at 1.25 GSa/s: the FPGA averages at every rate (0x1004 bit 2, B1)
     ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
     assert!(board().avg_hw(&ui.m));
+}
+
+/// Batch mode at 1 ms/div (unit 2026-11-18: half the records reached the picture): batches of one frame, 38 a second
+/// against 29 screens, through the queue to the frame loop: every record is used, as many as were queued, at 1 and 4
+/// channels. The frame loop's part; whether a batch holds one frame or two (frame 0 left out, issue #5) is the
+/// acquisition thread's.
+#[test]
+fn batch_mode_uses_every_record_at_1_ms_per_div() {
+    use super::*;
+    for mask in [1u32, 15] {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-6).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.draw_batch = true;
+        for c in 0..NCH {
+            (ui.m.ch[c].on, ui.m.ch[c].offset) = (mask & (1 << c) != 0, 0.0);
+        }
+        // a frame as the board decodes it at 1 ms/div (100 k points a channel), a sine on each channel on
+        let s = crate::board::dho::hw::settings(&ui.m, false);
+        let p = oos_hal::dho::hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        let mut f = crate::board::dho::hw::decode(&vec![0u8; oos_hal::dho::seq::frame_bytes(&s, &p)], &s, &p, 0);
+        for ch in f.ch.iter_mut() {
+            let n = ch.len();
+            for (k, v) in ch.iter_mut().enumerate() {
+                *v = 0.9 * ((k as f64 - n as f64 / 2.0) / n as f64 * 40.0 * std::f64::consts::TAU).sin() as f32;
+            }
+        }
+        f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
+        ui.step(1.0 / 30.0);
+        let (w0, mut fed) = (ui.wfm_total, 0u64);
+        for step in 0..87u64 {
+            // 38 frames in 29 screens: one or two a screen
+            for _ in 0..(38 * (step + 1) / 29 - 38 * step / 29) {
+                fed += 1;
+                shared.lock().unwrap().queue.push_back(crate::board::Frame { seq: fed, ..f.clone() });
+            }
+            ui.step(1.0 / 30.0);
+        }
+        let left = shared.lock().unwrap().queue.len() as u64;
+        assert_eq!(ui.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
+    }
 }

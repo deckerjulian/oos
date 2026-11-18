@@ -64,6 +64,9 @@ Removed:
 
 Changed:
 
+- Batch draw path (Acquire > Draw path = Batch): at 10 us/div the screen shows about 29 pictures a second with one,
+  two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
+  cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
 - System > Overclock is only in the menu with `adc.overclock = on` in `/oos/system.conf`, or while `limits.conf` already
   sets another clock: above 1.25 GHz every step boots, but records at the full rate lose samples (unit). Every step
   above 1.25 GHz is marked "(test)".

@@ -211,10 +211,10 @@ fn together<R: Send>(n: usize, work: impl Fn() -> R + Sync) -> Vec<R> {
     })
 }
 
-/// `items.iter().map(f).collect()` on the frame loop's thread and the helpers, in order. The items are handed out one
-/// by one (a small core takes about twice as long as a fast one).
-pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let n = helpers().min(items.len().saturating_sub(1));
+/// `items.iter().map(f).collect()` on the frame loop's thread and up to `helpers` helpers, in order. The items are
+/// handed out one by one (a small core takes about twice as long as a fast one).
+pub fn par_map<T: Sync, R: Send>(helpers: usize, items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let n = helpers.min(items.len().saturating_sub(1));
     if n == 0 {
         return items.iter().map(&f).collect();
     }
@@ -234,9 +234,10 @@ pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
     all.into_iter().map(|x| x.1).collect()
 }
 
-/// `f` for every item, each item to one thread (the frame loop's or a helper's), handed out one by one.
-pub fn par_each<T: Send>(items: Vec<T>, f: impl Fn(T) + Sync) {
-    let n = helpers().min(items.len().saturating_sub(1));
+/// `f` for every item, each item to one thread (the frame loop's or one of up to `helpers` helpers), handed out one by
+/// one.
+pub fn par_each<T: Send>(helpers: usize, items: Vec<T>, f: impl Fn(T) + Sync) {
+    let n = helpers.min(items.len().saturating_sub(1));
     if n == 0 {
         items.into_iter().for_each(f);
         return;

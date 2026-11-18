@@ -641,6 +641,7 @@ impl Source {
             let skip = n.saturating_sub(max);
             g.queue.drain(..skip);
             g.dropped += skip as u64;
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, skip as u64);
             return g.queue.drain(..n - skip).collect();
         }
         Vec::new()
