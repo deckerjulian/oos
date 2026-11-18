@@ -63,6 +63,7 @@ mod scpi_operations;
 mod scroll;
 mod selfcal;
 mod sertrig;
+mod service;
 mod sim;
 pub mod startup;
 mod strip;

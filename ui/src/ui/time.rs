@@ -8,11 +8,12 @@
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
 
+use super::service::Service;
 use super::*;
 use crate::clock::{self, Local, Tz, ZONES};
 use crate::sntp;
 use crate::sysconf::{self, NtpOrigin};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 
 /// A sync again after this long (the clock of the RK3399 drifts a few seconds a day).
 pub const RESYNC: f64 = 3600.0;
@@ -123,8 +124,7 @@ impl Schedule {
 #[derive(Default)]
 pub(super) struct NtpUi {
     pub st: Schedule,
-    tx: Option<Sender<String>>,
-    rx: Option<Receiver<Result<Synced, String>>>,
+    service: Service<String, Result<Synced, String>>,
     /// the offset last given to the kernel (FAT time stamps), and when it was checked
     kernel_tz: Option<i32>,
     tz_checked: f64,
@@ -297,21 +297,14 @@ impl Ui {
         }
         let up = self.net_up();
         if self.ntp.st.tick(self.now, self.sys.ntp, up) {
-            if self.ntp.tx.is_none() && !cfg!(test) {
-                let (tx, jobs) = channel();
-                let (out, rx) = channel();
-                if std::thread::Builder::new().name("ntp".into()).spawn(move || worker(jobs, out)).is_ok() {
-                    self.ntp.tx = Some(tx);
-                    self.ntp.rx = Some(rx);
-                }
-            }
+            self.ntp.service.start("ntp", worker);
             let (server, origin) = self.ntp_target();
             self.ntp.asked = Some((server.clone(), origin));
-            if !self.ntp.tx.as_ref().is_some_and(|tx| tx.send(server).is_ok()) && !cfg!(test) {
+            if !self.ntp.service.send(server) && !cfg!(test) {
                 self.ntp.st.done(self.now, Err("no worker".into()));
             }
         }
-        while let Some(r) = self.ntp.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        while let Some(r) = self.ntp.service.take() {
             self.ntp_report(r);
         }
     }
