@@ -8,8 +8,58 @@
 
 use super::*;
 
+/// What the acquisition of one step took: records, times, the pending clear and the newest raw deep record.
+struct StepTake {
+    got: usize,
+    ta: f32,
+    td: f32,
+    clear_pending: bool,
+    deep_raw: bool,
+    raw_rec: Option<Record>,
+}
+
 impl Ui {
+    /// One frame: the polls, the run state, the records of this step, their measurements and the trace brightness.
     pub fn step(&mut self, dt_wall: f64) {
+        self.step_polls(dt_wall);
+        self.step_guards();
+        let (hw_seg, final_done) = self.step_run_state();
+        let persist = PERSIST[self.m.persist].1;
+        self.step_refresh(dt_wall);
+        let live = self.m.n_on() > 0 || self.m.la_on();
+        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
+        if !self.record_mode()
+            && live
+            && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared))
+        {
+            self.step_live(dt_wall, persist, hw_seg);
+        } else if !self.record_mode() {
+            // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
+            // redraw the stored record with the current scale/offset
+            self.step_stopped_redraw();
+        }
+        if self.analyzed_view != self.m.view {
+            self.analyzed_view = self.m.view;
+            if self.m.view != AView::Scope {
+                self.analyzer_update();
+            }
+        }
+        self.step_meas_rows();
+        // the final frame was taken (or did not come in time): stopped
+        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
+            self.stop_final = None;
+        }
+        if self.m.run == RunState::Stop {
+            if !self.record_mode() {
+                self.m.status = TrigStatus::Stop;
+            }
+            self.wfm_rate = 0.0;
+        }
+        self.step_grade();
+    }
+
+    /// The per-frame polls and ticks, and the wall time.
+    fn step_polls(&mut self, dt_wall: f64) {
         // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
         crate::drawpipe::set_enabled(self.m.draw_batch && self.src.is_hw());
         // System > Features: what is left out runs nothing
@@ -37,6 +87,10 @@ impl Ui {
         self.la_probe_poll();
         self.log_tick();
         self.m.clamp_offsets();
+    }
+
+    /// Trigger level changes, SINGLE arming, the channels of the platform and the sources that point at them.
+    fn step_guards(&mut self) {
         if (self.m.trig_level, self.m.trig_level2) != self.level_seen {
             // the first look (start-up) is no change
             if !self.level_seen.0.is_nan() {
@@ -73,6 +127,11 @@ impl Ui {
         self.auto_step();
         self.sysinfo_poll();
         self.cal_poll();
+    }
+
+    /// RUN and STOP edges: segments, average restart, the final frame of a STOP; the segment switch and whether
+    /// the final frame is taken.
+    fn step_run_state(&mut self) -> (bool, bool) {
         // segmented recording: a new RUN/SINGLE starts a new set of segments
         let running = self.m.run == RunState::Run;
         let hw_seg = self.seg_hw_on();
@@ -108,7 +167,11 @@ impl Ui {
         if !running {
             self.cancel_demo_acquisition();
         }
-        let persist = PERSIST[self.m.persist].1;
+        (hw_seg, final_done)
+    }
+
+    /// Record mode plays or refreshes its reference; a STOP refreshes the captured view and its measurements.
+    fn step_refresh(&mut self, dt_wall: f64) {
         if self.record_mode() {
             if self.m.run == RunState::Run {
                 self.sim_play = true;
@@ -122,309 +185,341 @@ impl Ui {
             self.refresh_capture_view();
             self.refresh_stopped_measurements();
         }
-        let live = self.m.n_on() > 0 || self.m.la_on();
-        // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if !self.record_mode()
-            && live
-            && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared))
-        {
-            if self.m.run == RunState::Run {
-                self.stop_ti_off = None;
-                (self.stop_raw, self.stop_pic) = (None, None);
-            }
-            if self.dirty_map {
-                self.ph.clear();
-                self.phz.clear();
-                self.dirty_map = false;
-            }
-            // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
-            // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
-            let mut clear_pending = persist == 0.0;
-            if persist > 0.0 {
-                let f = (-dt_wall / persist as f64).exp() as f32;
-                self.ph.decay(f);
-                self.phz.decay(f);
-            }
-            let fast = self.fast_ok();
-            if !fast {
-                self.src.hw_take_all();
-            }
-            let k = match self.m.trig_type {
-                // fast path: it draws the queue on several cores, the record is the newest frame only (frames that
-                // come in meanwhile wait for the next screen's fast path instead of a full record each, one by one)
-                _ if fast => 1,
-                // the hardware source delivers batches: draw up to 48 queued records per frame
-                _ if matches!(self.src, Source::Hw { .. }) => 48,
-                TrigType::Edge | TrigType::Pattern => 6,
-                TrigType::Video => 1,
-                _ => 2,
-            };
-            let mut got = 0;
-            let (mut ta, mut td) = (0f32, 0f32);
-            // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
-            // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
-            // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
-            let deep_raw = crate::deepmeas::want(&self.m).is_some();
-            let mut raw_rec: Option<Record> = None;
-            if !fast {
-                if let Some(p) = crate::drawpipe::pipe() {
-                    p.set_view(None, 0, 0);
-                }
-            }
-            // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
-            if fast {
-                let t0 = std::time::Instant::now();
-                let frames = self.src.drain_newest(self.fast_max());
-                if !frames.is_empty() && clear_pending {
-                    self.ph.clear();
-                    clear_pending = false;
-                }
-                let n = frames.len();
-                if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
-                    raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
-                }
-                if n > 0 && self.fast_draw_all(frames) > 0 {
-                    self.m.status = TrigStatus::Triggered;
-                }
-                got += n;
-                let ms = t0.elapsed().as_secs_f32() * 1000.0;
-                td += ms;
-                self.t_fast += 0.05 * (ms - self.t_fast);
-                if n > 0 && ms > 0.0 {
-                    // as many as would have filled the budget at this pace: with a fixed part in each screen's time
-                    // (starting the helpers) this settles where the time meets the budget. Down only when the budget
-                    // was exceeded, up only when the take was the limit: the hardware delivers in bursts, and a screen
-                    // with a few frames says nothing about how many fit
-                    self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
-                }
-                // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
-                if let Some(p) = crate::drawpipe::pipe() {
-                    let t1 = std::time::Instant::now();
-                    p.set_view(Some(&self.m), self.ph.w, self.ph.h);
-                    let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
-                    if d.triggered > 0 {
-                        self.m.status = TrigStatus::Triggered;
-                    }
-                    got += d.frames as usize;
-                    self.mstat_fold(&d.folds);
-                    td += t1.elapsed().as_secs_f32() * 1000.0;
-                }
-            }
-            for _ in 0..k {
-                let t0 = std::time::Instant::now();
-                let r = self.acquire_bus_candidate(dt_wall / k as f64);
-                ta += t0.elapsed().as_secs_f32() * 1000.0;
-                if r.is_none() && self.bus_candidate_waiting() {
-                    break;
-                }
-                match r {
-                    Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
-                        // zone trigger: not a qualifying record
-                        let _ = &mut rec;
-                        self.zone_drops += 1;
-                    }
-                    // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
-                    // decides; Single waits on for the record that holds the event
-                    Some(rec)
-                        if self.m.trig_type == TrigType::Bus
-                            && !self.mixed_bus_mode()
-                            && self.m.trig_mode != TrigMode::Auto
-                            && !rec.triggered
-                            && !rec.partial
-                            && self.bus_can_match(&rec) =>
-                    {
-                        self.m.status = TrigStatus::Wait;
-                    }
-                    Some(mut rec) => {
-                        self.bus_candidate_committed();
-                        self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
-                        for c in 0..NCH {
-                            if self.m.ch[c].on
-                                && !rec.ch[c].is_empty()
-                                && !self.src.is_hw()
-                                && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned)
-                            {
-                                let dt = rec.dt;
-                                condition(&self.m, c, &mut rec.ch[c], dt);
-                            }
-                        }
-                        // the FPGA averaged the frame already: blending would average the average
-                        let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
-                        if self.m.acq == AcqMode::Average && !hw_avg {
-                            if let Some(prev) = &self.last[0] {
-                                let a = 1.0 / self.m.avg_count as f32;
-                                for c in 0..NCH {
-                                    if rec.ch[c].len() == prev.ch[c].len() {
-                                        for (x, p) in rec.ch[c].iter_mut().zip(prev.ch[c].iter()) {
-                                            if p.is_finite() {
-                                                *x = p + (*x - p) * a;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // minimum persistence: the picture of this step is every frame of it (the fast path's and this
-                        // record), cleared once before the first of them
-                        if clear_pending {
-                            self.ph.clear();
-                            self.phz.clear();
-                            clear_pending = false;
-                        }
-                        let zv = (tscales()[self.m.zscale], self.m.zdelay);
-                        let detail = self.captured_record_view(&rec, zv);
-                        let t1 = std::time::Instant::now();
-                        let zw = self.z_weights(&rec);
-                        // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
-                        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
-                        // against one span per column) and the grading of the picture follows how many of each it holds:
-                        // the trace flickered with the batch sizes (docs/fork/flicker.md)
-                        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
-                        if let Some(f) = frame {
-                            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
-                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
-                        } else {
-                            self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
-                        }
-                        td += t1.elapsed().as_secs_f32() * 1000.0;
-                        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
-                            self.history.pop_front();
-                        }
-                        // a deep LA record is tens of MB: the history keeps the LA of short records only
-                        let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
-                        self.history.push_back(Record { raw: None, la, ..rec.clone() });
-                        self.hist_pos = None;
-                        self.mask_test(&rec);
-                        if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
-                            raw_rec = Some(rec.clone());
-                        }
-                        self.last[0] = Some(rec);
-                        self.cleared = false;
-                        got += 1;
-                        self.records += 1;
-                        if self.m.segments > 0 {
-                            self.seg_n += 1;
-                            // hardware segments end when the thread has read them all back (`seg_poll`)
-                            if !hw_seg && self.seg_n >= self.seg_count() {
-                                if self.m.trig_mode == TrigMode::Single {
-                                    self.scpi_finish_operation(OperationToken::Single(self.single_operation));
-                                }
-                                self.m.run = RunState::Stop;
-                                self.toast(&format!("{} segments recorded", self.seg_n));
-                                break;
-                            }
-                        } else if self.m.trig_mode == TrigMode::Single
-                            && !self.last[0].as_ref().is_some_and(|r| r.partial)
-                        {
-                            self.scpi_finish_operation(OperationToken::Single(self.single_operation));
-                            self.m.run = RunState::Stop;
-                            break;
-                        }
-                    }
-                    None => {}
-                }
-                if self.m.run == RunState::Stop && self.stop_final.is_none() {
-                    break;
-                }
-            }
-            // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
-            // few attempts; an empty attempt must not override TRIG'D)
-            // at large depths the hardware delivers fewer records than frames: WAIT only after 0.5 s without one, or
-            // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
-            // record intervals (a 125 M record takes ~1 s to read)
-            let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
-            // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
-            // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
-            if got > 0 {
-                if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
-                    self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
-                }
-            }
-            // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
-            if persist != 0.0 {
-                self.pic_frames = 0;
-            } else if got > 0 {
-                self.pic_frames = got as u32;
-            }
-            if got > 0 {
-                let iv = (self.now - self.last_rec_t).min(2.0);
-                self.rec_iv += 0.3 * (iv - self.rec_iv);
-                self.last_rec_t = self.now;
-            } else if self.m.run == RunState::Run && self.now - self.last_rec_t > wait_after {
-                self.m.status = TrigStatus::Wait;
-            }
-            self.t_acq += 0.05 * (ta - self.t_acq);
-            self.t_draw += 0.05 * (td - self.t_draw);
-            let rate = got as f32 / dt_wall.max(1e-3) as f32;
-            self.wfm_rate += 0.1 * (rate - self.wfm_rate);
-            self.wfm_total += got as u64;
-            crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
-            // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
-            // measurement stays that of the last raw record
-            let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold = crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown);
-            if got > 0 {
-                let p0 = std::time::Instant::now();
-                if hold {
-                    // the measurement shown stays that of the last raw deep record, or of this step's
-                    if let Some(r) = raw_rec.take() {
-                        if self.meas_bg.is_some() {
-                            self.meas_want = true;
-                            self.meas_pending = Some(r);
-                        } else {
-                            self.measure_rec(&r);
-                            self.meas_new = true;
-                        }
-                    }
-                } else if self.meas_bg.is_some() {
-                    // the result for the last record is still good when it comes after this one: `meas_n` only
-                    // changes where a result out becomes wrong (a clear, measuring here at once)
-                    self.meas_want = true;
-                    // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
-                    // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
-                    // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
-                    // second with GPU and HDMI Layout, unit 2026-11-15)
-                    let raw_deep = self.last[0]
-                        .as_ref()
-                        .and_then(|r| r.raw.as_ref())
-                        .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
-                    if raw_deep && crate::deepmeas::want(&self.m).is_some() {
-                        self.meas_pending = self.last[0].clone();
-                    }
-                } else {
-                    self.measure_last();
-                    self.meas_new = true;
-                }
-                let p1 = std::time::Instant::now();
-                self.analyzer_update();
-                self.monitor_analyzer_update();
-                self.protocol_watch();
-                self.bode_update();
-                let p2 = std::time::Instant::now();
-                self.prof_add(0, p1 - p0);
-                self.prof_add(1, p2 - p1);
-            }
-        } else if !self.record_mode() {
-            // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
-            // redraw the stored record with the current scale/offset
-            self.stop_replay();
+    }
+
+    /// The records of this step: the fast path, the record loop, the rates and the measurement of the newest.
+    fn step_live(&mut self, dt_wall: f64, persist: f32, hw_seg: bool) {
+        if self.m.run == RunState::Run {
+            self.stop_ti_off = None;
+            (self.stop_raw, self.stop_pic) = (None, None);
+        }
+        if self.dirty_map {
             self.ph.clear();
             self.phz.clear();
-            let zv = (tscales()[self.m.zscale], self.m.zdelay);
-            let detail = self.captured_view(zv);
-            // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
-            let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
-            if let Some(rec) = shown {
-                let zw = self.z_weights(&rec);
-                self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24 * 6);
+            self.dirty_map = false;
+        }
+        // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
+        // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
+        let clear_pending = persist == 0.0;
+        if persist > 0.0 {
+            let f = (-dt_wall / persist as f64).exp() as f32;
+            self.ph.decay(f);
+            self.phz.decay(f);
+        }
+        let fast = self.fast_ok();
+        if !fast {
+            self.src.hw_take_all();
+        }
+        let k = match self.m.trig_type {
+            // fast path: it draws the queue on several cores, the record is the newest frame only (frames that
+            // come in meanwhile wait for the next screen's fast path instead of a full record each, one by one)
+            _ if fast => 1,
+            // the hardware source delivers batches: draw up to 48 queued records per frame
+            _ if matches!(self.src, Source::Hw { .. }) => 48,
+            TrigType::Edge | TrigType::Pattern => 6,
+            TrigType::Video => 1,
+            _ => 2,
+        };
+        // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
+        // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
+        // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
+        let mut take = StepTake {
+            got: 0,
+            ta: 0.0,
+            td: 0.0,
+            clear_pending,
+            deep_raw: crate::deepmeas::want(&self.m).is_some(),
+            raw_rec: None,
+        };
+        if !fast {
+            if let Some(p) = crate::drawpipe::pipe() {
+                p.set_view(None, 0, 0);
             }
         }
-        if self.analyzed_view != self.m.view {
-            self.analyzed_view = self.m.view;
-            if self.m.view != AView::Scope {
-                self.analyzer_update();
+        // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
+        if fast {
+            self.step_fast_frames(&mut take);
+        }
+        self.step_records(&mut take, k, dt_wall, hw_seg);
+        self.step_rates(&take, dt_wall, persist);
+        self.step_measure(&mut take);
+    }
+
+    /// Fast display path: the queued frames straight into the phosphor map, and the batch pipeline's merge.
+    fn step_fast_frames(&mut self, take: &mut StepTake) {
+        let t0 = std::time::Instant::now();
+        let frames = self.src.drain_newest(self.fast_max());
+        if !frames.is_empty() && take.clear_pending {
+            self.ph.clear();
+            take.clear_pending = false;
+        }
+        let n = frames.len();
+        if let Some(f) = frames.iter().rev().find(|f| take.deep_raw && crate::deepmeas::deep_raw_frame(f)) {
+            take.raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
+        }
+        if n > 0 && self.fast_draw_all(frames) > 0 {
+            self.m.status = TrigStatus::Triggered;
+        }
+        take.got += n;
+        let ms = t0.elapsed().as_secs_f32() * 1000.0;
+        take.td += ms;
+        self.t_fast += 0.05 * (ms - self.t_fast);
+        if n > 0 && ms > 0.0 {
+            // as many as would have filled the budget at this pace: with a fixed part in each screen's time
+            // (starting the helpers) this settles where the time meets the budget. Down only when the budget
+            // was exceeded, up only when the take was the limit: the hardware delivers in bursts, and a screen
+            // with a few frames says nothing about how many fit
+            self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
+        }
+        // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
+        if let Some(p) = crate::drawpipe::pipe() {
+            let t1 = std::time::Instant::now();
+            p.set_view(Some(&self.m), self.ph.w, self.ph.h);
+            let d = p.merge(&mut self.ph, &mut take.clear_pending, &mut self.fast_edges, &mut self.fast_off);
+            if d.triggered > 0 {
+                self.m.status = TrigStatus::Triggered;
+            }
+            take.got += d.frames as usize;
+            self.mstat_fold(&d.folds);
+            take.td += t1.elapsed().as_secs_f32() * 1000.0;
+        }
+    }
+
+    /// Up to `k` records from the source, each through the zone and protocol triggers before it is kept.
+    fn step_records(&mut self, take: &mut StepTake, k: usize, dt_wall: f64, hw_seg: bool) {
+        for _ in 0..k {
+            let t0 = std::time::Instant::now();
+            let r = self.acquire_bus_candidate(dt_wall / k as f64);
+            take.ta += t0.elapsed().as_secs_f32() * 1000.0;
+            if r.is_none() && self.bus_candidate_waiting() {
+                break;
+            }
+            match r {
+                Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
+                    // zone trigger: not a qualifying record
+                    let _ = &mut rec;
+                    self.zone_drops += 1;
+                }
+                // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
+                // decides; Single waits on for the record that holds the event
+                Some(rec)
+                    if self.m.trig_type == TrigType::Bus
+                        && !self.mixed_bus_mode()
+                        && self.m.trig_mode != TrigMode::Auto
+                        && !rec.triggered
+                        && !rec.partial
+                        && self.bus_can_match(&rec) =>
+                {
+                    self.m.status = TrigStatus::Wait;
+                }
+                Some(rec) => {
+                    if self.step_commit(rec, take, hw_seg) {
+                        break;
+                    }
+                }
+                None => {}
+            }
+            if self.m.run == RunState::Stop && self.stop_final.is_none() {
+                break;
             }
         }
+    }
+
+    /// One record kept: conditioned, drawn, into the history, and the end of segments or SINGLE; true stops the
+    /// loop.
+    fn step_commit(&mut self, mut rec: Record, take: &mut StepTake, hw_seg: bool) -> bool {
+        self.bus_candidate_committed();
+        self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
+        self.condition_record(&mut rec);
+        // minimum persistence: the picture of this step is every frame of it (the fast path's and this
+        // record), cleared once before the first of them
+        if take.clear_pending {
+            self.ph.clear();
+            self.phz.clear();
+            take.clear_pending = false;
+        }
+        let zv = (tscales()[self.m.zscale], self.m.zdelay);
+        let detail = self.captured_record_view(&rec, zv);
+        let t1 = std::time::Instant::now();
+        let zw = self.z_weights(&rec);
+        // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
+        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
+        // against one span per column) and the grading of the picture follows how many of each it holds:
+        // the trace flickered with the batch sizes (docs/fork/flicker.md)
+        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
+        if let Some(f) = frame {
+            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+        } else {
+            self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
+        }
+        take.td += t1.elapsed().as_secs_f32() * 1000.0;
+        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
+            self.history.pop_front();
+        }
+        // a deep LA record is tens of MB: the history keeps the LA of short records only
+        let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
+        self.history.push_back(Record { raw: None, la, ..rec.clone() });
+        self.hist_pos = None;
+        self.mask_test(&rec);
+        if take.deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
+            take.raw_rec = Some(rec.clone());
+        }
+        self.last[0] = Some(rec);
+        self.cleared = false;
+        take.got += 1;
+        self.records += 1;
+        if self.m.segments > 0 {
+            self.seg_n += 1;
+            // hardware segments end when the thread has read them all back (`seg_poll`)
+            if !hw_seg && self.seg_n >= self.seg_count() {
+                if self.m.trig_mode == TrigMode::Single {
+                    self.scpi_finish_operation(OperationToken::Single(self.single_operation));
+                }
+                self.m.run = RunState::Stop;
+                self.toast(&format!("{} segments recorded", self.seg_n));
+                return true;
+            }
+        } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {
+            self.scpi_finish_operation(OperationToken::Single(self.single_operation));
+            self.m.run = RunState::Stop;
+            return true;
+        }
+        false
+    }
+
+    /// The channel conditioning of a software source and the software average.
+    fn condition_record(&self, rec: &mut Record) {
+        for c in 0..NCH {
+            if self.m.ch[c].on
+                && !rec.ch[c].is_empty()
+                && !self.src.is_hw()
+                && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned)
+            {
+                let dt = rec.dt;
+                condition(&self.m, c, &mut rec.ch[c], dt);
+            }
+        }
+        // the FPGA averaged the frame already: blending would average the average
+        let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
+        if self.m.acq == AcqMode::Average && !hw_avg {
+            if let Some(prev) = &self.last[0] {
+                let a = 1.0 / self.m.avg_count as f32;
+                for c in 0..NCH {
+                    if rec.ch[c].len() == prev.ch[c].len() {
+                        for (x, p) in rec.ch[c].iter_mut().zip(prev.ch[c].iter()) {
+                            if p.is_finite() {
+                                *x = p + (*x - p) * a;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Trigger status, picture frames, record interval, timings and waveform rate of this step.
+    fn step_rates(&mut self, take: &StepTake, dt_wall: f64, persist: f32) {
+        // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
+        // few attempts; an empty attempt must not override TRIG'D)
+        // at large depths the hardware delivers fewer records than frames: WAIT only after 0.5 s without one, or
+        // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
+        // record intervals (a 125 M record takes ~1 s to read)
+        let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+        // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
+        // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
+        if take.got > 0 {
+            if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
+                self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
+            }
+        }
+        // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
+        if persist != 0.0 {
+            self.pic_frames = 0;
+        } else if take.got > 0 {
+            self.pic_frames = take.got as u32;
+        }
+        if take.got > 0 {
+            let iv = (self.now - self.last_rec_t).min(2.0);
+            self.rec_iv += 0.3 * (iv - self.rec_iv);
+            self.last_rec_t = self.now;
+        } else if self.m.run == RunState::Run && self.now - self.last_rec_t > wait_after {
+            self.m.status = TrigStatus::Wait;
+        }
+        self.t_acq += 0.05 * (take.ta - self.t_acq);
+        self.t_draw += 0.05 * (take.td - self.t_draw);
+        let rate = take.got as f32 / dt_wall.max(1e-3) as f32;
+        self.wfm_rate += 0.1 * (rate - self.wfm_rate);
+        self.wfm_total += take.got as u64;
+        crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, take.got as u64);
+    }
+
+    /// The measurement of this step's record, now or in the background, and the analyser updates.
+    fn step_measure(&mut self, take: &mut StepTake) {
+        // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
+        // measurement stays that of the last raw record
+        let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+        let hold = crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown);
+        if take.got > 0 {
+            let p0 = std::time::Instant::now();
+            if hold {
+                // the measurement shown stays that of the last raw deep record, or of this step's
+                if let Some(r) = take.raw_rec.take() {
+                    if self.meas_bg.is_some() {
+                        self.meas_want = true;
+                        self.meas_pending = Some(r);
+                    } else {
+                        self.measure_rec(&r);
+                        self.meas_new = true;
+                    }
+                }
+            } else if self.meas_bg.is_some() {
+                // the result for the last record is still good when it comes after this one: `meas_n` only
+                // changes where a result out becomes wrong (a clear, measuring here at once)
+                self.meas_want = true;
+                // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
+                // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
+                // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
+                // second with GPU and HDMI Layout, unit 2026-11-15)
+                let raw_deep = self.last[0]
+                    .as_ref()
+                    .and_then(|r| r.raw.as_ref())
+                    .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
+                if raw_deep && crate::deepmeas::want(&self.m).is_some() {
+                    self.meas_pending = self.last[0].clone();
+                }
+            } else {
+                self.measure_last();
+                self.meas_new = true;
+            }
+            let p1 = std::time::Instant::now();
+            self.analyzer_update();
+            self.monitor_analyzer_update();
+            self.protocol_watch();
+            self.bode_update();
+            let p2 = std::time::Instant::now();
+            self.prof_add(0, p1 - p0);
+            self.prof_add(1, p2 - p1);
+        }
+    }
+
+    /// Stopped: the stored record for the view shown, redrawn with the current scale and offset.
+    fn step_stopped_redraw(&mut self) {
+        self.stop_replay();
+        self.ph.clear();
+        self.phz.clear();
+        let zv = (tscales()[self.m.zscale], self.m.zdelay);
+        let detail = self.captured_view(zv);
+        // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
+        let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
+        if let Some(rec) = shown {
+            let zw = self.z_weights(&rec);
+            self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24 * 6);
+        }
+    }
+
+    /// The rows of the newest measurement into the trends, the counter and the statistics.
+    fn step_meas_rows(&mut self) {
         // the measurements of the newest record (in the background: when they are done, also after a stop)
         self.meas_poll();
         if std::mem::take(&mut self.meas_new) {
@@ -445,16 +540,10 @@ impl Ui {
                 }
             }
         }
-        // the final frame was taken (or did not come in time): stopped
-        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
-            self.stop_final = None;
-        }
-        if self.m.run == RunState::Stop {
-            if !self.record_mode() {
-                self.m.status = TrigStatus::Stop;
-            }
-            self.wfm_rate = 0.0;
-        }
+    }
+
+    /// Pane tick, trace brightness references, halving of saturating maps and the end of a toast.
+    fn step_grade(&mut self) {
         let p3 = std::time::Instant::now();
         self.pane_tick();
         let p4 = std::time::Instant::now();
