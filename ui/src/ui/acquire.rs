@@ -257,7 +257,7 @@ impl Ui {
         if let Some(f) = frames.iter().rev().find(|f| take.deep_raw && crate::deepmeas::deep_raw_frame(f)) {
             take.raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
         }
-        if n > 0 && self.fast_draw_all(frames) > 0 {
+        if n > 0 && self.fast_draw_all(frames, fast_helpers()) > 0 {
             self.m.status = TrigStatus::Triggered;
         }
         take.got += n;
@@ -712,24 +712,12 @@ impl Ui {
             })
     }
 
-    /// Helper threads of the fast path (`fast_draw_all`): none in batch mode, where the deposit workers keep the small
-    /// cores busy: a helper there waited for a core, and the frame loop for the helper (issue #186). In batch mode the
-    /// queue holds only the newest frame of each batch, one or two a screen.
-    pub(super) fn fast_helpers(&self) -> usize {
-        if self.m.draw_batch && self.src.is_hw() {
-            0
-        } else {
-            crate::fastdraw::helpers()
-        }
-    }
-
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
     /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
-    /// Returns the frames that counted as triggered.
-    pub(super) fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>) -> usize {
+    /// `helpers`: threads beside the frame loop's (`fast_helpers`). Returns the frames that counted as triggered.
+    pub(super) fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>, helpers: usize) -> usize {
         let frames: Vec<std::sync::Arc<crate::board::Frame>> = frames.into_iter().map(std::sync::Arc::new).collect();
         let (w, h) = (self.ph.w, self.ph.h);
-        let helpers = self.fast_helpers();
         let m = &self.m;
         // the statistics of every frame for the voltage measurements, once the measurements of the record have set
         // up their rows
@@ -848,6 +836,19 @@ pub struct FastFrame {
     pub plan: FastPlan,
     pub triggered: bool,
     pub fold: [Option<crate::fastdraw::Fold>; NCH],
+}
+
+/// Helper threads of the fast path (`Ui::fast_draw_all`): none while the deposit workers of batch mode have batches
+/// to draw, where they keep the small cores busy: a helper there waited for a core, and the frame loop for the helper
+/// (issue #186); the queue then holds only the newest frame of each batch, one or two a screen. Without batches to
+/// draw (batches of one frame, at slow time bases) every frame comes through the queue, and the helpers draw them as
+/// in the frames mode: the frame loop alone took fewer of them a screen and left the others out (unit 2026-11-18).
+pub(super) fn fast_helpers() -> usize {
+    if crate::drawpipe::pipe().is_some_and(|p| p.busy()) {
+        0
+    } else {
+        crate::fastdraw::helpers()
+    }
 }
 
 /// Where channel `c` of a dense frame lands on the `w` x `h` map with the trigger at sample `ti`.
