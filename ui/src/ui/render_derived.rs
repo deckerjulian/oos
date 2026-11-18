@@ -514,12 +514,8 @@ impl Ui {
         if m.dec_on_la() {
             return self.la_packets(m, rec).map(std::sync::Arc::new);
         }
-        // Screen `ch` is peak-detect / resampled for drawing; half-bit protocols (DCC) need the acquisition rate.
-        if rec
-            .raw
-            .as_ref()
-            .is_some_and(|raw| !raw.frame.envelope && raw.frame.ch.get(m.dec_src).is_some_and(|v| v.len() >= 2))
-        {
+        // the screen record is peak-detect or resampled; the acquisition's own samples where the record has them
+        if self.decoder_uses_raw(m) {
             return self.reference_decode_packets(m);
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();

@@ -184,6 +184,16 @@ impl Ui {
     pub(super) fn decoder_uses_refs(m: &Model) -> bool {
         !m.dec_on_la() && sources(m).is_ok_and(|ids| ids.iter().any(|&id| id >= DEC_REF_BASE))
     }
+    /// Whether the live record holds the acquisition's own samples (`Record.raw`) of any channel a role of `m` reads.
+    /// The screen record is peak-detect or resampled for drawing, which loses the timing of a protocol such as DCC
+    /// (58 us halves); such a decoder runs on the reference path, which reads `raw` for every role (issue #225).
+    pub(super) fn decoder_uses_raw(&self, m: &Model) -> bool {
+        let Some(raw) = self.last[0].as_ref().and_then(|rec| rec.raw.as_ref()) else { return false };
+        !m.dec_on_la()
+            && !raw.frame.envelope
+            && sources(m)
+                .is_ok_and(|ids| ids.iter().any(|&id| id < NCH && raw.frame.ch.get(id).is_some_and(|v| v.len() >= 2)))
+    }
     fn decoder_samples(&self, id: usize) -> Result<(&[f32], f64, f64, f32), &'static str> {
         self.decoder_samples_at(id, None)
     }
@@ -359,12 +369,10 @@ impl Ui {
             if !model.dec_on {
                 continue;
             }
-            let uses_raw = self.last[0].as_ref().is_some_and(|rec| {
-                rec.raw.as_ref().is_some_and(|raw| {
-                    !raw.frame.envelope && raw.frame.ch.get(model.dec_src).is_some_and(|v| v.len() >= 2)
-                })
-            });
-            if Self::decoder_uses_refs(&model) || uses_raw || model.deskew_ch.iter().any(|&shift| shift != 0.0) {
+            if Self::decoder_uses_refs(&model)
+                || self.decoder_uses_raw(&model)
+                || model.deskew_ch.iter().any(|&shift| shift != 0.0)
+            {
                 let _ = self.reference_decode_packets(&model);
             }
         }
@@ -620,6 +628,50 @@ mod tests {
         ui.m.dec_cs = Some(DEC_REF_BASE + 2);
         ui.m.dec_src4 = Some(DEC_REF_BASE + 3);
         assert_eq!(ui.reference_decode_packets(&ui.m).unwrap_err(), "Decoder sources do not overlap");
+    }
+
+    // Issue #225 (halma1, DCC on a live track): the screen record of a live channel is peak-detect or resampled, so a
+    // decoder of a live record reads the acquisition's own samples, for every role. Break it catches: the live path
+    // decoding the screen record although `raw` holds the channel; a decoder whose raw channel is a second role (an SPI
+    // clock) staying on the screen record; an envelope (min/max) frame or an empty raw channel taken as samples.
+    #[test]
+    fn a_live_decoder_reads_the_raw_samples_of_every_role() {
+        let mut ui = uart_ui(4000);
+        let (v, dt) = uart(0x5a, 4000);
+        let frame = |c: usize, envelope: bool| {
+            let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
+            ch[c] = v.clone();
+            Arc::new(crate::board::Frame { seq: 7, dt, ch, envelope, ..crate::board::Frame::default() })
+        };
+        let record = |raw: Option<Arc<crate::board::Frame>>| Record {
+            // the screen: 40 points of the idle level, too coarse for a start bit
+            ch: std::array::from_fn(|c| if c == 0 { vec![3.3; 40] } else { Vec::new() }),
+            dt: dt * 100.0,
+            t0: 0.0,
+            triggered: true,
+            partial: false,
+            raw: raw.map(|frame| crate::wave::Raw { frame, i0: 0, i1: 40, t0: 0.0, conditioned: true }),
+            la: None,
+            pairs: false,
+        };
+        ui.m.dec_src = 0;
+        ui.last[0] = Some(record(None));
+        assert!(!ui.decoder_uses_raw(&ui.m));
+        assert!(ui.decode_packets_of(&ui.m).unwrap().iter().all(|p| p.value != 0x5a), "the screen has no byte");
+        ui.last[0] = Some(record(Some(frame(0, false))));
+        assert!(ui.decoder_uses_raw(&ui.m));
+        let packets = ui.decode_packets_of(&ui.m).unwrap();
+        assert!(packets.iter().any(|p| p.kind == oos_dsp::decode::Kind::Data && p.value == 0x5a), "{packets:?}");
+        ui.last[0] = Some(record(Some(frame(0, true))));
+        assert!(!ui.decoder_uses_raw(&ui.m), "min/max pairs are not samples");
+        // SPI: data on CH1 without raw samples, the clock on CH2 with them
+        ui.last[0] = Some(record(Some(frame(1, false))));
+        ui.m.dec_proto = Proto::SPI;
+        ui.m.dec_src2 = 1;
+        ui.m.dec_cs = None;
+        assert!(ui.decoder_uses_raw(&ui.m), "a second role with raw samples");
+        ui.m.dec_src2 = 2;
+        assert!(!ui.decoder_uses_raw(&ui.m), "no role has raw samples");
     }
 
     #[test]
