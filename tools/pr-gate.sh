@@ -19,7 +19,7 @@
 #            a refactoring the comparison found equal: its title begins with `Lints:` or `Refactor:`, it says
 #            `Behaviour: unchanged`, CI's job `compare` passed with calibration values (artifact `compare-calibrated`)
 #            and kept nothing, and it touches only code that builds
-#            register sequences, which the comparison proves - nothing of $live (ADR 0042)
+#            register sequences, which the comparison proves - nothing of $live, all of $proven (ADR 0042)
 #   review   GitHub Copilot has reviewed it, once per pull request (ADR 0039), and left no open issue, or every
 #            thread it opened is resolved; pending until then, and for a draft. When the review was of an earlier
 #            commit, the status says so: what came after it was not read by Copilot.
@@ -41,7 +41,15 @@ hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|root
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
 live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
-live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$)"
+live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
+# what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
+# oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
+# in neither or in both), and one that is in neither counts as live: a new or a split file needs a unit until it is
+# classed
+proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
+proven="${proven}hal/src/dho/seq/(frame|samples|settings|tests)\.rs$|hal/src/dho/(acq|adc|afe|afg|auxout|avg|calfile|"
+proven="${proven}clock|counter|dvm|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|spu|target|tpu|uarttrig|"
+proven="${proven}wpu|zone|zonegeom)\.rs$)"
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
@@ -191,6 +199,7 @@ one() {
 				[ "$(ci_job scope)" = success ] && [ "$(ci_kept scope-binaries-differ)" = 0 ]; then
 				status "$sha" unit success "the programs for the scope are byte-identical to the base's (job scope)"
 			elif ! printf '%s\n' "$files" | grep -Eq "$live" &&
+				! printf '%s\n' "$files" | grep -E "$hardware" | grep -Evq "$proven" &&
 				printf '%s\n' "$title" | grep -Eq '^(Lints|Refactor):' && [ -n "$unchanged" ] &&
 				[ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ] &&
 				[ "$(ci_kept compare-calibrated 0)" = 1 ]; then
