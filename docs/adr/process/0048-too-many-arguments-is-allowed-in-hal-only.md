@@ -1,6 +1,6 @@
 # ADR 0048: `too_many_arguments` is allowed for the whole crate in hal only
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 

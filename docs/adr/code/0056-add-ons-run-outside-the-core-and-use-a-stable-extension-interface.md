@@ -1,6 +1,6 @@
 # ADR 0056: Add-ons run outside the core and use a stable extension interface
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 

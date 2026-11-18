@@ -1,6 +1,6 @@
 # ADR 0052: What a run on a unit has to cover depends on the class of the path
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 

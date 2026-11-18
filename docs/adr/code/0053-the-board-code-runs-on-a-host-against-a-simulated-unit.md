@@ -1,6 +1,6 @@
 # ADR 0053: The board code runs on a host against a simulated unit
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 

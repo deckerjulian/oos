@@ -1,6 +1,6 @@
 # ADR 0025: Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow`
 
-- Status: accepted
+- Status: accepted, amended by ADR 0054 (there is no telnet; SSH is the only shell)
 - Date: 2026-11-15
 - Category: system
 

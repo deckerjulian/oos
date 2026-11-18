@@ -1,6 +1,6 @@
 # ADR 0045: The Rust tool chain and the base images of the containers are pinned
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 

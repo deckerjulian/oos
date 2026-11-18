@@ -1,6 +1,6 @@
 # ADR 0029: Batch is the default draw path
 
-- Status: accepted
+- Status: superseded by ADR 0059 (Batch is the only draw path)
 - Date: 2026-11-16
 - Category: code
 

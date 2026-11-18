@@ -1,6 +1,6 @@
 # ADR 0046: Every kind of extension has one registry, one recipe and one check that names what is missing
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 

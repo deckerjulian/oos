@@ -1,6 +1,6 @@
 # ADR 0058: A protocol decoder is described and run in oos-dsp and shown in oos-ui
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 

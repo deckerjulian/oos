@@ -1,6 +1,6 @@
 # ADR 0002: Decoders, measurements and analyser pages are modules behind one registration
 
-- Status: accepted
+- Status: accepted, amended by ADR 0058 (a protocol decoder is described and run in oos-dsp, shown in oos-ui)
 - Date: 2026-11-11 (protocol decoders), extended 2026-11-15 (measurements, analyser pages)
 - Category: code
 

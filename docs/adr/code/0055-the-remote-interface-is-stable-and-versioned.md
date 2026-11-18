@@ -1,6 +1,6 @@
 # ADR 0055: The remote interface (SCPI and HTTP) is stable and versioned
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 
