@@ -7,6 +7,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- A number pad for the values of a channel's scale and offset, the time base and its position and the trigger level
+  (#22): a tap on the value opens it, a key with the unit (`mV`, `V`, `µs` ...) sets it, as `:CHANnel<n>:SCALe` and
+  the other remote commands do ([First Steps](wiki/First-Steps.md#the-keyboard)).
 - USB and Bluetooth mice and keyboards ([First Steps](wiki/First-Steps.md#mouse-and-keyboard)): the mouse is the
   finger, with a pointer while it is in use that moves in even steps; the keys stand in for the front panel and type
   into the on-screen keyboard. oos-ui takes them for itself, so no key reaches the console shell behind the screen

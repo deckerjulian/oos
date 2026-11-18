@@ -48,6 +48,7 @@ mod menu_dialog;
 mod menu_items;
 mod menu_text;
 mod motor;
+mod numpad;
 mod offline;
 mod overclock;
 mod pages;
@@ -972,6 +973,8 @@ pub struct Ui {
     /// System > Network > Bluetooth (ui/bt.rs); a Bluetooth stick is plugged in (`hci0`), and how many devices are
     /// connected through it as inputs (the top bar)
     bt: bt::BtUi,
+    /// the number pad of a value row (ui/numpad.rs)
+    numpad: numpad::NumPad,
     bt_stick: bool,
     bt_inputs: usize,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)

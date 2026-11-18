@@ -111,6 +111,12 @@ with the other preferences and across restarts; Default set-up and Recall keep i
 
 Names of channels and references, math formulas and WLAN passwords are typed on the on-screen keyboard. The arrows either side of Space move the insertion point one character, and a tap into the entry puts it where you tap. Typing and Delete work at the insertion point, so a wrong character in a long password is fixed without typing the rest again. Show / Hide shows the password.
 
+A number is typed on the number pad: tap the value itself (not - or +) of a channel's scale or offset, the time base
+or its position, or the trigger level. Type the digits, a point and a leading minus, then tap the key with the unit
+you mean (`mV`, `V`, `µs`, `ns` ...), which sets the value and closes the pad. The value lands where a remote command
+would put it: the scale on the nearest step (with Fine on, on the next calibrated step above it). Cancel leaves it as
+it was.
+
 ## Mouse and keyboard
 
 A USB mouse and keyboard work in the front port; Bluetooth ones through a stick: **System > Network > Bluetooth > Find devices** with the mouse or keyboard in pairing mode, tap it, and type the passkey a keyboard shows on it, then Enter. It reconnects by itself later; the `BT` box in the top bar turns green while one is connected ([docs/bluetooth.md](https://github.com/dekajoule/oos/blob/main/docs/bluetooth.md)). The mouse is the finger: a left click is a tap, a drag with the left button a touch drag, a right click the context menu, the wheel pans; with Shift it changes V/div, with Ctrl it zooms, with Alt it moves the trigger level. A white pointer shows while the mouse is in use and goes after 5 s at rest.
