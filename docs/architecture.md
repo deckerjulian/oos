@@ -223,7 +223,7 @@ flowchart TB
         signal["signal<br/>wave, trig, protocols, measures, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
         settings["settings<br/>settings<br/>one row per setting"]
         board["board<br/>board<br/>the one door to the hardware"]
-        model["model<br/>model, math, zone, decode<br/>what the user has set"]
+        model["model<br/>model, math, zone, decode, words<br/>what the user has set"]
         base["base<br/>gfx, font, layout, drm, vpu, hid; in the crate oos-system (ui/system/): clock, sysconf, system, net, netacl, mdns, ssh and nine more<br/>no state of the scope"]
     end
     hal["oos_hal::dho (hal/src/dho/)<br/>the registers of the DHO800/DHO900 board"]

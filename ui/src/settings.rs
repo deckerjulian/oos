@@ -205,7 +205,7 @@ pub fn command(slices: &[&'static [Setting]], nodes: &[&str]) -> Option<&'static
     slices.iter().flat_map(|g| g.iter()).find(|s| match s.scpi {
         Scpi::Cmd(c) => {
             c.split(':').count() == nodes.len()
-                && c.split(':').zip(nodes).all(|(word, node)| crate::scpi::kw(node, word))
+                && c.split(':').zip(nodes).all(|(word, node)| crate::words::kw(node, word))
         }
         _ => false,
     })
@@ -254,9 +254,9 @@ impl Setting {
     /// Reads the value of a setup line; the error names what was wrong, as `store::set` reports it.
     pub fn load(&self, m: &mut Model, n: usize, text: &str) -> Result<(), String> {
         let v = match &self.ty {
-            Ty::Bool => Val::Bool(crate::store::p_bool(text)?),
-            Ty::U32 { min, max, .. } => Val::U32(crate::store::p_u32(text)?.clamp(*min, *max)),
-            Ty::Steps(_) => Val::U32(crate::store::p_u32(text)?.max(1)),
+            Ty::Bool => Val::Bool(crate::words::p_bool(text)?),
+            Ty::U32 { min, max, .. } => Val::U32(crate::words::p_u32(text)?.clamp(*min, *max)),
+            Ty::Steps(_) => Val::U32(crate::words::p_u32(text)?.max(1)),
             Ty::Choice(list, unknown, _) => {
                 Val::Index(list.iter().position(|c| c.store == text).ok_or_else(|| match unknown {
                     Unknown::Value => format!("unknown value: {}", text),
@@ -266,12 +266,12 @@ impl Setting {
                     }
                 })?)
             }
-            Ty::Seconds { .. } | Ty::Hertz { .. } => Val::F32(crate::store::p_f32(text)?),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => Val::F32(crate::words::p_f32(text)?),
             Ty::Real { range, .. } => {
                 let (lo, hi) = range.unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
                 match (self.get)(m, n) {
-                    Val::F32(_) => Val::F32(crate::store::p_f32(text)?.clamp(lo as f32, hi as f32)),
-                    _ => Val::F64(crate::store::p_f64(text)?.clamp(lo, hi)),
+                    Val::F32(_) => Val::F32(crate::words::p_f32(text)?.clamp(lo as f32, hi as f32)),
+                    _ => Val::F64(crate::words::p_f64(text)?.clamp(lo, hi)),
                 }
             }
             Ty::Custom(io) => (io.load)(text)?,
@@ -287,8 +287,8 @@ impl Setting {
             Ty::Bool => if v.index() != 0 { "1" } else { "0" }.to_string(),
             Ty::U32 { .. } | Ty::Steps(_) => v.index().to_string(),
             Ty::Choice(list, ..) => short(list[v.index()].scpi),
-            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::e(v.secs() as f64),
-            Ty::Real { .. } => crate::scpi::e(v.real()),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::words::e(v.secs() as f64),
+            Ty::Real { .. } => crate::words::e(v.real()),
             Ty::Custom(io) => (io.query)(v),
         }
     }
@@ -296,7 +296,7 @@ impl Setting {
     /// Sets the value an SCPI argument names; false (the model untouched) when it names none.
     pub fn take(&self, m: &mut Model, n: usize, arg: &str) -> bool {
         let v = match &self.ty {
-            Ty::Bool => crate::scpi::parse_bool(arg).map(Val::Bool),
+            Ty::Bool => crate::words::parse_bool(arg).map(Val::Bool),
             Ty::U32 { min, max, .. } => {
                 let (lo, hi) = self.accept.unwrap_or((*min as f64, *max as f64));
                 arg.trim()
@@ -311,19 +311,21 @@ impl Setting {
                 .ok()
                 .filter(|&n| n >= list[0])
                 .map(|n| Val::U32(list.iter().rev().copied().find(|&c| c <= n).unwrap_or(list[0]))),
-            Ty::Choice(list, _, Arg::Keyword) => list.iter().position(|c| crate::scpi::kw(arg, c.scpi)).map(Val::Index),
+            Ty::Choice(list, _, Arg::Keyword) => {
+                list.iter().position(|c| crate::words::kw(arg, c.scpi)).map(Val::Index)
+            }
             Ty::Choice(list, _, Arg::Prefix) => {
                 let a = arg.to_ascii_uppercase();
                 list.iter().position(|c| a.starts_with(&short(c.scpi))).map(Val::Index)
             }
-            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::num(arg)
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::words::num(arg)
                 .filter(|&x| self.accept.is_none_or(|(lo, hi)| (lo..=hi).contains(&(x as f64))))
                 .map(Val::F32),
             Ty::Real { range, .. } => {
                 let (lo, hi) = range.unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
                 let within = |x: f64| self.accept.is_none_or(|(a, b)| (a..=b).contains(&x));
                 match (self.get)(m, n) {
-                    Val::F32(_) => crate::scpi::num(arg)
+                    Val::F32(_) => crate::words::num(arg)
                         .filter(|&x| within(x as f64))
                         .map(|x| Val::F32(x.clamp(lo as f32, hi as f32))),
                     _ => arg
