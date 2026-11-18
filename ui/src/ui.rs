@@ -664,15 +664,15 @@ impl MeasSrc {
     }
 }
 
-/// One record's measurements: (channel, samples, dt, the smallest swing that counts as a signal).
-type MeasJob = (u64, Vec<(usize, MeasSrc, f64, f64)>);
+/// One record's measurements: (channel, samples, dt, the smallest swing that counts as a signal, min/max pairs).
+type MeasJob = (u64, Vec<(usize, MeasSrc, f64, f64, bool)>);
+type MeasWork<'a> = (usize, &'a [f32], f64, f64, bool);
 type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
 
 /// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
-/// on the unit).
-fn measure_channels(work: &[(usize, &[f32], f64, f64)]) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
-    let one =
-        |&(c, v, dt, min): &(usize, &[f32], f64, f64)| (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min));
+/// on the unit); min/max pairs in time on the mean of neighbours (#118).
+fn measure_channels(work: &[MeasWork]) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
+    let one = |&(c, v, dt, min, p): &MeasWork| (c, stats(v, dt), analysis::analyze_samples(v, dt, min, 0.1, 0.9, p));
     if work.len() < 2 {
         return work.iter().map(one).collect();
     }
@@ -702,8 +702,8 @@ impl MeasWorker {
             .spawn(move || {
                 crate::http::to_little_cores();
                 while let Ok((n, work)) = jobs.recv() {
-                    let w: Vec<(usize, &[f32], f64, f64)> =
-                        work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
+                    let w: Vec<MeasWork> =
+                        work.iter().map(|(c, v, dt, min, p)| (*c, v.samples(), *dt, *min, *p)).collect();
                     if done.send((n, measure_channels(&w))).is_err() {
                         break;
                     }

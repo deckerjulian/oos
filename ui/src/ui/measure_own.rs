@@ -145,6 +145,10 @@ impl Ui {
             min_amp: 0.4 * f32::from_bits(k.vpd) as f64,
             low: f64::from_bits(k.low),
             high: f64::from_bits(k.high),
+            pairs: match key.source {
+                WaveId::Ch(c) => self.last[0].as_ref().is_some_and(|r| self.measurement_on_pairs(r, c)),
+                WaveId::Ref(_) => false,
+            },
             own: true,
             analysis,
         })
@@ -188,9 +192,10 @@ impl Ui {
         }
         if key.analysis.hi - key.analysis.lo <= BACKGROUND_MEASUREMENT_POINTS {
             let Some(job) = self.own_job(key) else { return f64::NAN };
-            let analysis = job.analysis.unwrap_or_else(|| {
-                Arc::new(oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high))
-            });
+            let analysis = match &job.analysis {
+                Some(a) => Arc::clone(a),
+                None => Arc::new(job.analyze()),
+            };
             let readings = scalar_readings(&analysis, key.analysis);
             let value = readings[index];
             self.cache_own_result(key, analysis, readings);

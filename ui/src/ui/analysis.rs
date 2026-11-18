@@ -61,8 +61,32 @@ struct RefMeasureJob {
     min_amp: f64,
     low: f64,
     high: f64,
+    /// the samples are min/max pairs (`Ui::measurement_on_pairs`)
+    pairs: bool,
     own: bool,
     analysis: Option<Arc<oos_dsp::measure::Analysis>>,
+}
+
+impl RefMeasureJob {
+    fn analyze(&self) -> oos_dsp::measure::Analysis {
+        analyze_samples(self.samples.slice(), self.dt, self.min_amp, self.low, self.high, self.pairs)
+    }
+}
+
+/// The analysis of a channel's or a ref's samples; min/max pairs measured in time on the mean of neighbours (#118).
+pub(super) fn analyze_samples(
+    v: &[f32],
+    dt: f64,
+    min: f64,
+    low: f64,
+    high: f64,
+    pairs: bool,
+) -> oos_dsp::measure::Analysis {
+    if pairs {
+        oos_dsp::measure::analyze_pairs(v, dt, min, low, high)
+    } else {
+        oos_dsp::measure::analyze_refs(v, dt, min, low, high)
+    }
 }
 
 enum MeasureSamples {
@@ -148,13 +172,11 @@ impl RefMeasureWorker {
 }
 
 fn measure_reference(job: RefMeasureJob) -> RefMeasureResult {
-    let analysis = job.analysis.unwrap_or_else(|| {
-        Arc::new(if job.key.basic {
-            basic_analysis(crate::board::BasicStats::of(job.samples.slice()))
-        } else {
-            oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high)
-        })
-    });
+    let analysis = match &job.analysis {
+        Some(a) => Arc::clone(a),
+        None if job.key.basic => Arc::new(basic_analysis(crate::board::BasicStats::of(job.samples.slice()))),
+        None => Arc::new(job.analyze()),
+    };
     let readings = scalar_readings(&analysis, job.key);
     RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own }
 }
@@ -316,6 +338,18 @@ impl Ui {
         (lo, hi)
     }
 
+    /// Whether `measurement_channel_samples` gives min/max pairs: the screen record of peak detect, or one resampled from
+    /// a frame of pairs (roll, scan, the live compression). High res averages them.
+    pub(super) fn measurement_on_pairs(&self, rec: &Record, c: usize) -> bool {
+        if self.m.acq == AcqMode::HiRes {
+            return false;
+        }
+        match rec.raw.as_ref() {
+            Some(raw) if !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2) => false,
+            raw => rec.pairs || raw.is_some_and(|r| r.frame.envelope),
+        }
+    }
+
     /// The measurement gate is independent of replay routing, so live CH and R
     /// overlays use the same physical screen times at their own sample intervals.
     pub(super) fn measurement_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
@@ -388,6 +422,7 @@ impl Ui {
                     min_amp: 0.4 * r.vpd as f64,
                     low: self.m.meas_lpct,
                     high: self.m.meas_hpct,
+                    pairs: false,
                     own: false,
                     analysis: None,
                 };
@@ -540,6 +575,7 @@ impl Ui {
                     min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64,
                     low: self.m.meas_lpct,
                     high: self.m.meas_hpct,
+                    pairs: self.measurement_on_pairs(record, channel),
                     own: false,
                     analysis: None,
                 };
@@ -547,12 +583,13 @@ impl Ui {
             }
             return None;
         }
-        let analysis = Arc::new(oos_dsp::measure::analyze_refs(
+        let analysis = Arc::new(analyze_samples(
             samples,
             dt,
             0.4 * self.m.ch[channel].volts_per_div() as f64,
             self.m.meas_lpct,
             self.m.meas_hpct,
+            self.measurement_on_pairs(record, channel),
         ));
         let readings = scalar_readings(&analysis, key);
         *self.azr.ch_measure[channel].borrow_mut() =

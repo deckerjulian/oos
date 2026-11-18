@@ -321,11 +321,11 @@ impl Ui {
 
     /// The measurements of `rec` now, on this thread.
     pub(super) fn measure_rec(&mut self, rec: &Record) {
-        let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
+        let work: Vec<super::MeasWork> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
                 let (v, dt) = self.meas_slice(rec, c);
-                (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64)
+                (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64, self.meas_on_pairs(rec, c))
             })
             .collect();
         let done = measure_channels(&work);
@@ -413,16 +413,16 @@ impl Ui {
             return;
         }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
-        let job: Vec<(usize, MeasSrc, f64, f64)> = (0..NCH)
+        let job: Vec<(usize, MeasSrc, f64, f64, bool)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
                 let min = 0.4 * self.m.ch[c].volts_per_div() as f64;
                 match self.meas_frame(rec, c) {
                     Some((f, i0, i1)) => {
                         let dt = f.dt;
-                        (c, MeasSrc::Frame(f, c, i0, i1), dt, min)
+                        (c, MeasSrc::Frame(f, c, i0, i1), dt, min, env[c])
                     }
-                    None => (c, MeasSrc::Own(rec.ch[c].clone()), rec.dt, min),
+                    None => (c, MeasSrc::Own(rec.ch[c].clone()), rec.dt, min, env[c]),
                 }
             })
             .collect();
