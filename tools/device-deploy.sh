@@ -44,6 +44,14 @@ send() {
 	run "chmod +x /tmp/$2" >/dev/null
 }
 
+# stop NAME FILE: FILE ends the loop that starts NAME, NAME is ended, and the next step waits until it is gone (at
+# most 15 s): an oos-ui that starts while the last one still holds its ports and the DMA device runs without them
+# (#212: "Resource busy" on /dev/xdma0_c2h_0, "SCPI port 5555 not available")
+stop() {
+	run "touch $2; kill \$(pidof $1) 2>/dev/null; i=0; while pidof $1 >/dev/null && [ \$i -lt 15 ]; do sleep 1; i=\$((i+1)); done; ! pidof $1" >/dev/null ||
+		echo "warning: $1 still runs after 15 s" >&2
+}
+
 loop() {
 	# as rcS starts it, with another program and another stop file; the hardware is up, so no start-up screen
 	l="while [ ! -e $2 ]; do $1 --hw --afe >> /tmp/oos-ui.log 2>&1; sleep 2; done"
@@ -51,7 +59,7 @@ loop() {
 }
 
 if [ "${2:-}" = --restore ]; then
-	run "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" >/dev/null
+	stop oos-ui.new /tmp/oos-ui.off2
 	run "rm -f /tmp/oos-ui.off" >/dev/null
 	loop /bin/oos-ui /tmp/oos-ui.off
 	echo "installed oos-ui running again"
@@ -61,11 +69,11 @@ fi
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
 run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1"
 # a build from an earlier deploy still runs from /tmp: "text file busy" for the upload otherwise
-run "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" >/dev/null
+stop oos-ui.new /tmp/oos-ui.off2
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
 send "$here/tools/plan-matrix.sh" plan-matrix.sh
-run "touch /tmp/oos-ui.off; kill \$(pidof oos-ui) 2>/dev/null || true" >/dev/null
+stop oos-ui /tmp/oos-ui.off
 run "rm -f /tmp/oos-ui.off2" >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2
 sleep 6
