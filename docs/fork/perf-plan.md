@@ -254,17 +254,32 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   worker and the helper had a mailbox, and the UI added every map of each, 4 x 970 x 448 pixels per mailbox, also the
   maps of channels that are off; in the host test about 4.9 sets a screen, 8.5 M pixel adds (about 50 MB read and
   written, a memory-bound pass that the A72 cannot keep in its cache), plus waits for a worker that added into its
-  mailbox under the lock. Now the workers and the helper fold their maps into one set on their own cores (the set
-  taken out of the shared mailbox and added outside the lock: the UI never waits, and finds the set being folded at
-  the next screen), the UI swaps that set in for minimum persistence (no pixel touched) or adds the maps of the
-  channels on (one map per channel), and a set is cleared only in the maps it used. In batch mode the fast path draws
-  the few queued frames (the newest of older batches) on the frame loop alone: its helpers would wait for the small
-  cores the workers keep busy. Pictures equal to before (guards above, and the merge of 12 batches while the workers
-  fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div` (host M3, 16 frames of 250 kB
-  a step, 4 workers): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum persistence and 0.03-0.13 ms
-  (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame loop per step 1 / 2 / 4 channels
-  5.4 / 3.3 / 3.3 ms before, 4.8 / 2.8 / 2.7 ms after, frames mode 7.5-8.7 / 5.0-5.4 / 4.3-4.7 ms. The host does not
-  show the unit's gap (its memory and cores keep up); the unit's rate is not measured yet.
+  mailbox under the lock. Now each worker and the helper draw on into their maps over their batches and once a screen
+  (after their first batch since a merge) fold them into one set in a shared mailbox, on their own cores and outside
+  the lock (the UI never waits); after their other batches they park the maps in their slot and take them up again.
+  The UI swaps the set in for minimum persistence (no pixel touched) or adds the maps of the channels on (one map per
+  channel); without a whole set it takes a parked one. A set is cleared only in the maps it used. A batch's read-out
+  buffer goes back with its last frame drawn, not when every worker holding the batch lets it go. While the workers
+  have batches the fast path draws the few queued frames (the newest of older batches) on the frame loop alone: its
+  helpers would wait for the small cores the workers keep busy; without batches (one frame each, slow time bases)
+  it draws with its helpers as in the frames mode. Pictures equal to before (guards above, and the merge of 12
+  batches while the drawers fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div`
+  (host M3, 16 frames of 250 kB a step, 4 workers): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum
+  persistence and 0.03-0.13 ms (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame
+  loop per step 1 / 2 / 4 channels 5.4 / 3.3 / 3.3 ms before, 4.8 / 2.8 / 2.7 ms after, frames mode 7.5-8.7 /
+  5.0-5.4 / 4.3-4.7 ms. Unit (DHO924S, verified on the unit, 2026-11-18) with the shared mailbox folded after every
+  batch: 10 us/div 28.5-29.3 screens a second in batch mode (was 14.4-19.2), but more frames dropped at 4 channels
+  (37 -> 47 %): the set was folded 4-5 times a batch (once a drawer), each a 4-map add on an A53 while the worker
+  held the batch and with it its buffer, and was out of the mailbox so often that most screens found none. The
+  parking is not measured on the unit yet. `perf_guard_batch_at_a_fixed_rate` (host M3, the unit's loop at a fixed
+  batch rate, 3 buffers, 4 workers, 29 screens a second), dropped for want of a buffer at 4 channels with a batch
+  every 400 / 250 us: mailbox per drawer 31-37 / 55-57 %, shared mailbox folded after every batch 40 / 61 % with
+  the median screen getting 0-8 frames, parked 1-13 / 33-41 % with even screens (host numbers vary with its load).
+  Counters: every frame read and neither queued nor lent to the workers counts as dropped (frames 0 and 1 left out of
+  a batch, frames the screen does not take, frames the fast path skips); before, those were in the UI's own `hw
+  dropped` only, and acquired - used - dropped grew with them. Drops for want of a buffer (the workers behind the
+  acquisition) are counted in the pipeline's counters only; at short time bases they are the limit of batch mode: 4
+  A53 draw about 3 k frames/s at 10 us/div (estimate above), fewer than the acquisition delivers.
   `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
   40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53
