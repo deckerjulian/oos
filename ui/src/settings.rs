@@ -4,15 +4,16 @@
 //! One declaration per setting (docs/adr/code/0043): a row of a const table names a setting's key in setup files, its
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
-//! `:CHANnel`, `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs),
-//! the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read and write the model; what a
-//! change sets off on the screen (redraw, statistics) stays with the caller.
+//! `:CHANnel`, `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs,
+//! scpi/system.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
+//! and write the model; what a change sets off on the screen (redraw, statistics) stays with the caller.
 //!
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
-//! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs) and the channel
-//! settings (settings/channel.rs) have tables; the other settings are still written out by hand in each of those
-//! places. A numbered family is one row for all its instances: `<n>` in its key stands for the instance's number, and
-//! the getter and setter take the instance's index (0 for a row that is not numbered).
+//! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
+//! settings (settings/channel.rs) and the draw path (settings/system.rs) have tables; the other settings are still
+//! written out by hand in each of those places. A numbered family is one row for all its instances: `<n>` in its key
+//! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
+//! numbered).
 //! A new setting of a group with a table is a row there, its `Item` with its place in a menu (ui/item.rs,
 //! ui/menu_items.rs, ui/setting_items.rs), its query in ui/tests/scpi.txt, and
 //! `OOS_BLESS=1 cargo test --locked -q settings::tests` for the docs table.
@@ -24,6 +25,7 @@ pub mod channel;
 pub mod display;
 pub mod math;
 pub mod meters;
+pub mod system;
 pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
@@ -157,6 +159,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(meters::DVM_SLICES)
         .chain(meters::COUNTER_SLICES)
         .chain(channel::SLICES)
+        .chain(system::SLICES)
         .flat_map(|g| g.iter())
 }
 

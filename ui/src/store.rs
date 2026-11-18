@@ -354,7 +354,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     crate::settings::write(&crate::settings::display::DRAW, m, 0, &mut kv);
-    kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
+    crate::settings::write(&crate::settings::system::DRAW_PATH, m, 0, &mut kv);
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
@@ -933,13 +933,6 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
         "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
-        "draw_path" => {
-            m.draw_batch = match v.trim() {
-                "batch" => true,
-                "standard" => false,
-                _ => return Err(format!("{:?}: standard or batch", v)),
-            }
-        }
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "hdmi_view" => {
             let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;

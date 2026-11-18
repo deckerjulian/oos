@@ -1,10 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:SYSTem`: the error queue (`ERRor?`), `STATe?`, `GRAPhics`, `PIPeline`, `AOUTput`, `LOG`, `SET` and `GET`, and the
-//! fork's `:SYSTem:DEBug:...` nodes with the raw state of the FPGA units. A new `:SYSTem` command goes into
-//! `system_cmd` here (a debug node into `system_debug_cmd`), with its line in docs/scpi.md and its query in
-//! ui/tests/scpi.txt (AGENTS.md).
+//! `:SYSTem`: the error queue (`ERRor?`), `STATe?`, `GRAPhics`, `PIPeline` (a row of settings/system.rs), `AOUTput`,
+//! `LOG`, `SET` and `GET`, and the fork's `:SYSTem:DEBug:...` nodes with the raw state of the FPGA units. A new
+//! `:SYSTem` setting of a setup file is a row of that table; another command goes into `system_cmd` here (a debug node
+//! into `system_debug_cmd`), with its line in docs/scpi.md; either with its query in ui/tests/scpi.txt (AGENTS.md).
 
 use super::{kw, parse_bool, Scpi};
 use crate::board::{board, Board};
@@ -59,18 +59,12 @@ impl Scpi {
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
             }
-            // Acquire > Draw path: BATCh (PR #7's pipeline, the default) or FRAMes (Standard); the `pipe` part of
-            // :SYSTem:STATe? says which runs
-            if kw(nodes[1], "PIPeline") {
+            // the rows of settings/system.rs (Acquire > Draw path); a change does not mark the model changed
+            if let Some(row) = crate::settings::command(&crate::settings::system::SLICES, &nodes[1..]) {
                 if query {
-                    return t(if ui.m.draw_batch { "BATC" } else { "FRAM" });
+                    return t(&row.query(&ui.m, 0));
                 }
-                let a = arg.trim().to_ascii_uppercase();
-                if a.starts_with("BATC") {
-                    ui.m.draw_batch = true;
-                } else if a.starts_with("FRAM") || a.starts_with("STAN") {
-                    ui.m.draw_batch = false;
-                } else {
+                if !row.take(&mut ui.m, 0, arg) {
                     self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 }
                 return None;
