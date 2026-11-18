@@ -280,6 +280,21 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   dropped` only, and acquired - used - dropped grew with them. Drops for want of a buffer (the workers behind the
   acquisition) are counted in the pipeline's counters only; at short time bases they are the limit of batch mode: 4
   A53 draw about 3 k frames/s at 10 us/div (estimate above), fewer than the acquisition delivers.
+  Unit (verified on the unit, 2026-11-18) with the parking: 28.7-29.4 screens a second at 10 us/div; frames a second
+  in the picture against the build before the shared mailbox: 1 channel +4-8 %, 2 channels equal, 4 channels -9 to
+  -14 % at 1 and 10 us/div. There the batches are fewer than the screens, so every drawer of a batch hands its maps on
+  after it: about 4 folds a batch, each four 970 x 448 maps added on an A53, where the mailbox per drawer was mostly
+  taken empty. Folds and clears now touch only the blocks of 64 pixels that hold counts (`add_map`, `clear_map`): a
+  trace covers a small part of a map (23 % of the blocks for 40 frames of a sine of 31 periods across the screen),
+  and a fold on a small core is memory-bound. Not measured on the unit yet. Tried and left: a worker claiming half a
+  batch (two drawers a batch, half the folds): on the host (M3) at 4 channels, a batch every 400 us, 34-49 % dropped
+  against 2 % with 4 frames a claim, as a batch then waits for two workers while the others have none.
+  1 ms/div (unit: 18 of 37-39 records a second in the picture, the earlier build 38): a batch plans 20 frames (4 MB a
+  read) and waits up to 25 ms for them; a batch of two frames gives the screen one, as frame 0 is left out of a batch
+  of several (issue #5, since 2026-11-16), in the batch path and the path without batches alike. The frame loop uses
+  every record of batches of one frame (`batch_mode_uses_every_record_at_1_ms_per_div`), with the fast path's helpers
+  as before batch mode's changes, and the batch sizes are the acquisition thread's. Not yet known on the unit: whether
+  the batches there hold two frames (the `acquire_batch` log line, or `acq.frame0 = keep` as a check).
   `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
   40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53

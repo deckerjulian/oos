@@ -455,7 +455,7 @@ impl Acc {
     fn reset(&mut self, gen: u64) {
         for (m, u) in self.ph.map.iter_mut().zip(&mut self.used) {
             if std::mem::take(u) {
-                m.fill(0);
+                clear_map(m);
             }
         }
         self.folds.clear();
@@ -549,7 +549,8 @@ pub struct Pipe {
 }
 
 /// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them, and
-/// the pixels the merge added on the caller's thread (none when the maps were swapped in).
+/// the pixels the merge added on the caller's thread (none when the maps were swapped in; else the blocks of the maps
+/// of the channels on that hold counts, `add_map`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Merged {
     pub frames: u64,
@@ -749,8 +750,7 @@ impl Pipe {
                 *clear = false;
             } else {
                 for c in (0..NCH).filter(|&c| a.used[c]) {
-                    add_map(&mut ph.map[c], &a.ph.map[c]);
-                    got.px += a.ph.map[c].len() as u64;
+                    got.px += add_map(&mut ph.map[c], &a.ph.map[c]);
                 }
             }
             for (x, y) in edges.iter_mut().zip(a.edges) {
@@ -923,11 +923,37 @@ fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mut
     }
 }
 
-/// `dst` += `src`, saturating: one channel's map.
-fn add_map(dst: &mut [u16], src: &[u16]) {
-    for (x, y) in dst.iter_mut().zip(src) {
-        *x = x.saturating_add(*y);
+/// `dst` += `src`, saturating: one channel's map. A trace covers a small part of it: the blocks of `src` without
+/// counts are only read, `dst` there not at all (a fold or a clear on a small core is memory-bound: the reads and
+/// writes it leaves out are its time).
+/// Returns the pixels of the blocks it added.
+fn add_map(dst: &mut [u16], src: &[u16]) -> u64 {
+    let mut px = 0;
+    for (d, s) in dst.chunks_mut(BLOCK).zip(src.chunks(BLOCK)) {
+        if any_count(s) {
+            for (x, y) in d.iter_mut().zip(s) {
+                *x = x.saturating_add(*y);
+            }
+            px += d.len() as u64;
+        }
     }
+    px
+}
+
+/// `m` cleared: only its blocks with counts are written.
+fn clear_map(m: &mut [u16]) {
+    for b in m.chunks_mut(BLOCK) {
+        if any_count(b) {
+            b.fill(0);
+        }
+    }
+}
+
+/// Pixels of a block of `add_map` and `clear_map`: two cache lines.
+const BLOCK: usize = 64;
+
+fn any_count(b: &[u16]) -> bool {
+    b.iter().fold(0, |a, &x| a | x) != 0
 }
 
 /// Workers where the cores are all alike (the host): two.
@@ -1364,9 +1390,9 @@ mod tests {
             assert_eq!((n.frames, n.triggered), (41, trig), "{}", what);
             assert!(!clear && trig > 30 && trig < 41, "{}: {} triggered", what, trig);
             // minimum persistence: the first set swapped in, nothing added on the UI's thread; a parked set after it
-            // is added (one map a channel on)
+            // is added (the blocks with counts of one map a channel on)
             assert_eq!(px[0], 0, "{}", what);
-            assert!(px[1..].iter().all(|&x| x == (w * h * (1 + two as usize)) as u64), "{}: {:?}", what, px);
+            assert!(px[1..].iter().all(|&x| x > 0 && x <= (w * h * (1 + two as usize)) as u64), "{}: {:?}", what, px);
             assert_eq!(edges, wedges, "{}", what);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
             for c in 0..NCH {
@@ -1412,7 +1438,7 @@ mod tests {
         let done = std::sync::atomic::AtomicBool::new(false);
         let mut take = |ph: &mut Phosphor| {
             let got = pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
-            assert!(got.px == 0 || got.px == (w * h) as u64, "{} pixels added", got.px);
+            assert!(got.px <= (w * h) as u64, "{} pixels added", got.px);
             frames += got.frames;
             merges += (got.frames > 0) as u64;
         };
@@ -1740,7 +1766,7 @@ mod tests {
     }
 
     // Break it catches (unit 2026-11-18, more frames dropped at 4 channels): the drawers folding their maps into the
-    // mailbox after every batch (folds a screen that grow with the batches, worker time and memory traffic on the
+    // mailbox after every batch (folds a screen that grow with the batches: worker time and memory traffic on the
     // small cores taken from drawing), or frames lost while they park their maps between screens.
     #[test]
     fn the_drawers_fold_once_a_screen() {
@@ -1753,7 +1779,6 @@ mod tests {
         let (screens, per) = (5u64, 8u64);
         let mut hp = Helper::default();
         let mut ph = Phosphor::new(w, h);
-        let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
         let mut frames = 0;
         for _ in 0..screens {
             for _ in 0..per {
@@ -1763,13 +1788,44 @@ mod tests {
                 settle(&pipe);
                 pipe.help_done(&mut hp);
             }
-            frames += merge(&mut ph);
+            frames += pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
         }
         let folds = pipe.mail.lock().unwrap().folds;
         frames += merge_all(&pipe, &mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
         assert_eq!((frames, c.read()), (40 * per * screens, (0, 0, 0)));
         // each of the 5 drawers hands its maps on once a screen at most, the first into the empty mailbox
         assert!(folds <= 4 * screens, "{} folds in {} screens of {} batches", folds, screens, per);
+    }
+
+    // Break it catches (unit 2026-11-18, 9-14 % fewer frames at 4 channels): a fold or a clear that goes over the whole
+    // map where the traces hold counts in a small part of it (where the batches are fewer than the screens every
+    // drawer of a batch folds its maps, at 4 channels four 970 x 448 maps each on a small core), counts left out, or
+    // pixels outside the blocks with counts touched wrongly (saturation, the last partial block).
+    #[test]
+    fn folding_and_clearing_touch_the_blocks_with_counts() {
+        let (w, h) = (970, 448);
+        let n = w * h;
+        // a batch's maps, as a drawer folds them: the traces of 40 frames, a sine with jitter and shifted frames
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(40, 12_512, false);
+        let (drawn, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+        let mut set = Phosphor::new(w, h);
+        let px = add_map(&mut set.map[0], &drawn.map[0]);
+        assert!(set.map[0] == drawn.map[0]);
+        assert!(px > 0 && px * 2 <= n as u64, "{} of {} pixels touched", px, n);
+        // the sums, saturated, and a last block of 59 pixels
+        let n = n - 5;
+        let mut src = vec![0u16; n];
+        for &(i, v) in &[(0usize, 3u16), (63, 1), (64, 7), (5000, u16::MAX), (n - 1, 2)] {
+            src[i] = v;
+        }
+        let mut dst = vec![1u16; n];
+        dst[5000] = 9;
+        assert_eq!(add_map(&mut dst, &src), 3 * BLOCK as u64 + 59);
+        let want: Vec<u16> = (0..n).map(|i| if i == 5000 { u16::MAX } else { 1 + src[i] }).collect();
+        assert!(dst == want);
+        clear_map(&mut src);
+        assert!(src.iter().all(|&x| x == 0));
     }
 
     /// The unit's loop at 10 us/div at a fixed rate (issue #186, unit 2026-11-18): a batch of 16 frames of 250 kB
