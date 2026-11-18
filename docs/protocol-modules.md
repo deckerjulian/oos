@@ -1,11 +1,13 @@
 # Protocol modules: adding a decoder
 
-A protocol decoder is a module in `oos-dsp` and one in `oos-ui`. In `oos-dsp`, next to the decoder in the file of its
-family, an `oos_dsp::protocols::ModuleInfo` says what it is: its stable key, its name, its family, the lines it takes,
-whether the main one may be a differential pair, how the decoder is called with the options and shared rows, its bit
-time, and what the protocol trigger finds in its packets and starts with; `oos_dsp::protocols::MODULES` lists them.
-In `oos-ui`, a type that implements `protocols::Protocol` names that info and brings what the scope shows of it (menu
-rows, labels, the first settings, demo traffic, a view), with one line that registers it:
+A protocol decoder is a module in `oos-dsp` and one in `oos-ui`
+([ADR 0058](adr/code/0058-a-protocol-decoder-is-described-and-run-in-oos-dsp-and-shown-in-oos-ui.md), which amends
+ADR 0002). In `oos-dsp`, next to the decoder in the file of its family, an `oos_dsp::protocols::ModuleInfo` says what
+it is: its stable key, its name, its family, the lines it takes, whether the main one may be a differential pair, how
+the decoder is called with the options and shared rows, its bit time, and what the protocol trigger finds in its
+packets and starts with; `oos_dsp::protocols::MODULES` lists them. In `oos-ui`, a type that implements
+`protocols::Protocol` names that info and brings what the scope shows of it (menu rows, labels, the first settings,
+demo traffic, a view), with one line that registers it:
 
 | What | Where it shows | Hook (default) |
 |---|---|---|
