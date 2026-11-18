@@ -1,6 +1,6 @@
 # ADR 0043: A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-18
 - Category: code
 
