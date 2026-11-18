@@ -146,19 +146,9 @@ impl Ui {
                 }
             }
         }
-        if taken.moved {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str("on the finest ref interval");
-        }
+        taken.note_moved(&mut note);
         let got = magnetic::measure(v, i, dt, geom);
-        if !got.note.is_empty() {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str(got.note);
-        }
+        add_note(&mut note, got.note);
         self.azr.mag_note = note;
         let n = got.loops.last().map(|l| l.len()).unwrap_or(0);
         if n > 0 {
@@ -294,6 +284,26 @@ pub(super) struct Taken {
     pub v: Vec<Vec<f32>>,
     pub opt: Vec<Option<Vec<f32>>>,
     pub moved: bool,
+}
+
+impl Taken {
+    /// Adds to a page's `note` that the waves were placed on the interval of a finer ref, when they were.
+    pub(super) fn note_moved(&self, note: &mut String) {
+        if self.moved {
+            add_note(note, "on the finest ref interval");
+        }
+    }
+}
+
+/// Adds `part` to a page's `note`, after ". " when the note says something already; an empty part adds nothing.
+pub(super) fn add_note(note: &mut String, part: &str) {
+    if part.is_empty() {
+        return;
+    }
+    if !note.is_empty() {
+        note.push_str(". ");
+    }
+    note.push_str(part);
 }
 
 impl Ui {

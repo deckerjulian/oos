@@ -340,12 +340,7 @@ impl Ui {
                 if q.short {
                     note = "cycle window is short".into();
                 }
-                if taken.moved {
-                    if !note.is_empty() {
-                        note.push_str(". ");
-                    }
-                    note.push_str("on the finest ref interval");
-                }
+                taken.note_moved(&mut note);
                 self.azr.inv_note = note;
                 self.azr.dq = Some(q);
             }
@@ -438,12 +433,7 @@ impl Ui {
     fn finish_mech(&mut self, shaft: oos_dsp::motor::Shaft, taken: &Taken) {
         let (tq, ev, ei) = (taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref());
         let mut note = shaft.note.to_string();
-        if taken.moved {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str("on the finest ref interval");
-        }
+        taken.note_moved(&mut note);
         let mech = motor::mechanical(shaft, tq, self.m.inv_scale, ev, ei);
         self.azr.inv_note = note;
         self.azr.mech = Some(mech);
