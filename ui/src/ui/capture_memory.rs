@@ -148,16 +148,7 @@ impl Ui {
             let Some(value) = values.reading(kind) else {
                 continue;
             };
-            let stat = &mut self.mstat[row];
-            if stat.n == 0 {
-                stat.min = value;
-                stat.max = value;
-            }
-            stat.n += 1;
-            stat.sum += value;
-            stat.sumsq += value * value;
-            stat.min = stat.min.min(value);
-            stat.max = stat.max.max(value);
+            self.mstat[row].add(value);
         }
     }
 
