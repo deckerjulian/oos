@@ -221,7 +221,7 @@ impl Ui {
         if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
             let tie = eye::tie(&clk.edges, &clk);
             self.azr.eye_ref = fp;
-            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
+            self.eye_refresh(&clk, &tie, (&v, dt, t0), &lay, rec);
             return;
         }
         if sim_capture {
@@ -233,7 +233,7 @@ impl Ui {
         self.azr.page.add(&tie, &clk);
         if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
             self.azr.page.t = self.now;
-            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
+            self.eye_refresh(&clk, &tie, (&v, dt, t0), &lay, rec);
         }
     }
 
@@ -311,17 +311,10 @@ impl Ui {
         (fold, gated)
     }
 
-    /// The heavy part of the page, from the pool and the last record.
-    fn eye_refresh(
-        &mut self,
-        clk: &eye::Clock,
-        tie: &[f64],
-        dt: f64,
-        t0: f64,
-        lay: &Layout,
-        wave: &[f32],
-        rec: &Record,
-    ) {
+    /// The heavy part of the page, from the pool and the last record. `wave` is the selected eye source: its
+    /// samples (on the common grid when a clock source is chosen), `dt` and `t0`.
+    fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], wave: (&[f32], f64, f64), lay: &Layout, rec: &Record) {
+        let (wave, dt, t0) = wave;
         let clock = if let Some(b) = self.m.eye_b {
             format!("clock from {}", self.wave_name(b))
         } else if self.m.eye_from_record {
@@ -363,7 +356,8 @@ impl Ui {
         p.text_status(&j);
         p.title = title;
         let means = self.azr.page.means.clone();
-        let (measured, model, eye_model) = self.eye_facts(clk, tie, &trend, &j, &meas, wave, dt, t0, rec, &means);
+        let input = FactInput { clk, tie, trend: &trend, j: &j, meas: &meas, wave, dt, means: &means };
+        let (measured, model, eye_model) = self.eye_facts(input, t0, rec);
         self.azr.page.measured.extend(measured);
         self.azr.page.model.extend(model);
         self.azr.page.eye_model.extend(eye_model);
@@ -372,33 +366,15 @@ impl Ui {
     }
 
     /// Gather optional companions; the DSP/figure builder is also used off-thread.
-    fn eye_facts(
-        &mut self,
-        clk: &eye::Clock,
-        tie: &[f64],
-        trend: &[f32],
-        j: &Jitter,
-        meas: &eye::EyeMeas,
-        wave: &[f32],
-        dt: f64,
-        t0: f64,
-        rec: &Record,
-        means: &EdgeMeans,
-    ) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    fn eye_facts(&mut self, input: FactInput, t0: f64, rec: &Record) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+        let (wave, dt) = (input.wave, input.dt);
         let settings = FactSettings::from(&self.m);
         let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id)).map(|s| eye_on_grid(s, t0, dt, wave.len()));
         let companion = self.m.eye_b.and_then(|id| self.eye_pair(rec, self.m.eye_src, id));
         populate_eye_facts(
             &mut self.azr.page,
             settings,
-            clk,
-            tie,
-            trend,
-            j,
-            meas,
-            wave,
-            dt,
-            means,
+            input,
             rail.as_ref().map(|v| (v.as_slice(), dt)),
             companion.as_ref().map(|(a, b, dt, _)| (a.as_slice(), b.as_slice(), *dt)),
         )
