@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("scpi_coverage", ROOT / "tools/scpi-coverage.py")
 cov = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cov)
+REAL_NOT_ASKED = dict(cov.NOT_ASKED)
 
 SCPI_RS = """fn kw(tok: &str, long: &str) -> bool { true }
 fn run(nodes: &[&str], arg: &str, ui: &mut Ui) {
@@ -75,6 +76,9 @@ class Coverage(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="oos-scpi-coverage-"))
         self.addCleanup(shutil.rmtree, self.root)
+        # the made-up tree has its own list of queries that are not asked: none, unless a test sets one
+        self.addCleanup(setattr, cov, "NOT_ASKED", cov.NOT_ASKED)
+        cov.NOT_ASKED = {}
         for rel, text in ((cov.SCPI_RS, SCPI_RS), (cov.SCPI_MD, SCPI_MD), (cov.SCPI_TXT, SCPI_TXT),
                           (cov.STORE_RS, STORE_RS)):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -171,6 +175,32 @@ class Coverage(unittest.TestCase):
         # second cell of the RUN row is asked in its short form
         self.assertEqual(self.result()["queries-tests"],
                          ([":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]", ":CURSor:CBX[?]"], 8))
+
+    def test_queries_not_asked_on_purpose(self):
+        # a listed query does not count; the total stays every documented query
+        cov.NOT_ASKED = {":CURSor:CAX[?]": "a reason"}
+        self.assertEqual(self.result()["queries-tests"], ([":CHANnel<n>:OFFSet[?]", ":CURSor:CBX[?]"], 8))
+        # a listed query that is asked, or that the docs no longer name, counts: the list must stay true
+        cov.NOT_ASKED = {":CHANnel<n>:SCALe[?]": "a reason", ":GONE?": "a reason"}
+        missing, _ = self.result()["queries-tests"]
+        self.assertEqual(missing, [
+            ":CHANnel<n>:SCALe[?] (in NOT_ASKED, but asked: remove it from the list)",
+            ":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]", ":CURSor:CBX[?]",
+            ":GONE? (in NOT_ASKED, but not in docs/scpi.md: remove it from the list)"])
+        # --list names them with their reasons
+        cov.NOT_ASKED = {":CURSor:CAX[?]": "a reason"}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cov.main(["--list", str(self.root)]), 0)
+        self.assertIn("not asked on purpose: 1 queries of docs/scpi.md (NOT_ASKED)\n  :CURSor:CAX[?]: a reason\n",
+                      out.getvalue())
+
+    def test_the_list_of_this_tree_is_true(self):
+        # every query of the tool's own list is documented in this tree and has a reason
+        queries = cov.documented_queries((ROOT / cov.SCPI_MD).read_text())
+        for q, why in REAL_NOT_ASKED.items():
+            self.assertIn(q, queries)
+            self.assertTrue(why)
 
     def test_query_pattern(self):
         pat = cov.query_pattern(":TIMebase[:MAIN]:SCALe[?]")

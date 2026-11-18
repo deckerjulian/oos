@@ -18,7 +18,8 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
   queries-tests  the queries of docs/scpi.md (each command in backticks, starting with `:` or `*`, in any cell of a
                  table row or in the running text, without its arguments, a relative one completed from the last
                  absolute one of its cell or sentence, when it ends in `?` or `[?]`) that no `scpi` line of
-                 ui/tests/scpi.txt asks, in the long or the short form as written;
+                 ui/tests/scpi.txt asks, in the long or the short form as written; NOT_ASKED below lists the
+                 ones it cannot ask, with the reason, and they do not count unless the list is no longer true;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
                  and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
                  interpreter never names as `.field` and no row with a command reaches. An upper bound:
@@ -45,6 +46,16 @@ SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
 SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
 NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
+
+# The queries of docs/scpi.md, as documented_queries spells them, that ui/tests/scpi.txt cannot ask, each with its
+# reason (like LEFT_OUT of the settings snapshot). They do not count toward queries-tests. A listed query that the
+# script asks, or that docs/scpi.md no longer names, counts as missing, so the list stays true.
+NOT_ASKED = {
+    ":LA:POINts?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":LA:PREamble?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":LA:DATA?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":SYSTem:STATe?": "its answer holds times measured on the computer, which differ from run to run",
+}
 
 # The expressions scpi.rs passes to kw() that hold a node of the header. Not counted: `a`, `arg`, `s`, `item`, `first`,
 # `z`, which hold arguments (`kw(first, "MAXimum")` reads the first argument of :MEASure:STATistic:ITEM?).
@@ -278,8 +289,13 @@ def counts(root):
     unasked = []
     for q in queries:
         pat = re.compile(query_pattern(q), re.IGNORECASE)
-        if not any(pat.fullmatch(c) for c in cmds):
+        hit = any(pat.fullmatch(c) for c in cmds)
+        if q in NOT_ASKED and hit:
+            unasked.append("%s (in NOT_ASKED, but asked: remove it from the list)" % q)
+        elif q not in NOT_ASKED and not hit:
             unasked.append(q)
+    unasked += ["%s (in NOT_ASKED, but not in %s: remove it from the list)" % (q, SCPI_MD)
+                for q in NOT_ASKED if q not in queries]
     return [
         ("words-docs", "command words of %s not in %s" % (SCPI_RS, SCPI_MD),
          [w for w in words if not named(w, scpi_md)], len(words)),
@@ -359,6 +375,9 @@ def main(argv):
             print("%s: %d of %d %s" % (key, len(missing), total, what))
             for name in missing:
                 print("  " + name)
+        print("not asked on purpose: %d queries of %s (NOT_ASKED)" % (len(NOT_ASKED), SCPI_MD))
+        for q, why in NOT_ASKED.items():
+            print("  %s: %s" % (q, why))
     else:
         print("scpi-coverage: " + ", ".join("%s %d/%d" % (k, len(m), t) for k, _, m, t in result) +
               " missing (--list names them)")
