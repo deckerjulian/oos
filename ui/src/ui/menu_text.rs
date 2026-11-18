@@ -177,9 +177,7 @@ impl Ui {
             | Item::TrigLevel
             | Item::AcqAvg
             | Item::CurA
-            | Item::CurB
-            | Item::Intensity
-            | Item::GridBright => Kind::Value,
+            | Item::CurB => Kind::Value,
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
             Item::StoreSaveSetup
@@ -266,7 +264,6 @@ impl Ui {
             Item::Open(MenuId::Magnetic) => "Magnetic",
             Item::Open(MenuId::Inverter) => "Inverter",
             Item::Open(MenuId::Dpt) => "Double pulse",
-            Item::ColorGrade => "Colour grade",
             Item::StoreSlot => "Setup slot",
             Item::StoreDest => "Save to",
             Item::StoreSaveSetup => "Save setup",
@@ -452,17 +449,10 @@ impl Ui {
             Item::CurB => "Cursor B",
             Item::CurC => "Y1",
             Item::CurD => "Y2",
-            Item::Persist => "Persistence",
-            Item::Intensity => "Intensity",
-            Item::GridStyle => "Grid",
-            Item::GridBright => "Grid bright.",
-            Item::GridFrame => "Grid frame",
             Item::TrigNoise => "Noise reject",
             Item::TrigAutoNoise => "Auto noise rej.",
             Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
-            Item::Dots => "Dots",
-            Item::BottomBar => "Bottom bar",
             Item::Hdmi => "HDMI",
             Item::TextSize => "Text size",
             Item::ZoneSel => "Zone",
@@ -686,16 +676,9 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::Persist => PERSIST[m.persist].0.into(),
-            Item::Intensity => format!("{} %", m.intensity),
-            Item::GridStyle => format!("{:?}", m.grid),
-            Item::GridBright => format!("{} %", m.grid_bright),
-            Item::GridFrame => onoff(m.grid_frame),
             Item::TrigNoise => onoff(m.trig_nrej),
             Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
-            Item::Dots => onoff(m.dots),
-            Item::BottomBar => if m.bar_compact { "Compact" } else { "Cards" }.into(),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
@@ -802,7 +785,6 @@ impl Ui {
             Item::MathOffset => format!("{:.2} div", m.math_offset),
             Item::FftWin => m.fft_win.name().into(),
             Item::MathFc => si_short(m.math_fc as f64, "Hz"),
-            Item::ColorGrade => onoff(m.color_grade),
             Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
             Item::MaskOn => onoff(m.mask_on),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),

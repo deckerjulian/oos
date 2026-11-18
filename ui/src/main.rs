@@ -52,6 +52,7 @@ mod placement;
 mod protocols;
 mod remote;
 mod scpi;
+mod settings;
 mod sntp;
 #[cfg(test)]
 mod soak;

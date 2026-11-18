@@ -73,6 +73,10 @@ Changed:
 
 Fixed:
 
+- Measure in roll and scan, and on compressed deep records: the frequency, the period and the other time values of
+  a slow signal read up to twice the true value now and then (25 Hz read as 50 Hz at 0.2 s/div). Their points are
+  min/max pairs, and on an edge each pair spans more than the hysteresis of the edge search; the time values are now
+  measured on the mean of neighbouring points. Max, Min, Pk-pk, Top and Base still come from the pairs (unit, #118).
 - Colour grade drawn by the GPU: the densest pixels (a summed count from 32768 up) were left out on a driver that
   keeps `mediump` integers in 16 bits; the shaders now compute counts in `highp` (host, Mesa 26).
 - Bode: the generator amplitude knob reaches 10 mVpp (it stopped at 1 Vpp).

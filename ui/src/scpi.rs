@@ -194,7 +194,7 @@ pub struct Scpi {
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
-fn kw(tok: &str, long: &str) -> bool {
+pub(crate) fn kw(tok: &str, long: &str) -> bool {
     let t = tok.to_ascii_uppercase();
     let short: String = long.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect();
     t == long.to_ascii_uppercase() || t == short
@@ -208,7 +208,7 @@ fn suffix(tok: &str) -> (&str, Option<usize>) {
 
 /// The index of the entry of `list` nearest to `v` by difference (`nearest` compares ratios), the first of two as
 /// near; 0 for an empty list.
-fn nearest_index(list: &[f64], v: f64) -> usize {
+pub(crate) fn nearest_index(list: &[f64], v: f64) -> usize {
     list.iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal))
@@ -264,7 +264,7 @@ fn parse_slot(s: &str) -> Option<usize> {
     s.parse::<usize>().ok().filter(|&n| (1..=NREF).contains(&n)).map(|n| n - 1)
 }
 
-fn parse_bool(s: &str) -> Option<bool> {
+pub(crate) fn parse_bool(s: &str) -> Option<bool> {
     match s.trim().to_ascii_uppercase().as_str() {
         "1" | "ON" => Some(true),
         "0" | "OFF" => Some(false),

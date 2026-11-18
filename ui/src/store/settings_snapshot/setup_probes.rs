@@ -538,7 +538,7 @@ fn family(k: &str) -> String {
 /// The keys `set` names in its source, with the numbered families as their probed instance: the literal patterns of
 /// the arms of its `match k`, of the `match field` of `ch<N>.*` and of `m<N>.*`. `d<N>.*` goes back into `set` and
 /// so has the plain keys; the keys behind a guard (`math_expr<N>`, `view<N>`) are found in `setup_text` instead.
-/// `set` is a match on text, not a table, so its source is the only list of what it reads. When it changes shape this
+/// `set` is a match on text besides the settings table, so its source and the table are the lists of what it reads. When it changes shape this
 /// scan fails by its own checks below and has to follow it.
 fn set_keys() -> Vec<String> {
     let src = include_str!("../../store.rs");
@@ -568,6 +568,8 @@ fn set_keys() -> Vec<String> {
             }
         }
     }
+    // the keys `set` hands to the settings table (settings.rs)
+    keys.extend(crate::settings::all().map(|s| s.key.to_string()));
     for want in ["tdiv", "dec_proto", "ser.rel", "ch1.vdiv", "ch1.bw20", "m2.op", "zone2"] {
         assert!(keys.iter().any(|k| k == want), "the scan of store::set found no {}: update set_keys", want);
     }
