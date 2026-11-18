@@ -32,10 +32,11 @@ takes the fields of a register.
 
 ## Decision
 
-`too_many_arguments` is allowed for the whole crate in `oos-hal` only. In `oos-dsp`, `oos-ui` and `oos-fpgad` the
-lint is on: a function over the limit gets the arguments that belong together as one small value, or an `#[allow]`
-at the function with its reason, which `tools/ratchet.txt` counts. The other two lines of ADR 0017's list stay the
-same in every crate.
+`too_many_arguments` is allowed for the whole crate in `oos-hal` only. In `oos-ui` and `oos-fpgad` the lint is on
+with this record; `oos-dsp` keeps its line until its six functions are grouped, in one pull request that then
+removes it (its `Cargo.toml` says so). Where the lint is on, a function over the limit gets the arguments that
+belong together as one small value, or an `#[allow]` at the function with its reason, which `tools/ratchet.txt`
+counts. The other two lines of ADR 0017's list stay the same in every crate.
 
 ## Alternatives
 

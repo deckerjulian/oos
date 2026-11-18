@@ -311,8 +311,8 @@ impl Ui {
         (fold, gated)
     }
 
-    /// The heavy part of the page, from the pool and the last record. `wave` is the eye source as
-    /// `eye_channel_samples` gives it: the samples, `dt` and `t0`.
+    /// The heavy part of the page, from the pool and the last record. `wave` is the selected eye source: its
+    /// samples (on the common grid when a clock source is chosen), `dt` and `t0`.
     fn eye_refresh(&mut self, clk: &eye::Clock, tie: &[f64], wave: (&[f32], f64, f64), lay: &Layout, rec: &Record) {
         let (wave, dt, t0) = wave;
         let clock = if let Some(b) = self.m.eye_b {
