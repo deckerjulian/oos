@@ -564,11 +564,6 @@ impl Ui {
                 m.z_src = if i == 0 { None } else { Some(i - 1) };
                 self.dirty_map = true;
             }
-            Item::Histogram => {
-                let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
-                let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
-                m.hist = all[cycle(i, 3, d)];
-            }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);

@@ -579,3 +579,14 @@ command does not take is refused with `-224`. The source and the tolerances are 
 
 Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:HISTogram:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
 
+The histogram's direction, its command and its key in a setup file. It is declared once, in
+`ui/src/settings/histogram.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+command does not take is refused with `-224`. `:HISTogram:ENABle` and the source are written by hand.
+
+<!-- settings:histogram:begin -->
+| Command | Takes | Setup key | Display menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:HISTogram:TYPE[?]` | `HORizontal`, `VERTical`; the query answers `HOR` or `VERT` (`VERT` while it is off) | `hist` | Histogram | The waveform histogram of the Display menu: off, vertical or horizontal. |
+<!-- settings:histogram:end -->
+

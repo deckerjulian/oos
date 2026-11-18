@@ -440,7 +440,6 @@ impl Ui {
             Item::ZoneShape => "Draw shape",
             Item::ZoneClear => "Delete",
             Item::ZInput => "Z input",
-            Item::Histogram => "Histogram",
             Item::About => "About OOS",
             Item::SysInfo => "System info",
             Item::Shot => "Screenshot",
@@ -612,7 +611,6 @@ impl Ui {
                 }
             }
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
-            Item::Histogram => format!("{:?}", m.hist),
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math_fam.name().into(),

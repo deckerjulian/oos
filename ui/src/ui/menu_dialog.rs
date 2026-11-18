@@ -186,7 +186,6 @@ impl Ui {
             Item::ZoneSrc => return ch_names(),
             Item::ZoneMode => &["Intersect", "Not intersect"],
             Item::ZInput => return opt_ch_names("Off"),
-            Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::AuxOut => {
                 return AuxOut::choices(board().mask_hw() || board().zone_hw())
                     .iter()

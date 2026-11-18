@@ -645,7 +645,6 @@ fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
                 .collect::<Result<_, String>>()?;
         }
         "z_src" => m.z_src = if v.trim() == "off" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
-        "hist" => m.hist = p_enum(v, &[Hist::Off, Hist::Vertical, Hist::Horizontal])?,
         "mask_src" => m.mask_src = p_idx(v, NCH)?,
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,

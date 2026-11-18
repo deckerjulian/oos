@@ -1,8 +1,9 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:HISTogram`: `ENABle`, `TYPE`, `SOURce` and `STATistics:RESult?`. A new `:HISTogram` command goes into
-//! `hist_cmd` here, with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
+//! `:HISTogram`: `ENABle`, `TYPE` (a row of settings/histogram.rs), `SOURce` and `STATistics:RESult?`. A new
+//! `:HISTogram` setting of a setup file is a row of that table, another command goes into `hist_cmd` here, with its
+//! line in docs/scpi.md; either with its query in ui/tests/scpi.txt (AGENTS.md).
 
 use super::{e, kw, parse_bool, parse_ch, Scpi};
 use crate::model::*;
@@ -33,20 +34,8 @@ impl Scpi {
                 }
             };
         }
-        if n.len() == 1 && kw(n0, "TYPE") {
-            if query {
-                return t(if ui.m.hist == Hist::Horizontal { "HOR" } else { "VERT" });
-            }
-            ui.m.hist = if kw(arg, "HORizontal") {
-                Hist::Horizontal
-            } else if kw(arg, "VERTical") {
-                Hist::Vertical
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            ui.mark_changed();
-            return None;
+        if let Some(row) = crate::settings::command(&crate::settings::histogram::SLICES, n) {
+            return self.setting_cmd(ui, row, query, arg);
         }
         if n.len() == 1 && kw(n0, "SOURce") {
             if query {

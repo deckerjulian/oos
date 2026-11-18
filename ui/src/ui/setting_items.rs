@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 43] = [
+const ITEMS: [(Item, &str); 44] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -52,6 +52,7 @@ const ITEMS: [(Item, &str); 43] = [
     (Item::MaskOn, "mask_on"),
     (Item::MaskAction, "mask_stop"),
     (Item::MaskInvert, "mask_inv"),
+    (Item::Histogram, "hist"),
 ];
 
 /// The item of instance n of a numbered family.
