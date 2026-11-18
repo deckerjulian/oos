@@ -42,6 +42,44 @@ def ago(hours):
 
 
 @unittest.skipUnless(shutil.which("jq"), "needs jq")
+def alternatives(pattern):
+    """The single patterns an extended regular expression of literals, groups and `|` stands for:
+    `^(a/|b/(c|d)\\.rs$)` gives `^a/`, `^b/c\\.rs$`, `^b/d\\.rs$`."""
+    def split(text):  # at the `|` outside groups
+        parts, depth, cur, i = [], 0, "", 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                cur, i = cur + text[i:i + 2], i + 2
+                continue
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if ch == "|" and depth == 0:
+                parts, cur = parts + [cur], ""
+            else:
+                cur += ch
+            i += 1
+        return parts + [cur]
+
+    def expand(text):
+        out = []
+        for part in split(text):
+            start = next((i for i, ch in enumerate(part) if ch == "(" and (i == 0 or part[i - 1] != "\\")), None)
+            if start is None:
+                out.append(part)
+                continue
+            depth, end = 0, start
+            for end in range(start, len(part)):
+                if part[end] in "()" and part[end - 1] != "\\":
+                    depth += 1 if part[end] == "(" else -1
+                    if depth == 0:
+                        break
+            inners, rests = expand(part[start + 1:end]), expand(part[end + 1:])
+            out += [part[:start] + inner + rest for inner in inners for rest in rests]
+        return out
+
+    return expand(pattern)
+
+
 class PullRequests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="oos-pr-"))
@@ -259,9 +297,10 @@ class PullRequests(unittest.TestCase):
         self.assertEqual([f for f in files if not live.search(f) and not proven.search(f)], [],
                          "in neither $live nor $proven of tools/pr-gate.sh: class it")
         self.assertEqual([f for f in files if live.search(f) and proven.search(f)], [], "in both")
-        named = re.findall(r"[a-z0-9_]+(?=[|)])", proven.pattern.split("hal/src/dho/(", 1)[1])
-        self.assertEqual([n for n in named if not (ROOT / "hal/src/dho" / (n + ".rs")).exists()], [],
-                         "named in $proven, not in the tree")
+        # every alternative of both lists names something in the tree: a renamed or removed file leaves no stale name
+        for name, pattern in (("$live", live.pattern), ("$proven", proven.pattern)):
+            stale = [a for a in alternatives(pattern) if not any(re.search(a, f) for f in files)]
+            self.assertEqual(stale, [], f"named in {name}, not in the tree")
 
     def test_a_refactoring_the_comparison_found_equal(self):
         unchanged = "**Behaviour:** unchanged.\n"
