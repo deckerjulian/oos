@@ -223,12 +223,12 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             m.pat_levels.copy_from_slice(&l);
         }
         "nth_n" => m.nth_n = p_u32(v)?,
-        "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
-        "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
+        "segments" => m.segments = (p_u32(v)? as usize).min(crate::model::SEG_HW_MAX),
+        "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::model::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,
         "density" => m.density = p_enum(v, &Density::ALL)?,
-        "split_pane" => m.split_pane = p_idx(v, crate::ui::PANES_N)?,
+        "split_pane" => m.split_pane = p_idx(v, crate::model::PANES_N)?,
         "ch_window" => {
             let w = p_list(v, NCH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.ch_win.copy_from_slice(&w);
@@ -268,7 +268,7 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             for e in v.split_whitespace() {
                 let f: Vec<&str> = e.split(':').collect();
                 let [k, a, b] = f[..] else { return Err(format!("not item:a:b: {}", e)) };
-                out.push((p_idx(k, crate::ui::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
+                out.push((p_idx(k, crate::model::PAIRS_N)?, WaveId::parse(a)?, WaveId::parse(b)?));
             }
             if m.meas.len() + out.len() + m.cat.len() > MEAS_SELECTION_MAX {
                 return Err("too many selected measurements".into());
@@ -307,18 +307,18 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             m.cnt_digits = p_idx(d, 8)?.max(3) as u32;
         }
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
-        "pane" => m.pane = p_idx(v, crate::ui::PANES_N)?,
+        "pane" => m.pane = p_idx(v, crate::model::PANES_N)?,
         "meas_labels" => m.meas_labels = p_bool(v)?,
         "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };
-            m.trend_sel = [p_idx(a, crate::ui::TREND_SEL_N)?, p_idx(b, crate::ui::TREND_SEL_N)?];
+            m.trend_sel = [p_idx(a, crate::model::TREND_SEL_N)?, p_idx(b, crate::model::TREND_SEL_N)?];
         }
         "spec_peaks" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [sort, harm] = f[..] else { return Err("spec_peaks: order harmonics".into()) };
-            (m.spec_sort, m.spec_harm) = (p_idx(sort, 2)?, p_idx(harm, crate::ui::PANE_HARMS.len())?);
+            (m.spec_sort, m.spec_harm) = (p_idx(sort, 2)?, p_idx(harm, crate::model::PANE_HARMS.len())?);
         }
         "cursor" => m.cursor = p_enum(v, &CURSORS)?,
         "cur_a" => m.cur_a = p_f32(v)?,
@@ -335,7 +335,7 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
-        "log_ivl" => m.log_ivl = p_idx(v, crate::ui::LOG_STEPS_N)?,
+        "log_ivl" => m.log_ivl = p_idx(v, crate::model::LOG_STEPS_N)?,
         k if k.starts_with("math_expr") => {
             let n = k[9..].parse::<usize>().map_err(|_| "math_expr: no number")?;
             // a formula that does not parse stays as it is and draws nothing; only the length is checked here
@@ -420,22 +420,22 @@ fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "hdmi_view" => {
             let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;
-            if n > crate::ui::VIEWS_MAX {
-                return Err(format!("{:?}: 0 (the panel's) to {}", v, crate::ui::VIEWS_MAX));
+            if n > crate::model::VIEWS_MAX {
+                return Err(format!("{:?}: 0 (the panel's) to {}", v, crate::model::VIEWS_MAX));
             }
             m.hdmi_view = n;
         }
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;
-            if !(1..=crate::ui::VIEWS_MAX).contains(&n[0]) || !(1..=n[0]).contains(&n[1]) {
-                return Err(format!("{:?}: count 1 to {}, then the one shown", v, crate::ui::VIEWS_MAX));
+            if !(1..=crate::model::VIEWS_MAX).contains(&n[0]) || !(1..=n[0]).contains(&n[1]) {
+                return Err(format!("{:?}: count 1 to {}, then the one shown", v, crate::model::VIEWS_MAX));
             }
             (m.views, m.view_cur) = (n[0], n[1] - 1);
         }
         k if k
             .strip_prefix("view")
             .and_then(|i| i.parse::<usize>().ok())
-            .is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) =>
+            .is_some_and(|i| (1..=crate::model::VIEWS_MAX).contains(&i)) =>
         {
             let i: usize = k[4..].parse().unwrap_or(1);
             m.view_slots[i - 1] = crate::ui::views::slot_checked(v)?;

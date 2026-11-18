@@ -58,7 +58,7 @@ mod reference_search_navigation_tests {
 }
 
 /// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
-pub const PANES: [&str; 6] = ["Traces", "Spectrum", "Results", "Events", "Trend", "Bus view"];
+pub const PANES: [&str; crate::model::PANES_N] = ["Traces", "Spectrum", "Results", "Events", "Trend", "Bus view"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
