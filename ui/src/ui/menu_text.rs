@@ -166,7 +166,6 @@ impl Ui {
             | Item::HScale
             | Item::HDelay
             | Item::TrigLevel
-            | Item::AcqAvg
             | Item::CurA
             | Item::CurB => Kind::Value,
             Item::RefSave | Item::RefClear => Kind::Action,
@@ -366,15 +365,10 @@ impl Ui {
             Item::Pat(_) => "CH4",
             Item::PatLevel => "Level",
             Item::NthN => "Edge no.",
-            Item::AcqMode => "Mode",
-            Item::AcqAvg => "Averages",
             Item::AcqSeg => "Segments",
-            Item::AcqSegHw => "HW segments",
-            Item::AcqAvgHw => "HW average",
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
-            Item::AcqCores => "ADC cores",
             Item::AcqDrawPath => "Draw path",
             Item::AcqAlias => "Aliasing",
             Item::MeasSrc => "Source A",
@@ -541,13 +535,6 @@ impl Ui {
             },
             Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
             Item::NthN => format!("{}", m.nth_n),
-            Item::AcqMode => match m.acq {
-                AcqMode::Normal => "Normal".into(),
-                AcqMode::Peak => "Peak".into(),
-                AcqMode::Average => "Average".into(),
-                AcqMode::HiRes => "High res".into(),
-            },
-            Item::AcqAvg => format!("{}", m.avg_count),
             Item::AcqSeg => {
                 if m.segments == 0 {
                     "Off".into()
@@ -555,11 +542,8 @@ impl Ui {
                     self.seg_count().to_string()
                 }
             }
-            Item::AcqSegHw => onoff(m.seg_hw),
-            Item::AcqAvgHw => onoff(m.avg_hw),
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
-            Item::AcqCores => if m.cores { "Matched" } else { "Raw" }.into(),
             Item::AcqDrawPath => if m.draw_batch { "Batch" } else { "Standard" }.into(),
             Item::AcqAlias => {
                 self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))

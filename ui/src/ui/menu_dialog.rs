@@ -186,10 +186,8 @@ impl Ui {
             }
             Item::DecMode => &["0", "1", "2", "3"],
             Item::DecParity => &["None", "Even", "Odd"],
-            Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::ZoneOn => &["Off", "On"],
-            Item::AcqCores => &["Raw", "Matched"],
             Item::AcqDrawPath => &["Standard", "Batch"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
@@ -210,9 +208,7 @@ impl Ui {
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => {
-                &["Off", "On"]
-            }
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -227,7 +223,6 @@ impl Ui {
             Item::TrigType => return TRIG_TYPES.iter().map(|t| t.name().to_string()).collect(),
             Item::AcqDepth => return mdepths().iter().map(|d| d.0.to_string()).collect(),
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
-            Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
             Item::AcqSeg => {
                 return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect()
             }

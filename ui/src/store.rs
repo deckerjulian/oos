@@ -114,7 +114,6 @@ pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 // ---------------------------------------------------------------------------------------------- setup files
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
-const ACQ_MODES: [AcqMode; 4] = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
 const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
 const CURSORS: [CursorMode; 5] =
@@ -264,12 +263,9 @@ pub fn setup_text(m: &Model) -> String {
     crate::settings::write(&crate::settings::trigger::WINDOW, m, &mut kv);
     kv("nth_n", m.nth_n.to_string());
     crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, &mut kv);
-    kv("acq", name(m.acq));
-    kv("cores", m.cores.to_string());
-    kv("avg_count", m.avg_count.to_string());
-    kv("avg_hw", m.avg_hw.to_string());
+    crate::settings::write(&crate::settings::acquisition::MODE, m, &mut kv);
     kv("segments", m.segments.to_string());
-    kv("seg_hw", m.seg_hw.to_string());
+    crate::settings::write(&crate::settings::acquisition::SEG_HW, m, &mut kv);
     kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
     crate::settings::write(&crate::settings::display::VIEW, m, &mut kv);
@@ -774,12 +770,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.pat_levels.copy_from_slice(&l);
         }
         "nth_n" => m.nth_n = p_u32(v)?,
-        "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
-        "cores" => m.cores = p_bool(v)?,
-        "avg_count" => m.avg_count = p_u32(v)?.max(1),
-        "avg_hw" => m.avg_hw = p_bool(v)?,
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),
-        "seg_hw" => m.seg_hw = p_bool(v)?,
         "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
         "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,

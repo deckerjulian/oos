@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 24] = [
+const ITEMS: [(Item, &str); 29] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -33,6 +33,11 @@ const ITEMS: [(Item, &str); 24] = [
     (Item::NthIdle, "nth_idle"),
     (Item::Setup, "setup"),
     (Item::Hold, "hold"),
+    (Item::AcqMode, "acq"),
+    (Item::AcqCores, "cores"),
+    (Item::AcqAvg, "avg_count"),
+    (Item::AcqAvgHw, "avg_hw"),
+    (Item::AcqSegHw, "seg_hw"),
 ];
 
 fn row(it: Item) -> Option<&'static Setting> {
@@ -65,6 +70,19 @@ impl Ui {
             Item::Dots | Item::BottomBar => self.dirty_map = true,
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,
+            // the hardware switches of the Acquire menu leave the rest as it is (no `settings_changed`), as before
+            // the table
+            Item::AcqAvgHw => {
+                if self.m.avg_hw && !board().avg_hw(&self.m) {
+                    self.toast("HW average needs a count of 2..1024 and ordinary records: software average");
+                }
+                return true;
+            }
+            Item::AcqSegHw => {
+                // the other limit applies from now on
+                self.m.segments = self.seg_count();
+                return true;
+            }
             _ => {}
         }
         self.settings_changed();
@@ -76,11 +94,13 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, or in the Trigger menu of a trigger type (with a time range, so both
-    /// limits show).
+    /// The item is in the Display menu, in the Acquire menu (in Average mode with segments, so their rows show; HW
+    /// average shows only with a hardware source, which the demo is not), or in the Trigger menu of a trigger type
+    /// (with a time range, so both limits show).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
-        if u.items(MenuId::Display).contains(&it) {
+        (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
+        if it == Item::AcqAvgHw || [MenuId::Display, MenuId::Acquire].iter().any(|&m| u.items(m).contains(&it)) {
             return true;
         }
         u.m.trig_when = WhenKind::In;

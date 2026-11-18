@@ -283,6 +283,9 @@ const LEFT_OUT: &[(&str, &str)] = &[
     // the settings table documents these since it holds them; their probes add lines to the golden file, so they
     // come in a pull request of their own
     (":TRIGger:COUPling", "documented by the settings table; not probed before it"),
+    (":ACQuire:CORes", "documented by the settings table; not probed before it"),
+    (":ACQuire:AVERages:HARDware", "documented by the settings table; not probed before it"),
+    (":ACQuire:SEGMents:HARDware", "documented by the settings table; not probed before it"),
 ];
 
 /// The first node of a command a table row or a sentence of docs/scpi.md starts with; a later one in the same line
