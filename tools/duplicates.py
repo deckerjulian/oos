@@ -93,7 +93,8 @@ def strip_tests(rel, lines, test_paths):
             if m:
                 test_paths.add(below + "/" + m.group(1))
         held = line.strip() == "#[cfg(test)]"
-        out.append(line)
+        # the attribute is test syntax too: blank, so it never lengthens a block of production code
+        out.append("" if held else line)
     return out
 
 

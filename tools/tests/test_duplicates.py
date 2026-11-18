@@ -86,6 +86,15 @@ class Duplicates(unittest.TestCase):
         self.assertEqual(self.blocks(root), ([], 0))
         self.assertEqual(self.blocks(root, loose=True), ([], 0))
 
+    def test_the_test_attribute_does_not_lengthen_a_block(self):
+        # the same 8 lines, each followed by `#[cfg(test)]` on a test-only function that differs: the attribute is
+        # test syntax and must not count as a ninth equal line
+        root = self.tree({
+            "dsp/src/a.rs": body(8) + "#[cfg(test)]\nfn ta() { one(); }\n",
+            "dsp/src/b.rs": body(8) + "#[cfg(test)]\nfn tb() { two(); }\n",
+        })
+        self.assertEqual(self.blocks(root)[1], 8)
+
     def test_a_block_under_the_minimum_is_not_reported(self):
         root = self.tree({"dsp/src/a.rs": func("f", body(7)), "dsp/src/b.rs": func("g", body(7))})
         self.assertEqual(self.blocks(root), ([], 0))
