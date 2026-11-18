@@ -70,7 +70,8 @@ Removed:
   `draw_path` in an older setup is passed over. `:SYSTem:PIPeline?` answers `BATC`, `:SYSTem:PIPeline BATCh` is
   taken and changes nothing, `FRAMes` and `STANdard` are refused with -224. The status line says `pipeline Off`
   instead of `pipeline Frames` with a source other than the hardware, and System info no longer names the path
-  (host-tested; not yet run on a unit).
+  (unit: starts in Batch, `:SYSTem:PIPeline` as above, about 29 pictures a second; the Acquire menu was checked on
+  the host only).
 
 Changed:
 
