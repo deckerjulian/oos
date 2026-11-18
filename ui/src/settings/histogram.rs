@@ -40,9 +40,9 @@ const HIST_IO: CustomIo = CustomIo {
     },
     query: |v| if ALL[v.index()] == Hist::Horizontal { "HOR" } else { "VERT" }.to_string(),
     take: |a| {
-        if crate::scpi::kw(a, "HORizontal") {
+        if crate::words::kw(a, "HORizontal") {
             Some(Val::Index(2))
-        } else if crate::scpi::kw(a, "VERTical") {
+        } else if crate::words::kw(a, "VERTical") {
             Some(Val::Index(1))
         } else {
             None

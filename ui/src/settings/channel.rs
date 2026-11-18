@@ -170,12 +170,12 @@ const BW_IO: CustomIo = CustomIo {
 /// the query answers `GND` or `CENT`.
 const EXPAND_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
-    load: |t| crate::store::p_bool(t).map(Val::Bool),
+    load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| if v.index() != 0 { "GND" } else { "CENT" }.to_string(),
     take: |a| {
-        if crate::scpi::kw(a, "GND") {
+        if crate::words::kw(a, "GND") {
             Some(Val::Bool(true))
-        } else if crate::scpi::kw(a, "CENTer") {
+        } else if crate::words::kw(a, "CENTer") {
             Some(Val::Bool(false))
         } else {
             None

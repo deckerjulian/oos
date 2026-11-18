@@ -54,6 +54,7 @@ mod ui;
 mod vpu;
 mod vxi11;
 mod wave;
+mod words;
 mod zone;
 
 // the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
