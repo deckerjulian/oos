@@ -2,7 +2,6 @@
 6 allow fpgad
 9 allow hal
 34 allow ui
-2951 lines ui/src/board/dho/hw.rs
 0 unsafe dsp
 4 unsafe fpgad
 33 unsafe hal
