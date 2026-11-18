@@ -117,8 +117,19 @@ class Tree(unittest.TestCase):
         self.assertEqual(result["unwraps"], (2, ["1 ui/src/lib.rs", "1 ui/src/plain.rs"]))
         self.assertEqual(result["headers"], (1, ["ui/src/plain.rs"]))
 
+    def test_menu_arms_count_menuid_in_the_shared_menu_files_outside_comments(self):
+        text = ("fn t(m: MenuId) {\n    match m {\n        MenuId::Main => 1, // MenuId::Pick\n"
+                "        // MenuId::Network\n        _ => 2,\n    }\n}\n")
+        self.assertEqual(met.menu_arms(text), 1)
+        path = self.root / "ui/src/ui/menu_text.rs"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("//! menus\n" + text)
+        result = {key: (n, items) for key, _, n, items in met.counts(str(self.root))}
+        self.assertEqual(result["menu-arms"], (1, ["1 ui/src/ui/menu_text.rs"]))
+
     def test_prints_one_line_and_exits_0(self):
-        self.assertEqual(self.run_tool(), (0, "code-metrics: long-fns 1, unwraps 2, headers 1 (--list names them)\n"))
+        self.assertEqual(self.run_tool(),
+                         (0, "code-metrics: long-fns 1, unwraps 2, headers 1, menu-arms 0 (--list names them)\n"))
         code, out = self.run_tool("--list")
         self.assertEqual(code, 0)
         self.assertIn("long-fns: 1 functions over 150 lines\n  151 ui/src/lib.rs:2 long\n", out)
@@ -131,10 +142,10 @@ class Tree(unittest.TestCase):
         return path.read_text()
 
     def test_enforce_passes_when_every_count_is_its_number(self):
-        self.numbers("1 headers\n1 long-fns\n2 unwraps\n")
+        self.numbers("1 headers\n1 long-fns\n0 menu-arms\n2 unwraps\n")
         code, out = self.run_tool("--enforce")
         self.assertEqual(code, 0, out)
-        self.assertIn("code-metrics: 3 numbers as recorded in tools/code-metrics.txt\n", out)
+        self.assertIn("code-metrics: 4 numbers as recorded in tools/code-metrics.txt\n", out)
 
     def test_enforce_fails_on_a_count_above_or_below_its_number_and_writes_nothing(self):
         self.numbers("1 headers\n0 long-fns\n5 unwraps\n")
@@ -161,7 +172,7 @@ class Tree(unittest.TestCase):
         self.assertIn("lowered: unwraps 5 -> 2\n", out)
         self.assertEqual(self.numbers(), "1 headers\n0 long-fns\n2 unwraps\n", "the rise stays out of the file")
         # once the rise is gone (here: the number raised by hand), --lower and --enforce pass
-        self.numbers("1 headers\n1 long-fns\n2 unwraps\n")
+        self.numbers("1 headers\n1 long-fns\n0 menu-arms\n2 unwraps\n")
         self.assertEqual(self.run_tool("--lower")[0], 0)
         self.assertEqual(self.run_tool("--enforce")[0], 0)
 

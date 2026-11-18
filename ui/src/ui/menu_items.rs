@@ -85,6 +85,9 @@ impl Ui {
 
     /// The rows of `menu`; a menu of more than one line has its own helper below, in this order.
     fn menu_items(&self, menu: MenuId) -> Vec<Item> {
+        if let Some(p) = pages::page(menu) {
+            return (p.items)(self, menu);
+        }
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
             MenuId::Channel(c) => self.channel_items(c),
@@ -112,12 +115,7 @@ impl Ui {
             MenuId::Power => self.power_items(),
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => self.network_items(),
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
-            MenuId::Remote => self.remote_items(),
-            MenuId::Ssh => self.ssh_items(),
-            MenuId::Bluetooth => self.bt_items(),
-            MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Sim => self.sim_items(),
             MenuId::SimAdvanced => self.sim_advanced_items(),
@@ -139,6 +137,8 @@ impl Ui {
                 (0..n).map(Item::PickOpt).collect()
             }
             MenuId::Math => self.math_items(),
+            // the pages of `PAGES`, answered above
+            _ => Vec::new(),
         }
     }
 
@@ -376,7 +376,7 @@ impl Ui {
     }
 
     /// The network menu.
-    fn network_items(&self) -> Vec<Item> {
+    pub(super) fn network_items(&self) -> Vec<Item> {
         vec![
             Item::NetEth,
             Item::NetRetry10,
