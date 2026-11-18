@@ -133,6 +133,12 @@ pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
+/// The time base and length every reader of an OOSW record asks for: two samples or more, a finite start and a finite
+/// step above zero. Indexing, cursors and measurements divide by the step and add to the start.
+pub(super) fn oosw_timing_ok(n: usize, dt: f64, t0: f64) -> bool {
+    n >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite()
+}
+
 /// One OOSW blob: the record and the number of bytes consumed.
 pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     if b.len() < 36 || &b[..4] != b"OOSW" {
@@ -149,7 +155,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     let n = usize::try_from(f.u64(12).unwrap_or(0)).unwrap_or(usize::MAX);
     let dt = f.f64(20).unwrap_or(0.0);
     let t0 = f.f64(28).unwrap_or(0.0);
-    if nch == 0 || nch > NCH || dt <= 0.0 {
+    if nch == 0 || nch > NCH || !oosw_timing_ok(n, dt, t0) {
         return Err("waveform header".into());
     }
     if n > MAX_WAVEFORM_SAMPLES {

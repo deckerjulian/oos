@@ -62,7 +62,7 @@ pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if n > MAX_WAVEFORM_SAMPLES {
         return Err("waveform exceeds the 32-million-sample import limit".into());
     }
-    if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
+    if nch == 0 || nch > 8 || !oosw_timing_ok(n, dt, t0) {
         return Err("that file holds no waveform".into());
     }
     let need = n

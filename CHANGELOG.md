@@ -86,6 +86,8 @@ Fixed:
 - Measure: a burst idle, setup or hold time above 5 s (set over SCPI) steps down to 5 s instead of turning off, also
   in a measurement's own settings.
 - Waveform import: a damaged file is refused with "truncated waveform" wherever a field lies past its end.
+- Fast-frame load (`frame-NNN.bin`): a frame whose time step or start is not a finite number, or with fewer than two
+  samples per channel, is refused, as the waveform import already refused such an `OOSW` file.
 - `oos-fpgad` without a command, or with `help`, prints its usage again (it printed nothing).
 - Tests no longer depend on the speed of the computer in the UI either (wall-time limits replaced).
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
