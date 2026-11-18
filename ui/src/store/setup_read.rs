@@ -89,7 +89,33 @@ fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result
     }
 }
 
+/// A group of keys of the setup reader: `Ok(true)` when it knows the key and has read the value.
+type SetGroup = fn(&mut Model, &str, &str) -> Result<bool, String>;
+
+/// Takes one `key = value` line of a setup into the model: each group of keys below is asked in turn, the first
+/// that knows the key reads the value. A key no group knows (one of a newer version) is ignored.
 pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
+    let groups: [SetGroup; 9] = [
+        set_numbered,
+        set_table,
+        set_time_trigger,
+        set_meas_math,
+        set_decoder,
+        set_zoom_views,
+        set_bode_spec_power,
+        set_inverter_zones,
+        set_more,
+    ];
+    for group in groups {
+        if group(m, k, v)? {
+            return Ok(());
+        }
+    }
+    Ok(()) // unknown keys of newer versions are ignored
+}
+
+/// The numbered keys: the deskew of a channel or a ref slot, the other decoders, the math channels, the channels.
+fn set_numbered(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     if let Some((reference, suffix)) =
         k.strip_prefix("deskew_ch").map(|s| (false, s)).or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s)))
     {
@@ -103,7 +129,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         let value =
             v.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
         values[index] = value;
-        return Ok(());
+        return Ok(true);
     }
     // the other decoders: dec_sel comes first in the file
     if let Some((n, field)) = k.strip_prefix('d').and_then(|r| r.split_once('.')) {
@@ -112,7 +138,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let mut t = m.dec_view(n);
             set(&mut t, field, v)?;
             m.dec_store(n, t.dec_cfg());
-            return Ok(());
+            return Ok(true);
         }
     }
     if let Some((n, field)) = k.strip_prefix('m').and_then(|r| r.split_once('.')) {
@@ -133,14 +159,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 }
                 _ => return Err("unknown key".into()),
             }
-            return Ok(());
+            return Ok(true);
         }
     }
     if let Some((c, field)) = k.strip_prefix("ch").and_then(|r| r.split_once('.')) {
         let c = c.parse::<usize>().ok().filter(|c| (1..=NCH).contains(c)).ok_or("unknown channel")? - 1;
         // the fields of the settings table (settings/channel.rs)
         if let Some(s) = crate::settings::find(&format!("ch<n>.{}", field)) {
-            return s.load(m, c, v);
+            return s.load(m, c, v).map(|()| true);
         }
         let ch = &mut m.ch[c];
         match field {
@@ -167,12 +193,21 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             "probe" => ch.probe = p_f32(v)?,
             _ => {} // unknown keys of newer versions are ignored
         }
-        return Ok(());
+        return Ok(true);
     }
-    // the keys of the settings table (settings.rs); the fields of a line are read with the line, below
+    Ok(false)
+}
+
+/// The keys of the settings table (settings.rs); the fields of a line are read with the line, below.
+fn set_table(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     if let Some(s) = crate::settings::find(k).filter(|s| s.line().is_none()) {
-        return s.load(m, 0, v);
+        return s.load(m, 0, v).map(|()| true);
     }
+    Ok(false)
+}
+
+/// The active channel, the cursor B source, the timebase, the trigger, the acquisition and the windows.
+fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     let ntime = tscales().len();
     match k {
         "active" => m.active = p_idx(v, NCH)?,
@@ -234,6 +269,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.math_win.copy_from_slice(&w);
         }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The measurements, the meters, the panes, the cursors, the fine steps and the math channel.
+fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    match k {
         "meas" => {
             let mut out = Vec::new();
             for e in v.split_whitespace() {
@@ -330,6 +373,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.math_lin = (p_f32(a)?, p_f32(b)?);
         }
         "math_offset" => m.math_offset = p_f32(v)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The keys of one decoder and its serial trigger.
+fn set_decoder(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    match k {
         "dec_on" => m.dec_on = p_bool(v)?,
         "dec_src" => m.dec_src = p_decode_source(v)?,
         "dec_baud" => m.dec_baud = p_idx(v, crate::decode::BAUDS.len())?,
@@ -376,6 +427,15 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
         "dec_bits" => m.dec_bits = p_u32(v)?.clamp(4, 32),
         "dec_parity" => m.dec_parity = p_enum(v, &PARITIES)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Zoom, HDMI and the views.
+fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    let ntime = tscales().len();
+    match k {
         "zoom" => m.zoom = p_bool(v)?,
         "auto_roll" => m.auto_roll = p_bool(v)?,
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
@@ -407,6 +467,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         // setups before the Layout mode: true = Waveform, false = Mirror
         "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
         "view" => m.view = p_enum(v, &crate::ui::stored_views())?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The Bode plot, the spectrum, the eye, the power analysis and the magnetics.
+fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    match k {
         "bode" => {
             // the address is the rest of the line: it may be empty
             let w: Vec<&str> = v.trim().splitn(8, char::is_whitespace).collect();
@@ -500,6 +568,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.mag_plot = p_enum(w[6], &[MagPlot::IPsi, MagPlot::BH])?;
             m.mag_cur = w[7].parse::<usize>().map_err(|e| e.to_string())?;
         }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The inverter, the double pulse test, zones, histogram, mask test, quick key, text size and logic lines.
+fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    match k {
         "inverter" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 23 {
@@ -593,6 +669,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 };
             }
         }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The measurement setup, the later lines of the analysers, the simulator and the bus.
+fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    match k {
         "meas_full_record" => m.meas_full_record = p_bool(v)?,
         "meas_cfg" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -696,9 +780,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.pw_ref = if reference == "-" { None } else { Some(reference.parse::<f64>().map_err(|e| e.to_string())?) };
             m.pw_clk = opt(clk)?;
         }
-        _ => {} // unknown keys of newer versions are ignored
+        _ => return Ok(false),
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the

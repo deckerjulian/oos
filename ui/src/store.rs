@@ -42,8 +42,6 @@ fn list<T: ToString>(v: &[T]) -> String {
     v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
 }
 
-/// The setup as `key = value` lines: every Model field except the acquisition state (run / trigger status).
-/// Enums by variant name, indices into the value ladders as numbers, floats in Rust's shortest exact form.
 /// The keys of one decoder.
 fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_on", m.dec_on.to_string());
@@ -100,14 +98,8 @@ fn bus_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("bus_rw", b.addr_rw.to_string());
 }
 
-pub fn setup_text(m: &Model) -> String {
-    let mut s = String::from("# OOS setup v1: key = value (oos-ui)\n");
-    let mut kv = |k: &str, v: String| {
-        s.push_str(k);
-        s.push_str(" = ");
-        s.push_str(&v);
-        s.push('\n');
-    };
+/// The deskew of the channels and the ref slots that have one.
+fn deskew_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     for (i, &seconds) in m.deskew_ch.iter().enumerate() {
         if seconds != 0.0 {
             kv(&format!("deskew_ch{}", i + 1), seconds.to_string());
@@ -118,15 +110,19 @@ pub fn setup_text(m: &Model) -> String {
             kv(&format!("deskew_ref{}", i + 1), seconds.to_string());
         }
     }
+}
+
+/// The `ch<N>.*` keys of each channel.
+fn channel_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     for (c, ch) in m.ch.iter().enumerate() {
         let p = |k: &str| format!("ch{}.{}", c + 1, k);
-        crate::settings::write(&crate::settings::channel::ON, m, c, &mut kv);
+        crate::settings::write(&crate::settings::channel::ON, m, c, kv);
         kv(&p("vdiv"), VSCALES[ch.vscale].to_string());
         if ch.vfine != 1.0 {
             kv(&p("vfine"), ch.vfine.to_string());
         }
         if ch.unit != AmpUnit::V {
-            crate::settings::write(&crate::settings::channel::UNIT, m, c, &mut kv);
+            crate::settings::write(&crate::settings::channel::UNIT, m, c, kv);
         }
         if ch.bias != 0.0 {
             kv(&p("bias"), ch.bias.to_string());
@@ -136,10 +132,14 @@ pub fn setup_text(m: &Model) -> String {
         }
         kv(&p("offset"), ch.offset.to_string());
         kv(&p("coupling"), name(ch.coupling));
-        crate::settings::write(&crate::settings::channel::BW, m, c, &mut kv);
+        crate::settings::write(&crate::settings::channel::BW, m, c, kv);
         kv(&p("probe"), ch.probe.to_string());
-        crate::settings::write(&crate::settings::channel::INVERT, m, c, &mut kv);
+        crate::settings::write(&crate::settings::channel::INVERT, m, c, kv);
     }
+}
+
+/// The active channel, the cursor B source, the timebase and the trigger.
+fn time_trigger_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("active", m.active.to_string());
     if let Some(source) = m.cur_b_source {
         kv("cur_b_source", source.token());
@@ -161,27 +161,31 @@ pub fn setup_text(m: &Model) -> String {
             .collect(),
     );
     kv("trig_level", m.trig_level.to_string());
-    crate::settings::write(&crate::settings::trigger::EDGE, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::EDGE, m, 0, kv);
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
-    crate::settings::write(&crate::settings::trigger::REJECT, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::REJECT, m, 0, kv);
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
-    crate::settings::write(&crate::settings::trigger::SECOND, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::SECOND, m, 0, kv);
     kv("trig_when", name(m.trig_when));
-    crate::settings::write(&crate::settings::trigger::TIMES, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::TIMES, m, 0, kv);
     kv("video_line", m.video_line.to_string());
     kv("pat", m.pat.iter().map(|&b| name(b)).collect::<Vec<_>>().join(" "));
     kv("pat_levels", list(&m.pat_levels));
-    crate::settings::write(&crate::settings::trigger::WINDOW, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::WINDOW, m, 0, kv);
     kv("nth_n", m.nth_n.to_string());
-    crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, 0, &mut kv);
-    crate::settings::write(&crate::settings::acquisition::MODE, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, 0, kv);
+}
+
+/// The acquisition, the segments, the memory depth and the windows of the plot.
+fn acquire_window_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
+    crate::settings::write(&crate::settings::acquisition::MODE, m, 0, kv);
     kv("segments", m.segments.to_string());
-    crate::settings::write(&crate::settings::acquisition::SEG_HW, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::acquisition::SEG_HW, m, 0, kv);
     kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
-    crate::settings::write(&crate::settings::display::VIEW, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::display::VIEW, m, 0, kv);
     kv("windows", name(m.win_layout));
     kv("density", name(m.density));
     kv("split_pane", m.split_pane.to_string());
@@ -189,6 +193,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("la_window", (m.la_win + 1).to_string());
     kv("ref_window", m.ref_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
+}
+
+/// The selected measurements, the voltmeter and the counter.
+fn meas_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("meas", m.meas.iter().map(|&(k, id)| format!("{:?}:{}", k, id.token())).collect::<Vec<_>>().join(" "));
     kv(
         "meas2",
@@ -206,6 +214,10 @@ pub fn setup_text(m: &Model) -> String {
     }
     kv("dvm", format!("{} {} {}", m.dvm_on, m.dvm_src, m.dvm_mode));
     kv("counter", format!("{} {} {} {}", m.cnt_on, m.cnt_src, m.cnt_mode, m.cnt_digits));
+}
+
+/// The channel labels, the cursors, the AUX output, the fine steps and the horizontal expansion.
+fn label_cursor_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     for c in 0..NCH {
         if !m.ch_label[c].is_empty() {
             kv(&format!("ch{}.label", c + 1), m.ch_label[c].clone());
@@ -218,18 +230,22 @@ pub fn setup_text(m: &Model) -> String {
     kv("cur_d", m.cur_d.to_string());
     kv("touch_lock", m.touch_lock.to_string());
     kv("aux_out", name(m.aux_out));
-    crate::settings::write(&crate::settings::channel::FINE, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::channel::FINE, m, 0, kv);
     kv("fine_t", m.fine_t.to_string());
     if m.tfine != 1.0 {
         kv("tfine", m.tfine.to_string());
     }
-    crate::settings::write(&crate::settings::channel::EXPAND, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::channel::EXPAND, m, 0, kv);
     kv("h_expand", format!("{:?}", m.h_expand));
+}
+
+/// The selected math channel as `math*` keys, the others as `m<N>.*`.
+fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("math", name(m.math));
     kv("math_a", m.math_a.to_string());
     kv("math_b", m.math_b.to_string());
     kv("math_scale", m.math_scale.to_string());
-    crate::settings::write(&crate::settings::math::FC, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::math::FC, m, 0, kv);
     kv("math_lin", format!("{} {}", m.math_lin.0, m.math_lin.1));
     for (k, e) in m.math_expr.iter().enumerate().filter(|(_, e)| !e.is_empty()) {
         kv(&format!("math_expr{}", k + 1), e.clone());
@@ -237,7 +253,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("log_ivl", m.log_ivl.to_string());
     kv("spec_margin", m.spec_margin.to_string());
     kv("math_offset", m.math_offset.to_string());
-    crate::settings::write(&crate::settings::math::WINDOW_BW, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::math::WINDOW_BW, m, 0, kv);
     // the "math*" keys are the selected math channel; the others as mN.* (N = 1..8)
     kv("math_sel", m.math_sel.to_string());
     for (k, c) in m.maths.iter().enumerate().filter(|(k, _)| *k != m.math_sel) {
@@ -252,12 +268,10 @@ pub fn setup_text(m: &Model) -> String {
         kv(&p("win"), name(c.win));
         kv(&p("lin"), format!("{} {}", c.lin.0, c.lin.1));
     }
-    kv("dec_sel", m.dec_sel.to_string());
-    dec_lines(m, &mut kv);
-    bus_lines(m, &mut kv);
-    for k in (0..DECODERS).filter(|&k| k != m.dec_sel && m.decs[k].is_some()) {
-        dec_lines(&m.dec_view(k), &mut |n: &str, v: String| kv(&format!("d{}.{}", k + 1, n), v));
-    }
+}
+
+/// The panes, zoom, the drawing, HDMI and the views.
+fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("pane", m.pane.to_string());
     kv("meas_labels", m.meas_labels.to_string());
     kv("strip_dock", name(m.strip_dock));
@@ -266,8 +280,8 @@ pub fn setup_text(m: &Model) -> String {
     kv("auto_roll", m.auto_roll.to_string());
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
-    crate::settings::write(&crate::settings::display::DRAW, m, 0, &mut kv);
-    crate::settings::write(&crate::settings::system::DRAW_PATH, m, 0, &mut kv);
+    crate::settings::write(&crate::settings::display::DRAW, m, 0, kv);
+    crate::settings::write(&crate::settings::system::DRAW_PATH, m, 0, kv);
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
@@ -276,6 +290,10 @@ pub fn setup_text(m: &Model) -> String {
     for (i, v) in m.view_slots.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
         kv(&format!("view{}", i + 1), v.clone());
     }
+}
+
+/// The Bode plot, the spectrum, the eye and the power analysis.
+fn analysis_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv(
         "bode",
         format!(
@@ -325,6 +343,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
     kv("eye_place", name(m.eye_place));
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
+}
+
+/// The measurement setup and the later lines of the analysers, with the magnetics.
+fn analysis_more_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     let opt = |id: Option<WaveId>| id.map(|w| w.token()).unwrap_or_else(|| "-".into());
     kv(
         "meas_cfg",
@@ -382,6 +404,10 @@ pub fn setup_text(m: &Model) -> String {
             m.mag_cur
         ),
     );
+}
+
+/// The inverter, the double pulse test and the signal simulator.
+fn inverter_sim_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     let opt = |c: Option<WaveId>| c.map_or("off".into(), |c| c.token());
     let line = |c: Option<u8>| c.map_or("off".into(), |c| c.to_string());
     kv(
@@ -454,6 +480,10 @@ pub fn setup_text(m: &Model) -> String {
             m.sim_ssc_center, m.sim_ssc_deviation, m.sim_ssc_hz, m.sim_dcd_pp, m.sim_corr_rj, m.sim_corr_hz
         ),
     );
+}
+
+/// The zones, the histogram, the mask test, the quick key, the text size and the logic lines.
+fn zone_mask_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
@@ -477,6 +507,36 @@ pub fn setup_text(m: &Model) -> String {
         "dec_la",
         format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")),
     );
+}
+
+/// The setup as `key = value` lines: every Model field except the acquisition state (run / trigger status).
+/// Enums by variant name, indices into the value ladders as numbers, floats in Rust's shortest exact form.
+pub fn setup_text(m: &Model) -> String {
+    let mut s = String::from("# OOS setup v1: key = value (oos-ui)\n");
+    let mut kv = |k: &str, v: String| {
+        s.push_str(k);
+        s.push_str(" = ");
+        s.push_str(&v);
+        s.push('\n');
+    };
+    deskew_lines(m, &mut kv);
+    channel_lines(m, &mut kv);
+    time_trigger_lines(m, &mut kv);
+    acquire_window_lines(m, &mut kv);
+    meas_lines(m, &mut kv);
+    label_cursor_lines(m, &mut kv);
+    math_lines(m, &mut kv);
+    kv("dec_sel", m.dec_sel.to_string());
+    dec_lines(m, &mut kv);
+    bus_lines(m, &mut kv);
+    for k in (0..DECODERS).filter(|&k| k != m.dec_sel && m.decs[k].is_some()) {
+        dec_lines(&m.dec_view(k), &mut |n: &str, v: String| kv(&format!("d{}.{}", k + 1, n), v));
+    }
+    view_lines(m, &mut kv);
+    analysis_lines(m, &mut kv);
+    analysis_more_lines(m, &mut kv);
+    inverter_sim_lines(m, &mut kv);
+    zone_mask_lines(m, &mut kv);
     s
 }
 
