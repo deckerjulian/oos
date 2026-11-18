@@ -21,8 +21,8 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "How long a drawn waveform stays on the screen.",
         accept: None,
-        get: |m| Val::Index(m.persist),
-        put: |m, v| m.persist = v.index(),
+        get: |m, _| Val::Index(m.persist),
+        put: |m, _, v| m.persist = v.index(),
     },
     Setting {
         key: "intensity",
@@ -32,8 +32,8 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "Brightness of the waveforms; 0 is refused, a value below 10 sets 10.",
         accept: Some((1.0, 100.0)),
-        get: |m| Val::U32(m.intensity),
-        put: |m, v| m.intensity = v.index() as u32,
+        get: |m, _| Val::U32(m.intensity),
+        put: |m, _, v| m.intensity = v.index() as u32,
     },
     Setting {
         key: "grid",
@@ -51,8 +51,8 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "The graticule: every division line, a lighter one, or none.",
         accept: None,
-        get: |m| Val::Index(GRIDS.iter().position(|&g| g == m.grid).unwrap_or(0)),
-        put: |m, v| m.grid = GRIDS[v.index()],
+        get: |m, _| Val::Index(GRIDS.iter().position(|&g| g == m.grid).unwrap_or(0)),
+        put: |m, _, v| m.grid = GRIDS[v.index()],
     },
     Setting {
         key: "grid_bright",
@@ -62,8 +62,8 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "Brightness of the graticule; a value below 10 sets 10.",
         accept: Some((0.0, 100.0)),
-        get: |m| Val::U32(m.grid_bright),
-        put: |m, v| m.grid_bright = v.index() as u32,
+        get: |m, _| Val::U32(m.grid_bright),
+        put: |m, _, v| m.grid_bright = v.index() as u32,
     },
     Setting {
         key: "grid_frame",
@@ -73,8 +73,8 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "A frame around the graticule with ticks every fifth of a division; none with the grid off.",
         accept: None,
-        get: |m| Val::Bool(m.grid_frame),
-        put: |m, v| m.grid_frame = v.index() != 0,
+        get: |m, _| Val::Bool(m.grid_frame),
+        put: |m, _, v| m.grid_frame = v.index() != 0,
     },
 ];
 
@@ -88,8 +88,8 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "Colours the persistence by how often a point was hit.",
         accept: None,
-        get: |m| Val::Bool(m.color_grade),
-        put: |m, v| m.color_grade = v.index() != 0,
+        get: |m, _| Val::Bool(m.color_grade),
+        put: |m, _, v| m.color_grade = v.index() != 0,
     },
     Setting {
         key: "dots",
@@ -99,8 +99,8 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "Draws every sample as a dot instead of joining them with lines.",
         accept: None,
-        get: |m| Val::Bool(m.dots),
-        put: |m, v| m.dots = v.index() != 0,
+        get: |m, _| Val::Bool(m.dots),
+        put: |m, _, v| m.dots = v.index() != 0,
     },
     Setting {
         key: "bar",
@@ -120,8 +120,8 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "The bottom bar as cards or as one compact line.",
         accept: None,
-        get: |m| Val::Index(m.bar_compact as usize),
-        put: |m, v| m.bar_compact = v.index() != 0,
+        get: |m, _| Val::Index(m.bar_compact as usize),
+        put: |m, _, v| m.bar_compact = v.index() != 0,
     },
 ];
 

@@ -29,8 +29,8 @@ pub const DVM: [Setting; 2] = [
         doc: "The voltmeter's reading of its source in the readouts; from the DVM block where it is switched on and \
               the board has one (docs/fork/dvm.md), else from the measurements of the records.",
         accept: None,
-        get: |m| Val::Bool(m.dvm_on),
-        put: |m, v| m.dvm_on = v.index() != 0,
+        get: |m, _| Val::Bool(m.dvm_on),
+        put: |m, _, v| m.dvm_on = v.index() != 0,
     },
     Setting {
         key: "dvm mode",
@@ -40,8 +40,8 @@ pub const DVM: [Setting; 2] = [
         #[cfg(test)]
         doc: "What the voltmeter reads: the mean (DC), the rms without the mean (AC rms) or the whole rms (AC+DC rms).",
         accept: None,
-        get: |m| Val::Index(m.dvm_mode.min(2)),
-        put: |m, v| m.dvm_mode = v.index(),
+        get: |m, _| Val::Index(m.dvm_mode.min(2)),
+        put: |m, _, v| m.dvm_mode = v.index(),
     },
 ];
 
@@ -54,8 +54,8 @@ pub const COUNTER: [Setting; 3] = [
         #[cfg(test)]
         doc: "The counter's reading of its source in the readouts (docs/protocols/counter.md).",
         accept: None,
-        get: |m| Val::Bool(m.cnt_on),
-        put: |m, v| m.cnt_on = v.index() != 0,
+        get: |m, _| Val::Bool(m.cnt_on),
+        put: |m, _, v| m.cnt_on = v.index() != 0,
     },
     Setting {
         key: "counter mode",
@@ -73,8 +73,8 @@ pub const COUNTER: [Setting; 3] = [
         #[cfg(test)]
         doc: "What the counter shows: the frequency, the period, or the edges counted since `:COUNter:TOTalize:CLEar`.",
         accept: None,
-        get: |m| Val::Index(m.cnt_mode.min(2)),
-        put: |m, v| m.cnt_mode = v.index(),
+        get: |m, _| Val::Index(m.cnt_mode.min(2)),
+        put: |m, _, v| m.cnt_mode = v.index(),
     },
     Setting {
         key: "counter digits",
@@ -84,8 +84,8 @@ pub const COUNTER: [Setting; 3] = [
         #[cfg(test)]
         doc: "The digits of the counter's reading.",
         accept: None,
-        get: |m| Val::U32(m.cnt_digits),
-        put: |m, v| m.cnt_digits = v.index() as u32,
+        get: |m, _| Val::U32(m.cnt_digits),
+        put: |m, _, v| m.cnt_digits = v.index() as u32,
     },
 ];
 

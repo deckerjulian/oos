@@ -341,9 +341,9 @@ impl Scpi {
     /// changed; a value it does not take is refused with -224.
     fn setting_cmd(&mut self, ui: &mut Ui, row: &crate::settings::Setting, query: bool, arg: &str) -> Option<Vec<u8>> {
         if query {
-            return Some(row.query(&ui.m).into_bytes());
+            return Some(row.query(&ui.m, 0).into_bytes());
         }
-        if !row.take(&mut ui.m, arg) {
+        if !row.take(&mut ui.m, 0, arg) {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         }

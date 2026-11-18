@@ -116,9 +116,7 @@ impl Ui {
         }
         let v: &[&str] = match it {
             Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
-            Item::ChOn(_)
-            | Item::ChInvert(_)
-            | Item::MeasStats
+            Item::MeasStats
             | Item::MeasLabels
             | Item::Zoom
             | Item::AutoRoll
@@ -208,9 +206,7 @@ impl Ui {
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
-            Item::ChUnit(_) => &["V", "A", "W", "U"],
-            Item::ChExpand => &["Center", "Ground"],
+            Item::HFine | Item::LogOn => &["Off", "On"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
             Item::BootMode => &["One-shot", "Persist"],
             // long lists: shown as a picker (see `ctl`)
@@ -219,7 +215,6 @@ impl Ui {
             Item::StoreDest => return crate::store::StoreDest::ALL.iter().map(|d| d.name().to_string()).collect(),
             Item::TrigType => return TRIG_TYPES.iter().map(|t| t.name().to_string()).collect(),
             Item::AcqDepth => return mdepths().iter().map(|d| d.0.to_string()).collect(),
-            Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::AcqSeg => {
                 return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect()
             }

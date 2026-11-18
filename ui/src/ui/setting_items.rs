@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 37] = [
+const ITEMS: [(Item, &str); 39] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -46,33 +46,56 @@ const ITEMS: [(Item, &str); 37] = [
     (Item::CntOn, "counter on"),
     (Item::CntMode, "counter mode"),
     (Item::CntDigits, "counter digits"),
+    (Item::ChFine, "fine_v"),
+    (Item::ChExpand, "v_expand_gnd"),
 ];
 
-fn row(it: Item) -> Option<&'static Setting> {
-    ITEMS.iter().find(|(i, _)| *i == it).and_then(|(_, key)| crate::settings::find(key))
+/// The item of instance n of a numbered family.
+type Instance = fn(usize) -> Item;
+
+/// The items of a numbered family, by the item of an instance and the row's key.
+const NUMBERED: [(Instance, &str); 4] = [
+    (Item::ChOn, "ch<n>.on"),
+    (Item::ChBw, "ch<n>.bw"),
+    (Item::ChInvert, "ch<n>.invert"),
+    (Item::ChUnit, "ch<n>.unit"),
+];
+
+/// The row of an item and the index of its instance (0 for a row that is not numbered).
+fn row(it: Item) -> Option<(&'static Setting, usize)> {
+    let numbered = || NUMBERED.iter().find_map(|&(f, key)| (0..NCH).find(|&n| f(n) == it).map(|n| (key, n)));
+    let (key, n) = ITEMS.iter().find(|(i, _)| *i == it).map(|&(_, key)| (key, 0)).or_else(numbered)?;
+    crate::settings::find(key).map(|s| (s, n))
 }
 
 impl Ui {
     pub(super) fn setting_kind(it: Item) -> Option<Kind> {
-        row(it).map(|s| if s.is_number() { Kind::Value } else { Kind::Choice })
+        row(it).map(|(s, _)| if s.is_number() { Kind::Value } else { Kind::Choice })
     }
 
     pub(super) fn setting_label(it: Item) -> Option<&'static str> {
-        row(it).map(|s| s.label)
+        row(it).map(|(s, _)| s.label)
     }
 
     pub(super) fn setting_value(&self, it: Item) -> Option<String> {
-        row(it).map(|s| s.shown(&self.m))
+        row(it).map(|(s, n)| s.shown(&self.m, n))
     }
 
     pub(super) fn setting_options(&self, it: Item) -> Option<Vec<String>> {
-        row(it).map(Setting::options)
+        row(it).map(|(s, _)| s.options())
     }
 
     pub(super) fn setting_adjust(&mut self, it: Item, d: i32) -> bool {
-        let Some(s) = row(it) else { return false };
-        s.step(&mut self.m, d);
+        let Some((s, n)) = row(it) else { return false };
+        s.step(&mut self.m, n, d);
         match it {
+            // only the inputs the model has switch on
+            Item::ChOn(c) => {
+                self.m.ch[c].on &= c < n_ch();
+                if self.m.ch[c].on && self.m.run == RunState::Run {
+                    self.m.floor_live_tdiv();
+                }
+            }
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar => self.dirty_map = true,
@@ -103,13 +126,18 @@ mod tests {
     use super::*;
 
     /// The item is in the Display menu, in the DVM menu, in the Acquire menu (in Average mode with segments, so their
-    /// rows show; HW average shows only with a hardware source, which the demo is not), in the Math menu of an
-    /// operator, or in the Trigger menu of a trigger type (with a time range, so both limits show).
+    /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
+    /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
+    /// limits show).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
+        let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire].iter().any(|&m| u.items(m).contains(&it))
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire]
+                .into_iter()
+                .chain(channels)
+                .any(|m| u.items(m).contains(&it))
         {
             return true;
         }
@@ -129,8 +157,10 @@ mod tests {
     #[test]
     fn every_row_has_its_item_and_a_step_changes_it() {
         for s in crate::settings::all() {
+            // a numbered row by the item of its first instance
             let it = ITEMS.iter().find(|(_, k)| *k == s.key).map(|(i, _)| *i);
-            let it = it.unwrap_or_else(|| panic!("{}: no menu item in ITEMS", s.key));
+            let it = it.or_else(|| NUMBERED.iter().find(|(_, k)| *k == s.key).map(|(f, _)| f(0)));
+            let it = it.unwrap_or_else(|| panic!("{}: no menu item in ITEMS or NUMBERED", s.key));
             assert!(in_a_menu(it), "{:?} is in no menu", it);
             let mut u = crate::ui::testkit::demo_ui();
             assert_eq!(u.item_label(it), s.label);
@@ -140,7 +170,7 @@ mod tests {
                 u.adjust(it, -1);
             }
             assert_ne!(u.value(it), before, "{:?}", it);
-            assert_eq!(u.value(it), s.shown(&u.m), "{:?}", it);
+            assert_eq!(u.value(it), s.shown(&u.m, 0), "{:?}", it);
             if !s.is_number() {
                 assert!(u.options(it).contains(&u.value(it)), "{:?}", it);
             }

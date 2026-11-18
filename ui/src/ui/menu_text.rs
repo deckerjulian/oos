@@ -332,11 +332,8 @@ impl Ui {
             Item::MathAuto => "Auto scale",
             Item::Open(MenuId::MeasSelected) => "Selected",
             Item::Open(_) => "",
-            Item::ChOn(_) => "Display",
             Item::ChCoupling(_) => "Coupling",
-            Item::ChBw(_) => "Bandwidth",
             Item::ChProbe(_) => "Probe",
-            Item::ChInvert(_) => "Invert",
             Item::ChScale(_) => "Scale",
             Item::ChOffset(_) => "Offset",
             Item::HScale => "Time/div",
@@ -378,12 +375,9 @@ impl Ui {
             Item::LogOn => "Logging",
             Item::LogIvl => "Interval",
             Item::LogInfo => "File",
-            Item::ChFine => "Fine scale",
-            Item::ChUnit(_) => "Unit",
             Item::ChBias(_) => "Zero bias",
             Item::ChBiasZero(_) => "Zero this input",
             Item::ChSkew(_) => "Deskew",
-            Item::ChExpand => "Expand around",
             Item::HFine => "Fine time base",
             Item::HExpandI => "Expand around",
             Item::RefColor => "Slot color",
@@ -477,17 +471,12 @@ impl Ui {
         let m = &self.m;
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         match it {
-            Item::ChOn(c) => onoff(m.ch[c].on),
             Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
-            Item::ChBw(c) => BWS[m.ch[c].bw].0.into(),
             Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
-            Item::ChInvert(c) => onoff(m.ch[c].invert),
             Item::ChScale(c) => si_short(m.ch[c].volts_per_div() as f64, m.unit(c)),
             Item::ChOffset(c) => si(m.ch[c].offset as f64, m.unit(c)),
-            Item::ChUnit(c) => m.unit(c).into(),
             Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
-            Item::ChExpand => if m.v_expand_gnd { "Ground" } else { "Center" }.into(),
             Item::HFine => onoff(m.fine_t),
             Item::HExpandI => format!("{:?}", m.h_expand),
             Item::RefColor => {
@@ -541,7 +530,6 @@ impl Ui {
             Item::MeasCopyTo => "Pick".into(),
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
             Item::CurSrcB => self.wave_name(self.cursor_b_source()),
-            Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => {
                 if m.math_expr[m.math_sel].is_empty() {
                     "none".to_string()

@@ -47,8 +47,8 @@ pub const WINDOW_BW: [Setting; 2] = [
         #[cfg(test)]
         doc: "The window the FFT multiplies the record with before the transform.",
         accept: None,
-        get: |m| Val::Index(WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0)),
-        put: |m, v| m.fft_win = WINDOWS[v.index()],
+        get: |m, _| Val::Index(WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0)),
+        put: |m, _, v| m.fft_win = WINDOWS[v.index()],
     },
     Setting {
         key: "math_bw",
@@ -61,8 +61,8 @@ pub const WINDOW_BW: [Setting; 2] = [
         #[cfg(test)]
         doc: "The width of the band of the band-pass and band-stop filters. The menu steps 1-2-5 in periods.",
         accept: None,
-        get: |m| Val::F32(m.math_bw),
-        put: |m, v| m.math_bw = v.secs(),
+        get: |m, _| Val::F32(m.math_bw),
+        put: |m, _, v| m.math_bw = v.secs(),
     },
 ];
 
@@ -79,8 +79,8 @@ pub const FC: [Setting; 1] = [Setting {
     doc: "The cut-off frequency of the low- and high-pass filters, the centre of the band filters. The menu steps \
           1-2-5 in periods.",
     accept: None,
-    get: |m| Val::F32(m.math_fc),
-    put: |m, v| m.math_fc = v.secs(),
+    get: |m, _| Val::F32(m.math_fc),
+    put: |m, _, v| m.math_fc = v.secs(),
 }];
 
 /// One step of a frequency on the 1-2-5 ladder of its period, from the nearest period (the first one at the start
