@@ -3,7 +3,7 @@
 
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
-use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash};
+use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash, Taken};
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
@@ -378,19 +378,7 @@ impl Ui {
         }
         let (poles, degv, off, elec, ang) = (m.inv_poles.max(1), m.inv_degv, m.inv_off, m.inv_elec, m.inv_ang);
         let nreq = if ang == InvAngle::Analog { 1 } else { 3 };
-        let taken = match self.take_waves(rec, &used[..nreq], &roles) {
-            Ok(t) => t,
-            Err(id) => {
-                self.azr.inv_note = missing_wave(id);
-                return;
-            }
-        };
-        for (slot, id) in roles.into_iter().enumerate() {
-            if let Some(id) = id.filter(|_| taken.opt[slot].is_none()) {
-                self.azr.inv_note = missing_wave(id);
-                return;
-            }
-        }
+        let Some(taken) = self.mech_waves(rec, &used[..nreq], roles) else { return };
         let shaft = match ang {
             InvAngle::Phase | InvAngle::Off => {
                 motor::shaft_phase(&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0, poles)
@@ -398,8 +386,7 @@ impl Ui {
             InvAngle::Analog => motor::shaft_analog(&taken.v[0], taken.dt, taken.t0, degv, off, elec, poles),
             InvAngle::Quad | InvAngle::Hall => return,
         };
-        let moved = taken.moved;
-        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), moved);
+        self.finish_mech(shaft, &taken);
     }
 
     fn mech_digital(&mut self, rec: &Record) {
@@ -424,32 +411,34 @@ impl Ui {
             motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
         };
         let roles = [self.m.inv_tq, self.m.inv_ev, self.m.inv_ei];
-        let taken = match self.take_waves(rec, &[], &roles) {
+        let Some(taken) = self.mech_waves(rec, &[], roles) else { return };
+        self.finish_mech(shaft, &taken);
+    }
+
+    /// The waves `required` of the shaft angle and the `roles` torque, bus voltage and bus current; when one of them
+    /// has no samples, None and the page's note names it.
+    fn mech_waves(&mut self, rec: &Record, required: &[WaveId], roles: [Option<WaveId>; 3]) -> Option<Taken> {
+        let taken = match self.take_waves(rec, required, &roles) {
             Ok(t) => t,
             Err(id) => {
                 self.azr.inv_note = missing_wave(id);
-                return;
+                return None;
             }
         };
         for (slot, id) in roles.into_iter().enumerate() {
             if let Some(id) = id.filter(|_| taken.opt[slot].is_none()) {
                 self.azr.inv_note = missing_wave(id);
-                return;
+                return None;
             }
         }
-        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), taken.moved);
+        Some(taken)
     }
 
-    fn finish_mech(
-        &mut self,
-        shaft: oos_dsp::motor::Shaft,
-        tq: Option<&[f32]>,
-        ev: Option<&[f32]>,
-        ei: Option<&[f32]>,
-        moved: bool,
-    ) {
+    /// The mechanical values of `shaft` with the role waves of `taken` (`mech_waves`).
+    fn finish_mech(&mut self, shaft: oos_dsp::motor::Shaft, taken: &Taken) {
+        let (tq, ev, ei) = (taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref());
         let mut note = shaft.note.to_string();
-        if moved {
+        if taken.moved {
             if !note.is_empty() {
                 note.push_str(". ");
             }
