@@ -639,7 +639,7 @@ impl Ui {
             Item::DecBaud => format!("{}", crate::decode::BAUDS[m.dec_baud]),
             Item::DecCphyRate => crate::decode::cphy_rate_label(m.dec_cphy_rate),
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
-            Item::TrigBusWhat => m.trig_bus.name().into(),
+            Item::TrigBusWhat => bus_what_name(m.trig_bus).into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
             Item::SerRel
             | Item::SerMax

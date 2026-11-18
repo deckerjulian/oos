@@ -52,10 +52,6 @@ impl Protocol for Uart9 {
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::uart9(l.main(), l.dt, baud(&l.opt, 0), l.thr, l.hy, false))
     }
-    /// Every word starts a frame, as for the plain UART.
-    fn trigger_match(&self, what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Frame && p.kind == oos_dsp::decode::Kind::Data).then_some(true)
-    }
     /// An address word and two data words at 9600 baud.
     fn demo(&self) -> Option<Demo> {
         Some(uart_demo(&[0x1A5, 0x0C3, 0x07E], 9, Parity::None, 9600.0, 1e-3))

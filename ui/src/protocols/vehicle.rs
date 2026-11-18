@@ -74,10 +74,6 @@ impl Protocol for FlexRay {
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::flexray(l.main(), l.dt, 10e6, l.thr, l.hy, false))
     }
-    /// The frame ID of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x2a)
-    }
     /// A static frame (ID 2A, cycle 5) with 8 payload bytes on RxD.
     fn demo(&self) -> Option<Demo> {
         let fr = decode::gen::FrFrame {
@@ -134,10 +130,6 @@ impl Protocol for Sent {
             Kind::Data => Some(format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize)),
             _ => None,
         }
-    }
-    /// The data of the first demo frame.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Data, 0x7f480b)
     }
     /// 5 V logic.
     fn setup(&self) -> Setup {

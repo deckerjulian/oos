@@ -57,7 +57,7 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_cphy_rate", m.dec_cphy_rate.to_string());
     kv("dec_src4", m.dec_src4.map_or("none".into(), |c| (c + 1).to_string()));
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
-    kv("trig_bus", m.trig_bus.name().to_string());
+    kv("trig_bus", bus_what_name(m.trig_bus).to_string());
     kv("trig_bus_val", m.trig_bus_val.to_string());
     let s = &m.ser;
     kv("ser.rel", name(s.rel));

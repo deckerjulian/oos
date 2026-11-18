@@ -399,8 +399,10 @@ fn set_decoder(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "dec_src4" => m.dec_src4 = p_decode_optional_one_based(v)?,
         "dec_diff" => m.dec_diff = p_decode_optional_one_based(v)?,
         "trig_bus" => {
-            m.trig_bus =
-                *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?
+            m.trig_bus = *BUS_WHATS
+                .iter()
+                .find(|&&b| bus_what_name(b) == v.trim())
+                .ok_or_else(|| format!("unknown bus match {}", v))?
         }
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,

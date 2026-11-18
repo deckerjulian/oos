@@ -44,14 +44,6 @@ impl Protocol for Usb {
             _ => return None,
         })
     }
-    /// ID: the device address or a PID.
-    fn trigger_match(&self, what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Id).then_some(matches!(p.kind, Kind::Field("ADDR" | "PID")) && p.value == value)
-    }
-    /// The demo device's address.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 5)
-    }
     /// D+ on CH3, D- on CH4, 3.3 V.
     fn setup(&self) -> Setup {
         Setup { src: [Some(2), None, Some(3), None], ..Setup::default() }

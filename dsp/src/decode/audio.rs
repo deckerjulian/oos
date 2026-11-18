@@ -9,10 +9,12 @@
 
 use super::{edge_times, Kind, Packet};
 use crate::edges::{edges, states};
-use crate::protocols::ModuleInfo;
+use crate::protocols::{BusWhat, ModuleInfo};
 
 /// I2S: data, bit clock and word select.
-pub static I2S: ModuleInfo = ModuleInfo::new("I2s", "I2S", "audio").roles([Some("SD"), Some("SCK"), Some("WS"), None]);
+pub static I2S: ModuleInfo = ModuleInfo::new("I2s", "I2S", "audio")
+    .roles([Some("SD"), Some("SCK"), Some("WS"), None])
+    .starts_on(BusWhat::Data, 0x7fff);
 
 /// I2S (Philips): SD sampled on the rising SCK edge, MSB first, the word starts one SCK period after the WS edge
 /// (WS low = left, high = right). `bits` = word length to keep (MSB-aligned; longer slots are cut, shorter ones end at

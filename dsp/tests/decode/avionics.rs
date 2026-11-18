@@ -47,6 +47,9 @@ fn arinc429_words_at_both_rates_fixed_and_auto() {
         add_noise(&mut v, 0.3, 7);
         let p = arinc429(&v, dt, set, (a / 2.0) as f32, 0.5);
         assert_eq!(kv(&p), arinc_want(&WORDS), "rate {} set {:?}", rate, set);
+        // the protocol trigger: every word starts with its label, and a label is found by its value
+        assert_eq!(p.iter().filter(|x| ARINC429.trigger_match(BusWhat::Frame, 0, x)).count(), WORDS.len());
+        assert_eq!(p.iter().filter(|x| ARINC429.trigger_match(BusWhat::Id, 0o310, x)).count(), 1);
         // the label ends after 8 bits
         let bit = 1.0 / rate / dt;
         assert!((p[0].t1 - p[0].t0 - 8.0 * bit).abs() < 0.1 * bit, "{:?}", p[0]);

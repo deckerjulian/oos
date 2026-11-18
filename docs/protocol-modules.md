@@ -1,8 +1,9 @@
 # Protocol modules: adding a decoder
 
 A protocol decoder is a module in `oos-dsp` and one in `oos-ui`. In `oos-dsp`, next to the decoder in the file of its
-family, an `oos_dsp::protocols::ModuleInfo` says what it is: its stable key, its name, its family, the lines it takes
-and whether the main one may be a differential pair; `oos_dsp::protocols::MODULES` lists them. In `oos-ui`, a type
+family, an `oos_dsp::protocols::ModuleInfo` says what it is: its stable key, its name, its family, the lines it takes,
+whether the main one may be a differential pair, and what the protocol trigger finds in its packets and starts with;
+`oos_dsp::protocols::MODULES` lists them. In `oos-ui`, a type
 that implements `protocols::Protocol` names that info and brings everything the scope shows around it, with one line
 that registers it:
 
@@ -15,8 +16,8 @@ that registers it:
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
 | the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
 | field text | the labels on the trace and in the event table | `text` (the generic text of each kind) |
-| protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `trigger_match` (the generic rule) |
-| trigger start value | what Trigger > Bus looks for when it is switched on | `trigger_default` (Frame) |
+| protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger`, the protocol's own rule (none: `ModuleInfo::trigger_match` uses the generic rule of `dsp/src/protocols.rs`) |
+| trigger start value | what Trigger > Bus looks for when it is switched on | `info`: `trigger_default` (Frame) |
 | trigger timing | sampling (a twentieth of a bit) and the search window | `bit_time` (required), `frame_span` (200 bits) |
 | hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `start_edge` (falling), `start_role` (the main line) |
 | first settings | channels, LA lines, threshold, shared-row values and the demo's trigger when the protocol is chosen | `setup` (CH3 / CH4, 1.65 V) |
@@ -34,8 +35,9 @@ Only `info`, `bit_time` and `decode` are required. The defaults fit a single-lin
    a function that returns an `oos_dsp::sim::Logic`); its tests go into the family's module of `dsp/tests/decode/`
    (`dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` fails for a family without one). Packet times are
    fractional sample indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
-   Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`), and at the
-   end of `MODULES` in `dsp/src/protocols.rs` its line.
+   Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`; a trigger
+   rule of its own with `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`), and
+   at the end of `MODULES` in `dsp/src/protocols.rs` its line.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.

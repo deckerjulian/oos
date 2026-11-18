@@ -26,10 +26,6 @@ impl Protocol for I2s {
         let sck = l.need(1, "source channel off")?;
         Ok(oos_dsp::decode::i2s(sck, l.lines[2], l.main(), l.sh.bits, l.thr, l.hy))
     }
-    /// The full-scale sample of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Data, 0x7fff)
-    }
     /// A frame starts at a change of WS, either way.
     fn start_edge(&self) -> Slope {
         Slope::Either

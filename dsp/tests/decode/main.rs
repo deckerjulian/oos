@@ -11,6 +11,7 @@ use oos_dsp::decode::gen::{
     self, bits_lsb, DccFrame, FdFrame, FrFrame, I3cBus, JtagGen, Ow, PdFrame, QspiFrame, SentFrame, SwdOp, Wave,
 };
 use oos_dsp::decode::*;
+use oos_dsp::protocols::BusWhat;
 use oos_dsp::sim::{add_noise, bits_logic, i2c_logic, sample, I2cXfer, Levels, Logic};
 use oos_dsp::trigger::Slope;
 

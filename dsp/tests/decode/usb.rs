@@ -142,6 +142,12 @@ fn usb_full_speed_round_trip() {
     for (k, bits) in [(0, 8.0), (1, 8.0), (2, 11.0), (3, 5.0), (4, 2.0)] {
         assert!((p[k].t1 - p[k].t0 - bits * 8.0).abs() < 1.0, "{:?}", p[k]);
     }
+    // the protocol trigger: an ID is a device address or a PID, not an endpoint (0xe of the SETUP token)
+    let (dp, dm) = usb_lines(&usb_items(&pk, USB_FULL, 1e-6), false, 0.0, dt);
+    let p = usb(&dp, Some(&dm), dt, UsbSpeed::Auto, 1.65, 0.3);
+    let ids = |v| p.iter().filter(|x| USB.trigger_match(BusWhat::Id, v, x)).map(|x| x.kind).collect::<Vec<_>>();
+    assert_eq!((ids(0x15), ids(0x2d)), (vec![F("ADDR")], vec![F("PID")]));
+    assert!(ids(0xe).is_empty());
 }
 
 #[test]

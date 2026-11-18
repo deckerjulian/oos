@@ -9,12 +9,13 @@
 
 use super::{Kind, Packet};
 use crate::edges::{edges, states};
-use crate::protocols::ModuleInfo;
+use crate::protocols::{every_word_is_a_frame, ModuleInfo};
 use crate::trigger::Slope;
 
 /// A parallel bus: the data lines from the main one upwards, and a clock.
-pub static PARALLEL: ModuleInfo =
-    ModuleInfo::new("Parallel", "Parallel", "parallel").roles([Some("D0"), None, Some("Clock"), None]);
+pub static PARALLEL: ModuleInfo = ModuleInfo::new("Parallel", "Parallel", "parallel")
+    .roles([Some("D0"), None, Some("Clock"), None])
+    .trigger(every_word_is_a_frame);
 
 /// Parallel bus: the data lines (`data[0]` = LSB, at most 32 are used) sampled on each `edge` of `clk`, or without a
 /// clock after every change of any line (changes less than 2 samples apart count as one, for line skew; the first

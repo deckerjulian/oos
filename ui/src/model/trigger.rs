@@ -103,19 +103,8 @@ pub const TRIG_TYPES: [TrigType; 13] = [
     TrigType::Bus,
 ];
 
-/// What the protocol trigger looks for in the decoded packets (`trig::find_all`); the trigger point is the end of
-/// the matching field.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BusWhat {
-    /// every frame start (SOF, break, I2C start, 1553 command word, UART / SPI word)
-    Frame,
-    /// identifier / address / 1553 command word equal to the value
-    Id,
-    /// data byte / word / audio sample equal to the value
-    Data,
-    /// any packet with a failed check (CRC, parity, checksum, NACK, missing ACK)
-    Error,
-}
+/// What the protocol trigger looks for in the decoded packets (`trig::find_all`), as oos-dsp matches it.
+pub use oos_dsp::protocols::BusWhat;
 pub const BUS_WHATS: [BusWhat; 4] = [BusWhat::Frame, BusWhat::Id, BusWhat::Data, BusWhat::Error];
 
 /// How a protocol value compares (`SerialTrig`): with the value (`trig_bus_val`) as min, `max` as the upper limit, all
@@ -238,14 +227,13 @@ impl Default for SerialTrig {
         }
     }
 }
-impl BusWhat {
-    pub fn name(self) -> &'static str {
-        match self {
-            BusWhat::Frame => "Frame",
-            BusWhat::Id => "ID/Addr",
-            BusWhat::Data => "Data",
-            BusWhat::Error => "Error",
-        }
+/// The name of what the protocol trigger looks for, in the menu and in setups.
+pub fn bus_what_name(w: BusWhat) -> &'static str {
+    match w {
+        BusWhat::Frame => "Frame",
+        BusWhat::Id => "ID/Addr",
+        BusWhat::Data => "Data",
+        BusWhat::Error => "Error",
     }
 }
 
