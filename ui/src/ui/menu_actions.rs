@@ -895,6 +895,11 @@ impl Ui {
                     self.close_picker();
                     self.ssh_remove_pick(k);
                 }
+                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::bt_is_pick(p.it)) => {
+                    let it = self.pick.map(|p| p.it).unwrap_or(Item::BtFound);
+                    self.close_picker();
+                    self.bt_pick(it, k);
+                }
                 Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
                     let p = self.ref_files.get(k).cloned();
                     self.close_picker();

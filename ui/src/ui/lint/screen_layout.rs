@@ -193,14 +193,16 @@ fn screen_in_order_on(scr: Screen) {
         u.m.text_size = ts;
         let f = u.fonts();
         // top bar, with and without the stick boxes
-        for (usb, wlan) in [(false, false), (true, false), (false, true), (true, true)] {
-            (u.usb, u.wlan_stick) = (usb, wlan);
+        for k in 0..8 {
+            let (usb, wlan, bt) = (k & 1 != 0, k & 2 != 0, k & 4 != 0);
+            (u.usb, u.wlan_stick, u.bt_stick) = (usb, wlan, bt);
             let pill = u.run_pill();
             assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
-            let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())]
-                .into_iter()
-                .flatten()
-                .collect();
+            let boxes: Vec<Rect> =
+                [Some(u.net_box()), wlan.then(|| u.wlan_box()), bt.then(|| u.bt_box()), usb.then(|| u.usb_box())]
+                    .into_iter()
+                    .flatten()
+                    .collect();
             for (i, b) in boxes.iter().enumerate() {
                 assert!(
                     b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
@@ -215,7 +217,7 @@ fn screen_in_order_on(scr: Screen) {
                 assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
             }
         }
-        (u.usb, u.wlan_stick) = (false, false);
+        (u.usb, u.wlan_stick, u.bt_stick) = (false, false, false);
         // the two lines of the network box: room for an address, the first line's descent above the second's capitals
         let n = u.net_box();
         assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);

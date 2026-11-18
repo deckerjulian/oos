@@ -75,6 +75,7 @@ impl Ui {
             MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
             MenuId::Remote => "Remote services".into(),
             MenuId::Ssh => "SSH".into(),
+            MenuId::Bluetooth => "Bluetooth".into(),
             MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Sim => "SIM".into(),

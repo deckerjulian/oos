@@ -23,6 +23,7 @@ mod batch2_tests;
 #[cfg(test)]
 mod batch5_tests;
 pub mod bode;
+mod bt;
 mod bus;
 mod busview;
 mod deskew;
@@ -461,6 +462,8 @@ pub enum MenuId {
     Remote,
     /// the SSH server: password, host key, trusted keys (ui/ssh.rs)
     Ssh,
+    /// mice and keyboards through a Bluetooth stick (ui/bt.rs)
+    Bluetooth,
     /// clock, NTP and time zone (ui/time.rs)
     Time,
     Bode,
@@ -964,6 +967,11 @@ pub struct Ui {
     wlan_stick: bool,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
     pub mouse: pointer::Mouse,
+    /// System > Network > Bluetooth (ui/bt.rs); a Bluetooth stick is plugged in (`hci0`), and how many devices are
+    /// connected through it as inputs (the top bar)
+    bt: bt::BtUi,
+    bt_stick: bool,
+    bt_inputs: usize,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,
