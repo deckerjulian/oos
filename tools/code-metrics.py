@@ -4,7 +4,7 @@
 """code-metrics.py: long functions, `.unwrap()`, modules without a header and the menu pages not yet in `PAGES`, in the
 four crates (issue 120, ADR 0060).
 
-    tools/code-metrics.py [ROOT]            one line: the three counts
+    tools/code-metrics.py [ROOT]            one line: the four counts
     tools/code-metrics.py --list [ROOT]     each count with what is behind it
     tools/code-metrics.py --enforce [ROOT]  the counts against tools/code-metrics.txt; exit 1 when one differs
     tools/code-metrics.py --lower [ROOT]    write the counts that went down into tools/code-metrics.txt
