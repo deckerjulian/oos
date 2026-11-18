@@ -180,7 +180,7 @@ Threads:
 | Thread | Job |
 |---|---|
 | main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip; reads the web, SCPI and VXI-11 connections without waiting (`net::read_now`): nothing in the loop may block on the network |
-| input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
+| input | front-panel UART (keys, knobs, LED frames), touch, and USB or Bluetooth mice and keyboards (evdev, taken for oos-ui alone; `hid.rs` says what an event means, `ui/src/ui/pointer.rs` acts on it) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |

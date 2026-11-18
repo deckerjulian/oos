@@ -15,6 +15,7 @@ mod conf;
 // the generator of all three crates, one file
 #[path = "../../hal/src/hostile/gen.rs"]
 mod gen;
+mod input;
 mod network;
 mod remote;
 mod signals;

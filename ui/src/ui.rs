@@ -51,6 +51,7 @@ mod offline;
 mod overclock;
 mod panes;
 mod plot_layout;
+pub mod pointer;
 mod records;
 mod reflook;
 mod render;
@@ -553,21 +554,8 @@ enum Kind {
 
 pub enum Ev {
     Key(u8),
-    Touch {
-        id: i32,
-        phase: Phase,
-        x: i32,
-        y: i32,
-    },
-    #[cfg_attr(not(test), allow(dead_code))] // only the tests make it
-    Wheel {
-        x: i32,
-        y: i32,
-        steps: i32,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    },
+    Touch { id: i32, phase: Phase, x: i32, y: i32 },
+    Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -974,6 +962,8 @@ pub struct Ui {
     pub net_fixed: bool,
     /// a WLAN stick is plugged in (its interface exists)
     wlan_stick: bool,
+    /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
+    pub mouse: pointer::Mouse,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,
