@@ -596,3 +596,7 @@ pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
     }
     out
 }
+
+// at the end, so the lines of the program keep their numbers (tools/scope-binaries.sh)
+#[cfg(test)]
+pub(crate) mod hostile_tests;
