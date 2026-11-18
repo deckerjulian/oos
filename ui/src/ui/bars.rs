@@ -707,23 +707,6 @@ impl Ui {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn generator_and_la_light_their_front_panel_leds() {
-        let mut ui = crate::ui::testkit::demo_ui();
-        let off = ui.leds();
-        assert_eq!(off & (1 << 8), 0, "LA off");
-        assert_eq!(off & (1 << 9), 0, "GEN off");
-        ui.m.afg_on = true;
-        assert_ne!(ui.leds() & (1 << 9), 0, "G1 on while generator output is on");
-        ui.m.afg_on = false;
-        ui.m.la.on = true;
-        assert_ne!(ui.leds() & (1 << 8), 0, "LA on");
-        assert_eq!(ui.leds() & (1 << 9), 0, "G1 stays off without afg_on");
-    }
-}
-
 fn draw_slope(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
     draw_slope1(cv, x, y, s, col);
     draw_slope1(cv, x + 1, y, s, col);
@@ -748,5 +731,22 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
             cv.line(x0, ylo, x0 + 6, yhi, col);
             cv.line(x0 + 7, yhi, x3, ylo, col);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn generator_and_la_light_their_front_panel_leds() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        let off = ui.leds();
+        assert_eq!(off & (1 << 8), 0, "LA off");
+        assert_eq!(off & (1 << 9), 0, "GEN off");
+        ui.m.afg_on = true;
+        assert_ne!(ui.leds() & (1 << 9), 0, "G1 on while generator output is on");
+        ui.m.afg_on = false;
+        ui.m.la.on = true;
+        assert_ne!(ui.leds() & (1 << 8), 0, "LA on");
+        assert_eq!(ui.leds() & (1 << 9), 0, "G1 stays off without afg_on");
     }
 }
