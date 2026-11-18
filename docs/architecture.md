@@ -28,6 +28,12 @@ flowchart LR
 
 Drawn from: [boot.md](boot.md), [network.md](network.md), ADR 0009 and ADR 0011, `ui/src/main.rs`.
 
+What a computer may build on is the remote interface: the SCPI commands, the HTTP routes and the MCP tools, each
+marked stable or experimental in its reference and versioned as a whole
+([ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md)). Add-ons use the same interface from a
+process of their own on the scope, not code inside `oos-ui`
+([ADR 0056](adr/code/0056-add-ons-run-outside-the-core-and-use-a-stable-extension-interface.md)); both are proposed.
+
 ## The programs of the image
 
 ```mermaid
