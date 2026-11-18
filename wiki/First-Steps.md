@@ -121,7 +121,9 @@ too.
 
 **Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin` (`wave-<date>-<time>.bin` once the
 clock is set), little endian: `OOSW`, u32 version (1), u32 channels, u64 samples per channel, f64 dt, f64 t0, then per
-channel its number (u32) and the samples (f32, volts). Both hold the record on the screen.
+channel its number (u32) and the samples (f32, volts). Both hold the record on the screen. A binary file with fewer
+than two samples per channel, a t0 that is not a finite number, or a dt that is not a finite number above zero is
+refused when it is loaded.
 
 ## Date and time
 
