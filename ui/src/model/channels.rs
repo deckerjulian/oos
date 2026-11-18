@@ -272,6 +272,12 @@ impl Model {
         if n >= NCH {
             return changed;
         }
+        changed = self.fit_wave_sources(n, changed);
+        self.fit_meas_sources(n, changed)
+    }
+
+    /// `fit_platform` for the Bode, trigger, mask, zone, analyser, decoder and Z input sources on a missing input.
+    fn fit_wave_sources(&mut self, n: usize, mut changed: bool) -> bool {
         // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
         if self.bode_sync >= n {
             self.bode_sync = n - 1;
@@ -332,6 +338,11 @@ impl Model {
             self.z_src = None;
             changed = true;
         }
+        changed
+    }
+
+    /// `fit_platform` for the measurement, catalogue, analyser and math sources on a missing input.
+    fn fit_meas_sources(&mut self, n: usize, mut changed: bool) -> bool {
         for e in &mut self.meas {
             if let WaveId::Ch(c) = e.1 {
                 if c >= n {
