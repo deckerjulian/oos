@@ -71,7 +71,8 @@ RULES = (
     (r"^ui/src/board/", ("acq", "roll", "trigger", "frontend", "registers")),
     # the measurement code: nearly every test of a1 reads its answer through a measurement (#118 was found by the
     # time axis test, through FREQ)
-    (r"^dsp/src/measure\.rs$|^ui/src/(framestats|ui/(analysis|measure_own|measure_pairs|records|acquire|tools|facts))\.rs$",
+    (r"^dsp/src/measure\.rs$|^ui/src/ui/analysis/\w+\.rs$"
+     r"|^ui/src/(framestats|ui/(analysis|measure_own|measure_pairs|records|acquire|tools|facts))\.rs$",
      ("measure", "acq", "roll", "frontend", "generator", "trigger")),
     (r"^ui/src/(scpi|vxi|hislip|http|mcp|net|mdns|announce|ssh|web)", ("remote",)),
     (r"^ui/src/(store|compress|logger)", ("store",)),
