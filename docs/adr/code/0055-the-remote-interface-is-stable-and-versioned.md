@@ -61,34 +61,38 @@ next release; the tree cannot tell whether a pull request breaks such a client.
 
 ## Decision
 
-- **The public interface** of OOS is:
-  - every SCPI command of [scpi.md](../../scpi.md), with its parameters, its answer and its error numbers, on every
-    transport (raw socket, VXI-11, HiSLIP, the `scpi` tool of MCP), and the framing of those transports;
-  - every HTTP route of a reference page of its own (`docs/http.md`, to be written with the implementation), with
-    its method, its request, its status codes and its answer;
-  - the MCP tools of `POST /mcp`, their names and their arguments;
-  - the formats these hand out or take: the CSV and binary forms of a record, the logic CSV, the waveform upload,
-    the pictures, the SCPI wire formats of ADR 0023, the LXI identification and the DNS-SD service types.
-- **Each entry is marked** in its reference: *stable* or *experimental*. Stable is what a client may build on.
-  Experimental may change or go in any release; the change is still listed (below). An entry becomes stable by a
-  minor version of the interface, and new entries come as experimental unless the pull request says why not.
-- **Not part of the interface**, whatever their mark: the development commands (`:DEBug:*`, `:SYSTem:DEBug:*`),
-  `:SYSTem:STATe?`, the keys and values of `:SYSTem:GET?` and `:SYSTem:SET` (they follow the setup file) unless the
-  reference marks a key stable, the HTML, CSS and script of the web page (`/`, `/style.css`, `GET /update`) and what
-  only the page asks for, the text of error messages (their numbers and status codes are part), timing, the control
-  FIFO and `--script` commands of `oos-ui`, the protocol between `oos-ui` and `oos-gpu` (ADR 0003), the files on the
-  card. As a first proposal, to be settled in the reference: `/ui-state`, `/stamp` and `/cmd` start as experimental
-  (`tap` and `drag` name points of a screen whose layout changes), the pictures, the downloads, `POST /waveform`,
-  `/lxi/identification`, `POST /mcp` and `POST /update` as stable.
+- **Every entry gets one of three marks** in its reference: every SCPI command in [scpi.md](../../scpi.md), every
+  HTTP route of `Http::answer` in a reference page of its own (`docs/http.md`, to be written with the
+  implementation), every MCP tool.
+  - *stable*: what a client may build on, with the promises below;
+  - *experimental*: may change or go in any release; the change is still listed (below);
+  - *internal*: listed so that the reference and its check know every entry, and no part of the interface.
+- **The public interface** of OOS is the entries marked stable or experimental: the SCPI commands with their
+  parameters, answers and error numbers on every transport (raw socket, VXI-11, HiSLIP, the `scpi` tool of MCP) and
+  the framing of those transports; the HTTP routes with their method, request, status codes and answer; the MCP tools
+  with their names and arguments; and the formats these hand out or take (the CSV and binary forms of a record, the
+  logic CSV, the waveform upload, the pictures, the SCPI wire formats of ADR 0023, the LXI identification, the
+  DNS-SD service types). An entry becomes stable by a minor version of the interface; new entries come as
+  experimental unless the pull request says why not.
+- **Internal**, and so not part of the interface: the development commands (`:DEBug:*`, `:SYSTem:DEBug:*`),
+  `:SYSTem:STATe?`, `:SYSTem:GET?` and `:SYSTem:SET` (their keys follow the setup file; the reference may mark a key
+  stable later), and the routes of the web page itself: `/`, `/style.css` and `GET /update`, whose HTML, CSS and
+  script change with the page. Also not part of it, and not entries of a reference: the text of error messages
+  (their numbers and status codes are part), timing, the control FIFO and `--script` commands of `oos-ui`, the
+  protocol between `oos-ui` and `oos-gpu` (ADR 0003), the files on the card. As a first proposal, to be settled in
+  the reference: `/ui-state`, `/stamp` and `/cmd` start as experimental (`tap` and `drag` name points of a screen
+  whose layout changes); the pictures, the downloads, `POST /waveform`, `/lxi/identification`, `POST /mcp` and
+  `POST /update` as stable.
 - **What stable promises.** The interface has a version `MAJOR.MINOR`, after semantic versioning, independent of the
-  release number of OOS. A new command, route, parameter, answer field or tool raises MINOR. A change that can break
-  a client of a stable entry (a removed or renamed command or route, a changed answer format, unit, default or
-  meaning, a parameter that is no longer taken) raises MAJOR, and is made only after the entry was *deprecated* for at
-  least one release: it still works, the reference says since when, what replaces it and in which release it goes,
-  and `CHANGELOG.md` says so. An HTTP route that is deprecated also answers with a `Deprecation` header (RFC 9745);
-  SCPI has no place for a warning, so a deprecated command is not made to queue an error. A fix that makes an entry do
-  what its reference says is no change of the interface. The stock command names stay as ADR 0023 has them: a
-  released stock name is never deprecated.
+  release number of OOS. A new command, route, parameter, answer field or tool raises MINOR, and so does any change
+  of an experimental entry, so a client that uses one can name the exact version it was written against (ADR 0056).
+  A change that can break a client of a stable entry (a removed or renamed command or route, a changed answer format,
+  unit, default or meaning, a parameter that is no longer taken) raises MAJOR, and is made only after the entry was
+  *deprecated* for at least one release: it still works, the reference says since when, what replaces it and in
+  which release it goes, and `CHANGELOG.md` says so. An HTTP route that is deprecated also answers with a
+  `Deprecation` header (RFC 9745); SCPI has no place for a warning, so a deprecated command is not made to queue an
+  error. A fix that makes an entry do what its reference says is no change of the interface. The stock command names
+  stay as ADR 0023 has them: a released stock name is never deprecated.
 - **A client reads the version** with an SCPI query and an HTTP route, which come with the implementation, not with
   this record. Proposed: `:SYSTem:INTerface:VERSion?` answers `<major>.<minor>` (SCPI's `:SYSTem:VERSion?` names the
   version of the SCPI standard and is left to that; the name is checked against the Programming Guide for a
@@ -99,9 +103,9 @@ next release; the tree cannot tell whether a pull request breaks such a client.
   - The answers of the stable SCPI queries are in `ui/tests/scpi.txt` and the comparison with the base, as now.
   - The HTTP routes get the same: a check in the layer `ratchet`, as `tools/scpi-coverage.py` does for SCPI (or that
     tool grown by a part), fails when a route of `Http::answer` is not in the reference, or an entry of either
-    reference has no mark; and a script of requests against `oos-ui --serve` writes status, type and body of each
-    stable route (a hash for a picture) to a text file that `tools/compare-base.sh` compares, so a change of an answer
-    shows in a pull request.
+    reference has none of the three marks; and a script of requests against `oos-ui --serve` writes status, type
+    and body of each stable route (a hash for a picture) to a text file that `tools/compare-base.sh` compares, so a
+    change of an answer shows in a pull request.
   - `CHANGELOG.md` gets a section `Interface:` in each release, next to `Added:`, `Changed:` and `Removed:`, with
     every change of the public interface, its mark, and the new version. A pull request whose comparison shows a
     changed answer of a stable entry has its line there, and a breaking one has a major version and its deprecation

@@ -36,44 +36,64 @@ What there is, read on 2026-11-18 (main at dd2eadc6):
 
 ## Decision
 
-- **An add-on is a program of its own,** outside the tree's crates, installed on the card in a folder of its own on
-  the data partition (`/oos/addons/<id>/`, proposed) with a manifest. The manifest names the add-on, its version, the
-  major version of the interface it needs, what it contributes, what it asks to be allowed, and its limits.
-- **OOS starts and stops it.** Each add-on has a switch, off after installing; a switched-on add-on is started after
-  `oos-ui` and stopped with it or with its switch. When it ends on its own it is started again a few times, then left
-  off with a message on the screen. Its end never ends `oos-ui`.
-- **It talks to `oos-ui` only over the stable remote interface** of ADR 0055, through a local socket, and over
-  **extension endpoints** that are part of that interface, with the same version and the same marks (they start
-  experimental). What they are for, the protocol left to the issues of the milestone:
-  - subscribing to the records (or the frames) as the scope accepts them, with their scale and time base;
-  - contributing what a module contributes today: the packets of a decoder for the bus lane and the decode table,
-    the values of a measurement for its tiles, a page or an overlay that `oos-ui` draws from what the add-on sends
-    (text, lines, traces, areas, in the named colours of ADR 0008: the add-on sends data, not pixels);
-  - settings of its own, declared in the manifest, which `oos-ui` shows in a menu of the add-on and keeps in the
-    add-on's folder.
+- **An add-on is a program of its own,** outside the tree's crates, with a manifest. The manifest names the add-on,
+  its version, the interface version and the extension endpoints it uses, what it contributes, the grants it asks
+  for (below), and its limits.
+- **Three places on the data partition, two of them the core's** (paths proposed):
+  - `/oos/addons/<id>/`: the program and the manifest, as installed. Owned by root, read only for the add-on. The
+    manifest the supervisor reads is this one, so an add-on cannot give itself grants or limits.
+  - `/oos/addon-settings/<id>`: the add-on's settings, which `oos-ui` keeps. Owned by root; the add-on cannot write
+    it and reads its settings over the interface.
+  - `/oos/addon-data/<id>/`: the one place the add-on writes, owned by its user. `oos-ui` never writes into it, so a
+    link the add-on puts there cannot lead a write of `oos-ui` onto `/oos/system.conf` or anything else.
+- **One user per add-on**, made when it is installed: no root, no capabilities, no other add-on's files. The user is
+  the add-on's identity.
+- **OOS starts and stops it.** Each add-on has a switch, off after installing; switching it on shows the grants of
+  its manifest. A switched-on add-on is started after `oos-ui` and stopped with it or with its switch. When it ends
+  on its own it is started again a few times, then left off with a message on the screen. Its end never ends
+  `oos-ui`.
+- **Each add-on has a socket of its own.** The supervisor makes a Unix socket per add-on in a folder of the core
+  (for example `/tmp/oos-addons/<id>`), which only that add-on's user may open, and hands its path to the add-on.
+  `oos-ui` also reads the peer's user from the socket (`SO_PEERCRED`) and drops a connection whose user is not the
+  add-on of that socket. An add-on never names itself in a message, so it cannot speak for another.
+- **The socket carries an allowlisted surface, not the whole remote interface.** What is on it:
+  - the **extension endpoints**, part of the interface of ADR 0055 with its version and marks (they start
+    experimental), the protocol left to the issues of the milestone: subscribing to the records (or the frames) as
+    the scope accepts them, with their scale and time base; contributing the packets of a decoder for the bus lane
+    and the decode table, the values of a measurement for its tiles, a page or an overlay that `oos-ui` draws from
+    what the add-on sends (text, lines, traces, areas, in the named colours of ADR 0008: data, not pixels); its own
+    settings, declared in the manifest, which `oos-ui` shows in a menu of the add-on;
+  - SCPI queries, by the grant `read`, which every add-on has;
+  - SCPI setters of the scope's settings, by the grant `control`, which the manifest has to ask for.
+
+  The interpreter knows the class of each command; the socket runs only the classes its add-on was granted. Never on
+  it, whatever the manifest says: `/cmd` and every other HTTP route, `POST /update` and MCP, the development
+  commands, `:SYSTem:SET`, and the commands that change the system, the network, the calibration or files (a class
+  of their own). The socket is no network transport and leads to nothing the network may not reach: `net.allow`
+  (ADR 0025) is not gone around, because the add-on offers no network service of its own and nothing on its socket
+  is beyond what the bench LAN may do.
 - **`oos-ui` never waits for an add-on.** A request is answered in the frame loop without waiting, as every
   transport is (ADR 0022); what an add-on sends is shown on a later frame; an add-on that falls behind loses records
   instead of holding the scope back.
-- **What an add-on may not do**, by the interface and by the user it runs as:
+- **What an add-on may not do**, by its socket and by its user:
   - touch the hardware: no register window, sample stream, front-end bus, GPIO or panel UART. Hardware stays with
     `oos-hal`, the board of `oos-ui` and `oos-fpgad` (ADR 0001); an add-on that needs a register sequence brings it
     into the tree. So no trigger type in hardware as an add-on.
-  - write the protected areas (ADR 0009), any block device of the card, `/oos/system.conf`, or another add-on's
-    folder; it writes its own folder only.
-  - go around `net.allow` (ADR 0025): it reaches `oos-ui` over the local socket only, offers no network service of its
-    own, and does not pass requests from the network on to the interface. An update (`POST /update`) is not an
-    extension endpoint.
-  - change the scope beyond what its manifest asks for. Reading the state is the default; changing settings over SCPI
-    is a grant of the manifest, which the switch shows.
-- **The sandbox is what the scope can hold:** a user of its own per add-on (no root, no capabilities), resource
-  limits (memory, processes, open files) through `setrlimit` and the control groups, and a place on the slow cores at
-  low priority. It keeps a faulty add-on from the screen, the hardware and the card. It does not make a hostile
-  add-on harmless: one that may change settings can do what any client on the bench LAN can (ADR 0025). Installing
-  an add-on is the owner's choice, as running a script on the bench computer is. A seccomp filter or namespaces can
-  tighten it later without changing the interface.
-- **Versioning is ADR 0055's.** The extension endpoints are part of the public interface; an add-on names the major
-  version it needs, and `oos-ui` does not start one whose major it does not serve and says so. A breaking change
-  waits a release as deprecated, as for any stable entry.
+  - write the protected areas (ADR 0009), any block device of the card, `/oos/system.conf`, its own program,
+    manifest or settings, or another add-on's places; it writes `/oos/addon-data/<id>/` only.
+  - offer a network service, or pass requests from the network on to its socket.
+- **The sandbox is what the scope can hold:** the user of its own, resource limits (memory, processes, open files)
+  through `setrlimit` and the control groups, and a place on the slow cores at low priority. It keeps a faulty
+  add-on from the screen, the hardware and the card. It does not make a hostile add-on harmless: one granted
+  `control` can change what any client on the bench LAN can (ADR 0025). Installing an add-on is the owner's choice,
+  as running a script on the bench computer is. A seccomp filter or namespaces can tighten it later without changing
+  the interface.
+- **Versioning is ADR 0055's, endpoint by endpoint.** On connecting, `oos-ui` tells the add-on the interface version
+  and the endpoints it serves with their marks. The manifest names the endpoints the add-on uses. For a stable one
+  the major version it was written for is enough, and a later minor of that major is fine. For an experimental one
+  the manifest names the exact interface version it was written against, and `oos-ui` starts the add-on only on that
+  version, since an experimental entry may change with any minor (ADR 0055). An add-on that cannot be started says
+  so on the screen, with the endpoint and the versions.
 - **The registries of ADR 0002 stay** for what ships in the tree, with their recipes and checks (ADR 0046). The
   modules in the tree are not rewritten as add-ons. An add-on appears in the same places through one entry per kind
   in the registry that forwards to the add-ons, compiled in and checked like the others. Stored identifiers of
@@ -107,6 +127,8 @@ What there is, read on 2026-11-18 (main at dd2eadc6):
   decoder that must keep up with every frame may still belong in the tree.
 - The interface grows by the extension endpoints, which have to be kept stable like every other stable entry
   (ADR 0055); its first versions are experimental on purpose.
+- The interpreter gets a class per command (read, control, system and the like), declared in the table that the
+  commands come from and kept complete by a check (ADR 0046), so a new command cannot reach an add-on by default.
 - The image grows by the supervision of add-ons and a user per add-on, which is a change of `rootfs/` and is tried on
   a unit (ADR 0052).
 - The milestone needs one example add-on outside the tree's crates that uses the interface, documented and tested
@@ -117,16 +139,17 @@ What there is, read on 2026-11-18 (main at dd2eadc6):
 Open questions for the maintainer, to be answered in the issues of the milestone:
 
 1. Which kinds come first: data only (decoder packets, measurement values), or pages and overlays from the start?
-2. The transport for an add-on on the scope: a Unix socket, or loopback TCP, which `net.allow` always allows? May
-   the extension endpoints also be reached from a computer (under `net.allow`), so an add-on can run there?
+2. May the extension endpoints also be reached from a computer (under `net.allow`, with an identity other than a
+   user on the scope), so an add-on can run there? This record allows only the socket on the scope.
 3. The form of the extension messages: SCPI commands under a subsystem of their own with binary blocks for data,
    or JSON lines (`oos-ui` has its own JSON code), or both?
 4. Who supervises the add-ons: `oos-ui` as their parent, or a small supervisor started by `rcS`?
 5. Installing: copying over SSH or from a USB stick, an upload on the web page, or both? Are add-on packages
    signed (the keys of ADR 0012, or keys of their own), or unsigned with a warning?
-6. One user per add-on, or one user for all? Does the image mount the control groups for the limits?
-7. Which permissions a manifest can ask for beyond reading the state: changing settings, writing to a USB stick,
-   the network?
+6. Does the image mount the control groups for the limits, and which limits does an add-on get when its manifest
+   names none?
+7. Which grants come after `read` and `control`: writing to a USB stick, files of the scope's storage, a network
+   service of its own (which would need its switch and the `net.allow` check, ADR 0025)?
 8. What a setup does that names an add-on that is not installed or is switched off.
 9. Where the example add-on lives: a folder of this repository outside the crates, or a repository of its own?
 
