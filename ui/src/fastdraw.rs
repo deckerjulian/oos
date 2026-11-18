@@ -70,13 +70,42 @@ pub fn edge_smooth(
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
     let l = l.max(1);
-    let a = pre.saturating_sub(span + l);
-    let b = (pre + span + l).min(v.len());
-    if b <= a + 2 * l {
+    let Some((a, s)) = smoothed(v, 0, v.len(), pre, span, l, level) else {
         return (None, None);
+    };
+    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
+    let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
+    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| {
+        edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
+    };
+    let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
+    (want, near(&|_| true).map(|e| oos_dsp::edges::Edge { t: a as f64 + e.t, ..e }))
+}
+
+/// Centred means of `l` >= 1 samples at `pre` +-`span`; `v` = samples `base..` of `len`. First index, means (or NaN).
+pub fn smoothed(
+    v: &[f32],
+    base: usize,
+    len: usize,
+    pre: usize,
+    span: usize,
+    l: usize,
+    level: f32,
+) -> Option<(usize, Vec<f32>)> {
+    let a = pre.saturating_sub(span + l);
+    let b = (pre + span + l).min(len);
+    if b <= a + 2 * l {
+        return None;
     }
     // running sum over the window; NaN samples count as the level (none in hardware frames)
-    let x = |i: usize| if v[i].is_finite() { v[i] as f64 } else { level as f64 };
+    let x = |i: usize| {
+        let y = v[i - base];
+        if y.is_finite() {
+            y as f64
+        } else {
+            level as f64
+        }
+    };
     let mut s = Vec::with_capacity(b - a);
     let mut sum = 0.0;
     let half = l / 2;
@@ -95,13 +124,7 @@ pub fn edge_smooth(
             s.push(f32::NAN);
         }
     }
-    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
-    let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| {
-        edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
-    };
-    let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
-    (want, near(&|_| true).map(|e| oos_dsp::edges::Edge { t: a as f64 + e.t, ..e }))
+    Some((a, s))
 }
 
 /// Helper threads the fast path spreads a batch over, besides the frame loop itself: one per core of
