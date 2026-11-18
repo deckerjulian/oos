@@ -33,10 +33,10 @@ pub static DCC: ModuleInfo = ModuleInfo::new("Dcc", "DCC", "dcc")
 
 /// NMRA DCC (S-9.2) on one channel (rail vs ground, or a differential A−B): edges mark half-bit boundaries.
 /// A short half (~58 us) is a `1`, a long half (>= ~80 us, up to several ms for a stretched zero) is a `0`. Bits are
-/// pairs of halves; a short/long mismatch or a gap resets the search. Packet: preamble (>=10 ones) → start `0` →
-/// address byte → (`0` + data byte)* → (`0` + XOR) → end `1`. Emits Field("PRE") (value = preamble ones), Id
-/// (address), Data (each data byte), Crc (received XOR, `ok` = matches). Cut packets and half-bit disagreements
-/// give Field("!ERR"); idle gaps and non-DCC bursts are skipped.
+/// pairs of halves; a gap resets the search, and a short/long phase slip drops one half and retries without a hole.
+/// Packet: preamble (>=10 ones) → start `0` → address byte → (`0` + data byte)* → (`0` + XOR) → end `1`. Emits
+/// Field("PRE") (value = preamble ones), Id (address), Data (each data byte), Crc (received XOR, `ok` = matches).
+/// Cut packets and false starts (too few bytes) are dropped; a hole mid-byte gives Field("!ERR"); idle gaps are skipped.
 pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     let mut out = Vec::new();
     if dt.is_nan() || dt <= 0.0 {
@@ -68,7 +68,7 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
             continue;
         }
         // start bit 0
-        let Some((s0, s1, false)) = bits.get(k).copied().flatten() else {
+        let Some((_s0, s1, false)) = bits.get(k).copied().flatten() else {
             continue;
         };
         let (Some(first), Some(last)) = (bits[pre0], bits[k - 1]) else { continue };
@@ -79,21 +79,18 @@ pub fn dcc(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         // separator: 0 = more data, 1 = end (last byte was the XOR)
         let DccBytes { bytes, cut, err_at, end } = dcc_bytes(&bits, k, s1);
         k = end;
-        if cut {
-            // packet truncated by the record: drop what we emitted for this attempt's PRE only if nothing else
+        if let Some((t0, t1)) = err_at {
+            out.push(Packet::tag("!ERR", t0, t1.max(t0 + 1.0), false));
+            continue;
+        }
+        if cut || bytes.len() < 2 {
+            // truncated by the record, or a false start (e.g. a 0 inside a long preamble then ones read as
+            // address + end): drop this attempt's PRE and keep searching — not a broken packet on the wire
             if let Some(last) = out.last() {
                 if last.kind == Kind::Field("PRE") {
                     out.pop();
                 }
             }
-            continue;
-        }
-        if let Some((t0, t1)) = err_at {
-            out.push(Packet::tag("!ERR", t0, t1.max(t0 + 1.0), false));
-            continue;
-        }
-        if bytes.len() < 2 {
-            out.push(Packet::tag("!ERR", s0, s0 + 1.0, false));
             continue;
         }
         let (xor_t0, xor_t1, xor) = bytes[bytes.len() - 1];
@@ -128,7 +125,9 @@ fn dcc_bits(e: &[f64], short_max: f64, long_max: f64) -> Vec<DccBit> {
             Half::Gap
         }
     };
-    // bits: (t0, t1, is_one); gaps and mismatches leave holes that reset the packet search
+    // bits: (t0, t1, is_one); gaps leave holes that reset the packet search. A short/long pair is a phase slip:
+    // drop one half and retry — do not insert a hole, or a mid-bit start (odd half before the next bit) poisons the
+    // whole stream after a good preamble (PRE then !ERR on live track captures).
     let mut bits: Vec<Option<(f64, f64, bool)>> = Vec::new();
     let mut i = 0;
     while i + 1 < e.len() {
@@ -152,9 +151,8 @@ fn dcc_bits(e: &[f64], short_max: f64, long_max: f64) -> Vec<DccBit> {
                 bits.push(None);
                 i += 1;
             }
-            // phase slip or noise: drop one half and try again
+            // phase slip or noise: drop one half and try again (no hole)
             _ => {
-                bits.push(None);
                 i += 1;
             }
         }

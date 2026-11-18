@@ -514,6 +514,10 @@ impl Ui {
         if m.dec_on_la() {
             return self.la_packets(m, rec).map(std::sync::Arc::new);
         }
+        // the screen record is peak-detect or resampled; the acquisition's own samples where the record has them
+        if self.decoder_uses_raw(m) {
+            return self.reference_decode_packets(m);
+        }
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (self.wfm_total, self.hist_pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
         for c in 0..NCH {
