@@ -44,7 +44,8 @@ pub fn word(symbols: &[u8; 7]) -> Option<u16> {
 }
 
 pub fn symbols_for_word(value: u16) -> [u8; 7] {
-    let &(flip, base) = REGIONS.iter().rev().find(|r| r.1 <= value as u32).unwrap();
+    // region 0 (no symbol 4, base 0) holds every value below the next one, so the search ends there at the latest
+    let &(flip, base) = REGIONS.iter().rev().find(|r| r.1 <= value as u32).unwrap_or(&REGIONS[0]);
     let mut payload = value as u32 - base;
     let mut symbols = [0; 7];
     for i in (0..7).rev() {
