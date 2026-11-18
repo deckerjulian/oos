@@ -47,4 +47,5 @@ smoothed away. The Display group is the first table; the other groups follow one
 ## References
 
 Issue #120; `ui/src/settings.rs`, `ui/src/settings/display.rs`, `ui/src/ui/setting_items.rs`,
-`ui/src/scpi/display.rs`, `ui/src/store.rs`; `ui/src/store/settings_snapshot.rs`; ADR 0002, ADR 0013, ADR 0014.
+`ui/src/scpi/display.rs`, `ui/src/store.rs`, `ui/src/store/setup_read.rs`; `ui/src/store/settings_snapshot.rs`; ADR
+0002, ADR 0013, ADR 0014.
