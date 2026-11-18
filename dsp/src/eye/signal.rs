@@ -128,11 +128,11 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     }
 }
 
-/// Local unit rates between equal-polarity transitions, with their midpoint times.
+/// Local unit rates between equal-polarity transitions, with their midpoint times and elapsed times: (t, rate, s).
 /// NRZ run lengths are integer UIs: counting them prevents a 3-bit run from being
 /// misread as a third of the clock rate. As with clock recovery, this assumes the
 /// local timing error is small enough to identify the nearest integer UI count.
-fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
+fn same_edge_rates(c: &Clock) -> Vec<(f64, f64, f64)> {
     if !c.period.is_finite() || c.period <= 0.0 {
         return Vec::new();
     }
@@ -144,43 +144,81 @@ fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
             let units = (elapsed / c.period).round().max(1.0);
             let rate = units / elapsed;
             if rate.is_finite() {
-                series.push((a + 0.5 * elapsed, rate));
+                series.push((a + 0.5 * elapsed, rate, elapsed));
             }
         }
     }
     series
 }
 
-/// Peak-to-peak local frequency deviation, parts per million of its measured
-/// mean, and the per-cycle series in ppm. The recovered UI is used to count NRZ
-/// run lengths; a hinted UI rate twice a clock's cycle rate does not halve depth.
-/// Other per-cycle timing jitter is included in this frequency-deviation span.
+/// Peak-to-peak local frequency deviation, parts per million of its measured mean, and the per-cycle series in ppm.
+/// The recovered UI is used to count NRZ run lengths; a hinted UI rate twice a clock's cycle rate does not halve depth.
+/// With a modulation line (the strongest of the spectrum, `ssc_rate`), the span is taken on the rate over windows of
+/// 1/32 of the modulation period, so the timing error of single edges does not count as modulation; a sine reads 0.2 %
+/// and a triangle 3 % under its span. Edge jitter alone puts its strongest line high, where a window holds one
+/// interval, and reads the span of the series, as a record without a line (constant rate, under 16 intervals) does.
 pub fn ssc_deviation(c: &Clock) -> (f64, Vec<f64>) {
     let series = same_edge_rates(c);
     if series.len() < 2 {
         return (f64::NAN, Vec::new());
     }
-    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    let mean = series.iter().map(|x| x.1).sum::<f64>() / series.len() as f64;
     if !mean.is_finite() || mean <= 0.0 {
         return (f64::NAN, Vec::new());
     }
-    let ppm: Vec<f64> = series.iter().map(|(_, f)| (f - mean) / mean * 1e6).collect();
-    let (lo, hi) = ppm.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+    let ppm: Vec<f64> = series.iter().map(|x| (x.1 - mean) / mean * 1e6).collect();
+    let rate = modulation_rate(&series);
+    let windowed = if is_positive(rate) { window_rates(&series, 1.0 / (32.0 * rate)) } else { Vec::new() };
+    let span: Vec<f64> =
+        if windowed.is_empty() { ppm.clone() } else { windowed.iter().map(|r| (r - mean) / mean * 1e6).collect() };
+    let (lo, hi) = span.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
     (hi - lo, ppm)
 }
 
-/// Strongest non-DC line of the local frequency series, hertz. Equal-polarity
-/// NRZ intervals are nonuniform in time, so their rates are linearly interpolated
-/// at uniform midpoint times before the FFT. This is an estimate when transitions
-/// are sparse; the UI period is never substituted for the actual elapsed time.
+/// The rate over `width` seconds around each time of `series` whose window lies inside the record: the units of the
+/// intervals in it over their elapsed time, so the timing error of the edges inside it cancels and a long NRZ run
+/// counts for its length.
+fn window_rates(series: &[(f64, f64, f64)], width: f64) -> Vec<f64> {
+    let (first, last) = (series[0].0, series[series.len() - 1].0);
+    let mut out = Vec::new();
+    let (mut lo, mut hi, mut units, mut elapsed) = (0usize, 0usize, 0.0, 0.0);
+    for &(t, _, _) in series {
+        if t - 0.5 * width < first || t + 0.5 * width > last {
+            continue;
+        }
+        while hi < series.len() && series[hi].0 <= t + 0.5 * width {
+            units += series[hi].1 * series[hi].2;
+            elapsed += series[hi].2;
+            hi += 1;
+        }
+        while series[lo].0 < t - 0.5 * width {
+            units -= series[lo].1 * series[lo].2;
+            elapsed -= series[lo].2;
+            lo += 1;
+        }
+        if hi > lo && is_positive(elapsed) {
+            out.push(units / elapsed);
+        }
+    }
+    out
+}
+
+/// Modulation rate of the local frequency series, hertz. Equal-polarity NRZ intervals are nonuniform in time, so their
+/// rates are linearly interpolated at uniform midpoint times before the FFT. The strongest non-DC line is refined by a
+/// parabola through the logarithms of it and its neighbours; with fewer than four modulation periods in the record,
+/// where the line is a few bins wide, by the sine that fits the series best around it. This is an estimate when
+/// transitions are sparse; the UI period is never substituted for the actual elapsed time.
 pub fn ssc_rate(c: &Clock) -> f64 {
-    let series = same_edge_rates(c);
+    modulation_rate(&same_edge_rates(c))
+}
+
+fn modulation_rate(series: &[(f64, f64, f64)]) -> f64 {
     if series.len() < 16 {
         return f64::NAN;
     }
-    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    let mean = series.iter().map(|x| x.1).sum::<f64>() / series.len() as f64;
     let (low, high) =
-        series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), (_, f)| (low.min(*f), high.max(*f)));
+        series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), x| (low.min(x.1), high.max(x.1)));
     // Constant-rate edges still have floating-point subtraction noise. They do
     // not contain an observable SSC modulation line.
     if !mean.is_finite() || mean <= 0.0 || high - low <= mean * 1e-10 {
@@ -199,8 +237,8 @@ pub fn ssc_rate(c: &Clock) -> f64 {
         while j + 1 < series.len() - 1 && series[j + 1].0 < t {
             j += 1;
         }
-        let (ta, fa) = series[j];
-        let (tb, fb) = series[j + 1];
+        let (ta, fa, _) = series[j];
+        let (tb, fb, _) = series[j + 1];
         let fraction = ((t - ta) / (tb - ta)).clamp(0.0, 1.0);
         // Remove the large carrier before f32 conversion so a small FM signal
         // is not quantized at the much larger nominal unit rate.
@@ -211,13 +249,84 @@ pub fn ssc_rate(c: &Clock) -> f64 {
         *f = (*f as f64 - dc) as f32;
     }
     let (df, spectrum) = crate::math::spectrum(&v, dt, crate::math::Window::Hann);
-    spectrum
-        .iter()
-        .enumerate()
-        .skip(1)
-        .filter(|(_, magnitude)| **magnitude > 0.0)
-        .max_by(|a, b| a.1.total_cmp(b.1))
-        .map(|(bin, _)| bin as f64 * df)
-        .filter(|f| *f > 0.0)
-        .unwrap_or(f64::NAN)
+    let Some(bin) =
+        (1..spectrum.len()).filter(|&k| spectrum[k] > 0.0).max_by(|&a, &b| spectrum[a].total_cmp(&spectrum[b]))
+    else {
+        return f64::NAN;
+    };
+    let mut f = bin as f64 * df;
+    if bin + 1 < spectrum.len() && spectrum[bin - 1] > 0.0 && spectrum[bin + 1] > 0.0 {
+        let (a, b, c) = (spectrum[bin - 1].ln(), spectrum[bin].ln(), spectrum[bin + 1].ln());
+        let d = a - 2.0 * b + c;
+        if d < 0.0 {
+            f += (0.5 * (a - c) / d).clamp(-0.5, 0.5) * df;
+        }
+    }
+    let span = last - first;
+    if f * span < 4.0 {
+        f = sine_fit(&v, dt, f, 1.0 / span);
+    }
+    if f > 0.0 {
+        f
+    } else {
+        f64::NAN
+    }
+}
+
+/// Frequency (Hz) of the sine that fits `v` (uniform, `dt` apart) with the least residual, searched within two record
+/// rates `fr` around `f0`. At most 4096 points of `v` are used.
+fn sine_fit(v: &[f32], dt: f64, f0: f64, fr: f64) -> f64 {
+    let step = v.len().div_ceil(4096).max(1);
+    let pts: Vec<(f64, f64)> = v.iter().enumerate().step_by(step).map(|(i, &x)| (i as f64 * dt, x as f64)).collect();
+    // least-squares a cos + b sin + c at f: the part of the energy it explains
+    let explained = |f: f64| -> f64 {
+        let w = 2.0 * std::f64::consts::PI * f;
+        let mut m = [[0.0f64; 3]; 3];
+        let mut r = [0.0f64; 3];
+        for &(t, x) in &pts {
+            let g = [(w * t).cos(), (w * t).sin(), 1.0];
+            for i in 0..3 {
+                for j in 0..3 {
+                    m[i][j] += g[i] * g[j];
+                }
+                r[i] += g[i] * x;
+            }
+        }
+        solve3(m, r).map_or(0.0, |k| k[0] * r[0] + k[1] * r[1] + k[2] * r[2])
+    };
+    let (lo, hi) = ((f0 - 2.0 * fr).max(0.25 * fr), f0 + 2.0 * fr);
+    let n = 200;
+    let grid = |k: usize| lo + (hi - lo) * k as f64 / n as f64;
+    let best = (0..=n).max_by(|&a, &b| explained(grid(a)).total_cmp(&explained(grid(b)))).unwrap_or(0);
+    let (mut a, mut b) = (grid(best.saturating_sub(1)), grid((best + 1).min(n)));
+    for _ in 0..40 {
+        let (m1, m2) = (a + (b - a) / 3.0, b - (b - a) / 3.0);
+        if explained(m1) < explained(m2) {
+            a = m1;
+        } else {
+            b = m2;
+        }
+    }
+    0.5 * (a + b)
+}
+
+/// Solves the 3 x 3 system m k = r (Cramer's rule); `None` when it is singular.
+fn solve3(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
+    let det = |a: [[f64; 3]; 3]| {
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    };
+    let d = det(m);
+    if !d.is_normal() {
+        return None;
+    }
+    let mut k = [0.0; 3];
+    for (c, kc) in k.iter_mut().enumerate() {
+        let mut a = m;
+        for row in 0..3 {
+            a[row][c] = r[row];
+        }
+        *kc = det(a) / d;
+    }
+    Some(k)
 }

@@ -117,6 +117,11 @@ Changed:
 
 Fixed:
 
+- SSC Freq Dev and SSC Modulation Rate are measured on the modulation (issue #196). The deviation was the span of
+  single cycles, mostly their timing error (about 9,400 ppm for a 5,000 ppm test clock, now about 5,500); it is now
+  the span of the rate averaged over 1/32 of the modulation period, which reads a sine 0.2 % and a triangle 3 % under
+  its span. The rate was the nearest spectral bin; it is now interpolated between bins, and with fewer than four
+  modulation periods in the record fitted with a sine (33 kHz with three periods read 29.3 kHz, now 33.0 kHz).
 - Double pulse: Ipeak and Irrm are the turn-on peak, not the end of the inductor's ramp later in the second pulse, so
   Trr, Qrr and the diode's d/dt have values. The descriptions of Td(off), Tf and Toff name the current fall they
   measure, not a voltage rise.
