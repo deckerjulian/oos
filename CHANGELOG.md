@@ -117,6 +117,8 @@ Changed:
 
 Fixed:
 
+- The WLAN box of the top bar is as wide as the LAN box at every text size: at the normal size its address ran out
+  of it (#23).
 - SSC Freq Dev and SSC Modulation Rate are measured on the modulation (issue #196). The deviation was the span of
   single cycles, mostly their timing error (about 9,400 ppm for a 5,000 ppm test clock, now about 5,500); it is now
   the span of the rate averaged over 1/32 of the modulation period, which reads a sine 0.2 % and a triangle 3 % under
