@@ -568,8 +568,8 @@ fn set_keys() -> Vec<String> {
             }
         }
     }
-    // the keys `set` hands to the settings table (settings.rs)
-    keys.extend(crate::settings::all().map(|s| s.key.to_string()));
+    // the keys `set` hands to the settings table (settings.rs); the fields of a line are read with it, above
+    keys.extend(crate::settings::all().filter(|s| s.line().is_none()).map(|s| s.key.to_string()));
     for want in ["tdiv", "dec_proto", "ser.rel", "ch1.vdiv", "ch1.bw20", "m2.op", "zone2"] {
         assert!(keys.iter().any(|k| k == want), "the scan of store::set found no {}: update set_keys", want);
     }

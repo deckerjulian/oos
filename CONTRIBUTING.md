@@ -47,10 +47,10 @@ walks through it. An analyser page registers the same way ([docs/analyser-module
 
 ## A new setting
 
-A setting of a group that has a table (so far the Display group, the trigger values, the acquisition settings and the
-math settings) is one row in its file of `ui/src/settings/`: the key in setup files, the type with its range or
-choices, the menu label, the SCPI command or why it has none, and its docs text. The setup file, the remote command,
-the menu row and the table in `docs/scpi.md` follow from it. Besides
+A setting of a group that has a table (so far the Display group, the trigger values, the acquisition settings, the
+math settings and the meters) is one row in its file of `ui/src/settings/`: the key in setup files, the type with its
+range or choices, the menu label, the SCPI command or why it has none, and its docs text. The setup file, the remote
+command, the menu row and the table in `docs/scpi.md` follow from it. Besides
 the row it needs its `Item` and its place in a menu (`ui/src/ui/item.rs`, `menu_items.rs`, `setting_items.rs`), its
 query in `ui/tests/scpi.txt`, and `(cd ui && OOS_BLESS=1 cargo test --locked -q settings::tests)` for the docs
 table ([ADR 0043](docs/adr/code/0043-one-declaration-per-setting.md)). A setting of the other groups is still

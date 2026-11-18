@@ -725,8 +725,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         return Ok(());
     }
-    // the keys of the settings table (settings.rs)
-    if let Some(s) = crate::settings::find(k) {
+    // the keys of the settings table (settings.rs); the fields of a line are read with the line, below
+    if let Some(s) = crate::settings::find(k).filter(|s| s.line().is_none()) {
         return s.load(m, v);
     }
     let ntime = tscales().len();

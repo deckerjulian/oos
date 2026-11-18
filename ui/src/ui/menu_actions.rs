@@ -514,13 +514,8 @@ impl Ui {
                 let next = self.step_wave(cur, d);
                 self.set_cursor_b_source(next);
             }
-            Item::DvmOn => m.dvm_on = !m.dvm_on,
             Item::DvmSrc => m.dvm_src = src_step(m.dvm_src, NCH, d),
-            Item::DvmMode => m.dvm_mode = (m.dvm_mode as i32 + d).rem_euclid(3) as usize,
-            Item::CntOn => m.cnt_on = !m.cnt_on,
             Item::CntSrc => m.cnt_src = src_step(m.cnt_src, NCH, d),
-            Item::CntMode => m.cnt_mode = (m.cnt_mode as i32 + d).rem_euclid(3) as usize,
-            Item::CntDigits => m.cnt_digits = (m.cnt_digits as i32 + d).clamp(3, 7) as u32,
             Item::MathLinA => m.math_lin.0 = (m.math_lin.0 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::CurMode => {

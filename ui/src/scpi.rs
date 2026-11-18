@@ -337,6 +337,20 @@ impl Scpi {
         l
     }
 
+    /// A row of the settings table (settings.rs) answers the query or takes the argument, which marks the model
+    /// changed; a value it does not take is refused with -224.
+    fn setting_cmd(&mut self, ui: &mut Ui, row: &crate::settings::Setting, query: bool, arg: &str) -> Option<Vec<u8>> {
+        if query {
+            return Some(row.query(&ui.m).into_bytes());
+        }
+        if !row.take(&mut ui.m, arg) {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        }
+        ui.mark_changed();
+        None
+    }
+
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
     /// so a client blocked on a line never waits forever.
     fn push_err(&mut self, mut message: String) {

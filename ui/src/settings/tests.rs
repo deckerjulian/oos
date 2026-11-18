@@ -11,11 +11,13 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 4] = [
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 6] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
     (&math::SLICES, ":MATH<n>", "math", "Math"),
+    (&meters::DVM_SLICES, ":DVM", "dvm", "DVM and counter"),
+    (&meters::COUNTER_SLICES, ":COUNter", "counter", "DVM and counter"),
 ];
 
 /// Rows with a command whose query ui/tests/scpi.txt does not ask yet, and why. Adding the query changes the answers
@@ -28,6 +30,11 @@ const NOT_ASKED: &[(&str, &str)] = &[
     (":ACQuire:AVERages:HARDware", "not asked before the table"),
     (":ACQuire:SEGMents:HARDware", "not asked before the table"),
     (":MATH1:FFT:WINDow", "not asked before the table; settings_snapshot probes it"),
+    (":DVM:ENABle", "not asked before the table; settings_snapshot probes it"),
+    (":DVM:MODE", "not asked before the table; settings_snapshot probes it"),
+    (":COUNter:ENABle", "not asked before the table; settings_snapshot probes it"),
+    (":COUNter:MODE", "not asked before the table; settings_snapshot probes it"),
+    (":COUNter:NDIGits", "not asked before the table; settings_snapshot probes it"),
 ];
 
 /// Every row with the SCPI root of its group, the first channel for `<n>`.
@@ -93,6 +100,10 @@ fn a_changed_value_survives_the_setup_file() {
         let m = changed(s);
         let back = crate::store::parse_setup(&crate::store::setup_text(&m)).expect("the setup loads");
         assert_eq!((s.get)(&back), (s.get)(&m), "{}", s.key);
+        // the line of the fields of a setup line is written by hand
+        if s.line().is_some() {
+            continue;
+        }
         let line = format!("{} = {}", s.key, s.store(&m));
         assert!(crate::store::setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
     }

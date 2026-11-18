@@ -208,12 +208,10 @@ impl Ui {
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
             Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
+            Item::ChFine | Item::HFine | Item::LogOn => &["Off", "On"],
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
-            Item::DvmMode => &tools::DVM_MODES,
-            Item::CntMode => &tools::CNT_MODES,
             Item::BootMode => &["One-shot", "Persist"],
             // long lists: shown as a picker (see `ctl`)
             Item::MathOpI => return self.math_ops_in_family().iter().map(|o| o.name().to_string()).collect(),

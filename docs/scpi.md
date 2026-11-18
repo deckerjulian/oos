@@ -290,11 +290,35 @@ See [reference analysis](reference-analysis.md) for sampling, model-derived jitt
 | `:CURSor:{MANual|TRACk}:CAY[?]` / `:CBY[?]` | A/B volts in the selected source's displayed lane, including display zoom. |
 | `:CURSor:XY:{AX|BX|AY|BY}[?]` | Independent X/Y coordinates on one selected waveform, not independent input sources. |
 | `:CURSor:{MANual|TRACk|XY}:{AXValue|BXValue|AYValue|BYValue|XDELta|IXDelta|YDELta}?` | Values/deltas; IXDelta is 1/abs(time delta). Missing is `9.9E37`. |
-| `:DVM:{ENABle|SOURce|MODE}[?]` | ON/OFF, acquired CHANn, and `DC|ACRMS|ACDC`; `:DVM:CURRent?` reads volts. |
-| `:COUNter:{ENABle|SOURce|MODE|NDIGits}[?]` | ON/OFF, acquired CHANn, `FREQuency|PERiod|TOTalize`, digits 3..7. |
+| `:DVM:SOURce[?]`, `:COUNter:SOURce[?]` | Acquired CHANn. |
+| `:DVM:CURRent?` | Reads volts. |
 | `:COUNter:CURRent?` / `:COUNter:TOTalize:CLEar` | Current result / reset accumulated counter statistics. |
 
 Cursor changes preserve capture statistics and an armed Single. Track values use the selected native/reference waveform and physical origin; positions remain viewport fractions. DVM/counter sources are acquired channels, not references; physical meter/counter parity is not established.
+
+### DVM and counter settings
+
+The switches and modes of the DVM and the counter, their commands and their place in a setup file. They are declared
+once, in `ui/src/settings/meters.rs`; these tables are written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`. Each meter keeps its settings in one setup line,
+`dvm = <on> <source> <mode>` and `counter = <on> <source> <mode> <digits>` (the modes by their place in the list);
+the sources (above) are written by hand.
+
+<!-- settings:dvm:begin -->
+| Command | Takes | Setup key | DVM and counter menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:DVM:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `dvm` (on) | DVM | The voltmeter's reading of its source in the readouts; from the DVM block where it is switched on and the board has one (docs/fork/dvm.md), else from the measurements of the records. |
+| `:DVM:MODE[?]` | `DC`, `ACRMs`, `ACDCrms` (also `ACDC`); the query answers `DC`, `ACRMS` or `ACDC` | `dvm` (mode) | DVM mode | What the voltmeter reads: the mean (DC), the rms without the mean (AC rms) or the whole rms (AC+DC rms). |
+<!-- settings:dvm:end -->
+
+<!-- settings:counter:begin -->
+| Command | Takes | Setup key | DVM and counter menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:COUNter:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `counter` (on) | Counter | The counter's reading of its source in the readouts (docs/protocols/counter.md). |
+| `:COUNter:MODE[?]` | `FREQuency`, `PERiod`, `TOTalize` | `counter` (mode) | Count mode | What the counter shows: the frequency, the period, or the edges counted since `:COUNter:TOTalize:CLEar`. |
+| `:COUNter:NDIGits[?]` | a whole number from 3 to 7 | `counter` (digits) | Digits | The digits of the counter's reading. |
+<!-- settings:counter:end -->
 
 ## Reference storage, SIM and decoding
 
