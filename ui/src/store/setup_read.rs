@@ -27,6 +27,11 @@ pub(crate) fn p_f32(v: &str) -> Result<f32, String> {
     v.parse::<f32>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v))
 }
 
+/// A number of an f64 field, as `str::parse` reads it: also `inf` and `NaN`, with its error text.
+pub(crate) fn p_f64(v: &str) -> Result<f64, String> {
+    v.parse::<f64>().map_err(|e| e.to_string())
+}
+
 pub(crate) fn p_u32(v: &str) -> Result<u32, String> {
     v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
 }
@@ -361,7 +366,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
         "log_ivl" => m.log_ivl = p_idx(v, crate::ui::LOG_STEPS_N)?,
-        "spec_margin" => m.spec_margin = p_f32(v)?.clamp(0.0, 60.0),
         k if k.starts_with("math_expr") => {
             let n = k[9..].parse::<usize>().map_err(|_| "math_expr: no number")?;
             // a formula that does not parse stays as it is and draws nothing; only the length is checked here
@@ -481,28 +485,19 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             if w.len() < 7 {
                 return Err("bode: want 8 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            (m.bode_start, m.bode_stop, m.bode_amp) = (f(w[0])?, f(w[1])?, f(w[3])?);
+            (m.bode_start, m.bode_stop, m.bode_amp) = (p_f64(w[0])?, p_f64(w[1])?, p_f64(w[3])?);
             m.bode_points = p_u32(w[2])?.clamp(2, 1000) as usize;
             m.bode_in = WaveId::parse(w[4])?;
             m.bode_out = WaveId::parse(w[5])?;
             m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
         }
-        "bode_link" => {
-            m.bode_usb = match v.trim() {
-                "usb" => true,
-                "lan" => false,
-                _ => return Err(format!("not lan or usb: {}", v)),
-            }
-        }
         "bode_sweep" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 7 {
                 return Err("bode_sweep: want 7 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            m.bode_sw_time = f(w[0])?;
+            m.bode_sw_time = p_f64(w[0])?;
             if !m.bode_sw_time.is_finite() || m.bode_sw_time <= 0.0 {
                 return Err("bode_sweep: the sweep time must be above 0".into());
             }
@@ -511,16 +506,15 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             m.bode_sync_slope = p_enum(w[3], &crate::settings::trigger::SLOPES[..2])?;
             m.bode_sync_level = p_f32(w[4])?;
             m.bode_sw_in = p_idx(w[5], NCH + 1)?;
-            m.bode_ref = f(w[6])?;
+            m.bode_ref = p_f64(w[6])?;
         }
         "spec" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 9 {
                 return Err("spec: want 9 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
             m.spec_src = WaveId::parse(w[0])?;
-            (m.spec_center, m.spec_span, m.spec_rbw) = (f(w[1])?, f(w[2])?, f(w[3])?);
+            (m.spec_center, m.spec_span, m.spec_rbw) = (p_f64(w[1])?, p_f64(w[2])?, p_f64(w[3])?);
             m.spec_win = p_enum(w[4], &WINDOWS)?;
             m.spec_trace = p_idx(w[5], 4)?;
             m.spec_ref = p_f32(w[6])?;
@@ -533,7 +527,6 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             // older files have no third field: the rate was entered, not measured
             m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
-        "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Full, EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 3 {
@@ -541,17 +534,7 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             }
             m.pw_v = WaveId::parse(w[0])?;
             m.pw_i = WaveId::parse(w[1])?;
-            m.pw_mode = p_enum(
-                w[2],
-                &[
-                    PowerMode::Quality,
-                    PowerMode::Harmonics,
-                    PowerMode::Switching,
-                    PowerMode::Ripple,
-                    PowerMode::Capacitance,
-                    PowerMode::Rail,
-                ],
-            )?;
+            m.pw_mode = p_enum(w[2], &crate::settings::power::MODES)?;
         }
         "magnetic" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -696,8 +679,8 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "spec_acpr" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [width, space] = w[..] else { return Err("spec_acpr: width spacing".into()) };
-            m.spec_acpr_w = width.parse::<f64>().map_err(|e| e.to_string())?;
-            m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
+            m.spec_acpr_w = p_f64(width)?;
+            m.spec_acpr_s = p_f64(space)?;
         }
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -745,12 +728,12 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [ber, lo, hi, npj, rail, notch, b, hp] = w[..] else { return Err("eye_more".into()) };
             let opt = |s: &str| if s == "-" { Ok(None) } else { WaveId::parse(s).map(Some) };
-            m.eye_ber = ber.parse::<f64>().map_err(|e| e.to_string())?;
-            m.eye_pn_lo = lo.parse::<f64>().map_err(|e| e.to_string())?;
-            m.eye_pn_hi = hi.parse::<f64>().map_err(|e| e.to_string())?;
+            m.eye_ber = p_f64(ber)?;
+            m.eye_pn_lo = p_f64(lo)?;
+            m.eye_pn_hi = p_f64(hi)?;
             m.eye_npj = p_bool(npj)?;
             m.eye_rail = opt(rail)?;
-            m.eye_notch = notch.parse::<f64>().map_err(|e| e.to_string())?;
+            m.eye_notch = p_f64(notch)?;
             m.eye_b = opt(b)?;
             m.eye_hp = p_bool(hp)?;
         }
@@ -767,8 +750,8 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [fline, fsw, vin, reference, clk] = w[..] else { return Err("power_more".into()) };
             let opt = |s: &str| if s == "-" { Ok(None) } else { WaveId::parse(s).map(Some) };
-            m.pw_fline = fline.parse::<f64>().map_err(|e| e.to_string())?;
-            m.pw_fsw = fsw.parse::<f64>().map_err(|e| e.to_string())?;
+            m.pw_fline = p_f64(fline)?;
+            m.pw_fsw = p_f64(fsw)?;
             m.pw_vin = opt(vin)?;
             m.pw_ref = if reference == "-" { None } else { Some(reference.parse::<f64>().map_err(|e| e.to_string())?) };
             m.pw_clk = opt(clk)?;

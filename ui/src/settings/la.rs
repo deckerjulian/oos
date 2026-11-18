@@ -25,6 +25,7 @@ pub const ON: [Setting; 1] = [Setting {
     doc: "The logic analyser, where the model has the LA port: its 16 lines are recorded with the channels. `ENABle` \
           is another name of `STATe`.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.la.on),
     put: |m, _, v| m.la.on = v.index() != 0,
 }];

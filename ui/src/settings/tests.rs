@@ -11,7 +11,7 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 12] = [
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 15] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
@@ -24,6 +24,9 @@ const GROUPS: [(&[&[Setting]], &str, &str, &str); 12] = [
     (&histogram::SLICES, ":HISTogram", "histogram", "Display"),
     (&bode::SLICES, ":BODE", "bode", "Bode"),
     (&la::SLICES, ":LA", "la", "Logic analyser"),
+    (&spectrum::SLICES, ":SPECtrum", "spectrum", "Spectrum"),
+    (&eye::SLICES, ":EYE", "eye", "Eye"),
+    (&power::SLICES, ":POWer", "power", "Power"),
 ];
 
 /// Every row with the SCPI root of its group, the first channel for `<n>`.
@@ -74,6 +77,9 @@ fn every_row_is_complete() {
             }
             Scpi::None { why } => assert!(!why.is_empty(), "{}: no command, and no reason", s.key),
         }
+        if let Ty::Real { .. } = s.ty {
+            assert!(s.step.is_some(), "{}: a real number steps by its row's step", s.key);
+        }
         let n = s.options().len();
         if let Ty::Steps(list) = s.ty {
             assert!(list.len() >= 2 && list.is_sorted(), "{}: steps in order", s.key);
@@ -122,6 +128,23 @@ fn a_changed_value_set_over_scpi_reads_back() {
                 }
                 assert!(q(&mut sc, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("0,"), "{}", s.key);
             }
+        }
+    }
+}
+
+/// A real number reads back what its row writes, with the precision of its field: an f64 field keeps a value an
+/// f32 cannot hold and reads `inf` as the setup lines do; an f32 field refuses it.
+#[test]
+fn a_real_number_reads_back_as_written() {
+    for s in all().filter(|s| matches!(s.ty, Ty::Real { .. })) {
+        let m = changed(s, 0);
+        let mut back = Model::default();
+        s.load(&mut back, 0, &s.store(&m, 0)).unwrap_or_else(|e| panic!("{}: {}", s.key, e));
+        assert_eq!((s.get)(&back, 0), (s.get)(&m, 0), "{}", s.key);
+        let f64_field = matches!((s.get)(&m, 0), Val::F64(_));
+        assert_eq!(s.load(&mut back, 0, "inf").is_ok(), f64_field, "{}", s.key);
+        if f64_field && s.load(&mut back, 0, "1.0000000001").is_ok() {
+            assert_eq!(s.store(&back, 0), "1.0000000001", "{}", s.key);
         }
     }
 }

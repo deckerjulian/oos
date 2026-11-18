@@ -64,6 +64,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
 | [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted |
 | [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | proposed |
+| [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | proposed |
 
 ## Reading order for agents
 

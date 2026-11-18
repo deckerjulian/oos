@@ -25,6 +25,7 @@ pub const DRAW_PATH: [Setting; 1] = [Setting {
           ([ADR 0029](adr/code/0029-batch-is-the-default-draw-path.md)), or Frames, the standard path; `STANdard` is \
           an alias of `FRAMes`. Which path runs is the `pipeline` part of `:SYSTem:STATe?`.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.draw_batch),
     put: |m, _, v| m.draw_batch = v.index() != 0,
 }];

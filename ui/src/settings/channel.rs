@@ -36,6 +36,7 @@ pub const ON: [Setting; 1] = [Setting {
     #[cfg(test)]
     doc: "Shows the channel. The menu switches on only the inputs the model has.",
     accept: None,
+    step: None,
     get: |m, n| Val::Bool(m.ch[n].on),
     put: |m, n, v| m.ch[n].on = v.index() != 0,
 }];
@@ -58,6 +59,7 @@ pub const UNIT: [Setting; 1] = [Setting {
     #[cfg(test)]
     doc: "Supported channel unit. Use the configured unit when interpreting cursor/readout values.",
     accept: None,
+    step: None,
     get: |m, n| Val::Index(m.ch[n].unit as usize),
     put: |m, n, v| m.ch[n].unit = AmpUnit::ALL[v.index()],
 }];
@@ -71,6 +73,7 @@ pub const BW: [Setting; 1] = [Setting {
     #[cfg(test)]
     doc: "The channel's bandwidth limit. OOS filtering extends stock choices.",
     accept: None,
+    step: None,
     get: |m, n| Val::Index(m.ch[n].bw),
     put: |m, n, v| m.ch[n].bw = v.index(),
 }];
@@ -84,6 +87,7 @@ pub const INVERT: [Setting; 1] = [Setting {
     #[cfg(test)]
     doc: "Inverts the channel.",
     accept: None,
+    step: None,
     get: |m, n| Val::Bool(m.ch[n].invert),
     put: |m, n, v| m.ch[n].invert = v.index() != 0,
 }];
@@ -98,6 +102,7 @@ pub const FINE: [Setting; 1] = [Setting {
     doc: "Fine vertical control, one switch for every channel: the scale steps through the rows of the calibration \
           instead of 1-2-5. Off keeps a fine scale until the next coarse step.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.fine_v),
     put: |m, _, v| m.fine_v = v.index() != 0,
 }];
@@ -112,6 +117,7 @@ pub const EXPAND: [Setting; 1] = [Setting {
     doc: "Vertical expansion reference supported by the model, one switch for every channel: a change of scale keeps \
           the ground line or the screen centre in place.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.v_expand_gnd),
     put: |m, _, v| m.v_expand_gnd = v.index() != 0,
 }];

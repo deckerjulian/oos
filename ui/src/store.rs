@@ -251,7 +251,7 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         kv(&format!("math_expr{}", k + 1), e.clone());
     }
     kv("log_ivl", m.log_ivl.to_string());
-    kv("spec_margin", m.spec_margin.to_string());
+    crate::settings::write(&crate::settings::spectrum::MARGIN, m, 0, kv);
     kv("math_offset", m.math_offset.to_string());
     crate::settings::write(&crate::settings::math::WINDOW_BW, m, 0, kv);
     // the "math*" keys are the selected math channel; the others as mN.* (N = 1..8)
@@ -309,7 +309,7 @@ fn analysis_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         ),
     );
     // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
-    kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
+    crate::settings::write(&crate::settings::bode::LINK, m, 0, kv);
     // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
     kv(
         "bode_sweep",
@@ -341,7 +341,7 @@ fn analysis_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     );
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
-    kv("eye_place", name(m.eye_place));
+    crate::settings::write(&crate::settings::eye::PLACE, m, 0, kv);
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
 }
 

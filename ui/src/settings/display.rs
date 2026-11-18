@@ -21,6 +21,7 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "How long a drawn waveform stays on the screen.",
         accept: None,
+        step: None,
         get: |m, _| Val::Index(m.persist),
         put: |m, _, v| m.persist = v.index(),
     },
@@ -32,6 +33,7 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "Brightness of the waveforms; 0 is refused, a value below 10 sets 10.",
         accept: Some((1.0, 100.0)),
+        step: None,
         get: |m, _| Val::U32(m.intensity),
         put: |m, _, v| m.intensity = v.index() as u32,
     },
@@ -51,6 +53,7 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "The graticule: every division line, a lighter one, or none.",
         accept: None,
+        step: None,
         get: |m, _| Val::Index(GRIDS.iter().position(|&g| g == m.grid).unwrap_or(0)),
         put: |m, _, v| m.grid = GRIDS[v.index()],
     },
@@ -62,6 +65,7 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "Brightness of the graticule; a value below 10 sets 10.",
         accept: Some((0.0, 100.0)),
+        step: None,
         get: |m, _| Val::U32(m.grid_bright),
         put: |m, _, v| m.grid_bright = v.index() as u32,
     },
@@ -73,6 +77,7 @@ pub const VIEW: [Setting; 5] = [
         #[cfg(test)]
         doc: "A frame around the graticule with ticks every fifth of a division; none with the grid off.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.grid_frame),
         put: |m, _, v| m.grid_frame = v.index() != 0,
     },
@@ -88,6 +93,7 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "Colours the persistence by how often a point was hit.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.color_grade),
         put: |m, _, v| m.color_grade = v.index() != 0,
     },
@@ -99,6 +105,7 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "Draws every sample as a dot instead of joining them with lines.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.dots),
         put: |m, _, v| m.dots = v.index() != 0,
     },
@@ -120,6 +127,7 @@ pub const DRAW: [Setting; 3] = [
         #[cfg(test)]
         doc: "The bottom bar as cards or as one compact line.",
         accept: None,
+        step: None,
         get: |m, _| Val::Index(m.bar_compact as usize),
         put: |m, _, v| m.bar_compact = v.index() != 0,
     },

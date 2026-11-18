@@ -296,16 +296,71 @@ Additional OOS families accept item names defined by their analysis page/source 
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
-The mode of the Bode page, its command and its key in a setup file. It is declared once, in `ui/src/settings/bode.rs`;
-this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails
-when the two differ. A value the command does not take is refused with `-224`. The sweep and the generator are written
-by hand.
+The settings of the Bode page, the command of the mode and their keys in a setup file. They are declared once, in
+`ui/src/settings/bode.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/`), and a test fails when the two differ. A value the command does not take is refused with `-224`. A key of two
+words names a field of a setup line of several values (`bode` (start) is the start field of the `bode` line). The
+input, the output, the generator with its address and `:BODE:GENerator`, and the sync channel are written by hand.
 
 <!-- settings:bode:begin -->
 | Command | Takes | Setup key | Bode menu | What it does |
 | --- | --- | --- | --- | --- |
 | `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (start) | Start freq | The first frequency of the sweep. The menu steps 1-2-5 and keeps it at or below half the stop. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (stop) | Stop freq | The last frequency of the sweep. The menu steps 1-2-5 and keeps it at or above twice the start. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (points) | Points | The number of frequencies of the sweep, logarithmically spaced. The menu steps by 5 from 5 to 200; a setup line keeps 2 to 1000. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp. |
+| none | set with the address by `:BODE:GENerator` | `bode_link` | Connection | How an external generator is reached: on the network at its address, or on the USB-A port. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (time) | Sweep time | How long the generator takes for one sweep. The menu steps 1-2-5 from 1 ms to 500 s. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (log) | Sweep | Whether the generator sweeps the frequency linearly or logarithmically over the sweep time. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (edge) | Sync edge | The edge of the sync channel that marks the start of a sweep. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (level) | Sync level | The level of the sync edge. The menu steps by 0.1 V from -20 V to 20 V. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (ref) | Ref level | The level the gain is measured against when the free sweep has no input channel, in dBV. The menu steps by 1 dB from -80 to 40 dBV. |
 <!-- settings:bode:end -->
+
+The settings of the spectrum page and their keys in a setup file. No command sets them yet. They are declared once,
+in `ui/src/settings/spectrum.rs`, and this table is written from there like the one above. The source, the span, the
+RBW and the harmonics of the pane are written by hand.
+
+<!-- settings:spectrum:begin -->
+| Command | Takes | Setup key | Spectrum menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (center) | Centre | The centre of the band the page shows (with a span), and the frequency Centre on peak sets. The menu steps 1-2-5. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (win) | Window | The window the record is multiplied with before the transform. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (trace) | Trace | What the trace shows of the spectra one after the other: the last one, their average, or the largest or smallest value of each frequency. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (ref) | Ref level | The level at the top of the plot, in dBV. The menu steps by 5 dB. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (wf) | Waterfall | The spectra one after the other as a waterfall under the trace. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (dist) | THD / SNR | The distortion figures of the largest component (THD, THD+N, SNR, SINAD, SFDR, ENOB) on the page. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_acpr` (width) | Ch width | The width of the main channel and of its neighbours for the adjacent channel power ratio. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_acpr` (spacing) | Ch space | The distance from the centre of the main channel to the centres of its neighbours. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_margin` | Limit margin | How far above the trace (its highest level nearby) Limit from trace puts the limit line, 0 to 60 dB. |
+<!-- settings:spectrum:end -->
+
+The settings of the eye and jitter page and their keys in a setup file, declared in `ui/src/settings/eye.rs`. No command
+sets them yet. The source, the bit rate, the rail and the clock are written by hand.
+
+<!-- settings:eye:begin -->
+| Command | Takes | Setup key | Eye menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `eye_place` | Place | Where the eye is drawn: over the whole plot, beside the trace, or under it (beside it when there is no room under it). A choice also brings a floated eye back into its place. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (ber) | BER | The bit error ratio the total jitter is given for. The menu offers 1e-3 to 1e-15, a factor of 1000 a step; a value on none starts from 1e-12. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (pn_lo) | Pn low | The lower end of the band of the phase noise. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (pn_hi) | Pn high | The upper end of the band of the phase noise. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (npj) | NPJ | The figure NPJ of the jitter model on the page; off leaves it out. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (notch) | Notch | A frequency that is fitted as a sine and taken out of the TIE trend before the eye is measured again (power-supply-induced jitter), off at 0. The menu steps 1-2-5 from 0. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (hp) | Highpass | The 30 kHz high-pass on the common mode before its peak-to-peak is measured. |
+<!-- settings:eye:end -->
+
+The settings of the power analysis and their keys in a setup file, declared in `ui/src/settings/power.rs`. No command
+sets them yet. The voltage, the current, the input, the clock and the reference of the rail are written by hand.
+
+<!-- settings:power:begin -->
+| Command | Takes | Setup key | Power menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `power` (mode) | Page | What the page analyses: the power quality, the harmonics, the switching losses, the ripple, the input capacitance or a supply rail. |
+| none | none yet: the page is set in its menu and by a setup file | `power_more` (fline) | Line f | The line frequency of the pages that need one, measured from the record when 0 (auto). The menu steps 1-2-5 from 0. |
+| none | none yet: the page is set in its menu and by a setup file | `power_more` (fsw) | Switch f | The switching frequency of the ripple page, measured from the record when 0 (auto). The menu steps 1-2-5 from 0. |
+<!-- settings:power:end -->
 
 ## Cursors, DVM and counter
 

@@ -41,6 +41,7 @@ pub const MODE: [Setting; 4] = [
         doc: "How a record is made: Normal, Peak, Average (over the count of `avg_count`) or High res (in software, \
               from more samples than screen points).",
         accept: None,
+        step: None,
         get: |m, _| Val::Index(ACQ_MODES.iter().position(|&a| a == m.acq).unwrap_or(0)),
         put: |m, _, v| m.acq = ACQ_MODES[v.index()],
     },
@@ -53,6 +54,7 @@ pub const MODE: [Setting; 4] = [
         doc: "Matched takes the offsets of the interleaved ADC cores off in software (docs/protocols/adc-mode.md 6); \
               Raw leaves the words as they come.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.cores),
         put: |m, _, v| m.cores = v.index() != 0,
     },
@@ -64,6 +66,7 @@ pub const MODE: [Setting; 4] = [
         #[cfg(test)]
         doc: "How many records the Average mode averages.",
         accept: None,
+        step: None,
         get: |m, _| Val::U32(m.avg_count),
         put: |m, _, v| m.avg_count = v.index() as u32,
     },
@@ -76,6 +79,7 @@ pub const MODE: [Setting; 4] = [
         doc: "Average mode: the FPGA averages where the board can, else the software does; experimental, not verified \
               on the unit (docs/fork/upstream-audit.md). The menu offers it in Average mode with a hardware source.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.avg_hw),
         put: |m, _, v| m.avg_hw = v.index() != 0,
     },
@@ -91,6 +95,7 @@ pub const SEG_HW: [Setting; 1] = [Setting {
     doc: "Segments recorded by the FPGA instead of the software history; experimental, not verified on the unit \
           (docs/fork/upstream-audit.md). The menu offers it while segments are on.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.seg_hw),
     put: |m, _, v| m.seg_hw = v.index() != 0,
 }];

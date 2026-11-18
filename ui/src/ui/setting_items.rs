@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 46] = [
+const ITEMS: [(Item, &str); 75] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -54,7 +54,36 @@ const ITEMS: [(Item, &str); 46] = [
     (Item::MaskInvert, "mask_inv"),
     (Item::Histogram, "hist"),
     (Item::BodeMode, "bode_mode"),
+    (Item::BodeStart, "bode start"),
+    (Item::BodeStop, "bode stop"),
+    (Item::BodePoints, "bode points"),
+    (Item::BodeAmp, "bode amp"),
+    (Item::BodeLink, "bode_link"),
+    (Item::BodeSwTime, "bode_sweep time"),
+    (Item::BodeSwLog, "bode_sweep log"),
+    (Item::BodeSyncEdge, "bode_sweep edge"),
+    (Item::BodeSyncLvl, "bode_sweep level"),
+    (Item::BodeRef, "bode_sweep ref"),
     (Item::LaOn, "la on"),
+    (Item::SpecCenter, "spec center"),
+    (Item::SpecWin, "spec win"),
+    (Item::SpecTrace, "spec trace"),
+    (Item::SpecRef, "spec ref"),
+    (Item::SpecWf, "spec wf"),
+    (Item::SpecDist, "spec dist"),
+    (Item::SpecAcprW, "spec_acpr width"),
+    (Item::SpecAcprS, "spec_acpr spacing"),
+    (Item::SpecMargin, "spec_margin"),
+    (Item::EyePlace, "eye_place"),
+    (Item::EyeBer, "eye_more ber"),
+    (Item::EyePnLo, "eye_more pn_lo"),
+    (Item::EyePnHi, "eye_more pn_hi"),
+    (Item::EyeNpj, "eye_more npj"),
+    (Item::EyeNotch, "eye_more notch"),
+    (Item::EyeHp, "eye_more hp"),
+    (Item::PowMode, "power mode"),
+    (Item::PowFline, "power_more fline"),
+    (Item::PowFsw, "power_more fsw"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -131,6 +160,49 @@ impl Ui {
                 }
                 return true;
             }
+            // an analyser page starts its averaging again and leaves the rest as it is (no `settings_changed`), as
+            // before the table
+            Item::SpecCenter
+            | Item::SpecWin
+            | Item::SpecTrace
+            | Item::SpecRef
+            | Item::SpecWf
+            | Item::SpecDist
+            | Item::SpecAcprW
+            | Item::SpecAcprS
+            | Item::SpecMargin
+            | Item::EyeBer
+            | Item::EyePnLo
+            | Item::EyePnHi
+            | Item::EyeNpj
+            | Item::EyeNotch
+            | Item::EyeHp
+            | Item::PowMode
+            | Item::PowFline
+            | Item::PowFsw => {
+                self.ana_restart();
+                return true;
+            }
+            // a new place moves the eye: `eye_set_place` compares it with the old one, and keeps the eye beside the
+            // trace when there is no room under it; Full, Side and Under also bring a floated eye back into its place
+            Item::EyePlace => {
+                let place = self.m.eye_place;
+                (s.put)(&mut self.m, n, before);
+                self.workspace.eye_float = None;
+                self.eye_set_place(place);
+                return true;
+            }
+            // the rest of the Bode page, likewise
+            Item::BodeStart
+            | Item::BodeStop
+            | Item::BodePoints
+            | Item::BodeAmp
+            | Item::BodeLink
+            | Item::BodeSwTime
+            | Item::BodeSwLog
+            | Item::BodeSyncEdge
+            | Item::BodeSyncLvl
+            | Item::BodeRef => return true,
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -147,21 +219,37 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the LA menu, in the
-    /// Acquire menu (in Average mode with segments, so their
-    /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
-    /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
-    /// limits show).
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an analyser
+    /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
+    /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
+    /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
+    /// show).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::La, MenuId::Spectrum, MenuId::Eye]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))
         {
+            return true;
+        }
+        // the rows of each page of the power analysis
+        if crate::settings::power::MODES.iter().any(|&p| {
+            u.m.pw_mode = p;
+            u.items(MenuId::Power).contains(&it)
+        }) {
+            return true;
+        }
+        // the free sweep's rows (with no input channel, so the reference level shows), the connection of an external
+        // generator
+        u.m.bode_sw_in = 0;
+        if (0..crate::ui::bode::GENERATORS.len()).any(|g| {
+            u.m.bode_gen = g;
+            u.items(MenuId::Bode).contains(&it)
+        }) {
             return true;
         }
         if crate::math::MATH_OPS.iter().any(|&op| {
