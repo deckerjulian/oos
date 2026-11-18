@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Hostile input for the parsers of oos-ui that read what comes from outside the program (ADR 0047): files, the
-//! network, remote commands. Each parser has one test: valid inputs, mutated from a fixed seed (hal's
-//! `hostile/gen.rs`), go in; it must return, not panic, and what it accepts must obey the contract the test states.
-//! `cargo test hostile` runs them all, `OOS_HOSTILE_ITERS` raises the number of inputs.
+//! network, remote commands, the signal on the probes. Each parser has one test: valid inputs, mutated from a fixed
+//! seed (hal's `hostile/gen.rs`), go in; it must return, not panic, and what it accepts must obey the contract the
+//! test states. `cargo test hostile` runs them all, `OOS_HOSTILE_ITERS` raises the number of inputs.
 //!
 //! The tests are here by kind of input, or in the tests of the parser's own module where they need its private parts
 //! (`store/hostile_tests.rs`, `http/tests/hostile.rs`, `hislip.rs`, `mdns.rs`, `announce.rs`); each has `hostile` in
@@ -17,6 +17,7 @@ mod conf;
 mod gen;
 mod network;
 mod remote;
+mod signals;
 
 pub(crate) use gen::*;
 
@@ -64,6 +65,12 @@ pub(crate) const KNOWN: &[Known] = &[
         name: "ssh-rsa-empty-modulus",
         what: "ssh::parse_line subtracts past zero on an RSA key whose modulus has no bit set",
         repro: conf::hostile_known_ssh_rsa_empty_modulus,
+    },
+    #[cfg(feature = "dec-qspi")]
+    Known {
+        name: "qspi-zero-frame",
+        what: "the QSPI decoder (oos-dsp) panics on a CS# frame that ends where it starts with a clock edge there",
+        repro: signals::hostile_known_qspi_zero_frame,
     },
 ];
 
