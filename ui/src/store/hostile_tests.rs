@@ -242,14 +242,11 @@ fn ppm_trap(b: &[u8]) -> Option<&'static str> {
             }
             p += 1;
         }
-        if p > b.len() {
-            return Some("ppm-header-ends-in-a-comment");
-        }
         let s = p;
         while p < b.len() && b[p].is_ascii_digit() {
             p += 1;
         }
-        fields.push(std::str::from_utf8(&b[s..p]).ok()?.parse::<i32>().ok()?);
+        fields.push(std::str::from_utf8(b.get(s..p)?).ok()?.parse::<i32>().ok()?);
     }
     let (w, h, max) = (fields[0] as i64, fields[1] as i64, fields[2]);
     (max == 255 && w > 0 && h > 0 && w * h * 3 > i32::MAX as i64).then_some("ppm-size-overflows")
@@ -278,9 +275,9 @@ fn hostile_power_on_picture() {
     });
 }
 
+// Break it catches: a header that ends inside a comment (#181)
 #[test]
-#[ignore = "ppm_into panics on a header that ends inside a comment, #181"]
-pub(crate) fn hostile_known_ppm_header_ends_in_a_comment() {
+fn hostile_ppm_header_ends_in_a_comment() {
     assert_eq!(ppm_into(b"P6\n#", &mut Canvas::new(16, 8)), None);
 }
 

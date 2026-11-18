@@ -322,7 +322,8 @@ pub fn ppm_into(b: &[u8], cv: &mut Canvas) -> Option<(i32, i32)> {
         while p < b.len() && b[p].is_ascii_digit() {
             p += 1;
         }
-        fields.push(std::str::from_utf8(&b[s..p]).ok()?.parse::<i32>().ok()?);
+        // a header that ends inside a comment leaves p one past the end: no field
+        fields.push(std::str::from_utf8(b.get(s..p)?).ok()?.parse::<i32>().ok()?);
     }
     let (w, h, max) = (fields[0], fields[1], fields[2]);
     p += 1;
