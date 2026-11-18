@@ -41,16 +41,9 @@ impl Ui {
 
     pub(in crate::ui) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecSpan
-            | Item::SpecRbw
-            | Item::EyeRate
-            | Item::EyeBer
-            | Item::EyePnLo
-            | Item::EyePnHi
-            | Item::EyeNotch
-            | Item::PowFline
-            | Item::PowFsw
-            | Item::PowRef => Kind::Value,
+            Item::SpecSpan | Item::SpecRbw | Item::EyeRate | Item::PowFline | Item::PowFsw | Item::PowRef => {
+                Kind::Value
+            }
             Item::SpecPeak
             | Item::SpecLimitSet
             | Item::SpecLimitClear
@@ -64,11 +57,8 @@ impl Ui {
             | Item::SpecSrc
             | Item::SpecHarm
             | Item::EyeOn
-            | Item::EyePlace
             | Item::EyeSrc
             | Item::EyeB
-            | Item::EyeHp
-            | Item::EyeNpj
             | Item::EyeRail
             | Item::PowOn
             | Item::PowV
@@ -96,16 +86,9 @@ impl Ui {
             Item::SpecLimitSet => "Limit from trace",
             Item::SpecLimitClear => "Clear limit",
             Item::EyeAct => "Auto Eye/Jitter",
-            Item::EyePlace => "Place",
             Item::EyeRate => "Bit rate",
-            Item::EyeBer => "BER",
             Item::EyeB => "Clock",
-            Item::EyeHp => "Highpass",
-            Item::EyePnLo => "Pn low",
-            Item::EyePnHi => "Pn high",
-            Item::EyeNpj => "NPJ",
             Item::EyeRail => "Rail",
-            Item::EyeNotch => "Notch",
             Item::EyeClear => "Clear eye",
             Item::PowV => "Voltage",
             Item::PowI => "Current",
@@ -127,11 +110,6 @@ impl Ui {
             Item::SpecOn => onoff(m.view == AView::Spectrum),
             Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
-            Item::EyePlace => match m.eye_place {
-                EyePlace::Full => "Full".into(),
-                EyePlace::Side => "Side".into(),
-                EyePlace::Under => "Under".into(),
-            },
             Item::PowOn => onoff(m.view == AView::Power),
             Item::SpecSrc => self.wave_name(m.spec_src),
             Item::EyeSrc => self.wave_name(m.eye_src),
@@ -157,20 +135,8 @@ impl Ui {
                     si_short(m.eye_rate, "b/s")
                 }
             }
-            Item::EyeBer => format!("{:.0e}", m.eye_ber),
             Item::EyeB => m.eye_b.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
-            Item::EyeHp => onoff(m.eye_hp),
-            Item::EyePnLo => si_short(m.eye_pn_lo, "Hz"),
-            Item::EyePnHi => si_short(m.eye_pn_hi, "Hz"),
-            Item::EyeNpj => onoff(m.eye_npj),
             Item::EyeRail => m.eye_rail.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
-            Item::EyeNotch => {
-                if m.eye_notch > 0.0 {
-                    si_short(m.eye_notch, "Hz")
-                } else {
-                    "off".into()
-                }
-            }
             Item::PowMode => power_page(m.pw_mode).into(),
             Item::PowFline => {
                 if m.pw_fline > 0.0 {
@@ -206,10 +172,7 @@ impl Ui {
     pub(in crate::ui) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => {
-                v(&["Off", "On"])
-            }
-            Item::EyePlace => v(&["Full", "Side", "Under"]),
+            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::ProtoWatch => v(&["Off", "On"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
@@ -221,14 +184,6 @@ impl Ui {
 
     /// Adjusts an analyser item; false = not an analyser item.
     pub(in crate::ui) fn ana_adjust(&mut self, it: Item, d: i32) -> bool {
-        if it == Item::EyePlace {
-            // Full, Side and Under also bring a floated eye back into its place (`eye_set_place` only clears it for Full)
-            let all = [EyePlace::Full, EyePlace::Side, EyePlace::Under];
-            let i = all.iter().position(|&p| p == self.m.eye_place).unwrap_or(0);
-            self.workspace.eye_float = None;
-            self.eye_set_place(all[(i as i32 + d).rem_euclid(all.len() as i32) as usize]);
-            return true;
-        }
         if let Item::IdFind(k) = it {
             if let Some(f) = self.azr.findings.get(k).cloned() {
                 self.apply_finding(&f);
@@ -302,21 +257,6 @@ impl Ui {
                 m.eye_rate = step_ladder(m.eye_rate, d);
                 m.eye_from_record = false;
             }
-            Item::EyePlace => {
-                let all = [EyePlace::Full, EyePlace::Side, EyePlace::Under];
-                let i = all.iter().position(|&p| p == m.eye_place).unwrap_or(0);
-                m.eye_place = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
-            }
-            Item::EyeBer => {
-                const BERS: [f64; 5] = [1e-3, 1e-6, 1e-9, 1e-12, 1e-15];
-                let i = BERS.iter().position(|&x| (x - m.eye_ber).abs() < x * 0.01).unwrap_or(3);
-                m.eye_ber = BERS[step_index(i, BERS.len(), d)];
-            }
-            Item::EyeHp => m.eye_hp = !m.eye_hp,
-            Item::EyePnLo => m.eye_pn_lo = step_ladder(m.eye_pn_lo, d).max(1.0),
-            Item::EyePnHi => m.eye_pn_hi = step_ladder(m.eye_pn_hi, d).max(1.0),
-            Item::EyeNpj => m.eye_npj = !m.eye_npj,
-            Item::EyeNotch => m.eye_notch = step_ladder(m.eye_notch, d),
             Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),
             Item::PowFsw => m.pw_fsw = step_ladder(m.pw_fsw, d),
             Item::PowRef => {

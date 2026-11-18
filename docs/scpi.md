@@ -336,6 +336,21 @@ RBW and the harmonics of the pane are written by hand.
 | none | none yet: the page is set in its menu and by a setup file | `spec_margin` | Limit margin | How far above the trace (its highest level nearby) Limit from trace puts the limit line, 0 to 60 dB. |
 <!-- settings:spectrum:end -->
 
+The settings of the eye and jitter page and their keys in a setup file, declared in `ui/src/settings/eye.rs`. No command
+sets them yet. The source, the bit rate, the rail and the clock are written by hand.
+
+<!-- settings:eye:begin -->
+| Command | Takes | Setup key | Eye menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `eye_place` | Place | Where the eye is drawn: over the whole plot, beside the trace, or under it (beside it when there is no room under it). A choice also brings a floated eye back into its place. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (ber) | BER | The bit error ratio the total jitter is given for. The menu offers 1e-3 to 1e-15, a factor of 1000 a step; a value on none starts from 1e-12. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (pn_lo) | Pn low | The lower end of the band of the phase noise. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (pn_hi) | Pn high | The upper end of the band of the phase noise. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (npj) | NPJ | The figure NPJ of the jitter model on the page; off leaves it out. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (notch) | Notch | A frequency that is fitted as a sine and taken out of the TIE trend before the eye is measured again (power-supply-induced jitter), off at 0. The menu steps 1-2-5 from 0. |
+| none | none yet: the page is set in its menu and by a setup file | `eye_more` (hp) | Highpass | The 30 kHz high-pass on the common mode before its peak-to-peak is measured. |
+<!-- settings:eye:end -->
+
 ## Cursors, DVM and counter
 
 | Command | Meaning |

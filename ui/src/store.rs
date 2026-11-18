@@ -341,7 +341,7 @@ fn analysis_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     );
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {} {}", m.eye_src.token(), m.eye_rate, if m.eye_from_record { 1 } else { 0 }));
-    kv("eye_place", name(m.eye_place));
+    crate::settings::write(&crate::settings::eye::PLACE, m, 0, kv);
     kv("power", format!("{} {} {}", m.pw_v.token(), m.pw_i.token(), name(m.pw_mode)));
 }
 

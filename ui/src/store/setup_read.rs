@@ -527,7 +527,6 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             // older files have no third field: the rate was entered, not measured
             m.eye_from_record = w.get(2).is_some_and(|s| *s != "0");
         }
-        "eye_place" => m.eye_place = p_enum(v, &[EyePlace::Full, EyePlace::Side, EyePlace::Under])?,
         "power" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 3 {
@@ -739,12 +738,12 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [ber, lo, hi, npj, rail, notch, b, hp] = w[..] else { return Err("eye_more".into()) };
             let opt = |s: &str| if s == "-" { Ok(None) } else { WaveId::parse(s).map(Some) };
-            m.eye_ber = ber.parse::<f64>().map_err(|e| e.to_string())?;
-            m.eye_pn_lo = lo.parse::<f64>().map_err(|e| e.to_string())?;
-            m.eye_pn_hi = hi.parse::<f64>().map_err(|e| e.to_string())?;
+            m.eye_ber = p_f64(ber)?;
+            m.eye_pn_lo = p_f64(lo)?;
+            m.eye_pn_hi = p_f64(hi)?;
             m.eye_npj = p_bool(npj)?;
             m.eye_rail = opt(rail)?;
-            m.eye_notch = notch.parse::<f64>().map_err(|e| e.to_string())?;
+            m.eye_notch = p_f64(notch)?;
             m.eye_b = opt(b)?;
             m.eye_hp = p_bool(hp)?;
         }

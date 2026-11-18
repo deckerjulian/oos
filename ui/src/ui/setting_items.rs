@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 65] = [
+const ITEMS: [(Item, &str); 72] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -74,6 +74,13 @@ const ITEMS: [(Item, &str); 65] = [
     (Item::SpecAcprW, "spec_acpr width"),
     (Item::SpecAcprS, "spec_acpr spacing"),
     (Item::SpecMargin, "spec_margin"),
+    (Item::EyePlace, "eye_place"),
+    (Item::EyeBer, "eye_more ber"),
+    (Item::EyePnLo, "eye_more pn_lo"),
+    (Item::EyePnHi, "eye_more pn_hi"),
+    (Item::EyeNpj, "eye_more npj"),
+    (Item::EyeNotch, "eye_more notch"),
+    (Item::EyeHp, "eye_more hp"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -160,8 +167,23 @@ impl Ui {
             | Item::SpecDist
             | Item::SpecAcprW
             | Item::SpecAcprS
-            | Item::SpecMargin => {
+            | Item::SpecMargin
+            | Item::EyeBer
+            | Item::EyePnLo
+            | Item::EyePnHi
+            | Item::EyeNpj
+            | Item::EyeNotch
+            | Item::EyeHp => {
                 self.ana_restart();
+                return true;
+            }
+            // a new place moves the eye: `eye_set_place` compares it with the old one, and keeps the eye beside the
+            // trace when there is no room under it; Full, Side and Under also bring a floated eye back into its place
+            Item::EyePlace => {
+                let place = self.m.eye_place;
+                (s.put)(&mut self.m, n, before);
+                self.workspace.eye_float = None;
+                self.eye_set_place(place);
                 return true;
             }
             // the rest of the Bode page, likewise
@@ -191,17 +213,17 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the LA menu, in the
-    /// Acquire menu (in Average mode with segments, so their
-    /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
-    /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
-    /// limits show).
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an analyser
+    /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
+    /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
+    /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
+    /// show).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La, MenuId::Spectrum]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::La, MenuId::Spectrum, MenuId::Eye]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))
