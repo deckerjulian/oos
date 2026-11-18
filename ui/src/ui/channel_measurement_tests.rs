@@ -135,3 +135,43 @@ fn native_cache_rejects_conditioning_changes_and_new_acceptance_without_mutating
     assert_eq!(frame.ch[0][0].to_bits(), original);
     assert_eq!((ui.m.run, ui.records), (RunState::Stop, 0));
 }
+
+#[test]
+fn a_row_writes_ratios_and_counts_without_a_prefix() {
+    // breaks when a row formats a value without an SI unit with SI prefixes again: "498 m", "1.00", "1.50 krpm" (#198)
+    let row = |v: f64, unit: &'static str| {
+        let row = tools::MeasRow { name: String::new(), src: WaveId::Ch(0), v, unit, computing: false };
+        (row.fmt(v), row.fmt4(v))
+    };
+    assert_eq!(row(0.498, ""), ("0.498".into(), "0.4980".into()));
+    assert_eq!(row(1.0, ""), ("1".into(), "1".into()));
+    assert_eq!(row(1500.0, "rpm"), ("1500 rpm".into(), "1500 rpm".into()));
+    assert_eq!(row(0.002, "V"), ("2.00 mV".into(), "2.000 mV".into()));
+}
+
+#[test]
+fn measurement_values_without_an_si_unit_take_no_prefix() {
+    // breaks when a ratio gets an SI prefix again ("498 m", #198)
+    assert_eq!(tools::meas_digits(0.498, "", 3), "0.498");
+    assert_eq!(tools::meas_digits(-0.0123, "", 3), "-0.0123");
+    assert_eq!(tools::meas_digits(12.345, "", 3), "12.3");
+    assert_eq!(tools::meas_digits(9.996, "", 3), "10.0");
+    assert_eq!(tools::meas_digits(0.4981, "", 4), "0.4981");
+    // breaks when a count is written with decimals again ("1.00")
+    assert_eq!(tools::meas_digits(1.0, "", 3), "1");
+    assert_eq!(tools::meas_digits(0.0, "", 3), "0");
+    assert_eq!(tools::meas_digits(123456.0, "", 3), "123456");
+    // a large count and a tiny ratio go to exponent form
+    assert_eq!(tools::meas_digits(2.5e7, "", 3), "2.50e7");
+    assert_eq!(tools::meas_digits(1.5e-5, "", 3), "1.50e-5");
+    // breaks when the units that are not SI get a prefix again ("1.50 krpm", "12.0 nppm", "500 m%")
+    assert_eq!(tools::meas_digits(1500.0, "rpm", 3), "1500 rpm");
+    assert_eq!(tools::meas_digits(-250.0, "rpm/s", 3), "-250 rpm/s");
+    assert_eq!(tools::meas_digits(12.0, "ppm", 3), "12.0 ppm");
+    assert_eq!(tools::meas_digits(0.5, "%", 3), "0.500 %");
+    assert_eq!(tools::meas_digits(-45.26, "dB", 3), "-45.3 dB");
+    assert_eq!(tools::meas_digits(f64::NAN, "ppm", 3), "---- ppm");
+    // the SI units keep their prefix
+    assert_eq!(tools::meas_digits(0.498, "V", 3), si_digits(0.498, "V", 3));
+    assert_eq!(tools::meas_digits(1.0, "A", 4), "1.000 A");
+}
