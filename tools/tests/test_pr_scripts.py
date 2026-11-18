@@ -319,6 +319,8 @@ class PullRequests(unittest.TestCase):
                      "fpgad/src/main.rs", "fpgad/src/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
             self.pull(regs + [live], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "pending", f"{live}: timing, start or update need a unit")
+        self.pull(["rust-toolchain.toml"], title="Refactor: x", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "pending", "another compiler builds other programs for the scope")
         self.pull(regs + ["hal/src/dho/a_new_file.rs"], title="Refactor: x", body=unchanged)
         self.assertEqual(self.gate()["unit"], "pending", "a file of the hardware paths that is not classed yet")
         self.ci()

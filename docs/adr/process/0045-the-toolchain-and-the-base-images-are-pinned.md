@@ -47,8 +47,9 @@ The registry moves a tag to a new build whenever the distribution publishes one.
   (the file is none of the paths `tools/ci-parts.sh` knows).
 - The canary says when a bump needs work: it fails and the weekly issue names it. When it passes it only leaves a
   notice in the run that a newer release exists. Nothing forces a bump, so the pin can fall behind.
-- A bump changes every program for the scope, and `unit` (ADR 0038) does not hold it: `rust-toolchain.toml` is no
-  path that asks for a run on a unit. Whether it should be one is open.
+- A bump changes every program for the scope. `rust-toolchain.toml` is therefore a hardware path of the gate
+  (`tools/pr-gate.sh`, in `$live`): a bump needs a run on a unit, unless the programs come out byte-identical
+  (ADR 0041).
 - The comparisons with the base (ADR 0032, ADR 0041) build each side with the Rust its commit names. The two differ
   only in a pull request that changes the pin, and then the difference is the bump's.
 - The digest pins the base image, not the packages a build installs on top (`apt-get install`, `apk add`). Nothing
