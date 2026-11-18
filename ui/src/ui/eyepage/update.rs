@@ -7,6 +7,9 @@
 
 use super::*;
 
+/// What an eye is made for (`eye_key`): source, clock, scale, offset, symbol rate and plot size.
+type EyeKey = (u8, usize, u8, usize, u32, u32, u64, i32, i32);
+
 impl Ui {
     /// Generated and imported references are immutable records. Eye analysis reads
     /// the whole record even when ordinary measurements follow the zoom window.
@@ -132,16 +135,8 @@ impl Ui {
 
     /// Eye page, per record. Clock, when set, is the strobe: its edges fold the source (DQ vs DQS).
     pub(in crate::ui) fn eye_update(&mut self, rec: &Record) {
-        for id in [Some(self.m.eye_src), self.m.eye_b, self.m.eye_rail].into_iter().flatten() {
-            if let Some(problem) = self.eye_input_problem(rec, id) {
-                self.azr.eye = None;
-                self.azr.eye_res = None;
-                self.azr.eye_auto.summary = None;
-                self.azr.eye_auto.invalidate();
-                self.azr.page = Page::default();
-                self.azr.page.status = [self.wave_name(id), problem.into()];
-                return;
-            }
+        if self.eye_input_blocked(rec) {
+            return;
         }
         if self.eye_auto_update(rec) {
             return;
@@ -200,16 +195,7 @@ impl Ui {
         let (clk_vpd, _) = self.eye_scale(recov_id);
         // A strobe idles near one rail between bursts; histogram top/base sit on that rail and the
         // comparator chatters. Peak-to-peak with a wide hysteresis keeps the burst edges.
-        let (thr, hyst) =
-            if let Some(summary) = self.azr.eye_auto.summary.as_ref().filter(|_| self.azr.eye_auto.enabled) {
-                (summary.threshold, summary.hysteresis)
-            } else if clk_id.is_some() {
-                let (lo, hi) = (st.vmin, st.vmax);
-                (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
-            } else {
-                let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
-                (thr, 0.1 * clk_vpd)
-            };
+        let (thr, hyst) = self.eye_threshold(&st, clk_id, clk_vpd);
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         // An idle live bus keeps its accumulated eye. A replacement reference
         // without edges must not display the previous reference's results.
@@ -225,7 +211,64 @@ impl Ui {
             self.azr.page.status[1] = format!("Under 3 edges on {} in the last record", self.wave_name(recov_id));
             return;
         };
-        let data_st = stats(&v, dt);
+        self.eye_restart(&v, dt, key, reference_changed, pw, ph);
+        let last = self.azr.page.ui.mean();
+        if last.is_finite() && (clk.period / last - 1.0).abs() > UI_CHANGE {
+            self.azr.eye.as_mut().unwrap().clear();
+            self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
+        }
+        let (fold, data) = if clk_id.is_some() { self.eye_strobe_fold(&v, dt, &clk) } else { (clk.clone(), v.clone()) };
+        if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
+            let tie = eye::tie(&clk.edges, &clk);
+            self.azr.eye_ref = fp;
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
+            return;
+        }
+        if sim_capture {
+            self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision));
+        }
+        self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
+        self.azr.eye_ref = fp;
+        let tie = eye::tie(&clk.edges, &clk);
+        self.azr.page.add(&tie, &clk);
+        if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
+            self.azr.page.t = self.now;
+            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
+        }
+    }
+
+    /// An input the eye cannot read (native HiRes, envelope): the page is cleared and says why; true then.
+    fn eye_input_blocked(&mut self, rec: &Record) -> bool {
+        for id in [Some(self.m.eye_src), self.m.eye_b, self.m.eye_rail].into_iter().flatten() {
+            if let Some(problem) = self.eye_input_problem(rec, id) {
+                self.azr.eye = None;
+                self.azr.eye_res = None;
+                self.azr.eye_auto.summary = None;
+                self.azr.eye_auto.invalidate();
+                self.azr.page = Page::default();
+                self.azr.page.status = [self.wave_name(id), problem.into()];
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The threshold and hysteresis that recover the clock: the auto setup's, the strobe's swing or the source's level.
+    fn eye_threshold(&self, st: &Stats, clk_id: Option<WaveId>, clk_vpd: f32) -> (f32, f32) {
+        if let Some(summary) = self.azr.eye_auto.summary.as_ref().filter(|_| self.azr.eye_auto.enabled) {
+            (summary.threshold, summary.hysteresis)
+        } else if clk_id.is_some() {
+            let (lo, hi) = (st.vmin, st.vmax);
+            (0.5 * (lo + hi), (0.2 * (hi - lo)).max(0.1 * clk_vpd))
+        } else {
+            let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
+            (thr, 0.1 * clk_vpd)
+        }
+    }
+
+    /// A new eye when there is none, its key changed, the signal left or shrank in its range or the reference changed.
+    fn eye_restart(&mut self, v: &[f32], dt: f64, key: EyeKey, reference_changed: bool, pw: i32, ph: i32) {
+        let data_st = stats(v, dt);
         let left = self.azr.eye.as_ref().is_some_and(|e| {
             let (lo, hi) = (e.v_min as f64, e.v_max as f64);
             let (span, swing) = (hi - lo, (data_st.vmax - data_st.vmin) as f64);
@@ -246,47 +289,26 @@ impl Ui {
             self.azr.eye_res = None;
             self.azr.page = Page { vstep: step, ..Page::default() };
         }
-        let last = self.azr.page.ui.mean();
-        if last.is_finite() && (clk.period / last - 1.0).abs() > UI_CHANGE {
-            self.azr.eye.as_mut().unwrap().clear();
-            self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
-        }
-        let (fold, data) = if clk_id.is_some() {
-            let gated = eye::gate_around_clock(&v, dt, &clk, 1.5);
-            let e = self.azr.eye.as_ref().unwrap();
-            let height = |c: &eye::Clock| {
-                let mut t = eye::Eye::new(48, 48, 2, e.v_min, e.v_max);
-                t.accumulate(&gated, dt, c);
-                let h = t.measure(c.period).height;
-                if h.is_finite() {
-                    h
-                } else {
-                    f64::NEG_INFINITY
-                }
-            };
-            let shifted = eye::center_strobe(&clk);
-            let fold = if height(&shifted) > height(&clk) { shifted } else { clk.clone() };
-            (fold, gated)
-        } else {
-            (clk.clone(), v.clone())
+    }
+
+    /// With a strobe: the record gated around its edges, folded on the strobe or on it shifted by half a period,
+    /// whichever gives the higher eye.
+    fn eye_strobe_fold(&self, v: &[f32], dt: f64, clk: &eye::Clock) -> (eye::Clock, Vec<f32>) {
+        let gated = eye::gate_around_clock(v, dt, clk, 1.5);
+        let e = self.azr.eye.as_ref().unwrap();
+        let height = |c: &eye::Clock| {
+            let mut t = eye::Eye::new(48, 48, 2, e.v_min, e.v_max);
+            t.accumulate(&gated, dt, c);
+            let h = t.measure(c.period).height;
+            if h.is_finite() {
+                h
+            } else {
+                f64::NEG_INFINITY
+            }
         };
-        if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
-            let tie = eye::tie(&clk.edges, &clk);
-            self.azr.eye_ref = fp;
-            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
-            return;
-        }
-        if sim_capture {
-            self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision));
-        }
-        self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
-        self.azr.eye_ref = fp;
-        let tie = eye::tie(&clk.edges, &clk);
-        self.azr.page.add(&tie, &clk);
-        if fp.is_some() || self.now - self.azr.page.t >= REFRESH {
-            self.azr.page.t = self.now;
-            self.eye_refresh(&clk, &tie, dt, t0, &lay, &v, rec);
-        }
+        let shifted = eye::center_strobe(clk);
+        let fold = if height(&shifted) > height(clk) { shifted } else { clk.clone() };
+        (fold, gated)
     }
 
     /// The heavy part of the page, from the pool and the last record.
