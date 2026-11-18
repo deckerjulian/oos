@@ -442,7 +442,8 @@ pub fn span_rows(s: &Spans) -> (usize, usize) {
 }
 
 #[cfg(test)]
-/// `deposit_dots` for the rows `r_lo` .. `r_lo + band.len() / w` of a map `w` x `h`, held in `band`.
+/// `deposit_dots` as it was (one scattered write per sample) for the rows `r_lo` .. `r_lo + band.len() / w` of a map
+/// `w` x `h`, held in `band`: the reference of its equality test and timing guard and of `acquire::fast_deposit`.
 pub fn deposit_dots_band(band: &mut [u16], w: usize, r_lo: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
     if v.is_empty() || m.x_per_sample <= 0.0 {
         return;
@@ -1000,30 +1001,6 @@ pub mod whole {
     /// Samples of a column whose row repeats decide whether the next column adds in runs (`dots_column`).
     const PROBE: usize = 32;
 
-    /// `deposit_dots` as it was (one scattered write per sample): the reference of the equality test and timing guard.
-    #[cfg(test)]
-    pub fn deposit_dots_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
-        if v.is_empty() || m.x_per_sample <= 0.0 {
-            return;
-        }
-        let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-        let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-        let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
-        let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
-        let mut ka = first(c0);
-        for c in c0..c1 {
-            let kb = first(c + 1);
-            for &x in &v[ka..kb.max(ka)] {
-                let r = (x * m.y_per_volt + m.y0).round();
-                if r >= 0.0 && r < h as f32 {
-                    let i = r as usize * w + c as usize;
-                    map[i] = map[i].saturating_add(wgt);
-                }
-            }
-            ka = kb.max(ka);
-        }
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1143,7 +1120,7 @@ pub mod whole {
                             for (wgt, pre) in [(24u16, 0u16), (60_000, 30_000), (1, 65_534)] {
                                 let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
                                 let (mut a, mut b) = (vec![pre; w * h], vec![pre; w * h]);
-                                deposit_dots_reference(&mut a, w, h, &v, &m, wgt);
+                                crate::fastdraw::deposit_dots_band(&mut a, w, 0, h, &v, &m, wgt);
                                 deposit_dots(&mut b, w, h, &v, &m, wgt);
                                 assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                             }
@@ -1173,7 +1150,7 @@ pub mod whole {
                 let (old, new) = crate::perfguard::best_pair(
                     crate::perfguard::ROUNDS,
                     22,
-                    || deposit_dots_reference(&mut ma, w, h, &v, &m, 1),
+                    || crate::fastdraw::deposit_dots_band(&mut ma, w, 0, h, &v, &m, 1),
                     || deposit_dots(&mut mb, w, h, &v, &m, 1),
                 );
                 let r = new.as_secs_f64() / old.as_secs_f64();
