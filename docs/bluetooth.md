@@ -1,7 +1,7 @@
 # Bluetooth through a USB stick
 
 OOS can use Bluetooth mice and keyboards through a combined WLAN and Bluetooth stick in the front USB port. The
-decision and its reasons are in [ADR 0055](adr/system/0055-bluetooth-input-through-bluez.md).
+decision and its reasons are in [ADR 0057](adr/system/0057-bluetooth-input-through-bluez.md).
 
 **Verified on the unit** (DHO924S): on 2026-11-15, in a development image started by kexec, the stick below switched
 out of its driver-CD mode, the firmware loaded, `hci0`, the system bus and `bluetoothd` came up, the adapter on with

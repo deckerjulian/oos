@@ -7,7 +7,7 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
-- Bluetooth through a USB stick ([bluetooth.md](docs/bluetooth.md), ADR 0055): a TP-Link Archer TX10UB Nano is
+- Bluetooth through a USB stick ([bluetooth.md](docs/bluetooth.md), ADR 0057): a TP-Link Archer TX10UB Nano is
   switched out of its driver-CD mode, its Realtek 8851BU gets its firmware, and BlueZ runs on a system bus of its own;
   pairings are kept on the data partition. The page that pairs mice and keyboards comes with oos-ui (unit: a BLE
   keyboard with touchpad paired, used, and reconnected after a power cycle).
