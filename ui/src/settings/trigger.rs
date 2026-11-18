@@ -77,7 +77,7 @@ pub const REJECT: [Setting; 2] = [
         ty: Ty::Bool,
         label: "Noise reject",
         #[cfg(test)]
-        doc: "A wider hysteresis of the trigger comparator (0.7 instead of 0.3 divisions).",
+        doc: "A wider hysteresis of the trigger comparator (the values by scale: docs/protocols/trigger.md 2.3).",
         accept: None,
         get: |m| Val::Bool(m.trig_nrej),
         put: |m, v| m.trig_nrej = v.index() != 0,

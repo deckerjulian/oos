@@ -112,7 +112,7 @@ command does not take is refused with `-113`.
 | `:TRIGger:EDGE:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl`, or any word that starts with a short form | `slope` | Slope | The edge that triggers; also of the slope, timeout and Nth edge triggers, and A of the delay trigger. |
 | `:TRIGger:SWEep[?]` | `AUTO`, `NORMal`, `SINGle`, or any word that starts with a short form | `trig_mode` | Sweep | Auto draws without a trigger after a while, Normal only on a trigger, Single once; the menu's Single also starts the acquisition. |
 | `:TRIGger:HOLDoff[?]` | seconds from 0 to 10 | `holdoff` | Holdoff | The time after a trigger in which no other one is taken; 0 is off. The menu steps 1-2-5 from 100 ns. |
-| `:TRIGger:NREJect[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `trig_nrej` | Noise reject | A wider hysteresis of the trigger comparator (0.7 instead of 0.3 divisions). |
+| `:TRIGger:NREJect[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `trig_nrej` | Noise reject | A wider hysteresis of the trigger comparator (the values by scale: docs/protocols/trigger.md 2.3). |
 | none | a choice of the auto set-up, not of the trigger | `auto_nrej` | Auto noise rej. | The auto set-up sets noise reject from the noise on the flat levels of the trigger signal. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_slope2` | Slope B | The edge of B (delay trigger) or of the clock (setup/hold trigger). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_pol` | Polarity | The polarity of the pulse (pulse and runt triggers). |
