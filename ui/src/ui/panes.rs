@@ -9,10 +9,6 @@ use super::*;
 use oos_dsp::spectrum;
 use std::collections::VecDeque;
 
-/// Harmonics of the measured frequency the span of the pane covers; 0 = the whole band.
-pub const PANE_HARMS: [usize; 5] = [0, 5, 10, 20, 50];
-/// Values of `Model::trend_sel`: by the list, off, one per measurement.
-pub const TREND_SEL_N: usize = tools::MEAS_MAX + 2;
 /// Lines in the peak list and on the trace.
 pub(super) const PEAKS_MAX: usize = 8;
 pub(super) const DB_PER_DIV: f32 = 10.0;

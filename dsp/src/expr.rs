@@ -150,11 +150,11 @@ impl Parser<'_> {
         if self.eat(b'(') {
             return self.call(&name, depth);
         }
-        match name.as_str() {
-            "t" => self.ops.push(Op::T),
-            "pi" => self.ops.push(Op::Num(std::f64::consts::PI)),
-            _ if self.names.iter().any(|s| s.eq_ignore_ascii_case(&name)) => {
-                let k = self.names.iter().position(|s| s.eq_ignore_ascii_case(&name)).unwrap();
+        let source = self.names.iter().position(|s| s.eq_ignore_ascii_case(&name));
+        match (name.as_str(), source) {
+            ("t", _) => self.ops.push(Op::T),
+            ("pi", _) => self.ops.push(Op::Num(std::f64::consts::PI)),
+            (_, Some(k)) => {
                 if k < crate::CHANNELS {
                     self.used[k] = true;
                 }

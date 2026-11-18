@@ -61,7 +61,7 @@ pub const MODE: [Setting; 4] = [
     Setting {
         key: "avg_count",
         scpi: Scpi::Cmd("AVERages"),
-        ty: Ty::Steps(&crate::ui::AVERAGES),
+        ty: Ty::Steps(&crate::model::AVERAGES),
         label: "Averages",
         #[cfg(test)]
         doc: "How many records the Average mode averages.",

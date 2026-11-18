@@ -19,6 +19,7 @@ mod decode;
 mod defaults;
 mod display;
 mod generator;
+mod limits;
 mod math;
 mod trigger;
 
@@ -28,6 +29,7 @@ pub use channels::*;
 pub use decode::*;
 pub use display::*;
 pub use generator::*;
+pub use limits::*;
 pub use math::*;
 pub use trigger::*;
 
@@ -491,7 +493,7 @@ pub struct Model {
     /// the one shown (0-based)
     pub view_cur: usize,
     /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
-    pub view_slots: [String; crate::ui::VIEWS_MAX],
+    pub view_slots: [String; VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
