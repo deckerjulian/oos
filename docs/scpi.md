@@ -362,14 +362,28 @@ These commands are implemented by the same model and acquisition router above. T
 | `:TIMebase:MODE[?]` | Main/zoom/XY mode supported by the model. |
 | `:TIMebase:ROLL[?]` | Model roll setting; acquisition source restrictions still apply. |
 | `:TIMebase:XY:ENABle[?]`, `:X[?]`, `:Y[?]`, `:Z[?]` | XY display and channel roles; `NONE` disables the optional Z input. |
-| `:DISPlay:TYPE[?]` | `DOTS|VECTors`. |
-| `:DISPlay:GRADing:TIME[?]` | `MIN`, `INFinite`, or a duration mapped to the supported persistence ladder. |
-| `:DISPlay:WBRightness[?]`, `:GBRightness[?]` | Waveform/grid brightness. |
-| `:DISPlay:GRID[?]` | Supported full/half/no-grid display choice. |
-| `:DISPlay:RULers[?]`, `:COLor[?]` | Rulers and color grading. |
 | `:REFerence:COLor[?]`, `:RESet` | Selected/explicit slot color and reference display-scale reset. Recorded samples and native timing are retained. |
 
 Display configuration is not proof of hardware acquisition capability. Force aliases route through the active context: stored/SIM acquisition receives a software force; live acquisition requests one hardware pulse. Local mock tests verify routing/counting, not a physical FPGA outcome.
+
+### Display settings
+
+The settings of the Display menu, their `:DISPlay` commands and their keys in a setup file. They are declared once,
+in `ui/src/settings/display.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ.
+
+<!-- settings:display:begin -->
+| Command | Takes | Setup key | Display menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:DISPlay:GRADing:TIME[?]` | `MIN`, `INFinite`, or seconds, set to the nearest time of the persistence ladder; the query answers `MIN`, the seconds or `INF` | `persist` | Persistence | How long a drawn waveform stays on the screen. |
+| `:DISPlay:WBRightness[?]` | a whole number from 1 to 100, set within 10 to 100 % | `intensity` | Intensity | Brightness of the waveforms; 0 is refused, a value below 10 sets 10. |
+| `:DISPlay:GRID[?]` | `FULL`, `HALF`, `NONE` | `grid` | Grid | The graticule: every division line, a lighter one, or none. |
+| `:DISPlay:GBRightness[?]` | a whole number from 0 to 100, set within 10 to 100 % | `grid_bright` | Grid bright. | Brightness of the graticule; a value below 10 sets 10. |
+| `:DISPlay:RULers[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `grid_frame` | Grid frame | A frame around the graticule with ticks every fifth of a division; none with the grid off. |
+| `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
+| `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
+| none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
+<!-- settings:display:end -->
 
 ### Measurement settings and statistics
 
