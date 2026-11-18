@@ -9,6 +9,7 @@
 
 use super::{at, rising, Kind, Packet};
 use crate::edges::{edges, states};
+use crate::protocols::ModuleInfo;
 
 /// Quad-SPI frame layout: lines per phase (1, 2 or 4), address length (0 = no address, 3 or 4 bytes), dummy cycles
 /// after the address, `mode` = a mode byte ("continuous read" bits M7..M0) on the address lines after the address.
@@ -138,6 +139,10 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
         mode: false,
     })
 }
+
+/// Quad-SPI flash: IO0, SCK, CS# and IO1.
+pub static QSPI: ModuleInfo =
+    ModuleInfo::new("Qspi", "Quad-SPI", "qspi").roles([Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")]);
 
 /// Quad-SPI flash / PSRAM: CS# active low frames, all lines sampled on the rising SCK edge (SPI mode 0 or 3), MSB
 /// first; on 2/4 lines IO1/IO3 carries the most significant bit of each cycle. `io` = IO0..IO3 (missing lines read

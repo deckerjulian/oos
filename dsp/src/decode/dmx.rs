@@ -9,12 +9,16 @@
 
 use super::{field_be, uart, Byte, Kind, Packet, Parity};
 use crate::edges::{edges, states};
+use crate::protocols::ModuleInfo;
 
 /// DMX512 bit rate.
 pub const DMX_BAUD: f64 = 250e3;
 
 /// RDM start code (ANSI E1.20).
 pub const RDM_SC: u8 = 0xcc;
+
+/// DMX512 on an RS-485 pair.
+pub static DMX512: ModuleInfo = ModuleInfo::new("Dmx512", "DMX512", "dmx").differential();
 
 /// DMX512-A (ANSI E1.11) with RDM (ANSI E1.20): 250 kbit/s 8N2, idle high (`invert` = idle low). Per packet: Break
 /// (low >= 88 us), Field("MAB") (value = mark after break in us, `ok` >= 8 us), Field("SC") start code. Start code

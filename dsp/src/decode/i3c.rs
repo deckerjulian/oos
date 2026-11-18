@@ -9,6 +9,7 @@
 
 use super::{at, msb, Kind, Packet};
 use crate::edges::{edges, states};
+use crate::protocols::ModuleInfo;
 
 /// Common Command Code names (MIPI I3C Basic v1.1.1, table 16).
 pub fn i3c_ccc_name(code: u8) -> &'static str {
@@ -177,6 +178,9 @@ impl I3c {
         }
     }
 }
+
+/// MIPI I3C on SDA and SCL.
+pub static I3C: ModuleInfo = ModuleInfo::new("I3c", "I3C", "i3c").roles([Some("SDA"), Some("SCL"), None, None]);
 
 /// I3C SDR (MIPI I3C Basic v1.1.1): START/Sr/STOP and bits like I2C (SDA sampled on the rising SCL edge, MSB first).
 /// Emits Start/RepStart/Stop, `Kind::Addr { read }` (ok = ACK) incl. the broadcast address 0x7E, `Field("CCC")`

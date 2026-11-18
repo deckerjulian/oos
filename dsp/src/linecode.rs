@@ -6,6 +6,7 @@
 use crate::decode::{Kind, Packet};
 use crate::edges::edges;
 use crate::eye;
+use crate::protocols::ModuleInfo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gate {
@@ -296,6 +297,9 @@ fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
     }
 }
 
+/// Manchester (IEEE 802.3) on one line.
+pub static MANCHESTER: ModuleInfo = ModuleInfo::new("Manchester", "Manchester", "linecode");
+
 /// IEEE 802.3 Manchester: a 1 is low→high in the bit cell (mid-cell rising). `bitrate` 0 = from the edge spacings.
 pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     let e = edges(v, thr, hyst);
@@ -333,6 +337,9 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
     ethernet_fields(&bytes, &mut out);
     out
 }
+
+/// MLT-3 on one line.
+pub static MLT3: ModuleInfo = ModuleInfo::new("Mlt3", "MLT-3", "linecode");
 
 /// MLT-3: cycling −A / 0 / +A; every change of level is a 1, a hold is a 0. The line is sliced to its three levels
 /// with two comparators at ±A/2 around the middle of its outer levels (the 1st and 99th percentile), each with the

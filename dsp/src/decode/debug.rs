@@ -9,6 +9,10 @@
 
 use super::{at, lsb, rising, Kind, Packet};
 use crate::edges::states;
+use crate::protocols::ModuleInfo;
+
+/// ARM SWD.
+pub static SWD: ModuleInfo = ModuleInfo::new("Swd", "SWD", "debug").roles([Some("SWDIO"), Some("SWCLK"), None, None]);
 
 /// Serial Wire Debug (ARM Debug Interface Architecture Specification ADIv5.0 to ADIv5.2, ARM IHI 0031): SWDIO
 /// sampled on the rising SWCLK edge. Emits
@@ -243,6 +247,10 @@ pub fn jtag_shifts(
 ) -> Vec<JtagShift> {
     jtag_walk(tck, tms, Some(tdi), tdo, start, thr, hyst).1
 }
+
+/// JTAG.
+pub static JTAG: ModuleInfo =
+    ModuleInfo::new("Jtag", "JTAG", "debug").roles([Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")]);
 
 /// JTAG (IEEE 1149.1 TAP): TMS, TDI and TDO sampled on the rising TCK edge, the TAP controller tracked from `start`
 /// (None = unknown until 5 TMS-high cycles). Emits `Field("!TLR")` on entering Test-Logic-Reset and per scan

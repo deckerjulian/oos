@@ -8,6 +8,7 @@
 //! (ADR 0002).
 
 use super::{edge_times, usbpd_crc32, Kind, Packet};
+use crate::protocols::ModuleInfo;
 
 /// 4b5b symbols of USB PD (r3.1 table 5-1) as 5-bit numbers, first transmitted bit = LSB.
 pub const PD_4B5B: [u8; 16] =
@@ -269,6 +270,9 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
         _ => out.push(Packet::tag("!ERR", b[p.min(n - 1)].0, b[n - 1].1, false)),
     }
 }
+
+/// USB Power Delivery on the CC line.
+pub static USB_PD: ModuleInfo = ModuleInfo::new("UsbPd", "USB PD", "usbpd").roles([Some("CC"), None, None, None]);
 
 /// USB Power Delivery (USB PD r3.1 chapter 5) on the CC line: BMC at 300 kbit/s +-10 % (the bit time is tracked
 /// from the nominal value), preamble, 4b5b symbols LSB first. Per message: `Field("PRE")` (value = preamble bits),
