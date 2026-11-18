@@ -716,6 +716,8 @@ struct Device {
     hdmi: Option<drm::Display>,
     hdmi_on: bool,
     mdns_t: Option<std::time::Instant>,
+    /// when the ports of web and SCPI were last tried again (`remote_services`)
+    listen_t: Option<std::time::Instant>,
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
     remote_now: Option<[bool; 5]>,
@@ -785,6 +787,7 @@ impl Device {
         let mdns = mdns::Mdns::new(None);
         let mdns_now: Option<mdns::Config> = None;
         let mdns_t: Option<Instant> = None;
+        let listen_t: Option<Instant> = None;
         // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
         let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
         let hdmi: Option<drm::Display> = None;
@@ -829,6 +832,7 @@ impl Device {
             hdmi,
             hdmi_on,
             mdns_t,
+            listen_t,
             mdns_now,
             mdns,
             remote_now,
@@ -910,6 +914,15 @@ impl Device {
         }
     }
 
+    /// The ports the web page offers to the browser (SCPI, VXI-11, HiSLIP), as they are open now.
+    fn offer_ports(&mut self) {
+        self.web.offer(http::Offer {
+            scpi_port: self.scpi.port(),
+            vxi11: self.vxi.service_port().is_some(),
+            hislip_port: self.hislip.port(),
+        });
+    }
+
     /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) is started by rcS.
     fn remote_services(&mut self) {
         let ui = &self.ui;
@@ -929,12 +942,18 @@ impl Device {
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
             }
-            self.web.offer(http::Offer {
-                scpi_port: self.scpi.port(),
-                vxi11: self.vxi.service_port().is_some(),
-                hislip_port: self.hislip.port(),
-            });
+            self.offer_ports();
             self.remote_now = Some(want);
+        }
+        // a port the oos-ui before this one still held at the start is tried again once a second, while its switch
+        // is on: before, SCPI and the web page stayed off until the next start (#212)
+        if self.listen_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+            self.listen_t = Some(std::time::Instant::now());
+            let web = want[0] && self.web.listen_again(self.web_port);
+            let scpi = want[1] && self.scpi.listen_again(self.scpi_port);
+            if web || scpi {
+                self.offer_ports();
+            }
         }
     }
 
