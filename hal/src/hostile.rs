@@ -4,7 +4,7 @@
 //! Hostile input for the parsers of oos-hal that read what comes from outside the program (ADR 0047): the files of
 //! the unit (calibration, `vendor.bin`, `limits.conf`), the answers of wpa_supplicant, and the update (in
 //! `update/hostile_tests.rs`, next to the builders of valid packages). Each parser has one test: valid inputs,
-//! mutated from a fixed seed (`gen.rs`, the same file as in dsp and ui), go in; it must return, not panic, and what
+//! mutated from a fixed seed (`gen.rs`, which dsp and ui take too), go in; it must return, not panic, and what
 //! it accepts must obey the contract the test states. `cargo test hostile` runs them all, `OOS_HOSTILE_ITERS` raises
 //! the number of inputs. A new parser of outside input comes with its test. A finding is not fixed in the test: its
 //! smallest input becomes an ignored test, and `KNOWN` names it so the run steps over that one case until the fix is

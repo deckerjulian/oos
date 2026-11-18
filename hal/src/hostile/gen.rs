@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The generator of hostile input (ADR 0047): a seeded xorshift generator, mutations of valid inputs, the loop that
-//! feeds a parser and names the input it failed on, and the list of findings that still stand. The same file in hal,
-//! dsp and ui (`hostile/gen.rs`; ui's test `the_generator_is_one_file` compares the copies): a change goes into all
-//! three. Nothing here reads a clock; the same build gives the same inputs on every computer.
+//! feeds a parser and names the input it failed on, and the list of findings that still stand. One file for hal, dsp
+//! and ui: dsp and ui take it with `#[path]` (no crate depends on another for its tests), so the three try the same
+//! inputs. Nothing here reads a clock; the same build gives the same inputs on every computer.
 
 use std::fmt::Write as _;
 use std::panic::{catch_unwind, AssertUnwindSafe};
