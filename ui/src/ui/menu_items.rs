@@ -116,6 +116,7 @@ impl Ui {
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
+            MenuId::Bluetooth => self.bt_items(),
             MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Sim => self.sim_items(),
@@ -387,6 +388,7 @@ impl Ui {
             Item::WlanScan,
             Item::WlanForget,
             Item::WlanInfo,
+            Item::Open(MenuId::Bluetooth),
         ]
     }
 

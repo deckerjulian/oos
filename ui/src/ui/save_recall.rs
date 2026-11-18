@@ -83,6 +83,8 @@ impl Ui {
         }
         self.usb_check = self.now + 2.0;
         self.wlan_stick = wlan::stick_there();
+        self.bt_stick = bt::stick_there();
+        self.bt_inputs = bt::inputs_connected(&bt::inputs());
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
         if on != self.usb {
             self.usb = on;
