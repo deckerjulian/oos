@@ -7,8 +7,9 @@ decision and its reasons are in [ADR 0057](adr/system/0057-bluetooth-input-throu
 out of its driver-CD mode, the firmware loaded, `hci0`, the system bus and `bluetoothd` came up, the adapter on with
 the scope's name, and an LE scan listed the devices around. On 2026-11-17 and 18, in an installed image with oos-ui's
 Bluetooth page: a BLE keyboard with a touchpad paired with its passkey, connected, typed and moved the pointer, and
-reconnected by itself after a power cycle. **Not yet verified on hardware:** a classic (BR/EDR) mouse or keyboard,
-two devices at once, long runs.
+reconnected by itself after a power cycle. On 2026-11-18, with the oos-ui of main after #216 (in an image of the
+branch of #177): the page in System > Network, pairing, the keyboard and the touchpad, and the `BT` box with its green
+dot. **Not yet verified on hardware:** a classic (BR/EDR) mouse or keyboard, two devices at once, long runs.
 
 oos-ui talks to bluetoothd with a D-Bus client of its own (`hal/src/dbus.rs`, `hal/src/bluez.rs`; no libdbus) and
 registers itself as the pairing agent (`KeyboardDisplay`): it shows a passkey or the PIN `0000` for an old keyboard,
@@ -31,10 +32,10 @@ System > Network > Bluetooth:
 | Bluetooth details | the adapter and every paired device (the pickers of Paired devices and Forget device show the first 18: a picker does not scroll) |
 
 While a Bluetooth stick is there, the top bar has a box `BT` beside the WLAN box: its dot is green while a mouse or
-keyboard is connected through it (counted from `/sys/class/input`, bus `0005`, one per address; this sysfs layout is
-assumed from the kernel's input core, not yet read on the unit), and a tap opens the page. A paired device is trusted, so it connects again by itself when it wakes up, also after a power
-cycle. Its input reaches oos-ui like a USB mouse or keyboard (`ui/src/hid.rs`; what the mouse and the keys do:
-the wiki, First Steps).
+keyboard is connected through it (counted from `/sys/class/input`, bus `0005`, one per address; verified on the
+unit), and a tap opens the page. A paired device is trusted, so it connects again by itself when it wakes up, also
+after a power cycle. Its input reaches oos-ui like a USB mouse or keyboard (`ui/src/hid.rs`; what the mouse and the
+keys do: the wiki, First Steps).
 
 ## Sticks
 
