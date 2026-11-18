@@ -4,7 +4,7 @@
 //! DMX512 (with RDM): 250 kbit/s on an RS-485 pair, break, mark after break, start code, up to 512 slots.
 
 use super::*;
-use oos_dsp::decode_ext as x1;
+use oos_dsp::decode as x1;
 
 pub struct Dmx512;
 

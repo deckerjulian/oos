@@ -7,7 +7,7 @@
 
 use super::*;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext3::{self as x3, UsbSpeed, USB_FULL, USB_LOW};
+use oos_dsp::decode::{self as x3, UsbSpeed, USB_FULL, USB_LOW};
 
 pub struct Usb;
 

@@ -34,7 +34,7 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
             .collect();
         let refs: Vec<&[f32]> = lines.iter().map(|l| &l[..]).collect();
         let clk = la[2].map(wave);
-        return Ok(oos_dsp::decode_ext::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
+        return Ok(oos_dsp::decode::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
     }
     let slots: [Vec<f32>; NCH] = std::array::from_fn(|i| la.get(i).copied().flatten().map_or(Vec::new(), &wave));
     let mut s = m.clone();
@@ -44,7 +44,7 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
 
 /// `decode` with the threshold and hysteresis given.
 pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
-    use oos_dsp::decode_ext as x1;
+    use oos_dsp::decode as x1;
     let get = |c: usize| ch.get(c).copied().filter(|v| !v.is_empty()).ok_or("source channel off");
     let opt = |c: Option<usize>| -> Result<Option<&[f32]>, &'static str> { c.map(get).transpose() };
     // RS-485 / differential: A - B, threshold around 0 V like the pair's receiver

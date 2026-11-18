@@ -4,7 +4,7 @@
 //! S/PDIF (IEC 60958): biphase-mark coded audio frames, preambles B / M / W, 24-bit samples, channel status.
 
 use super::*;
-use oos_dsp::decode_ext2 as x2;
+use oos_dsp::decode as x2;
 
 pub struct Spdif;
 

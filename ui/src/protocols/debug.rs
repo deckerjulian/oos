@@ -6,8 +6,8 @@
 //! names of the old setups. Checked against generated traffic.
 
 use super::*;
+use oos_dsp::decode as x2;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext2 as x2;
 
 pub struct Swd;
 

@@ -7,8 +7,8 @@
 //! name, so they stay where they were. They stand first in `MODULES` at fixed places, which `Proto::UART` ... name.
 
 use super::*;
+use oos_dsp::decode as x1;
 use oos_dsp::decode::{can, i2c, lin, spi, uart};
-use oos_dsp::decode_ext as x1;
 
 /// Demo traffic on one line: `a` repeated every `period` seconds.
 fn one_line(a: oos_dsp::sim::Logic, period: f64) -> Demo {

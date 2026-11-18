@@ -7,8 +7,8 @@
 //! in the shared rows brings them along (`legacy`). Checked against generated frames.
 
 use super::*;
+use oos_dsp::decode as x1;
 use oos_dsp::decode::Parity;
-use oos_dsp::decode_ext as x1;
 
 /// The baud rate of option row `k`.
 fn baud(opt: &[usize; OPTS], k: usize) -> f64 {

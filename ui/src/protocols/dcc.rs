@@ -1,7 +1,7 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode_ext3::dcc` and a
+//! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode::dcc` and a
 //! view of the layout it controls (`oos_dsp::dcc_yard`): locomotives with direction, speed and functions, turnouts,
 //! signals, and whether the track is live or in emergency stop. The view collects over the records until the display
 //! is cleared.
@@ -12,8 +12,8 @@
 
 use super::*;
 use oos_dsp::dcc_yard::{functions_text, TrackStatus, Yard};
+use oos_dsp::decode as x3;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext3 as x3;
 
 pub struct Dcc;
 

@@ -7,8 +7,8 @@
 //! ARINC rate in the shared row brings it along (`legacy`). Checked against generated traffic.
 
 use super::*;
+use oos_dsp::decode as x3;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext3 as x3;
 
 /// The ARINC 429 bit rates (`decode::ARINC_RATES`).
 const ARATE_NAMES: [&str; 3] = ["Auto", "12.5 k", "100 k"];

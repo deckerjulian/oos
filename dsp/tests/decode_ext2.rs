@@ -3,9 +3,9 @@
 
 //! SWD, JTAG, Quad-SPI, I3C, S/PDIF and USB PD decoders against generated signals with known content.
 
+use oos_dsp::decode::gen::{self, bits_lsb, I3cBus, JtagGen, PdFrame, QspiFrame, SwdOp};
+use oos_dsp::decode::*;
 use oos_dsp::decode::{Kind, Packet};
-use oos_dsp::decode_ext2::gen::{self, bits_lsb, I3cBus, JtagGen, PdFrame, QspiFrame, SwdOp};
-use oos_dsp::decode_ext2::*;
 use oos_dsp::sim::{add_noise, sample, Logic};
 
 /// Samples logic waveforms to a common length (until shortly after the last change of any of them).

@@ -7,9 +7,9 @@
 //! (`legacy`). Checked against generated traffic.
 
 use super::*;
+use oos_dsp::decode as x1;
+use oos_dsp::decode as x3;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext as x1;
-use oos_dsp::decode_ext3 as x3;
 
 /// Demo traffic on one line: `a` and then `idle` seconds.
 fn one_line(a: oos_dsp::sim::Logic, idle: f64) -> Demo {

@@ -3,9 +3,9 @@
 
 //! ARINC 429, SENT, USB and NMRA DCC decoders against generated signals with known content.
 
+use oos_dsp::decode::gen::{self, DccFrame, SentFrame};
+use oos_dsp::decode::*;
 use oos_dsp::decode::{Kind, Packet};
-use oos_dsp::decode_ext3::gen::{self, DccFrame, SentFrame};
-use oos_dsp::decode_ext3::*;
 use oos_dsp::sim::{add_noise, sample, Levels};
 
 fn kv(p: &[Packet]) -> Vec<(Kind, u32, bool)> {

@@ -3,9 +3,9 @@
 
 //! Extended decoders (part 1) against generated signals with known content: round trips, corrupted bits, noise.
 
+use oos_dsp::decode::gen::{self, FdFrame, FrFrame, Ow, Wave};
+use oos_dsp::decode::*;
 use oos_dsp::decode::{i2c, Kind, Packet, Parity};
-use oos_dsp::decode_ext::gen::{self, FdFrame, FrFrame, Ow, Wave};
-use oos_dsp::decode_ext::*;
 use oos_dsp::sim::{add_noise, bits_logic, i2c_logic, sample, I2cXfer, Levels, Logic};
 use oos_dsp::trigger::Slope;
 

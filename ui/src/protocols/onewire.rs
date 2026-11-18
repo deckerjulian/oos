@@ -6,7 +6,7 @@
 //! OOS 0.1.12, modules since; their keys are the names of the old setups. Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode_ext as x1;
+use oos_dsp::decode as x1;
 
 pub struct OneWire;
 

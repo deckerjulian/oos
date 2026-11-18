@@ -5,7 +5,7 @@
 //! since; the key is the name of the old setups. Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode_ext2 as x2;
+use oos_dsp::decode as x2;
 
 pub struct I3c;
 

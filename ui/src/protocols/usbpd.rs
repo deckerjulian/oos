@@ -4,7 +4,7 @@
 //! USB Power Delivery on the CC line: BMC at 300 kbit/s, 4b5b symbols, SOP header, data objects, CRC-32.
 
 use super::*;
-use oos_dsp::decode_ext2 as x2;
+use oos_dsp::decode as x2;
 
 pub struct UsbPd;
 
