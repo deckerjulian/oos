@@ -83,240 +83,36 @@ impl Ui {
         v
     }
 
+    /// The rows of `menu`; a menu of more than one line has its own helper below, in this order.
     fn menu_items(&self, menu: MenuId) -> Vec<Item> {
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
-            MenuId::Channel(c) => vec![
-                Item::ChOn(c),
-                Item::ChScale(c),
-                Item::ChOffset(c),
-                Item::ChCoupling(c),
-                Item::ChBw(c),
-                Item::ChProbe(c),
-                Item::ChInvert(c),
-                Item::ChFine,
-                Item::ChLabel(c),
-                Item::Open(MenuId::ChMore(c)),
-            ],
-            MenuId::ChMore(c) => vec![
-                Item::ChUnit(c),
-                Item::ChBias(c),
-                Item::ChBiasZero(c),
-                Item::ChSkew(c),
-                Item::AutoDeskew,
-                Item::ChExpand,
-            ],
-            MenuId::Horizontal => {
-                if self.m.zoom {
-                    vec![
-                        Item::HScale,
-                        Item::HFine,
-                        Item::HExpandI,
-                        Item::HDelay,
-                        Item::HZero,
-                        Item::AutoDeskew,
-                        Item::ClearDeskew,
-                        Item::Zoom,
-                        Item::ZScale,
-                        Item::ZDelay,
-                        Item::AutoRoll,
-                    ]
-                } else {
-                    vec![
-                        Item::HScale,
-                        Item::HFine,
-                        Item::HExpandI,
-                        Item::HDelay,
-                        Item::HZero,
-                        Item::AutoDeskew,
-                        Item::ClearDeskew,
-                        Item::Zoom,
-                        Item::AutoRoll,
-                    ]
-                }
-            }
+            MenuId::Channel(c) => self.channel_items(c),
+            MenuId::ChMore(c) => self.ch_more_items(c),
+            MenuId::Horizontal => self.horizontal_items(),
             MenuId::Trigger => self.trigger_items(),
             // the Horizontal Menu key opens Acquire; time base and zoom one level down
-            MenuId::Acquire => {
-                let mut v = vec![Item::AcqMode];
-                if self.m.acq == AcqMode::Average {
-                    v.push(Item::AcqAvg);
-                    if self.src.is_hw() {
-                        v.push(Item::AcqAvgHw);
-                    }
-                }
-                v.push(Item::AcqDepth);
-                v.push(Item::AcqSeg);
-                if self.m.segments > 0 {
-                    v.push(Item::AcqSegHw);
-                }
-                if self.seg_hw_on() {
-                    v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
-                }
-                v.push(Item::AcqCores);
-                v.push(Item::AcqDrawPath);
-                if self.alias_above().is_some() {
-                    v.push(Item::AcqAlias);
-                }
-                v.push(Item::Open(MenuId::Horizontal));
-                v
-            }
+            MenuId::Acquire => self.acquire_items(),
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
-            MenuId::Dvm => vec![
-                Item::DvmOn,
-                Item::DvmSrc,
-                Item::DvmMode,
-                Item::CntOn,
-                Item::CntSrc,
-                Item::CntMode,
-                Item::CntDigits,
-                Item::CntClear,
-            ],
+            MenuId::Dvm => self.dvm_items(),
             // in the order of the groups of `measure_layout`
-            MenuId::Measure => vec![
-                Item::MeasSrc,
-                Item::MeasSrcB,
-                Item::MeasCopyTo,
-                Item::MeasGate,
-                Item::MeasRefs,
-                Item::MeasStats,
-                Item::MeasLabels,
-                Item::StripDock,
-                Item::MeasIdle,
-                Item::MeasTsetup,
-                Item::MeasThold,
-                Item::MeasOutside,
-                Item::MeasN,
-                Item::MeasEdges,
-                Item::Open(MenuId::MeasPair),
-                Item::Open(MenuId::Dvm),
-                Item::MeasClear,
-            ],
+            MenuId::Measure => self.measure_items(),
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
-            MenuId::Ref => vec![
-                Item::RefSrc,
-                Item::RefSave,
-                Item::RefClear,
-                Item::RefSel,
-                Item::RefVpd,
-                Item::RefOffset,
-                Item::RefColor,
-                Item::RefLabel,
-                Item::RefLoad,
-                Item::RefExport,
-                Item::RefImport,
-            ]
-            .into_iter()
-            .filter(|&it| it != Item::RefLoad || self.feature_on("load"))
-            .chain((0..NREF).map(Item::RefShow))
-            .collect(),
+            MenuId::Ref => self.ref_items(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasSelected => self.measurement_catalog(),
-            MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
-            MenuId::Cursor if self.m.cursor == CursorMode::Xy => {
-                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
-            }
-            MenuId::Cursor if self.m.cursor == CursorMode::Track => {
-                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB]
-            }
-            MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
-            MenuId::Display => {
-                let mut v = vec![
-                    Item::Open(MenuId::Windows),
-                    Item::Views,
-                    Item::Persist,
-                    Item::ColorGrade,
-                    Item::Intensity,
-                    Item::GridStyle,
-                    Item::GridBright,
-                    Item::GridFrame,
-                    Item::Dots,
-                    Item::BottomBar,
-                    Item::ZInput,
-                    Item::Histogram,
-                    Item::XyMode,
-                    Item::Hdmi,
-                    Item::HdmiView,
-                    Item::Backlight,
-                    Item::TextSize,
-                    Item::ClearDisp,
-                ];
-                if self.m.pane == tables::PANE_TREND {
-                    v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
-                }
-                v
-            }
-            MenuId::Storage => vec![
-                Item::StoreDest,
-                Item::StoreSlot,
-                Item::StoreSaveSetup,
-                Item::StoreRecall,
-                Item::StoreCsv,
-                Item::StoreBin,
-                Item::StoreFfSave,
-                Item::StoreFfLoad,
-                Item::StorePng,
-            ],
-            MenuId::Spectrum => vec![
-                Item::SpecOn,
-                Item::SpecSrc,
-                Item::SpecCenter,
-                Item::SpecSpan,
-                Item::SpecHarm,
-                Item::SpecRbw,
-                Item::SpecWin,
-                Item::SpecTrace,
-                Item::SpecRef,
-                Item::SpecWf,
-                Item::SpecDist,
-                Item::SpecAcprW,
-                Item::SpecAcprS,
-                Item::SpecPeak,
-                Item::SpecMargin,
-                Item::SpecLimitSet,
-                Item::SpecLimitClear,
-            ],
-            MenuId::Eye => vec![
-                Item::EyeAct,
-                Item::EyeOn,
-                Item::EyePlace,
-                Item::EyeSrc,
-                Item::EyeRate,
-                Item::EyeBer,
-                Item::EyeB,
-                Item::EyeHp,
-                Item::EyePnLo,
-                Item::EyePnHi,
-                Item::EyeNpj,
-                Item::EyeRail,
-                Item::EyeNotch,
-                Item::EyeClear,
-            ],
-            MenuId::Power => {
-                let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
-                match self.m.pw_mode {
-                    PowerMode::Ripple => v.extend([Item::PowFline, Item::PowFsw, Item::PowVin]),
-                    PowerMode::Rail => v.extend([Item::PowRef, Item::PowVin, Item::PowClk]),
-                    _ => {}
-                }
-                v
-            }
+            MenuId::Cursor => self.cursor_items(),
+            MenuId::Display => self.display_items(),
+            MenuId::Storage => self.storage_items(),
+            MenuId::Spectrum => self.spectrum_items(),
+            MenuId::Eye => self.eye_items(),
+            MenuId::Power => self.power_items(),
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => vec![
-                Item::NetEth,
-                Item::NetRetry10,
-                Item::NetMac,
-                Item::Open(MenuId::Remote),
-                Item::NetPorts,
-                Item::NetWlan,
-                Item::WlanScan,
-                Item::WlanForget,
-                Item::WlanInfo,
-            ],
+            MenuId::Network => self.network_items(),
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
@@ -334,60 +130,342 @@ impl Ui {
             MenuId::LaLines => self.la_line_items(),
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
             MenuId::Windows => self.win_items(),
-            MenuId::Zone => vec![
-                Item::ZoneSel,
-                Item::ZoneOn,
-                Item::ZoneSrc,
-                Item::ZoneMode,
-                Item::ZoneBox,
-                Item::ZoneShape,
-                Item::ZoneClear,
-            ],
-            MenuId::Mask => vec![
-                Item::MaskOn,
-                Item::MaskSrc,
-                Item::MaskInvert,
-                Item::MaskX,
-                Item::MaskY,
-                Item::MaskAction,
-                Item::MaskCreate,
-                Item::MaskFromRef,
-                Item::MaskReset,
-                Item::MaskClear,
-                Item::MaskSave,
-                Item::MaskLoad,
-            ],
-            MenuId::Utility => {
-                let mut v = vec![
-                    Item::Offline,
-                    Item::QuickAct,
-                    Item::AuxOut,
-                    Item::BootMode,
-                    Item::Overclock,
-                    Item::Graphics,
-                    Item::Shot,
-                    Item::Open(MenuId::SelfCal),
-                    Item::Open(MenuId::Network),
-                    Item::Open(MenuId::Features),
-                    Item::Open(MenuId::Time),
-                    Item::SysInfo,
-                    Item::About,
-                    Item::Update,
-                    Item::UpdateRollback,
-                    Item::Stock,
-                ];
-                // overclocking loses samples at the full rate: only with `adc.overclock = on` (overclock.rs)
-                if !overclock::shown(overclock::switch_on(), self.clock_next) {
-                    v.retain(|&i| i != Item::Overclock);
-                }
-                v
-            }
+            MenuId::Zone => self.zone_items(),
+            MenuId::Mask => self.mask_items(),
+            MenuId::Utility => self.utility_items(),
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
             }
-            MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathFam, Item::MathOpI],
-            MenuId::Math if self.m.math == MathOp::Expr => vec![
+            MenuId::Math => self.math_items(),
+        }
+    }
+
+    /// The channel menu of channel `c`.
+    fn channel_items(&self, c: usize) -> Vec<Item> {
+        vec![
+            Item::ChOn(c),
+            Item::ChScale(c),
+            Item::ChOffset(c),
+            Item::ChCoupling(c),
+            Item::ChBw(c),
+            Item::ChProbe(c),
+            Item::ChInvert(c),
+            Item::ChFine,
+            Item::ChLabel(c),
+            Item::Open(MenuId::ChMore(c)),
+        ]
+    }
+
+    /// The second level of the channel menu of channel `c`.
+    fn ch_more_items(&self, c: usize) -> Vec<Item> {
+        vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand]
+    }
+
+    /// The time base menu, with the zoom rows while zoomed.
+    fn horizontal_items(&self) -> Vec<Item> {
+        if self.m.zoom {
+            vec![
+                Item::HScale,
+                Item::HFine,
+                Item::HExpandI,
+                Item::HDelay,
+                Item::HZero,
+                Item::AutoDeskew,
+                Item::ClearDeskew,
+                Item::Zoom,
+                Item::ZScale,
+                Item::ZDelay,
+                Item::AutoRoll,
+            ]
+        } else {
+            vec![
+                Item::HScale,
+                Item::HFine,
+                Item::HExpandI,
+                Item::HDelay,
+                Item::HZero,
+                Item::AutoDeskew,
+                Item::ClearDeskew,
+                Item::Zoom,
+                Item::AutoRoll,
+            ]
+        }
+    }
+
+    /// The acquire menu: mode, average, depth, segments, cores, draw path, alias.
+    fn acquire_items(&self) -> Vec<Item> {
+        let mut v = vec![Item::AcqMode];
+        if self.m.acq == AcqMode::Average {
+            v.push(Item::AcqAvg);
+            if self.src.is_hw() {
+                v.push(Item::AcqAvgHw);
+            }
+        }
+        v.push(Item::AcqDepth);
+        v.push(Item::AcqSeg);
+        if self.m.segments > 0 {
+            v.push(Item::AcqSegHw);
+        }
+        if self.seg_hw_on() {
+            v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
+        }
+        v.push(Item::AcqCores);
+        v.push(Item::AcqDrawPath);
+        if self.alias_above().is_some() {
+            v.push(Item::AcqAlias);
+        }
+        v.push(Item::Open(MenuId::Horizontal));
+        v
+    }
+
+    /// The voltmeter and counter menu.
+    fn dvm_items(&self) -> Vec<Item> {
+        vec![
+            Item::DvmOn,
+            Item::DvmSrc,
+            Item::DvmMode,
+            Item::CntOn,
+            Item::CntSrc,
+            Item::CntMode,
+            Item::CntDigits,
+            Item::CntClear,
+        ]
+    }
+
+    /// The measurement menu.
+    fn measure_items(&self) -> Vec<Item> {
+        vec![
+            Item::MeasSrc,
+            Item::MeasSrcB,
+            Item::MeasCopyTo,
+            Item::MeasGate,
+            Item::MeasRefs,
+            Item::MeasStats,
+            Item::MeasLabels,
+            Item::StripDock,
+            Item::MeasIdle,
+            Item::MeasTsetup,
+            Item::MeasThold,
+            Item::MeasOutside,
+            Item::MeasN,
+            Item::MeasEdges,
+            Item::Open(MenuId::MeasPair),
+            Item::Open(MenuId::Dvm),
+            Item::MeasClear,
+        ]
+    }
+
+    /// The reference menu; Load only with its feature on.
+    fn ref_items(&self) -> Vec<Item> {
+        vec![
+            Item::RefSrc,
+            Item::RefSave,
+            Item::RefClear,
+            Item::RefSel,
+            Item::RefVpd,
+            Item::RefOffset,
+            Item::RefColor,
+            Item::RefLabel,
+            Item::RefLoad,
+            Item::RefExport,
+            Item::RefImport,
+        ]
+        .into_iter()
+        .filter(|&it| it != Item::RefLoad || self.feature_on("load"))
+        .chain((0..NREF).map(Item::RefShow))
+        .collect()
+    }
+
+    /// The cursor menu, with the rows of the cursor mode.
+    fn cursor_items(&self) -> Vec<Item> {
+        if self.m.cursor == CursorMode::Off {
+            vec![Item::CurMode]
+        } else if self.m.cursor == CursorMode::Xy {
+            vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
+        } else if self.m.cursor == CursorMode::Track {
+            vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB]
+        } else {
+            vec![Item::CurMode, Item::CurA, Item::CurB]
+        }
+    }
+
+    /// The display menu; the trend selectors while the trend pane is shown.
+    fn display_items(&self) -> Vec<Item> {
+        let mut v = vec![
+            Item::Open(MenuId::Windows),
+            Item::Views,
+            Item::Persist,
+            Item::ColorGrade,
+            Item::Intensity,
+            Item::GridStyle,
+            Item::GridBright,
+            Item::GridFrame,
+            Item::Dots,
+            Item::BottomBar,
+            Item::ZInput,
+            Item::Histogram,
+            Item::XyMode,
+            Item::Hdmi,
+            Item::HdmiView,
+            Item::Backlight,
+            Item::TextSize,
+            Item::ClearDisp,
+        ];
+        if self.m.pane == tables::PANE_TREND {
+            v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
+        }
+        v
+    }
+
+    /// The storage menu.
+    fn storage_items(&self) -> Vec<Item> {
+        vec![
+            Item::StoreDest,
+            Item::StoreSlot,
+            Item::StoreSaveSetup,
+            Item::StoreRecall,
+            Item::StoreCsv,
+            Item::StoreBin,
+            Item::StoreFfSave,
+            Item::StoreFfLoad,
+            Item::StorePng,
+        ]
+    }
+
+    /// The spectrum menu.
+    fn spectrum_items(&self) -> Vec<Item> {
+        vec![
+            Item::SpecOn,
+            Item::SpecSrc,
+            Item::SpecCenter,
+            Item::SpecSpan,
+            Item::SpecHarm,
+            Item::SpecRbw,
+            Item::SpecWin,
+            Item::SpecTrace,
+            Item::SpecRef,
+            Item::SpecWf,
+            Item::SpecDist,
+            Item::SpecAcprW,
+            Item::SpecAcprS,
+            Item::SpecPeak,
+            Item::SpecMargin,
+            Item::SpecLimitSet,
+            Item::SpecLimitClear,
+        ]
+    }
+
+    /// The eye diagram menu.
+    fn eye_items(&self) -> Vec<Item> {
+        vec![
+            Item::EyeAct,
+            Item::EyeOn,
+            Item::EyePlace,
+            Item::EyeSrc,
+            Item::EyeRate,
+            Item::EyeBer,
+            Item::EyeB,
+            Item::EyeHp,
+            Item::EyePnLo,
+            Item::EyePnHi,
+            Item::EyeNpj,
+            Item::EyeRail,
+            Item::EyeNotch,
+            Item::EyeClear,
+        ]
+    }
+
+    /// The power analysis menu, with the rows of its mode.
+    fn power_items(&self) -> Vec<Item> {
+        let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
+        match self.m.pw_mode {
+            PowerMode::Ripple => v.extend([Item::PowFline, Item::PowFsw, Item::PowVin]),
+            PowerMode::Rail => v.extend([Item::PowRef, Item::PowVin, Item::PowClk]),
+            _ => {}
+        }
+        v
+    }
+
+    /// The network menu.
+    fn network_items(&self) -> Vec<Item> {
+        vec![
+            Item::NetEth,
+            Item::NetRetry10,
+            Item::NetMac,
+            Item::Open(MenuId::Remote),
+            Item::NetPorts,
+            Item::NetWlan,
+            Item::WlanScan,
+            Item::WlanForget,
+            Item::WlanInfo,
+        ]
+    }
+
+    /// The zone trigger menu.
+    fn zone_items(&self) -> Vec<Item> {
+        vec![
+            Item::ZoneSel,
+            Item::ZoneOn,
+            Item::ZoneSrc,
+            Item::ZoneMode,
+            Item::ZoneBox,
+            Item::ZoneShape,
+            Item::ZoneClear,
+        ]
+    }
+
+    /// The mask test menu.
+    fn mask_items(&self) -> Vec<Item> {
+        vec![
+            Item::MaskOn,
+            Item::MaskSrc,
+            Item::MaskInvert,
+            Item::MaskX,
+            Item::MaskY,
+            Item::MaskAction,
+            Item::MaskCreate,
+            Item::MaskFromRef,
+            Item::MaskReset,
+            Item::MaskClear,
+            Item::MaskSave,
+            Item::MaskLoad,
+        ]
+    }
+
+    /// The utility menu; Overclock only when it is switched on.
+    fn utility_items(&self) -> Vec<Item> {
+        let mut v = vec![
+            Item::Offline,
+            Item::QuickAct,
+            Item::AuxOut,
+            Item::BootMode,
+            Item::Overclock,
+            Item::Graphics,
+            Item::Shot,
+            Item::Open(MenuId::SelfCal),
+            Item::Open(MenuId::Network),
+            Item::Open(MenuId::Features),
+            Item::Open(MenuId::Time),
+            Item::SysInfo,
+            Item::About,
+            Item::Update,
+            Item::UpdateRollback,
+            Item::Stock,
+        ];
+        // overclocking loses samples at the full rate: only with `adc.overclock = on` (overclock.rs)
+        if !overclock::shown(overclock::switch_on(), self.clock_next) {
+            v.retain(|&i| i != Item::Overclock);
+        }
+        v
+    }
+
+    /// The math menu, with the rows of the operation.
+    fn math_items(&self) -> Vec<Item> {
+        if self.m.math == MathOp::Off {
+            vec![Item::MathSel, Item::MathFam, Item::MathOpI]
+        } else if self.m.math == MathOp::Expr {
+            vec![
                 Item::MathSel,
                 Item::MathFam,
                 Item::MathOpI,
@@ -396,30 +474,29 @@ impl Ui {
                 Item::MathScale,
                 Item::MathOffset,
                 Item::MathAuto,
-            ],
-            MenuId::Math => {
-                let mut v = vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathA];
-                if self.m.math.two_sources() {
-                    v.push(Item::MathB);
-                }
-                if self.m.math == MathOp::Lin {
-                    v.extend([Item::MathLinA, Item::MathLinB]);
-                }
-                if self.m.math.has_fc() {
-                    v.push(Item::MathFc);
-                }
-                if self.m.math.has_bw() {
-                    v.push(Item::MathBw);
-                }
-                v.extend([Item::MathScale, Item::MathOffset]);
-                if self.m.math == MathOp::Fft {
-                    v.push(Item::FftWin);
-                }
-                if self.m.math != MathOp::Off {
-                    v.push(Item::MathAuto);
-                }
-                v
+            ]
+        } else {
+            let mut v = vec![Item::MathSel, Item::MathFam, Item::MathOpI, Item::MathA];
+            if self.m.math.two_sources() {
+                v.push(Item::MathB);
             }
+            if self.m.math == MathOp::Lin {
+                v.extend([Item::MathLinA, Item::MathLinB]);
+            }
+            if self.m.math.has_fc() {
+                v.push(Item::MathFc);
+            }
+            if self.m.math.has_bw() {
+                v.push(Item::MathBw);
+            }
+            v.extend([Item::MathScale, Item::MathOffset]);
+            if self.m.math == MathOp::Fft {
+                v.push(Item::FftWin);
+            }
+            if self.m.math != MathOp::Off {
+                v.push(Item::MathAuto);
+            }
+            v
         }
     }
 

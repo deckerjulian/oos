@@ -7,6 +7,17 @@
 
 use super::*;
 
+/// The corner button's place when a press takes it, and the place it had before.
+type FullFrom = (i32, i32, Option<(i32, i32)>);
+
+/// What a press hits, found before the touch state starts.
+struct PressHits {
+    in_plot: bool,
+    zmap: Option<(Rect, f32, f32)>,
+    full_from: Option<FullFrom>,
+    grip: Option<(scroll::List, scroll::Grip)>,
+}
+
 impl Ui {
     pub fn handle(&mut self, ev: Ev) {
         if self.start_up_input(&ev) {
@@ -550,6 +561,7 @@ impl Ui {
         (self.area, self.cur_win) = keep;
     }
 
+    /// One finger's press, move or lift in the area of the current window.
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
         let covered = self.dlg_layout().is_some_and(|d| d.r.contains(x, y));
         let in_plot = ph == Phase::Down
@@ -582,397 +594,413 @@ impl Ui {
         } else {
             None
         };
-        let t = &mut self.touch;
         match ph {
-            Phase::Down => {
-                let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
-                *t = TouchState {
-                    down: true,
-                    x0: x,
-                    y0: y,
-                    x,
-                    y,
-                    t0: self.now,
-                    held: false,
-                    drag: Drag::None,
-                    start_offset: 0.0,
-                    start_delay: sd,
-                    start_level: self.m.trig_level,
-                    start_cur: 0.0,
-                    win: self.cur_win,
-                };
-                if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
-                    return;
-                }
-                if let Some((l, g)) = grip {
-                    t.drag = Drag::Scroll(l, g);
-                    return;
-                }
-                if let Some((ox, oy, prev)) = full_from {
-                    t.drag = Drag::FullBtn { ox, oy, prev };
-                } else if !in_plot {
-                    // a finger held on the card of a channel that is on: AC/DC, as the channel key
-                    let (chs, _, _) = self.cards();
-                    self.card_hold =
-                        chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
+            Phase::Down => self.touch_down(x, y, PressHits { in_plot, zmap, full_from, grip }),
+            Phase::Move => self.touch_move(x, y),
+            _ => self.touch_up(x, y),
+        }
+    }
+
+    /// A press: the touch state starts, and what the finger is on picks the drag it may become.
+    fn touch_down(&mut self, x: i32, y: i32, hits: PressHits) {
+        let PressHits { in_plot, zmap, full_from, grip } = hits;
+        let t = &mut self.touch;
+        let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
+        *t = TouchState {
+            down: true,
+            x0: x,
+            y0: y,
+            x,
+            y,
+            t0: self.now,
+            held: false,
+            drag: Drag::None,
+            start_offset: 0.0,
+            start_delay: sd,
+            start_level: self.m.trig_level,
+            start_cur: 0.0,
+            win: self.cur_win,
+        };
+        if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+            return;
+        }
+        if let Some((l, g)) = grip {
+            t.drag = Drag::Scroll(l, g);
+            return;
+        }
+        if let Some((ox, oy, prev)) = full_from {
+            t.drag = Drag::FullBtn { ox, oy, prev };
+        } else if !in_plot {
+            // a finger held on the card of a channel that is on: AC/DC, as the channel key
+            let (chs, _, _) = self.cards();
+            self.card_hold =
+                chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
+        } else {
+            // an edge strip of the plot swipes between the views (not while a zoom box is armed)
+            let edge = zmap.is_none() && self.view_edge(x);
+            let t = &mut self.touch;
+            t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
+            if let Some(map) = zmap {
+                t.drag = Drag::ZoomBox;
+                self.zoom_path = vec![(x, y), (x, y)];
+                self.zoom_map = Some(map);
+            } else if let Some((k, _)) = self.zone_arm {
+                t.drag = Drag::Zone(k);
+                self.zone_path = vec![(x, y)];
+            }
+        }
+    }
+
+    /// A move: a scroll or a view swipe goes on, a pending press picks its drag, and the drag follows the finger.
+    fn touch_move(&mut self, x: i32, y: i32) {
+        let t = &mut self.touch;
+        if !t.down {
+            return;
+        }
+        t.x = x;
+        t.y = y;
+        if let Drag::Scroll(l, g) = t.drag {
+            let y0 = t.y0;
+            self.scroll_move(l, g, y0, y);
+            return;
+        }
+        if t.drag == Drag::ViewEdge {
+            let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
+            match self.view_swipe(x0, dx, dy) {
+                Some(true) => self.touch.drag = Drag::None,
+                Some(false) => return,
+                None => self.touch.drag = Drag::Pending,
+            }
+        }
+        let t = &mut self.touch;
+        let (tx0, ty0, tdrag) = (t.x0, t.y0, t.drag);
+        let (dx, dy) = (x - tx0, y - ty0);
+        if tdrag == Drag::Pending && (dx.abs() > 10 || dy.abs() > 10) {
+            // choose what to drag
+            let drag = self.pick_drag(tx0, ty0, dx, dy);
+            self.touch_start_drag(drag);
+        }
+        self.touch_drag_to(x, y);
+    }
+
+    /// What a press at (`tx0`, `ty0`) drags once it moved by (`dx`, `dy`): zoom edges, cursors, levels, offsets or delay.
+    fn pick_drag(&self, tx0: i32, ty0: i32, dx: i32, dy: i32) -> Drag {
+        let near_right = tx0 > self.area.x + self.area.w - 50;
+        let near_left = tx0 < self.area.x + 50;
+        let cur_hit = |frac: f32, vertical: bool| -> bool {
+            if vertical {
+                (self.area.x + (frac * self.area.w as f32) as i32 - tx0).abs() < 24
+            } else {
+                (self.area.y + (frac * self.area.h as f32) as i32 - ty0).abs() < 24
+            }
+        };
+        let m = &self.m;
+        // the cursors stand in the window of the active channel
+        let cur_hit = |frac: f32, vertical: bool| {
+            self.selected_workspace_source().is_some_and(|id| self.workspace_source_visible_here(id))
+                && cur_hit(frac, vertical)
+        };
+        let overview_drag = if m.zoom {
+            let overview = Self::split_zoom(self.grid).0;
+            if overview.contains(tx0, ty0) {
+                let ppd = overview.w as f32 / HDIV;
+                let half = tscales()[m.zscale] * HDIV * 0.5;
+                let edge = |time| overview.x + overview.w / 2 + ((time - m.delay) / m.time_per_div() * ppd) as i32;
+                let left = (tx0 - edge(m.zdelay - half)).abs();
+                let right = (tx0 - edge(m.zdelay + half)).abs();
+                Some(if left < 20 && left <= right {
+                    Drag::ZoomLeft
+                } else if right < 20 {
+                    Drag::ZoomRight
                 } else {
-                    // an edge strip of the plot swipes between the views (not while a zoom box is armed)
-                    let edge = zmap.is_none() && self.view_edge(x);
-                    let t = &mut self.touch;
-                    t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
-                    if let Some(map) = zmap {
-                        t.drag = Drag::ZoomBox;
-                        self.zoom_path = vec![(x, y), (x, y)];
-                        self.zoom_map = Some(map);
-                    } else if let Some((k, _)) = self.zone_arm {
-                        t.drag = Drag::Zone(k);
-                        self.zone_path = vec![(x, y)];
+                    Drag::Overview
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(drag) = overview_drag {
+            drag
+        } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_c, false) {
+            Drag::CursorC
+        } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_d, false) {
+            Drag::CursorD
+        } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) && cur_hit(m.cur_a, true) {
+            Drag::CursorA
+        } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy) && cur_hit(m.cur_b, true) {
+            Drag::CursorB
+        } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_a, false) {
+            Drag::CursorA
+        } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_b, false) {
+            Drag::CursorB
+        } else if near_right
+            && dy.abs() >= dx.abs()
+            && self.trigger_absolute_level_visible(false)
+            && (m.trig_ref.is_some() || self.shows(m.trig_src))
+        {
+            let secondary = matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold);
+            let upper = self.trigger_level_y(m.trig_level, false).unwrap_or(ty0);
+            let lower = self.trigger_level_y(m.trig_level2, secondary).unwrap_or(ty0);
+            if matches!(
+                m.trig_type,
+                TrigType::Runt | TrigType::Slope | TrigType::Window | TrigType::Delay | TrigType::SetupHold
+            ) && (ty0 - lower).abs() < (ty0 - upper).abs()
+            {
+                Drag::Level2
+            } else {
+                Drag::Level
+            }
+        } else if m.zoom && dy.abs() > dx.abs() {
+            Drag::ZoomVertical
+        } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
+            Drag::RefOffset(self.drag_reference().unwrap())
+        } else if dy.abs() > dx.abs() {
+            // nearest enabled channel marker when starting at the left edge, else the active channel (in a
+            // split plot: of this window)
+            let mut c = if self.shows(m.active) {
+                m.active
+            } else {
+                (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active)
+            };
+            let mut best = i32::MAX;
+            if near_left {
+                for i in 0..NCH {
+                    if m.ch[i].on && self.shows(i) {
+                        let d = (self.y_of_volts(i, 0.0) - ty0).abs();
+                        if d < best {
+                            best = d;
+                            c = i;
+                        }
                     }
                 }
             }
-            Phase::Move => {
-                if !t.down {
-                    return;
+            let bus_d = (self.bus_y() - ty0).abs();
+            if m.bus.on && bus_d <= 18 && bus_d < best {
+                Drag::Bus
+            } else {
+                Drag::Offset(c)
+            }
+        } else {
+            Drag::Delay
+        }
+    }
+
+    /// The start values of a drag just picked, and the source it selects.
+    fn touch_start_drag(&mut self, drag: Drag) {
+        let start_offset = match drag {
+            Drag::Offset(c) => self.m.ch[c].offset,
+            Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
+            Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
+            Drag::ZoomVertical => self.zoom_vcenter,
+            Drag::Bus => self.m.bus.pos,
+            _ => 0.0,
+        };
+        let start_cur = match drag {
+            Drag::ZoomLeft => self.m.zdelay + tscales()[self.m.zscale] * HDIV * 0.5,
+            Drag::ZoomRight => self.m.zdelay - tscales()[self.m.zscale] * HDIV * 0.5,
+            Drag::CursorA => self.m.cur_a,
+            Drag::CursorB => self.m.cur_b,
+            Drag::CursorC => self.m.cur_c,
+            Drag::CursorD => self.m.cur_d,
+            _ => 0.0,
+        };
+        match drag {
+            Drag::ZoomVertical => {
+                if let Some(i) = self.drag_reference() {
+                    self.select_workspace_source(WaveId::Ref(i));
+                } else if let Some(c) = (0..NCH).find(|&c| self.m.ch[c].on && self.shows(c)) {
+                    self.select_workspace_source(WaveId::Ch(c));
                 }
-                t.x = x;
-                t.y = y;
-                if let Drag::Scroll(l, g) = t.drag {
-                    let y0 = t.y0;
-                    self.scroll_move(l, g, y0, y);
-                    return;
+            }
+            Drag::Offset(c) => self.select_workspace_source(WaveId::Ch(c)),
+            Drag::RefOffset(i) => self.select_workspace_source(WaveId::Ref(i)),
+            _ => {}
+        }
+        let start_level = if drag == Drag::Level2 { self.m.trig_level2 } else { self.m.trig_level };
+        let t = &mut self.touch;
+        t.start_level = start_level;
+        t.drag = drag;
+        t.start_offset = start_offset;
+        t.start_cur = start_cur;
+    }
+
+    /// The drag under way follows the finger at (`x`, `y`).
+    fn touch_drag_to(&mut self, x: i32, y: i32) {
+        let t = &self.touch;
+        let (dx, dy) = (x - t.x0, y - t.y0);
+        let ppx = self.area.w as f32 / HDIV;
+        let ppy = self.area.h as f32 / VDIV;
+        match t.drag {
+            Drag::ZoomVertical => {
+                self.zoom_vcenter = t.start_offset + dy as f32 / ppy / self.zoom_vfactor;
+                self.dirty_map = true;
+            }
+            Drag::RefOffset(i) => {
+                if let Some(reference) = &mut self.refs[i] {
+                    reference.offset = t.start_offset - dy as f32 / ppy * reference.vpd;
                 }
-                if t.drag == Drag::ViewEdge {
-                    let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
-                    match self.view_swipe(x0, dx, dy) {
-                        Some(true) => self.touch.drag = Drag::None,
-                        Some(false) => return,
-                        None => self.touch.drag = Drag::Pending,
-                    }
+            }
+            Drag::Overview => {
+                let overview = Self::split_zoom(self.grid).0;
+                self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
+                self.clamp_zoom();
+                self.settings_changed();
+            }
+            Drag::ZoomLeft | Drag::ZoomRight => {
+                let overview = Self::split_zoom(self.grid).0;
+                let time = self.m.delay
+                    + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
+                let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
+                let wanted = (span / HDIV).max(tscales()[0]);
+                self.m.zscale = tscales()
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| (a.1 - wanted).abs().total_cmp(&(b.1 - wanted).abs()))
+                    .map_or(0, |(i, _)| i)
+                    .min(self.m.tscale);
+                let half = tscales()[self.m.zscale] * HDIV * 0.5;
+                self.m.zdelay = if t.drag == Drag::ZoomLeft { t.start_cur - half } else { t.start_cur + half };
+                self.clamp_zoom();
+                self.settings_changed();
+            }
+            Drag::Offset(c) => {
+                let vpd = self.m.ch[c].volts_per_div();
+                self.m.ch[c].offset = t.start_offset - dy as f32 / ppy * vpd;
+                self.settings_changed();
+            }
+            Drag::Delay => {
+                if self.m.zoom {
+                    let zt = tscales()[self.m.zscale];
+                    self.m.zdelay = t.start_delay - dx as f32 / ppx * zt;
+                    self.clamp_zoom();
+                } else {
+                    self.m.delay = t.start_delay - dx as f32 / ppx * self.m.time_per_div();
                 }
-                let t = &mut self.touch;
-                let (tx0, ty0, tdrag) = (t.x0, t.y0, t.drag);
-                let (dx, dy) = (x - tx0, y - ty0);
-                if tdrag == Drag::Pending && (dx.abs() > 10 || dy.abs() > 10) {
-                    // choose what to drag
-                    let near_right = tx0 > self.area.x + self.area.w - 50;
-                    let near_left = tx0 < self.area.x + 50;
-                    let cur_hit = |frac: f32, vertical: bool| -> bool {
-                        if vertical {
-                            (self.area.x + (frac * self.area.w as f32) as i32 - tx0).abs() < 24
-                        } else {
-                            (self.area.y + (frac * self.area.h as f32) as i32 - ty0).abs() < 24
-                        }
-                    };
-                    let m = &self.m;
-                    // the cursors stand in the window of the active channel
-                    let cur_hit = |frac: f32, vertical: bool| {
-                        self.selected_workspace_source().is_some_and(|id| self.workspace_source_visible_here(id))
-                            && cur_hit(frac, vertical)
-                    };
-                    let overview_drag = if m.zoom {
-                        let overview = Self::split_zoom(self.grid).0;
-                        if overview.contains(tx0, ty0) {
-                            let ppd = overview.w as f32 / HDIV;
-                            let half = tscales()[m.zscale] * HDIV * 0.5;
-                            let edge =
-                                |time| overview.x + overview.w / 2 + ((time - m.delay) / m.time_per_div() * ppd) as i32;
-                            let left = (tx0 - edge(m.zdelay - half)).abs();
-                            let right = (tx0 - edge(m.zdelay + half)).abs();
-                            Some(if left < 20 && left <= right {
-                                Drag::ZoomLeft
-                            } else if right < 20 {
-                                Drag::ZoomRight
-                            } else {
-                                Drag::Overview
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-                    let drag = if let Some(drag) = overview_drag {
-                        drag
-                    } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_c, false) {
-                        Drag::CursorC
-                    } else if m.cursor == CursorMode::Xy && dy.abs() >= dx.abs() && cur_hit(m.cur_d, false) {
-                        Drag::CursorD
-                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy)
-                        && cur_hit(m.cur_a, true)
-                    {
-                        Drag::CursorA
-                    } else if matches!(m.cursor, CursorMode::Time | CursorMode::Track | CursorMode::Xy)
-                        && cur_hit(m.cur_b, true)
-                    {
-                        Drag::CursorB
-                    } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_a, false) {
-                        Drag::CursorA
-                    } else if m.cursor == CursorMode::Volt && cur_hit(m.cur_b, false) {
-                        Drag::CursorB
-                    } else if near_right
-                        && dy.abs() >= dx.abs()
-                        && self.trigger_absolute_level_visible(false)
-                        && (m.trig_ref.is_some() || self.shows(m.trig_src))
-                    {
-                        let secondary = matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold);
-                        let upper = self.trigger_level_y(m.trig_level, false).unwrap_or(ty0);
-                        let lower = self.trigger_level_y(m.trig_level2, secondary).unwrap_or(ty0);
-                        if matches!(
-                            m.trig_type,
-                            TrigType::Runt | TrigType::Slope | TrigType::Window | TrigType::Delay | TrigType::SetupHold
-                        ) && (ty0 - lower).abs() < (ty0 - upper).abs()
-                        {
-                            Drag::Level2
-                        } else {
-                            Drag::Level
-                        }
-                    } else if m.zoom && dy.abs() > dx.abs() {
-                        Drag::ZoomVertical
-                    } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
-                        Drag::RefOffset(self.drag_reference().unwrap())
-                    } else if dy.abs() > dx.abs() {
-                        // nearest enabled channel marker when starting at the left edge, else the active channel (in a
-                        // split plot: of this window)
-                        let mut c = if self.shows(m.active) {
-                            m.active
-                        } else {
-                            (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active)
-                        };
-                        let mut best = i32::MAX;
-                        if near_left {
-                            for i in 0..NCH {
-                                if m.ch[i].on && self.shows(i) {
-                                    let d = (self.y_of_volts(i, 0.0) - ty0).abs();
-                                    if d < best {
-                                        best = d;
-                                        c = i;
-                                    }
-                                }
-                            }
-                        }
-                        let bus_d = (self.bus_y() - ty0).abs();
-                        if m.bus.on && bus_d <= 18 && bus_d < best {
-                            Drag::Bus
-                        } else {
-                            Drag::Offset(c)
-                        }
-                    } else {
-                        Drag::Delay
-                    };
-                    let start_offset = match drag {
-                        Drag::Offset(c) => self.m.ch[c].offset,
-                        Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
-                        Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
-                        Drag::ZoomVertical => self.zoom_vcenter,
-                        Drag::Bus => self.m.bus.pos,
-                        _ => 0.0,
-                    };
-                    let start_cur = match drag {
-                        Drag::ZoomLeft => self.m.zdelay + tscales()[self.m.zscale] * HDIV * 0.5,
-                        Drag::ZoomRight => self.m.zdelay - tscales()[self.m.zscale] * HDIV * 0.5,
-                        Drag::CursorA => self.m.cur_a,
-                        Drag::CursorB => self.m.cur_b,
-                        Drag::CursorC => self.m.cur_c,
-                        Drag::CursorD => self.m.cur_d,
-                        _ => 0.0,
-                    };
-                    match drag {
-                        Drag::ZoomVertical => {
-                            if let Some(i) = self.drag_reference() {
-                                self.select_workspace_source(WaveId::Ref(i));
-                            } else if let Some(c) = (0..NCH).find(|&c| self.m.ch[c].on && self.shows(c)) {
-                                self.select_workspace_source(WaveId::Ch(c));
-                            }
-                        }
-                        Drag::Offset(c) => self.select_workspace_source(WaveId::Ch(c)),
-                        Drag::RefOffset(i) => self.select_workspace_source(WaveId::Ref(i)),
-                        _ => {}
-                    }
-                    let start_level = if drag == Drag::Level2 { self.m.trig_level2 } else { self.m.trig_level };
-                    let t = &mut self.touch;
-                    t.start_level = start_level;
-                    t.drag = drag;
-                    t.start_offset = start_offset;
-                    t.start_cur = start_cur;
+                self.settings_changed();
+            }
+            Drag::Level | Drag::Level2 => {
+                let lower = t.drag == Drag::Level2;
+                let secondary = lower && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
+                let id = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
+                let ppy = self
+                    .source_area(id)
+                    .map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
+                let level = t.start_level - dy as f32 / ppy * self.trigger_vpd(secondary);
+                // a two-level type: the dragged line stops at the other one, as the knob does
+                let two = self.m.trig_type.two_level();
+                if lower {
+                    self.m.trig_level2 = if two { level.min(self.m.trig_level) } else { level };
+                } else {
+                    self.m.trig_level = if two { level.max(self.m.trig_level2) } else { level };
                 }
-                let t = &self.touch;
-                let (dx, dy) = (x - t.x0, y - t.y0);
-                let ppx = self.area.w as f32 / HDIV;
-                let ppy = self.area.h as f32 / VDIV;
+                self.settings_changed();
+            }
+            Drag::Bus => {
+                self.m.bus.pos = (t.start_offset - dy as f32 / ppy).clamp(BUS_POS_MIN, BUS_POS_MAX);
+                self.settings_changed();
+            }
+            Drag::Zone(_) => {
+                let shape = self.zone_arm.is_some_and(|a| a.1);
+                let last = self.zone_path.last().copied().unwrap_or((x, y));
+                if !shape {
+                    self.zone_path.truncate(1);
+                    self.zone_path.push((x, y));
+                } else if (x - last.0).abs() + (y - last.1).abs() >= 6 {
+                    self.zone_path.push((x, y));
+                }
+            }
+            Drag::ZoomBox => {
+                if let Some(p) = self.zoom_path.last_mut() {
+                    *p = (x, y);
+                }
+            }
+            Drag::FullBtn { ox, oy, prev } => {
+                // past the tap slop the button follows the finger; a shorter move is still a tap
+                if dx.abs() >= 16 || dy.abs() >= 16 {
+                    let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                    self.full_at = Some((px, py));
+                } else {
+                    self.full_at = prev;
+                }
+            }
+            Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
+                let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD) {
+                    t.start_cur + dy as f32 / self.area.h as f32
+                } else {
+                    t.start_cur + dx as f32 / self.area.w as f32
+                }
+                .clamp(0.0, 1.0);
                 match t.drag {
-                    Drag::ZoomVertical => {
-                        self.zoom_vcenter = t.start_offset + dy as f32 / ppy / self.zoom_vfactor;
-                        self.dirty_map = true;
-                    }
-                    Drag::RefOffset(i) => {
-                        if let Some(reference) = &mut self.refs[i] {
-                            reference.offset = t.start_offset - dy as f32 / ppy * reference.vpd;
-                        }
-                    }
-                    Drag::Overview => {
-                        let overview = Self::split_zoom(self.grid).0;
-                        self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
-                        self.clamp_zoom();
-                        self.settings_changed();
-                    }
-                    Drag::ZoomLeft | Drag::ZoomRight => {
-                        let overview = Self::split_zoom(self.grid).0;
-                        let time = self.m.delay
-                            + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV)
-                                * self.m.time_per_div();
-                        let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
-                        let wanted = (span / HDIV).max(tscales()[0]);
-                        self.m.zscale = tscales()
-                            .iter()
-                            .enumerate()
-                            .min_by(|a, b| (a.1 - wanted).abs().total_cmp(&(b.1 - wanted).abs()))
-                            .map_or(0, |(i, _)| i)
-                            .min(self.m.tscale);
-                        let half = tscales()[self.m.zscale] * HDIV * 0.5;
-                        self.m.zdelay = if t.drag == Drag::ZoomLeft { t.start_cur - half } else { t.start_cur + half };
-                        self.clamp_zoom();
-                        self.settings_changed();
-                    }
-                    Drag::Offset(c) => {
-                        let vpd = self.m.ch[c].volts_per_div();
-                        self.m.ch[c].offset = t.start_offset - dy as f32 / ppy * vpd;
-                        self.settings_changed();
-                    }
-                    Drag::Delay => {
-                        if self.m.zoom {
-                            let zt = tscales()[self.m.zscale];
-                            self.m.zdelay = t.start_delay - dx as f32 / ppx * zt;
-                            self.clamp_zoom();
-                        } else {
-                            self.m.delay = t.start_delay - dx as f32 / ppx * self.m.time_per_div();
-                        }
-                        self.settings_changed();
-                    }
-                    Drag::Level | Drag::Level2 => {
-                        let lower = t.drag == Drag::Level2;
-                        let secondary = lower && matches!(self.m.trig_type, TrigType::Delay | TrigType::SetupHold);
-                        let id = if secondary { self.m.trigger_wave2() } else { self.m.trigger_wave() };
-                        let ppy = self
-                            .source_area(id)
-                            .map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
-                        let level = t.start_level - dy as f32 / ppy * self.trigger_vpd(secondary);
-                        // a two-level type: the dragged line stops at the other one, as the knob does
-                        let two = self.m.trig_type.two_level();
-                        if lower {
-                            self.m.trig_level2 = if two { level.min(self.m.trig_level) } else { level };
-                        } else {
-                            self.m.trig_level = if two { level.max(self.m.trig_level2) } else { level };
-                        }
-                        self.settings_changed();
-                    }
-                    Drag::Bus => {
-                        self.m.bus.pos = (t.start_offset - dy as f32 / ppy).clamp(BUS_POS_MIN, BUS_POS_MAX);
-                        self.settings_changed();
-                    }
-                    Drag::Zone(_) => {
-                        let shape = self.zone_arm.is_some_and(|a| a.1);
-                        let last = self.zone_path.last().copied().unwrap_or((x, y));
-                        if !shape {
-                            self.zone_path.truncate(1);
-                            self.zone_path.push((x, y));
-                        } else if (x - last.0).abs() + (y - last.1).abs() >= 6 {
-                            self.zone_path.push((x, y));
-                        }
-                    }
-                    Drag::ZoomBox => {
-                        if let Some(p) = self.zoom_path.last_mut() {
-                            *p = (x, y);
-                        }
-                    }
-                    Drag::FullBtn { ox, oy, prev } => {
-                        // past the tap slop the button follows the finger; a shorter move is still a tap
-                        if dx.abs() >= 16 || dy.abs() >= 16 {
-                            let (px, py) = self.clamp_full(ox + dx, oy + dy);
-                            self.full_at = Some((px, py));
-                        } else {
-                            self.full_at = prev;
-                        }
-                    }
-                    Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
-                        let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD)
-                        {
-                            t.start_cur + dy as f32 / self.area.h as f32
-                        } else {
-                            t.start_cur + dx as f32 / self.area.w as f32
-                        }
-                        .clamp(0.0, 1.0);
-                        match t.drag {
-                            Drag::CursorA => self.m.cur_a = v,
-                            Drag::CursorB => self.m.cur_b = v,
-                            Drag::CursorC => self.m.cur_c = v,
-                            Drag::CursorD => self.m.cur_d = v,
-                            _ => {}
-                        }
-                    }
+                    Drag::CursorA => self.m.cur_a = v,
+                    Drag::CursorB => self.m.cur_b = v,
+                    Drag::CursorC => self.m.cur_c = v,
+                    Drag::CursorD => self.m.cur_d = v,
                     _ => {}
                 }
             }
-            _ => {
-                // Up
-                let was = (t.down, t.drag, t.x0, t.y0, t.held);
-                t.down = false;
-                t.drag = Drag::None;
-                t.held = false;
-                if !was.0 {
-                    return;
-                }
-                // the short menu is already open; this lift runs its shortcut instead of a tap
-                if was.4 {
-                    self.meas_hold_up(x, y);
-                    return;
-                }
-                if let Drag::Zone(k) = was.1 {
-                    self.finish_zone(k);
-                    return;
-                }
-                if was.1 == Drag::ZoomBox {
-                    self.finish_zoom_box();
-                    return;
-                }
-                if let Drag::FullBtn { ox, oy, prev } = was.1 {
-                    let (dx, dy) = (x - was.2, y - was.3);
-                    if dx.abs() < 16 && dy.abs() < 16 {
-                        self.full_at = prev;
-                        self.tap(was.2, was.3);
-                    } else {
-                        let (px, py) = self.clamp_full(ox + dx, oy + dy);
-                        self.full_at = Some((px, py));
-                    }
-                    return;
-                }
-                if self.dialog.is_some() {
-                    self.dialog = None;
-                    return;
-                }
-                if self.m.touch_lock {
-                    // the Menu button ("Locked") is the one touch target left: it unlocks
-                    if self.menu_btn().contains(was.2, was.3) {
-                        self.key(key::TOUCHLOCK);
-                    }
-                    return;
-                }
-                // a press on a list that did not move it is a tap on what is under the finger
-                if let Drag::Scroll(_, g) = was.1 {
-                    if matches!(g, scroll::Grip::Content { .. })
-                        && (x - was.2).abs() < 16
-                        && (y - was.3).abs() < scroll::SLOP
-                    {
-                        self.tap(was.2, was.3);
-                    }
-                    return;
-                }
-                if (was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge)
-                    && (x - was.2).abs() < 16
-                    && (y - was.3).abs() < 16
-                {
-                    self.tap(was.2, was.3);
-                }
+            _ => {}
+        }
+    }
+
+    /// A lift: it ends the drag, finishes a zone, a zoom box or the corner button, or is a tap.
+    fn touch_up(&mut self, x: i32, y: i32) {
+        let t = &mut self.touch;
+        let was = (t.down, t.drag, t.x0, t.y0, t.held);
+        t.down = false;
+        t.drag = Drag::None;
+        t.held = false;
+        if !was.0 {
+            return;
+        }
+        // the short menu is already open; this lift runs its shortcut instead of a tap
+        if was.4 {
+            self.meas_hold_up(x, y);
+            return;
+        }
+        if let Drag::Zone(k) = was.1 {
+            self.finish_zone(k);
+            return;
+        }
+        if was.1 == Drag::ZoomBox {
+            self.finish_zoom_box();
+            return;
+        }
+        if let Drag::FullBtn { ox, oy, prev } = was.1 {
+            let (dx, dy) = (x - was.2, y - was.3);
+            if dx.abs() < 16 && dy.abs() < 16 {
+                self.full_at = prev;
+                self.tap(was.2, was.3);
+            } else {
+                let (px, py) = self.clamp_full(ox + dx, oy + dy);
+                self.full_at = Some((px, py));
             }
+            return;
+        }
+        if self.dialog.is_some() {
+            self.dialog = None;
+            return;
+        }
+        if self.m.touch_lock {
+            // the Menu button ("Locked") is the one touch target left: it unlocks
+            if self.menu_btn().contains(was.2, was.3) {
+                self.key(key::TOUCHLOCK);
+            }
+            return;
+        }
+        // a press on a list that did not move it is a tap on what is under the finger
+        if let Drag::Scroll(_, g) = was.1 {
+            if matches!(g, scroll::Grip::Content { .. }) && (x - was.2).abs() < 16 && (y - was.3).abs() < scroll::SLOP {
+                self.tap(was.2, was.3);
+            }
+            return;
+        }
+        if (was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge)
+            && (x - was.2).abs() < 16
+            && (y - was.3).abs() < 16
+        {
+            self.tap(was.2, was.3);
         }
     }
 
