@@ -689,6 +689,12 @@ impl Ui {
         } else {
             m |= 1 << 5;
         }
+        if self.m.la.on {
+            m |= 1 << 8;
+        }
+        if self.m.afg_on {
+            m |= 1 << 9; // G1 (GI); G2 has no LED on the DHO900
+        }
         if self.m.touch_lock {
             m |= 1 << 11;
         }
@@ -698,6 +704,23 @@ impl Ui {
             Slope::Either => m |= (1 << 14) | (1 << 15),
         }
         m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn generator_and_la_light_their_front_panel_leds() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        let off = ui.leds();
+        assert_eq!(off & (1 << 8), 0, "LA off");
+        assert_eq!(off & (1 << 9), 0, "GEN off");
+        ui.m.afg_on = true;
+        assert_ne!(ui.leds() & (1 << 9), 0, "G1 on while generator output is on");
+        ui.m.afg_on = false;
+        ui.m.la.on = true;
+        assert_ne!(ui.leds() & (1 << 8), 0, "LA on");
+        assert_eq!(ui.leds() & (1 << 9), 0, "G1 stays off without afg_on");
     }
 }
 
