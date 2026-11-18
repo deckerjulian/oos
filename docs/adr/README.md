@@ -67,6 +67,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | accepted |
 | [0045](process/0045-the-toolchain-and-the-base-images-are-pinned.md) | process | The Rust tool chain and the base images of the containers are pinned; the weekly run tries the newest Rust (amends ADR 0017) | proposed |
 | [0046](process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md) | process | Every kind of extension has one registry, one recipe and one check that names what is missing | proposed |
+| [0047](process/0047-parsers-of-outside-input-have-hostile-input-tests.md) | process | Every parser of outside input has a hostile-input test in `cargo test` | proposed |
 | [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only (amends ADR 0017) | proposed |
 | [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings are numbers that only go down | proposed |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | proposed |

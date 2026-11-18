@@ -273,6 +273,11 @@ c2h bytes ── deinterleave ──> per-channel u16 codes ── volts (scale,
 | ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage |
 | fpgad | `cargo test` in fpgad/ | option parsing, status interpretation |
 
+Every parser of outside input (files, the network, remote commands, the samples of a record) also has a hostile-input
+test: `cargo test hostile` in hal/, dsp/ and ui/ feeds it mutated valid inputs from a fixed seed, and it must return,
+not panic, and accept only what its contract allows; `OOS_HOSTILE_ITERS` raises the number of inputs
+([ADR 0047](adr/process/0047-parsers-of-outside-input-have-hostile-input-tests.md)).
+
 Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 
 ## Lessons from the first device tests
