@@ -394,6 +394,80 @@ pub fn pair_name(k: usize) -> &'static str {
     all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(pairs::pair_short_name(k), |(_, d)| d.name)
 }
 
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
+pub fn catalog_id_valid(id: u16) -> bool {
+    persisted(id)
+}
+
+// Which catalog rows the model may keep is the registry's to say (ADR 0049)
+impl crate::model::Model {
+    /// `fit_platform` for the measurement, catalogue, analyser and math sources on a missing input.
+    pub(crate) fn fit_meas_sources(&mut self, n: usize, mut changed: bool) -> bool {
+        for e in &mut self.meas {
+            if let WaveId::Ch(c) = e.1 {
+                if c >= n {
+                    e.1 = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for e in &mut self.meas2 {
+            for id in [&mut e.1, &mut e.2] {
+                if let WaveId::Ch(c) = *id {
+                    if c >= n {
+                        *id = WaveId::Ch(0);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let previous_cat = self.cat.len();
+        self.cat.retain(|row| catalog_id_valid(row.0));
+        self.cat.truncate(crate::model::MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
+        changed |= previous_cat != self.cat.len();
+        for row in &mut self.cat {
+            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
+                if let WaveId::Ch(c) = *source {
+                    if c >= n {
+                        *source = WaveId::Ch(0);
+                        changed = true;
+                    }
+                } else if matches!(*source, WaveId::Ref(i) if i >= crate::model::NREF) {
+                    *source = WaveId::Ref(0);
+                    changed = true;
+                }
+            }
+        }
+        for s in [
+            &mut self.inv_tq,
+            &mut self.inv_ev,
+            &mut self.inv_ei,
+            &mut self.eye_b,
+            &mut self.eye_rail,
+            &mut self.pw_vin,
+            &mut self.pw_clk,
+        ] {
+            if let Some(WaveId::Ch(c)) = *s {
+                if c >= n {
+                    *s = None;
+                    changed = true;
+                }
+            }
+        }
+        // math sources: channels 0..NCH, then math channels (always there)
+        for s in [&mut self.math_a, &mut self.math_b]
+            .into_iter()
+            .chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b]))
+        {
+            if !crate::model::src_ok(*s) {
+                *s = 0;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,7 +506,7 @@ mod tests {
         }
         // what setups store is what the setup reader takes
         for id in 0..=u16::MAX {
-            assert_eq!(crate::model::catalog_id_valid(id), persisted(id), "id {id}");
+            assert_eq!(catalog_id_valid(id), persisted(id), "id {id}");
         }
     }
 

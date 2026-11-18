@@ -144,7 +144,7 @@ impl Default for Model {
             dec_bits: 8,
             dec_parity: oos_dsp::decode::Parity::None,
             bus: TraceBus::default(),
-            dec_opt: [0; crate::protocols::OPTS],
+            dec_opt: [0; oos_dsp::protocols::OPTS],
             zoom: false,
             auto_roll: true,
             zscale: 0,

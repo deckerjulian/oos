@@ -126,9 +126,4 @@ impl Model {
             self.gen_sel = i;
         }
     }
-
-    /// Highest frequency (Hz) of the selected generator's wave shape.
-    pub fn gen_max_hz(&self) -> f64 {
-        board().gen_max_hz(&self.gen_read())
-    }
 }

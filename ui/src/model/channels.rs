@@ -241,43 +241,9 @@ impl Model {
     pub fn n_on(&self) -> usize {
         self.ch.iter().take(n_ch()).filter(|c| c.on).count()
     }
-    /// Switches off the inputs the model does not have (2-channel models: CH3/CH4), whatever turned them on
-    /// (setups, autoset, demos, SCPI). Returns true if something changed.
-    pub fn fit_platform(&mut self) -> bool {
-        let n = n_ch();
-        let mut changed = false;
-        // what this board does not have: a coupling from a setup of another board, a generator it lacks
-        for ch in &mut self.ch {
-            if !board().couplings().contains(&ch.coupling) {
-                ch.coupling = Coupling::Dc;
-                changed = true;
-            }
-        }
-        if self.gen_sel >= gen_count().max(1) {
-            self.gen_select(0);
-            changed = true;
-        }
-        for c in n..NCH {
-            changed |= std::mem::replace(&mut self.ch[c].on, false);
-        }
-        if self.active >= n {
-            self.active = 0;
-            changed = true;
-        }
-        // models without the LA port: no logic analyser
-        if self.la.on && !crate::model::la::available() {
-            self.la.on = false;
-            changed = true;
-        }
-        if n >= NCH {
-            return changed;
-        }
-        changed = self.fit_wave_sources(n, changed);
-        self.fit_meas_sources(n, changed)
-    }
 
     /// `fit_platform` for the Bode, trigger, mask, zone, analyser, decoder and Z input sources on a missing input.
-    fn fit_wave_sources(&mut self, n: usize, mut changed: bool) -> bool {
+    pub(crate) fn fit_wave_sources(&mut self, n: usize, mut changed: bool) -> bool {
         // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
         if self.bode_sync >= n {
             self.bode_sync = n - 1;
@@ -337,72 +303,6 @@ impl Model {
         if self.z_src.is_some_and(|c| c >= n) {
             self.z_src = None;
             changed = true;
-        }
-        changed
-    }
-
-    /// `fit_platform` for the measurement, catalogue, analyser and math sources on a missing input.
-    fn fit_meas_sources(&mut self, n: usize, mut changed: bool) -> bool {
-        for e in &mut self.meas {
-            if let WaveId::Ch(c) = e.1 {
-                if c >= n {
-                    e.1 = WaveId::Ch(0);
-                    changed = true;
-                }
-            }
-        }
-        for e in &mut self.meas2 {
-            for id in [&mut e.1, &mut e.2] {
-                if let WaveId::Ch(c) = *id {
-                    if c >= n {
-                        *id = WaveId::Ch(0);
-                        changed = true;
-                    }
-                }
-            }
-        }
-        let previous_cat = self.cat.len();
-        self.cat.retain(|row| catalog_id_valid(row.0));
-        self.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
-        changed |= previous_cat != self.cat.len();
-        for row in &mut self.cat {
-            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
-                if let WaveId::Ch(c) = *source {
-                    if c >= n {
-                        *source = WaveId::Ch(0);
-                        changed = true;
-                    }
-                } else if matches!(*source, WaveId::Ref(i) if i >= NREF) {
-                    *source = WaveId::Ref(0);
-                    changed = true;
-                }
-            }
-        }
-        for s in [
-            &mut self.inv_tq,
-            &mut self.inv_ev,
-            &mut self.inv_ei,
-            &mut self.eye_b,
-            &mut self.eye_rail,
-            &mut self.pw_vin,
-            &mut self.pw_clk,
-        ] {
-            if let Some(WaveId::Ch(c)) = *s {
-                if c >= n {
-                    *s = None;
-                    changed = true;
-                }
-            }
-        }
-        // math sources: channels 0..NCH, then math channels (always there)
-        for s in [&mut self.math_a, &mut self.math_b]
-            .into_iter()
-            .chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b]))
-        {
-            if !src_ok(*s) {
-                *s = 0;
-                changed = true;
-            }
         }
         changed
     }

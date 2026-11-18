@@ -40,6 +40,7 @@ mod measures;
 mod model;
 #[cfg(test)]
 mod perfguard;
+mod platform;
 mod protocols;
 mod scpi;
 mod settings;
