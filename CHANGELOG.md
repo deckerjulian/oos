@@ -76,6 +76,10 @@ Changed:
 
 Fixed:
 
+- Update: an image with a larger initramfs (a 48 MB package) stopped in a kernel panic at the restart into it
+  ("unknown-block(0,0)"); a power cycle brought the previous build back, nothing was written. The restart now places
+  the new initramfs above 1 GiB through kexec-tools, also when the device tree stays the same (unit). An update to such
+  an image needs this build installed first.
 - Measure in roll and scan, and on compressed deep records: the frequency, the period and the other time values of
   a slow signal read up to twice the true value now and then (25 Hz read as 50 Hz at 0.2 s/div). Their points are
   min/max pairs, and on an edge each pair spans more than the hysteresis of the edge search; the time values are now

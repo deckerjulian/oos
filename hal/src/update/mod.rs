@@ -422,7 +422,19 @@ pub fn kexec_stage(
     };
     let tree = if booted == dt {
         r.say("device tree: the same as the running one");
-        None
+        // with kexec-tools the start goes its way even so: kexec_file_load puts the initramfs right behind the new
+        // kernel, low in memory, where the loader's reserved ramdisk area and the GIC's tables lie; a larger initramfs
+        // reached into them and the started kernel found no root (seen on the unit). kexec-tools loads above them.
+        match running_tree {
+            Some(run) => {
+                let old_dt = fdt::rsce_file(&booted, fdt::TREE)
+                    .map_err(|e| format!("the running image's device tree: {}", e))?;
+                let (t, _) =
+                    fdt::with_loader_changes(old_dt, old_dt, run).map_err(|e| format!("the device tree: {}", e))?;
+                Some(t)
+            }
+            None => None,
+        }
     } else {
         let Some(run) = running_tree else {
             return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
