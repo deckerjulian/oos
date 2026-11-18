@@ -211,6 +211,7 @@ impl Ui {
             wlan_stick: false,
             mouse: pointer::Mouse::default(),
             bt: bt::BtUi::default(),
+            numpad: numpad::NumPad::default(),
             bt_stick: false,
             bt_inputs: 0,
             limits_path: oos_hal::model::LIMITS_CONF.into(),

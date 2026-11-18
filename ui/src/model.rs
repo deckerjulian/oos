@@ -253,6 +253,17 @@ pub const HW_MIN_TDIV: f32 = 1e-9;
 
 /// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
 /// `HW_MIN_TDIV` (`hw_time_per_div`).
+/// The step of `ladder` nearest to `v`, by ratio (a 1-2-5 ladder: 0.37 is nearer to 0.5 than to 0.2).
+pub fn nearest_step(ladder: &[f32], v: f32) -> usize {
+    let mut best = 0;
+    for (i, &x) in ladder.iter().enumerate() {
+        if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
+            best = i;
+        }
+    }
+    best
+}
+
 pub fn tscales() -> Vec<f32> {
     // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn with the
     // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`

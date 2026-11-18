@@ -227,6 +227,7 @@ impl Ui {
             | Item::I2cAddrBits
             | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
+            Item::NumEntry => return self.numpad_keys(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
             Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
@@ -795,6 +796,9 @@ impl Ui {
                         self.adjust(row.it, -1);
                     } else if pl.contains(x, y) {
                         self.adjust(row.it, 1);
+                    } else if matches!(row.ctl, Ctl::Value) && self.numpad_unit(row.it).is_some() {
+                        // the number itself: type it (issue #22)
+                        self.open_numpad(row.it);
                     } else if let Ctl::Pick = row.ctl {
                         self.open_picker(row.it);
                     }

@@ -249,15 +249,7 @@ fn parse_slot(s: &str) -> Option<usize> {
     s.parse::<usize>().ok().filter(|&n| (1..=NREF).contains(&n)).map(|n| n - 1)
 }
 
-fn nearest(ladder: &[f32], v: f32) -> usize {
-    let mut best = 0;
-    for (i, &x) in ladder.iter().enumerate() {
-        if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
-            best = i;
-        }
-    }
-    best
-}
+use crate::model::nearest_step as nearest;
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {

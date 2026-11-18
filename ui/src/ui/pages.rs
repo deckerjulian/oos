@@ -217,6 +217,16 @@ pub(super) type Layout = (MenuId, &'static str, fn(&mut Ui), &'static [Item]);
 /// The longest states of the pages of `PAGES`, for the layout lint.
 #[cfg(test)]
 pub(super) const LAYOUTS: &[Layout] = &[
+    // the number pad with the longest entry, its title the longest row name of a channel
+    (
+        MenuId::Channel(0),
+        "number pad",
+        |u| {
+            u.numpad.target = Some(Item::ChOffset(0));
+            u.keypad = "-1234.5678901".into();
+        },
+        &[Item::NumEntry],
+    ),
     (MenuId::Bluetooth, "crowded", Ui::bt_crowded_for_tests, &[Item::BtFound, Item::BtPairedPick, Item::BtForgetPick]),
     // the clock page: a failure after a sync, a zone of its own, a long server name
     (

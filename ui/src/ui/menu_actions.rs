@@ -417,18 +417,7 @@ impl Ui {
                     m.tscale = step_index(m.tscale, tscales().len(), d);
                     m.tfine = 1.0;
                 }
-                if m.zscale > m.tscale {
-                    m.zscale = m.tscale;
-                }
-                // the delay is the time in the middle of the screen: keep the expand point where it is
-                let new = m.time_per_div();
-                let half = HDIV / 2.0;
-                match m.h_expand {
-                    HExpand::Center => {}
-                    HExpand::Left => m.delay -= half * (old - new),
-                    HExpand::Right => m.delay += half * (old - new),
-                    HExpand::Trigger => m.delay *= new / old,
-                }
+                keep_expand_point(m, old);
             }
             Item::HDelay => m.delay += d as f32 * m.time_per_div() / 25.0,
             Item::TrigSrc => {
@@ -874,6 +863,7 @@ impl Ui {
                     }
                 }
                 Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
+                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::NumEntry) => self.numpad_key(k),
                 // a picker its page answers for (ADR 0060)
                 Item::PickOpt(k) if self.pick.is_some_and(|p| Self::page_of_pick(p.it).is_some()) => {
                     if let Some((it, page)) = self.pick.and_then(|p| Some((p.it, Self::page_of_pick(p.it)?))) {
@@ -1149,4 +1139,20 @@ fn fine_time(now: f32, d: i32) -> (usize, f32) {
     }
     let f = want / ts[i];
     (i, if (f - 1.0).abs() < 1e-5 { 1.0 } else { f })
+}
+
+/// After the time base changed from `old` s/div: the zoom stays inside it, and the delay, the time in the middle of
+/// the screen, moves so the expand point keeps its place (the knob and the number pad).
+pub(super) fn keep_expand_point(m: &mut Model, old: f32) {
+    if m.zscale > m.tscale {
+        m.zscale = m.tscale;
+    }
+    let new = m.time_per_div();
+    let half = HDIV / 2.0;
+    match m.h_expand {
+        HExpand::Center => {}
+        HExpand::Left => m.delay -= half * (old - new),
+        HExpand::Right => m.delay += half * (old - new),
+        HExpand::Trigger => m.delay *= new / old,
+    }
 }
