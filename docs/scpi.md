@@ -78,7 +78,7 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:TRIGger:STATus?` | `STOP|TD|AUTO|WAIT`. A completed Single reports STOP. |
 | `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. |
 | `:TRIGger:EDGE:LEVel[?]` | Volts. |
-| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
+| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `:ALEVel` / `:BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
 
 Trigger type names are `EDGE`, `PULSE`, `SLOPE`, `VIDEO`, `PATTERN`, `DURATION`, `TIMEOUT`, `RUNT`, `WINDOW`, `DELAY`, `SETUPHOLD`, `NTHEDGE`, `BUS`. MODE replies use canonical short tokens: `EDGE`, `PULS`, `SLOP`, `VID`, `PATT`, `DUR`, `TIM`, `RUNT`, `WIND`, `DEL`, `SET`, `NEDG`, `BUS`; TYPE retains the UI's descriptive names. This list does not imply that every stock type-specific subtree exists. Additional settings use the UI/setup schema; unsupported headers report an error.
@@ -378,6 +378,26 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
+| Command | Meaning |
+| --- | --- |
+| `:SYSTem:PIPeline[?] BATCh|FRAMes` | The draw path of the Acquire menu: Batch, the default ([ADR 0029](adr/code/0029-batch-is-the-default-draw-path.md)), or Frames, the standard path; `STANdard` is an alias of `FRAMes`. The query answers `BATC` or `FRAM`; which path runs is the `pipeline` part of `:SYSTem:STATe?`. |
+| `:SYSTem:GRAPhics[?] CPU|GPU` | System > Graphics, the choice; `:SYSTem:STATe?` shows the GPU's times (`gpu layers ...`) only while it really draws. |
+| `:SYSTem:AOUTput[?] TOUT|PFAil|OFF` | The rear AUX OUT: trigger out (the default), pass/fail where the board has the mask or the zone unit, or constant low (`OFF`, an OOS choice). The query answers `TOUT`, `PFA` or `OFF`; a choice the board does not offer is refused with `-224`. |
+
+The development commands below read the raw state of the scope's FPGA units next to what the software computes, for
+sessions on a unit. Their answers are no stable interface; on a computer they answer that there is no unit.
+
+| Command | Meaning |
+| --- | --- |
+| `:DEBug:SLOTs?` | Asks for one raw run of the measure unit and answers the previous request: `<request>`, then for each slot 0..7 `;<min>,<max>,<mean>` (min and max 12-bit, the mean on the 16-bit scale); `<request>;none` when the unit gave nothing, `pending` before the first answer, `no hardware` on a source without the unit. Ask twice, about 0.3 s apart ([trigger-lockin.md](fork/trigger-lockin.md)). |
+| `:SYSTem:DEBug:{UART|SERial}?` | The words of the trigger unit's UART receiver for the current settings ([hwuart.md](fork/hwuart.md)); `off,enabled=0` without it. |
+| `:SYSTem:DEBug:ZONE?` | The zone unit's raw status and counters next to the software's zone filter and the frame counters ([hwzone.md](fork/hwzone.md)); `off,...` without the unit. |
+| `:SYSTem:DEBug:MASK?` | The mask unit's raw counters and slot next to the software's mask test and the frame counters ([hwmask.md](fork/hwmask.md)); `off,...` without the unit. |
+| `:SYSTem:DEBug:MASK:MAP[?] <key>=<value>` | The comparator mapping of the mask test and the zone trigger, as `key=value` pairs separated by spaces (`domain`, `cpd`, `mid`, `shift`, `offs`, `invert`, `cols`, `range`); the setter changes one pair, a bad one is refused with `-224`. |
+| `:SYSTem:DEBug:MASK:COLumns? [<a>[,<b>]]` | For each column a..b (default 0..9) of the loaded mask table its limits, and the lowest and highest code of the newest record in that column; `off` without the mask unit, `no table` without a table. |
+| `:SYSTem:DEBug:DVM?` | The DVM block's latest raw reading next to the software DVM ([dvm.md](fork/dvm.md)); `off,sw=<V>` without one. |
+| `:SYSTem:DEBug:DVM:LANE[?] 0..3|AUTO` | Makes the DVM block read one lane (a pair of ADC cores) while one channel is acquired; `AUTO`, the default, leaves the choice to it. Another value is refused with `-224`. |
+
 ## Errors and compatibility limits
 
 Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
@@ -420,6 +440,12 @@ These commands are implemented by the same model and acquisition router above. T
 | `:CHANnel<n>:EXPand[?]` | Vertical expansion reference supported by the model. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
+| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, at most 100000, without the menu's steps; `OFF` or `0` switches it off. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
+| `:ACQuire:SEGMents:INTerval[?] <s>` | Hardware segments: the pause after each segment in seconds, set within 0 to 10. |
+| `:ACQuire:SEGMents:TIMes?` | Hardware segments: the trigger time of each recorded segment since the first one, comma-separated seconds, `9.9E37` for a segment without a time stamp; empty before segments are recorded. |
+| `:DISPlay:VIEW[?] <n>` | Display > Views (OOS): show view n, 1 through the view count; the query answers the view shown. |
+| `:DISPlay:VIEW:COUNt[?] 1..4` | How many views there are. |
+| `:DISPlay:VIEW:MONitor[?] <n>` | The view an HDMI monitor shows in the Layout, 0 the panel's own; another than 0 needs at least two views. A value past the view count is refused with `-224`. |
 | `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
 | `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |
 | `:TIMebase:HREFerence:MODE[?]` | Horizontal expansion reference. |

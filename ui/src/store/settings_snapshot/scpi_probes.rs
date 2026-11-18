@@ -280,6 +280,22 @@ const LEFT_OUT: &[(&str, &str)] = &[
     (":SYSTem:SET", "writes the setup keys, which setup_probes covers through the same reader"),
     (":SYSTem:GET", "reads the setup keys, which setup_probes covers through setup_text"),
     (":SOURce<n>:*", "the generator: docs/scpi.md lists its commands without a query form"),
+    (
+        ":SYSTem:DEBug:MASK:MAP",
+        "the comparator mapping is a state of the whole process, which other tests read at the same time; the test \
+         of ui/src/scpi/system.rs sets it and puts it back",
+    ),
+    // documented with the command words the interpreter knows; their probes add lines to the golden file, so they
+    // come with the snapshot's update
+    (":ACQuire:SEGMents", "documented after the snapshot; not probed before it"),
+    (":ACQuire:SEGMents:INTerval", "documented after the snapshot; not probed before it"),
+    (":DISPlay:VIEW", "documented after the snapshot; not probed before it"),
+    (":DISPlay:VIEW:COUNt", "documented after the snapshot; not probed before it"),
+    (":DISPlay:VIEW:MONitor", "documented after the snapshot; not probed before it"),
+    (":SYSTem:AOUTput", "documented after the snapshot; not probed before it"),
+    (":SYSTem:DEBug:DVM:LANE", "documented after the snapshot; not probed before it"),
+    (":SYSTem:GRAPhics", "documented after the snapshot; not probed before it"),
+    (":SYSTem:PIPeline", "documented after the snapshot; not probed before it"),
     // the settings table documents these since it holds them; their probes add lines to the golden file, so they
     // come in a pull request of their own
     (":TRIGger:COUPling", "documented by the settings table; not probed before it"),
