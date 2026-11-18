@@ -169,8 +169,11 @@ the code under test in one more respect.
 
 The bytes are made by the inverse of the decode, which goes into hal next to it (`hal/src/dho/seq/samples.rs`,
 `hal/src/dho/seq/frame.rs`, `hal/src/dho/roll.rs`): volts to a code, channels to interleaved words, the padding, the
-header, a chunk. Round-trip tests hold the two together: bytes, decoded and encoded again, are the same bytes for
-every code and every channel set; volts, encoded and decoded, come back within half a code.
+header, a chunk. Round-trip tests hold the two together for what the decode keeps whole (raw words, padding, header,
+roll chunk): bytes, decoded and encoded again, are the same bytes for every code and every channel set; volts, encoded
+and decoded, come back within half a code. Compressed frames have no inverse, since a block keeps only its extremes:
+the model makes them with `pairs::model` from the scene's samples, and a test checks that their decode gives the
+extremes of each block of the scene, in the order they occur.
 
 So a host run goes: settings, step list, simulated unit, bytes, decode, `Frame`, `Record`, picture.
 
@@ -272,7 +275,7 @@ Each stage is one or two pull requests that can be proven by themselves. Sizes a
 |---|---|---|---|---|---|
 | 0a | the inverse codec: volts to code, interleave, padding, header, roll chunk; round-trip tests | `hal/src/dho/seq/samples.rs`, `hal/src/dho/seq/frame.rs`, `hal/src/dho/roll.rs` | 150 and 150 of tests | host tests; the comparison finds nothing; nothing of the scope's programs calls the additions, so the job `scope` is expected to find them byte-identical and `unit` passes by ADR 0041 | low. If the job `scope` finds the programs different, the additions go behind a feature of hal that only tests switch on |
 | 0b | the simulated unit for triggered acquisitions: the model with clock, scene and trace; `Engine` moves into it | `oos_hal::dho::sim` (new), `hal/src/dho/seg.rs`, `hal/src/dho/avg.rs` (their tests) | 450 and 250 of tests | as 0a; `seq::acquire_batch` and `seg::*` run against it in hal's tests | low for the scope; the model can be wrong, see 5 |
-| 1a | the executor takes any bus, stream, front-end bus, lines and clock; `selfcal::Unit` and the generator's executor too | `hal/src/dho/seq/exec.rs`, `hal/src/dho/selfcal.rs`, `hal/src/dho/afg.rs` | 200 | `Refactor:`, `Behaviour: unchanged`, the comparison finds nothing; time-outs tested in virtual time; one run on a unit | medium: the executor runs live with its timing. `exec.rs` is not in `live` today, the run on a unit is asked for all the same (as for #144) |
+| 1a | the executor takes any bus, stream, front-end bus, lines and clock; `selfcal::Unit` and the generator's executor too | `hal/src/dho/seq/exec.rs`, `hal/src/dho/selfcal.rs`, `hal/src/dho/afg.rs` | 200 | `Refactor:`, `Behaviour: unchanged`, the comparison finds nothing; time-outs tested in virtual time; one run on a unit | medium: the executor runs live with its timing. `exec.rs` is in `live` (`tools/pr-gate.sh`, ADR 0052), so this is a refactoring of a live path and the gate asks for the run on a unit |
 | 1b | the seam of section 4: `Port`, `Hw`, `hw::run`, the scope's port | `ui/src/board/dho/hw.rs`, `hw/plan.rs`, `hw/seg.rs`, `hw/units.rs`, `hw/trim.rs`, `ui/src/deepmeas.rs`, a new module for the port | 300 | as 1a; `tools/device-test.py --changed` on the unit (for `ui/src/board/`: acquisition, roll, trigger, front end, register sequences), and its frame rate against main on the same unit | medium: a unit of time mixed up turns 33 ms into 33 s. No lines move, so the diff can be read |
 | 2 | the host run: a test of oos-ui runs `hw::run` against the simulated unit for a matrix of settings and N records each, checks the frames against the scene and writes the trace; the comparison gets a third part | a test module of `hw/`, `tools/compare-base.sh`, `.github/workflows/ci.yml`, `tools/README.md`, `docs/architecture.md` | 400 and 60 in the tools | host tests (layer `test`); a test and tools only, so the programs for the scope are expected byte-identical (job `scope`); pictures and register sequences of the comparison equal, the new part reported as new | low for the scope; the run must not flake: virtual clock, one thread, no order taken from a hash map |
 | 3 | the roll stream, scan (RUN and SINGLE) and the segmented read in the model and in the matrix | `oos_hal::dho::sim`, the test module of stage 2 | 500 | as stage 2; new lines only in the live part | low |
@@ -289,8 +292,11 @@ comparison keeps an artifact that says the live run was compared, as `compare-ca
 The cost is a test build of oos-ui in each tree, to be measured in that pull request.
 
 **Stage 4, what leaves `live`.** For a pull request titled `Refactor:` or `Lints:` that says `Behaviour: unchanged`,
-where the comparison ran the live run on both sides and found nothing: `ui/src/board/` without the scope's port and
-`fpga.rs`, `hal/src/dho/roll.rs`, `hal/src/dho/seg.rs`, `hal/src/dho/seq/exec.rs`. Only then is
+where the comparison ran the live run on both sides and found nothing: the files of `ui/src/board/` whose every
+path the live run reaches, as section 7 counts them, and `hal/src/dho/roll.rs`, `hal/src/dho/seg.rs`,
+`hal/src/dho/seq/exec.rs` once that holds for them too. A file with a path the run does not reach stays in `live`:
+the scope's port, `fpga.rs`, and the files of the paths left for later below (the generator, the DVM and the counter,
+levels, core trim, mask and zone, arming ahead, self-calibration). Only then is
 `spawn` split into functions (goal S2), each step proven by the comparison.
 
 **Later, not part of goal T1:** the switches as options of the loop, so the opt-in paths run on a host (arming
