@@ -129,7 +129,7 @@ off.
     differ by more than one row (host 0, 2, 4; the record path drew 8 to 13 differently), dots and lines;
   - k by time base, smoothing length, opt-in parsing, model conditions;
   - `perf_guard_compressed_frame` (ignored, `tools/perf-guard.sh`): compressed frame <= 0.25 x raw frame.
-- `ui/src/board/dho/hw.rs` `live_compression_plan_by_time_base`: k, frame bytes and frames per batch from 1 us/div to
+- `ui/src/board/dho/hw/tests.rs` `live_compression_plan_by_time_base`: k, frame bytes and frames per batch from 1 us/div to
   1 ms/div, 1 and 2 channels; off at 100 ns/div, in Single, above 1 M.
 - `ui/src/ui.rs` `statistics_of_the_fast_path_leave_out_what_pairs_cannot_give`: frames of the fast path add Max but
   not Mean or Std dev of deep pairs, and nothing of live-compression pairs.

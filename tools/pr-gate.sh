@@ -40,7 +40,7 @@ agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board)\.rs$|ui/src/board/|'
+live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
 live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$)"
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records

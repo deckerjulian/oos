@@ -146,7 +146,7 @@ the 5x of the arithmetic alone.
 
 - `seq::decode_volts_into(bytes, mask, cal, &mut [Vec<f32>; 4])`: no allocation once the vectors have room.
 - `decode_volts` keeps its signature: oos-ui builds unchanged.
-- Left for the ui: per-frame allocation in the batch loop goes away only when `hw.rs` `decode` takes recycled
+- Left for the ui: per-frame allocation in the batch loop goes away only when `hw/decode.rs` `decode` takes recycled
   vectors (a pool the UI thread returns dropped frames' `ch` vectors to) and calls `decode_volts_into`. Until then
   every frame of >= 32 k samples per channel is a fresh musl mmap.
 
