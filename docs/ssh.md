@@ -39,9 +39,9 @@ password (network.md 7).
 
 ## Tools over SSH
 
-`tools/device-deploy.sh` and `tools/device-test.py` use the telnet shell. Over SSH instead:
-`OOS_SHELL=ssh tools/device-deploy.sh <ip>` and `OOS_SHELL=ssh tools/device-test.py ...`, with strict host key checking
-(compare the fingerprint on the SSH settings page with the first `ssh root@<ip>` prompt first); `OOS_SSH_IDENTITY`
-names a private key, `OOS_SSH_PORT` another port.
+`tools/device-deploy.sh` and `tools/device-test.py` reach the scope over SSH only, with a trusted key and strict host
+key checking: compare the fingerprint on the SSH settings page with the first `ssh root@<ip>` prompt first.
+`OOS_SSH_IDENTITY` names a private key, `OOS_SSH_PORT` another port. The steps for a bench unit are in
+[device-testing.md](device-testing.md#ssh-on-a-bench-unit).
 
 Offline tests of the key tool: `python3 -m unittest discover -s tools/tests -p test_ssh_keys.py -v`.

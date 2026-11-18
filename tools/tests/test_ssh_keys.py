@@ -94,7 +94,8 @@ class HostKeys(unittest.TestCase):
         scope = object.__new__(device_test.Scope)
         scope.host, scope.sim = "example.invalid", False
         result = subprocess.CompletedProcess([], 0, "read-only result\n", "")
-        with mock.patch.dict(os.environ, {"OOS_SHELL": "ssh", "OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
+        # SSH is the only way in (ADR 0054): no switch picks it
+        with mock.patch.dict(os.environ, {"OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
             with mock.patch.object(subprocess, "run", return_value=result) as run:
                 self.assertEqual(scope.shell("uname -r"), "read-only result")
                 args = run.call_args.args[0]
@@ -106,6 +107,24 @@ class HostKeys(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     scope.shell("dd of=/dev/mmcblk0")
                 self.assertEqual(run.call_count, 1)
+
+    def test_deploy_reaches_the_scope_over_ssh_only_without_network(self):
+        # an `ssh` of this test in place of the real one: it writes its arguments down and answers nothing
+        log = self.root / "ssh.log"
+        fake = self.root / "bin/ssh"
+        fake.parent.mkdir()
+        fake.write_text(f"#!/bin/sh\necho \"$*\" >> '{log}'\n")
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=f"{fake.parent}{os.pathsep}{os.environ['PATH']}",
+                   OOS_SSH_IDENTITY="local/test identity", OOS_SSH_PORT="2222")
+        r = subprocess.run(["sh", str(ROOT / "tools/device-deploy.sh"), "example.invalid", "--restore"], env=env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = log.read_text().splitlines()
+        self.assertGreaterEqual(len(calls), 3)
+        for c in calls:
+            self.assertIn("-o BatchMode=yes -o StrictHostKeyChecking=yes", c)
+            self.assertIn("-p 2222 -i local/test identity root@example.invalid ", c)
 
 
 def posix(path):
