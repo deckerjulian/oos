@@ -33,6 +33,11 @@ pub struct Quality {
 
 /// Frequency of a periodic signal from its rising crossings of the mean (hysteresis 10 % of peak-peak).
 pub(crate) fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
+    mean_crossings(x, dt).map(|(freq, _)| freq)
+}
+
+/// The frequency of `freq_of` (of any sign) and the rising crossings of the mean it is counted from.
+pub(crate) fn mean_crossings(x: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
     let f: Vec<f32> = x.iter().copied().filter(|v| v.is_finite()).collect();
     if f.len() < 4 {
         return None;
@@ -46,7 +51,7 @@ pub(crate) fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
     if r.len() < 2 {
         return None;
     }
-    Some((r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt))
+    Some(((r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt), r))
 }
 
 /// Sample range [a, b) covering the largest whole number of cycles of `f` (at least the whole record when shorter

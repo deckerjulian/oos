@@ -4,8 +4,7 @@
 //! Magnetic measurements on a winding: inductance from the ψ–i slope, B / H / μr when the core geometry is set,
 //! cycle loss, and the I vs ∫V loop. ψ is the flux linkage ∫v dt (V·s), restarted at each voltage cycle.
 
-use crate::edges::edges;
-use crate::power::{integrate, quality};
+use crate::power::{integrate, mean_crossings, quality};
 use std::f64::consts::{PI, SQRT_2};
 
 /// Permeability of free space, H/m.
@@ -104,7 +103,7 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
         return out;
     }
     let g = clean_geom(geom);
-    let Some((freq, rises)) = voltage_cycles(v, dt) else {
+    let Some((freq, rises)) = mean_crossings(v, dt).filter(|(freq, _)| *freq > 0.0) else {
         out.partial = true;
         out.note = "under one cycle";
         out.loops = vec![partial_loop(v, i, dt)];
@@ -216,25 +215,6 @@ fn clean_geom(g: Geom) -> Geom {
         length: g.length.filter(|l| l.is_finite() && *l > 0.0),
         rcu: if g.rcu.is_finite() && g.rcu > 0.0 { g.rcu } else { 0.0 },
     }
-}
-
-/// Rising crossings of the voltage mean, and the frequency, the same rule as `power::freq_of`.
-fn voltage_cycles(v: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
-    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
-    if f.len() < 4 {
-        return None;
-    }
-    let mean = f.iter().map(|&x| x as f64).sum::<f64>() / f.len() as f64;
-    let (lo, hi) = f.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
-    if !(hi > lo) {
-        return None;
-    }
-    let r: Vec<f64> = edges(v, mean as f32, 0.1 * (hi - lo)).into_iter().filter(|e| e.rising).map(|e| e.t).collect();
-    if r.len() < 2 {
-        return None;
-    }
-    let freq = (r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt);
-    (freq > 0.0).then_some((freq, r))
 }
 
 fn mean_finite(x: &[f32]) -> f64 {
