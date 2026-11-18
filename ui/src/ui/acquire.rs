@@ -909,21 +909,10 @@ pub fn fast_deposit_t(
     }
 }
 
-/// Channel `c` of a placed frame into the rows `r_lo` .. `r_lo + band.len() / w` of that channel's map (`w` x `h`),
-/// held in `band` (the whole map: `r_lo` 0): one frame after the other straight into the row-major map, the tests'
-/// reference for the fast path's drawing.
+/// Channel `c` of a placed frame into that channel's whole map `map` (`w` x `h`): one frame after the other straight
+/// into the row-major map, the tests' reference for the fast path's drawing.
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub fn fast_deposit(
-    m: &Model,
-    w: usize,
-    h: usize,
-    c: usize,
-    band: &mut [u16],
-    r_lo: usize,
-    f: &crate::board::Frame,
-    p: &FastPlan,
-) {
+pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, map: &mut [u16], f: &crate::board::Frame, p: &FastPlan) {
     if !m.ch[c].on {
         return;
     }
@@ -931,10 +920,10 @@ pub fn fast_deposit(
         FastPlan::Rec(rec) => {
             if !rec.ch[c].is_empty() {
                 crate::wave::draw_trace(
-                    band,
+                    map,
                     w,
                     h,
-                    r_lo,
+                    0,
                     c,
                     m,
                     (m.time_per_div(), m.delay),
@@ -948,9 +937,9 @@ pub fn fast_deposit(
             }
         }
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
-            Some(s) => crate::fastdraw::add_spans(band, w, r_lo, s, 24),
+            Some(s) => crate::fastdraw::add_spans(map, w, 0, s, 24),
             None if !f.ch[c].is_empty() => {
-                crate::fastdraw::deposit_dots_band(band, w, r_lo, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
+                crate::fastdraw::deposit_dots_band(map, w, 0, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
             }
             None => {}
         },
