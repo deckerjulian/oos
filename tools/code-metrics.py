@@ -37,10 +37,17 @@ ROOT = os.path.dirname(TOOLS)
 NUMBERS = "tools/code-metrics.txt"  # the counts that may only go down, `<count> <key>` per line
 LONG = 150  # a function of more lines is long (goal S2)
 
-# the reading of the tree and the tokens of Rust: tools/duplicates.py, one place for both
-_spec = importlib.util.spec_from_file_location("duplicates", os.path.join(TOOLS, "duplicates.py"))
-dup = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(dup)
+
+def load(name):
+    """tools/<name>.py as a module, by its path: `python3 -I` puts no folder of the tools on the path."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(TOOLS, name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+dup = load("duplicates")  # the reading of the tree and the tokens of Rust, one place for both
+numbers = load("ratchet_numbers")  # the file of the numbers that only go down
 
 
 def impl_name(toks):
@@ -163,56 +170,8 @@ def counts(root):
 
 
 def read_numbers(root):
-    """tools/code-metrics.txt as {key: number}; empty when there is none. A line that is not `<count> <key>` is an
-    error."""
-    path = os.path.join(root, NUMBERS)
-    if not os.path.exists(path):
-        return {}
-    out = {}
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f.read().split("\n"), 1):
-            if not line.strip():
-                continue
-            parts = line.split()
-            if len(parts) != 2 or not parts[0].isdigit():
-                raise ValueError("%s:%d: not `<count> <key>`: %r" % (NUMBERS, n, line))
-            out[parts[1]] = int(parts[0])
-    return out
-
-
-def enforce(root, now, lower):
-    """Compares each count of `now` ({key: count}) with its number in tools/code-metrics.txt and prints a line for
-    each that differs; with `lower` writes the counts that went down. Returns 0 when every count is its number (after
-    --lower: when none went up), else 1."""
-    kept = read_numbers(root)
-    bad, out = 0, {}
-    for key in sorted(set(kept) | set(now)):
-        was, count = kept.get(key), now.get(key)
-        if count is None:
-            print("unknown: %s %d is no count of this tool: remove its line" % (key, was))
-            bad = 1
-        elif was is None:
-            print("up: %s is new with %d: add `%d %s` to %s" % (key, count, count, key, NUMBERS))
-            bad = 1
-        elif count > was:
-            print("up: %s %d -> %d (--list names them)" % (key, was, count))
-            bad = 1
-            out[key] = was
-        elif count < was and lower:
-            print("lowered: %s %d -> %d" % (key, was, count))
-            out[key] = count
-        elif count < was:
-            print("down: %s %d -> %d (run tools/code-metrics.py --lower)" % (key, was, count))
-            bad = 1
-            out[key] = was
-        else:
-            out[key] = count
-    if lower:
-        with open(os.path.join(root, NUMBERS), "w", encoding="utf-8") as f:
-            f.write("".join("%d %s\n" % (out[k], k) for k in sorted(out)))
-    if not bad:
-        print("code-metrics: %d numbers as recorded in %s" % (len(out), NUMBERS))
-    return bad
+    """tools/code-metrics.txt as {key: number} (tools/ratchet_numbers.py)."""
+    return numbers.read(root, NUMBERS)
 
 
 def main(argv):
@@ -233,7 +192,7 @@ def main(argv):
     else:
         print("code-metrics: " + ", ".join("%s %d" % (k, n) for k, _, n, _ in result) + " (--list names them)")
     if args.enforce or args.lower:
-        return enforce(args.root, {k: n for k, _, n, _ in result}, args.lower)
+        return numbers.enforce(args.root, NUMBERS, {k: n for k, _, n, _ in result}, args.lower)
     return 0
 
 
