@@ -15,12 +15,6 @@ impl Protocol for Swd {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::SWD
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::swd(l.need(1, "SWCLK source missing")?, l.main(), l.thr, l.hy))
-    }
     /// The ACK of a transfer is a field with its three bits, not an I2C style acknowledge.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         (p.kind == Kind::Ack).then(|| format!("ACK {}", p.value))
@@ -48,13 +42,6 @@ pub struct Jtag;
 impl Protocol for Jtag {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::JTAG
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let tdi = l.need(2, "TDI source missing")?;
-        Ok(decode::jtag(l.need(1, "TCK source missing")?, l.main(), tdi, l.lines[3], None, l.thr, l.hy))
     }
     /// TMS, TCK, TDI, TDO on CH1 to CH4.
     fn setup(&self) -> Setup {
@@ -89,13 +76,14 @@ mod tests {
             |k: usize| -> Vec<f32> { (0..n).map(|i| d.lines[k].as_ref().unwrap()(i as f64 * dt) as f32).collect() };
         let (dio, clk) = (wave(0), wave(1));
         let p = Swd
+            .info()
             .decode(&Lines {
                 lines: [Some(&dio), Some(&clk), None, None],
                 dt,
                 thr: 1.65,
                 hy: 0.1,
                 opt: [0; OPTS],
-                sh: Shared::default(),
+                sh: shared(&Default::default()),
                 chans: [None; 4],
                 src: [None; 4],
             })

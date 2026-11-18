@@ -9,13 +9,29 @@
 
 use super::{Kind, Packet};
 use crate::edges::{edges, states};
-use crate::protocols::{every_word_is_a_frame, ModuleInfo};
+use crate::protocols::{every_word_is_a_frame, Lines, ModuleInfo};
 use crate::trigger::Slope;
 
 /// A parallel bus: the data lines from the main one upwards, and a clock.
 pub static PARALLEL: ModuleInfo = ModuleInfo::new("Parallel", "Parallel", "parallel")
     .roles([Some("D0"), None, Some("Clock"), None])
-    .trigger(every_word_is_a_frame);
+    .trigger(every_word_is_a_frame)
+    .bit(|_, _| 0.5e-6)
+    .decoder(parallel_lines);
+
+/// The parallel bus of its module: the data lines from the main source upwards, as many as the shared Bits row says
+/// (at most 4), skipping the clock; sampled on its rising edge.
+fn parallel_lines(l: &Lines) -> Result<Vec<Packet>, &'static str> {
+    let d0 = l.src[0].unwrap_or(0);
+    let n = l.chans.len();
+    let lines: Vec<&[f32]> = (0..n)
+        .map(|k| (d0 + k) % n)
+        .filter(|&c| Some(c) != l.src[2])
+        .take(l.sh.bits.clamp(1, 4) as usize)
+        .map(|c| l.chans[c].ok_or("source channel off"))
+        .collect::<Result<_, _>>()?;
+    Ok(parallel(&lines, l.lines[2], Slope::Rising, l.thr, l.hy))
+}
 
 /// Parallel bus: the data lines (`data[0]` = LSB, at most 32 are used) sampled on each `edge` of `clk`, or without a
 /// clock after every change of any line (changes less than 2 samples apart count as one, for line skew; the first

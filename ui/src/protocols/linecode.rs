@@ -7,11 +7,6 @@
 
 use super::*;
 
-/// The baud rate of option row 0.
-fn baud(opt: &[usize; OPTS]) -> f64 {
-    crate::decode::BAUDS[opt[0].min(crate::decode::BAUDS.len() - 1)]
-}
-
 const OPTIONS: [Opt; 1] = [Opt { name: "Baud", choices: &BAUD_NAMES, default: BAUD_DEFAULT }];
 
 pub struct Manchester;
@@ -22,12 +17,6 @@ impl Protocol for Manchester {
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / baud(opt)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::linecode::manchester(l.main(), l.dt, baud(&l.opt), l.thr, l.hy))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, 0, 0, 0])
@@ -42,12 +31,6 @@ impl Protocol for Mlt3 {
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / baud(opt)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::linecode::mlt3(l.main(), l.dt, baud(&l.opt), l.thr, l.hy))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, 0, 0, 0])

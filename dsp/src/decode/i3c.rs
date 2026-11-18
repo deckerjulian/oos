@@ -180,7 +180,11 @@ impl I3c {
 }
 
 /// MIPI I3C on SDA and SCL.
-pub static I3C: ModuleInfo = ModuleInfo::new("I3c", "I3C", "i3c").roles([Some("SDA"), Some("SCL"), None, None]);
+pub static I3C: ModuleInfo = ModuleInfo::new("I3c", "I3C", "i3c")
+    .roles([Some("SDA"), Some("SCL"), None, None])
+    // a bit at 10 MHz (SDR)
+    .bit(|_, _| 0.1e-6)
+    .decoder(|l| Ok(i3c(l.main(), l.need(1, "SCL source missing")?, &[], l.thr, l.hy)));
 
 /// I3C SDR (MIPI I3C Basic v1.1.1): START/Sr/STOP and bits like I2C (SDA sampled on the rising SCL edge, MSB first).
 /// Emits Start/RepStart/Stop, `Kind::Addr { read }` (ok = ACK) incl. the broadcast address 0x7E, `Field("CCC")`

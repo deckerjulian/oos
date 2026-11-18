@@ -14,7 +14,9 @@ use crate::protocols::{BusWhat, ModuleInfo};
 /// I2S: data, bit clock and word select.
 pub static I2S: ModuleInfo = ModuleInfo::new("I2s", "I2S", "audio")
     .roles([Some("SD"), Some("SCK"), Some("WS"), None])
-    .starts_on(BusWhat::Data, 0x7fff);
+    .starts_on(BusWhat::Data, 0x7fff)
+    .bit(|_, _| 0.6e-6)
+    .decoder(|l| Ok(i2s(l.need(1, "source channel off")?, l.lines[2], l.main(), l.sh.bits, l.thr, l.hy)));
 
 /// I2S (Philips): SD sampled on the rising SCK edge, MSB first, the word starts one SCK period after the WS edge
 /// (WS low = left, high = right). `bits` = word length to keep (MSB-aligned; longer slots are cut, shorter ones end at
@@ -84,7 +86,8 @@ pub fn i2s(sck: &[f32], ws: Option<&[f32]>, sd: &[f32], bits: u32, thr: f32, hys
 }
 
 /// S/PDIF on one line.
-pub static SPDIF: ModuleInfo = ModuleInfo::new("Spdif", "S/PDIF", "audio");
+pub static SPDIF: ModuleInfo =
+    ModuleInfo::new("Spdif", "S/PDIF", "audio").bit(|_, _| 0.15e-6).decoder(|l| Ok(spdif(l.main(), l.thr, l.hy)));
 
 /// S/PDIF / AES3 (IEC 60958-1/-3/-4): biphase-mark coded subframes of 32 time slots. The unit interval (half a time
 /// slot) is recovered from the shortest pulses, the preambles B (Z, block start, channel A), M (X, channel A) and W

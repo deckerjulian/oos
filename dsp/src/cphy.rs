@@ -134,7 +134,15 @@ struct Run {
 }
 
 /// MIPI C-PHY on the three lines of a trio.
-pub static CPHY: ModuleInfo = ModuleInfo::new("Cphy", "C-PHY", "cphy").roles([Some("A"), Some("B"), Some("C"), None]);
+pub static CPHY: ModuleInfo = ModuleInfo::new("Cphy", "C-PHY", "cphy")
+    .roles([Some("A"), Some("B"), Some("C"), None])
+    // auto: a symbol a nanosecond
+    .bit(|_, sh| if sh.cphy_rate > 0.0 { 1.0 / sh.cphy_rate } else { 1e-9 })
+    .decoder(|l| {
+        let c = l.lines[2].ok_or("C-PHY C source missing")?;
+        let rate = (l.sh.cphy_rate > 0.0).then_some(l.sh.cphy_rate);
+        Ok(decode(l.main(), l.need(1, "source channel off")?, c, l.dt, rate, l.thr.abs().max(1e-6)))
+    });
 
 /// Returns packet times as native sample indices, like the other DSP decoders.
 /// Unaligned mid-burst captures expose electrical symbols rather than guessed words.

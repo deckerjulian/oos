@@ -154,16 +154,16 @@ family adds a module next to it ([porting.md](porting.md)).
 ### oos-dsp: signal processing
 
 Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, the protocol
-decoders and their registry (`protocols`: key, name, lines and protocol trigger rule of each), mask test, signal
-generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
+decoders as modules (`protocols`: key, name, lines, the call of the decoder, bit time and protocol trigger rule of
+each), mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
 
 ### oos-ui: the scope screen
 
 One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
 
 Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](protocol-modules.md)) bring their
-menu rows, labels, demo traffic and an optional view of their own through one trait, `Protocol`; what each one is and
-its protocol trigger rule come from its `ModuleInfo` in `oos-dsp`.
+menu rows, labels, demo traffic and an optional view of their own through one trait, `Protocol`; what each one is,
+the call of its decoder, its timing and its protocol trigger rule come from its `ModuleInfo` in `oos-dsp`.
 Measurements come the same way (`ui/src/measures`, [measurement-modules.md](measurement-modules.md)): a
 `MeasModule` gives its tiles on the measurement page and computes its values on the catalog worker thread.
 Analyser pages implement `Analyser` (`ui/src/ui/analysers.rs`, [analyser-modules.md](analyser-modules.md)): the start

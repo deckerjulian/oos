@@ -7,7 +7,7 @@
 
 use super::*;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode::{self, UsbSpeed, USB_FULL, USB_LOW};
+use oos_dsp::decode::{self, USB_FULL};
 
 pub struct Usb;
 
@@ -17,20 +17,6 @@ impl Protocol for Usb {
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::UsbSpeed]
-    }
-    /// Auto: full speed.
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        1.0 / USB_FULL
-    }
-    fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        1.0 / if sh.usb_speed == UsbSpeed::Low { USB_LOW } else { USB_FULL }
-    }
-    /// Auto: room for a low-speed packet before the trigger point.
-    fn frame_span_sh(&self, _: &[usize; OPTS], sh: &Shared) -> Option<f64> {
-        (sh.usb_speed == UsbSpeed::Auto).then_some(200.0 / USB_LOW)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::usb(l.main(), l.lines[2], l.dt, l.sh.usb_speed, l.thr, l.hy))
     }
     /// The speed of the SYNC, PID names, bytes.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -90,7 +76,7 @@ mod tests {
         let load = |text: &str| crate::store::parse_setup(&format!("dec_on = true\n{}", text)).unwrap();
         let m = load("dec_proto = Usb\ndec_uspeed = 1\n");
         assert_eq!((m.dec_proto.name(), m.dec_uspeed), ("USB", 1));
-        assert_eq!(m.bus_bit(), 1.0 / USB_LOW);
+        assert_eq!(m.bus_bit(), 1.0 / decode::USB_LOW);
         let m = load("dec_proto = I2s\ndec_bits = 24\n");
         assert_eq!((m.dec_proto.name(), m.dec_bits), ("I2S", 24));
     }
@@ -114,11 +100,11 @@ mod tests {
                 thr: 1.65,
                 hy: 0.1,
                 opt: [0; OPTS],
-                sh: Shared::default(),
+                sh: shared(&Default::default()),
                 chans: [None; 4],
                 src: [None; 4],
             };
-            assert!(!p.decode(&l).unwrap().is_empty(), "{}", p.name());
+            assert!(!p.info().decode(&l).unwrap().is_empty(), "{}", p.name());
         }
     }
 }

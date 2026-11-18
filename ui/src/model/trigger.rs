@@ -503,7 +503,7 @@ impl Model {
             TrigType::Bus => self
                 .dec_proto
                 .module()
-                .and_then(|p| p.frame_span_sh(&self.dec_opts(), &crate::protocols::Shared::of(self)))
+                .and_then(|p| p.info().frame_span(&self.dec_opts(), &crate::protocols::shared(self)))
                 .unwrap_or(200.0 * self.bus_bit()),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,

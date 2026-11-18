@@ -5,11 +5,11 @@
 //!
 //! A protocol module is one file in this directory with a type that implements [`Protocol`], and one line in
 //! [`MODULES`]. That is all: the Decode menu (protocol list, source rows named after the roles, option rows), saved
-//! setups, the protocol trigger (bit time, what a frame start is, the starting value), the packet labels on the trace
-//! and in the event table, the demo traffic of the host build and the protocol's own view in the pane under the plot
-//! all come from the trait. The decoder itself lives in `oos-dsp`, with its [`ModuleInfo`] (key, name, the lines it
-//! takes, what the protocol trigger finds and starts with) next to it and listed in `oos_dsp::protocols::MODULES`;
-//! the module names that info and calls the decoder.
+//! setups, the packet labels on the trace and in the event table, the demo traffic of the host build and the
+//! protocol's own view in the pane under the plot come from the trait. What the decoder is lives in `oos-dsp`: its
+//! [`ModuleInfo`] (key, name, the lines it takes, the call of the decoder, its bit time, what the protocol trigger
+//! finds and starts with) stands next to the decoder and is listed in `oos_dsp::protocols::MODULES`; the module names
+//! it with [`Protocol::info`].
 //!
 //! Every decoder is a module. The seven core protocols (`core.rs`: UART, I2C, SPI, CAN, LIN, Parallel, C-PHY) are
 //! always built and keep the first places, since the hardware trigger types and SCPI name them (`Proto::UART` ...).
@@ -112,8 +112,7 @@ pub static MODULES: &[&dyn Protocol] = &[
     &example::Example,
 ];
 
-/// Option rows a module may have (bit rate, word size, variant ...).
-pub const OPTS: usize = 4;
+pub use oos_dsp::protocols::{Lines, Shared, OPTS};
 
 /// A row of the Decode menu several protocols share, kept in its own field of the model (`dec_baud`, `dec_bits` ...):
 /// SCPI (`:BUS<n>:RS232:BAUD` ...), the hardware protocol triggers and the setups use those fields by name, so a
@@ -136,48 +135,20 @@ pub enum Row {
     Fmt,
 }
 
-/// The values of the shared rows.
-#[derive(Clone, Copy, Debug)]
-pub struct Shared {
-    pub baud: f64,
-    pub bits: u32,
-    pub parity: oos_dsp::decode::Parity,
-    pub spi_mode: u8,
-    pub can_rate: f64,
-    pub canh: bool,
-    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-    pub usb_speed: oos_dsp::decode::UsbSpeed,
-    /// 0 = auto
-    pub cphy_rate: f64,
-    /// the UART line is inverted (the protocol trigger's polarity)
-    pub uart_inv: bool,
-    /// SPI: a clock pause (s) that starts a frame (0: 20 bit times), and CS active high (the protocol trigger's)
-    pub spi_timeout: f64,
-    pub spi_cs_high: bool,
-}
-
-impl Default for Shared {
-    /// What a new model has.
-    fn default() -> Shared {
-        Shared::of(&crate::model::Model::default())
-    }
-}
-
-impl Shared {
-    pub fn of(m: &crate::model::Model) -> Shared {
-        Shared {
-            baud: crate::decode::BAUDS[m.dec_baud.min(crate::decode::BAUDS.len() - 1)],
-            bits: m.dec_bits,
-            parity: m.dec_parity,
-            spi_mode: m.dec_mode,
-            can_rate: crate::decode::CAN_RATES[m.dec_canrate.min(crate::decode::CAN_RATES.len() - 1)],
-            canh: m.dec_canh,
-            usb_speed: crate::decode::USB_SPEEDS[m.dec_uspeed.min(crate::decode::USB_SPEEDS.len() - 1)],
-            cphy_rate: m.dec_cphy_rate,
-            uart_inv: m.ser.uart_inv,
-            spi_timeout: m.ser.spi_timeout as f64,
-            spi_cs_high: m.ser.spi_cs_high,
-        }
+/// The values of the shared rows in `m`.
+pub fn shared(m: &crate::model::Model) -> Shared {
+    Shared {
+        baud: crate::decode::BAUDS[m.dec_baud.min(crate::decode::BAUDS.len() - 1)],
+        bits: m.dec_bits,
+        parity: m.dec_parity,
+        spi_mode: m.dec_mode,
+        can_rate: crate::decode::CAN_RATES[m.dec_canrate.min(crate::decode::CAN_RATES.len() - 1)],
+        canh: m.dec_canh,
+        usb_speed: crate::decode::USB_SPEEDS[m.dec_uspeed.min(crate::decode::USB_SPEEDS.len() - 1)],
+        cphy_rate: m.dec_cphy_rate,
+        uart_inv: m.ser.uart_inv,
+        spi_timeout: m.ser.spi_timeout as f64,
+        spi_cs_high: m.ser.spi_cs_high,
     }
 }
 
@@ -211,40 +182,6 @@ pub struct Opt {
     pub name: &'static str,
     pub choices: &'static [&'static str],
     pub default: usize,
-}
-
-/// The lines a decoder runs on, as voltages, in the order of [`Protocol::roles`]. `lines[0]` is always there (the main
-/// source; with "B line (A-B)" the difference of the pair); a role the protocol does not name, or an optional role
-/// set to "none", is `None`.
-pub struct Lines<'a> {
-    pub lines: [Option<&'a [f32]>; 4],
-    /// sample spacing (s)
-    pub dt: f64,
-    /// decision threshold and hysteresis (V)
-    pub thr: f32,
-    pub hy: f32,
-    /// the option settings, indices into [`Opt::choices`], already in range
-    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-    pub opt: [usize; OPTS],
-    /// the shared rows ([`Protocol::shared`])
-    pub sh: Shared,
-    /// every analog channel (None: off) and the channel of each role, for a protocol whose lines are not its roles
-    /// (Parallel: the data lines from the main source upwards)
-    pub chans: [Option<&'a [f32]>; 4],
-    pub src: [Option<usize>; 4],
-}
-
-impl<'a> Lines<'a> {
-    /// The main line.
-    pub fn main(&self) -> &'a [f32] {
-        self.lines[0].unwrap_or(&[])
-    }
-
-    /// Line `k`, or the error the scope shows when it is missing.
-    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-    pub fn need(&self, k: usize, what: &'static str) -> Result<&'a [f32], &'static str> {
-        self.lines[k].ok_or(what)
-    }
 }
 
 /// Where the demo traffic sits and what the decoder starts with when the protocol is chosen.
@@ -340,7 +277,7 @@ pub struct Section {
     pub rows: Vec<String>,
 }
 
-/// A protocol module. Only `info`, `bit_time` and `decode` are required; everything else has a default that
+/// A protocol module. Only `info` is required; everything else has a default that
 /// fits a single-line serial protocol.
 pub trait Protocol: Sync {
     /// What oos-dsp says of the decoder: its stable key, its name, the lines it takes, whether the main one may be a
@@ -352,17 +289,6 @@ pub trait Protocol: Sync {
     fn options(&self) -> &'static [Opt] {
         &[]
     }
-
-    /// Bit time (s) with these options: the protocol trigger samples at a twentieth of it and searches 200 of them.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64;
-
-    /// Record length (s) the protocol trigger needs before the trigger point, when 200 bit times are not right.
-    fn frame_span(&self, _opt: &[usize; OPTS]) -> Option<f64> {
-        None
-    }
-
-    /// Decodes the lines. Packet times are fractional sample indices.
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str>;
 
     /// Text of a decoded field on the trace and in the event table; `None` = the generic text of its kind.
     fn text(&self, _p: &Packet, _opt: &[usize; OPTS]) -> Option<String> {
@@ -400,16 +326,6 @@ pub trait Protocol: Sync {
     /// The shared rows of the Decode menu the protocol shows, before its own options ([`Row`]).
     fn shared(&self) -> &'static [Row] {
         &[]
-    }
-
-    /// `bit_time` when it depends on a shared row (`Row::Baud` ...).
-    fn bit_time_sh(&self, opt: &[usize; OPTS], _sh: &Shared) -> f64 {
-        self.bit_time(opt)
-    }
-
-    /// `frame_span` when it depends on a shared row.
-    fn frame_span_sh(&self, opt: &[usize; OPTS], _sh: &Shared) -> Option<f64> {
-        self.frame_span(opt)
     }
 
     /// The role whose line frames start on, where the hardware trigger in front of the protocol trigger looks
@@ -479,7 +395,6 @@ mod tests {
                 assert!(o.default < o.choices.len(), "{}: {} default", m.name(), o.name);
             }
             assert!(m.info().roles[0].is_some(), "{}: no main role", m.name());
-            assert!(m.bit_time(&[0; OPTS]) > 0.0, "{}: bit time", m.name());
         }
         // the core decoders at their fixed places (`Proto::UART` ...)
         for (p, key) in [
@@ -500,7 +415,8 @@ mod tests {
     fn modules_decode_their_demo() {
         for (i, m) in MODULES.iter().enumerate() {
             let Some(d) = demo(i as u8) else { continue };
-            let dt = m.bit_time(&opt_fit(i as u8, opt_default(i as u8))) / 40.0;
+            let sh = shared(&Default::default());
+            let dt = m.info().bit_time(&opt_fit(i as u8, opt_default(i as u8)), &sh) / 40.0;
             let n = (3.0 * d.period / dt) as usize;
             let waves: Vec<Option<Vec<f32>>> = d
                 .lines
@@ -514,11 +430,11 @@ mod tests {
                 thr: s.thr,
                 hy: 0.1,
                 opt: opt_fit(i as u8, opt_default(i as u8)),
-                sh: Shared::default(),
+                sh,
                 chans: [None; 4],
                 src: [None; 4],
             };
-            let p = m.decode(&l).unwrap_or_else(|e| panic!("{}: {}", m.name(), e));
+            let p = m.info().decode(&l).unwrap_or_else(|e| panic!("{}: {}", m.name(), e));
             assert!(!p.is_empty(), "{}: nothing decoded from its demo", m.name());
             // I2C: the master NACKs the last byte it reads before the stop, which the decoder flags like any NACK.
             use oos_dsp::decode::Kind;
@@ -548,10 +464,12 @@ mod tests {
 
     /// What a decoder needs besides its module, each failure with its name and the part that is missing: its key in
     /// ui/tests/golden/decoder-keys.txt (a key never changes: `OOS_BLESS=1 cargo test --locked -q protocols::tests`
-    /// adds the line of a new one and no other), its name under Protocol decoders in wiki/Features.md, demo traffic
-    /// or the reason it has none, with demo traffic its case in `extended_decoders_decode_their_demo`, and for its
-    /// file the Cargo feature among the default ones. The number of decoders the wiki and README.md give is the
-    /// number registered.
+    /// adds the line of a new one and no other), its `ModuleInfo` in `oos_dsp::protocols::MODULES` at the same place
+    /// (and, in the whole build, a module for every decoder there), its name under Protocol decoders in
+    /// wiki/Features.md, demo traffic or the reason it has none, with demo traffic its case in
+    /// `extended_decoders_decode_their_demo`, and for its file the Cargo feature among the default ones. The number of
+    /// decoders the wiki and README.md give is the number registered. What a `ModuleInfo` needs is checked in oos-dsp
+    /// (dsp/src/protocols.rs).
     #[test]
     fn every_decoder_is_complete() {
         use crate::ui::testkit::{count_of, document, exempt_once, names, section, stored_names};

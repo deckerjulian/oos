@@ -59,7 +59,11 @@ pub fn usb_pid_name(pid: u8) -> &'static str {
 pub static USB: ModuleInfo = ModuleInfo::new("Usb", "USB", "usb")
     .roles([Some("D+"), None, Some("D-"), None])
     .trigger(usb_trigger)
-    .starts_on(BusWhat::Id, 5);
+    .starts_on(BusWhat::Id, 5)
+    // auto: room for a low-speed packet before the trigger point
+    .bit(|_, sh| 1.0 / if sh.usb_speed == UsbSpeed::Low { USB_LOW } else { USB_FULL })
+    .span(|_, sh| (sh.usb_speed == UsbSpeed::Auto).then_some(200.0 / USB_LOW))
+    .decoder(|l| Ok(usb(l.main(), l.lines[2], l.dt, l.sh.usb_speed, l.thr, l.hy)));
 
 /// USB's rule of the protocol trigger: an ID is the device address or a PID.
 fn usb_trigger(what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
