@@ -602,19 +602,11 @@ impl Ui {
         )
     }
 
+    /// Adds `value` to `stat` when it is finite (a reading, not a gap).
     fn add_capture_statistic(stat: &mut MStat, value: f64) {
-        if !value.is_finite() {
-            return;
+        if value.is_finite() {
+            stat.add(value);
         }
-        if stat.n == 0 {
-            stat.min = value;
-            stat.max = value;
-        }
-        stat.n += 1;
-        stat.sum += value;
-        stat.sumsq += value * value;
-        stat.min = stat.min.min(value);
-        stat.max = stat.max.max(value);
     }
 
     /// Finish only rows pending for this exact accepted record and measurement

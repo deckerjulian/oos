@@ -84,36 +84,19 @@ impl Ui {
                 crate::wave::autoset_summary(&record.ch[c], record.dt)
             }
         });
-        let period = native
-            .as_ref()
-            .map(|summary| summary.period)
-            .filter(|&p| ok(p))
-            .or_else(|| Some(self.meas(c, Meas::Period)).filter(|&p| ok(p)));
-        let Some(p) = period else { return self.toast("No period on the trigger channel") };
+        // a time from the capture's summary, else from the measurement `meas`, when it is a positive number
+        let time = |of: fn(&crate::wave::Stats) -> f64, meas: Meas| {
+            native.as_ref().map(of).filter(|&x| ok(x)).or_else(|| Some(self.meas(c, meas)).filter(|&x| ok(x)))
+        };
+        let Some(p) = time(|s| s.period, Meas::Period) else {
+            return self.toast("No period on the trigger channel");
+        };
         let (t, slope) = match v {
             AutoView::Few => (p * 3.0 / HDIV as f64, None),
             AutoView::Many => (p * 10.0 / HDIV as f64, None),
             // the 10-90 % time over about two divisions; a period / 20 when there is no edge time
-            AutoView::Rise => (
-                native
-                    .as_ref()
-                    .map(|summary| summary.rise)
-                    .filter(|&x| ok(x))
-                    .or_else(|| Some(self.meas(c, Meas::Rise)).filter(|&x| ok(x)))
-                    .unwrap_or(p / 10.0)
-                    / 2.0,
-                Some(Slope::Rise),
-            ),
-            AutoView::Fall => (
-                native
-                    .as_ref()
-                    .map(|summary| summary.fall)
-                    .filter(|&x| ok(x))
-                    .or_else(|| Some(self.meas(c, Meas::Fall)).filter(|&x| ok(x)))
-                    .unwrap_or(p / 10.0)
-                    / 2.0,
-                Some(Slope::Fall),
-            ),
+            AutoView::Rise => (time(|s| s.rise, Meas::Rise).unwrap_or(p / 10.0) / 2.0, Some(Slope::Rise)),
+            AutoView::Fall => (time(|s| s.fall, Meas::Fall).unwrap_or(p / 10.0) / 2.0, Some(Slope::Fall)),
         };
         self.m.tscale = tscale_for(t as f32);
         self.m.tfine = 1.0;

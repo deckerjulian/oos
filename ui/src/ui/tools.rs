@@ -161,16 +161,7 @@ impl Ui {
         let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };
         let index = self.m.meas.len() + self.m.meas2.len() + index;
         self.mstat.resize(self.measurement_count(), MStat::default());
-        let stat = &mut self.mstat[index];
-        if stat.n == 0 {
-            stat.min = value;
-            stat.max = value;
-        }
-        stat.n += 1;
-        stat.sum += value;
-        stat.sumsq += value * value;
-        stat.min = stat.min.min(value);
-        stat.max = stat.max.max(value);
+        self.mstat[index].add(value);
     }
 
     /// While a large record of channel `c` is measured in the background with the settings of the last one: the value

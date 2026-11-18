@@ -501,40 +501,36 @@ fn chars(s: &str) -> Vec<(Key, i32)> {
 impl Osk {
     /// The keyboard for the name of channel `c`, with its name so far.
     pub(super) fn for_label(c: usize, now: &str) -> Osk {
-        let mut o = Osk::new(OskFor::Label(c));
-        o.text = now.to_string();
-        o.cursor = o.text.chars().count();
-        o
+        Osk::with_whole_text(OskFor::Label(c), now)
     }
 
     /// The keyboard for the formula of math channel `k`; the symbols are one layer up.
     pub(super) fn for_expr(k: usize, now: &str) -> Osk {
-        let mut o = Osk::new(OskFor::MathExpr(k));
-        o.text = now.to_string();
-        o.cursor = o.text.chars().count();
-        o
+        Osk::with_whole_text(OskFor::MathExpr(k), now)
     }
 
     /// The keyboard for the name drawn on the bus.
     pub(super) fn for_bus(now: &str) -> Osk {
-        let mut o = Osk::new(OskFor::BusLabel);
-        o.text = now.to_string();
-        o.cursor = o.text.chars().count();
-        o
+        Osk::with_whole_text(OskFor::BusLabel, now)
     }
 
     /// The keyboard for the name of reference `i`.
     pub(super) fn for_ref(i: usize, now: &str) -> Osk {
-        let mut o = Osk::new(OskFor::RefLabel(i));
-        o.text = now.to_string();
-        o.cursor = o.text.chars().count();
-        o
+        Osk::with_whole_text(OskFor::RefLabel(i), now)
     }
 
     /// The keyboard for `what`, with the text so far.
     pub(super) fn with_text(what: OskFor, now: &str) -> Osk {
         let mut o = Osk::new(what);
         o.text = now.chars().take(o.max_len()).collect();
+        o.cursor = o.text.chars().count();
+        o
+    }
+
+    /// The keyboard for `what` with all of `now`, not cut to the length the keyboard takes.
+    fn with_whole_text(what: OskFor, now: &str) -> Osk {
+        let mut o = Osk::new(what);
+        o.text = now.to_string();
         o.cursor = o.text.chars().count();
         o
     }

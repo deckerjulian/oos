@@ -24,14 +24,7 @@ pub struct Stats {
 }
 
 pub fn stats(v: &[f32], dt: f64) -> Stats {
-    // the finite samples: the record itself when it has no gap
-    let own: Vec<f32>;
-    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
-        v
-    } else {
-        own = v.iter().copied().filter(|x| x.is_finite()).collect();
-        &own
-    };
+    let f: &[f32] = &oos_dsp::measure::finite_samples(v);
     if f.len() < 4 {
         return Stats::default();
     }
