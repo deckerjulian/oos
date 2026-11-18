@@ -42,6 +42,11 @@ pub(crate) const KNOWN: &[Known] = &[
         repro: files::hostile_known_mask_tolerance_not_finite,
     },
     Known {
+        name: "mdns-answer-it-cannot-read",
+        what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
+        repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
+    },
+    Known {
         name: "usbtmc-empty-transfers-forever",
         what: "usbtmc::Usbtmc::read asks for ever while a device answers with transfers of no data and no end",
         repro: network::hostile_known_usbtmc_empty_transfers_forever,
