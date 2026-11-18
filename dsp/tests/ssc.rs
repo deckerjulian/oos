@@ -107,3 +107,34 @@ fn deviation_and_rate_are_read_on_the_modulation() {
         assert!((rate / MODULATION - 1.0).abs() < 0.002, "{rate} Hz for 33 kHz with {periods} periods in the record");
     }
 }
+
+/// Edge jitter without modulation puts its strongest line high, where a window holds one interval: the deviation stays
+/// the span of the series.
+#[test]
+fn edge_jitter_alone_reads_the_span_of_the_series() {
+    let c = fm_clock(40_000, 1e-8, 5e3, 0.0, 0.005);
+    let (ppm, series) = eye::ssc_deviation(&c);
+    let (lo, hi) = series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!(ppm > 10_000.0 && (ppm - (hi - lo)).abs() < 1e-6, "{ppm} ppm, the series spans {}", hi - lo);
+}
+
+/// In the window of the deviation, a long NRZ run counts for its length: the units over the elapsed time of the
+/// window, so the edge error inside it cancels (each interval counted once read 14,966 ppm for this 10,000 ppm PRBS
+/// with ± 1 % UI edge error, the short runs' error weighing as much as the long runs).
+#[test]
+fn nrz_runs_count_for_their_length_in_the_deviation() {
+    let c = data_clock(true);
+    let mut seed = 7u64;
+    let edges: Vec<f64> = c
+        .edges
+        .iter()
+        .map(|t| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            t + 0.02 * UI * ((seed >> 11) as f64 / (1u64 << 53) as f64 - 0.5)
+        })
+        .collect();
+    let (ppm, _) = eye::ssc_deviation(&Clock { edges, ..c });
+    assert!((ppm / 10_000.0 - 1.0).abs() < 0.25, "{ppm} ppm for 10,000");
+}

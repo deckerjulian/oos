@@ -128,11 +128,11 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     }
 }
 
-/// Local unit rates between equal-polarity transitions, with their midpoint times.
+/// Local unit rates between equal-polarity transitions, with their midpoint times and elapsed times: (t, rate, s).
 /// NRZ run lengths are integer UIs: counting them prevents a 3-bit run from being
 /// misread as a third of the clock rate. As with clock recovery, this assumes the
 /// local timing error is small enough to identify the nearest integer UI count.
-fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
+fn same_edge_rates(c: &Clock) -> Vec<(f64, f64, f64)> {
     if !c.period.is_finite() || c.period <= 0.0 {
         return Vec::new();
     }
@@ -144,7 +144,7 @@ fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
             let units = (elapsed / c.period).round().max(1.0);
             let rate = units / elapsed;
             if rate.is_finite() {
-                series.push((a + 0.5 * elapsed, rate));
+                series.push((a + 0.5 * elapsed, rate, elapsed));
             }
         }
     }
@@ -153,46 +153,51 @@ fn same_edge_rates(c: &Clock) -> Vec<(f64, f64)> {
 
 /// Peak-to-peak local frequency deviation, parts per million of its measured mean, and the per-cycle series in ppm.
 /// The recovered UI is used to count NRZ run lengths; a hinted UI rate twice a clock's cycle rate does not halve depth.
-/// With a modulation line (`ssc_rate`), the span is taken on the series averaged over 1/32 of the modulation period,
-/// so the timing error of single edges does not count as modulation; a sine reads 0.2 % and a triangle 3 % under its
-/// span. Without a line it is the span of the series, timing jitter included.
+/// With a modulation line (the strongest of the spectrum, `ssc_rate`), the span is taken on the rate over windows of
+/// 1/32 of the modulation period, so the timing error of single edges does not count as modulation; a sine reads 0.2 %
+/// and a triangle 3 % under its span. Edge jitter alone puts its strongest line high, where a window holds one
+/// interval, and reads the span of the series, as a record without a line (constant rate, under 16 intervals) does.
 pub fn ssc_deviation(c: &Clock) -> (f64, Vec<f64>) {
     let series = same_edge_rates(c);
     if series.len() < 2 {
         return (f64::NAN, Vec::new());
     }
-    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    let mean = series.iter().map(|x| x.1).sum::<f64>() / series.len() as f64;
     if !mean.is_finite() || mean <= 0.0 {
         return (f64::NAN, Vec::new());
     }
-    let ppm: Vec<f64> = series.iter().map(|(_, f)| (f - mean) / mean * 1e6).collect();
+    let ppm: Vec<f64> = series.iter().map(|x| (x.1 - mean) / mean * 1e6).collect();
     let rate = modulation_rate(&series);
-    let shown = if is_positive(rate) { window_means(&series, &ppm, 1.0 / (32.0 * rate)) } else { Vec::new() };
-    let span = if shown.is_empty() { &ppm } else { &shown };
+    let windowed = if is_positive(rate) { window_rates(&series, 1.0 / (32.0 * rate)) } else { Vec::new() };
+    let span: Vec<f64> =
+        if windowed.is_empty() { ppm.clone() } else { windowed.iter().map(|r| (r - mean) / mean * 1e6).collect() };
     let (lo, hi) = span.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
     (hi - lo, ppm)
 }
 
-/// Means of `values` over `width` seconds around each time of `series` whose window lies inside the record. Rates of
-/// adjacent intervals average to the rate over the window, so the timing error of the edges inside it cancels.
-fn window_means(series: &[(f64, f64)], values: &[f64], width: f64) -> Vec<f64> {
+/// The rate over `width` seconds around each time of `series` whose window lies inside the record: the units of the
+/// intervals in it over their elapsed time, so the timing error of the edges inside it cancels and a long NRZ run
+/// counts for its length.
+fn window_rates(series: &[(f64, f64, f64)], width: f64) -> Vec<f64> {
     let (first, last) = (series[0].0, series[series.len() - 1].0);
     let mut out = Vec::new();
-    let (mut lo, mut hi, mut sum) = (0usize, 0usize, 0.0);
-    for &(t, _) in series {
+    let (mut lo, mut hi, mut units, mut elapsed) = (0usize, 0usize, 0.0, 0.0);
+    for &(t, _, _) in series {
         if t - 0.5 * width < first || t + 0.5 * width > last {
             continue;
         }
         while hi < series.len() && series[hi].0 <= t + 0.5 * width {
-            sum += values[hi];
+            units += series[hi].1 * series[hi].2;
+            elapsed += series[hi].2;
             hi += 1;
         }
         while series[lo].0 < t - 0.5 * width {
-            sum -= values[lo];
+            units -= series[lo].1 * series[lo].2;
+            elapsed -= series[lo].2;
             lo += 1;
         }
-        if hi > lo {
-            out.push(sum / (hi - lo) as f64);
+        if hi > lo && is_positive(elapsed) {
+            out.push(units / elapsed);
         }
     }
     out
@@ -207,13 +212,13 @@ pub fn ssc_rate(c: &Clock) -> f64 {
     modulation_rate(&same_edge_rates(c))
 }
 
-fn modulation_rate(series: &[(f64, f64)]) -> f64 {
+fn modulation_rate(series: &[(f64, f64, f64)]) -> f64 {
     if series.len() < 16 {
         return f64::NAN;
     }
-    let mean = series.iter().map(|(_, f)| f).sum::<f64>() / series.len() as f64;
+    let mean = series.iter().map(|x| x.1).sum::<f64>() / series.len() as f64;
     let (low, high) =
-        series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), (_, f)| (low.min(*f), high.max(*f)));
+        series.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), x| (low.min(x.1), high.max(x.1)));
     // Constant-rate edges still have floating-point subtraction noise. They do
     // not contain an observable SSC modulation line.
     if !mean.is_finite() || mean <= 0.0 || high - low <= mean * 1e-10 {
@@ -232,8 +237,8 @@ fn modulation_rate(series: &[(f64, f64)]) -> f64 {
         while j + 1 < series.len() - 1 && series[j + 1].0 < t {
             j += 1;
         }
-        let (ta, fa) = series[j];
-        let (tb, fb) = series[j + 1];
+        let (ta, fa, _) = series[j];
+        let (tb, fb, _) = series[j + 1];
         let fraction = ((t - ta) / (tb - ta)).clamp(0.0, 1.0);
         // Remove the large carrier before f32 conversion so a small FM signal
         // is not quantized at the much larger nominal unit rate.
