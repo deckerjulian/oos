@@ -1198,6 +1198,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         && after.is_none()
                         && frame0_drop()
                     {
+                        skip += frames.len();
                         frames.clear();
                         first_left = true;
                         // the deep window read of this batch went with it: the next batch reads one at once
@@ -1222,10 +1223,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         last_batch = Some((b.clone(), p, count - 1));
                     }
                     let mut g = out.lock().unwrap();
+                    // the pipeline's counters take every frame read that is neither queued nor lent to the workers:
+                    // the ones left out above, the ones the screen does not take, the oldest of a full queue
+                    let dropped_before = g.dropped;
                     g.decoded += count as u64;
                     g.dropped += skip as u64;
                     g.queue.extend(frames);
-                    let dropped_before = g.dropped;
                     let size = |f: &Frame| f.ch.iter().map(Vec::len).sum::<usize>();
                     let mut held: usize = g.queue.iter().map(size).sum();
                     // the newest frame stays whatever its size
