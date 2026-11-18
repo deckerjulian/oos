@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """scpi-coverage.py: what a remote command or a setting lacks of the parts it should have (AGENTS.md, ADR 0022/0023).
 
-    tools/scpi-coverage.py [ROOT]          one line: the four counts, missing/total
-    tools/scpi-coverage.py --list [ROOT]   each count with the names behind it
+    tools/scpi-coverage.py [ROOT]            one line: the four counts, missing/total
+    tools/scpi-coverage.py --list [ROOT]     each count with the names behind it
+    tools/scpi-coverage.py --enforce [ROOT]  the counts against tools/scpi-coverage.txt; exit 1 when one differs
+    tools/scpi-coverage.py --lower [ROOT]    write the counts that went down into tools/scpi-coverage.txt
 
 ROOT is the top of a tree (default: this tree). Read from it as it is:
   words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs and the files of its
@@ -13,15 +15,21 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
                  ui/src/settings/), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
                  in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
-  queries-tests  the queries of docs/scpi.md (the first command of a table row, without its arguments, when it ends
-                 in `?` or `[?]`) that no `scpi` line of ui/tests/scpi.txt asks, in the long or the short form;
+  queries-tests  the queries of docs/scpi.md (each command of the first cell of a table row, without its arguments,
+                 a relative one completed from the first, when it ends in `?` or `[?]`) that no `scpi` line of
+                 ui/tests/scpi.txt asks, in the long or the short form;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
                  and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
                  interpreter never names as `.field` and no row with a command reaches. An upper bound:
                  a field can be set by a command under another name, and some fields are no setting a remote
                  command should have.
 
-A report only: it exits 0 whatever it counts. Python's standard library; reads files, touches no scope.
+Without an option a report: it exits 0 whatever it counts. With --enforce the counts are numbers that only go down
+(ADR 0037), kept in tools/scpi-coverage.txt, one `<count> <key>` per line as in tools/ratchet.txt: a count above its
+number fails (add the doc row or the query, or say in the pull request why the number is raised by hand), a count
+below it fails too, so the file never allows more than the tree has: run --lower, which writes the counts that went
+down and never one that went up. The layer `ratchet` of tools/check.sh runs --enforce. Python's standard library;
+reads files, touches no scope.
 """
 import argparse
 import os
@@ -35,6 +43,7 @@ SCPI_MD = "docs/scpi.md"
 SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
 SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
+NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
 
 # The expressions scpi.rs passes to kw() that hold a node of the header. Not counted: `a`, `arg`, `s`, `item`, `first`,
 # `z`, which hold arguments (`kw(first, "MAXimum")` reads the first argument of :MEASure:STATistic:ITEM?).
@@ -105,16 +114,56 @@ def query_pattern(doc):
     return "".join(out)
 
 
+def nodes(header):
+    """The nodes of a header without its leading `:`, split at the `:` that are not inside `[...]` or `{...}`:
+    `:TIMebase[:MAIN]:SCALe[?]` is `TIMebase[:MAIN]`, `SCALe[?]`."""
+    out, cur, depth = [], "", 0
+    for ch in header.lstrip(":"):
+        depth += ch in "[{"
+        depth -= ch in "]}"
+        if ch == ":" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur]
+
+
+def row_commands(line):
+    """Every command of the first cell of a table row of scpi.md, without its arguments, written out in full. A
+    command with fewer nodes than the first one of the cell is relative to it and replaces as many of its last nodes
+    (`:WAVeform:STARt[?]` / `:STOP[?]` is `:WAVeform:STOP[?]`, `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` is
+    `:BUS<n>:IIC:SDA:SOURce[?]`); one with as many or more is absolute (`:TFORce` or `:TRIGger:FORCe`)."""
+    if not ROW.match(line):
+        return []
+    # the first cell ends at the first ` | ` outside backticks (a `|` inside them separates choices)
+    cell, inside = "", False
+    for i, ch in enumerate(line[1:], 1):
+        inside ^= ch == "`"
+        if not inside and line.startswith(" | ", i):
+            break
+        cell += ch
+    out, base = [], None
+    for span in re.findall(r"`([^`]+)`", cell):
+        if not span.startswith((":", "*")):
+            continue
+        cmd = span.split(" ")[0]
+        ns = nodes(cmd)
+        if base is not None and cmd.startswith(":") and len(ns) < len(base):
+            cmd = ":" + ":".join(base[:len(base) - len(ns)] + ns)
+        else:
+            base = ns
+        out.append(cmd)
+    return out
+
+
 def documented_queries(scpi_md):
-    """The first command of each table row of scpi.md, without arguments, when it is a query."""
+    """Every command of the first cell of each table row of scpi.md (row_commands) that is a query, once each."""
     out = []
     for line in scpi_md.split("\n"):
-        m = ROW.match(line)
-        if not m:
-            continue
-        cmd = m.group(1).split(" ")[0]
-        if cmd.endswith(("?", "[?]")) and cmd not in out:
-            out.append(cmd)
+        for cmd in row_commands(line):
+            if cmd.endswith(("?", "[?]")) and cmd not in out:
+                out.append(cmd)
     return out
 
 
@@ -174,7 +223,7 @@ def settings_rows(root):
 
 def counts(root):
     """The four gaps as (key, what, missing, total); missing is a list of names. The keys name the gaps in the
-    summary, and are what a later --enforce keeps a number for."""
+    summary and in tools/scpi-coverage.txt."""
     scpi_rs, scpi_md, scpi_txt = read_interpreter(root), read(root, SCPI_MD), read(root, SCPI_TXT)
     rows = settings_rows(root)
     words = command_words(scpi_rs)
@@ -201,10 +250,67 @@ def counts(root):
     ]
 
 
+def read_numbers(root):
+    """tools/scpi-coverage.txt as {key: number}; empty when there is none. A line that is not `<count> <key>` is an
+    error."""
+    path = os.path.join(root, NUMBERS)
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    for n, line in enumerate(read(root, NUMBERS).split("\n"), 1):
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) != 2 or not parts[0].isdigit():
+            raise ValueError("%s:%d: not `<count> <key>`: %r" % (NUMBERS, n, line))
+        out[parts[1]] = int(parts[0])
+    return out
+
+
+def enforce(root, result, lower):
+    """Compares the count of each key with its number in tools/scpi-coverage.txt and prints a line for each; with
+    `lower` writes the counts that went down. Returns 0 when every count is its number (after --lower: when none went
+    up), else 1."""
+    kept = read_numbers(root)
+    now = {key: len(missing) for key, _, missing, _ in result}
+    bad, out = 0, {}
+    for key in sorted(set(kept) | set(now)):
+        was, count = kept.get(key), now.get(key)
+        if count is None:
+            print("unknown: %s %d is no count of this tool: remove its line" % (key, was))
+            bad = 1
+        elif was is None:
+            print("up: %s is new with %d: add `%d %s` to %s" % (key, count, count, key, NUMBERS))
+            bad = 1
+        elif count > was:
+            print("up: %s %d -> %d (--list names them)" % (key, was, count))
+            bad = 1
+            out[key] = was
+        elif count < was and lower:
+            print("lowered: %s %d -> %d" % (key, was, count))
+            out[key] = count
+        elif count < was:
+            print("down: %s %d -> %d (run tools/scpi-coverage.py --lower)" % (key, was, count))
+            bad = 1
+            out[key] = was
+        else:
+            out[key] = count
+    if lower:
+        with open(os.path.join(root, NUMBERS), "w", encoding="utf-8") as f:
+            f.write("".join("%d %s\n" % (out[k], k) for k in sorted(out)))
+    if not bad:
+        print("scpi-coverage: %d numbers as recorded in %s" % (len(out), NUMBERS))
+    return bad
+
+
 def main(argv):
-    ap = argparse.ArgumentParser(description="what a remote command or a setting lacks; a report, exit 0")
+    ap = argparse.ArgumentParser(description="what a remote command or a setting lacks; a report, exit 0, unless "
+                                             "--enforce or --lower")
     ap.add_argument("root", nargs="?", default=ROOT, help="top of the tree (default: this tree)")
     ap.add_argument("--list", action="store_true", help="each count with its names")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--enforce", action="store_true", help="exit 1 when a count differs from %s" % NUMBERS)
+    mode.add_argument("--lower", action="store_true", help="write the counts that went down into %s" % NUMBERS)
     args = ap.parse_args(argv)
     result = counts(args.root)
     if args.list:
@@ -215,8 +321,8 @@ def main(argv):
     else:
         print("scpi-coverage: " + ", ".join("%s %d/%d" % (k, len(m), t) for k, _, m, t in result) +
               " missing (--list names them)")
-    # A later --enforce compares len(missing) of each key with numbers kept in the tree, as tools/ratchet.txt
-    # does, and fails when one grew. Until then this is a report and exits 0.
+    if args.enforce or args.lower:
+        return enforce(args.root, result, args.lower)
     return 0
 
 

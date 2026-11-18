@@ -20,23 +20,6 @@ const GROUPS: [(&[&[Setting]], &str, &str, &str); 6] = [
     (&meters::COUNTER_SLICES, ":COUNter", "counter", "DVM and counter"),
 ];
 
-/// Rows with a command whose query ui/tests/scpi.txt does not ask yet, and why. Adding the query changes the answers
-/// the comparison with the base records, so it comes in a pull request of its own.
-const NOT_ASKED: &[(&str, &str)] = &[
-    (":DISPlay:GBRightness", "not asked before the table; settings_snapshot probes it"),
-    (":DISPlay:COLor", "not asked before the table; settings_snapshot probes it"),
-    (":TRIGger:COUPling", "not asked before the table"),
-    (":ACQuire:CORes", "not asked before the table"),
-    (":ACQuire:AVERages:HARDware", "not asked before the table"),
-    (":ACQuire:SEGMents:HARDware", "not asked before the table"),
-    (":MATH1:FFT:WINDow", "not asked before the table; settings_snapshot probes it"),
-    (":DVM:ENABle", "not asked before the table; settings_snapshot probes it"),
-    (":DVM:MODE", "not asked before the table; settings_snapshot probes it"),
-    (":COUNter:ENABle", "not asked before the table; settings_snapshot probes it"),
-    (":COUNter:MODE", "not asked before the table; settings_snapshot probes it"),
-    (":COUNter:NDIGits", "not asked before the table; settings_snapshot probes it"),
-];
-
 /// Every row with the SCPI root of its group, the first channel for `<n>`.
 fn rows() -> impl Iterator<Item = (&'static Setting, String)> {
     GROUPS.into_iter().flat_map(|(slices, root, _, _)| {
@@ -70,14 +53,7 @@ fn every_row_is_complete() {
                     .lines()
                     .filter(|l| l.starts_with("scpi "))
                     .any(|l| l.split_whitespace().nth(2).is_some_and(|h| h.eq_ignore_ascii_case(&format!("{}?", cmd))));
-                let excused = NOT_ASKED.iter().any(|&(n, _)| n == cmd);
-                assert!(
-                    asked != excused,
-                    "{}: {}? is {} ui/tests/scpi.txt",
-                    s.key,
-                    cmd,
-                    ["not in", "in"][asked as usize]
-                );
+                assert!(asked, "{}: {}? is not in ui/tests/scpi.txt", s.key, cmd);
                 assert!(cmds.insert(cmd), "{}: the command {} twice", s.key, c);
             }
             Scpi::None { why } => assert!(!why.is_empty(), "{}: no command, and no reason", s.key),

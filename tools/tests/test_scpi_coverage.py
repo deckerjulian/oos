@@ -110,11 +110,33 @@ class Coverage(unittest.TestCase):
     def test_documented_queries(self):
         self.assertEqual(cov.documented_queries(SCPI_MD), [
             ":CHANnel<n>:SCALe[?]", ":CHANnel<n>:OFFSet[?]", ":CURSor:{MANual|TRACk}:{AXValue|BXValue}?",
-            ":CURSor:CAX[?]", ":TIMebase[:MAIN]:SCALe[?]", ":MEASure:ITEM?"])
+            ":CURSor:CAX[?]", ":CURSor:CBX[?]", ":TIMebase[:MAIN]:SCALe[?]", ":MEASure:ITEM?"])
+
+    def test_every_command_of_the_first_cell(self):
+        # a relative command replaces as many last nodes of the first one as it has, after `, ` or ` / `; one with as
+        # many nodes or more is absolute; a `|` inside backticks is no end of the cell; the other cells do not count
+        row = cov.row_commands
+        self.assertEqual(row("| `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom, `:TIM:X?`. |"),
+                         [":TIMebase:DELay:ENABle[?]", ":TIMebase:DELay:SCALe[?]", ":TIMebase:DELay:OFFSet[?]"])
+        self.assertEqual(row("| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Volts. |"),
+                         [":TRIGger:RUNT:UPPer[?]", ":TRIGger:RUNT:LOWer[?]"])
+        self.assertEqual(row("| `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` | Roles. |"),
+                         [":BUS<n>:IIC:SCLK:SOURce[?]", ":BUS<n>:IIC:SDA:SOURce[?]"])
+        self.assertEqual(row("| `:CURSor:{MANual|TRACk}:CAX[?]` / `:CBX[?]` | Time. |"),
+                         [":CURSor:{MANual|TRACk}:CAX[?]", ":CURSor:{MANual|TRACk}:CBX[?]"])
+        self.assertEqual(row("| `:REFerence:VSCale[?] [<slot>,]<V>` / `:VOFFset[?] [<slot>,]<V>` | Scale. |"),
+                         [":REFerence:VSCale[?]", ":REFerence:VOFFset[?]"])
+        self.assertEqual(row("| `:TFORce` or `:TRIGger:FORCe` | Force. |"), [":TFORce", ":TRIGger:FORCe"])
+        self.assertEqual(row("| `:DVM:SOURce[?]`, `:COUNter:SOURce[?]` | Sources. |"),
+                         [":DVM:SOURce[?]", ":COUNter:SOURce[?]"])
+        self.assertEqual(row("| `:AUToscale` / `:AUToscale?` | Autoset. |"), [":AUToscale", ":AUToscale?"])
+        self.assertEqual(cov.nodes(":TIMebase[:MAIN]:SCALe[?]"), ["TIMebase[:MAIN]", "SCALe[?]"])
+        self.assertEqual(row("| Command | Meaning |"), [])
 
     def test_queries_not_asked(self):
-        # the OFFSet line sets, it does not ask
-        self.assertEqual(self.result()["queries-tests"], ([":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]"], 6))
+        # the OFFSet line sets, it does not ask; `:CBX[?]` is the second command of the CAX row
+        self.assertEqual(self.result()["queries-tests"],
+                         ([":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]", ":CURSor:CBX[?]"], 7))
 
     def test_query_pattern(self):
         pat = cov.query_pattern(":TIMebase[:MAIN]:SCALe[?]")
@@ -155,13 +177,83 @@ class Coverage(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cov.main([str(self.root)]), 0)
-        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 4/8, queries-tests 2/6, "
+        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 4/8, queries-tests 3/7, "
                                          "fields-scpi 2/4 missing (--list names them)\n")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cov.main(["--list", str(self.root)]), 0)
         self.assertIn("fields-scpi: 2 of 4 setup fields", out.getvalue())
         self.assertIn("\n  grid\n  bus\n", out.getvalue())
+
+    def numbers(self, text=None):
+        """Writes tools/scpi-coverage.txt of the made-up tree (when `text` is given) and returns what is in it."""
+        path = self.root / cov.NUMBERS
+        if text is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return path.read_text() if path.exists() else None
+
+    def enforce(self, *opts):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cov.main(list(opts) + [str(self.root)])
+        return code, out.getvalue()
+
+    # the made-up tree counts words-docs 2, words-tests 4, queries-tests 3, fields-scpi 2
+    AS_IS = "2 fields-scpi\n3 queries-tests\n2 words-docs\n4 words-tests\n"
+
+    def test_enforce_passes_when_every_count_is_its_number(self):
+        self.numbers(self.AS_IS)
+        code, out = self.enforce("--enforce")
+        self.assertEqual(code, 0)
+        self.assertIn("scpi-coverage: 4 numbers as recorded in tools/scpi-coverage.txt\n", out)
+
+    def test_enforce_fails_on_a_count_above_its_number(self):
+        # a command word the docs do not name, one more than the file allows
+        self.numbers(self.AS_IS.replace("2 words-docs", "1 words-docs"))
+        code, out = self.enforce("--enforce")
+        self.assertEqual(code, 1)
+        self.assertIn("up: words-docs 1 -> 2 (--list names them)\n", out)
+        self.assertNotIn("as recorded", out)
+
+    def test_enforce_fails_on_a_count_below_its_number_and_asks_to_lower_it(self):
+        self.numbers(self.AS_IS.replace("4 words-tests", "9 words-tests"))
+        code, out = self.enforce("--enforce")
+        self.assertEqual(code, 1)
+        self.assertIn("down: words-tests 9 -> 4 (run tools/scpi-coverage.py --lower)\n", out)
+        self.assertEqual(self.numbers(), self.AS_IS.replace("4 words-tests", "9 words-tests"),
+                         "--enforce writes nothing")
+
+    def test_lower_writes_what_went_down_and_never_raises(self):
+        self.numbers("2 fields-scpi\n7 queries-tests\n1 words-docs\n4 words-tests\n")
+        code, out = self.enforce("--lower")
+        self.assertEqual(code, 1, "words-docs went up: --lower does not make that pass")
+        self.assertIn("lowered: queries-tests 7 -> 3\n", out)
+        self.assertIn("up: words-docs 1 -> 2", out)
+        self.assertEqual(self.numbers(), "2 fields-scpi\n3 queries-tests\n1 words-docs\n4 words-tests\n")
+        # once the rise is gone (here: the number raised by hand), --lower and --enforce pass
+        self.numbers("2 fields-scpi\n7 queries-tests\n2 words-docs\n4 words-tests\n")
+        self.assertEqual(self.enforce("--lower")[0], 0)
+        self.assertEqual(self.numbers(), self.AS_IS)
+        self.assertEqual(self.enforce("--enforce")[0], 0)
+
+    def test_a_missing_or_unknown_key_fails(self):
+        code, out = self.enforce("--enforce")
+        self.assertEqual(code, 1, "no file: every count is new")
+        self.assertIn("up: words-docs is new with 2: add `2 words-docs` to tools/scpi-coverage.txt\n", out)
+        self.numbers(self.AS_IS + "3 words-wiki\n")
+        code, out = self.enforce("--enforce")
+        self.assertEqual(code, 1)
+        self.assertIn("unknown: words-wiki 3 is no count of this tool", out)
+
+    def test_a_line_that_is_no_number_and_key_is_an_error(self):
+        self.numbers("two words-docs\n")
+        with self.assertRaises(ValueError):
+            cov.read_numbers(str(self.root))
+
+    def test_enforce_and_lower_exclude_each_other(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cov.main(["--enforce", "--lower", str(self.root)])
 
 
 if __name__ == "__main__":

@@ -72,6 +72,11 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":ACQuire:TYPE", &["NORMal", "PEAK", "AVERages", "HRESolution", "HRES"]),
     (":ACQuire:AVERages", &["16", "2", "1", "3", "1024", "65536"]),
     (":ACQuire:ULTRa:MAXFrame", &["10", "1", "100000", "100001", "0"]),
+    (":ACQuire:CORes", &["MATChed", "RAW", "MATC", "ON", "OFF", "1", "0"]),
+    (":ACQuire:AVERages:HARDware", BOOL),
+    (":ACQuire:SEGMents", &["10", "1", "100000", "100001", "OFF", "ON", "0"]),
+    (":ACQuire:SEGMents:HARDware", BOOL),
+    (":ACQuire:SEGMents:INTerval", &["1e-3", "0", "10", "11"]),
     (":TRIGger:MODE", TRIGGER_TYPES),
     (":TRIGger:TYPe", TRIGGER_TYPES),
     (":TRIGger:SWEep", &["AUTO", "NORMal", "SINGle"]),
@@ -80,6 +85,7 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":TRIGger:EDGE:SLOPe", &["POSitive", "NEGative", "RFALl", "POS", "NEG", "RFAL"]),
     (":TRIGger:HOLDoff", &["1e-6", "0", "10", "11"]),
     (":TRIGger:NREJect", BOOL),
+    (":TRIGger:COUPling", &["DC", "AC", "LFReject", "HFReject", "LFR", "HFR"]),
     (":TRIGger:RUNT:UPPer", &["2", "0.4", "-1"]),
     (":TRIGger:RUNT:LOWer", &["0.2", "1", "3"]),
     (":TRIGger:SOURce2", SOURCES),
@@ -174,6 +180,9 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":DISPlay:GRID", &["FULL", "HALF", "NONE"]),
     (":DISPlay:RULers", BOOL),
     (":DISPlay:COLor", BOOL),
+    (":DISPlay:VIEW", &["1", "2", "0"]),
+    (":DISPlay:VIEW:COUNt", &["1", "2", "4", "5", "0"]),
+    (":DISPlay:VIEW:MONitor", &["0", "1", "2"]),
     (":MATH1:DISPlay", BOOL),
     (":MATH1:OPERator", MATH_OPS),
     (":MATH1:SOURce1", &["CHAN1", "CHAN2", "R1", "MATH1", "MATH2"]),
@@ -212,6 +221,10 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":HISTogram:ENABle", BOOL),
     (":HISTogram:TYPE", &["HORizontal", "VERTical"]),
     (":HISTogram:SOURce", SOURCES),
+    (":SYSTem:PIPeline", &["BATCh", "FRAMes", "STANdard", "BATC", "FRAM"]),
+    (":SYSTem:GRAPhics", &["CPU", "GPU", "cpu"]),
+    (":SYSTem:AOUTput", &["TOUT", "PFAil", "PFA", "OFF", "off"]),
+    (":SYSTem:DEBug:DVM:LANE", &["AUTO", "0", "3", "4", "auto"]),
 ];
 
 /// What a setter needs before it does more than refuse: the reference commands (and the SIM slot's visibility) a
@@ -280,12 +293,11 @@ const LEFT_OUT: &[(&str, &str)] = &[
     (":SYSTem:SET", "writes the setup keys, which setup_probes covers through the same reader"),
     (":SYSTem:GET", "reads the setup keys, which setup_probes covers through setup_text"),
     (":SOURce<n>:*", "the generator: docs/scpi.md lists its commands without a query form"),
-    // the settings table documents these since it holds them; their probes add lines to the golden file, so they
-    // come in a pull request of their own
-    (":TRIGger:COUPling", "documented by the settings table; not probed before it"),
-    (":ACQuire:CORes", "documented by the settings table; not probed before it"),
-    (":ACQuire:AVERages:HARDware", "documented by the settings table; not probed before it"),
-    (":ACQuire:SEGMents:HARDware", "documented by the settings table; not probed before it"),
+    (
+        ":SYSTem:DEBug:MASK:MAP",
+        "the comparator mapping is a state of the whole process, which other tests read at the same time; the test \
+         of ui/src/scpi/system.rs sets it and puts it back",
+    ),
 ];
 
 /// The first node of a command a table row or a sentence of docs/scpi.md starts with; a later one in the same line
