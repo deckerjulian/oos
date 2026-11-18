@@ -18,6 +18,24 @@ tools/device-deploy.sh IP --restore                          # the installed oos
 `plan.txt` is `OOS_CAL_DIR=local/cal tools/plan-matrix.sh fpgad/target/release/oos-fpgad > plan.txt` on this
 computer, with the calibration files of the same unit.
 
+## SSH on a bench unit
+
+Both tools reach the scope's shell over SSH only, with a trusted key and strict host key checking; there is no telnet
+(ADR 0054). `device-test.py` needs it for its read-only commands (the fingerprint of the protected areas, the build,
+the log), `device-deploy.sh` for everything. Once per unit, at the scope ([ssh.md](ssh.md), network.md 7):
+
+1. System > Network > Remote services > **Allowed**: the prefix of the bench LAN (`192.0.2.0/24`). SSH listens only
+   with an address list.
+2. **SSH** on. SSH settings > State says `on: password and keys`; Show password gives the password and the host key
+   fingerprint.
+3. On the computer: `ssh root@IP` once, compare the fingerprint it shows with the one on the scope and answer `yes`
+   (the tools refuse an unknown host key), then `ssh-copy-id root@IP` with the password. A key can also come with the
+   image (`OOS_SSH_AUTHORIZED_KEYS`), from a USB stick, or be written to the card on a computer (ssh.md).
+4. `ssh -o BatchMode=yes root@IP true` answers without a question: the tools work. `OOS_SSH_IDENTITY` names another
+   key file, `OOS_SSH_PORT` another port.
+
+The keys, the host key and the password stay on the data partition (`/oos/ssh`) over updates and power cycles.
+
 ## What a run from RAM does not cover
 
 `tools/device-deploy.sh` restarts `oos-ui` with the new programs; it does not start the scope. What runs once at boot

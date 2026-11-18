@@ -31,8 +31,9 @@ Tiers, in this order:
 A test that cannot run for lack of wiring is SKIP. A result that needs a decision is INFO. The results go to
 device-test/<time>/ as report.md, results.json and screenshots.
 
-It only talks to the published interfaces, plus read-only commands on the shell (telnet, or SSH with OOS_SHELL=ssh). shell() refuses everything
-that could write the FPGA flash, the calibration or the boot partitions, so a typo here cannot.
+It only talks to the published interfaces, plus read-only commands on the shell over SSH (a trusted key, the host key
+known first: docs/ssh.md; OOS_SSH_IDENTITY, OOS_SSH_PORT). shell() refuses everything that could write the FPGA flash,
+the calibration or the boot partitions, so a typo here cannot.
 """
 
 import argparse, base64, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
@@ -182,37 +183,22 @@ class Scope:
                 f.write(b)
 
     def shell(self, cmd, wait=2.0, reads_card=False):
-        """A read-only command on the scope's shell, the output as text: telnet (the default, as the image starts it)
-        or, with OOS_SHELL=ssh, key-authenticated SSH with strict host identity checking (OOS_SSH_IDENTITY,
-        OOS_SSH_PORT)."""
+        """A read-only command on the scope's shell, the output as text: key-authenticated SSH with strict host identity
+        checking (OOS_SSH_IDENTITY, OOS_SSH_PORT)."""
         if self.sim:
             raise Skip("no shell in the simulation")
         if FORBIDDEN.search(cmd) and not reads_card:
             raise AssertionError(f"refused here: {cmd}")
-        if os.environ.get("OOS_SHELL", "telnet") == "ssh":
-            args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-                    "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
-            if os.environ.get("OOS_SSH_IDENTITY"):
-                args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
-            result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True,
-                                    text=True, timeout=wait + 15, check=True)
-            return result.stdout.strip()
-        s = socket.create_connection((self.host, 23), timeout=10)
-        time.sleep(1)
-        s.sendall(b"echo @@S; " + cmd.encode() + b"; echo @@E\n")
-        s.settimeout(wait + 8)
-        b, end = b"", time.time() + wait + 8
-        while b.count(b"@@E") < 2 and time.time() < end:
-            try:
-                c = s.recv(65536)
-            except socket.timeout:
-                break
-            if not c:
-                break
-            b += c
-        s.close()
-        t = b.decode(errors="replace")
-        return t.split("@@S", 2)[-1].split("@@E")[0].strip()
+        args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
+        if os.environ.get("OOS_SSH_IDENTITY"):
+            args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
+        result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True, text=True, timeout=wait + 15)
+        # the command's own exit status is its business (`grep -c` with no match ends with 1), as it was on telnet; 255
+        # is ssh's: no connection, no key, a host key that does not match
+        if result.returncode == 255:
+            raise AssertionError(f"ssh root@{self.host}: {result.stderr.strip()}")
+        return result.stdout.strip()
 
     def base(self):
         """Back to a known state: defaults, the waveform view, the generator's channel at 1 V/div, generator off, running."""
@@ -481,6 +467,20 @@ def web_keeps_foreign_sites_out(s, o):
     c, _ = s.http("/", headers={"Sec-Fetch-Site": "cross-site"})
     assert c == 200, "a link to the page must work"
     assert s.stat()["run"] == "Run", "a refused request stopped the scope"
+
+
+@test("a0")
+def no_telnet_shell(s, o):
+    """There is no shell without password on the network (ADR 0054): port 23 does not answer, and no telnetd runs."""
+    if s.sim:
+        raise Skip("the scope's own ports only")
+    try:
+        socket.create_connection((s.host, 23), timeout=3).close()
+    except OSError:
+        pass
+    else:
+        raise AssertionError("port 23 answers")
+    assert s.shell("pidof telnetd || echo none") == "none", "telnetd runs"
 
 
 @test("a0")

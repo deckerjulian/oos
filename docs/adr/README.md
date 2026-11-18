@@ -73,6 +73,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings are numbers that only go down | proposed |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | proposed |
 | [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit, and the comparison with the base covers the live paths | proposed |
+| [0054](system/0054-ssh-is-the-only-shell-on-the-network.md) | system | SSH is the only shell on the network; there is no telnet (supersedes the telnet part of ADR 0025) | proposed |
 | [0055](system/0055-bluetooth-input-through-bluez.md) | system | Bluetooth mice and keyboards through BlueZ on a system bus of their own | proposed |
 
 ## Reading order for agents

@@ -54,8 +54,8 @@ A scope without such a stick loads no module and starts no daemon.
 
 ## By hand
 
-On the shell of the scope (telnet or SSH): `btmon` shows every HCI packet, for a device that does not pair; its `-T`
-gives the time of each. The image has no `bluetoothctl`: it would bring readline, and oos-ui pairs with a client of its
-own. bluetoothd's log is `/tmp/bluetoothd.log`, oos-bt's `/tmp/oos-bt.log`.
+On the shell of the scope (SSH): `btmon` shows every HCI packet, for a device that does not pair; its `-T` gives the
+time of each. The image has no `bluetoothctl`: it would bring readline, and oos-ui pairs with a client of its own.
+bluetoothd's log is `/tmp/bluetoothd.log`, oos-bt's `/tmp/oos-bt.log`.
 
 A connected mouse or keyboard appears as an input device (`/proc/bus/input/devices`, bus `0005`).

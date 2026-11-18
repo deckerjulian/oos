@@ -211,6 +211,7 @@ impl Ui {
             | Item::SysInfo
             | Item::Shot
             | Item::Stock
+            | Item::BootAgain
             | Item::Update
             | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
@@ -447,6 +448,7 @@ impl Ui {
             Item::Stock => "Back to stock",
             Item::Update => "Update",
             Item::BootMode => "Boot mode",
+            Item::BootAgain => "Start OOS again",
             Item::Overclock => "Overclock",
             Item::ViewExit => "Exit",
             Item::ViewSettings => "Settings",

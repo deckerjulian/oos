@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn settings_win_over_the_image() {
-        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.telnet = off\n";
+        let image = "# unit\nnet.allow = 192.0.2.0/24\nremote.ssh = on\n";
         let (a, _) = Acl::from_texts(Some(image), Some("ntp = on\n"));
         assert!(a.permits(ip("192.0.2.9")) && !a.permits(ip("192.168.1.9")));
         let (a, _) = Acl::from_texts(Some(image), Some("net.allow = 192.168.1.0/24 # new LAN\n"));

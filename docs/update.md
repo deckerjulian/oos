@@ -229,7 +229,8 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
 - A full `/oos` stops the trial bookkeeping: an update then neither confirms nor rolls back. The next power-on in one-shot
   mode starts stock.
 
-Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`) checks that `recovery` holds an image the loader takes and
+Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`, on the screen System > Start OOS again: two taps
+within 5 s, the job's output in a dialog) checks that `recovery` holds an image the loader takes and
 that no install or rollback runs; after a cut job the next start stays stock. `oos-update confirm` ends a trial only when
 the image on trial is the one running. Images whose load addresses or sizes are outside what the loader handles
 (docs/boot.md) are refused at install.

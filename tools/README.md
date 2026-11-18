@@ -63,9 +63,9 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 
 | Tool | Touches a scope? | Purpose |
 |---|---|---|
-| `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope; `--changed BASE` runs only what a change reaches, a failure runs again (`--retries`), one that main has too is known (`--known`); `--sim` runs it against `oos-ui --serve` on this computer ([device-testing.md](../docs/device-testing.md)) |
+| `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope, its read-only shell commands over SSH as `device-deploy.sh`; `--changed BASE` runs only what a change reaches, a failure runs again (`--retries`), one that main has too is known (`--known`); `--sim` runs it against `oos-ui --serve` on this computer ([device-testing.md](../docs/device-testing.md)) |
 | `device_select.py` | no (a library) | which device tests a change needs, and how `device-test.py` judges retries, known failures and the register sequences |
-| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS, over telnet or with `OOS_SHELL=ssh` over SSH; each file checked with SHA-256 |
+| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS over SSH with a trusted key (`OOS_SSH_IDENTITY`, `OOS_SSH_PORT`; [SSH on a bench unit](../docs/device-testing.md#ssh-on-a-bench-unit)); each file checked with SHA-256 |
 | `device-survey.sh [ip] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |
 | `platform-probe.sh IP` | read-only over adb, removes its files again | description of another Rigol model (MHO900, DHO1000, ...) for a port, ready to share: device tree, buses, display, partition table, `/rigol` by name; serial number and MAC addresses replaced ([docs/porting.md](../docs/porting.md)); `platform-probe/probe.sh` is its part on the scope |
 | `frontpanel.py dump / leds / selftest` | runs on the scope under OOS; `leds` writes the panel's LEDs | the front-panel MCU over UART0 ([frontpanel.md](../docs/protocols/frontpanel.md)) |

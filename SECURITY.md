@@ -1,11 +1,11 @@
 # Security
 
-**OOS has no authentication apart from SSH, by design for now.** SSH asks for the scope's own password or a trusted key; telnet gives a root shell without a password (switch it off
-once SSH is set up). SCPI, VXI-11, HiSLIP (on a computer), the web remote, the LAN announcement,
-MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. The community signing key
-is public, so anyone on that network can also install an update. Keep the scope on a trusted bench network and never
-expose it to the internet. None of this is a vulnerability to report: it is listed in the
-[disclaimer](README.md#disclaimer).
+**OOS has no authentication apart from SSH, by design for now.** SSH, the only shell on the network, asks for the
+scope's own password or a trusted key; there is no telnet. SCPI, VXI-11, HiSLIP (on a computer), the web remote, the
+LAN announcement, MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN.
+The community signing key is public, so anyone on that network can also install an update. Keep the scope on a
+trusted bench network and never expose it to the internet. None of this is a vulnerability to report: it is listed in
+the [disclaimer](README.md#disclaimer).
 
 Signed updates protect against damaged packages, not against an attacker: see [docs/update.md](docs/update.md).
 

@@ -717,7 +717,7 @@ struct Device {
     mdns_t: Option<std::time::Instant>,
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
-    remote_now: Option<[bool; 6]>,
+    remote_now: Option<[bool; 5]>,
     hislip: hislip::Server,
     vxi: vxi11::Server,
     scpi: scpi::Scpi,
@@ -777,9 +777,9 @@ impl Device {
             ui.set_allow_runner(remote::script_runner());
         }
         let (web, scpi, vxi, hislip) = lan_servers(scope, args, &acl);
-        // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login, telnet (None:
-        // not yet, at the start)
-        let remote_now: Option<[bool; 6]> = None;
+        // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
+        // at the start)
+        let remote_now: Option<[bool; 5]> = None;
         // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
         let mdns = mdns::Mdns::new(None);
         let mdns_now: Option<mdns::Config> = None;
@@ -903,20 +903,12 @@ impl Device {
         }
     }
 
-    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) and telnet are started
-    /// by rcS.
+    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) is started by rcS.
     fn remote_services(&mut self) {
         let ui = &self.ui;
-        let want = [
-            ui.sys.remote_web,
-            ui.sys.remote_scpi,
-            ui.sys.remote_vxi11,
-            ui.sys.remote_ssh,
-            ui.sys.ssh_password,
-            ui.sys.remote_telnet,
-        ];
+        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
         if self.remote_now != Some(want) {
-            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4], !want[5]]);
+            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4]]);
             if want[0] != was[0] {
                 self.web.set_open(want[0].then_some(self.web_port));
             }
@@ -929,9 +921,6 @@ impl Device {
             }
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
-            }
-            if want[5] != was[5] {
-                remote::telnet(want[5]);
             }
             self.web.offer(http::Offer {
                 scpi_port: self.scpi.port(),

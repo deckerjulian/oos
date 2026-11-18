@@ -341,6 +341,8 @@ pub(super) enum Item {
     Update,
     UpdateRollback,
     BootMode,
+    /// System > Start OOS again: OOS at the next power-on once more (`oos-update arm`, as `oos-boot-oos-again`)
+    BootAgain,
     Overclock,
     ViewExit,
     ViewSettings,
@@ -354,11 +356,9 @@ pub(super) enum Item {
     RemWeb,
     RemScpi,
     RemVxi,
-    RemTelnet,
     RemSsh,
     RemScpiInfo,
     RemVxiInfo,
-    RemTelnetInfo,
     /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
     SshState,
     SshPassword,
