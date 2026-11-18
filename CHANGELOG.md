@@ -192,6 +192,8 @@ Fixed:
   longer leaves its first values in the Bode settings; the line changes nothing.
 - Decoders: Quad-SPI no longer ends oos-ui on a CS# frame that ends where it starts (both edges between the same two
   samples) with a clock edge at that instant; such a frame holds no data.
+- Update: an image whose device tree nests deeper than 64 levels is refused with a message; oos-update ended on
+  one (from about 30 000 levels the stack overflowed).
 
 ## 0.1.13
 

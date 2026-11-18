@@ -181,28 +181,6 @@ fn rsce_reads_one_entry_for_ever(b: &[u8]) -> bool {
     b.len() >= 16 && b[10] == 0 && u32::from_le_bytes([b[12], b[13], b[14], b[15]]) > 4096
 }
 
-/// How deep the nodes of a blob nest, read token by token as `Fdt::parse` reads them, without building the tree.
-fn nesting(b: &[u8]) -> usize {
-    let word = |at: usize| b.get(at..at + 4).map(|w| u32::from_be_bytes([w[0], w[1], w[2], w[3]]) as usize);
-    let (Some(mut p), mut depth, mut most) = (word(8), 0usize, 0usize) else { return 0 };
-    while let Some(token) = word(p) {
-        p += 4;
-        match token {
-            1 => {
-                let Some(name) = b.get(p..).and_then(|rest| rest.iter().position(|&c| c == 0)) else { break };
-                p += (name + 1).div_ceil(4) * 4;
-                depth += 1;
-                most = most.max(depth);
-            }
-            2 => depth = depth.saturating_sub(1),
-            3 => p += 8 + word(p).unwrap_or(0).div_ceil(4) * 4,
-            4 => {}
-            _ => break,
-        }
-    }
-    most
-}
-
 /// A tree of `depth` nodes, each inside the one before.
 fn nested(depth: usize) -> Vec<u8> {
     let mut b = Vec::new();
@@ -219,12 +197,14 @@ fn nested(depth: usize) -> Vec<u8> {
     b
 }
 
+// Break it catches: a tree nested so deep that writing or dropping it overflows the stack (#181)
 #[test]
-#[ignore = "fdt takes a tree nested any deep; 30 000 levels overflow the stack and end the process, #181"]
-pub(crate) fn hostile_known_fdt_nesting_not_bounded() {
-    // 2000 levels are still read, written and dropped; a tree of the unit nests less than 20 deep
-    assert_eq!(nesting(&nested(2000)), 2000);
-    assert!(Fdt::parse(&nested(2000)).is_err(), "a tree of 2000 nested nodes is taken");
+fn hostile_fdt_nesting_not_bounded() {
+    let deepest = Fdt::parse(&nested(fdt::DEPTH_MAX)).expect("a tree of DEPTH_MAX levels is taken");
+    assert_eq!(Fdt::parse(&deepest.to_bytes()), Ok(deepest));
+    assert!(Fdt::parse(&nested(fdt::DEPTH_MAX + 1)).is_err(), "a tree one level deeper is taken");
+    // 30 000 levels ended the process
+    assert!(Fdt::parse(&nested(30_000)).is_err(), "a tree of 30 000 nested nodes is taken");
 }
 
 /// `Fdt::parse`, `Fdt::to_bytes`, `fdt::rsce_file` and `fdt::with_loader_changes` (the device tree section of an
@@ -236,9 +216,6 @@ fn hostile_device_trees() {
     let container = rsce(fdt::TREE, &old);
     let seeds: [&[u8]; 3] = [&old, &running, &container];
     run("update::fdt::parse", &seeds, 4, |b| {
-        if nesting(b) > 1000 && known(KNOWN, "fdt-nesting-not-bounded") {
-            return Ok(());
-        }
         if let Ok(t) = Fdt::parse(b) {
             match Fdt::parse(&t.to_bytes()) {
                 Ok(again) if again == t => {}

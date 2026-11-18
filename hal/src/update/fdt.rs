@@ -57,6 +57,11 @@ const PROP: u32 = 3;
 const NOP: u32 = 4;
 const FINISH: u32 = 9;
 
+/// How deep the nodes of a tree may nest, the root counting as one. A tree of the unit nests less than 20 deep, and
+/// Linux itself leaves out nodes below 64 levels (`FDT_MAX_DEPTH`). The bound keeps writing, comparing and dropping a
+/// tree (one stack frame per level) from overflowing the stack on a damaged one.
+pub(crate) const DEPTH_MAX: usize = 64;
+
 fn be32(b: &[u8], at: usize) -> Result<u32, String> {
     b.get(at..at + 4)
         .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
@@ -100,6 +105,9 @@ impl Fdt {
             p += 4;
             match tok {
                 BEGIN => {
+                    if stack.len() == DEPTH_MAX {
+                        return Err(format!("device tree: nested deeper than {} levels", DEPTH_MAX));
+                    }
                     let name = cstr(b, p)?.to_string();
                     p += (name.len() + 1).div_ceil(4) * 4;
                     stack.push(Node { name, ..Default::default() });
