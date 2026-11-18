@@ -15,9 +15,8 @@ use crate::edges::{edges, states, Edge};
 /// recessive bit times, resynchronisation on every edge, sampling at 70 % of the bit, bit de-stuffing, CRC check.
 pub fn can(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32, invert: bool) -> Vec<Packet> {
     let spb = 1.0 / bitrate / dt;
-    let mut out = Vec::new();
     if spb < 3.0 {
-        return out;
+        return Vec::new();
     }
     let st = states(v, thr, hyst);
     // recessive = true
@@ -27,6 +26,18 @@ pub fn can(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32, invert: bool) 
         let i = e.partition_point(|x| x.t < from);
         e.get(i).filter(|x| x.t < to).map(|x| x.t)
     };
+    frames(&e, invert, spb, &rec, |sof| can_frame(sof, spb, &rec, &edge_near))
+}
+
+/// The frames on the bus: `frame` decodes from each SOF (packets, end), one not inside the frame before.
+fn frames(
+    e: &[Edge],
+    invert: bool,
+    bit: f64,
+    rec: &dyn Fn(f64) -> Option<bool>,
+    mut frame: impl FnMut(f64) -> Option<(Vec<Packet>, f64)>,
+) -> Vec<Packet> {
+    let mut out = Vec::new();
     let mut busy_until = 0.0;
     let mut last_rec_start: Option<f64> = None;
     for (k, x) in e.iter().enumerate() {
@@ -42,10 +53,10 @@ pub fn can(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32, invert: bool) 
         // SOF: dominant edge after >= 7 recessive bit times (or the record start when the bus was idle before)
         let idle_from =
             last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
-        if x.t - idle_from < 7.0 * spb {
+        if x.t - idle_from < 7.0 * bit {
             continue;
         }
-        if let Some((pk, end)) = can_frame(x.t, spb, &rec, &edge_near) {
+        if let Some((pk, end)) = frame(x.t) {
             busy_until = end;
             out.extend(pk);
         }
@@ -185,35 +196,13 @@ impl BitClock<'_> {
 pub fn can_fd(v: &[f32], dt: f64, nominal: f64, data_rate: f64, thr: f32, hyst: f32, invert: bool) -> Vec<Packet> {
     let tn = 1.0 / nominal / dt;
     let td = 1.0 / data_rate / dt;
-    let mut out = Vec::new();
     if !(tn >= 3.0 && td >= 3.0) {
-        return out;
+        return Vec::new();
     }
     let st = states(v, thr, hyst);
     let rec = |x: f64| -> Option<bool> { st.get(x as usize).copied().flatten().map(|b| b != invert) };
     let e = edges(v, thr, hyst);
-    let mut busy_until = 0.0;
-    let mut last_rec_start: Option<f64> = None;
-    for (k, x) in e.iter().enumerate() {
-        if x.rising != invert {
-            last_rec_start = Some(x.t);
-            continue;
-        }
-        if x.t < busy_until {
-            continue;
-        }
-        let idle_from =
-            last_rec_start.unwrap_or(if k == 0 && rec(x.t - 1.0) == Some(true) { 0.0 } else { f64::INFINITY });
-        if x.t - idle_from < 7.0 * tn {
-            continue;
-        }
-        let mut clk = BitClock { t: x.t, rec: &rec, e: &e };
-        if let Some((pk, end)) = can_fd_frame(&mut clk, tn, td) {
-            busy_until = end;
-            out.extend(pk);
-        }
-    }
-    out
+    frames(&e, invert, tn, &rec, |sof| can_fd_frame(&mut BitClock { t: sof, rec: &rec, e: &e }, tn, td))
 }
 
 /// One CAN / CAN FD frame from its SOF: the packets and the time after the ACK delimiter.
