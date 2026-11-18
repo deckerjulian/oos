@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check on an MHO900 under its stock system what OOS assumes about its acquisition board.
 
-  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes]
+  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes] [--map | --afe] [--fifty]
 
 Every assumption of docs/protocols/mho-acquisition.md that can be seen without writing to the hardware is checked, and
 the result is written to mho-check-<model>-<date>.txt in the current directory, to attach to the GitHub issue.
@@ -27,6 +27,11 @@ the stock system writes itself, read back), in the GPIO lines (/sys/kernel/debug
 lines), in the ADC bridge word, and in the kernel log. It writes mho-map-<model>-<date>.txt. Nothing may be connected
 to the inputs; the settings are set back at the end as above.
 
+With --afe it records, for the same steps and more (offset and AC coupling at several scales, CH2 to CH4), the words
+the stock system sends to the front ends and the clock chip over their GPIO buses. It switches on the kernel's trace
+event gpio_value for those lines only (tracefs, in memory), decodes the levels on the PC and switches the event off
+again, with the trace settings as they were; nothing else is touched. It writes mho-afe-<model>-<date>.txt.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
@@ -38,7 +43,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "2"
+VERSION = "3"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -519,11 +524,17 @@ def same_setting(a, b):
 
 
 def restore(scpi, rep, keep, cmds=None):
-    """Every setting written back one by one, each refusal named, then read again and compared with before."""
+    """Every setting written back one by one, each refusal named, then read again and compared with before. An entry
+    (command, value) is only written, with that value, and not compared: a channel is switched on before its own
+    settings go back, since the stock system does not take the scale of a channel that is off (seen on an MHO98)."""
     cmds = RESTORE if cmds is None else cmds
     scpi.errors()
     refused, differ = [], []
     for cmd in cmds:
+        if isinstance(cmd, tuple):
+            scpi.write(f"{cmd[0]} {cmd[1]}")
+            scpi.errors()
+            continue
         v = keep.get(cmd + "?")
         if not v:
             continue
@@ -535,6 +546,8 @@ def restore(scpi, rep, keep, cmds=None):
     scpi.write(":STOP" if keep.get(":TRIGger:STATus?", "").upper().startswith("STOP") else ":RUN")
     time.sleep(1.5)
     for cmd in cmds:
+        if isinstance(cmd, tuple):
+            continue
         v = keep.get(cmd + "?")
         if v:
             now = scpi.query(cmd + "?")
@@ -621,14 +634,21 @@ def map_steps(fifty=False):
 
 
 def map_restore_list(fifty=False):
-    """The settings --map changes, in the order they are set back: the impedance before the scale, the scale before
-    the offset and the trigger level."""
+    """The settings --map and --afe change, in the order they are set back: each channel switched on first (a channel
+    that is off does not take its scale), the impedance before the scale, the scale before the offset, the channel's
+    own display state last, then the time base and the trigger."""
     out = []
     for n in range(1, 5):
+        out.append((f":CHANnel{n}:DISPlay", "ON"))
         out += [f":CHANnel{n}:IMPedance"] if fifty and n == 1 else []
         out += [f":CHANnel{n}:COUPling", f":CHANnel{n}:BWLimit", f":CHANnel{n}:SCALe", f":CHANnel{n}:OFFSet",
                 f":CHANnel{n}:DISPlay"]
     return out + [":TIMebase:MAIN:SCALe", ":TRIGger:MODE", ":TRIGger:EDGE:SOURce", ":TRIGger:EDGE:LEVel"]
+
+
+def query_list(cmds):
+    """The queries of a restore list: one per setting, not for the entries that are only written."""
+    return [c for c in cmds if not isinstance(c, tuple)]
 
 
 def gpio_lines(text):
@@ -670,7 +690,7 @@ def run_map(adb, scpi, out, fifty):
     names = dict(MAP_REGS)
     keep = {}
     cmds = map_restore_list(fifty)
-    for c in cmds + [":TRIGger:STATus"]:
+    for c in query_list(cmds) + [":TRIGger:STATus"]:
         keep[c + "?"] = scpi.query(c + "?")
     out.append("settings before: " + "; ".join(f"{k} {v}" for k, v in keep.items()))
     _, t0 = log_after(adb.sh("dmesg | tail -n 1"), 0.0)
@@ -745,6 +765,245 @@ def map_main(a, adb):
     return 0
 
 
+# ---- --afe: the words on the GPIO buses of the front ends, from the kernel's gpio_value trace event ----
+
+# The front ends are set over a bus the processor drives on GPIOs (driver spi2afe_gpio, /dev/spi_simulate), so --map
+# sees only where its data line was left (MHO98: AC coupling and the offset changed no register, only that line). The
+# kernel's trace event gpio_value records every level the driver sets and reads on these lines; the words are decoded
+# from it on the PC. Line numbers and names: /sys/kernel/debug/gpio of the platform probes (MHO954, MHO98).
+TRACEFS = "/sys/kernel/debug/tracing"
+AFE_BUS = {"name": "AFE", "sclk": 75, "mosi": 74, "miso": 73, "cs": {76: "AFE cs0", 66: "AFE cs1", 69: "AFE cs2",
+                                                                      68: "AFE cs3"}}
+# The clock chip's 3-wire bus (/dev/spi_3wires): one data line for both directions.
+PLL_BUS = {"name": "PLL", "sclk": 49, "mosi": 51, "miso": 51, "cs": {50: "PLL cs"}}
+# Select lines `a`, `b`, `c` in four groups (assumed: one group per channel), and the clock chip's other lines.
+SELECT_LINES = {122: "a 122", 123: "b 123", 124: "c 124", 125: "a 125", 126: "b 126", 127: "c 127",
+                129: "a 129", 130: "b 130", 131: "c 131", 149: "a 149", 152: "b 152", 153: "c 153",
+                46: "vsel 46", 55: "vsel 55", 52: "reset 52", 54: "sysref_reset 54"}
+TRACE_RE = re.compile(r"\s(\d+\.\d+):\s+gpio_value:\s+(\d+)\s+(set|get)\s+(\d+)")
+RAW_PER_STEP = 800
+
+
+def traced_lines():
+    bus = [AFE_BUS, PLL_BUS]
+    nums = {b[k] for b in bus for k in ("sclk", "mosi", "miso")} | {c for b in bus for c in b["cs"]}
+    return sorted(nums | set(SELECT_LINES))
+
+
+def trace_filter(lines):
+    """The event filter that keeps only `lines` (the kernel's filter syntax of 4.4)."""
+    return " || ".join(f"gpio == {n}" for n in lines)
+
+
+def parse_trace(text):
+    """[(time s, gpio, "set" or "get", value)] from the trace buffer, in order."""
+    return [(float(t), int(g), op, int(v)) for t, g, op, v in TRACE_RE.findall(text)]
+
+
+def bits_hex(bits):
+    if not bits:
+        return "-"
+    return f"0x{int(''.join(map(str, bits)), 2):0{(len(bits) + 3) // 4}x}"
+
+
+def decode_bus(events, bus, levels=None):
+    """The frames on one bus: [(time, chip select, bits, data on rising clock, on falling clock, data read)]. A frame
+    is the time a chip-select line is low; the data line is taken at each clock edge the driver sets (both edges, as
+    the clock phase is not known), and what it reads at its `get`s of the input line. `levels` gives the lines' state
+    before the first event (clock low, chip selects high when not given)."""
+    lv = {bus["sclk"]: 0, bus["mosi"]: 0, **{c: 1 for c in bus["cs"]}}
+    lv.update(levels or {})
+    frames, cur = [], None
+    for t, g, op, v in events:
+        if op == "get":
+            if g == bus["miso"] and cur is not None:
+                cur["miso"].append(v)
+            continue
+        if g in bus["cs"]:
+            if v == 0 and lv.get(g) != 0:
+                cur = {"t": t, "cs": bus["cs"][g], "rise": [], "fall": [], "miso": []}
+            elif v == 1 and lv.get(g) == 0 and cur is not None and cur["cs"] == bus["cs"][g]:
+                frames.append(cur)
+                cur = None
+        elif g == bus["sclk"] and cur is not None and v != lv.get(g):
+            cur["rise" if v else "fall"].append(lv.get(bus["mosi"], 0))
+        lv[g] = v
+    if cur is not None:
+        frames.append(cur)
+    return [(f["t"], f["cs"], len(f["rise"]), bits_hex(f["rise"]), bits_hex(f["fall"]), bits_hex(f["miso"]))
+            for f in frames]
+
+
+def select_changes(events, levels):
+    """[(time, line name, old, new)] for the select lines whose level the driver changed."""
+    out, lv = [], dict(levels)
+    for t, g, op, v in events:
+        if op == "set" and g in SELECT_LINES and lv.get(g) != v:
+            out.append((t, SELECT_LINES[g], lv.get(g), v))
+            lv[g] = v
+    return out
+
+
+def afe_steps(fifty=False):
+    """The steps of --map, then what --map could not see: the offset of CH1 at two more scales, AC coupling at two
+    scales, and coupling, offset and scale of CH2 to CH4 (each switched on, CH1 stays on)."""
+    steps = [("idle (nothing changed: what the stock system writes by itself)", [])] + map_steps(fifty)
+    for v, o in (("0.01", "0.05"), ("1", "2")):
+        steps += [(f"CH1 {v} V/div", [f":CHANnel1:SCALe {v}"]),
+                  (f"CH1 offset {o} V at {v} V/div", [f":CHANnel1:OFFSet {o}"]),
+                  (f"CH1 offset 0 V at {v} V/div", [":CHANnel1:OFFSet 0"]),
+                  (f"CH1 coupling AC at {v} V/div", [":CHANnel1:COUPling AC"]),
+                  (f"CH1 coupling DC at {v} V/div", [":CHANnel1:COUPling DC"])]
+    steps.append(("CH1 0.1 V/div", [":CHANnel1:SCALe 0.1"]))
+    for n in (2, 3, 4):
+        steps += [(f"CH{n} on, 0.1 V/div", [f":CHANnel{n}:DISPlay ON", f":CHANnel{n}:SCALe 0.1"]),
+                  (f"CH{n} 1 V/div", [f":CHANnel{n}:SCALe 1"]),
+                  (f"CH{n} 0.1 V/div", [f":CHANnel{n}:SCALe 0.1"]),
+                  (f"CH{n} offset 0.3 V", [f":CHANnel{n}:OFFSet 0.3"]),
+                  (f"CH{n} offset 0 V", [f":CHANnel{n}:OFFSet 0"]),
+                  (f"CH{n} coupling AC", [f":CHANnel{n}:COUPling AC"]),
+                  (f"CH{n} coupling DC", [f":CHANnel{n}:COUPling DC"]),
+                  (f"CH{n} bandwidth limit 20M", [f":CHANnel{n}:BWLimit 20M"]),
+                  (f"CH{n} bandwidth limit OFF", [f":CHANnel{n}:BWLimit OFF"]),
+                  (f"CH{n} off", [f":CHANnel{n}:DISPlay OFF"])]
+    return steps
+
+
+class Tracer:
+    """The kernel's gpio_value event on the traced lines, switched on for --afe and set back as it was. It writes only
+    to the trace control files of the kernel (no file, partition or register); the buffer lives in memory."""
+    FILES = ["tracing_on", "buffer_size_kb", "events/gpio/gpio_value/enable"]
+
+    def __init__(self, adb):
+        self.adb, self.saved = adb, {}
+
+    def available(self):
+        """None when the event can be used, else why not."""
+        enable = f"{TRACEFS}/events/gpio/gpio_value/enable"
+        if self.adb.sh(f"ls {enable}").strip() != enable:
+            return "this kernel has no gpio_value trace event (or tracefs is not mounted)"
+        tracer = self.adb.sh(f"cat {TRACEFS}/current_tracer").strip()
+        events = self.adb.sh(f"cat {TRACEFS}/set_event").strip()
+        if tracer != "nop" or events:
+            return f"the kernel's tracing is in use (tracer {tracer!r}, events {events!r}); left alone"
+        return None
+
+    def start(self):
+        for f in self.FILES:
+            self.saved[f] = self.adb.sh(f"cat {TRACEFS}/{f}").strip().split()[0]
+        self.adb.sh(f"echo 0 > {TRACEFS}/tracing_on; echo 4096 > {TRACEFS}/buffer_size_kb; "
+                    f"echo '{trace_filter(traced_lines())}' > {TRACEFS}/events/gpio/gpio_value/filter; "
+                    f"echo 1 > {TRACEFS}/events/gpio/gpio_value/enable; echo > {TRACEFS}/trace")
+
+    def record(self, action, seconds=1.5):
+        """The events while `action` runs and `seconds` after it."""
+        self.adb.sh(f"echo > {TRACEFS}/trace; echo 1 > {TRACEFS}/tracing_on")
+        try:
+            action()
+            time.sleep(seconds)
+        finally:
+            self.adb.sh(f"echo 0 > {TRACEFS}/tracing_on")
+        return self.adb.sh(f"cat {TRACEFS}/trace", timeout=120)
+
+    def stop(self):
+        """Everything as it was: the event off, its filter cleared, buffer size and tracing_on as before, buffer
+        empty. Returns what could not be set back."""
+        e = self.saved.get("events/gpio/gpio_value/enable", "0")
+        self.adb.sh(f"echo 0 > {TRACEFS}/tracing_on; echo {e} > {TRACEFS}/events/gpio/gpio_value/enable; "
+                    f"echo 0 > {TRACEFS}/events/gpio/gpio_value/filter; echo > {TRACEFS}/trace; "
+                    f"echo {self.saved.get('buffer_size_kb', '1408')} > {TRACEFS}/buffer_size_kb; "
+                    f"echo {self.saved.get('tracing_on', '1')} > {TRACEFS}/tracing_on")
+        left = []
+        for f, v in self.saved.items():
+            now = self.adb.sh(f"cat {TRACEFS}/{f}").strip().split()
+            if not now or now[0] != v:
+                left.append(f"{TRACEFS}/{f} is {now[0] if now else '?'} (was {v})")
+        return left
+
+
+def run_afe(adb, scpi, out, fifty):
+    tracer = Tracer(adb)
+    why = tracer.available()
+    if why:
+        out += ["", f"not recorded: {why}"]
+        print(why)
+        return
+    cmds = map_restore_list(fifty)
+    keep = {c + "?": scpi.query(c + "?") for c in query_list(cmds) + [":TRIGger:STATus"]}
+    out.append("settings before: " + "; ".join(f"{k} {v}" for k, v in keep.items()))
+    levels = {}
+    for g, line in gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
+        if g in traced_lines():
+            levels[g] = 1 if line.split()[-1] == "hi" else 0
+    out += ["", "lines traced (level before the first step): "
+            + ", ".join(f"{g} {levels.get(g, '?')}" for g in traced_lines())]
+    rep = Report()
+    raw = []
+    tracer.start()
+    try:
+        scpi.errors()
+        for i, (label, commands) in enumerate(afe_steps(fifty)):
+            print(f"  {i:2} {label}")
+
+            def act():
+                for c in commands:
+                    scpi.write(c)
+            ev = parse_trace(tracer.record(act))
+            err = scpi.errors()
+            out += ["", f"## step {i}: {label}", "commands: " + ("; ".join(commands) or "none"),
+                    f"events: {len(ev)}"]
+            if err:
+                out.append("SCPI errors: " + "; ".join(err))
+            for bus in (AFE_BUS, PLL_BUS):
+                for t, cs, n, rise, fall, miso in decode_bus(ev, bus, levels):
+                    out.append(f"{cs}: +{(t - ev[0][0]) * 1e3:8.3f} ms  {n:2} clocks  rise {rise}  fall {fall}"
+                               + (f"  read {miso}" if miso != "-" else ""))
+            out += [f"line {name}: {old} -> {new} at +{(t - ev[0][0]) * 1e3:.3f} ms"
+                    for t, name, old, new in select_changes(ev, levels)]
+            for _, g, op, v in ev:
+                if op == "set":
+                    levels[g] = v
+            raw += ["", f"## raw, step {i}: {label} ({len(ev)} events"
+                    + (f", the first {RAW_PER_STEP}" if len(ev) > RAW_PER_STEP else "") + ")"]
+            raw += [f"{(t - ev[0][0]) * 1e6:10.1f} us {g:3} {op} {v}" for t, g, op, v in ev[:RAW_PER_STEP]]
+    finally:
+        left = tracer.stop()
+        restore(scpi, rep, keep, cmds)
+        out += ["", "## set back"] + [f"{s} {k} {t}: {d}" for k, t, s, d in rep.results]
+        out.append("trace settings: " + ("as before" if not left else "NOT ALL SET BACK: " + "; ".join(left)))
+        if left:
+            print("trace settings not all set back (a restart of the scope sets them back): " + "; ".join(left))
+    out += raw
+
+
+def afe_main(a, adb):
+    if not adb.is_root():
+        return "--afe needs adb root (the kernel's trace event); nothing done"
+    if not a.yes:
+        ans = input("--afe records the front ends' GPIO buses with the kernel's trace event while it changes the "
+                    "vertical settings of CH1 to CH4, the time base and the trigger level over SCPI (about 5 minutes) "
+                    "and sets them back. Nothing may be connected to the inputs"
+                    + (", and CH1 goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes", "j", "ja"):
+            return "declined; nothing done"
+    scpi = Scpi(a.host, a.scpi_port)
+    idn = idn_without_serial(scpi.query("*IDN?"))
+    code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
+    out = [f"mho-check {VERSION} --afe (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn}", f"hardware code: {code}", f"kernel: {adb.sh('uname -r').strip()}",
+           "Each step lists the frames on the front ends' bus (AFE cs0 to cs3) and the clock chip's bus (PLL), with "
+           "the data line at the rising and at the falling clock edges, and the select lines that changed. The raw "
+           "events follow at the end.", ""]
+    print("steps:")
+    run_afe(adb, scpi, out, a.fifty)
+    model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
+    name = f"mho-afe-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("host")
@@ -755,7 +1014,11 @@ def main():
     ap.add_argument("--map", action="store_true",
                     help="instead of the checks: step through vertical, time base and trigger settings and record "
                          "what the stock system sets for each (about 3 minutes; nothing connected to the inputs)")
-    ap.add_argument("--fifty", action="store_true", help="with --map: CH1 at 50 ohm too (CH1 must be unconnected)")
+    ap.add_argument("--afe", action="store_true",
+                    help="instead of the checks: record the words on the front ends' GPIO bus for each vertical "
+                         "setting, with the kernel's gpio_value trace event (about 5 minutes; nothing connected)")
+    ap.add_argument("--fifty", action="store_true",
+                    help="with --map or --afe: CH1 at 50 ohm too (CH1 must be unconnected)")
     a = ap.parse_args()
 
     adb = Adb(f"{a.host}:{a.adb_port}")
@@ -768,6 +1031,8 @@ def main():
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
 
+    if a.afe:
+        sys.exit(afe_main(a, adb))
     if a.map:
         sys.exit(map_main(a, adb))
 

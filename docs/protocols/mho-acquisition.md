@@ -218,13 +218,53 @@ After each step it records what changed against the step before:
 - new lines of the kernel log.
 
 The settings it changes are read first and set back one by one at the end, and compared again. The report,
-`mho-map-<model>-<date>.txt`, ends with every register per step as a table.
+`mho-map-<model>-<date>.txt`, ends with every register per step as a table. Each channel is switched on before its
+own settings are written back: on an MHO98 the stock system did not take the scale of a channel that was off, and
+CH2 to CH4 stayed at 10 mV/div.
 
-## 8. Open at the bench
+`tools/mho-check.py <scope-ip> --afe` records what `--map` cannot see: the words the stock system sends to the front
+ends (driver `spi2afe_gpio`: chip selects gpio 76, 66, 69, 68 for cs0 to cs3, clock 75, data out 74, data in 73) and
+to the clock chip (3-wire bus: chip select 50, clock 49, data 51), and the select lines `a`, `b`, `c`. It switches on
+the kernel's trace event `gpio_value`, filtered to these lines, records it around each setting, and switches it off
+again with the trace settings as they were; tracefs lives in memory, nothing else is written. The words are decoded on
+the PC: one frame per chip-select low, the data line at the rising and at the falling clock edge (the clock phase is
+not known yet), and what the driver reads. The steps are those of `--map`, an idle step first (what the stock system
+writes by itself), then the offset and AC coupling of CH1 at 10 mV/div and 1 V/div, and scale, offset, coupling and
+bandwidth limit of CH2 to CH4. It needs the event in the kernel (4.4 has it when tracing is built in; the stock
+kernel mounts tracefs) and adb root. The report is `mho-afe-<model>-<date>.txt`, with the raw events at its end.
+
+## 8. Seen on units (stock system 00.01.00, hardware code 3)
+
+From `mho-check.py` on an MHO954 and an MHO98 and `--map` on the MHO98 (issue #4); **verified on the unit** means
+read on these units under the stock system, nothing of it driven by OOS:
+
+- All 25 checks of the MHO954 as assumed, with the spidevs `/dev/spidev2.0` and `/dev/spidev5.0`. The MHO98's three
+  differences were the check's own (S6, S11) or are explained by the mask block below (R14).
+- Mask block: 0x6110 is 0x00100000 while the mask test runs, 0 when it is off or on and stopped; 0x2438 stays 0
+  (verified on the unit, MHO954).
+- The analog gain and offset words 0x14c8 to 0x14f4 belong to the four ADC **lanes**, not to the channels: with CH1
+  alone all four hold CH1's values, with two channels lanes 1 and 3 hold CH1's and lanes 2 and 4 the other's, with four
+  channels each its own (verified on the unit). With GND coupling the lane's gain is 0 and its offset 0x8000.
+- AC coupling changes nothing `--map` reads; the offset changes no register but the trigger level words, and moves
+  the data line of the front ends' bus (verified on the unit). Assumed: both are set over that bus; `--afe` is to show
+  the words.
+- Bandwidth limit 20 MHz on CH1: bits 23:20 of 0x1004 and 0x1014 go to 0xf (verified on the unit; which bit is which
+  channel not yet).
+- Select lines: gpio 153 (`c`) is high at 0.1 and 0.2 V/div of CH1, gpio 149 (`a`) at 5 and 10 V/div, both low
+  between; at 50 ohm 153 stays low and 149 is high at 1 V/div (verified on the unit). Assumed: the group 149, 152,
+  153 belongs to CH1.
+- Sample rate: one channel 4 GSa/s from 2 to 100 ns/div, with interpolation at 2 and 10 ns/div (0x1154, 0x115c,
+  0x1168), 1 GSa/s at 1 us/div; 0x10d0 is 0x8001, 0x8002, 0x8004 or 0x8008 at the higher rates and 0 below them,
+  where 0x10d8 divides 250 MSa/s (5, 25, 250 give 50, 10, 1 MSa/s). The segment size 0x10e0 is 0x200, 0x400 and
+  0x800 with one, two and three or four channels (verified on the unit).
+- 0x4008 changes between two values while nothing is changed (0x08805181 and 0xc880b1a1 at 1 us/div): it holds state
+  bits besides the channel mask, so `--map` lists it at steps that do not touch it.
+
+## 9. Open at the bench
 
 - the LMK04821 settings and the ADC register set and masks (sections 1 and 4);
 - the JESD204 link values and how to see that it is up;
-- the front ends (the `a`, `b`, `c` select lines of the platform probe, the gain tables, the 50 ohm path) and their
-  calibration files;
+- the front ends: the words on their bus per setting (`--afe`), the select lines of CH2 to CH4, the 50 ohm path and
+  their calibration files;
 - whether the run and read-out sequences of acquisition-start.md work unchanged with the new words of section 3 left
   at their power-on values.

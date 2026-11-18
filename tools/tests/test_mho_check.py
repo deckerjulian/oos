@@ -116,6 +116,22 @@ class Judging(unittest.TestCase):
         self.assertLess(mc.map_restore_list(True).index(":CHANnel1:IMPedance"),
                         mc.map_restore_list(True).index(":CHANnel1:SCALe"))
         self.assertFalse(any("IMPedance" in c for _, cs in mc.map_steps(False) for c in cs), "50 ohm only on request")
+        for fifty in (False, True):
+            back = set(mc.map_restore_list(fifty))
+            for label, commands in mc.afe_steps(fifty):
+                for c in commands:
+                    head = c.split()[0]
+                    self.assertTrue(head in back or head == ":RUN", f"--afe {label}: {c} is not set back")
+
+    def test_a_channel_is_switched_on_before_its_settings_go_back(self):
+        # the stock system did not take the scale of a channel that was off (MHO98: CH2 to CH4 stayed at 10 mV/div)
+        order = mc.map_restore_list(False)
+        for n in range(1, 5):
+            on = order.index((f":CHANnel{n}:DISPlay", "ON"))
+            self.assertLess(on, order.index(f":CHANnel{n}:SCALe"))
+            self.assertLess(order.index(f":CHANnel{n}:OFFSet"), order.index(f":CHANnel{n}:DISPlay"))
+        self.assertNotIn((":CHANnel1:DISPlay", "ON"), mc.query_list(order))
+        self.assertIn(":CHANnel1:DISPlay", mc.query_list(order))
 
     def test_map_reads_only_configuration_registers(self):
         addrs = [a for a, _ in mc.MAP_REGS]
@@ -135,6 +151,57 @@ class Judging(unittest.TestCase):
 
     def test_channel_mask(self):
         self.assertEqual(mc.channel_mask(0x00420003), 0x3)
+
+
+class AfeTrace(unittest.TestCase):
+    def test_only_the_bus_and_select_lines_are_traced(self):
+        lines = mc.traced_lines()
+        for n in (73, 74, 75, 76, 66, 68, 69, 49, 50, 51, 149, 153):
+            self.assertIn(n, lines)
+        # the power lines, the FPGA's programming lines and the touch controller are not among them
+        for n in (1, 2, 32, 45, 84, 87, 134, 135, 154):
+            self.assertNotIn(n, lines)
+        self.assertEqual(mc.trace_filter([74, 75]), "gpio == 74 || gpio == 75")
+
+    def test_trace_lines(self):
+        text = ("# tracer: nop\n#\n"
+                " app-1234  [002] ....   100.000100: gpio_value: 76 set 0\n"
+                "   <...>-1240  [003] d..1   100.000200: gpio_value: 73 get 1\n")
+        self.assertEqual(mc.parse_trace(text), [(100.0001, 76, "set", 0), (100.0002, 73, "get", 1)])
+
+    @staticmethod
+    def frame(cs, word, n, t=0.0):
+        """The events of a mode-0 transfer of `word` (n bits, MSB first) on chip select `cs`, with a read per bit."""
+        ev = [(t, cs, "set", 0)]
+        for i in range(n):
+            b = (word >> (n - 1 - i)) & 1
+            ev += [(t, 74, "set", b), (t, 75, "set", 1), (t, 73, "get", 1 - b), (t, 75, "set", 0)]
+        return ev + [(t, cs, "set", 1)]
+
+    def test_a_word_is_decoded_per_chip_select(self):
+        ev = self.frame(76, 0xA5C3, 16) + self.frame(69, 0x1, 8, 1.0)
+        frames = mc.decode_bus(ev, mc.AFE_BUS)
+        self.assertEqual([(cs, n, rise) for _, cs, n, rise, _, _ in frames],
+                         [("AFE cs0", 16, "0xa5c3"), ("AFE cs2", 8, "0x01")])
+        self.assertEqual(frames[0][5], "0x5a3c")      # what was read
+        # at the falling edge the data line still holds the bit set before the rising one
+        self.assertEqual(frames[0][4], "0xa5c3")
+
+    def test_clock_edges_outside_a_frame_and_repeated_levels_are_not_bits(self):
+        ev = [(0, 75, "set", 1), (0, 75, "set", 0)] + self.frame(66, 0x3, 2) + [(0, 75, "set", 0)]
+        frames = mc.decode_bus(ev, mc.AFE_BUS)
+        self.assertEqual([(cs, n, rise) for _, cs, n, rise, _, _ in frames], [("AFE cs1", 2, "0x3")])
+        self.assertEqual(mc.decode_bus([], mc.AFE_BUS), [])
+
+    def test_the_three_wire_bus_reads_on_its_one_data_line(self):
+        ev = [(0, 50, "set", 0), (0, 51, "set", 1), (0, 49, "set", 1), (0, 49, "set", 0),
+              (0, 51, "get", 0), (0, 49, "set", 1), (0, 49, "set", 0), (0, 50, "set", 1)]
+        (_, cs, n, rise, _, read), = mc.decode_bus(ev, mc.PLL_BUS)
+        self.assertEqual((cs, n, rise, read), ("PLL cs", 2, "0x3", "0x0"))
+
+    def test_select_lines_report_only_changes(self):
+        ev = [(1.0, 153, "set", 1), (1.1, 153, "set", 1), (1.2, 149, "set", 0), (1.3, 74, "set", 1)]
+        self.assertEqual(mc.select_changes(ev, {153: 0, 149: 0}), [(1.0, "c 153", 0, 1)])
 
 
 if __name__ == "__main__":

@@ -133,6 +133,9 @@ New:
   issue. The memory depth is written back as the scope takes it (`10k`, not the `1.0000E+04` its query answers).
   `--map` steps through the vertical settings, time base and trigger level and records for each what the stock system
   sets in the FPGA's configuration registers, on the GPIO lines and in the ADC bridge, for the front-end bring-up.
+  `--afe` records the words the stock system sends to the front ends and the clock chip over their GPIO buses (the
+  kernel's `gpio_value` trace event on those lines only, switched off again afterwards), which `--map` cannot see. A
+  channel is switched on before its settings are written back: a channel that is off did not take its scale (MHO98).
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,
