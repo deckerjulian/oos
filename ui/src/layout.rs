@@ -237,6 +237,7 @@ mod tests {
                 || name == "http/tests.rs"
                 || name == "ui/tests.rs"
                 || name == "ui/menu_tests.rs"
+                || name == "ui/eyepage/tests.rs"
             {
                 continue;
             }
