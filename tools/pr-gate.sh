@@ -37,10 +37,11 @@ repo=${OOS_REPO:-${GITHUB_REPOSITORY:-dekajoule/oos}}
 maintainer=${OOS_MAINTAINER:-${repo%%/*}}
 agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 # paths whose effect is only seen on a unit: register sequences and the board, updates, how the scope starts
-hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
+# (and the compiler: rust-toolchain.toml builds every program for the scope, ADR 0045)
+hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
+live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
 live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is

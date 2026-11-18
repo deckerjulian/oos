@@ -19,7 +19,7 @@
 # never its code. Needs gh (GH_TOKEN) and jq. OOS_REPO names another repository (default $GITHUB_REPOSITORY).
 set -eu
 repo=${OOS_REPO:-${GITHUB_REPOSITORY:-dekajoule/oos}}
-hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
+hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 dry=0
 
 one() {

@@ -75,8 +75,9 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 | `ssh-keys.py --data-dir DIR add / list / remove` | an offline mounted data directory only | manage Ed25519 public keys without a network connection; [SSH setup](../docs/ssh.md) |
 
 `lib/` holds what several scripts source: `adb.sh` (connect to a stock system as root), `sim.sh` (the image's busybox
-and the virtual machine of the sims), `docker.sh` (the base images, the arm64 check, and the build images tagged with a
-hash of their Dockerfile, so an edit is built again). `check.sh sim` runs every sim and `../gpu/test-host.sh`.
+and the virtual machine of the sims), `docker.sh` (the base images with their digests, the arm64 check, and the build
+images tagged with a hash of their Dockerfile, so an edit is built again). `check.sh sim` runs every sim and
+`../gpu/test-host.sh`.
 
 `device-test.py` also has the tiers `la` (`--pico <port>`: D0-D2 on GP2-GP4 of a Pico with the openSciLab firmware) and `rf`
 (`--rf <port>`: an HT008 on `--rf-ch`, CH2 by default). `--busy 3` names other channels with a cable, which are no open inputs.

@@ -33,8 +33,9 @@ Debian or Ubuntu; other distributions need the same things. Run everything as yo
 
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   rustup target add aarch64-unknown-linux-musl
    ```
+
+   Which Rust release OOS builds with is written in the tree (`rust-toolchain.toml`); step 4 installs it.
 
 3. **x86-64 only: arm64 containers through QEMU.** Again after every reboot:
 
@@ -51,6 +52,7 @@ Debian or Ubuntu; other distributions need the same things. Run everything as yo
 
    ```sh
    git clone https://github.com/dekajoule/oos.git && cd oos
+   rustup toolchain install      # the Rust release the tree names, with the target for the scope
    mkdir -p kernel/src
    curl -fL -o kernel/src/linux-6.12.115-base.tar.xz \
      https://github.com/dekajoule/oos/releases/latest/download/linux-6.12.115-base.tar.xz
@@ -71,7 +73,7 @@ Debian or Ubuntu; other distributions need the same things. Run everything as yo
 
 ## On macOS
 
-Docker Desktop, running, and Rust from rustup with `rustup target add aarch64-unknown-linux-musl`. Then steps 4 and 5 above. The kernel takes about 5 minutes on an M-series Mac.
+Docker Desktop, running, and [rustup](https://rustup.rs). Then steps 4 and 5 above. The kernel takes about 5 minutes on an M-series Mac.
 
 ## Signing
 
@@ -97,7 +99,8 @@ Replace all keys in `keys/update.pub` with the line it prints. The secret key is
 | The script says | What to do |
 |---|---|
 | `do not run this with sudo` | step 1, then run it as yourself |
-| `no cargo` or `missing Rust target` | step 2 |
+| `no cargo` | step 2 |
+| `missing Rust target` | `rustup toolchain install` in the tree (step 4) |
 | `no rustup` | Rust from the distribution: remove it, take rustup |
 | `Docker is not running` / `permission denied` on the Docker socket | start Docker; on Linux, step 1 and log in again |
 | `Docker cannot run arm64 containers`, or `exec format error` | step 3 (after a reboot again) |

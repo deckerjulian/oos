@@ -34,7 +34,7 @@ if [ $all = 0 ]; then
 		case $f in
 		'') ;;
 		# the paths of tools/pr-gate.sh that only a unit proves: inside a crate, or in the image
-		hal/src/dho/* | hal/src/update/* | ui/src/board/* | fpgad/*) unitpath=1 ;;
+		hal/src/dho/* | hal/src/update/* | ui/src/board/* | fpgad/* | rust-toolchain.toml) unitpath=1 ;;
 		boot/* | kernel/* | rootfs/*) image=1 ;;
 		esac
 		case $f in

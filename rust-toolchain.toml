@@ -1,0 +1,11 @@
+# The Rust the tree builds with, on every computer and in CI (docs/adr/process/0045). rustup reads this file from the
+# folder of a crate upwards: cargo in hal/, dsp/, ui/ and fpgad/ runs this version, and `rustup toolchain install` in
+# the tree installs it with the components and the target named here.
+#
+# To bump: set `channel` to the new release, run tools/check.sh, fix what it finds, all in one pull request. The
+# weekly run tries the newest stable release against the tree (job `canary` of .github/workflows/weekly.yml).
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-unknown-linux-musl"]
