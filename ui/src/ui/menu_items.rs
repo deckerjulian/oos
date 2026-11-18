@@ -164,33 +164,21 @@ impl Ui {
 
     /// The time base menu, with the zoom rows while zoomed.
     fn horizontal_items(&self) -> Vec<Item> {
+        let mut v = vec![
+            Item::HScale,
+            Item::HFine,
+            Item::HExpandI,
+            Item::HDelay,
+            Item::HZero,
+            Item::AutoDeskew,
+            Item::ClearDeskew,
+            Item::Zoom,
+        ];
         if self.m.zoom {
-            vec![
-                Item::HScale,
-                Item::HFine,
-                Item::HExpandI,
-                Item::HDelay,
-                Item::HZero,
-                Item::AutoDeskew,
-                Item::ClearDeskew,
-                Item::Zoom,
-                Item::ZScale,
-                Item::ZDelay,
-                Item::AutoRoll,
-            ]
-        } else {
-            vec![
-                Item::HScale,
-                Item::HFine,
-                Item::HExpandI,
-                Item::HDelay,
-                Item::HZero,
-                Item::AutoDeskew,
-                Item::ClearDeskew,
-                Item::Zoom,
-                Item::AutoRoll,
-            ]
+            v.extend([Item::ZScale, Item::ZDelay]);
         }
+        v.push(Item::AutoRoll);
+        v
     }
 
     /// The acquire menu: mode, average, depth, segments, cores, draw path, alias.
