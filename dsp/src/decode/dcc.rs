@@ -28,7 +28,8 @@ pub static DCC: ModuleInfo = ModuleInfo::new("Dcc", "DCC", "dcc")
     .differential()
     .starts_on(BusWhat::Id, 3)
     // a `1` bit: two halves of 58 us
-    .bit(|_, _| 2.0 * DCC_ONE_HALF);
+    .bit(|_, _| 2.0 * DCC_ONE_HALF)
+    .decoder(|l| Ok(dcc(l.main(), l.dt, l.thr, l.hy)));
 
 /// NMRA DCC (S-9.2) on one channel (rail vs ground, or a differential A−B): edges mark half-bit boundaries.
 /// A short half (~58 us) is a `1`, a long half (>= ~80 us, up to several ms for a stretched zero) is a `0`. Bits are

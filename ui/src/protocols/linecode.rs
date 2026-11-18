@@ -18,9 +18,6 @@ impl Protocol for Manchester {
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::linecode::manchester(l.main(), l.dt, oos_dsp::decode::opt_baud(&l.opt, 0), l.thr, l.hy))
-    }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, 0, 0, 0])
     }
@@ -34,9 +31,6 @@ impl Protocol for Mlt3 {
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::linecode::mlt3(l.main(), l.dt, oos_dsp::decode::opt_baud(&l.opt, 0), l.thr, l.hy))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, 0, 0, 0])

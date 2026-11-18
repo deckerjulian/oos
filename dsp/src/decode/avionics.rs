@@ -12,8 +12,10 @@ use crate::edges::{edges, states};
 use crate::protocols::{BusWhat, ModuleInfo, OPTS};
 
 /// MIL-STD-1553 on one line.
-pub static MIL1553: ModuleInfo =
-    ModuleInfo::new("Mil1553", "1553", "avionics").starts_on(BusWhat::Id, 0x0c23).bit(|_, _| 1e-6);
+pub static MIL1553: ModuleInfo = ModuleInfo::new("Mil1553", "1553", "avionics")
+    .starts_on(BusWhat::Id, 0x0c23)
+    .bit(|_, _| 1e-6)
+    .decoder(|l| Ok(mil1553(l.main(), l.dt, l.thr, l.hy)));
 
 /// MIL-STD-1553: Manchester II at 1 Mbit/s on a bipolar bus signal (threshold normally 0 V). A word = 3 us sync
 /// (command/status: 1.5 us positive then 1.5 us negative; data: the inverse), 16 data bits MSB first (1 = positive
@@ -91,7 +93,8 @@ pub static ARINC429: ModuleInfo = ModuleInfo::new("Arinc429", "ARINC 429", "avio
     .starts_on(BusWhat::Id, 0o310)
     // auto: high speed (the finer sampling), with room for a low-speed word
     .bit(|opt, _| 1.0 / arinc_rate(opt).unwrap_or(ARINC_RATES[2]))
-    .span(|opt, _| arinc_rate(opt).is_none().then(|| 200.0 / ARINC_RATES[1]));
+    .span(|opt, _| arinc_rate(opt).is_none().then(|| 200.0 / ARINC_RATES[1]))
+    .decoder(|l| Ok(arinc429(l.main(), l.dt, arinc_rate(&l.opt), l.thr, l.hy)));
 
 /// ARINC 429 bit rates of the Decode menu; 0 = from the pulse spacing.
 pub const ARINC_RATES: [f64; 3] = [0.0, ARINC429_LOW, ARINC429_HIGH];

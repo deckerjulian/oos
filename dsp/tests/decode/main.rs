@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The protocol decoders of `oos_dsp::decode` against generated signals with known content (round trips, corrupted
-//! bits, noise), one module per protocol family as in `dsp/src/decode/`, and the helpers they share.
+//! bits, noise), one module per protocol family as in `dsp/src/decode/`, and the helpers they share; `modules` runs
+//! the decoders through their `ModuleInfo` with settings that are not the first choice.
 //!
 //! The tests of a new decoder go into the module of its family, a new family gets a module of its own and a `mod` line
-//! here; the decoder's protocol module is registered in `ui/src/protocols/mod.rs` (ADR 0002).
+//! here; a decoder whose module passes option rows or shared rows gets a case in `modules`. The decoder's protocol
+//! module is registered in `ui/src/protocols/mod.rs` (ADR 0002).
 
 use oos_dsp::decode::gen::{
     self, bits_lsb, DccFrame, FdFrame, FrFrame, I3cBus, JtagGen, Ow, PdFrame, QspiFrame, SentFrame, SwdOp, Wave,
@@ -25,6 +27,7 @@ mod dmx;
 mod garbage;
 mod i3c;
 mod modbus;
+mod modules;
 mod onewire;
 mod parallel;
 mod qspi;

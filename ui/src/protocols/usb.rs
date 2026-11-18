@@ -18,9 +18,6 @@ impl Protocol for Usb {
     fn shared(&self) -> &'static [Row] {
         &[Row::UsbSpeed]
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::usb(l.main(), l.lines[2], l.dt, l.sh.usb_speed, l.thr, l.hy))
-    }
     /// The speed of the SYNC, PID names, bytes.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         Some(match p.kind {
@@ -107,7 +104,7 @@ mod tests {
                 chans: [None; 4],
                 src: [None; 4],
             };
-            assert!(!p.decode(&l).unwrap().is_empty(), "{}", p.name());
+            assert!(!p.info().decode(&l).unwrap().is_empty(), "{}", p.name());
         }
     }
 }

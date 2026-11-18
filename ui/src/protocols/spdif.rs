@@ -12,9 +12,6 @@ impl Protocol for Spdif {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::SPDIF
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::spdif(l.main(), l.thr, l.hy))
-    }
     /// Six stereo frames at 48 kHz, 3.3 V logic.
     fn demo(&self) -> Option<Demo> {
         let a = decode::gen::spdif(&[(0x12345, 0x6789A); 6], &[0u8; 24], 48e3, &[], 0.0, 3.3);

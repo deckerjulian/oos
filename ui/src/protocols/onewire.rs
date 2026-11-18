@@ -14,9 +14,6 @@ impl Protocol for OneWire {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::ONE_WIRE
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::onewire(l.main(), l.dt, l.thr, l.hy, false))
-    }
     /// Reset with presence, Read ROM, and the ROM of a DS18B20 (family 28) as far as the third byte.
     fn demo(&self) -> Option<Demo> {
         use decode::gen::Ow;
@@ -39,10 +36,6 @@ pub struct Ds2482;
 impl Protocol for Ds2482 {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::DS2482
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let scl = l.need(1, "SCL source missing")?;
-        Ok(decode::ds2482(&oos_dsp::decode::i2c(l.main(), scl, l.thr, l.hy)))
     }
     /// SDA on CH3, SCL on CH4; on the LA the I2C lines of the demo (D13 SDA, D12 SCL).
     fn setup(&self) -> Setup {

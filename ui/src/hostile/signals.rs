@@ -7,7 +7,7 @@
 use super::{is_known, run};
 use crate::protocols::{demo, opt_default, opt_fit, shared, Lines, MODULES};
 
-/// Every decoder of the registry (`Protocol::decode`) on records made from its own demo traffic: returns for any
+/// Every decoder of the registry (`ModuleInfo::decode`) on records made from its own demo traffic: returns for any
 /// samples, also none, one, and ones that are no numbers; it gives packets or says what is missing; the times of a
 /// packet are numbers, and there are not more packets than a record of that length can hold.
 #[test]
@@ -59,7 +59,7 @@ fn hostile_decoder_records() {
             if m.key() == "Qspi" && qspi_trap(&waves[2], &waves[1], s.thr, 0.1) && is_known("qspi-zero-frame") {
                 return Ok(());
             }
-            match m.decode(&l) {
+            match m.info().decode(&l) {
                 Ok(p) => {
                     if let Some(x) = p.iter().find(|x| !(x.t0.is_finite() && x.t1.is_finite())) {
                         return Err(format!("a packet from {} to {}: {:?}", x.t0, x.t1, x.kind));
@@ -113,5 +113,5 @@ pub(super) fn hostile_known_qspi_zero_frame() {
         chans: lines,
         src: [None; 4],
     };
-    let _ = m.decode(&l);
+    let _ = m.info().decode(&l);
 }
