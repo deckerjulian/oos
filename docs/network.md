@@ -156,6 +156,8 @@ System > Network > Remote services has a switch for each service, next to where 
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
+Every route of the web remote, with what it answers and its mark, is in [http.md](http.md).
+
 Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
 switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
 update page: an update then comes from a USB stick. SSH is the only shell on the network: `rcS` starts it at power-on

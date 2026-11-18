@@ -43,6 +43,9 @@ Added:
   as `oos-boot-oos-again` does (it runs the same `oos-update arm`), and a dialog shows the result. With Boot mode
   Persist it only says that OOS starts anyway. One-shot users no longer need a shell for this step (host-tested; not
   yet run on a unit).
+- [docs/http.md](docs/http.md), the reference of the web remote's HTTP routes and the MCP tools `scpi` and
+  `screenshot` (issue #205): method, query, body, status codes, content type, limits and `net.allow` of each, and
+  the mark of ADR 0055 (proposed): stable, experimental or internal. The behaviour is unchanged.
 
 Removed:
 
