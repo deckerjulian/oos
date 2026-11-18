@@ -11,14 +11,21 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 2] =
-    [(&display::SLICES, ":DISPlay", "display", "Display"), (&trigger::SLICES, ":TRIGger", "trigger", "Trigger")];
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 3] = [
+    (&display::SLICES, ":DISPlay", "display", "Display"),
+    (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
+    (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
+];
 
 /// Rows with a command whose query ui/tests/scpi.txt does not ask yet, and why. Adding the query changes the answers
 /// the comparison with the base records, so it comes in a pull request of its own.
 const NOT_ASKED: &[(&str, &str)] = &[
     (":DISPlay:GBRightness", "not asked before the table; settings_snapshot probes it"),
     (":DISPlay:COLor", "not asked before the table; settings_snapshot probes it"),
+    (":TRIGger:COUPling", "not asked before the table"),
+    (":ACQuire:CORes", "not asked before the table"),
+    (":ACQuire:AVERages:HARDware", "not asked before the table"),
+    (":ACQuire:SEGMents:HARDware", "not asked before the table"),
 ];
 
 /// Every row with the SCPI root of its group.
@@ -65,7 +72,10 @@ fn every_row_is_complete() {
             Scpi::None { why } => assert!(!why.is_empty(), "{}: no command, and no reason", s.key),
         }
         let n = s.options().len();
-        if s.is_number() {
+        if let Ty::Steps(list) = s.ty {
+            assert!(list.len() >= 2 && list.is_sorted(), "{}: steps in order", s.key);
+            assert!(list.contains(&((s.get)(&Model::default()).index() as u32)), "{}: the default a step", s.key);
+        } else if s.is_number() {
             assert_eq!(n, 0, "{}: a number has no options", s.key);
         } else {
             assert!(n >= 2, "{}: a choice of {}", s.key, n);

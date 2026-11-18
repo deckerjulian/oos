@@ -238,6 +238,7 @@ mod tests {
                 || name == "ui/tests.rs"
                 || name == "ui/menu_tests.rs"
                 || name == "ui/eyepage/tests.rs"
+                || name == "ui/analysis/measurement_gate_tests.rs"
             {
                 continue;
             }

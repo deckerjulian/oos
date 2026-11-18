@@ -114,6 +114,7 @@ command does not take is refused with `-113`.
 | `:TRIGger:HOLDoff[?]` | seconds from 0 to 10 | `holdoff` | Holdoff | The time after a trigger in which no other one is taken; 0 is off. The menu steps 1-2-5 from 100 ns. |
 | `:TRIGger:NREJect[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `trig_nrej` | Noise reject | A wider hysteresis of the trigger comparator (the values by scale: docs/protocols/trigger.md 2.3). |
 | none | a choice of the auto set-up, not of the trigger | `auto_nrej` | Auto noise rej. | The auto set-up sets noise reject from the noise on the flat levels of the trigger signal. |
+| `:TRIGger:COUPling[?]` | `DC`, `AC`, `LFReject`, `HFReject` | `trig_coup` | Coupling | A filter in the trigger path of the edge trigger; the trace keeps the channel's coupling (docs/protocols/trigger.md 2.5). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_slope2` | Slope B | The edge of B (delay trigger) or of the clock (setup/hold trigger). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_pol` | Polarity | The polarity of the pulse (pulse and runt triggers). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t1` | Time | The time the condition compares with, the lower limit of Inside and Outside; the timeout of the timeout trigger. |
@@ -125,6 +126,24 @@ command does not take is refused with `-113`.
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `setup` | Setup | The setup time the setup/hold trigger checks the data against the clock edge. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `hold` | Hold | The hold time the setup/hold trigger checks the data against after the clock edge. |
 <!-- settings:trigger:end -->
+
+### Acquisition settings
+
+The settings of the Acquire menu, their `:ACQuire` commands and their keys in a setup file. They are declared once,
+in `ui/src/settings/acquisition.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value
+`:TYPE` or `:AVERages` does not take is refused with `-224`, one of the others with `-113`. The memory depth
+(`:ACQuire:MDEPth`, above) and the segment count (`:ACQuire:ULTRa:MAXFrame`, below) are written by hand.
+
+<!-- settings:acquisition:begin -->
+| Command | Takes | Setup key | Acquire menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:ACQuire:TYPE[?]` | `NORMal`, `PEAK`, `AVERages`, `HRESolution` | `acq` | Mode | How a record is made: Normal, Peak, Average (over the count of `avg_count`) or High res (in software, from more samples than screen points). |
+| `:ACQuire:CORes[?]` | any word that starts with `MATC` or `RAW`, or `ON`, `OFF`, `1`, `0`; the query answers `MATC` or `RAW` | `cores` | ADC cores | Matched takes the offsets of the interleaved ADC cores off in software (docs/protocols/adc-mode.md 6); Raw leaves the words as they come. |
+| `:ACQuire:AVERages[?]` | a whole number from 2, set to the step at or below it: 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 | `avg_count` | Averages | How many records the Average mode averages. |
+| `:ACQuire:AVERages:HARDware[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `avg_hw` | HW average | Average mode: the FPGA averages where the board can, else the software does; experimental, not verified on the unit (docs/fork/upstream-audit.md). The menu offers it in Average mode with a hardware source. |
+| `:ACQuire:SEGMents:HARDware[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `seg_hw` | HW segments | Segments recorded by the FPGA instead of the software history; experimental, not verified on the unit (docs/fork/upstream-audit.md). The menu offers it while segments are on. |
+<!-- settings:acquisition:end -->
 
 ## Waveform transfer
 
@@ -376,8 +395,6 @@ These commands are implemented by the same model and acquisition router above. T
 | `:CHANnel<n>:BIAS[?]` | Software channel zero-bias correction. This is not a calibration procedure. |
 | `:CHANnel<n>:EXPand[?]` | Vertical expansion reference supported by the model. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
-| `:ACQuire:TYPE[?]` | `NORMal|PEAK|AVERages|HRESolution`. |
-| `:ACQuire:AVERages[?]` | Requested average count, mapped to supported powers of two. Read back the selected count. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
 | `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
 | `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |

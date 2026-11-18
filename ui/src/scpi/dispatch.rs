@@ -517,25 +517,6 @@ impl Scpi {
                     };
                     return Some(t(s));
                 }
-                if nodes.len() == 2 && kw(last, "COUPling") {
-                    if query {
-                        return Some(t(match m.trig_coup {
-                            TrigCoup::Dc => "DC",
-                            TrigCoup::Ac => "AC",
-                            TrigCoup::LfReject => "LFR",
-                            TrigCoup::HfReject => "HFR",
-                        }));
-                    }
-                    let a = arg.trim().to_ascii_uppercase();
-                    m.trig_coup = match a.as_str() {
-                        "DC" => TrigCoup::Dc,
-                        "AC" => TrigCoup::Ac,
-                        "LFR" | "LFREJECT" => TrigCoup::LfReject,
-                        "HFR" | "HFREJECT" => TrigCoup::HfReject,
-                        _ => return None,
-                    };
-                    return Some(None);
-                }
                 // the trigger values of the settings table (settings/trigger.rs); a value a row does not take falls
                 // through to the later branches, which answer -113, as before the table
                 if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {
@@ -602,22 +583,24 @@ impl Scpi {
                 m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
                 return Some(None);
             }
-            if kw(n0, "ACQuire") && nodes.len() == 2 && kw(nodes[1], "CORes") {
-                // the ADC cores matched in software (on) or the words as they come (Acquire > ADC cores)
-                if query {
-                    return Some(t(if m.cores { "MATC" } else { "RAW" }));
+            // the acquisition settings of the table (settings/acquisition.rs), where :CORes was, before :SEGMents,
+            // :AVERages:HARDware, :TYPE and :AVERages; a value a row does not take is refused with -224 or falls
+            // through to the later branches (-113), each as before the table
+            if kw(n0, "ACQuire") {
+                if let Some(row) = crate::settings::command(&crate::settings::acquisition::SLICES, &nodes[1..]) {
+                    if query {
+                        return Some(t(&row.query(m)));
+                    }
+                    if !row.take(m, arg) {
+                        if !crate::settings::acquisition::REFUSES.contains(&row.key) {
+                            return None;
+                        }
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    }
+                    return Some(None);
                 }
-                let a = arg.trim().to_ascii_uppercase();
-                m.cores = if a.starts_with("MATC") || a == "ON" || a == "1" {
-                    true
-                } else if a.starts_with("RAW") || a == "OFF" || a == "0" {
-                    false
-                } else {
-                    return None;
-                };
-                return Some(None);
             }
-            // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>
+            // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:INTerval <s> (:HARDware is a row)
             if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
                 match (nodes.get(2).copied(), query) {
                     (None, true) => return Some(t(&m.segments.to_string())),
@@ -628,61 +611,14 @@ impl Scpi {
                             (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX)
                         }
                     }
-                    (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.seg_hw { "1" } else { "0" })),
-                    (Some(x), false) if kw(x, "HARDware") => m.seg_hw = parse_bool(arg)?,
                     (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
                     (Some(x), false) if kw(x, "INTerval") => m.seg_ivl = num(arg)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
                     _ => return None,
                 }
                 return Some(None);
             }
-            // OOS: :ACQuire:AVERages:HARDware ON|OFF
-            if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "AVERages") && kw(nodes[2], "HARDware") {
-                if query {
-                    return Some(t(if m.avg_hw { "1" } else { "0" }));
-                }
-                m.avg_hw = parse_bool(arg)?;
-                return Some(None);
-            }
             if kw(n0, "ACQuire") && nodes.len() == 2 {
                 let n1 = nodes[1];
-                if kw(n1, "TYPE") {
-                    if query {
-                        return Some(t(match m.acq {
-                            AcqMode::Normal => "NORM",
-                            AcqMode::Peak => "PEAK",
-                            AcqMode::Average => "AVER",
-                            AcqMode::HiRes => "HRES",
-                        }));
-                    }
-                    let a = arg.trim();
-                    m.acq = if kw(a, "NORMal") {
-                        AcqMode::Normal
-                    } else if kw(a, "PEAK") {
-                        AcqMode::Peak
-                    } else if kw(a, "AVERages") {
-                        AcqMode::Average
-                    } else if kw(a, "HRESolution") || a.eq_ignore_ascii_case("HRES") {
-                        AcqMode::HiRes
-                    } else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return Some(None);
-                    };
-                    return Some(None);
-                }
-                if kw(n1, "AVERages") {
-                    if query {
-                        return Some(t(&m.avg_count.to_string()));
-                    }
-                    // The Acquire menu's counts. A value that is not one of them snaps down to the next lower power of two.
-                    const COUNTS: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
-                    let Some(n) = arg.trim().parse::<u32>().ok().filter(|n| *n >= 2) else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return Some(None);
-                    };
-                    m.avg_count = COUNTS.iter().rev().find(|&&c| c <= n).copied().unwrap_or(2);
-                    return Some(None);
-                }
                 if query {
                     // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
                     let (sr, depth) = src.rate_depth(m);
