@@ -15,9 +15,11 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
                  ui/src/settings/), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
                  in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
-  queries-tests  the queries of docs/scpi.md (each command of the first cell of a table row, without its arguments,
-                 a relative one completed from the first, when it ends in `?` or `[?]`) that no `scpi` line of
-                 ui/tests/scpi.txt asks, in the long or the short form;
+  queries-tests  the queries of docs/scpi.md (each command in backticks, starting with `:` or `*`, in any cell of a
+                 table row or in the running text, without its arguments, a relative one completed from the last
+                 absolute one of its cell or sentence, when it ends in `?` or `[?]`) that no `scpi` line of
+                 ui/tests/scpi.txt asks, in the long or the short form as written; NOT_ASKED below lists the
+                 ones it cannot ask, with the reason, and they do not count unless the list is no longer true;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
                  and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
                  interpreter never names as `.field` and no row with a command reaches. An upper bound:
@@ -45,6 +47,16 @@ STORE_RS = "ui/src/store.rs"
 SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
 NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
 
+# The queries of docs/scpi.md, as documented_queries spells them, that ui/tests/scpi.txt cannot ask, each with its
+# reason (like LEFT_OUT of the settings snapshot). They do not count toward queries-tests. A listed query that the
+# script asks, or that docs/scpi.md no longer names, counts as missing, so the list stays true.
+NOT_ASKED = {
+    ":LA:POINts?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":LA:PREamble?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":LA:DATA?": "an LA record exists only on the hardware source; the demo source answers -230",
+    ":SYSTem:STATe?": "its answer holds times measured on the computer, which differ from run to run",
+}
+
 # The expressions scpi.rs passes to kw() that hold a node of the header. Not counted: `a`, `arg`, `s`, `item`, `first`,
 # `z`, which hold arguments (`kw(first, "MAXimum")` reads the first argument of :MEASure:STATistic:ITEM?).
 NODE = r"n0|n1|k0|k|n|x|last|node|leaf|which|nodes\[\d+\]|n\[\d+\]|suffix\((?:n|n0)\)\.0"
@@ -52,7 +64,6 @@ KW = re.compile(r"\bkw\(\s*(?:" + NODE + r")\s*,\s*\"([A-Za-z0-9]+)\"\s*\)")
 FIELD = re.compile(r"\bm\.([a-z_][a-z0-9_]*)\b(?!\s*\()")
 HANDS_M = re.compile(r"\b([a-z_][a-z0-9_]*)\(\s*m\s*,")
 SCPI_LINE = re.compile(r"^scpi\s+\S+\s+(.+)$")
-ROW = re.compile(r"^\|\s*`([^`]+)`")
 SETTING = re.compile(r"\bSetting\s*\{")
 SETTING_CMD = re.compile(r'Scpi::Cmd\("([A-Za-z0-9:]+)"\)')
 
@@ -129,27 +140,20 @@ def nodes(header):
     return out + [cur]
 
 
-def row_commands(line):
-    """Every command of the first cell of a table row of scpi.md, without its arguments, written out in full. A
-    command with fewer nodes than the first one of the cell is relative to it and replaces as many of its last nodes
-    (`:WAVeform:STARt[?]` / `:STOP[?]` is `:WAVeform:STOP[?]`, `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` is
-    `:BUS<n>:IIC:SDA:SOURce[?]`); one with as many or more is absolute (`:TFORce` or `:TRIGger:FORCe`)."""
-    if not ROW.match(line):
-        return []
-    # the first cell ends at the first ` | ` outside backticks (a `|` inside them separates choices)
-    cell, inside = "", False
-    for i, ch in enumerate(line[1:], 1):
-        inside ^= ch == "`"
-        if not inside and line.startswith(" | ", i):
-            break
-        cell += ch
+def relative(parts):
+    """The commands among the backticked `parts` of one cell or sentence, without their arguments, written out in full.
+    Only a span that starts with `:` or `*` is a command. One with fewer nodes than the last absolute one before it is
+    relative to that and replaces as many of its last nodes (`:WAVeform:STARt[?]` / `:STOP[?]` is `:WAVeform:STOP[?]`,
+    `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` is `:BUS<n>:IIC:SDA:SOURce[?]`); one with as many or more, or one
+    that starts with the same first node, is absolute (`:TFORce` or `:TRIGger:FORCe`; `:LA:DIGital<n>:DISPlay[?]`,
+    `:LA:POINts?`)."""
     out, base = [], None
-    for span in re.findall(r"`([^`]+)`", cell):
+    for span in parts:
         if not span.startswith((":", "*")):
             continue
         cmd = span.split(" ")[0]
         ns = nodes(cmd)
-        if base is not None and cmd.startswith(":") and len(ns) < len(base):
+        if base is not None and cmd.startswith(":") and len(ns) < len(base) and ns[0].upper() != base[0].upper():
             cmd = ":" + ":".join(base[:len(base) - len(ns)] + ns)
         else:
             base = ns
@@ -157,11 +161,60 @@ def row_commands(line):
     return out
 
 
+def spans(text):
+    """The backticked parts of a text."""
+    return re.findall(r"`([^`]+)`", text)
+
+
+def cells(line):
+    """The cells of a table row, split at the ` | ` outside backticks (a `|` inside them separates choices)."""
+    out, cell, inside = [], "", False
+    for i, ch in enumerate(line[1:], 1):
+        inside ^= ch == "`"
+        if not inside and line.startswith(" | ", i):
+            out.append(cell)
+            cell = ""
+        else:
+            cell += ch
+    return out + [cell]
+
+
+def sentences(text):
+    """The sentences of a paragraph, split at a `.`, `?` or `!` outside backticks that ends the text or is followed by a
+    space."""
+    out, cur, inside = [], "", False
+    for i, ch in enumerate(text):
+        inside ^= ch == "`"
+        cur += ch
+        if ch in ".?!" and not inside and text[i + 1:i + 2] in ("", " "):
+            out.append(cur)
+            cur = ""
+    return out + [cur] if cur.strip() else out
+
+
+def scopes(scpi_md):
+    """The parts of scpi.md a relative command refers within: each cell of a table row, and each sentence of the
+    running text (a paragraph is the lines between empty lines, tables and fenced code; code is no part)."""
+    out, para, fenced = [], [], False
+    for line in scpi_md.split("\n") + [""]:
+        if line.startswith("```"):
+            fenced = not fenced
+        if fenced or line.startswith(("```", "|")) or not line.strip():
+            out += sentences(" ".join(para))
+            para = []
+            if not fenced and line.startswith("|"):
+                out += cells(line)
+            continue
+        para.append(line.strip())
+    return out
+
+
 def documented_queries(scpi_md):
-    """Every command of the first cell of each table row of scpi.md (row_commands) that is a query, once each."""
+    """Every command named in backticks anywhere in scpi.md, in a table cell or in the running text (relative, within
+    its cell or sentence), that is a query, once each."""
     out = []
-    for line in scpi_md.split("\n"):
-        for cmd in row_commands(line):
+    for part in scopes(scpi_md):
+        for cmd in relative(spans(part)):
             if cmd.endswith(("?", "[?]")) and cmd not in out:
                 out.append(cmd)
     return out
@@ -237,8 +290,13 @@ def counts(root):
     unasked = []
     for q in queries:
         pat = re.compile(query_pattern(q), re.IGNORECASE)
-        if not any(pat.fullmatch(c) for c in cmds):
+        hit = any(pat.fullmatch(c) for c in cmds)
+        if q in NOT_ASKED and hit:
+            unasked.append("%s (in NOT_ASKED, but asked: remove it from the list)" % q)
+        elif q not in NOT_ASKED and not hit:
             unasked.append(q)
+    unasked += ["%s (in NOT_ASKED, but not in %s: remove it from the list)" % (q, SCPI_MD)
+                for q in NOT_ASKED if q not in queries]
     return [
         ("words-docs", "command words of %s not in %s" % (SCPI_RS, SCPI_MD),
          [w for w in words if not named(w, scpi_md)], len(words)),
@@ -318,6 +376,9 @@ def main(argv):
             print("%s: %d of %d %s" % (key, len(missing), total, what))
             for name in missing:
                 print("  " + name)
+        print("not asked on purpose: %d queries of %s (NOT_ASKED)" % (len(NOT_ASKED), SCPI_MD))
+        for q, why in NOT_ASKED.items():
+            print("  %s: %s" % (q, why))
     else:
         print("scpi-coverage: " + ", ".join("%s %d/%d" % (k, len(m), t) for k, _, m, t in result) +
               " missing (--list names them)")
