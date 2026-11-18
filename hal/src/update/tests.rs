@@ -1004,3 +1004,28 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     assert!(e.contains("device tree"), "{}", e);
     assert_eq!(f.st().kexec, None);
 }
+
+/// The same tree with kexec-tools there: the start goes through kexec-tools too (kexec_file_load put a 68 MB initramfs
+/// over the loader's reserved ramdisk area on the unit), with the running tree as the loader left it, without the old
+/// ramdisk's place.
+#[test]
+fn kexec_stage_takes_kexec_tools_for_the_same_tree_too() {
+    let f = Fake::new("kexec-sametree", None);
+    let old = rsce(&dtb(&[("model", b"DHO\0")], vec![chosen(b"a\0")]));
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let p = pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_second(2, old.clone()), &[kexec::LINE]).unwrap();
+    let mut loader = chosen(b"a loader\0");
+    loader.props.push(("linux,initrd-start".into(), vec![0, 0, 0, 0, 0x0a, 0, 0, 0]));
+    let running = dtb(&[("model", b"DHO\0")], vec![loader]);
+    let (r, staged) =
+        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
+    assert!(r.lines.iter().any(|l| l.contains("device tree: the same")), "{:?}", r.lines);
+    let t = fdt::Fdt::parse(staged.expect("a kexec start").tree.as_deref().expect("through kexec-tools")).unwrap();
+    assert_eq!(t.root.kids[0].prop("bootargs"), Some(&b"a loader\0"[..]), "the running tree");
+    assert_eq!(t.root.kids[0].prop("linux,initrd-start"), None, "without the old ramdisk");
+    // a build without kexec-tools: kexec_file_load, as before
+    let f = Fake::new("kexec-sametree-notool", None);
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let (_, staged) = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, None).unwrap();
+    assert!(staged.expect("a kexec start").tree.is_none());
+}

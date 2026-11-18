@@ -299,8 +299,12 @@ fn install(a: &Args) {
     }
     let booted = std::fs::read(kexec::BOOTED_DT).ok();
     let running = update::running_build();
-    // another device tree can be tried with kexec-tools, from the tree the running kernel got
-    let running_tree = Path::new(kexec::TOOL).exists().then(|| std::fs::read(kexec::RUNNING_TREE).ok()).flatten();
+    // with kexec-tools every kexec start goes through it, from the tree the running kernel got; a tree that cannot be
+    // read stops here rather than fall back to kexec_file_load, which puts a large initramfs where the loader and the
+    // GIC keep theirs
+    let running_tree = Path::new(kexec::TOOL).exists().then(|| {
+        std::fs::read(kexec::RUNNING_TREE).unwrap_or_else(|e| die(&format!("{}: {}", kexec::RUNNING_TREE, e)))
+    });
     match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref(), running_tree.as_deref()) {
         Err(e) if e.contains("device tree") => die(&format!(
             "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
