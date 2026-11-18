@@ -87,8 +87,8 @@ pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {
 /// record (at most about `PERIOD` old).
 pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
     let Some(f) = f.filter(|f| deep_pairs(f)) else { return false };
-    // the thread reads no raw window while the LA records (`deep_raw_settings` in board/dho/hw.rs): holding for one
-    // would freeze the measurements
+    // the thread reads no raw window while the LA records (`deep_raw_settings` in board/dho/hw/plan.rs): holding for
+    // one would freeze the measurements
     if m.la_on() {
         return false;
     }
