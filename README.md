@@ -154,7 +154,7 @@ For how the hardware works, see the [hardware overview](https://dekajoule.github
 - **Measurement and maths**: 35 automatic measurements with statistics, cursors, DVM, a frequency counter in the FPGA,
   a second pane (spectrum, results, events, trends), data logger, 8 math channels with free formulas, references,
   mask test
-- **26 protocol decoders**, from UART, I2C and SPI to CAN-FD, MIL-STD-1553 and NMRA DCC
+- **29 protocol decoders**, from UART, I2C and SPI to CAN-FD, MIL-STD-1553 and NMRA DCC
 - **Analysers**: spectrum, eye diagram and jitter, power, Bode with the built-in or an external generator, bandwidth
   test, Identify
 - **Logic analyser** with the PLA2216 probe, and the **generator** of S models

@@ -36,10 +36,10 @@ removes it again. **Measure > Dock** moves the strip to the left, the right, or 
 
 ## Analysers
 
-**Menu > Analysers** holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. They replace the
-waveform. **Eye / jitter** opens as a full analysis page with optional side or lower panes; its source and rate
-settings and **Close** are in its pane header. The other analyser views have three dots at the top right, which lead to
-**Exit**, **Settings** and what fits the view.
+**Menu > Analysers** holds Spectrum, Eye / jitter, Power analysis, Bode, the bandwidth test, Magnetic, Inverter and
+Double pulse. They replace the waveform. **Eye / jitter** opens as a full analysis page with optional side or lower
+panes; its source and rate settings and **Close** are in its pane header. The other analyser views have three dots
+at the top right, which lead to **Exit**, **Settings** and what fits the view.
 
 If the source of an analyser is switched off, choose another one in its Settings. From 0.1.1 on it takes the first channel that is on by itself.
 

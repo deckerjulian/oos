@@ -43,13 +43,13 @@ in the README. How to use it: the guides listed on [[Home]].
   integrate, differentiate, abs, sqrt, log, ln, exp, Ax+B, low/high/band-pass and band-stop filters, FFT
 - Reference waveforms with scale, offset, colour, name and CSV export and import, mask test
 
-**Protocol decoders (26)**
+**Protocol decoders (29)**
 - Four decoders at once, with an event table you can export and that jumps to an event; DCC lists one command per row
   ("Loco 5  Fwd 50/128")
 - Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
 - Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
 - Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
-- Other: USB low/full speed, USB PD, parallel
+- Other: USB low/full speed, USB PD, parallel, C-PHY, Manchester, MLT-3
 - Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
   locomotives, turnouts, signals, and the track status, green while live and red after an emergency stop
 - New decoders come as protocol modules: one file, one registration
@@ -68,6 +68,11 @@ in the README. How to use it: the guides listed on [[Home]].
   sync output
 - Identify: names a signal and sets up a trigger and decoder for it
 - Bandwidth test: rise time, overshoot and magnitude response from a fast edge
+- Magnetic: inductance of a winding, B, H and relative permeability once the core geometry is set, cycle loss, and
+  the loop of current over flux
+- Inverter: the DQ0 transform of three phases, and speed, direction and angle from a shaft source
+- Double pulse: one turn-off and one turn-on of a switch, with peak voltage and current, switching times and energies
+  and the reverse recovery charge
 
 **Logic analyser** (models with an LA port, PLA2216 probe)
 - D0..D15, hardware trigger on the digital lines, also in roll and scan mode. Thresholds are set as under stock, but on
