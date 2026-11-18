@@ -1,9 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Bluetooth through bluetoothd on the system bus (docs/bluetooth.md, ADR 0026): the adapter, the devices it knows,
-//! discovery, pairing, connecting and removing, and the pairing agent that shows a keyboard's passkey. `/bin/oos-bt`
-//! runs bluetoothd; this module talks to it over `dbus.rs`. The parsing (`objects`, `agent`) is pure and tested on
+//! Bluetooth through bluetoothd on the system bus: the adapter, the devices it knows, discovery, pairing, connecting
+//! and removing, and the pairing agent that shows a keyboard's passkey. The interfaces are BlueZ's own, as its API
+//! documents of 5.82 describe them (`doc/org.bluez.Adapter.rst`, `Device.rst`, `Agent.rst`, `AgentManager.rst`);
+//! how the scope runs bluetoothd comes with the image (`/bin/oos-bt`). This module talks to it over `dbus.rs`. The parsing (`objects`, `agent`) is pure and tested on
 //! the host; the calls need the bus of a unit.
 
 use crate::dbus::{Conn, Handler, Message, Value, SYSTEM_BUS};

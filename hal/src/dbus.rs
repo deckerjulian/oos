@@ -254,9 +254,12 @@ impl Reader<'_> {
         Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
 
+    /// A string, a path or a signature: UTF-8 as it is (no replacement), and the NUL the specification puts after it.
     fn string(&mut self, len: usize) -> Result<String, String> {
-        let s = String::from_utf8_lossy(self.take(len)?).into_owned();
-        self.take(1)?;
+        let s = String::from_utf8(self.take(len)?.to_vec()).map_err(|_| "a string that is not UTF-8")?;
+        if self.take(1)? != [0] {
+            return Err("a string without its NUL".into());
+        }
         Ok(s)
     }
 
@@ -333,6 +336,12 @@ impl Reader<'_> {
                     items.push(self.value(e)?);
                     if self.p == at {
                         return Err(format!("array of '{}' does not advance", String::from_utf8_lossy(e)));
+                    }
+                    if self.p > end {
+                        return Err(format!(
+                            "an element of '{}' past the end of its array",
+                            String::from_utf8_lossy(e)
+                        ));
                     }
                 }
                 Value::Array(String::from_utf8_lossy(e).into_owned(), items)
@@ -770,6 +779,11 @@ mod tests {
         // header fields that end before the padding to 8 bytes, without the padding, and no body
         let cut = [b'l', METHOD_RETURN, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 9, 1, b'y', 0, 7];
         assert!(Message::decode(&cut).unwrap().body.is_empty());
+        // a string that is not UTF-8, one without its NUL, and an element past the end of its array (review of #204)
+        assert!(Message::decode(&raw("s", &[1, 0, 0, 0, 0xff, 0])).is_err());
+        assert!(Message::decode(&raw("s", &[1, 0, 0, 0, b'x', b'y'])).is_err());
+        assert!(Message::decode(&raw("as", &[4, 0, 0, 0, 1, 0, 0, 0, b'x', 0])).is_err());
+        assert!(Message::decode(&raw("as", &[6, 0, 0, 0, 1, 0, 0, 0, b'x', 0])).is_ok());
         // and what is right still decodes
         let ok = Message::decode(&raw("v", &[1, b'y', 0, 7])).unwrap();
         assert_eq!(ok.body, vec![Value::Variant(Box::new(Value::Byte(7)))]);
