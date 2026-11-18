@@ -93,3 +93,41 @@ fn levels(l: &Levels, dt: f64) -> Vec<f32> {
     let end = l.seg.last().map_or(0.0, |s| s.0);
     sample(|t| l.v(t), 0.0, dt, (end / dt) as usize)
 }
+
+/// The files of `dsp/src/decode/` that have no module of tests here, each with the reason. One in this list that has
+/// a module here fails the test, so the list only gets shorter.
+const NO_TESTS_HERE: [(&str, &str); 3] = [
+    ("crc", "the CRC engine of the decoders: its tests are in its own file, and every family's tests run it"),
+    ("gen", "the generators: they make the signals the tests of every family decode"),
+    ("usb_bus", "the line states of USB that the packet decoder reads: the tests of `usb` run it"),
+];
+
+/// Every protocol family of `dsp/src/decode.rs` has its module of tests here, with a test in it, or stands in
+/// `NO_TESTS_HERE` with the reason. A new family fails here until its tests are written.
+#[test]
+fn every_decoder_family_has_its_tests() {
+    let (families, here) = (include_str!("../../src/decode.rs"), include_str!("main.rs"));
+    let mut n = 0;
+    for line in families.lines() {
+        let line = line.strip_prefix("pub(crate) ").or(line.strip_prefix("pub ")).unwrap_or(line);
+        let Some(family) = line.strip_prefix("mod ").and_then(|l| l.strip_suffix(';')) else { continue };
+        n += 1;
+        let tested = here.lines().any(|l| l == format!("mod {};", family));
+        match NO_TESTS_HERE.iter().find(|x| x.0 == family) {
+            Some(x) => {
+                assert!(!tested && !x.1.is_empty(), "{}: it has its tests, take it out of NO_TESTS_HERE", family)
+            }
+            None => {
+                assert!(
+                    tested,
+                    "{}: no `mod {};` in dsp/tests/decode/main.rs, and no reason in NO_TESTS_HERE",
+                    family, family
+                );
+                let file = format!("{}/tests/decode/{}.rs", env!("CARGO_MANIFEST_DIR"), family);
+                let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {}", file, e));
+                assert!(text.contains("#[test]"), "{}: no test in dsp/tests/decode/{}.rs", family, family);
+            }
+        }
+    }
+    assert!(n > NO_TESTS_HERE.len(), "dsp/src/decode.rs names its families as `mod <family>;`");
+}
