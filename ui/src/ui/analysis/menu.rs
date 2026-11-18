@@ -7,7 +7,6 @@
 
 use super::*;
 
-const TRACES: [&str; 4] = ["Normal", "Average", "Max hold", "Min hold"];
 const POWER_MODES: [PowerMode; 6] = [
     PowerMode::Quality,
     PowerMode::Harmonics,
@@ -29,14 +28,7 @@ fn power_page(p: PowerMode) -> &'static str {
 }
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
-/// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
-fn freq_ladder() -> Vec<f64> {
-    decades(0, 10, true)
-}
-
-fn step_ladder(v: f64, d: i32) -> f64 {
-    ladder_step(&freq_ladder(), v, d, 0)
-}
+use crate::settings::spectrum::freq_step as step_ladder;
 
 impl Ui {
     /// Remote view changes must refresh stopped references too: there may be no
@@ -49,12 +41,8 @@ impl Ui {
 
     pub(in crate::ui) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecCenter
-            | Item::SpecSpan
+            Item::SpecSpan
             | Item::SpecRbw
-            | Item::SpecRef
-            | Item::SpecAcprW
-            | Item::SpecAcprS
             | Item::EyeRate
             | Item::EyeBer
             | Item::EyePnLo
@@ -69,17 +57,12 @@ impl Ui {
             | Item::EyeClear
             | Item::EyeAct
             | Item::IdentifyAct => Kind::Action,
-            Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
             // a finding is a row with its summary as the only option: tapping it applies it
             Item::IdFind(_) => Kind::Choice,
             Item::SpecOn
             | Item::SpecSrc
             | Item::SpecHarm
-            | Item::SpecWin
-            | Item::SpecTrace
-            | Item::SpecWf
-            | Item::SpecDist
             | Item::EyeOn
             | Item::EyePlace
             | Item::EyeSrc
@@ -106,19 +89,12 @@ impl Ui {
             Item::ProtoWatch => "Protocol watch",
             Item::SpecOn | Item::EyeOn | Item::PowOn => "View",
             Item::SpecSrc | Item::EyeSrc => "Source",
-            Item::SpecCenter => "Centre",
             Item::SpecSpan => "Span",
             Item::SpecHarm => "Harmonics",
             Item::SpecRbw => "RBW",
-            Item::SpecWin => "Window",
-            Item::SpecTrace => "Trace",
-            Item::SpecRef => "Ref level",
-            Item::SpecWf => "Waterfall",
-            Item::SpecDist => "THD / SNR",
             Item::SpecPeak => "Centre on peak",
             Item::SpecLimitSet => "Limit from trace",
             Item::SpecLimitClear => "Clear limit",
-            Item::SpecMargin => "Limit margin",
             Item::EyeAct => "Auto Eye/Jitter",
             Item::EyePlace => "Place",
             Item::EyeRate => "Bit rate",
@@ -139,8 +115,6 @@ impl Ui {
             Item::PowVin => "Input",
             Item::PowRef => "Reference",
             Item::PowClk => "Clock",
-            Item::SpecAcprW => "Ch width",
-            Item::SpecAcprS => "Ch space",
             Item::IdFind(k) => FIND_LABELS[k.min(7)],
             _ => return None,
         })
@@ -163,7 +137,6 @@ impl Ui {
             Item::EyeSrc => self.wave_name(m.eye_src),
             Item::PowV => self.wave_name(m.pw_v),
             Item::PowI => self.wave_name(m.pw_i),
-            Item::SpecCenter => si_short(m.spec_center, "Hz"),
             Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
             Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => {
                 format!("Auto {}", si_short(self.azr.spec_stop, "Hz"))
@@ -175,11 +148,6 @@ impl Ui {
                 _ if m.spec_rbw == 0.0 => "Auto".into(),
                 _ => si_short(m.spec_rbw, "Hz"),
             },
-            Item::SpecWin => m.spec_win.name().into(),
-            Item::SpecTrace => TRACES[m.spec_trace.min(3)].into(),
-            Item::SpecRef => format!("{:.0} dBV", m.spec_ref),
-            Item::SpecWf => onoff(m.spec_wf),
-            Item::SpecDist => onoff(m.spec_dist),
             Item::EyeRate => {
                 if m.eye_from_record && m.eye_rate > 0.0 {
                     format!("{} from record", si_short(m.eye_rate, "b/s"))
@@ -221,8 +189,6 @@ impl Ui {
             Item::PowVin => m.pw_vin.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::PowRef => m.pw_ref.map(|v| si_short(v, "V")).unwrap_or_else(|| "Top".into()),
             Item::PowClk => m.pw_clk.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
-            Item::SpecAcprW => si_short(m.spec_acpr_w, "Hz"),
-            Item::SpecAcprS => si_short(m.spec_acpr_s, "Hz"),
             Item::IdFind(k) => self.azr.findings.get(k).map_or(String::new(), |f| {
                 // the whole text: the row's button draws it in the largest font that fits
                 format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary)
@@ -233,7 +199,6 @@ impl Ui {
             | Item::EyeClear
             | Item::EyeAct
             | Item::IdentifyAct => String::new(),
-            Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),
             _ => return None,
         })
     }
@@ -241,20 +206,13 @@ impl Ui {
     pub(in crate::ui) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn
-            | Item::EyeOn
-            | Item::PowOn
-            | Item::SpecWf
-            | Item::SpecDist
-            | Item::EyeHp
-            | Item::EyeNpj
-            | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::EyeHp | Item::EyeNpj | Item::ProtoWatch => {
+                v(&["Off", "On"])
+            }
             Item::EyePlace => v(&["Full", "Side", "Under"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
-            Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
-            Item::SpecTrace => v(&TRACES),
             Item::PowMode => POWER_MODES.iter().map(|p| power_page(*p).to_string()).collect(),
             Item::IdFind(_) => vec![self.ana_value(it).unwrap_or_default()],
             _ => return None,
@@ -308,11 +266,7 @@ impl Ui {
                 Item::PowV => self.m.pw_v = next,
                 _ => self.m.pw_i = next,
             }
-            self.azr.spec_avg = None;
-            if let Some(w) = &mut self.azr.wf {
-                w.clear();
-            }
-            self.analyzer_update();
+            self.ana_restart();
             return true;
         }
         if matches!(it, Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk) {
@@ -338,22 +292,12 @@ impl Ui {
             Item::SpecOn => view(m, AView::Spectrum),
             Item::EyeOn => view(m, AView::Eye),
             Item::PowOn => view(m, AView::Power),
-            Item::SpecCenter => m.spec_center = step_ladder(m.spec_center, d),
             Item::SpecSpan => m.spec_span = step_ladder(m.spec_span, d),
             Item::SpecRbw => m.spec_rbw = step_ladder(m.spec_rbw, d),
             Item::SpecHarm => {
                 m.spec_harm = cycle(m.spec_harm, PANE_HARMS.len(), d);
                 self.azr.spec_stop = 0.0;
             }
-            Item::SpecMargin => m.spec_margin = (m.spec_margin + d as f32).clamp(0.0, 60.0),
-            Item::SpecWin => {
-                let w = crate::math::WINDOWS;
-                m.spec_win = w[cycle(w.iter().position(|&x| x == m.spec_win).unwrap_or(0), w.len(), d)];
-            }
-            Item::SpecTrace => m.spec_trace = cycle(m.spec_trace, 4, d),
-            Item::SpecRef => m.spec_ref += 5.0 * d as f32,
-            Item::SpecWf => m.spec_wf = !m.spec_wf,
-            Item::SpecDist => m.spec_dist = !m.spec_dist,
             Item::EyeRate => {
                 m.eye_rate = step_ladder(m.eye_rate, d);
                 m.eye_from_record = false;
@@ -373,8 +317,6 @@ impl Ui {
             Item::EyePnHi => m.eye_pn_hi = step_ladder(m.eye_pn_hi, d).max(1.0),
             Item::EyeNpj => m.eye_npj = !m.eye_npj,
             Item::EyeNotch => m.eye_notch = step_ladder(m.eye_notch, d),
-            Item::SpecAcprW => m.spec_acpr_w = step_ladder(m.spec_acpr_w.max(1.0), d).max(1.0),
-            Item::SpecAcprS => m.spec_acpr_s = step_ladder(m.spec_acpr_s.max(1.0), d).max(1.0),
             Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),
             Item::PowFsw => m.pw_fsw = step_ladder(m.pw_fsw, d),
             Item::PowRef => {
@@ -388,13 +330,17 @@ impl Ui {
             }
             _ => return false,
         }
-        // the averaging/waterfall/eye restart on any analyser change
+        self.ana_restart();
+        true
+    }
+
+    /// After a change of an analyser's setting: the averaging and the waterfall start again, the page updates.
+    pub(in crate::ui) fn ana_restart(&mut self) {
         self.azr.spec_avg = None;
         if let Some(w) = &mut self.azr.wf {
             w.clear();
         }
         self.analyzer_update();
-        true
     }
 
     /// Runs an analyser action; false = not one.

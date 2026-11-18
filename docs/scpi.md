@@ -307,6 +307,25 @@ by hand.
 | `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
 <!-- settings:bode:end -->
 
+The settings of the spectrum page and their keys in a setup file. No command sets them yet. They are declared once,
+in `ui/src/settings/spectrum.rs`, and this table is written from there like the one above. A key of two words names a
+field of a setup line of several values (`spec` (center) is the centre field of the `spec` line). The source, the
+span, the RBW and the harmonics of the pane are written by hand.
+
+<!-- settings:spectrum:begin -->
+| Command | Takes | Setup key | Spectrum menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (center) | Centre | The centre of the band the page shows (with a span), and the frequency Centre on peak sets. The menu steps 1-2-5. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (win) | Window | The window the record is multiplied with before the transform. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (trace) | Trace | What the trace shows of the spectra one after the other: the last one, their average, or the largest or smallest value of each frequency. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (ref) | Ref level | The level at the top of the plot, in dBV. The menu steps by 5 dB. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (wf) | Waterfall | The spectra one after the other as a waterfall under the trace. |
+| none | none yet: the page is set in its menu and by a setup file | `spec` (dist) | THD / SNR | The distortion figures of the largest component (THD, THD+N, SNR, SINAD, SFDR, ENOB) on the page. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_acpr` (width) | Ch width | The width of the main channel and of its neighbours for the adjacent channel power ratio. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_acpr` (spacing) | Ch space | The distance from the centre of the main channel to the centres of its neighbours. The menu steps 1-2-5 from 1 Hz. |
+| none | none yet: the page is set in its menu and by a setup file | `spec_margin` | Limit margin | How far above the trace (its highest level nearby) Limit from trace puts the limit line, 0 to 60 dB. |
+<!-- settings:spectrum:end -->
+
 ## Cursors, DVM and counter
 
 | Command | Meaning |

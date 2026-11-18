@@ -26,6 +26,7 @@ pub const HIST: [Setting; 1] = [Setting {
     #[cfg(test)]
     doc: "The waveform histogram of the Display menu: off, vertical or horizontal.",
     accept: None,
+    step: None,
     get: |m, _| Val::Index(ALL.iter().position(|&h| h == m.hist).unwrap_or(0)),
     put: |m, _, v| m.hist = ALL[v.index()],
 }];

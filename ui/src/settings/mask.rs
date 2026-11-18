@@ -26,6 +26,7 @@ pub const ON: [Setting; 1] = [Setting {
     doc: "The pass/fail test of the source against the mask. A mask needs accepted channel data; enabling it does \
           not prove a valid mask or a physical pass/fail result.",
     accept: None,
+    step: None,
     get: |m, _| Val::Bool(m.mask_on),
     put: |m, _, v| m.mask_on = v.index() != 0,
 }];
@@ -43,6 +44,7 @@ pub const TEST: [Setting; 2] = [
         #[cfg(test)]
         doc: "What a failed waveform does: None goes on, Stop stops the acquisition.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.mask_stop),
         put: |m, _, v| m.mask_stop = v.index() != 0,
     },
@@ -58,6 +60,7 @@ pub const TEST: [Setting; 2] = [
         doc: "Turns the mask round: the band becomes the forbidden region, and a waveform passes where it stays \
               outside it.",
         accept: None,
+        step: None,
         get: |m, _| Val::Bool(m.mask_inv),
         put: |m, _, v| m.mask_inv = v.index() != 0,
     },

@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 46] = [
+const ITEMS: [(Item, &str); 55] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -55,6 +55,15 @@ const ITEMS: [(Item, &str); 46] = [
     (Item::Histogram, "hist"),
     (Item::BodeMode, "bode_mode"),
     (Item::LaOn, "la on"),
+    (Item::SpecCenter, "spec center"),
+    (Item::SpecWin, "spec win"),
+    (Item::SpecTrace, "spec trace"),
+    (Item::SpecRef, "spec ref"),
+    (Item::SpecWf, "spec wf"),
+    (Item::SpecDist, "spec dist"),
+    (Item::SpecAcprW, "spec_acpr width"),
+    (Item::SpecAcprS, "spec_acpr spacing"),
+    (Item::SpecMargin, "spec_margin"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -131,6 +140,20 @@ impl Ui {
                 }
                 return true;
             }
+            // an analyser page starts its averaging again and leaves the rest as it is (no `settings_changed`), as
+            // before the table
+            Item::SpecCenter
+            | Item::SpecWin
+            | Item::SpecTrace
+            | Item::SpecRef
+            | Item::SpecWf
+            | Item::SpecDist
+            | Item::SpecAcprW
+            | Item::SpecAcprS
+            | Item::SpecMargin => {
+                self.ana_restart();
+                return true;
+            }
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -157,7 +180,7 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode, MenuId::La, MenuId::Spectrum]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))

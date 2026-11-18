@@ -11,9 +11,10 @@
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
 //! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
 //! settings (settings/channel.rs), the draw path (settings/system.rs), the switches of the mask test
-//! (settings/mask.rs), the histogram (settings/histogram.rs), the mode of the Bode page (settings/bode.rs) and the
-//! switch of the logic analyser (settings/la.rs) have tables; the other settings are still
-//! written out by hand in each of those places. A numbered family is one row for all its instances: `<n>` in its key
+//! (settings/mask.rs), the histogram (settings/histogram.rs), the mode of the Bode page (settings/bode.rs), the
+//! switch of the logic analyser (settings/la.rs) and the spectrum page (settings/spectrum.rs) have tables; the other
+//! settings are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real`
+//! rows (f64 fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key
 //! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
 //! numbered).
 //! A new setting of a group with a table is a row there, its `Item` with its place in a menu (ui/item.rs,
@@ -31,6 +32,7 @@ pub mod la;
 pub mod mask;
 pub mod math;
 pub mod meters;
+pub mod spectrum;
 pub mod system;
 pub mod trigger;
 
@@ -41,8 +43,10 @@ pub enum Val {
     U32(u32),
     /// a choice by its place in the list
     Index(usize),
-    /// seconds
+    /// seconds, hertz, or a real number of an f32 field
     F32(f32),
+    /// a real number of an f64 field
+    F64(f64),
 }
 
 impl Val {
@@ -52,13 +56,23 @@ impl Val {
             Val::U32(n) => n as usize,
             Val::Index(i) => i,
             Val::F32(x) => x as usize,
+            Val::F64(x) => x as usize,
         }
     }
 
     fn secs(self) -> f32 {
         match self {
             Val::F32(x) => x,
+            Val::F64(x) => x as f32,
             v => v.index() as f32,
+        }
+    }
+
+    fn real(self) -> f64 {
+        match self {
+            Val::F32(x) => x as f64,
+            Val::F64(x) => x,
+            v => v.index() as f64,
         }
     }
 }
@@ -82,6 +96,12 @@ pub enum Ty {
     Seconds { ladder: fn(f32, i32) -> f32, zero: Option<&'static str> },
     /// hertz, as `Seconds` without `zero`; the menu shows `<n> Hz`
     Hertz { ladder: fn(f32, i32) -> f32 },
+    /// a real number as its field keeps it: `Val::F64` in a setup in Rust's shortest exact form, read as `str::parse`
+    /// reads it (`inf` and `NaN` too, with its error text, as the setup lines of the analyser pages read theirs), or
+    /// `Val::F32` for an f32 field, its shortest form, read as a finite number; within `range` when the row has one,
+    /// wherever it comes from. Over SCPI a number (within `accept` when the row has it), the query answers
+    /// `1.000000E+03`. The menu shows `shown` of it and steps by the row's `step`, which such a row has
+    Real { range: Option<(f64, f64)>, shown: fn(f64) -> String },
     /// a setting whose words follow none of the rules above
     Custom(&'static CustomIo),
 }
@@ -150,6 +170,9 @@ pub struct Setting {
     /// the SCPI input range of a `U32` when it differs from `min..=max` (a value in it is then kept within those),
     /// of `Seconds` when it has one
     pub accept: Option<(f64, f64)>,
+    /// the menu's step when it is not the type's: the value `d` steps from the one in the model (a ladder of the row's
+    /// own, a clamp against another field); None takes the type's step
+    pub step: Option<fn(&Model, usize, i32) -> Val>,
     /// the value of instance n (0 for a row that is not numbered)
     pub get: fn(&Model, usize) -> Val,
     pub put: fn(&mut Model, usize, Val),
@@ -170,6 +193,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(histogram::SLICES)
         .chain(bode::SLICES)
         .chain(la::SLICES)
+        .chain(spectrum::SLICES)
         .flat_map(|g| g.iter())
 }
 
@@ -211,11 +235,14 @@ impl Setting {
     pub fn store(&self, m: &Model, n: usize) -> String {
         let v = (self.get)(m, n);
         match &self.ty {
-            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. } => match v {
-                Val::Bool(b) => b.to_string(),
-                Val::F32(x) => x.to_string(),
-                v => v.index().to_string(),
-            },
+            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. } | Ty::Real { .. } => {
+                match v {
+                    Val::Bool(b) => b.to_string(),
+                    Val::F32(x) => x.to_string(),
+                    Val::F64(x) => x.to_string(),
+                    v => v.index().to_string(),
+                }
+            }
             Ty::Choice(list, ..) => list[v.index()].store.to_string(),
             Ty::Custom(io) => (io.store)(v),
         }
@@ -237,6 +264,13 @@ impl Setting {
                 })?)
             }
             Ty::Seconds { .. } | Ty::Hertz { .. } => Val::F32(crate::store::p_f32(text)?),
+            Ty::Real { range, .. } => {
+                let (lo, hi) = range.unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+                match (self.get)(m, n) {
+                    Val::F32(_) => Val::F32(crate::store::p_f32(text)?.clamp(lo as f32, hi as f32)),
+                    _ => Val::F64(crate::store::p_f64(text)?.clamp(lo, hi)),
+                }
+            }
             Ty::Custom(io) => (io.load)(text)?,
         };
         (self.put)(m, n, v);
@@ -251,6 +285,7 @@ impl Setting {
             Ty::U32 { .. } | Ty::Steps(_) => v.index().to_string(),
             Ty::Choice(list, ..) => short(list[v.index()].scpi),
             Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::e(v.secs() as f64),
+            Ty::Real { .. } => crate::scpi::e(v.real()),
             Ty::Custom(io) => (io.query)(v),
         }
     }
@@ -281,6 +316,21 @@ impl Setting {
             Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::num(arg)
                 .filter(|&x| self.accept.is_none_or(|(lo, hi)| (lo..=hi).contains(&(x as f64))))
                 .map(Val::F32),
+            Ty::Real { range, .. } => {
+                let (lo, hi) = range.unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+                let within = |x: f64| self.accept.is_none_or(|(a, b)| (a..=b).contains(&x));
+                match (self.get)(m, n) {
+                    Val::F32(_) => crate::scpi::num(arg)
+                        .filter(|&x| within(x as f64))
+                        .map(|x| Val::F32(x.clamp(lo as f32, hi as f32))),
+                    _ => arg
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|&x| x.is_finite() && within(x))
+                        .map(|x| Val::F64(x.clamp(lo, hi))),
+                }
+            }
             Ty::Custom(io) => (io.take)(arg),
         };
         v.map(|v| (self.put)(m, n, v)).is_some()
@@ -288,7 +338,7 @@ impl Setting {
 
     /// The menu row is a number with - and + (a choice otherwise).
     pub fn is_number(&self) -> bool {
-        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. })
+        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. } | Ty::Real { .. })
     }
 
     /// The menu's options (none for a number but the steps of `Steps`).
@@ -296,7 +346,7 @@ impl Setting {
         let labels: Vec<&str> = match &self.ty {
             Ty::Steps(list) => return list.iter().map(u32::to_string).collect(),
             Ty::Bool => vec!["Off", "On"],
-            Ty::U32 { .. } | Ty::Seconds { .. } | Ty::Hertz { .. } => Vec::new(),
+            Ty::U32 { .. } | Ty::Seconds { .. } | Ty::Hertz { .. } | Ty::Real { .. } => Vec::new(),
             Ty::Choice(list, ..) => list.iter().map(|c| c.label).collect(),
             Ty::Custom(io) => io.labels.to_vec(),
         };
@@ -313,13 +363,18 @@ impl Setting {
             Ty::Seconds { zero: Some(z), .. } if v.secs() <= 0.0 => z.to_string(),
             Ty::Seconds { .. } => si_short(v.secs() as f64, "s"),
             Ty::Hertz { .. } => si_short(v.secs() as f64, "Hz"),
+            Ty::Real { shown, .. } => shown(v.real()),
             _ => self.options()[v.index()].clone(),
         }
     }
 
-    /// A step of the menu row by `d`: a number by `d` steps within its range, a list round by `d`; a switch or a list
-    /// of two changes on every step.
+    /// A step of the menu row by `d`: the row's own step when it has one; else a number by `d` steps within its
+    /// range, a list round by `d`, and a switch or a list of two changes on every step.
     pub fn step(&self, m: &mut Model, n: usize, d: i32) {
+        if let Some(step) = self.step {
+            let v = step(m, n, d);
+            return (self.put)(m, n, v);
+        }
         let v = (self.get)(m, n);
         let v = match (&self.ty, v) {
             (_, Val::Bool(b)) => Val::Bool(!b),
@@ -332,6 +387,8 @@ impl Setting {
                 Val::U32(list[step_index(i.unwrap_or(0), list.len(), d)])
             }
             (Ty::Seconds { ladder, .. } | Ty::Hertz { ladder }, v) => Val::F32(ladder(v.secs(), d)),
+            // a real number steps by its row's step only
+            (Ty::Real { .. }, v) => v,
             (_, v) => {
                 let n = self.options().len();
                 Val::Index(if n == 2 { 1 - v.index() } else { cycle(v.index(), n, d) })
@@ -370,6 +427,10 @@ impl Setting {
                 None => "seconds".into(),
             },
             Ty::Hertz { .. } => "hertz".into(),
+            Ty::Real { .. } => match self.accept {
+                Some((lo, hi)) => format!("a number from {} to {}", lo, hi),
+                None => "a number".into(),
+            },
             Ty::Custom(io) => io.values.into(),
         }
     }

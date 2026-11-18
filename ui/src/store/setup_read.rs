@@ -27,6 +27,11 @@ pub(crate) fn p_f32(v: &str) -> Result<f32, String> {
     v.parse::<f32>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v))
 }
 
+/// A number of an f64 field, as `str::parse` reads it: also `inf` and `NaN`, with its error text.
+pub(crate) fn p_f64(v: &str) -> Result<f64, String> {
+    v.parse::<f64>().map_err(|e| e.to_string())
+}
+
 pub(crate) fn p_u32(v: &str) -> Result<u32, String> {
     v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
 }
@@ -361,7 +366,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
         "log_ivl" => m.log_ivl = p_idx(v, crate::ui::LOG_STEPS_N)?,
-        "spec_margin" => m.spec_margin = p_f32(v)?.clamp(0.0, 60.0),
         k if k.starts_with("math_expr") => {
             let n = k[9..].parse::<usize>().map_err(|_| "math_expr: no number")?;
             // a formula that does not parse stays as it is and draws nothing; only the length is checked here
@@ -518,9 +522,8 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             if w.len() != 9 {
                 return Err("spec: want 9 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
             m.spec_src = WaveId::parse(w[0])?;
-            (m.spec_center, m.spec_span, m.spec_rbw) = (f(w[1])?, f(w[2])?, f(w[3])?);
+            (m.spec_center, m.spec_span, m.spec_rbw) = (p_f64(w[1])?, p_f64(w[2])?, p_f64(w[3])?);
             m.spec_win = p_enum(w[4], &WINDOWS)?;
             m.spec_trace = p_idx(w[5], 4)?;
             m.spec_ref = p_f32(w[6])?;
@@ -696,8 +699,8 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "spec_acpr" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [width, space] = w[..] else { return Err("spec_acpr: width spacing".into()) };
-            m.spec_acpr_w = width.parse::<f64>().map_err(|e| e.to_string())?;
-            m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
+            m.spec_acpr_w = p_f64(width)?;
+            m.spec_acpr_s = p_f64(space)?;
         }
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();

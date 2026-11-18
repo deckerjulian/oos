@@ -38,6 +38,7 @@ pub const MODE: [Setting; 1] = [Setting {
           rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A \
           free sweep always measures the gain.",
     accept: None,
+    step: None,
     get: |m, _| Val::Index(MODES.iter().position(|&x| x == m.bode_mode).unwrap_or(0)),
     put: |m, _, v| m.bode_mode = MODES[v.index()],
 }];

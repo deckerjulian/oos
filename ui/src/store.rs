@@ -251,7 +251,7 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         kv(&format!("math_expr{}", k + 1), e.clone());
     }
     kv("log_ivl", m.log_ivl.to_string());
-    kv("spec_margin", m.spec_margin.to_string());
+    crate::settings::write(&crate::settings::spectrum::MARGIN, m, 0, kv);
     kv("math_offset", m.math_offset.to_string());
     crate::settings::write(&crate::settings::math::WINDOW_BW, m, 0, kv);
     // the "math*" keys are the selected math channel; the others as mN.* (N = 1..8)

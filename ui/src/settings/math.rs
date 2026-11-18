@@ -27,26 +27,26 @@ pub const SLICES: [&[Setting]; 2] = [&WINDOW_BW, &FC];
 #[cfg(test)]
 const CORNERS: &str = "set through `:MATH<n>:FILTer:W1` and `:W2`, the corner frequencies (below)";
 
+/// The windows of `WINDOWS` by their place: their word in a setup, their keyword of `:FFT:WINDow`, their name.
+pub const WINDOWS_CHOICES: [Choice; 5] = [
+    Choice { store: "Rect", scpi: "RECTangle", label: "Rect" },
+    Choice { store: "Hann", scpi: "HANNing", label: "Hann" },
+    Choice { store: "Hamming", scpi: "HAMMing", label: "Hamming" },
+    Choice { store: "Blackman", scpi: "BLACkman", label: "Blackman" },
+    Choice { store: "Flattop", scpi: "FLATtop", label: "Flattop" },
+];
+
 /// Written after `math_offset`.
 pub const WINDOW_BW: [Setting; 2] = [
     Setting {
         key: "fft_win",
         scpi: Scpi::Cmd("FFT:WINDow"),
-        ty: Ty::Choice(
-            &[
-                Choice { store: "Rect", scpi: "RECTangle", label: "Rect" },
-                Choice { store: "Hann", scpi: "HANNing", label: "Hann" },
-                Choice { store: "Hamming", scpi: "HAMMing", label: "Hamming" },
-                Choice { store: "Blackman", scpi: "BLACkman", label: "Blackman" },
-                Choice { store: "Flattop", scpi: "FLATtop", label: "Flattop" },
-            ],
-            Unknown::Value,
-            Arg::Keyword,
-        ),
+        ty: Ty::Choice(&WINDOWS_CHOICES, Unknown::Value, Arg::Keyword),
         label: "Window",
         #[cfg(test)]
         doc: "The window the FFT multiplies the record with before the transform.",
         accept: None,
+        step: None,
         get: |m, _| Val::Index(WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0)),
         put: |m, _, v| m.fft_win = WINDOWS[v.index()],
     },
@@ -61,6 +61,7 @@ pub const WINDOW_BW: [Setting; 2] = [
         #[cfg(test)]
         doc: "The width of the band of the band-pass and band-stop filters. The menu steps 1-2-5 in periods.",
         accept: None,
+        step: None,
         get: |m, _| Val::F32(m.math_bw),
         put: |m, _, v| m.math_bw = v.secs(),
     },
@@ -79,6 +80,7 @@ pub const FC: [Setting; 1] = [Setting {
     doc: "The cut-off frequency of the low- and high-pass filters, the centre of the band filters. The menu steps \
           1-2-5 in periods.",
     accept: None,
+    step: None,
     get: |m, _| Val::F32(m.math_fc),
     put: |m, _, v| m.math_fc = v.secs(),
 }];
