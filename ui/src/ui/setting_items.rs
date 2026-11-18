@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 39] = [
+const ITEMS: [(Item, &str); 40] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -48,6 +48,7 @@ const ITEMS: [(Item, &str); 39] = [
     (Item::CntDigits, "counter digits"),
     (Item::ChFine, "fine_v"),
     (Item::ChExpand, "v_expand_gnd"),
+    (Item::AcqDrawPath, "draw_path"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -98,7 +99,7 @@ impl Ui {
             }
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
-            Item::Dots | Item::BottomBar => self.dirty_map = true,
+            Item::Dots | Item::BottomBar | Item::AcqDrawPath => self.dirty_map = true,
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,
             // the hardware switches of the Acquire menu leave the rest as it is (no `settings_changed`), as before

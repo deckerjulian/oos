@@ -360,7 +360,6 @@ impl Ui {
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
-            Item::AcqDrawPath => "Draw path",
             Item::AcqAlias => "Aliasing",
             Item::MeasSrc => "Source A",
             Item::MeasCopyTo => "Copy meas. to",
@@ -522,7 +521,6 @@ impl Ui {
             }
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
-            Item::AcqDrawPath => if m.draw_batch { "Batch" } else { "Standard" }.into(),
             Item::AcqAlias => {
                 self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))
             }

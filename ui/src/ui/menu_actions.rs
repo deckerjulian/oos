@@ -547,10 +547,6 @@ impl Ui {
                 let z = &mut m.zones[self.zone_sel];
                 z.inside = !z.inside;
             }
-            Item::AcqDrawPath => {
-                m.draw_batch = !m.draw_batch;
-                self.dirty_map = true;
-            }
             Item::Hdmi => {
                 let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
                 m.hdmi = HDMI_MODES[step_index(i, HDMI_MODES.len(), d)];
