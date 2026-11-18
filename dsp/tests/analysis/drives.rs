@@ -293,6 +293,9 @@ fn double_pulse_peaks_are_the_turn_on_peak_not_the_end_of_the_inductor_ramp() {
     assert!(close(p.trr.unwrap(), 190e-9, 3e-9), "trr {:?}", p.trr);
     assert!(close(p.qrr.unwrap(), 0.5 * 200e-9 * 2.0, 0.01 * 0.5 * 200e-9 * 2.0), "qrr {:?}", p.qrr);
     assert!(close(p.diode_didt.unwrap(), 2.0 / 100e-9, 0.05 * 2.0 / 100e-9), "diode di/dt {:?}", p.diode_didt);
+    // Err over the same interval: Vds sits at 1 V, so Vbus - Vds is 399 V times the charge up to the end of Trr
+    let q_trr = 0.5 * 200e-9 * 2.0 - 0.5 * 10e-9 * 0.2;
+    assert!(close(p.err.unwrap(), 399.0 * q_trr, 0.01 * 399.0 * q_trr), "err {:?}", p.err);
 }
 
 #[test]
