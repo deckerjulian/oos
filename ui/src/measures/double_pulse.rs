@@ -28,7 +28,15 @@ pub const QOSS: u16 = 186;
 
 static DEFS: [Def; 17] = [
     module(VPEAK, "Vpeak", "V", Pulse, &[0, 1, 2], &[(DPT, "SWITCHING")], "Highest voltage on the turn-off edge."),
-    module(IPEAK, "Ipeak", "A", Pulse, &[0, 1, 2], &[(DPT, "SWITCHING")], "Highest current on the turn-on edge."),
+    module(
+        IPEAK,
+        "Ipeak",
+        "A",
+        Pulse,
+        &[0, 1, 2],
+        &[(DPT, "SWITCHING")],
+        "Peak current of the turn-on, before the load current ramps on.",
+    ),
     module(
         TD_ON,
         "Td(on)",
@@ -45,12 +53,12 @@ static DEFS: [Def; 17] = [
         Edge,
         &[0, 1, 2],
         &[(DPT, "SWITCHING")],
-        "Delay from the gate falling through its threshold to the voltage starting to rise.",
+        "Delay from the gate falling through its threshold to the current falling through 90 %.",
     ),
     module(TR, "Tr", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Current rise time of the turn-on."),
-    module(TF, "Tf", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Voltage rise time of the turn-off."),
+    module(TF, "Tf", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Current fall time of the turn-off, 90 to 10 %."),
     module(TON, "Ton", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Turn-on delay plus the current rise."),
-    module(TOFF, "Toff", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Turn-off delay plus the voltage rise."),
+    module(TOFF, "Toff", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "Turn-off delay plus the current fall."),
     module(DPDT_V, "dv/dt", "V/s", Slope, &[0, 1, 2], &[(DPT, "SWITCHING")], "Slope of the voltage on the pulse edge."),
     module(DPDT_I, "di/dt", "A/s", Slope, &[0, 1, 2], &[(DPT, "SWITCHING")], "Slope of the current on the pulse edge."),
     module(TDT, "Tdt", "s", Edge, &[0, 1, 2], &[(DPT, "SWITCHING")], "The smaller of the two dead times."),
