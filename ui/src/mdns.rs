@@ -950,7 +950,11 @@ pub(crate) mod tests {
         pointer.extend([1, b'a', 5, b'l', b'o', b'c', b'a', b'l', 0, 0, 1, 0, 1]);
         pointer.extend([1, b'b', 0xc0, 14, 0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 192, 0, 2, 1]);
         let seeds: [&[u8]; 4] = [&ask, &taken, &srv, &pointer];
+        let finding = answer_it_cannot_read();
         crate::hostile::run("mdns::receive", &seeds, 1, |b| {
+            if b == finding.as_slice() && crate::hostile::is_known("mdns-answer-it-cannot-read") {
+                return Ok(());
+            }
             if let Some(m) = parse(b) {
                 let count = |at: usize| u16::from_be_bytes([b[at], b[at + 1]]) as usize;
                 if (m.qs.len(), m.an.len(), m.ns.len(), m.ar.len()) != (count(4), count(6), count(8), count(10)) {
@@ -970,7 +974,6 @@ pub(crate) mod tests {
                 for o in out {
                     match parse(&o.pkt) {
                         Some(m) if o.iface == ETH && o.pkt.len() <= 9000 && (m.is_response() || !m.ns.is_empty()) => {}
-                        _ if crate::hostile::is_known("mdns-answer-it-cannot-read") => {}
                         _ => return Err(format!("sent a packet of {} bytes it cannot read itself", o.pkt.len())),
                     }
                 }
@@ -984,16 +987,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "mdns: the answer to a question of control bytes and pointers is a packet parse refuses, #181"]
     pub(crate) fn hostile_known_mdns_answer_it_cannot_read() {
-        let hex = [
-            "0007000000030000000000000e64686f393234732d313233343536056c6f63616c0000010001055f7f7fffff045f7463",
-            "70c01b000e800109ff7365727669636573071b000c000109ff1b000c800109ff1b000c800109ff1b000c800109ff1b00",
-            "0c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800909ff1b",
-            "000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff",
-            "1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c80010dff1b000c800109ff5f646e732d73",
-            "44045f756470c01b000c0001",
-        ]
-        .concat();
-        let b: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+        let b = answer_it_cannot_read();
         for (port, to_group) in [(PORT, true), (PORT, false), (40000, true), (40000, false)] {
             let mut r = running();
             let mut out = r.receive(10.0, &b, peer(port), ETH, to_group);
@@ -1003,5 +997,19 @@ pub(crate) mod tests {
                 assert!(parse(&o.pkt).is_some(), "sent a packet of {} bytes it cannot read itself", o.pkt.len());
             }
         }
+    }
+
+    /// The input of the finding `mdns-answer-it-cannot-read`: the question the weekly run found.
+    fn answer_it_cannot_read() -> Vec<u8> {
+        let hex = [
+            "0007000000030000000000000e64686f393234732d313233343536056c6f63616c0000010001055f7f7fffff045f7463",
+            "70c01b000e800109ff7365727669636573071b000c000109ff1b000c800109ff1b000c800109ff1b000c800109ff1b00",
+            "0c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800909ff1b",
+            "000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff",
+            "1b000c800109ff1b000c800109ff1b000c800109ff1b000c800109ff1b000c80010dff1b000c800109ff5f646e732d73",
+            "44045f756470c01b000c0001",
+        ]
+        .concat();
+        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
     }
 }
