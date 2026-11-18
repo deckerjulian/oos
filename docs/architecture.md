@@ -44,6 +44,7 @@ flowchart TB
         gpu["oos-gpu<br/>puts the picture together on the GPU, optional"]
         fpgad["oos-fpgad<br/>cold boot of the FPGA, service commands"]
         net["Network programs<br/>udhcpc, wpa_supplicant, nftables, Dropbear"]
+        bt["Bluetooth<br/>oos-bt, dbus-daemon, bluetoothd"]
         kernel["Linux kernel<br/>PCIe and XDMA, DRM, GPIO, UART, input"]
     end
     data[("/oos<br/>settings, calibration by OOS, update state")]
@@ -52,6 +53,8 @@ flowchart TB
     rcs -- "starts" --> ui
     rcs -- "cold-boot --execute" --> fpgad
     rcs -- "starts" --> net
+    rcs -- "starts" --> bt
+    bt -- "pairings" --> data
     ui -- "layers and trace maps: shared memory, a Unix socket" --> gpu
     ui -- "device files" --> kernel
     fpgad -- "device files" --> kernel

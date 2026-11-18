@@ -136,6 +136,8 @@ from `/etc/oos-board` ([porting.md](porting.md)):
    without confirmation is rolled back here. After oos-ui: `oos-update watch` in the background confirms the trial
    (oos-ui 20 s stable + start-up finished) or writes the previous image back.
 4d. `oos-wlan` in the background: waits for the end of the start-up, then WLAN through a USB stick (`wlan.md`).
+   `oos-bt` beside it: Bluetooth through a USB stick, the system bus and bluetoothd while one is there
+   (`bluetooth.md`).
 5. In the background: `oos-mount-rigol`, then **`oos-fpgad cold-boot --execute --power-on --booted --progress`**:
    calibration files check (warn if one is missing or damaged), sample clock and AFEs during the FPGA wait (GPIO
    only, no FPGA needed), the rest of the wait, PCIe polled every 20 ms, the cold-boot steps grouped into the screen's stages (`boot::stage`: FPGA image, sample clock, analog front ends,

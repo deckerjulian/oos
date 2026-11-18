@@ -22,6 +22,7 @@ also holds the parts listed here. Each keeps its own licence.
 | Device tree of the board | this tree | GPL-2.0-or-later OR MIT | in the boot image | `GPL-2.0.txt` | `kernel/dts/` |
 | XDMA driver (Xilinx `dma_ip_drivers`) | commit `f09dce7` | Dual BSD/GPL, as its files state | module `xdma.ko` | in its files | `kernel/modules/xdma/` |
 | wireless-regdb (`regulatory.db`) | as in `kernel/firmware/` | ISC | built into the kernel | `wireless-regdb.txt` | `kernel/firmware/` (data, with its signature) |
+| RTL8851BU Bluetooth firmware (`rtl8851bu_fw.bin`, `rtl8851bu_config.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtl_bt/` | `/lib/firmware/rtl_bt/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 | rtw89 driver (Linux, `rtw89_core`, `rtw89_usb`, `rtw89_8851b`, `rtw89_8851bu`) | Linux 6.18.63, with `kernel/modules/rtw89-linux-6.12.patch` | GPL-2.0 OR BSD-3-Clause, as its files state | modules in `/lib/modules/*/updates/` | in its files | `kernel/modules/rtw89/` |
 | RTL8851B firmware (`rtw8851b_fw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtw89/` | `/lib/firmware/rtw89/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 | RTL8188EU firmware (`rtl8188eufw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtlwifi/` | `/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
@@ -41,12 +42,18 @@ also holds the parts listed here. Each keeps its own licence.
 | kexec-tools | 2.0.32 | GPL-2.0-only | `/bin/kexec`, static | `kexec-tools` | `kexec-tools-2.0.32.tar.xz` |
 | wpa_supplicant (`wpa_supplicant`, `wpa_cli`) | 2.11 | BSD-3-Clause | `/bin`, static | `wpa_supplicant` | `wpa_supplicant-2.11.tar.gz` |
 | libnl | 3.11.0 (Alpine `libnl3-static` 3.11.0-r0) | LGPL-2.1-or-later | linked into `wpa_supplicant` and `wpa_cli` | `LGPL-2.1.txt` | `libnl-3.11.0.tar.gz`, `libnl3-musl.patch` (Alpine's one patch) |
+| BlueZ (`bluetoothd`, `btmon`) | 5.82 | GPL-2.0-or-later; its libraries LGPL-2.1-or-later | `/bin`, static | `bluez`, `GPL-2.0.txt`, `LGPL-2.1.txt` | `bluez-5.82.tar.xz` |
+| D-Bus (`dbus-daemon`) | 1.16.2 | AFL-2.1 OR GPL-2.0-or-later | `/bin/dbus-daemon`, static | `dbus` | `dbus-1.16.2.tar.xz` |
+| expat | 2.10.0 (Alpine `expat-static` 2.10.0-r0) | MIT | linked into `dbus-daemon` | `expat` | `expat-2.10.0.tar.xz` |
+| GLib | 2.84.4 (Alpine `glib-static` 2.84.4-r0) | LGPL-2.1-or-later | linked into `bluetoothd` | `LGPL-2.1.txt` | `glib-2.84.4.tar.xz`, `tests-machine-id.patch`, `flaky-tests.patch` (Alpine's patches) |
+| PCRE2 | 10.46 (Alpine `pcre2-static` 10.46-r1) | BSD-3-Clause WITH PCRE2-exception | linked into `bluetoothd` (through GLib) | `pcre2` | `pcre2-10.46.tar.bz2` |
+| GNU gettext (`libintl`) | 0.24.1 (Alpine `gettext-static` 0.24.1-r0) | LGPL-2.1-or-later | linked into `bluetoothd` (through GLib) | `LGPL-2.1.txt` | `gettext-0.24.1.tar.xz`, `cwd.patch`, `skip-tests-musl.patch`, `skip-meaningless-pthread-rwlock-test.patch` (Alpine's patches) |
 | nftables (`nft`) | 1.1.3 | GPL-2.0-only; its mini-gmp LGPL-3.0-or-later OR GPL-2.0-or-later | `/bin/nft`, static | `nftables` | `nftables-1.1.3.tar.xz` |
 | libmnl | 1.0.5 | LGPL-2.1-or-later | linked into `nft` | `LGPL-2.1.txt` | `libmnl-1.0.5.tar.bz2` |
 | libnftnl | 1.2.9 | GPL-2.0-or-later | linked into `nft` | `GPL-2.0.txt` | `libnftnl-1.2.9.tar.xz` |
 | Dropbear (`dropbear`, `dropbearkey`, `scp`) | 2026.94 | MIT, and the licences of its parts its file lists | `/bin/dropbearmulti`, static | `dropbear` | `dropbear-2026.94.tar.bz2` |
 | OpenSSH (`sftp-server` only) | 10.6p2 | BSD licences, as its file lists | `/bin/sftp-server`, static | `openssh-sftp-server` | `openssh-10.6p2.tar.gz` |
-| musl | the one of Alpine 3.22 (C programs) and of Rust's musl target (Rust programs) | MIT | linked into `e2fsck`, `kexec`, `wpa_supplicant`, `wpa_cli`, `nft`, `dropbearmulti`, `sftp-server`, `oos-ui`, `oos-fpgad`, `oos-update` | `musl.txt` | not required |
+| musl | the one of Alpine 3.22 (C programs) and of Rust's musl target (Rust programs) | MIT | linked into `e2fsck`, `kexec`, `wpa_supplicant`, `wpa_cli`, `nft`, `dropbearmulti`, `sftp-server`, `dbus-daemon`, `bluetoothd`, `btmon`, `oos-ui`, `oos-fpgad`, `oos-update` | `musl.txt` | not required |
 | Rust standard library | the toolchain of the build | MIT OR Apache-2.0; parts under other permissive licences | linked into `oos-ui`, `oos-fpgad`, `oos-update` | `rust.txt`, `Apache-2.0.txt` | not required |
 | `libc` crate | as in `ui/Cargo.lock` | MIT OR Apache-2.0 | linked into `oos-ui`, `oos-fpgad`, `oos-update` | `rust.txt`, `Apache-2.0.txt` | not required |
 | Roboto (roboto-classic) | as in `ui/tools/fonts/` | Apache-2.0 | its glyphs, drawn into `oos-ui` | `Apache-2.0.txt` ([ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt)) | not required |

@@ -20,6 +20,7 @@ local/
 boot/out/
 # built by boot/build-dev-image.sh from tools/hw/oos-hw.c
 tools/hw/oos-hw
+tools/hw/oos-usbmode
 # built by rootfs/build-wlan-tools.sh
 rootfs/out/
 # results of tools/device-test.py

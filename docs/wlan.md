@@ -19,11 +19,10 @@ hardware:** an RTL8188EU stick with `rtl8xxxu`, the joining pages of oos-ui with
 | Not supported | WPA3 only, enterprise (802.1X), WEP. The list says so, a join is refused |
 | Address | DHCP only |
 
-The TX10UB first shows up as a driver CD. The switch to its real ids (`oos-usbmode`, started by `oos-bt`) comes with
-Bluetooth, in a pull request of its own; until it is in the image, only a stick that already starts in WLAN mode gets
-this driver. `rtw89` with USB came with Linux 6.17: OOS builds the driver of 6.18.63 as modules beside its 6.12 kernel
-(`kernel/modules/rtw89/`, ADR 0027). Next to `wlan0` a second interface of the same radio, `p2p0`, shows up and stays
-down.
+The TX10UB first shows up as a driver CD; `oos-usbmode` (started by `oos-bt`, [bluetooth.md](bluetooth.md)) switches it,
+then its Bluetooth and its WLAN interface are there. `rtw89` with USB came with Linux 6.17: OOS builds the driver of
+6.18.63 as modules beside its 6.12 kernel (`kernel/modules/rtw89/`, ADR 0027). Next to `wlan0` a second interface of the
+same radio, `p2p0`, shows up and stays down.
 
 Another chip of `rtl8xxxu` needs its firmware file under `rootfs/initramfs/lib/firmware/rtlwifi/`, and some need the kernel
 option `RTL8XXXU_UNTESTED`. Another driver needs its modules in `boot/build-dev-image.sh` and in `oos-wlan`.

@@ -76,6 +76,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0054](system/0054-ssh-is-the-only-shell-on-the-network.md) | system | SSH is the only shell on the network; there is no telnet (supersedes the telnet part of ADR 0025) | proposed |
 | [0055](code/0055-the-remote-interface-is-stable-and-versioned.md) | code | The remote interface (SCPI, HTTP routes, MCP tools) is public, marked stable or experimental, and versioned; a breaking change of a stable entry needs a deprecation and a new major version | proposed |
 | [0056](code/0056-add-ons-run-outside-the-core-and-use-a-stable-extension-interface.md) | code | Add-ons run outside the core as processes of their own, started by OOS, and use the stable remote interface and its extension endpoints; no plugins in `oos-ui` | proposed |
+| [0057](system/0057-bluetooth-input-through-bluez.md) | system | Bluetooth mice and keyboards through BlueZ on a system bus of their own | proposed |
 
 ## Reading order for agents
 
