@@ -44,12 +44,15 @@ send() {
 	run "chmod +x /tmp/$2" >/dev/null
 }
 
-# stop NAME FILE: FILE ends the loop that starts NAME, NAME is ended, and the next step waits until it is gone (at
-# most 15 s): an oos-ui that starts while the last one still holds its ports and the DMA device runs without them
-# (#212: "Resource busy" on /dev/xdma0_c2h_0, "SCPI port 5555 not available")
+# stop NAME FILE: FILE ends the loop that starts NAME (rcS's and loop() below have the form `while [ ! -e FILE ]`),
+# NAME is ended, and the next step waits until both the program and its loop are gone (at most 15 s): an oos-ui that
+# starts while the last one still holds its ports and the DMA device runs without them (#212: "Resource busy" on
+# /dev/xdma0_c2h_0, "SCPI port 5555 not available"), and a loop still alive would start a program again. When they
+# are not gone, or the scope does not answer, nothing is started and the script ends with an error.
 stop() {
-	run "touch $2; kill \$(pidof $1) 2>/dev/null; i=0; while pidof $1 >/dev/null && [ \$i -lt 15 ]; do sleep 1; i=\$((i+1)); done; ! pidof $1" >/dev/null ||
-		echo "warning: $1 still runs after 15 s" >&2
+	alive="pidof $1 >/dev/null || ps | grep -v grep | grep -qF 'while [ ! -e $2 ]'"
+	run "touch $2; kill \$(pidof $1) 2>/dev/null; i=0; while { $alive; } && [ \$i -lt 15 ]; do sleep 1; i=\$((i+1)); done; ! { $alive; }" >/dev/null ||
+		{ echo "error: $1 or its loop still runs after 15 s (or the scope did not answer): nothing started" >&2; exit 1; }
 }
 
 loop() {
