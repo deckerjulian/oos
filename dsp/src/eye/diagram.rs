@@ -4,7 +4,7 @@
 //! The eye diagram: hits accumulated per pixel with linear interpolation between samples, and the voltage and timing
 //! measurements read from it (`EyeMeas`). A new eye measurement is a field of `EyeMeas` filled in `Eye::measure`.
 
-use super::{is_above, is_positive, is_probability, norm_inv, Clock};
+use super::{is_above, is_positive, is_probability, norm_inv, q_tail, Clock};
 
 /// Eye diagram: a hit counter per pixel; `ui_span` unit intervals across `w` columns with the eye centred (crossings
 /// at span/2 ± 0.5 UI), `v_max` at row 0 and `v_min` at row h-1.
@@ -35,7 +35,7 @@ pub struct EyeMeas {
     /// Q-scale eye height at a bit-error rate: (one − Q σ1) − (zero + Q σ0), clamped at 0.
     /// Q is `norm_inv(1 − BER)`. Empty until `height_at` fills it. The 3σ `height` stays as it is.
     pub height_ber: f64,
-    /// 1 UI - 6 σ of the crossing time, s
+    /// 1 UI - 6 σ of the crossing time without the picture's own spread, s
     pub width: f64,
     /// crossing level relative to zero..one, %
     pub crossing_pct: f64,
@@ -282,9 +282,10 @@ impl Eye {
         let m = o.iter().map(|x| x.0 * x.1).sum::<f64>() / n;
         (m, (o.iter().map(|x| (x.0 - m).powi(2) * x.1).sum::<f64>() / n).sqrt())
     }
-    /// Eye width (s): 1 UI - 6 σ of the crossing time.
+    /// Eye width (s): 1 UI - 6 σ of the crossing time, with the picture's own spread taken out (`unbinned_sigma`).
     pub fn eye_width(&self, period: f64) -> f64 {
-        (1.0 - 6.0 * self.crossing_time().1) * period
+        let cols = self.w as f64 / self.span();
+        (1.0 - 6.0 * unbinned_sigma(self.crossing_time().1 * cols) / cols) * period
     }
     /// 20-80 % rise and fall times on the eye (s): at the 20 % and 80 % rows the hits left of the crossing belong to
     /// the rising (at 20 %) / falling (at 80 %) edges, those right of it to the other one.
@@ -323,6 +324,48 @@ impl Eye {
             fall,
         }
     }
+}
+
+/// Variance (columns²) of the column centres that a Gaussian crossing of σ = `s` columns lights when it is centred on
+/// a column border.
+fn binned_variance(s: f64) -> f64 {
+    if !is_positive(s) {
+        return 0.25;
+    }
+    let k = (8.0 * s).ceil() as i64 + 1;
+    let (mut m1, mut m2) = (0.0, 0.0);
+    for m in -k..k {
+        let p = q_tail(m as f64 / s) - q_tail((m + 1) as f64 / s);
+        let x = m as f64 + 0.5;
+        m1 += p * x;
+        m2 += p * x * x;
+    }
+    m2 - m1 * m1
+}
+
+/// The crossing's own σ (columns) from the σ the picture reads (columns). A line through the rows at the crossing
+/// lights its column and a neighbour, and an edge takes time to pass those rows: a crossing without jitter reads half
+/// a column (measured at 48 to 960 columns; 6 % of the UI in the 96 columns of a 2-UI eye), and a wide one reads a
+/// variance a twelfth of a column² above its own. A Gaussian centred on a column border reads both, so the reading is
+/// matched to that model.
+fn unbinned_sigma(read: f64) -> f64 {
+    let v = read * read;
+    if !read.is_finite() {
+        return f64::NAN;
+    }
+    if !is_above(v, binned_variance(0.0)) {
+        return 0.0;
+    }
+    let (mut lo, mut hi) = (0.0, read);
+    for _ in 0..50 {
+        let mid = 0.5 * (lo + hi);
+        if binned_variance(mid) < v {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 impl EyeMeas {
