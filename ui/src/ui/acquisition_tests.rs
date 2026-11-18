@@ -1335,3 +1335,47 @@ fn hardware_average_bypasses_the_blend_and_restarts() {
     ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
     assert!(board().avg_hw(&ui.m));
 }
+
+/// Batch mode at 1 ms/div (unit 2026-11-18: half the records reached the picture): batches of one frame, 38 a second
+/// against 29 screens, through the queue to the frame loop: every record is used, as many as were queued, at 1 and 4
+/// channels. The frame loop's part; whether a batch holds one frame or two (frame 0 left out, issue #5) is the
+/// acquisition thread's.
+#[test]
+fn batch_mode_uses_every_record_at_1_ms_per_div() {
+    use super::*;
+    for mask in [1u32, 15] {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-6).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.draw_batch = true;
+        for c in 0..NCH {
+            (ui.m.ch[c].on, ui.m.ch[c].offset) = (mask & (1 << c) != 0, 0.0);
+        }
+        // a frame as the board decodes it at 1 ms/div (100 k points a channel), a sine on each channel on
+        let s = crate::board::dho::hw::settings(&ui.m, false);
+        let p = oos_hal::dho::hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        let mut f = crate::board::dho::hw::decode(&vec![0u8; oos_hal::dho::seq::frame_bytes(&s, &p)], &s, &p, 0);
+        for ch in f.ch.iter_mut() {
+            let n = ch.len();
+            for (k, v) in ch.iter_mut().enumerate() {
+                *v = 0.9 * ((k as f64 - n as f64 / 2.0) / n as f64 * 40.0 * std::f64::consts::TAU).sin() as f32;
+            }
+        }
+        f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
+        ui.step(1.0 / 30.0);
+        let (w0, mut fed) = (ui.wfm_total, 0u64);
+        for step in 0..87u64 {
+            // 38 frames in 29 screens: one or two a screen
+            for _ in 0..(38 * (step + 1) / 29 - 38 * step / 29) {
+                fed += 1;
+                shared.lock().unwrap().queue.push_back(crate::board::Frame { seq: fed, ..f.clone() });
+            }
+            ui.step(1.0 / 30.0);
+        }
+        let left = shared.lock().unwrap().queue.len() as u64;
+        assert_eq!(ui.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
+    }
+}
