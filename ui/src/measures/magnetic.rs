@@ -60,7 +60,6 @@ impl MeasModule for Magnetic {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
         let m = x.model;
         let geom = oos_dsp::magnetic::Geom {
             turns: m.mag_n.max(1.0),
@@ -69,18 +68,11 @@ impl MeasModule for Magnetic {
             rcu: m.mag_rcu.max(0.0),
         };
         let g = x.align(&[a, b]).map(|v| oos_dsp::magnetic::measure(v[0], v[1], x.dt, geom));
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    INDUCTANCE => g.as_ref().and_then(|g| g.l).unwrap_or(f64::NAN),
-                    MAG_PROP => g.as_ref().and_then(|g| g.mu_r).unwrap_or(f64::NAN),
-                    MAG_LOSS => g.as_ref().and_then(|g| g.loss).unwrap_or(f64::NAN),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            INDUCTANCE => g.as_ref().and_then(|g| g.l).unwrap_or(f64::NAN),
+            MAG_PROP => g.as_ref().and_then(|g| g.mu_r).unwrap_or(f64::NAN),
+            MAG_LOSS => g.as_ref().and_then(|g| g.loss).unwrap_or(f64::NAN),
+            _ => f64::NAN,
+        })
     }
 }

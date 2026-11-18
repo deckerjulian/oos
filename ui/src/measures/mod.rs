@@ -268,6 +268,11 @@ pub struct Values {
 /// The quality line of a value that is derived directly from the sources.
 pub const DERIVED: &str = "Derived from scaled source roles";
 
+/// The values of the measurements `ids`, each `value(id)`, derived directly from the sources.
+pub fn derived(ids: &[u16], value: impl Fn(u16) -> f64) -> Values {
+    Values { values: ids.iter().map(|&id| (id, value(id))).collect(), quality: DERIVED }
+}
+
 /// A measurement module. Only `key` and `defs` are required; a module of [`Kind::Module`] measurements also needs
 /// `compute`.
 pub trait MeasModule: Sync {
@@ -290,7 +295,7 @@ pub trait MeasModule: Sync {
     /// The values of the measurements `ids` (all of this module, all reading the same roles) on these sources. Runs
     /// on the worker thread, never on the render thread; a panic counts as "Catalog analysis failed".
     fn compute(&self, _x: &Ctx, ids: &[u16]) -> Values {
-        Values { values: ids.iter().map(|&id| (id, f64::NAN)).collect(), quality: DERIVED }
+        derived(ids, |_| f64::NAN)
     }
 
     /// The quality line while a value of `id` is still computing.
