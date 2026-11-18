@@ -64,18 +64,13 @@ impl MeasModule for Rails {
             let vin = if a != b { x.wave(b) } else { None };
             oos_dsp::power::rail(v, x.dt, x.model.pw_ref.filter(|v| v.is_finite() && *v != 0.0), vin, None)
         });
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = rail.as_ref().map_or(f64::NAN, |r| match id {
-                    RAIL_OVER => r.overshoot,
-                    RAIL_UNDER => r.undershoot,
-                    RAIL_TURN => r.turn_on,
-                    _ => r.dc,
-                });
-                (id, v)
+        derived(ids, |id| {
+            rail.as_ref().map_or(f64::NAN, |r| match id {
+                RAIL_OVER => r.overshoot,
+                RAIL_UNDER => r.undershoot,
+                RAIL_TURN => r.turn_on,
+                _ => r.dc,
             })
-            .collect();
-        Values { values, quality: DERIVED }
+        })
     }
 }

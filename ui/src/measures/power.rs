@@ -48,21 +48,13 @@ impl MeasModule for Quality {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
         let fline = (x.model.pw_fline > 0.0).then_some(x.model.pw_fline);
         let q = x.align(&[a, b]).map(|v| oos_dsp::power::quality(v[0], v[1], x.dt, fline));
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    POWER_QUALITY => q.map_or(f64::NAN, |q| q.p_real),
-                    POWER_FACTOR => q.map_or(f64::NAN, |q| q.pf),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            POWER_QUALITY => q.map_or(f64::NAN, |q| q.p_real),
+            POWER_FACTOR => q.map_or(f64::NAN, |q| q.pf),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -94,33 +86,20 @@ impl MeasModule for Harmonics {
     }
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
-        let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    HARMONICS => x.wave(b).map_or(f64::NAN, |i| {
-                        let h = oos_dsp::power::harmonics(
-                            i,
-                            x.dt,
-                            (x.model.pw_fline > 0.0).then_some(x.model.pw_fline),
-                            40,
-                        );
-                        let fund = h.iter().find(|x| x.0 == 1).map(|x| x.1).unwrap_or(0.0);
-                        let rest = h.iter().filter(|x| x.0 > 1).map(|x| x.1 * x.1).sum::<f64>().sqrt();
-                        if fund > 0.0 {
-                            100.0 * rest / fund
-                        } else {
-                            f64::NAN
-                        }
-                    }),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        let b = x.row[1];
+        derived(ids, |id| match id {
+            HARMONICS => x.wave(b).map_or(f64::NAN, |i| {
+                let h = oos_dsp::power::harmonics(i, x.dt, (x.model.pw_fline > 0.0).then_some(x.model.pw_fline), 40);
+                let fund = h.iter().find(|x| x.0 == 1).map(|x| x.1).unwrap_or(0.0);
+                let rest = h.iter().filter(|x| x.0 > 1).map(|x| x.1 * x.1).sum::<f64>().sqrt();
+                if fund > 0.0 {
+                    100.0 * rest / fund
+                } else {
+                    f64::NAN
+                }
+            }),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -148,19 +127,11 @@ impl MeasModule for Inrush {
     }
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
-        let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    INRUSH => x.wave(b).map_or(f64::NAN, |i| oos_dsp::power::inrush(i, x.dt).0),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        let b = x.row[1];
+        derived(ids, |id| match id {
+            INRUSH => x.wave(b).map_or(f64::NAN, |i| oos_dsp::power::inrush(i, x.dt).0),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -189,20 +160,10 @@ impl MeasModule for InputC {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    INPUT_C => {
-                        x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::input_capacitance(v[0], v[1], x.dt))
-                    }
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            INPUT_C => x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::input_capacitance(v[0], v[1], x.dt)),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -243,19 +204,11 @@ impl MeasModule for Turn {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    TURN_ON => x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::turn_on_time(v[1], v[0], x.dt)),
-                    TURN_OFF => x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::turn_off_time(v[1], v[0], x.dt)),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            TURN_ON => x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::turn_on_time(v[1], v[0], x.dt)),
+            TURN_OFF => x.align(&[a, b]).map_or(f64::NAN, |v| oos_dsp::power::turn_off_time(v[1], v[0], x.dt)),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -332,27 +285,19 @@ impl MeasModule for Switching {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
         let s = x.align(&[a, b]).map(|v| oos_dsp::power::switching(v[0], v[1], x.dt, 10.0));
         let s = s.as_ref();
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    E_ON => s.map_or(f64::NAN, |s| s.e_on),
-                    E_OFF => s.map_or(f64::NAN, |s| s.e_off),
-                    E_COND => s.map_or(f64::NAN, |s| s.e_cond),
-                    DVDT_RISE => s.map_or(f64::NAN, |s| s.dvdt_rise),
-                    DVDT_FALL => s.map_or(f64::NAN, |s| s.dvdt_fall),
-                    DIDT_RISE => s.map_or(f64::NAN, |s| s.didt_rise),
-                    DIDT_FALL => s.map_or(f64::NAN, |s| s.didt_fall),
-                    RDS_ON => s.map_or(f64::NAN, |s| s.rds_on),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            E_ON => s.map_or(f64::NAN, |s| s.e_on),
+            E_OFF => s.map_or(f64::NAN, |s| s.e_off),
+            E_COND => s.map_or(f64::NAN, |s| s.e_cond),
+            DVDT_RISE => s.map_or(f64::NAN, |s| s.dvdt_rise),
+            DVDT_FALL => s.map_or(f64::NAN, |s| s.dvdt_fall),
+            DIDT_RISE => s.map_or(f64::NAN, |s| s.didt_rise),
+            DIDT_FALL => s.map_or(f64::NAN, |s| s.didt_fall),
+            RDS_ON => s.map_or(f64::NAN, |s| s.rds_on),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -373,19 +318,11 @@ impl MeasModule for Ripple {
     }
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
-        let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    RIPPLE => x.wave(a).map_or(f64::NAN, |v| oos_dsp::power::ripple(v).0),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        let a = x.row[0];
+        derived(ids, |id| match id {
+            RIPPLE => x.wave(a).map_or(f64::NAN, |v| oos_dsp::power::ripple(v).0),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -417,23 +354,14 @@ impl MeasModule for LineRipple {
     }
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
-        let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    LINE_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
-                        let f =
-                            if x.model.pw_fline > 0.0 { x.model.pw_fline } else { oos_dsp::power::line_hz(v, x.dt) };
-                        oos_dsp::power::tone_ripple(v, x.dt, f).pp
-                    }),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        let a = x.row[0];
+        derived(ids, |id| match id {
+            LINE_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
+                let f = if x.model.pw_fline > 0.0 { x.model.pw_fline } else { oos_dsp::power::line_hz(v, x.dt) };
+                oos_dsp::power::tone_ripple(v, x.dt, f).pp
+            }),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -465,22 +393,14 @@ impl MeasModule for SwRipple {
     }
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
-        let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    SW_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
-                        let f = if x.model.pw_fsw > 0.0 { x.model.pw_fsw } else { oos_dsp::power::switch_hz(v, x.dt) };
-                        oos_dsp::power::switching_ripple(v, x.dt, f).pp
-                    }),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        let a = x.row[0];
+        derived(ids, |id| match id {
+            SW_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
+                let f = if x.model.pw_fsw > 0.0 { x.model.pw_fsw } else { oos_dsp::power::switch_hz(v, x.dt) };
+                oos_dsp::power::switching_ripple(v, x.dt, f).pp
+            }),
+            _ => f64::NAN,
+        })
     }
 }
 
@@ -525,19 +445,11 @@ impl MeasModule for Ratio {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let _ = (a, b);
-        let values = ids
-            .iter()
-            .map(|&id| {
-                let v = match id {
-                    PSRR => ratio(x, a, b, oos_dsp::bode::Mode::Psrr),
-                    IMPEDANCE => ratio(x, a, b, oos_dsp::bode::Mode::Z),
-                    _ => f64::NAN,
-                };
-                (id, v)
-            })
-            .collect();
-        Values { values, quality: DERIVED }
+        derived(ids, |id| match id {
+            PSRR => ratio(x, a, b, oos_dsp::bode::Mode::Psrr),
+            IMPEDANCE => ratio(x, a, b, oos_dsp::bode::Mode::Z),
+            _ => f64::NAN,
+        })
     }
 }
 
