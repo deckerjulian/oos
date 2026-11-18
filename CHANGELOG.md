@@ -114,6 +114,8 @@ Changed:
 
 Fixed:
 
+- The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
+  dark before (contributed by halma1).
 - Slow time bases put about every record in the picture again (issue #220): at 1 ms/div a batch holds the frame the
   scope kept from before the arm and one more, and the first was always left out (issue #5), so only 18 of 37 records
   a second were drawn. In a batch of up to four frames that frame is now kept when its edge is at the trigger point;
