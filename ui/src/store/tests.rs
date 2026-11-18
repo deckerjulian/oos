@@ -231,7 +231,7 @@ pub(super) fn custom() -> Model {
     m.mask_y = 1.25;
     m.mask_stop = true;
     m.quick = Quick::SaveCsv;
-    m.la = crate::ui::la::LaSet {
+    m.la = crate::model::la::LaSet {
         on: true,
         show: 0x0f0f,
         preset: [2, crate::ui::la::USER],

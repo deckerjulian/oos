@@ -83,7 +83,7 @@ UI_LAYERS = (
     ("base", "ui-base-up", "",
      "base64 clock drm ethlink font gfx hid hostname json layout mdns net net6 netacl placement remote sntp ssh sysconf system"
      " usbtmc vpu"),
-    ("model", "ui-model-up", "base", "decode math model words zone"),
+    ("model", "ui-model-up", "base", "decode logic math model words zone"),
     ("settings", "ui-settings-up", "base model", "settings"),
     ("board", "ui-board-up", "base model", "board"),
     ("signal", "ui-signal-up", "base model board",

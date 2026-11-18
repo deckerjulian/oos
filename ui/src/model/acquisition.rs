@@ -60,7 +60,7 @@ impl Model {
     }
 
     pub fn la_on(&self) -> bool {
-        self.la.on && crate::ui::la::available()
+        self.la.on && crate::model::la::available()
     }
 
     pub fn max_mem(&self) -> u64 {

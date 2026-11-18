@@ -19,6 +19,7 @@ mod decode;
 mod defaults;
 mod display;
 mod generator;
+pub mod la;
 mod limits;
 mod math;
 mod trigger;
@@ -666,7 +667,7 @@ pub struct Model {
     /// size of the text on the screen
     pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
-    pub la: crate::ui::la::LaSet,
+    pub la: crate::model::la::LaSet,
     /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,

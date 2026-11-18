@@ -605,7 +605,7 @@ fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "mask_y" => m.mask_y = p_f32(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
         "text_size" => m.text_size = p_enum(v, &TEXT_SIZES)?,
-        "la" => m.la = crate::ui::la::LaSet::parse(v)?,
+        "la" => m.la = crate::model::la::LaSet::parse(v)?,
         "dec_la" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 5 {

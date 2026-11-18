@@ -47,7 +47,7 @@ pub struct Record {
     /// every captured sample (shared, not copied; dropped for the history)
     pub raw: Option<Raw>,
     /// logic analyser lines D0..D15 of the same acquisition (LA on)
-    pub la: Option<crate::ui::la::LaRec>,
+    pub la: Option<crate::logic::LaRec>,
     /// the points are min/max pairs (`to_record` peak detect: point 2j the minimum, 2j+1 the maximum of one span)
     pub pairs: bool,
 }
@@ -775,10 +775,10 @@ fn acquire_demo(m: &Model, t: &mut f64, dt_wall: f64, rng: &mut Rng, g: &ScreenG
     }
     // the 16 logic lines over the same window, finer than the analog points (bus-style bands show)
     let la = m.la_on().then(|| {
-        let nl = crate::ui::la::DEMO_SAMPLES;
+        let nl = crate::logic::DEMO_SAMPLES;
         let dl = window / nl as f64;
         let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
-        crate::ui::la::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
+        crate::logic::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
     });
     Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
 }
@@ -845,7 +845,7 @@ fn demo_la_pattern(m: &Model, bufs: &[Vec<f32>], start: f64, dts: f64, ns: usize
                 Bit::L => bufs[c].get(k).is_some_and(|&v| v <= m.pat_levels[c]),
                 _ => true,
             });
-            (ch && crate::ui::la::pattern_is(w, &m.pat_la)) as u8 as f32
+            (ch && crate::logic::pattern_is(w, &m.pat_la)) as u8 as f32
         })
         .collect();
     let e: [f32; 0] = [];
