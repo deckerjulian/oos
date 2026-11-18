@@ -427,6 +427,88 @@ mod tests {
         assert!(missing.is_empty(), "{}", missing.join("\n"));
     }
 
+    /// What each page with `sources` reads, in each of its modes: the channels whose button `off_sources` shows
+    /// when every channel is off, in the order of the page.
+    #[test]
+    fn the_sources_of_every_page_in_each_mode() {
+        use WaveId::Ch;
+        assert!(n_ch() >= 4, "the cases use four channels");
+        type Set = fn(&mut Model);
+        let cases: [(MenuId, &str, Set, &[usize]); 15] = [
+            (MenuId::Power, "ripple", |m| (m.pw_mode, m.pw_v, m.pw_i) = (PowerMode::Ripple, Ch(1), Ch(2)), &[1]),
+            (MenuId::Power, "rail", |m| (m.pw_mode, m.pw_v, m.pw_i) = (PowerMode::Rail, Ch(1), Ch(2)), &[1]),
+            (MenuId::Power, "quality", |m| (m.pw_mode, m.pw_v, m.pw_i) = (PowerMode::Quality, Ch(1), Ch(2)), &[1, 2]),
+            (MenuId::Spectrum, "", |m| m.spec_src = Ch(2), &[2]),
+            (MenuId::Eye, "", |m| m.eye_src = Ch(3), &[3]),
+            (
+                MenuId::Bode,
+                "free with an input",
+                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (bode::FREE, Ch(0), 2, 3),
+                &[0, 1, 3],
+            ),
+            (
+                MenuId::Bode,
+                "free without an input",
+                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (bode::FREE, Ch(0), 0, 3),
+                &[0, 3],
+            ),
+            (MenuId::Bode, "generator", |m| (m.bode_gen, m.bode_in, m.bode_out) = (5, Ch(1), Ch(2)), &[1, 2]),
+            (MenuId::Magnetic, "", |m| (m.mag_v, m.mag_i) = (Ch(0), Ch(1)), &[0, 1]),
+            (
+                MenuId::Inverter,
+                "dq0 analog",
+                |m| {
+                    (m.inv_page, m.inv_ang, m.inv_a, m.inv_b, m.inv_c, m.inv_an) =
+                        (InvPage::Dq0, InvAngle::Analog, Ch(0), Ch(1), Ch(2), Ch(3))
+                },
+                &[0, 1, 2, 3],
+            ),
+            (
+                MenuId::Inverter,
+                "mechanical, phases and torque",
+                |m| {
+                    (m.inv_page, m.inv_ang, m.inv_a, m.inv_b, m.inv_c) =
+                        (InvPage::Mech, InvAngle::Phase, Ch(2), Ch(1), Ch(0));
+                    (m.inv_tq, m.inv_ev, m.inv_ei) = (Some(Ch(3)), None, None);
+                },
+                &[2, 1, 0, 3],
+            ),
+            (
+                MenuId::Inverter,
+                "mechanical, hall",
+                |m| {
+                    (m.inv_page, m.inv_ang) = (InvPage::Mech, InvAngle::Hall);
+                    (m.inv_tq, m.inv_ev, m.inv_ei) = (None, Some(Ch(1)), Some(Ch(2)));
+                },
+                &[1, 2],
+            ),
+            (
+                MenuId::Dpt,
+                "three",
+                |m| (m.dpt_v, m.dpt_i, m.dpt_g, m.dpt_4th) = (Ch(0), Ch(1), Ch(2), DptFourth::Off),
+                &[0, 1, 2],
+            ),
+            (MenuId::BwTest, "", |m| m.bw_src = 2, &[2]),
+            (MenuId::Mask, "", |m| m.mask_src = 1, &[1]),
+        ];
+        for (menu, mode, set, want) in cases {
+            let mut u = crate::ui::testkit::demo_ui();
+            for c in 0..n_ch() {
+                u.m.ch[c].on = false;
+            }
+            set(&mut u.m);
+            assert_eq!(u.off_sources(menu), want, "{:?} {}", menu, mode);
+        }
+        // a fourth signal of the double pulse
+        let mut u = crate::ui::testkit::demo_ui();
+        for c in 0..n_ch() {
+            u.m.ch[c].on = false;
+        }
+        (u.m.dpt_v, u.m.dpt_i, u.m.dpt_g, u.m.dpt_4ch) = (Ch(0), Ch(1), Ch(2), Ch(3));
+        u.m.dpt_4th = DptFourth::Gate;
+        assert_eq!(u.off_sources(MenuId::Dpt), vec![0, 1, 2, 3]);
+    }
+
     /// A picker is answered by one page at most: of the rows of every page, and of the pickers a page opens itself.
     #[test]
     fn a_picker_has_one_page() {

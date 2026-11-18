@@ -137,7 +137,9 @@ when a user notices it.
 - **Declare it** as a module in `ui/src/ui/` with the functions of its page (its rows, its title, what its pickers
   do), and its line in `PAGES` (`ui/src/ui/pages.rs`,
   [ADR 0060](docs/adr/code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md)). The shared menu code asks
-  `PAGES` for its title, rows, anchor and pickers; the layout check opens it.
+  `PAGES` for its title, rows, anchor and pickers, and for its `sources`, the signals it reads: a channel among them
+  that is off gets a button on the page to switch it on (`off_sources`). The layout check opens it. A page of only a
+  title, rows and sources is one call of `page!`.
 - **Also touch** its `MenuId` and its `mod` line (`ui/src/ui.rs`), its rows as `Item`s with their `Part`
   (`ui/src/ui/item.rs`), the row that opens it on its parent page, its longest states in `LAYOUTS` (`pages.rs`), and
   its page in the wiki.
