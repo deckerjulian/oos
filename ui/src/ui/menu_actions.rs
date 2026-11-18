@@ -297,17 +297,6 @@ impl Ui {
                 let i = o.iter().position(|&n| n >= cur).unwrap_or(0);
                 self.m.segments = o[cycle(i, o.len(), d)];
             }
-            Item::AcqAvgHw => {
-                self.m.avg_hw = !self.m.avg_hw;
-                if self.m.avg_hw && !board().avg_hw(&self.m) {
-                    self.toast("HW average needs a count of 2..1024 and ordinary records: software average");
-                }
-            }
-            Item::AcqSegHw => {
-                self.m.seg_hw = !self.m.seg_hw;
-                // the other limit applies from now on
-                self.m.segments = self.seg_count();
-            }
             Item::AcqSegIvl => {
                 let i = SEG_IVLS.iter().position(|&x| x >= self.m.seg_ivl).unwrap_or(0);
                 self.m.seg_ivl = SEG_IVLS[cycle(i, SEG_IVLS.len(), d)];
@@ -510,15 +499,6 @@ impl Ui {
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
             Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
-            Item::AcqMode => {
-                let all = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
-                let i = all.iter().position(|&x| x == m.acq).unwrap();
-                m.acq = all[cycle(i, 4, d)];
-            }
-            Item::AcqAvg => {
-                let i = AVERAGES.iter().position(|&x| x == m.avg_count).unwrap_or(3);
-                m.avg_count = AVERAGES[step_index(i, AVERAGES.len(), d)];
-            }
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => {
                 let cur = self.meas_src;
@@ -586,7 +566,6 @@ impl Ui {
                 let z = &mut m.zones[self.zone_sel];
                 z.inside = !z.inside;
             }
-            Item::AcqCores => m.cores = !m.cores,
             Item::AcqDrawPath => {
                 m.draw_batch = !m.draw_batch;
                 self.dirty_map = true;
@@ -612,10 +591,6 @@ impl Ui {
                 let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
                 m.hist = all[cycle(i, 3, d)];
-            }
-            Item::TrigCoup => {
-                let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
-                m.trig_coup = TRIG_COUPS[cycle(i, TRIG_COUPS.len(), d)];
             }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());

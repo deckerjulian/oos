@@ -9,12 +9,11 @@
 //! An SCPI value a row does not take falls through to the later branches of `exec_cmd`, which answer
 //! `-113,"Undefined header"`, as before the table. Still written out by hand: `trig_when` (its menu offers Off only
 //! for Runt), `video_line` (the menu keeps it below the line count of the standard) and `nth_n` (the menu keeps it
-//! within 1 to 65535), where a row would change what they do, a setup reading any number into the last two; the
-//! sources, levels and patterns, which are not one value each; and `trig_coup`, whose menu labels are `TrigCoup::name`
-//! in model.rs, left unused (dead code on the scope's target) while that stays.
+//! within 1 to 65535), where a row would change what they do, a setup reading any number into the last two; and the
+//! sources, levels and patterns, which are not one value each.
 
 use super::{Arg, Choice, Scpi, Setting, Ty, Unknown, Val};
-use crate::model::{step_index, time_ladder, Pol, Slope, TrigMode, VSync, VideoStd, WinMode};
+use crate::model::{step_index, time_ladder, Pol, Slope, TrigMode, VSync, VideoStd, WinMode, TRIG_COUPS};
 
 /// Every slice, in the order of the docs table.
 pub const SLICES: [&[Setting]; 6] = [&EDGE, &REJECT, &SECOND, &TIMES, &WINDOW, &SETUP_HOLD];
@@ -70,7 +69,7 @@ pub const EDGE: [Setting; 3] = [
 ];
 
 /// Written after `trig_level2`.
-pub const REJECT: [Setting; 2] = [
+pub const REJECT: [Setting; 3] = [
     Setting {
         key: "trig_nrej",
         scpi: Scpi::Cmd("NREJect"),
@@ -95,6 +94,27 @@ pub const REJECT: [Setting; 2] = [
         accept: None,
         get: |m| Val::Bool(m.auto_nrej),
         put: |m, v| m.auto_nrej = v.index() != 0,
+    },
+    Setting {
+        key: "trig_coup",
+        scpi: Scpi::Cmd("COUPling"),
+        ty: Ty::Choice(
+            &[
+                Choice { store: "Dc", scpi: "DC", label: "DC" },
+                Choice { store: "Ac", scpi: "AC", label: "AC" },
+                Choice { store: "LfReject", scpi: "LFReject", label: "LF reject" },
+                Choice { store: "HfReject", scpi: "HFReject", label: "HF reject" },
+            ],
+            Unknown::Value,
+            Arg::Keyword,
+        ),
+        label: "Coupling",
+        #[cfg(test)]
+        doc: "A filter in the trigger path of the edge trigger; the trace keeps the channel's coupling \
+              (docs/protocols/trigger.md 2.5).",
+        accept: None,
+        get: |m| Val::Index(TRIG_COUPS.iter().position(|&c| c == m.trig_coup).unwrap_or(0)),
+        put: |m, v| m.trig_coup = TRIG_COUPS[v.index()],
     },
 ];
 
