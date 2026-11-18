@@ -7,6 +7,8 @@
 use super::*;
 use std::io::Read;
 
+mod hostile;
+
 /// The tests that fetch large answers one after the other: `SENDERS` is shared by the whole process and lets
 /// `MAX_SENDERS` through, and under load (tests in parallel, CI) a sender at `SCHED_IDLE` holds its place long
 /// enough that another test is answered 503 busy
