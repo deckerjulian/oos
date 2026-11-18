@@ -117,6 +117,8 @@ Changed:
 
 Fixed:
 
+- Measurements without an SI unit take no SI prefix: a ratio reads `0.498`, not `498 m`, a count `1`, not `1.00`, and
+  `ppm`, `rpm` and `rpm/s` are plain decimals (`1500 rpm`, not `1.50 krpm`).
 - The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
   the ADC, so the level is a level on the AC trace as drawn. Only the demo, which triggers before it takes the mean
   out, still hides it (on the unit: assumed, not yet checked).
