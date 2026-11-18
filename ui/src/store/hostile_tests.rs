@@ -8,7 +8,7 @@
 use super::header_import_tests::{ag_f32, isf_i16, raw_f64, tr0_f32, wavedesc_i16, wfmx_f32};
 use super::tests::{custom, wfm_f32};
 use super::*;
-use crate::hostile::{is_known, run};
+use crate::hostile::run;
 
 /// A record of two channels, as a capture stores it.
 fn record() -> (Record, Model) {
@@ -191,11 +191,6 @@ fn hostile_setup_files() {
         let written = setup_text(&m);
         let (again, bad_again) = parse_setup_lenient(&written);
         if let Some(e) = bad_again.first() {
-            // the finding `setup-refused-line-half-applied`: the key refused now is one refused in the input
-            let key = |e: &str| e.split(": ").nth(1).unwrap_or("").to_string();
-            if bad.iter().any(|b| key(b) == key(e)) && is_known("setup-refused-line-half-applied") {
-                return Ok(());
-            }
             return Err(format!("accepted a setup the reader refuses when it is written out: {e}"));
         }
         let rewritten = setup_text(&again);
@@ -212,9 +207,9 @@ fn hostile_setup_files() {
     });
 }
 
+// Break it catches: a setup line that takes its first values before a later one is refused (#181)
 #[test]
-#[ignore = "a setup line that is refused for a later value leaves its first values in the model, #181"]
-pub(crate) fn hostile_known_setup_refused_line_half_applied() {
+fn hostile_setup_refused_line_half_applied() {
     let (m, bad) = parse_setup_lenient("bode_sweep = inf true 1 Rise 0 1 0\n");
     assert_eq!(bad.len(), 1, "an infinite sweep time is refused: {bad:?}");
     assert_eq!(m.bode_sw_time, Model::default().bode_sw_time, "and the refused line changes nothing");

@@ -182,6 +182,8 @@ Fixed:
   `OOSW` file with such a time base is. It became a reference with an infinite time step.
 - Mask test: a mask file whose tolerance `x` or `y` is `inf` or `NaN` is refused with "Load failed"; such a
   tolerance became the mask's margin.
+- Setup recall: a `bode_sweep` line that is refused (a sweep time of 0 or `inf`, or a later value that is wrong) no
+  longer leaves its first values in the Bode settings; the line changes nothing.
 
 ## 0.1.13
 

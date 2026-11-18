@@ -22,8 +22,6 @@ mod signals;
 
 pub(crate) use gen::*;
 
-use crate::store::hostile_tests as files;
-
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
 pub(crate) const KNOWN: &[Known] = &[
@@ -31,11 +29,6 @@ pub(crate) const KNOWN: &[Known] = &[
         name: "mdns-answer-it-cannot-read",
         what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
         repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
-    },
-    Known {
-        name: "setup-refused-line-half-applied",
-        what: "store::set applies the first values of a line it then refuses: an infinite Bode sweep time stays",
-        repro: files::hostile_known_setup_refused_line_half_applied,
     },
     Known {
         name: "sysconf-list-word-with-hash",

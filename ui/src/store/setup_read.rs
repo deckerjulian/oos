@@ -499,16 +499,16 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             if w.len() != 7 {
                 return Err("bode_sweep: want 7 values".into());
             }
-            m.bode_sw_time = p_f64(w[0])?;
-            if !m.bode_sw_time.is_finite() || m.bode_sw_time <= 0.0 {
+            // the whole line is read before any of it is taken: a refused line leaves the model as it was
+            let time = p_f64(w[0])?;
+            if !time.is_finite() || time <= 0.0 {
                 return Err("bode_sweep: the sweep time must be above 0".into());
             }
-            m.bode_sw_log = p_bool(w[1])?;
-            m.bode_sync = p_idx(w[2], NCH + 1)?.max(1) - 1;
-            m.bode_sync_slope = p_enum(w[3], &crate::settings::trigger::SLOPES[..2])?;
-            m.bode_sync_level = p_f32(w[4])?;
-            m.bode_sw_in = p_idx(w[5], NCH + 1)?;
-            m.bode_ref = p_f64(w[6])?;
+            let (log, sync) = (p_bool(w[1])?, p_idx(w[2], NCH + 1)?.max(1) - 1);
+            let (slope, level) = (p_enum(w[3], &crate::settings::trigger::SLOPES[..2])?, p_f32(w[4])?);
+            let (input, reference) = (p_idx(w[5], NCH + 1)?, p_f64(w[6])?);
+            (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope) = (time, log, sync, slope);
+            (m.bode_sync_level, m.bode_sw_in, m.bode_ref) = (level, input, reference);
         }
         "spec" => {
             let w: Vec<&str> = v.split_whitespace().collect();
