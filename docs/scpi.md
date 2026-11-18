@@ -440,7 +440,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:CHANnel<n>:EXPand[?]` | Vertical expansion reference supported by the model. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
-| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, at most 100000, without the menu's steps; `OFF` or `0` switches it off. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
+| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps, a larger one than 100000 sets 100000; `OFF` or `0` switches it off, another value is refused with `-113`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
 | `:ACQuire:SEGMents:INTerval[?] <s>` | Hardware segments: the pause after each segment in seconds, set within 0 to 10. |
 | `:ACQuire:SEGMents:TIMes?` | Hardware segments: the trigger time of each recorded segment since the first one, comma-separated seconds, `9.9E37` for a segment without a time stamp; empty before segments are recorded. |
 | `:DISPlay:VIEW[?] <n>` | Display > Views (OOS): show view n, 1 through the view count; the query answers the view shown. |
