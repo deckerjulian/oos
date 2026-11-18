@@ -805,60 +805,15 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
-            let mut job = self.wave.take().unwrap();
-            let status = if ok { "200 OK" } else { "409 Conflict" };
-            let head = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
-                Cache-Control: no-store\r\nConnection: close\r\n\r\n",
-                text.len()
-            );
-            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
-            let _ = job.s.write_all(head.as_bytes());
-            let _ = job.s.write_all(text.as_bytes());
-        }
-        if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
-                if self.pending.len() >= MAX_PENDING {
-                    continue; // dropped: closes the connection
-                }
-                let _ = s.set_nonblocking(false);
-                let now = Instant::now();
-                self.pending.push(Pending { s, req: Vec::new(), t: now, t_acc: now, need: None, large: false });
-            }
-        }
+        self.finish_wave(ui);
+        self.accept_new();
         let mut i = 0;
         while i < self.pending.len() {
             let mut buf = [0u8; 65536];
             // a waveform being parsed holds its body too
             let large_taken = self.pending.iter().any(|p| p.large) || self.wave.is_some();
             let Pending { s, req, t, t_acc, need, large } = &mut self.pending[i];
-            let mut dead = false;
-            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s), and once
-            // the length is known not beyond the request: the buffer reserved for it is not outgrown
-            let mut got = 0;
-            while got < 2 << 20 {
-                let room = need.map_or(buf.len(), |n| n.saturating_sub(req.len()).min(buf.len()));
-                if room == 0 {
-                    break;
-                }
-                match crate::net::read_now(s, &mut buf[..room]) {
-                    Ok(0) => {
-                        dead = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        req.extend_from_slice(&buf[..n]);
-                        got += n;
-                        *t = Instant::now();
-                    }
-                    Err(e) if crate::net::later(&e) => break,
-                    Err(_) => {
-                        dead = true;
-                        break;
-                    }
-                }
-            }
+            let mut dead = read_some(s, req, t, *need, &mut buf);
             // headers complete, and the body when there is a Content-Length
             let hdr_end = req.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
             if hdr_end.is_none() && req.len() > 16384 {
@@ -920,120 +875,8 @@ impl Http {
                 let _ = s.write_all(msg);
                 dead = true;
             } else if complete {
-                // only the header as text: the body may be a 31 MB binary package
-                let text = String::from_utf8_lossy(&req[..hdr_end.unwrap_or(req.len())]).into_owned();
-                let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
-                let (route, query) = path.split_once('?').unwrap_or((&path, ""));
-                let req_body = &req[hdr_end.unwrap_or(req.len())..];
-                let post = text.starts_with("POST ");
-                // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
-                let peer_ok = self.acl.permits_peer(s.peer_addr());
-                // an answer that is text for the page to show, not the data asked for
-                let mut failed = false;
-                let mut csv = |r: Result<String, String>| match r {
-                    Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
-                    Err(e) => {
-                        failed = true;
-                        ("text/plain", e.into_bytes())
-                    }
-                };
-                let (ctype, body): (&str, Vec<u8>) = match route {
-                    _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
-                    "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
-                    "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
-                    "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
-                    "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
-                    "/waveform" if post => {
-                        let slot = query
-                            .split('&')
-                            .find_map(|part| part.strip_prefix("slot="))
-                            .and_then(|value| value.parse::<usize>().ok());
-                        match slot.filter(|s| (1..=10).contains(s)) {
-                            None => {
-                                failed = true;
-                                ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
-                            }
-                            Some(_) if self.wave.is_some() => {
-                                busy_answer(s);
-                                self.pending.remove(i);
-                                continue;
-                            }
-                            Some(slot) => {
-                                // the request goes to the parser whole, its body is not copied out
-                                let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
-                                let Pending { s, req, .. } = self.pending.remove(i);
-                                match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
-                                    Some(job) => self.wave = Some(job),
-                                    None => eprintln!("oos-ui: no thread for a waveform upload"),
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    "/screen.png" | "/screen.jpg" => {
-                        let have = header(&text, "if-none-match").map(str::to_string);
-                        self.shots.request(s, have, cv, route == "/screen.jpg");
-                        self.pending.remove(i);
-                        continue;
-                    }
-                    // the scope's local time for the names of the page's downloads; empty while its clock is not set
-                    "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
-                    "/wave.csv" => csv(ui.web_wave_csv()),
-                    "/la.csv" => csv(ui.web_la_csv()),
-                    "/wave.bin" => match ui.web_wave_bin() {
-                        Ok(b) => ("application/octet-stream", b),
-                        Err(e) => {
-                            failed = true;
-                            ("text/plain", e.into_bytes())
-                        }
-                    },
-                    "/update" if post => match ui.update_upload(req_body) {
-                        Ok(m) => ("text/plain", m.into_bytes()),
-                        Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
-                    },
-                    "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
-                    "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
-                    "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
-                        Some(r) => ("application/json", r.into_bytes()),
-                        None => ("", Vec::new()),
-                    },
-                    "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
-                    "/cmd" => {
-                        let mut refused = false;
-                        for kv in query.split('&') {
-                            if let Some(v) = kv.strip_prefix("c=") {
-                                let c = unescape(v);
-                                if crate::cmd::remote_ok(&c) {
-                                    cmds.push(c);
-                                } else {
-                                    refused = true;
-                                }
-                            }
-                        }
-                        ("text/plain", if refused { b"refused".to_vec() } else { b"ok".to_vec() })
-                    }
-                    _ => ("text/plain", b"not found".to_vec()),
-                };
-                let status = if failed {
-                    "409 Conflict"
-                } else if body == b"not found" {
-                    "404 Not Found"
-                } else if body == b"refused" {
-                    "403 Forbidden"
-                } else if ctype.is_empty() {
-                    "202 Accepted"
-                } else {
-                    "200 OK"
-                };
-                let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
-                if body.len() > SEND_INLINE {
-                    if !send_in_background(s, head, body) {
-                        busy_answer(s);
-                    }
-                } else {
-                    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-                    let _ = s.write_all(head.as_bytes());
-                    let _ = s.write_all(&body);
+                if !self.answer(i, hdr_end, ui, cv, scpi, &mut cmds) {
+                    continue;
                 }
                 dead = true;
             } else if t.elapsed().as_secs() > IDLE_S || t_acc.elapsed().as_secs() > DEADLINE_S {
@@ -1047,6 +890,206 @@ impl Http {
         }
         cmds
     }
+
+    /// Answers the waveform upload whose parsing has finished.
+    fn finish_wave(&mut self, ui: &mut Ui) {
+        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
+            let mut job = self.wave.take().unwrap();
+            let status = if ok { "200 OK" } else { "409 Conflict" };
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                text.len()
+            );
+            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
+            let _ = job.s.write_all(head.as_bytes());
+            let _ = job.s.write_all(text.as_bytes());
+        }
+    }
+
+    /// Takes the connections waiting at the listener, up to `MAX_PENDING`.
+    fn accept_new(&mut self) {
+        if let Some(l) = &self.l {
+            while let Ok((s, _)) = l.accept() {
+                if self.pending.len() >= MAX_PENDING {
+                    continue; // dropped: closes the connection
+                }
+                let _ = s.set_nonblocking(false);
+                let now = Instant::now();
+                self.pending.push(Pending { s, req: Vec::new(), t: now, t_acc: now, need: None, large: false });
+            }
+        }
+    }
+
+    /// Answers the complete request of connection `i`; false when the connection was handed on and is gone.
+    fn answer(
+        &mut self,
+        i: usize,
+        hdr_end: Option<usize>,
+        ui: &mut Ui,
+        cv: &Canvas,
+        scpi: &mut crate::scpi::Scpi,
+        cmds: &mut Vec<String>,
+    ) -> bool {
+        let Pending { s, req, .. } = &mut self.pending[i];
+        // only the header as text: the body may be a 31 MB binary package
+        let text = String::from_utf8_lossy(&req[..hdr_end.unwrap_or(req.len())]).into_owned();
+        let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
+        let (route, query) = path.split_once('?').unwrap_or((&path, ""));
+        let req_body = &req[hdr_end.unwrap_or(req.len())..];
+        let post = text.starts_with("POST ");
+        // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
+        let peer_ok = self.acl.permits_peer(s.peer_addr());
+        // an answer that is text for the page to show, not the data asked for
+        let mut failed = false;
+        let mut csv = |r: Result<String, String>| match r {
+            Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
+            Err(e) => {
+                failed = true;
+                ("text/plain", e.into_bytes())
+            }
+        };
+        let (ctype, body): (&str, Vec<u8>) = match route {
+            _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+            "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
+            "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
+            "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
+            "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
+            "/waveform" if post => {
+                let slot = query
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("slot="))
+                    .and_then(|value| value.parse::<usize>().ok());
+                match slot.filter(|s| (1..=10).contains(s)) {
+                    None => {
+                        failed = true;
+                        ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
+                    }
+                    Some(slot) => {
+                        self.waveform_take(i, slot, query, hdr_end, ui);
+                        return false;
+                    }
+                }
+            }
+            "/screen.png" | "/screen.jpg" => {
+                let have = header(&text, "if-none-match").map(str::to_string);
+                self.shots.request(s, have, cv, route == "/screen.jpg");
+                self.pending.remove(i);
+                return false;
+            }
+            // the scope's local time for the names of the page's downloads; empty while its clock is not set
+            "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
+            "/wave.csv" => csv(ui.web_wave_csv()),
+            "/la.csv" => csv(ui.web_la_csv()),
+            "/wave.bin" => match ui.web_wave_bin() {
+                Ok(b) => ("application/octet-stream", b),
+                Err(e) => {
+                    failed = true;
+                    ("text/plain", e.into_bytes())
+                }
+            },
+            "/update" if post => match ui.update_upload(req_body) {
+                Ok(m) => ("text/plain", m.into_bytes()),
+                Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
+            },
+            "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
+            "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
+            "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
+                Some(r) => ("application/json", r.into_bytes()),
+                None => ("", Vec::new()),
+            },
+            "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
+            "/cmd" => remote_cmds(query, cmds),
+            _ => ("text/plain", b"not found".to_vec()),
+        };
+        let status = if failed {
+            "409 Conflict"
+        } else if body == b"not found" {
+            "404 Not Found"
+        } else if body == b"refused" {
+            "403 Forbidden"
+        } else if ctype.is_empty() {
+            "202 Accepted"
+        } else {
+            "200 OK"
+        };
+        let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
+        if body.len() > SEND_INLINE {
+            if !send_in_background(s, head, body) {
+                busy_answer(s);
+            }
+        } else {
+            let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(&body);
+        }
+        true
+    }
+
+    /// POST /waveform to `slot`: the request goes whole to the parser, or is answered busy while one is parsed; the
+    /// connection leaves `pending` either way.
+    fn waveform_take(&mut self, i: usize, slot: usize, query: &str, hdr_end: Option<usize>, ui: &mut Ui) {
+        let Pending { s, req, .. } = &mut self.pending[i];
+        if self.wave.is_some() {
+            busy_answer(s);
+            self.pending.remove(i);
+        } else {
+            // the request goes to the parser whole, its body is not copied out
+            let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
+            let Pending { s, req, .. } = self.pending.remove(i);
+            match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
+                Some(job) => self.wave = Some(job),
+                None => eprintln!("oos-ui: no thread for a waveform upload"),
+            }
+        }
+    }
+}
+
+/// Reads what connection `s` has now into `req`; true when it closed or failed.
+fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usize>, buf: &mut [u8]) -> bool {
+    let mut dead = false;
+    // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s), and once
+    // the length is known not beyond the request: the buffer reserved for it is not outgrown
+    let mut got = 0;
+    while got < 2 << 20 {
+        let room = need.map_or(buf.len(), |n| n.saturating_sub(req.len()).min(buf.len()));
+        if room == 0 {
+            break;
+        }
+        match crate::net::read_now(s, &mut buf[..room]) {
+            Ok(0) => {
+                dead = true;
+                break;
+            }
+            Ok(n) => {
+                req.extend_from_slice(&buf[..n]);
+                got += n;
+                *t = Instant::now();
+            }
+            Err(e) if crate::net::later(&e) => break,
+            Err(_) => {
+                dead = true;
+                break;
+            }
+        }
+    }
+    dead
+}
+
+/// GET /cmd: the commands `c=` of the query that a remote may give go to `cmds`; "refused" when one may not.
+fn remote_cmds(query: &str, cmds: &mut Vec<String>) -> (&'static str, Vec<u8>) {
+    let mut refused = false;
+    for kv in query.split('&') {
+        if let Some(v) = kv.strip_prefix("c=") {
+            let c = unescape(v);
+            if crate::cmd::remote_ok(&c) {
+                cmds.push(c);
+            } else {
+                refused = true;
+            }
+        }
+    }
+    ("text/plain", if refused { b"refused".to_vec() } else { b"ok".to_vec() })
 }
 
 /// The value of a header of the request head (name without case).
