@@ -193,8 +193,11 @@ class Scope:
                 "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
         if os.environ.get("OOS_SSH_IDENTITY"):
             args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
-        result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True,
-                                text=True, timeout=wait + 15, check=True)
+        result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True, text=True, timeout=wait + 15)
+        # the command's own exit status is its business (`grep -c` with no match ends with 1), as it was on telnet; 255
+        # is ssh's: no connection, no key, a host key that does not match
+        if result.returncode == 255:
+            raise AssertionError(f"ssh root@{self.host}: {result.stderr.strip()}")
         return result.stdout.strip()
 
     def base(self):

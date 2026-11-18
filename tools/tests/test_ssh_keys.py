@@ -107,6 +107,13 @@ class HostKeys(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     scope.shell("dd of=/dev/mmcblk0")
                 self.assertEqual(run.call_count, 1)
+            # the command's exit status does not fail the call (grep -c with no match ends with 1); ssh's own 255 does
+            with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "0\n", "")):
+                self.assertEqual(scope.shell("grep -c panic /tmp/oos-ui.log"), "0")
+            refused = subprocess.CompletedProcess([], 255, "", "Host key verification failed.")
+            with mock.patch.object(subprocess, "run", return_value=refused):
+                with self.assertRaises(AssertionError):
+                    scope.shell("uname -r")
 
     def test_deploy_reaches_the_scope_over_ssh_only_without_network(self):
         # an `ssh` of this test in place of the real one: it writes its arguments down and answers nothing
