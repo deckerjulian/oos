@@ -196,73 +196,20 @@ impl Scpi {
             return None;
         }
         if n.len() == 1 && kw(n0, "DATA") && query {
-            let events = match ui.decode_events_result() {
-                Ok(events) => events,
-                Err("Decode computing") => return t("BUSY"),
-                Err(error) => {
-                    self.push_err(format!("-230,\"{}\"", error));
-                    return None;
-                }
-            };
-            let prefix = format!("D{} ", k + 1);
-            let rows = events
-                .lines()
-                .filter(|line| line.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix)))
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Some(block(format!("{}\n{}", proto_token(cfg.proto), rows).as_bytes()));
+            return self.bus_data(ui, k);
         }
         if n.len() == 2 && kw(n0, "RS232") {
             return self.bus_rs232(ui, k, n[1], query, arg);
         }
         if n.len() == 3 && kw(n0, "IIC") && kw(n[2], "SOURce") && (kw(n[1], "SCLK") || kw(n[1], "SDA")) {
-            let clock = kw(n[1], "SCLK");
-            if query {
-                return t(&bus_source_name(if clock { cfg.src2 } else { cfg.src }));
-            }
-            let Some(source) = parse_bus_wave(ui, arg) else {
-                self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
-                return None;
-            };
-            if !put_bus_wave(ui, k, Proto::I2C, usize::from(clock), Some(source)) {
-                self.push_err("-224,\"Decoder source is unavailable\"".into());
-            }
-            return None;
+            return self.bus_iic_source(ui, k, n, query, arg);
         }
         if n.len() == 3
             && kw(n0, "SPI")
             && kw(n[2], "SOURce")
             && (kw(n[1], "SCLK") || kw(n[1], "MOSI") || kw(n[1], "SS"))
         {
-            let role = if kw(n[1], "SCLK") {
-                1
-            } else if kw(n[1], "MOSI") {
-                0
-            } else {
-                2
-            };
-            if query {
-                return t(&match role {
-                    0 => bus_source_name(cfg.src),
-                    1 => bus_source_name(cfg.src2),
-                    _ => cfg.cs.map(bus_source_name).unwrap_or_else(|| "OFF".into()),
-                });
-            }
-            let source = if role == 2 && (kw(arg, "OFF") || kw(arg, "NONE")) {
-                None
-            } else {
-                match parse_bus_wave(ui, arg) {
-                    Some(source) => Some(source),
-                    None => {
-                        self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
-                        return None;
-                    }
-                }
-            };
-            if !put_bus_wave(ui, k, Proto::SPI, role, source) {
-                self.push_err("-224,\"Decoder source is unavailable\"".into());
-            }
-            return None;
+            return self.bus_spi_source(ui, k, n, query, arg);
         }
         if n.len() == 2 && kw(n0, "SPI") && kw(n[1], "DBITs") {
             if query {
@@ -279,6 +226,80 @@ impl Scpi {
             return None;
         }
         self.push_err(format!("-113,\"Undefined header\" :BUS{}:{}", k + 1, n.join(":")));
+        None
+    }
+
+    /// `:BUS<n>:DATA?`: the decoder's protocol and its rows of the event table.
+    fn bus_data(&mut self, ui: &Ui, k: usize) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let cfg = ui.m.dec_slot(k);
+        let events = match ui.decode_events_result() {
+            Ok(events) => events,
+            Err("Decode computing") => return t("BUSY"),
+            Err(error) => {
+                self.push_err(format!("-230,\"{}\"", error));
+                return None;
+            }
+        };
+        let prefix = format!("D{} ", k + 1);
+        let rows = events
+            .lines()
+            .filter(|line| line.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(block(format!("{}\n{}", proto_token(cfg.proto), rows).as_bytes()))
+    }
+
+    /// `:BUS<n>:IIC:SCLK|SDA:SOURce` (`n` without the root).
+    fn bus_iic_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let cfg = ui.m.dec_slot(k);
+        let clock = kw(n[1], "SCLK");
+        if query {
+            return t(&bus_source_name(if clock { cfg.src2 } else { cfg.src }));
+        }
+        let Some(source) = parse_bus_wave(ui, arg) else {
+            self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
+            return None;
+        };
+        if !put_bus_wave(ui, k, Proto::I2C, usize::from(clock), Some(source)) {
+            self.push_err("-224,\"Decoder source is unavailable\"".into());
+        }
+        None
+    }
+
+    /// `:BUS<n>:SPI:SCLK|MOSI|SS:SOURce` (`n` without the root); SS takes OFF.
+    fn bus_spi_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let cfg = ui.m.dec_slot(k);
+        let role = if kw(n[1], "SCLK") {
+            1
+        } else if kw(n[1], "MOSI") {
+            0
+        } else {
+            2
+        };
+        if query {
+            return t(&match role {
+                0 => bus_source_name(cfg.src),
+                1 => bus_source_name(cfg.src2),
+                _ => cfg.cs.map(bus_source_name).unwrap_or_else(|| "OFF".into()),
+            });
+        }
+        let source = if role == 2 && (kw(arg, "OFF") || kw(arg, "NONE")) {
+            None
+        } else {
+            match parse_bus_wave(ui, arg) {
+                Some(source) => Some(source),
+                None => {
+                    self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
+                    return None;
+                }
+            }
+        };
+        if !put_bus_wave(ui, k, Proto::SPI, role, source) {
+            self.push_err("-224,\"Decoder source is unavailable\"".into());
+        }
         None
     }
 

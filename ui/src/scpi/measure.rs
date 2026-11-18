@@ -249,22 +249,7 @@ impl Scpi {
                 return None;
             }
             if kw(n1, "SOURce") {
-                if query {
-                    return t(&wave_tok(ui.meas_source()));
-                }
-                let words: Vec<_> = arg.split(',').map(str::trim).collect();
-                if words.is_empty() || words.len() > 2 || words.iter().any(|word| word.is_empty()) {
-                    self.push_err("-224,\"Illegal parameter value\"".into());
-                    return None;
-                }
-                let a = self.named_source(words[0])?;
-                let b = if words.len() == 2 { Some(self.named_source(words[1])?) } else { None };
-                ui.set_meas_source(a);
-                if let Some(b) = b {
-                    ui.set_meas_source_b(b);
-                }
-                ui.mark_changed();
-                return None;
+                return self.meas_sources(ui, query, arg);
             }
             if kw(n1, "CLEar") && !query {
                 ui.meas_clear_remote();
@@ -274,24 +259,7 @@ impl Scpi {
                 return self.meas_place(ui, arg);
             }
             if kw(n1, "REFS") {
-                if query {
-                    let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
-                    return t(if ten { "10/90" } else { "20/80" });
-                }
-                let a = arg.trim().replace(' ', "");
-                let (lo, hi) = if a == "10/90" || a == "1090" || a == "10" {
-                    (0.1, 0.9)
-                } else if a == "20/80" || a == "2080" || a == "20" {
-                    (0.2, 0.8)
-                } else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    return None;
-                };
-                ui.m.meas_lpct = lo;
-                ui.m.meas_hpct = hi;
-                ui.measure_last();
-                ui.mark_changed();
-                return None;
+                return self.meas_refs(ui, query, arg);
             }
             if kw(n1, "INDicator") {
                 return self.meas_indicator(ui, query, arg);
@@ -300,28 +268,78 @@ impl Scpi {
                 return self.meas_gate(ui, n1, query, arg);
             }
             if kw(n1, "TSETup") || kw(n1, "THOLd") {
-                let setup = kw(n1, "TSETup");
-                if query {
-                    return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
-                }
-                match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
-                    Some(v) => {
-                        if setup {
-                            ui.m.meas_tsetup = v;
-                        } else {
-                            ui.m.meas_thold = v;
-                        }
-                        ui.mark_changed();
-                    }
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
+                return self.meas_setup_hold(ui, n1, query, arg);
             }
             if kw(n1, "ITEM") && query {
                 return self.meas_item(ui, arg);
             }
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    /// `:MEASure:SOURce`: source A, and B after a comma.
+    fn meas_sources(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(&wave_tok(ui.meas_source()));
+        }
+        let words: Vec<_> = arg.split(',').map(str::trim).collect();
+        if words.is_empty() || words.len() > 2 || words.iter().any(|word| word.is_empty()) {
+            self.push_err("-224,\"Illegal parameter value\"".into());
+            return None;
+        }
+        let a = self.named_source(words[0])?;
+        let b = if words.len() == 2 { Some(self.named_source(words[1])?) } else { None };
+        ui.set_meas_source(a);
+        if let Some(b) = b {
+            ui.set_meas_source_b(b);
+        }
+        ui.mark_changed();
+        None
+    }
+
+    /// `:MEASure:REFS`: the 10/90 or 20/80 threshold pair.
+    fn meas_refs(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
+            return t(if ten { "10/90" } else { "20/80" });
+        }
+        let a = arg.trim().replace(' ', "");
+        let (lo, hi) = if a == "10/90" || a == "1090" || a == "10" {
+            (0.1, 0.9)
+        } else if a == "20/80" || a == "2080" || a == "20" {
+            (0.2, 0.8)
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        ui.m.meas_lpct = lo;
+        ui.m.meas_hpct = hi;
+        ui.measure_last();
+        ui.mark_changed();
+        None
+    }
+
+    /// `:MEASure:TSETup|THOLd` (`n1`): the setup and hold times.
+    fn meas_setup_hold(&mut self, ui: &mut Ui, n1: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let setup = kw(n1, "TSETup");
+        if query {
+            return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
+        }
+        match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+            Some(v) => {
+                if setup {
+                    ui.m.meas_tsetup = v;
+                } else {
+                    ui.m.meas_thold = v;
+                }
+                ui.mark_changed();
+            }
+            None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+        }
         None
     }
 

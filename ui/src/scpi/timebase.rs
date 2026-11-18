@@ -63,76 +63,10 @@ impl Scpi {
             };
         }
         if n.len() == 2 && kw(n0, "HREFerence") && kw(n[1], "MODE") {
-            if query {
-                return t(match ui.m.h_expand {
-                    HExpand::Center => "CENT",
-                    HExpand::Left => "LB",
-                    HExpand::Right => "RB",
-                    HExpand::Trigger => "TRIG",
-                });
-            }
-            let a = arg.trim();
-            ui.m.h_expand = if kw(a, "CENTer") {
-                HExpand::Center
-            } else if a.eq_ignore_ascii_case("LB") || kw(a, "LEFT") {
-                HExpand::Left
-            } else if a.eq_ignore_ascii_case("RB") || kw(a, "RIGHt") {
-                HExpand::Right
-            } else if kw(a, "TRIGger") {
-                HExpand::Trigger
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            ui.mark_changed();
-            return None;
+            return self.timebase_href(ui, query, arg);
         }
-        if n.len() == 2 && kw(n0, "DELay") && kw(n[1], "ENABle") {
-            if query {
-                return t(if ui.m.zoom { "1" } else { "0" });
-            }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.zoom_set_remote(on);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
-        }
-        if n.len() == 2 && kw(n0, "DELay") && kw(n[1], "SCALe") {
-            if query {
-                return t(&e(tscales()[ui.m.zscale] as f64));
-            }
-            let Some(v) = num(arg) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let scales = tscales();
-            let mut i = nearest(&scales, v);
-            if i > ui.m.tscale {
-                i = ui.m.tscale;
-            }
-            ui.m.zscale = i;
-            ui.zoom_clamp();
-            ui.mark_changed();
-            return None;
-        }
-        if n.len() == 2 && kw(n0, "DELay") && (kw(n[1], "OFFSet") || kw(n[1], "POSition")) {
-            if query {
-                return t(&e(ui.m.zdelay as f64));
-            }
-            let Some(v) = num(arg) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            ui.m.zdelay = v;
-            ui.zoom_clamp();
-            ui.mark_changed();
-            return None;
+        if n.len() == 2 && kw(n0, "DELay") {
+            return self.timebase_delay(ui, n, query, arg);
         }
         if n.len() == 1 && kw(n0, "ROLL") {
             // Auto roll: the screen enters roll at 50 ms/div while this is on.
@@ -152,23 +86,121 @@ impl Scpi {
             };
         }
         if n.len() == 1 && kw(n0, "MODE") {
-            // MAIN is YT. XY is the screen's XY plot. This screen has no forced roll mode; auto roll is :TIMebase:ROLL.
-            // The query names XY while that plot is on, so a controller can read the mode it just set.
+            return self.timebase_mode(ui, query, arg);
+        }
+        if n.len() == 2 && kw(n0, "XY") {
+            return self.timebase_xy(ui, n, query, arg);
+        }
+        self.push_err(format!("-113,\"Undefined header\" :TIMebase:{}", n.join(":")));
+        None
+    }
+
+    /// `:TIMebase:HREFerence:MODE`: the point the scale expands around.
+    fn timebase_href(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(match ui.m.h_expand {
+                HExpand::Center => "CENT",
+                HExpand::Left => "LB",
+                HExpand::Right => "RB",
+                HExpand::Trigger => "TRIG",
+            });
+        }
+        let a = arg.trim();
+        ui.m.h_expand = if kw(a, "CENTer") {
+            HExpand::Center
+        } else if a.eq_ignore_ascii_case("LB") || kw(a, "LEFT") {
+            HExpand::Left
+        } else if a.eq_ignore_ascii_case("RB") || kw(a, "RIGHt") {
+            HExpand::Right
+        } else if kw(a, "TRIGger") {
+            HExpand::Trigger
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        ui.mark_changed();
+        None
+    }
+
+    /// `:TIMebase:DELay:ENABle|SCALe|OFFSet|POSition`: the zoom window (`n` without the root).
+    fn timebase_delay(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if kw(n[1], "ENABle") {
             if query {
-                return t(if ui.xy_on() { "XY" } else { "MAIN" });
+                return t(if ui.m.zoom { "1" } else { "0" });
             }
-            if kw(arg, "MAIN") {
-                ui.xy_set(false);
-            } else if arg.trim().eq_ignore_ascii_case("XY") {
-                ui.xy_set(true);
-            } else {
+            return match parse_bool(arg) {
+                Some(on) => {
+                    ui.zoom_set_remote(on);
+                    ui.mark_changed();
+                    None
+                }
+                None => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    None
+                }
+            };
+        }
+        if kw(n[1], "SCALe") {
+            if query {
+                return t(&e(tscales()[ui.m.zscale] as f64));
+            }
+            let Some(v) = num(arg) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
+            };
+            let scales = tscales();
+            let mut i = nearest(&scales, v);
+            if i > ui.m.tscale {
+                i = ui.m.tscale;
             }
+            ui.m.zscale = i;
+            ui.zoom_clamp();
             ui.mark_changed();
             return None;
         }
-        if n.len() == 2 && kw(n0, "XY") && kw(n[1], "ENABle") {
+        if kw(n[1], "OFFSet") || kw(n[1], "POSition") {
+            if query {
+                return t(&e(ui.m.zdelay as f64));
+            }
+            let Some(v) = num(arg) else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            };
+            ui.m.zdelay = v;
+            ui.zoom_clamp();
+            ui.mark_changed();
+            return None;
+        }
+        self.push_err(format!("-113,\"Undefined header\" :TIMebase:{}", n.join(":")));
+        None
+    }
+
+    /// `:TIMebase:MODE`: MAIN or XY.
+    fn timebase_mode(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        // MAIN is YT. XY is the screen's XY plot. This screen has no forced roll mode; auto roll is :TIMebase:ROLL.
+        // The query names XY while that plot is on, so a controller can read the mode it just set.
+        if query {
+            return t(if ui.xy_on() { "XY" } else { "MAIN" });
+        }
+        if kw(arg, "MAIN") {
+            ui.xy_set(false);
+        } else if arg.trim().eq_ignore_ascii_case("XY") {
+            ui.xy_set(true);
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        }
+        ui.mark_changed();
+        None
+    }
+
+    /// `:TIMebase:XY:ENABle|X|Y|Z`: the XY plot (`n` without the root).
+    fn timebase_xy(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if kw(n[1], "ENABle") {
             if query {
                 return t(if ui.xy_on() { "1" } else { "0" });
             }
@@ -184,7 +216,7 @@ impl Scpi {
                 }
             };
         }
-        if n.len() == 2 && kw(n0, "XY") && (kw(n[1], "X") || kw(n[1], "Y")) {
+        if kw(n[1], "X") || kw(n[1], "Y") {
             // The plot is CH1 against CH2. Those sources are not selectable.
             let x = kw(n[1], "X");
             if query {
@@ -197,7 +229,7 @@ impl Scpi {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         }
-        if n.len() == 2 && kw(n0, "XY") && kw(n[1], "Z") {
+        if kw(n[1], "Z") {
             if query {
                 return t(&ui.m.z_src.map(chan_token).unwrap_or_else(|| "NONE".into()));
             }
