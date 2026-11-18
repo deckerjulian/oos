@@ -75,6 +75,9 @@ Removed:
 
 Changed:
 
+- The DHO802 and DHO812 count as verified ([models.md](docs/models.md) 2.1): a user installed OOS 0.1.13 on a DHO802
+  from the USB stick and it started, answered SCPI and the web page (issue #19). The first install from the stock
+  system now takes both models without `oos-any-model.txt`.
 - Batch draw path: at 10 us/div the screen shows about 29 pictures a second with one,
   two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
   cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
