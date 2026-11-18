@@ -928,23 +928,10 @@ pub fn fast_deposit_t(
             if !rec.ch[c].is_empty() {
                 let bw = band.len() / (h + 1);
                 let c_hi = (c_lo + bw) as i32;
-                crate::wave::trace_columns(
-                    w,
-                    h,
-                    c,
-                    m,
-                    (m.time_per_div(), m.delay),
-                    rec.t0,
-                    rec.dt,
-                    &rec.ch[c],
-                    24,
-                    None,
-                    rec.pairs,
-                    (c_lo as i32, c_hi),
-                    |cx, r0, r1, wt| {
-                        crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
-                    },
-                );
+                let trace = crate::wave::Trace::record(c, m, rec);
+                crate::wave::trace_columns(w, h, &trace, (c_lo as i32, c_hi), |cx, r0, r1, wt| {
+                    crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
+                });
             }
         }
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
@@ -967,21 +954,7 @@ pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, map: &mut [u16], f:
     match p {
         FastPlan::Rec(rec) => {
             if !rec.ch[c].is_empty() {
-                crate::wave::draw_trace(
-                    map,
-                    w,
-                    h,
-                    0,
-                    c,
-                    m,
-                    (m.time_per_div(), m.delay),
-                    rec.t0,
-                    rec.dt,
-                    &rec.ch[c],
-                    24,
-                    None,
-                    rec.pairs,
-                );
+                crate::wave::draw_trace(map, w, h, 0, &crate::wave::Trace::record(c, m, rec));
             }
         }
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {

@@ -1006,31 +1006,38 @@ impl Phosphor {
         pairs: bool,
     ) {
         let (pw, ph) = (self.w, self.h);
-        draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs);
+        draw_trace(&mut self.map[c], pw, ph, 0, &Trace { c, m, view, rec_t0, dt, v, w, z, pairs });
+    }
+}
+
+/// The arguments of `Phosphor::draw_ex` (a channel's points and how to draw them) for `draw_trace` and `trace_columns`.
+#[derive(Clone, Copy)]
+pub struct Trace<'a> {
+    pub c: usize,
+    pub m: &'a Model,
+    pub view: (f32, f32),
+    pub rec_t0: f64,
+    pub dt: f64,
+    pub v: &'a [f32],
+    pub w: u16,
+    pub z: Option<&'a [f32]>,
+    pub pairs: bool,
+}
+
+impl<'a> Trace<'a> {
+    /// Channel `c` of `rec` at the time base of `m`, weight 24 a point: how the fast path draws a screen record.
+    pub fn record(c: usize, m: &'a Model, rec: &'a Record) -> Self {
+        let view = (m.time_per_div(), m.delay);
+        Trace { c, m, view, rec_t0: rec.t0, dt: rec.dt, v: &rec.ch[c], w: 24, z: None, pairs: rec.pairs }
     }
 }
 
 /// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
 /// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
-#[allow(clippy::too_many_arguments)]
-pub fn draw_trace(
-    band: &mut [u16],
-    pw: usize,
-    ph: usize,
-    r_lo: usize,
-    c: usize,
-    m: &Model,
-    view: (f32, f32),
-    rec_t0: f64,
-    dt: f64,
-    v: &[f32],
-    w: u16,
-    z: Option<&[f32]>,
-    pairs: bool,
-) {
+pub fn draw_trace(band: &mut [u16], pw: usize, ph: usize, r_lo: usize, t: &Trace) {
     let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
     let wi = pw as i32;
-    trace_columns(pw, ph, c, m, view, rec_t0, dt, v, w, z, pairs, (0, wi), |cx, r0, r1, w| {
+    trace_columns(pw, ph, t, (0, wi), |cx, r0, r1, w| {
         for r in r0.max(b0)..=r1.min(b1 - 1) {
             let idx = ((r - b0) * wi + cx) as usize;
             band[idx] = band[idx].saturating_add(w);
@@ -1043,22 +1050,8 @@ pub fn draw_trace(
 /// point to point, or one pixel a point with `Model::dots`; `z` scales the weight per point (Z input). With `pairs`
 /// (`v` holds min/max pairs) and dots, each pair is one span from its minimum to its maximum over the columns it
 /// covers: two dots would lose the edges of a square at slow time bases.
-#[allow(clippy::too_many_arguments)]
-pub fn trace_columns(
-    pw: usize,
-    ph: usize,
-    c: usize,
-    m: &Model,
-    view: (f32, f32),
-    rec_t0: f64,
-    dt: f64,
-    v: &[f32],
-    w: u16,
-    z: Option<&[f32]>,
-    pairs: bool,
-    cols: (i32, i32),
-    mut put: impl FnMut(i32, i32, i32, u16),
-) {
+pub fn trace_columns(pw: usize, ph: usize, t: &Trace, cols: (i32, i32), mut put: impl FnMut(i32, i32, i32, u16)) {
+    let Trace { c, m, view, rec_t0, dt, v, w, z, pairs } = *t;
     let (wd, ht) = (pw as f32, ph as f32);
     let tdiv = view.0 as f64;
     let vdelay = view.1 as f64;
@@ -1106,10 +1099,7 @@ pub fn trace_columns(
             prev = None;
             continue;
         }
-        let w = match z {
-            Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
-            None => w0,
-        };
+        let w = wt(k);
         let p = (x_of(k), y_of(val));
         if m.dots {
             let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
