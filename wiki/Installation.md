@@ -44,9 +44,9 @@ The stock system's own update (**Storage > Upgrade**) installs OOS onto the card
   come out, so **the scope has to be opened after all.** Read
   [docs/install-usb.md](https://github.com/dekajoule/oos/blob/main/docs/install-usb.md) first.
 - **Models.** The install goes ahead by itself on the models whose hardware OOS has run on: DHO804, DHO814, DHO824 (a
-  DHO804 runs OOS) and DHO914S, DHO924S (from 0.1.6; up to 0.1.5 only the DHO924S). On any other model it stops,
-  writes nothing, and `oos-install.log` says so: put an empty file `oos-any-model.txt` next to the `.GEL` file to go on
-  anyway.
+  DHO804 runs OOS), DHO802, DHO812 (a DHO802 runs OOS; from the release after 0.1.13) and DHO914S, DHO924S (from 0.1.6;
+  up to 0.1.5 only the DHO924S). On any other model it stops, writes nothing, and `oos-install.log` says so: put an
+  empty file `oos-any-model.txt` next to the `.GEL` file to go on anyway.
 - **What it writes.** `recovery`, the first 32 MiB of `backup` and, as its very last step, the 4 bytes of `boot` that
   select OOS. A failure or power cut before that step leaves a card that starts stock as before, and running the same
   install again finishes the job. No stock update step runs, and the FPGA flash and `/rigol` are not touched.

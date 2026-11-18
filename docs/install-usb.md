@@ -128,15 +128,16 @@ in their licensed bandwidth.
 
 | Verified | Not verified yet |
 |---|---|
-| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO802, DHO812 |
-| DHO914S, DHO924S (a DHO924S runs OOS) | DHO914, DHO924, DHO914-EDU, DHO924-EDU |
+| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO914, DHO924 |
+| DHO802, DHO812 (a DHO802 runs OOS) | DHO914-EDU, DHO924-EDU |
+| DHO914S, DHO924S (a DHO924S runs OOS) | |
 
 On another model the update stops before it writes anything; the screen reports a failure, and `oos-install.log` on
 the stick says:
 
 ```
-oos-update: OOS has not run on a DHO802 yet (hardware variant "DHO800, 2 channels": no unit of it has run OOS so far). Nothing written.
-Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO914S, DHO924S.
+oos-update: OOS has not run on a DHO914 yet (hardware variant "DHO900 without generator": no unit of it has run OOS so far). Nothing written.
+Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO802, DHO812, DHO914S, DHO924S.
 ...
 exit code 1
 ```

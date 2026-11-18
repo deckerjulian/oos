@@ -120,7 +120,7 @@ Details and limits: [docs/models.md](docs/models.md).
 
 | Model | Rated bandwidth | Channels | Logic analyser | Generator | EXT trigger | Runs OOS |
 |---|---|---|---|---|---|---|
-| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | not yet |
+| DHO802 / DHO812 | 70 / 100 MHz | 2 | - | - | yes | a DHO802 runs it (user report) |
 | DHO804 / DHO814 / DHO824 | 70 / 100 / 250 MHz | 4 | - | - | - | a DHO804 runs it (user report) |
 | DHO914 / DHO924 | 125 / 250 MHz | 4 | yes | - | - | not yet |
 | DHO914-EDU / DHO924-EDU | 125 / 250 MHz | 4 | yes | - | - | not yet |

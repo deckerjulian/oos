@@ -1,7 +1,7 @@
 # Contributing to OOS
 
 Reports, measurements and code are all welcome. The most useful thing right now is a test on hardware: OOS has run on
-a DHO924S and a DHO804 so far. A report from a DHO802/DHO812, a DHO914/DHO924 without generator or an EDU model makes
+a DHO924S, a DHO804 and a DHO802 so far. A report from a DHO914/DHO924 without generator or an EDU model makes
 that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 
 ## Ground rules
