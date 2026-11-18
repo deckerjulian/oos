@@ -3,9 +3,9 @@
 
 //! System > Network > Remote services: which of the network services run, each switch next to the line that says
 //! where to reach it. The choice is a setting of the scope (`/oos/system.conf`, `remote.*`); `main.rs` opens and closes
-//! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default,
-//! telnet (a shell without password, for bring-up on the bench LAN) is on by default as before; SSH, the
-//! authenticated shell, is off unless the image or the user switches it on.
+//! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default;
+//! SSH, the only shell on the network (there is no telnet, ADR 0054), is off unless the image or the user switches it
+//! on.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
 //! scope's name on the network, `dho924s-123456.local` (`net.name`). The name is also the kernel's host name, which
@@ -62,14 +62,12 @@ impl Ui {
             Item::RemWeb,
             Item::RemScpi,
             Item::RemVxi,
-            Item::RemTelnet,
             Item::RemSsh,
             Item::RemMdns,
             Item::RemAllow,
             Item::NetWeb,
             Item::RemScpiInfo,
             Item::RemVxiInfo,
-            Item::RemTelnetInfo,
             Item::Open(MenuId::Ssh),
             Item::RemName,
             Item::RemFirewall,
@@ -81,7 +79,6 @@ impl Ui {
             Item::RemWeb
             | Item::RemScpi
             | Item::RemVxi
-            | Item::RemTelnet
             | Item::RemSsh
             | Item::RemMdns
             | Item::RemName
@@ -381,8 +378,7 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall)
-            || Self::ssh_text(it)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemFirewall) || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -391,14 +387,13 @@ impl Ui {
             Item::RemWeb => "Web remote",
             Item::RemScpi => "SCPI",
             Item::RemVxi => "VXI-11",
-            Item::RemTelnet => "telnet",
             Item::RemSsh => "SSH",
             Item::RemMdns => "mDNS",
             Item::RemName => "Name",
             Item::RemAllow => "Allowed",
             Item::RemFirewall => "Firewall",
             Item::NetWeb => "Address",
-            Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo => "Port",
+            Item::RemScpiInfo | Item::RemVxiInfo => "Port",
             _ => return Self::ssh_label(it),
         })
     }
@@ -411,7 +406,6 @@ impl Ui {
             Item::RemWeb => onoff(s.remote_web),
             Item::RemScpi => onoff(s.remote_scpi),
             Item::RemVxi => onoff(s.remote_vxi11),
-            Item::RemTelnet => onoff(s.remote_telnet),
             Item::RemSsh => onoff(s.remote_ssh),
             Item::RemMdns => onoff(s.remote_mdns),
             Item::RemName => self.name_value(),
@@ -422,7 +416,6 @@ impl Ui {
             Item::NetWeb => format!("http://{}:8080", self.net),
             Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
             Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
-            Item::RemTelnetInfo => port(s.remote_telnet, "23, a shell without password".into()),
             _ => return self.ssh_value(it),
         })
     }
@@ -444,7 +437,6 @@ impl Ui {
             Item::RemWeb => (&mut s.remote_web, "Web remote"),
             Item::RemScpi => (&mut s.remote_scpi, "SCPI"),
             Item::RemVxi => (&mut s.remote_vxi11, "VXI-11"),
-            Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
             // the name and the address list change in their pickers only
@@ -457,7 +449,6 @@ impl Ui {
         // what is lost with it
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
-            (Item::RemTelnet, false) => self.toast("telnet off: no remote shell without password"),
             (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
@@ -474,13 +465,12 @@ mod tests {
         let mut u = crate::ui::testkit::demo_ui();
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of six: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
         for (sw, info) in [
             (Item::RemWeb, Item::NetWeb),
             (Item::RemScpi, Item::RemScpiInfo),
             (Item::RemVxi, Item::RemVxiInfo),
-            (Item::RemTelnet, Item::RemTelnetInfo),
             (Item::RemSsh, Item::Open(MenuId::Ssh)),
             (Item::RemMdns, Item::RemName),
             (Item::RemAllow, Item::RemFirewall),
@@ -494,7 +484,7 @@ mod tests {
     #[test]
     fn a_service_switched_off_says_so() {
         let mut u = crate::ui::testkit::demo_ui();
-        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11 && u.sys.remote_telnet, "on by default");
+        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
         assert!(!u.sys.remote_ssh, "SSH off by default");
         u.net = "192.168.1.9".into();
         assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
