@@ -12,20 +12,20 @@ that registers it:
 | name, stable key | Decode > Protocol, event table, decoder label, saved setups, SCPI setups | `info` (required): `name`, `key` of its `ModuleInfo` |
 | source rows | Decode menu: one row per role, named after it ("SDA", "CC", "Data" ...) | `info`: `roles` (one "Source") |
 | differential input | the "B line (A-B)" row for an RS-485 style pair | `info`: `diff_ok` (off) |
-| shared rows | Decode menu rows several protocols use (Baud, Bits, Parity, SPI mode, CAN rate, USB speed ...), saved under their own setup keys | `shared` (none), `bit_time_sh`, `frame_span_sh` |
+| shared rows | Decode menu rows several protocols use (Baud, Bits, Parity, SPI mode, CAN rate, USB speed ...), saved under their own setup keys; a decoder reads their values (`Shared`) | `shared` (none) |
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
 | the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
 | field text | the labels on the trace and in the event table | `text` (the generic text of each kind) |
 | protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger`, the protocol's own rule (none: `ModuleInfo::trigger_match` uses the generic rule of `dsp/src/protocols.rs`) |
 | trigger start value | what Trigger > Bus looks for when it is switched on | `info`: `trigger_default` (Frame) |
-| trigger timing | sampling (a twentieth of a bit) and the search window | `bit_time` (required), `frame_span` (200 bits) |
+| trigger timing | sampling (a twentieth of a bit) and the search window | `info`: `bit` (required), `span` (200 bits) |
 | hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `start_edge` (falling), `start_role` (the main line) |
 | first settings | channels, LA lines, threshold, shared-row values and the demo's trigger when the protocol is chosen | `setup` (CH3 / CH4, 1.65 V) |
 | old setups | how a setup saved before the protocol was a module maps onto its options | `legacy` (none) |
 | demo traffic | the host build's simulated signals, on the channels of `setup` | `demo` (none) |
 | own view | Display > Second pane > Bus view: a status line and columns of rows, with a memory across records | `view` (none) |
 
-Only `info`, `bit_time` and `decode` are required. The defaults fit a single-line serial protocol on CH3.
+Only `info` with its `bit`, and `decode` are required. The defaults fit a single-line serial protocol on CH3.
 
 ## Steps
 
@@ -36,8 +36,9 @@ Only `info`, `bit_time` and `decode` are required. The defaults fit a single-lin
    (`dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` fails for a family without one). Packet times are
    fractional sample indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
    Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`; a trigger
-   rule of its own with `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`), and
-   at the end of `MODULES` in `dsp/src/protocols.rs` its line.
+   rule of its own with `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`, the bit
+   time from the options and the shared rows with `.bit`), and at the end of `MODULES` in `dsp/src/protocols.rs` its
+   line.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.

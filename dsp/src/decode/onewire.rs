@@ -130,7 +130,9 @@ impl OwNet {
 }
 
 /// 1-Wire on its data line.
-pub static ONE_WIRE: ModuleInfo = ModuleInfo::new("OneWire", "1-Wire", "onewire");
+pub static ONE_WIRE: ModuleInfo = ModuleInfo::new("OneWire", "1-Wire", "onewire")
+    // the shortest standard-speed slot
+    .bit(|_, _| 15e-6);
 
 /// 1-Wire (timings of Maxim/Analog Devices AN126, standard and overdrive speed) on the bus line, idle high. Low
 /// pulses are classified by length: standard: < 15 us = 1, < 150 us = 0, >= 300 us = reset; overdrive: < 2 us = 1,
@@ -203,8 +205,10 @@ enum DsPend {
 type Xfer = (bool, f64, Vec<(u8, f64, f64)>);
 
 /// 1-Wire through a DS2482 bridge, read from its I2C bus.
-pub static DS2482: ModuleInfo =
-    ModuleInfo::new("Ds2482", "DS2482", "onewire").roles([Some("SDA"), Some("SCL"), None, None]);
+pub static DS2482: ModuleInfo = ModuleInfo::new("Ds2482", "DS2482", "onewire")
+    .roles([Some("SDA"), Some("SCL"), None, None])
+    // an I2C bit at 400 kHz
+    .bit(|_, _| 2.5e-6);
 
 pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
     let mut net = OwNet::new(false);

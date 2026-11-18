@@ -75,7 +75,7 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
         thr,
         hy,
         opt: m.dec_opts(),
-        sh: crate::protocols::Shared::of(m),
+        sh: crate::protocols::shared(m),
         chans,
         src,
     })

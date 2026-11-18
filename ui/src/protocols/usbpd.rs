@@ -12,9 +12,6 @@ impl Protocol for UsbPd {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::USB_PD
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        3.33e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::usbpd(l.main(), l.dt, l.thr, l.hy))
     }

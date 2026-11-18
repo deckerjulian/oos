@@ -12,9 +12,6 @@ impl Protocol for Dmx512 {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::DMX512
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        4e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::dmx512(l.main(), l.dt, l.thr, l.hy, false))
     }

@@ -154,8 +154,8 @@ family adds a module next to it ([porting.md](porting.md)).
 ### oos-dsp: signal processing
 
 Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, the protocol
-decoders and their registry (`protocols`: key, name, lines and protocol trigger rule of each), mask test, signal
-generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
+decoders and their registry (`protocols`: key, name, lines, bit time and protocol trigger rule of each), mask test,
+signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
 
 ### oos-ui: the scope screen
 
