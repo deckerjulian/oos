@@ -52,6 +52,14 @@ class Selection(unittest.TestCase):
     def test_a_file_no_rule_knows_runs_everything(self):
         self.assertEqual(chosen("somewhere/new.bin"), set(NAMES))
 
+    def test_the_measurement_code_runs_the_tests_that_read_measurements(self):
+        for p in ("dsp/src/measure.rs", "ui/src/ui/analysis.rs", "ui/src/ui/records.rs", "ui/src/ui/measure_pairs.rs",
+                  "ui/src/ui/acquire.rs"):
+            c = chosen(p)
+            self.assertIn("time_axis_at_every_channel_count", c, p)
+            self.assertIn("every_scale_reads_true", c, p)
+            self.assertIn("generator_frequency_and_amplitude", c, p)
+
     def test_scpi_runs_the_remote_tests(self):
         c = chosen("ui/src/scpi.rs")
         self.assertIn("vxi11_answers", c)
