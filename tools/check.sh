@@ -235,11 +235,13 @@ layer_decoders() {
 # the numbers that only go down: the size of the large files, switched-off lints, `unsafe`, what a remote command
 # or a setting lacks (docs/scpi.md, the comparison's queries; tools/scpi-coverage.txt), long functions, `.unwrap()`
 # and modules without a header (tools/code-metrics.txt), code that crosses a layer (tools/layers.txt) (ADR 0037,
-# issue 120)
+# issue 120); and, with nothing missing a plain check, an HTTP route or MCP tool without its entry and mark in
+# docs/http.md (ADR 0055)
 layer_ratchet() {
     tools/ratchet.sh || fail "ratchet: see docs/adr/process/0037-numbers-that-only-go-down.md"
     python3 -I tools/scpi-coverage.py --enforce ||
         fail "ratchet: tools/scpi-coverage.py --list names what is missing (ADR 0037)"
+    python3 -I tools/http-coverage.py || fail "ratchet: docs/http.md lacks what tools/http-coverage.py names (ADR 0055)"
     python3 -I tools/code-metrics.py --enforce || fail "ratchet: tools/code-metrics.py --list names them (ADR 0037)"
     python3 -I tools/layers.py --enforce || fail "ratchet: tools/layers.py --list names them (ADR 0001, ADR 0037)"
 }

@@ -23,6 +23,8 @@ Open `http://<scope>:8080/`. Click on the picture to touch the screen, drag to s
 also works on a phone. The buttons at the bottom save a screenshot or the last record to your computer, as CSV or
 binary; CSV takes records up to 2 million points, larger ones go as binary, through Storage on the scope or over SCPI.
 The Update link leads to the update page ([[Updates and Going Back]]).
+Every address of the web remote, for a script or a program of your own:
+[docs/http.md](https://github.com/dekajoule/oos/blob/main/docs/http.md).
 
 The live picture is a PNG (about 90 to 115 KB, depending on what the screen shows). **Live picture format** can switch
 it to the uncompressed 1.8 MB BMP, or to a JPEG (below). The choice is kept in the browser. The PNG is made off the
