@@ -235,7 +235,8 @@ in bytes on Linux. More detail:
 By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
 system**. This is the safe mode for a new installation.
 
-To start OOS once more, run this in a telnet or SSH session (or on the serial console) and power-cycle the scope:
+To start OOS once more, run this in an SSH session (first login: [[Remote Control]]) or on the serial console and
+power-cycle the scope:
 
 ```sh
 oos-boot-oos-again

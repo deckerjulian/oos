@@ -154,15 +154,15 @@ System > Network > Remote services has a switch for each service, next to where 
 | Web remote | 8080 | live picture, keys and touch, downloads, LXI identification, MCP, **the update page** |
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
-| telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Web remote, SCPI, VXI-11 and telnet are on by default, SSH is off unless the image or the user switches it on. A
-service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
-the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
-`/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
-when a switch changes. With SSH set up, switch telnet off: it is a shell for anyone on the network. The serial
-console (UART2) keeps its shell without a login.
+Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
+switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
+update page: an update then comes from a USB stick. SSH is the only shell on the network: `rcS` starts it at power-on
+(`/bin/oos-ssh`, which reads `remote.ssh` from `/oos/system.conf`), and oos-ui starts or stops it when its switch
+changes. There is no telnet (ADR 0054): an image of this version starts no `telnetd` and nothing listens on port 23;
+a `remote.telnet` line that an earlier version wrote is read without a complaint and left out when the file is written
+again. The serial console (UART2) keeps its shell without a login.
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
 which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see
@@ -255,7 +255,6 @@ eth.retry_10m = on
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
-remote.telnet = on
 remote.ssh = off
 ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)
