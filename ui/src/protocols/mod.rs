@@ -190,7 +190,7 @@ pub const BAUD_DEFAULT: usize = 7;
 /// The decoder settings of a setup from before a protocol became a module: what its option rows were kept in.
 /// A module that was a built-in protocol maps them onto its options (`Protocol::legacy`).
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // the rows of protocols that are still built in
+#[allow(dead_code)] // the rows of protocols that are still built in (USB speed: no module reads it yet)
 pub struct Legacy {
     pub baud: usize,
     pub bits: u32,
@@ -222,7 +222,7 @@ pub struct Lines<'a> {
     pub thr: f32,
     pub hy: f32,
     /// the option settings, indices into [`Opt::choices`], already in range
-    #[allow(dead_code)] // interface: no module of the scope build has options yet
+    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
     pub opt: [usize; OPTS],
     /// the shared rows ([`Protocol::shared`])
     pub sh: Shared,
@@ -239,7 +239,7 @@ impl<'a> Lines<'a> {
     }
 
     /// Line `k`, or the error the scope shows when it is missing.
-    #[allow(dead_code)] // interface: no module of the scope build has a second line yet
+    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
     pub fn need(&self, k: usize, what: &'static str) -> Result<&'a [f32], &'static str> {
         self.lines[k].ok_or(what)
     }
@@ -316,7 +316,7 @@ pub fn memory<T: Default + Send + 'static>(m: &mut Memory) -> &mut T {
 }
 
 /// Colour hint of a view's status line.
-#[allow(dead_code)] // interface: no module of the scope build has a view yet
+#[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tone {
     Neutral,

@@ -440,6 +440,9 @@ fn fit_point(sw: &Sweep, rec: &SweepRecord, i0: usize, i1: usize, f: f64, tm: f6
 mod tests {
     use super::*;
 
+    /// A true response: frequency (Hz) -> (dB, degrees).
+    type Response = Box<dyn Fn(f64) -> (f64, f64)>;
+
     #[test]
     fn margins_of_a_third_order_loop() {
         // three real poles at 1 kHz, gain 20: phase -180 at sqrt(3) kHz where the gain is 20/8 (+8 dB, unstable by 8 dB)
@@ -507,13 +510,7 @@ mod tests {
     /// stop frequency after it), a first-order low-pass at `fc` with gain `g` behind it, and the sync pulse (3.3 V,
     /// 1 ms) at the start. The record runs from -10 % to 110 % of the sweep at `fs`, with 1 mV of noise.
     /// Returns (input, output, sync, time of sample 0, the low-pass's true response at f as (dB, degrees)).
-    #[allow(clippy::type_complexity)]
-    fn free_sweep_bench(
-        sw: &Sweep,
-        fs: f64,
-        fc: f64,
-        g: f64,
-    ) -> (Vec<f32>, Vec<f32>, Vec<f32>, f64, Box<dyn Fn(f64) -> (f64, f64)>) {
+    fn free_sweep_bench(sw: &Sweep, fs: f64, fc: f64, g: f64) -> (Vec<f32>, Vec<f32>, Vec<f32>, f64, Response) {
         let dt = 1.0 / fs;
         let t0 = -0.1 * sw.time;
         let n = (1.2 * sw.time * fs) as usize;

@@ -1010,7 +1010,7 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
             let f = std::sync::Arc::new(f.clone());
             let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
             for c in 0..NCH {
-                fast_deposit(&ui.m, w, h, c, &mut want.map[c], 0, &f, &p.plan);
+                fast_deposit(&ui.m, w, h, c, &mut want.map[c], &f, &p.plan);
             }
         }
         ui.ph.clear();
@@ -1086,7 +1086,7 @@ fn fast_path_bands_draw_as_the_whole_map() {
             for f in &frames {
                 let f = std::sync::Arc::new(f.clone());
                 let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
-                fast_deposit(&ui.m, w, h, 0, &mut want, 0, &f, &p.plan);
+                fast_deposit(&ui.m, w, h, 0, &mut want, &f, &p.plan);
             }
             ui.ph.clear();
             ui.fast_draw_all(frames);

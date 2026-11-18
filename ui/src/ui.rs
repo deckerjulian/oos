@@ -281,7 +281,6 @@ const HEAT_STOPS: [(f32, f32, f32); 5] =
 pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
-#[allow(dead_code)] // the full code table, not every code is matched by name
 pub mod key {
     pub const REF: u8 = 0x01;
     pub const LA: u8 = 0x02;
@@ -404,13 +403,13 @@ pub const KEY_NAMES: [(&str, u8); 30] = [
 ];
 /// Knob names -> CW code (CCW = CW + 1, push = CW + 2).
 pub const KNOB_NAMES: [(&str, u8); 7] = [
-    ("hpos", 0x8a),
-    ("vpos", 0x9a),
-    ("multi2", 0xaa),
-    ("multi1", 0xba),
-    ("hscale", 0xca),
-    ("vscale", 0xda),
-    ("tlevel", 0xea),
+    ("hpos", key::HPOS_CW),
+    ("vpos", key::VPOS_CW),
+    ("multi2", key::MULTI2_CW),
+    ("multi1", key::MULTI1_CW),
+    ("hscale", key::HSCALE_CW),
+    ("vscale", key::VSCALE_CW),
+    ("tlevel", key::TLEVEL_CW),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

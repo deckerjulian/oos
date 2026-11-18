@@ -335,7 +335,7 @@ impl Drop for Lease {
 
 /// A batch with the workers: its frames are claimed a few at a time by whoever is free (the workers, and the
 /// acquisition thread while it waits for the next batch: `help`). Frames never claimed count as dropped.
-struct Batch {
+pub(crate) struct Batch {
     lease: Lease,
     fb: usize,
     frames: usize,
@@ -558,31 +558,16 @@ impl Pipe {
     /// `feed_codes` without the board's view of the read-out words (tests).
     #[cfg(test)]
     pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
-        self.feed_batch(raw, fb, 0, frames, stamp, decode, None);
+        self.feed_codes(raw, fb, 0, frames, stamp, decode, None);
     }
 
     /// From the acquisition thread: frames `first..frames` of `fb` bytes in `raw` (the ones before `first` are left
     /// out: frame 0 of a batch, issue #5), recorded under settings stamp `stamp`, for the workers (and the helper) to
     /// claim, decoded with `decode` or, without per-frame measurements, drawn from their words with `codes`
     /// (`draw_frame_codes`). The buffer comes back through `take_buffer` when the batch is done. Frames nobody claims
-    /// are counted as dropped.
+    /// are counted as dropped. Returns the batch (tests hold it to let the helper alone draw it).
     #[allow(clippy::too_many_arguments)]
     pub fn feed_codes(
-        &self,
-        raw: Box<dyn RawBatch>,
-        fb: usize,
-        first: usize,
-        frames: usize,
-        stamp: u64,
-        decode: DecodeInto,
-        codes: Option<CodesInto>,
-    ) {
-        self.feed_batch(raw, fb, first, frames, stamp, decode, codes);
-    }
-
-    /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
-    #[allow(clippy::too_many_arguments)]
-    fn feed_batch(
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
@@ -1234,7 +1219,7 @@ mod tests {
             let (bytes, fb, s, p) = batch(20, memsel, false);
             let pipe = Pipe::start(0, false, fresh());
             pipe.set_view(Some(&m), w, h);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0, 20, 0, dec(&s, &p), None);
+            let b = pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 20, 0, dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
             while pipe.help(&mut hp) {
@@ -1259,7 +1244,7 @@ mod tests {
         let (bytes, fb, s, p) = batch(20, 12_512, false);
         let pipe = Pipe::start(0, false, fresh());
         pipe.set_view(Some(&m), w, h);
-        let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 1, 20, 0, dec(&s, &p), None);
+        let b = pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 1, 20, 0, dec(&s, &p), None);
         let mut hp = Helper::default();
         let mut k = 0;
         while pipe.help(&mut hp) {

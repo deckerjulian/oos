@@ -148,6 +148,8 @@ layer_text() {
     python3 -I tools/link-check.py || fail "text: a document names something that is not there (tools/link-check.py)"
     # what a remote command or a setting lacks (docs, the comparison's queries): counted, not yet enforced
     python3 -I tools/scpi-coverage.py || true
+    # blocks of code in two or more places (issue 120): counted, not yet enforced
+    python3 -I tools/duplicates.py || true
 }
 
 # every tracked Python file, every shell script by its first line (shell_scripts), and the workflow files as YAML

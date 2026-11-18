@@ -8,7 +8,7 @@
 use super::*;
 
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)] // the measurements come from oos-dsp; these serve auto set-up and level 50 %
+#[allow(dead_code)] // vavg, vrms: set (ui/analysis.rs) but read by nothing; the measurements come from oos-dsp
 pub struct Stats {
     pub vmax: f32,
     pub vmin: f32,
