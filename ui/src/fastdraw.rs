@@ -841,7 +841,6 @@ pub mod whole {
     }
 
     /// `min_max` as one chain: the reference, and the code on other targets.
-    #[cfg_attr(all(target_arch = "aarch64", not(test)), allow(dead_code))]
     pub fn min_max_scalar(s: &[f32]) -> (f32, f32) {
         let (mut a, mut b) = (f32::INFINITY, f32::NEG_INFINITY);
         for &x in s {

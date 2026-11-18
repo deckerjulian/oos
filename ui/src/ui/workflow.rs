@@ -727,7 +727,7 @@ impl Ui {
         self.cancel_pointer();
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // only the tests read it
+    #[cfg(test)]
     pub fn waveform_destination(&self) -> Option<usize> {
         self.load_destination
     }

@@ -1327,7 +1327,7 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg_attr(not(test), allow(dead_code))] // only the tests call it
+    #[cfg(test)]
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask {
             self.cancel_load_slot();
