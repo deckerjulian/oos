@@ -32,37 +32,8 @@ pub(super) const MEAS_MAX: usize = MEAS_SELECTION_MAX;
 /// Measurements on one row of the strip when it runs across the screen.
 pub(super) const STRIP_PER_ROW: usize = 6;
 
-/// What a channel-pair row measures. The edge flags choose the edges of delay, phase and skew.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PairKind {
-    Delay,
-    Phase,
-    Skew,
-    Setup,
-    Hold,
-    SetupAndHold,
-}
-
-/// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); PAIRS_N] = [
-    ("Delay rise-rise", PairKind::Delay, true, true),
-    ("Delay fall-fall", PairKind::Delay, false, false),
-    ("Delay rise-fall", PairKind::Delay, true, false),
-    ("Delay fall-rise", PairKind::Delay, false, true),
-    ("Phase rise-rise", PairKind::Phase, true, true),
-    ("Phase fall-fall", PairKind::Phase, false, false),
-    ("Phase rise-fall", PairKind::Phase, true, false),
-    ("Phase fall-rise", PairKind::Phase, false, true),
-    ("Skew rise-rise", PairKind::Skew, true, true),
-    ("Skew fall-fall", PairKind::Skew, false, false),
-    ("Skew rise-fall", PairKind::Skew, true, false),
-    ("Skew fall-rise", PairKind::Skew, false, true),
-    ("Setup time", PairKind::Setup, true, true),
-    ("Hold time", PairKind::Hold, true, true),
-    ("Setup+Hold", PairKind::SetupAndHold, true, true),
-    ("Setup fall", PairKind::Setup, false, true),
-    ("Hold fall", PairKind::Hold, false, true),
-];
+// the table of the two-source variants belongs to the measurements (measures/pairs.rs)
+pub use crate::measures::pairs::{PairKind, PAIRS};
 
 /// One measurement as the screen shows it.
 pub(super) struct MeasRow {
