@@ -96,7 +96,7 @@ every test passed. Two checks since:
 
 - **On the scope** (`tools/device-test.py --tier a0`, `frame_rate_by_graphics_and_monitor`): four channels in Run, a
   menu open, Graphics = CPU and = GPU, with a monitor plugged in in each HDMI mode. It fails below 27 frames a second
-  (22 for the CPU in Layout), when the GPU is more than 1.5 frames a second behind the CPU or its frame loop busier,
+  (22 for the CPU and 26 for the GPU in Layout), when the GPU is more than 1.5 frames a second behind the CPU or its frame loop busier,
   and when the GPU's own time (`gpu panel .. monitor ..` in `:SYSTem:STATe?`, the helper's upload and draw) leaves
   less than a third of the budget: 45 ms for a panel and a monitor frame together (a monitor frame comes with every
   second panel frame), 22 ms for a panel frame without a monitor. The frame rate alone missed it: with 0.1.11's

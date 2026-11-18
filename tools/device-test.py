@@ -610,6 +610,10 @@ def menus_open_and_close(s, o):
 # combination of graphics and monitor mode; the CPU drawing the monitor's own screen (Layout) is known to be heavier.
 FPS_FLOOR = 27.0
 FPS_FLOOR_CPU_LAYOUT = 22.0
+# The GPU drawing the monitor's own screen runs at 27 frames a second: ten runs of builds with equal behaviour on a
+# DHO924S (2026-11-17 and -18) gave 26.6 to 27.7, mean 27.0, standard deviation 0.35, so a floor of 27 failed every
+# other run of main. 26 is three deviations below the mean and still above the 25 the test was written to catch.
+FPS_FLOOR_GPU_LAYOUT = 26.0
 # the GPU may be this far below the CPU in the same mode (noise), and its frame loop this much busier (points)
 GPU_BEHIND_FPS = 1.5
 GPU_BUSIER = 5.0
@@ -693,7 +697,8 @@ def frame_rate_by_graphics_and_monitor(s, o):
         s.w(f":SYST:SET hdmi = {keep_h}")
         s.base()
     for (g, h), (fps, loop, *_) in rows.items():
-        floor = FPS_FLOOR_CPU_LAYOUT if (g, h) == ("CPU", "Layout") else FPS_FLOOR
+        floors = {("CPU", "Layout"): FPS_FLOOR_CPU_LAYOUT, ("GPU", "Layout"): FPS_FLOOR_GPU_LAYOUT}
+        floor = floors.get((g, h), FPS_FLOOR)
         if fps < floor:
             bad.append(f"{g} {h or 'panel'}: {fps:.1f} frames a second, at least {floor:.0f} expected")
     for h in modes:
