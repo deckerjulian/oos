@@ -25,7 +25,7 @@ trap stop EXIT
 trap 'exit 130' INT TERM
 
 for c in $crates; do
-	(cd "$c" && cargo test --locked --no-run --quiet) || {
+	(cd "$c" && cargo test --locked --workspace --no-run --quiet) || {
 		echo "stress-tests.sh: the tests of $c do not build" >&2
 		exit 2
 	}
@@ -44,7 +44,7 @@ echo "== $rounds rounds next to $((n * 2)) busy processes"
 r=1
 while [ "$r" -le "$rounds" ]; do
 	for c in $crates; do
-		if ! (cd "$c" && cargo test --locked 2>&1) >"$tmp/out"; then
+		if ! (cd "$c" && cargo test --locked --workspace 2>&1) >"$tmp/out"; then
 			grep -E '^test .* \.\.\. FAILED$' "$tmp/out" | sed -E "s/^test (.*) \.\.\. FAILED\$/$c \1/" >>"$tmp/failed"
 			grep -qE '^test .* \.\.\. FAILED$' "$tmp/out" || echo "$c (no test named: see the build)" >>"$tmp/failed"
 			echo "round $r, $c: failed"

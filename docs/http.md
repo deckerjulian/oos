@@ -58,9 +58,9 @@ port differ from `Host`; or when `Sec-Fetch-Site` is `cross-site` or `same-site`
 `/style.css`, `/update` and `/lxi/identification`, which a link may open. A client that sends neither `Origin` nor
 `Sec-Fetch-Site` (curl, a script) is never foreign.
 
-**net.allow** ([network.md](network.md) 6, `ui/src/netacl.rs`): without a list everyone is allowed; loopback always
-is. Each request is checked, so a change of Allowed counts from the next one. Only `POST /update` and `/mcp` look at
-it; the firewall of the scope applies to every port.
+**net.allow** ([network.md](network.md) 6, `ui/system/src/netacl.rs`): without a list everyone is allowed; loopback
+always is. Each request is checked, so a change of Allowed counts from the next one. Only `POST /update` and `/mcp` look
+at it; the firewall of the scope applies to every port.
 
 ## Routes
 

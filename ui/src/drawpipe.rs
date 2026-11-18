@@ -557,7 +557,7 @@ impl Pipe {
             let (v, m) = (view.clone(), mail.clone());
             match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
                 if little {
-                    crate::http::to_little_cores();
+                    crate::placement::to_little_cores();
                 }
                 work(k, rx, &v, &m)
             }) {

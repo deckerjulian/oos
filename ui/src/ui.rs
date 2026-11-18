@@ -694,7 +694,7 @@ impl MeasWorker {
         std::thread::Builder::new()
             .name("measure".into())
             .spawn(move || {
-                crate::http::to_little_cores();
+                crate::placement::to_little_cores();
                 while let Ok((n, work)) = jobs.recv() {
                     let w: Vec<MeasWork> =
                         work.iter().map(|(c, v, dt, min, p)| (*c, v.samples(), *dt, *min, *p)).collect();

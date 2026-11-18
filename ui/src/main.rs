@@ -18,7 +18,6 @@
 
 mod announce;
 mod board;
-mod clock;
 mod cmd;
 mod compress;
 mod decode;
@@ -26,7 +25,6 @@ mod deepmeas;
 mod drawpipe;
 #[cfg(target_os = "linux")]
 mod drm;
-mod ethlink;
 mod fastdraw;
 mod font;
 mod framestats;
@@ -34,42 +32,36 @@ mod gfx;
 mod gpu;
 mod hid;
 mod hislip;
-mod hostname;
 mod http;
 #[cfg(target_os = "linux")]
 mod input;
-mod json;
 mod layout;
 mod math;
-mod mdns;
 mod measures;
 mod model;
-mod net;
-mod net6;
-mod netacl;
 #[cfg(test)]
 mod perfguard;
-mod placement;
 mod protocols;
-mod remote;
 mod scpi;
 mod settings;
-mod sntp;
 #[cfg(test)]
 mod soak;
 mod sparse;
-mod ssh;
 mod store;
-mod sysconf;
-mod system;
 mod trig;
 mod trignear;
 mod ui;
-mod usbtmc;
 mod vpu;
 mod vxi11;
 mod wave;
 mod zone;
+
+// the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
+#[cfg(target_os = "linux")]
+use oos_system::hostname;
+use oos_system::{
+    base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
+};
 
 use gfx::Canvas;
 use ui::Ui;
@@ -152,7 +144,7 @@ fn main() {
     // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
-        http::pin_to_big_cores();
+        placement::pin_to_big_cores();
         placement::place(placement::Role::Ui);
     }
     let mut ui = Ui::new(source(&args));
@@ -448,7 +440,7 @@ const HDMI_BG: u32 = 0x0d1117;
 /// The GPU helper with the panel's scan-out buffers as targets 0 to 2 (the monitor's follow them, up to the helper's 8).
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
-    http::pin_to_big_cores();
+    placement::pin_to_big_cores();
     placement::place(placement::Role::Ui);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
