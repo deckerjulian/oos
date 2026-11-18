@@ -1,5 +1,11 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+//! The finite jobs a remote command can wait for with `*OPC?`, `*OPC` and `*WAI`: an autoset, a SIM generation and a
+//! SINGLE capture. Each gets a token when it starts; a fence taken at the command stays pending until those jobs end,
+//! and counts as cancelled when the workflow starts over. A new kind of job that a command waits for gets its token
+//! here.
+
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

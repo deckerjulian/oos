@@ -273,7 +273,7 @@ pub(crate) fn parse_bool(s: &str) -> Option<bool> {
 }
 
 /// A finite number ("nan", "inf" and overflows are refused: they would end up in the model and in saved setups).
-fn num(s: &str) -> Option<f32> {
+pub(crate) fn num(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
@@ -288,7 +288,7 @@ fn nearest(ladder: &[f32], v: f32) -> usize {
 }
 
 /// Rigol number format: 7 significant digits, two-digit exponent ("2.000000E-04").
-fn e(v: f64) -> String {
+pub(crate) fn e(v: f64) -> String {
     if !v.is_finite() {
         return "9.9E37".into();
     }

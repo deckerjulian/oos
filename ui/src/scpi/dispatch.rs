@@ -536,44 +536,13 @@ impl Scpi {
                     };
                     return Some(None);
                 }
-                if nodes.len() == 2 && kw(last, "NREJect") {
+                // the trigger values of the settings table (settings/trigger.rs); a value a row does not take falls
+                // through to the later branches, which answer -113, as before the table
+                if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {
                     if query {
-                        return Some(t(if m.trig_nrej { "1" } else { "0" }));
+                        return Some(t(&row.query(m)));
                     }
-                    let a = arg.trim().to_ascii_uppercase();
-                    m.trig_nrej = match a.as_str() {
-                        "1" | "ON" => true,
-                        "0" | "OFF" => false,
-                        _ => return None,
-                    };
-                    return Some(None);
-                }
-                if nodes.len() == 2 && kw(last, "HOLDoff") {
-                    if query {
-                        return Some(t(&e(m.holdoff as f64)));
-                    }
-                    m.holdoff = num(arg).filter(|&h| (0.0..=10.0).contains(&h))?;
-                    return Some(None);
-                }
-                if nodes.len() == 2 && kw(last, "SWEep") {
-                    if query {
-                        return Some(t(match m.trig_mode {
-                            TrigMode::Auto => "AUTO",
-                            TrigMode::Normal => "NORM",
-                            TrigMode::Single => "SING",
-                        }));
-                    }
-                    let a = arg.to_ascii_uppercase();
-                    m.trig_mode = if a.starts_with("AUTO") {
-                        TrigMode::Auto
-                    } else if a.starts_with("NORM") {
-                        TrigMode::Normal
-                    } else if a.starts_with("SING") {
-                        TrigMode::Single
-                    } else {
-                        return None;
-                    };
-                    return Some(None);
+                    return row.take(m, arg).then_some(None);
                 }
                 if nodes.len() == 3 && kw(nodes[1], "EDGE") {
                     if kw(last, "SOURce") {
@@ -598,24 +567,6 @@ impl Scpi {
                             return Some(t(&e(m.trig_level as f64)));
                         }
                         m.trig_level = num(arg)?;
-                    } else if kw(last, "SLOPe") {
-                        if query {
-                            return Some(t(match m.slope {
-                                Slope::Rise => "POS",
-                                Slope::Fall => "NEG",
-                                Slope::Either => "RFAL",
-                            }));
-                        }
-                        let a = arg.to_ascii_uppercase();
-                        m.slope = if a.starts_with("POS") {
-                            Slope::Rise
-                        } else if a.starts_with("NEG") {
-                            Slope::Fall
-                        } else if a.starts_with("RFAL") {
-                            Slope::Either
-                        } else {
-                            return None;
-                        };
                     } else {
                         return None;
                     }

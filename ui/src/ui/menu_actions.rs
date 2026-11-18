@@ -459,19 +459,6 @@ impl Ui {
             Item::TrigSrc => {
                 m.trig_src = src_step(m.trig_src, NCH, d);
             }
-            Item::TrigSlope => {
-                let all = [Slope::Rise, Slope::Fall, Slope::Either];
-                let i = all.iter().position(|&x| x == m.slope).unwrap();
-                m.slope = all[cycle(i, 3, d)];
-            }
-            Item::TrigMode => {
-                let all = [TrigMode::Auto, TrigMode::Normal, TrigMode::Single];
-                let i = all.iter().position(|&x| x == m.trig_mode).unwrap();
-                m.trig_mode = all[cycle(i, 3, d)];
-                if m.trig_mode == TrigMode::Single {
-                    m.run = RunState::Run;
-                }
-            }
             Item::TrigLevel => {
                 m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0;
                 // the upper level of a two-level type stops at the lower one, as Bode's start stops at its stop
@@ -497,12 +484,6 @@ impl Ui {
                 self.search_on = !self.search_on;
                 return;
             }
-            Item::TrigSlope2 => {
-                let all = [Slope::Rise, Slope::Fall, Slope::Either];
-                let i = all.iter().position(|&x| x == m.trig_slope2).unwrap();
-                m.trig_slope2 = all[cycle(i, 3, d)];
-            }
-            Item::TrigPol => m.trig_pol = if m.trig_pol == Pol::Pos { Pol::Neg } else { Pol::Pos },
             Item::TrigWhen => {
                 let all: &[WhenKind] = if m.trig_type == TrigType::Runt {
                     &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
@@ -511,17 +492,6 @@ impl Ui {
                 };
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cycle(i, all.len(), d)];
-            }
-            Item::TrigT1 => m.trig_t1 = time_ladder_step(m.trig_t1, d),
-            Item::TrigT2 => m.trig_t2 = time_ladder_step(m.trig_t2, d),
-            Item::NthIdle => m.nth_idle = time_ladder_step(m.nth_idle, d),
-            Item::Setup => m.setup = time_ladder_step(m.setup, d),
-            Item::Hold => m.hold = time_ladder_step(m.hold, d),
-            Item::VidStd => m.video_std = if m.video_std == VideoStd::Pal { VideoStd::Ntsc } else { VideoStd::Pal },
-            Item::VidSync => {
-                let all = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
-                let i = all.iter().position(|&x| x == m.video_sync).unwrap();
-                m.video_sync = all[cycle(i, all.len(), d)];
             }
             Item::VidLine => {
                 m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
@@ -538,11 +508,6 @@ impl Ui {
             Item::PatLevel => {
                 let c = m.trig_src;
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
-            }
-            Item::WinModeI => {
-                let all = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
-                let i = all.iter().position(|&x| x == m.win_mode).unwrap();
-                m.win_mode = all[cycle(i, 3, d)];
             }
             Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
             Item::AcqMode => {
@@ -576,7 +541,6 @@ impl Ui {
             Item::CntSrc => m.cnt_src = src_step(m.cnt_src, NCH, d),
             Item::CntMode => m.cnt_mode = (m.cnt_mode as i32 + d).rem_euclid(3) as usize,
             Item::CntDigits => m.cnt_digits = (m.cnt_digits as i32 + d).clamp(3, 7) as u32,
-            Item::TrigHoldoff => m.holdoff = holdoff_step(m.holdoff, d),
             Item::MathLinA => m.math_lin.0 = (m.math_lin.0 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::CurMode => {
@@ -649,8 +613,6 @@ impl Ui {
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
                 m.hist = all[cycle(i, 3, d)];
             }
-            Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
-            Item::TrigAutoNoise => m.auto_nrej = !m.auto_nrej,
             Item::TrigCoup => {
                 let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
                 m.trig_coup = TRIG_COUPS[cycle(i, TRIG_COUPS.len(), d)];
@@ -1263,26 +1225,6 @@ impl Ui {
             },
         }
     }
-}
-
-/// One step on the 1-2-5 time ladder from the nearest ladder value.
-fn time_ladder_step(x: f32, d: i32) -> f32 {
-    let l = time_ladder();
-    let i = l.iter().position(|&v| v >= x * 0.999).unwrap_or(l.len() - 1);
-    l[step_index(i, l.len(), d)]
-}
-
-/// Next holdoff on the 1-2-5 ladder from 100 ns to 10 s; 0 is off.
-fn holdoff_step(h: f32, d: i32) -> f32 {
-    let mut steps = vec![0.0f32];
-    let mut x = 1e-7f32;
-    while x < 11.0 {
-        steps.extend([x, 2.0 * x, 5.0 * x]);
-        x *= 10.0;
-    }
-    steps.retain(|&s| s <= 10.0);
-    let i = steps.iter().position(|&s| s >= h * 0.999).unwrap_or(steps.len() - 1) as i32;
-    steps[(i + d).clamp(0, steps.len() as i32 - 1) as usize]
 }
 
 /// Text on a dark backing, for labels drawn over the waveforms; returns the x after the text.
