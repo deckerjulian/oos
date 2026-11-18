@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+//! The trigger source of the screen: channels and loaded refs as sources, the levels of a ref trigger fitted to its
+//! range, the compact trigger box and its tap, and the level markers. A new kind of source goes into
+//! `trigger_sources` and `set_trigger_source`.
 use super::*;
 
 impl Ui {
