@@ -78,6 +78,35 @@ pub struct State {
     pub zone_run: Option<(u32, u32, u32, u64)>,
 }
 
+/// The record parameters of `s` (delay, LA, hardware average), with their notes in `st`.
+fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Params, String> {
+    let mut p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, 0);
+    // with the LA on the record stays centred: its rate rule comes after this one and is not worked out for it
+    if s.delay != 0.0 && s.la.is_none() {
+        let half = p.dot_fs as i128 * p.memsel as i128 / 2;
+        p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, time_fs(s.delay).clamp(-half, half));
+    }
+    if let Some(l) = &s.la {
+        p = la::prep(p, l.analog_shown);
+    }
+    if let acq::Mode::Average { count } = s.mode {
+        // the hardware does not refuse these combinations (assumed), OOS does
+        if s.la.is_some() || s.segments.is_some() {
+            return Err("hardware average with the LA or hardware segments".into());
+        }
+        p = hz::avg_params(p);
+        if p.max_frames == 0 {
+            return Err(format!("hardware average: {} points do not fit the average layout", p.memsel));
+        }
+        st.push(Step::Note(format!("hardware average of {} (0x10b0 = {})", count, acq::avg_count_reg(count))));
+    }
+    st.push(Step::Note(format!(
+        "mask {:#x}: ratio {}, {} Sa/s, {} points/channel, segment {:#x}, pre {} post {}",
+        s.mask, p.ratio, p.rate, p.memsel, p.seg, p.pre, p.post
+    )));
+    Ok(p)
+}
+
 impl State {
     /// State after a warm hand-over: the stock values, ADC in the mode of `app_mask`.
     pub fn handover(app_mask: u32, cal_adc: Option<&adc::CalAdc>) -> State {
@@ -122,30 +151,41 @@ impl State {
             return Err("channel mask 1..0xf with the trigger source enabled".into());
         }
         let mut st = Vec::new();
-        let mut p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, 0);
-        // with the LA on the record stays centred: its rate rule comes after this one and is not worked out for it
-        if s.delay != 0.0 && s.la.is_none() {
-            let half = p.dot_fs as i128 * p.memsel as i128 / 2;
-            p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, time_fs(s.delay).clamp(-half, half));
+        let p = record_params(s, &mut st)?;
+        self.adc_mode_steps(s, cal_adc, &mut st)?;
+        self.afe_steps(s, cal, &p, &mut st)?;
+        if s.blocks & 7 != 7 {
+            st.push(Step::Note(format!(
+                "configuration blocks {:#x} (bit0 trigger, bit1 acquisition, bit2 auto trigger)",
+                s.blocks
+            )));
+        }
+        if s.blocks & 1 != 0 {
+            st.extend(self.trigger(s).into_iter().map(Step::Wr));
+        }
+        if s.blocks & 2 != 0 {
+            self.acquisition_steps(s, &p, &mut st);
         }
         if let Some(l) = &s.la {
-            p = la::prep(p, l.analog_shown);
+            // thresholds with every set-up (la.md 8.1: on change and once after the start)
+            st.push(Step::Wr(la::thresholds(&l.cal, l.thr[0], l.thr[1])));
         }
-        if let acq::Mode::Average { count } = s.mode {
-            // the hardware does not refuse these combinations (assumed), OOS does
-            if s.la.is_some() || s.segments.is_some() {
-                return Err("hardware average with the LA or hardware segments".into());
-            }
-            p = hz::avg_params(p);
-            if p.max_frames == 0 {
-                return Err(format!("hardware average: {} points do not fit the average layout", p.memsel));
-            }
-            st.push(Step::Note(format!("hardware average of {} (0x10b0 = {})", count, acq::avg_count_reg(count))));
+        if s.blocks & 4 != 0 {
+            st.push(Step::Note(format!("SCU {} trigger", if s.auto { "auto" } else { "normal" })));
+            // a time base of 0 gives the shortest auto times (t1 10 ms, t2 100 ms)
+            let tb = if s.auto_fast { 0 } else { tdiv_fs(s.tdiv) };
+            st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
         }
-        st.push(Step::Note(format!(
-            "mask {:#x}: ratio {}, {} Sa/s, {} points/channel, segment {:#x}, pre {} post {}",
-            s.mask, p.ratio, p.rate, p.memsel, p.seg, p.pre, p.post
-        )));
+        Ok((st, p))
+    }
+
+    /// Steps that switch the ADC to the mode of the channel set, when it is not in it.
+    fn adc_mode_steps(
+        &mut self,
+        s: &Settings,
+        cal_adc: Option<&adc::CalAdc>,
+        st: &mut Vec<Step>,
+    ) -> Result<(), String> {
         let mode = adc::mode_of_mask(s.mask).unwrap();
         if mode != self.mode {
             let c = cal_adc.ok_or("a channel set different from the current ADC mode needs cal_adc.hex")?;
@@ -164,6 +204,17 @@ impl State {
             }
             self.mode = mode;
         }
+        Ok(())
+    }
+
+    /// The AFE steps of the acquired channels and the read-path gain/offset from their digital gains (`s.afe`).
+    fn afe_steps(
+        &mut self,
+        s: &Settings,
+        cal: Option<&afe::Cal>,
+        p: &hz::Params,
+        st: &mut Vec<Step>,
+    ) -> Result<(), String> {
         if s.afe {
             let cal = cal.ok_or("AFE set-up needs the calibration files (cal_vertical/zero/bandwidth/lsb.hex)")?;
             for c in 0..4 {
@@ -209,63 +260,41 @@ impl State {
             });
             st.extend(crate::dho::wpu::analog_gnd(s.mask, self.gain, gnd).into_iter().map(Step::Wr));
         }
-        if s.blocks & 7 != 7 {
-            st.push(Step::Note(format!(
-                "configuration blocks {:#x} (bit0 trigger, bit1 acquisition, bit2 auto trigger)",
-                s.blocks
-            )));
+        Ok(())
+    }
+
+    /// The acquisition block: stop poll, average clear, acquisition, LA, AUX OUT, zone and mask unit.
+    fn acquisition_steps(&mut self, s: &Settings, p: &hz::Params, st: &mut Vec<Step>) {
+        st.push(Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 30, what: "FSM stopped (stop poll)" });
+        if matches!(s.mode, acq::Mode::Average { .. }) {
+            // stock RunConfig: stop, average clear, then the configuration
+            st.push(Step::Note("average clear".into()));
+            st.extend(acq::avg_clear().into_iter().map(Step::Wr));
         }
-        if s.blocks & 1 != 0 {
-            st.extend(self.trigger(s).into_iter().map(Step::Wr));
+        st.push(Step::Note("acquisition configuration".into()));
+        let deskew = s.la.as_ref().map(|_| la::deskew(la::timing(p, s.mask).m));
+        let skew = s.ch.map(|k| (k.skew * 1e15).round() as i64);
+        let invert = (0..4).filter(|&c| s.ch[c].invert).fold(0, |a, c| a | 1 << c);
+        st.extend(
+            acq::configure_la(&mut self.sh, p, s.mask, invert, 0, s.mode, deskew, skew).into_iter().map(Step::Wr),
+        );
+        if std::mem::replace(&mut self.la_was_on, s.la.is_some()) && s.la.is_none() {
+            st.push(Step::Wr(la::wave_early(None)));
         }
-        if s.blocks & 2 != 0 {
-            st.push(Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 30, what: "FSM stopped (stop poll)" });
-            if matches!(s.mode, acq::Mode::Average { .. }) {
-                // stock RunConfig: stop, average clear, then the configuration
-                st.push(Step::Note("average clear".into()));
-                st.extend(acq::avg_clear().into_iter().map(Step::Wr));
-            }
-            st.push(Step::Note("acquisition configuration".into()));
-            let deskew = s.la.as_ref().map(|_| la::deskew(la::timing(&p, s.mask).m));
-            let skew = s.ch.map(|k| (k.skew * 1e15).round() as i64);
-            let invert = (0..4).filter(|&c| s.ch[c].invert).fold(0, |a, c| a | 1 << c);
+        if s.la.is_some() {
+            let t = la::timing(p, s.mask);
+            st.push(Step::Note(format!("LA on: m {}, {} Sa/s, {} LA samples, trigger at {}", t.m, t.rate, t.n, t.pre)));
             st.extend(
-                acq::configure_la(&mut self.sh, &p, s.mask, invert, 0, s.mode, deskew, skew).into_iter().map(Step::Wr),
+                la::config(&mut self.sh, p, s.mask, s.la.as_ref().is_some_and(|l| l.roll)).into_iter().map(Step::Wr),
             );
-            if std::mem::replace(&mut self.la_was_on, s.la.is_some()) && s.la.is_none() {
-                st.push(Step::Wr(la::wave_early(None)));
-            }
-            if s.la.is_some() {
-                let t = la::timing(&p, s.mask);
-                st.push(Step::Note(format!(
-                    "LA on: m {}, {} Sa/s, {} LA samples, trigger at {}",
-                    t.m, t.rate, t.n, t.pre
-                )));
-                st.extend(
-                    la::config(&mut self.sh, &p, s.mask, s.la.as_ref().is_some_and(|l| l.roll))
-                        .into_iter()
-                        .map(Step::Wr),
-                );
-            }
-            if self.aux != Some(s.aux) {
-                st.push(Step::Note(format!("AUX OUT {:?}", s.aux)));
-                st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
-                self.aux = Some(s.aux);
-            }
-            st.extend(self.zone_steps(s, &p));
-            st.extend(self.mask_steps(s, &p));
         }
-        if let Some(l) = &s.la {
-            // thresholds with every set-up (la.md 8.1: on change and once after the start)
-            st.push(Step::Wr(la::thresholds(&l.cal, l.thr[0], l.thr[1])));
+        if self.aux != Some(s.aux) {
+            st.push(Step::Note(format!("AUX OUT {:?}", s.aux)));
+            st.extend(auxout::writes(&s.aux).into_iter().map(Step::Wr));
+            self.aux = Some(s.aux);
         }
-        if s.blocks & 4 != 0 {
-            st.push(Step::Note(format!("SCU {} trigger", if s.auto { "auto" } else { "normal" })));
-            // a time base of 0 gives the shortest auto times (t1 10 ms, t2 100 ms)
-            let tb = if s.auto_fast { 0 } else { tdiv_fs(s.tdiv) };
-            st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
-        }
-        Ok((st, p))
+        st.extend(self.zone_steps(s, p));
+        st.extend(self.mask_steps(s, p));
     }
 
     /// The mask unit for `s` (docs/fork/hwmask.md): nothing while it runs as wanted; else off, the table when it
