@@ -316,7 +316,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("math_a", m.math_a.to_string());
     kv("math_b", m.math_b.to_string());
     kv("math_scale", m.math_scale.to_string());
-    kv("math_fc", m.math_fc.to_string());
+    crate::settings::write(&crate::settings::math::FC, m, &mut kv);
     kv("math_lin", format!("{} {}", m.math_lin.0, m.math_lin.1));
     for (k, e) in m.math_expr.iter().enumerate().filter(|(_, e)| !e.is_empty()) {
         kv(&format!("math_expr{}", k + 1), e.clone());
@@ -324,8 +324,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("log_ivl", m.log_ivl.to_string());
     kv("spec_margin", m.spec_margin.to_string());
     kv("math_offset", m.math_offset.to_string());
-    kv("fft_win", name(m.fft_win));
-    kv("math_bw", m.math_bw.to_string());
+    crate::settings::write(&crate::settings::math::WINDOW_BW, m, &mut kv);
     // the "math*" keys are the selected math channel; the others as mN.* (N = 1..8)
     kv("math_sel", m.math_sel.to_string());
     for (k, c) in m.maths.iter().enumerate().filter(|(k, _)| *k != m.math_sel) {
@@ -726,8 +725,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         return Ok(());
     }
-    // the keys of the settings table (settings.rs)
-    if let Some(s) = crate::settings::find(k) {
+    // the keys of the settings table (settings.rs); the fields of a line are read with the line, below
+    if let Some(s) = crate::settings::find(k).filter(|s| s.line().is_none()) {
         return s.load(m, v);
     }
     let ntime = tscales().len();
@@ -874,10 +873,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "math" => m.math = p_enum(v, &MATH_OPS)?,
         "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
-        "math_bw" => m.math_bw = p_f32(v)?,
         "math_sel" => m.math_sel = p_idx(v, crate::math::NMATH)?,
         "math_scale" => m.math_scale = p_idx(v, crate::math::math_scales().len())?,
-        "math_fc" => m.math_fc = p_f32(v)?,
         "log_ivl" => m.log_ivl = p_idx(v, crate::ui::LOG_STEPS_N)?,
         "spec_margin" => m.spec_margin = p_f32(v)?.clamp(0.0, 60.0),
         k if k.starts_with("math_expr") => {
@@ -891,7 +888,6 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             m.math_lin = (p_f32(a)?, p_f32(b)?);
         }
         "math_offset" => m.math_offset = p_f32(v)?,
-        "fft_win" => m.fft_win = p_enum(v, &WINDOWS)?,
         "dec_on" => m.dec_on = p_bool(v)?,
         "dec_src" => m.dec_src = p_decode_source(v)?,
         "dec_baud" => m.dec_baud = p_idx(v, crate::decode::BAUDS.len())?,

@@ -353,6 +353,7 @@ pub fn eye_infer(v: &[f32], dt: f64, rate: Option<f64>) -> Result<(f64, oos_dsp:
 pub const PANES_N: usize = tables::PANES.len();
 pub use eyepage::EYE_ITEMS;
 pub use panes::{PANE_HARMS, TREND_SEL_N};
+pub use tools::{CNT_MODES, DVM_MODES};
 pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 
 /// Keys of the frequency keypad: the unit ends the entry.

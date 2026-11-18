@@ -290,11 +290,35 @@ See [reference analysis](reference-analysis.md) for sampling, model-derived jitt
 | `:CURSor:{MANual|TRACk}:CAY[?]` / `:CBY[?]` | A/B volts in the selected source's displayed lane, including display zoom. |
 | `:CURSor:XY:{AX|BX|AY|BY}[?]` | Independent X/Y coordinates on one selected waveform, not independent input sources. |
 | `:CURSor:{MANual|TRACk|XY}:{AXValue|BXValue|AYValue|BYValue|XDELta|IXDelta|YDELta}?` | Values/deltas; IXDelta is 1/abs(time delta). Missing is `9.9E37`. |
-| `:DVM:{ENABle|SOURce|MODE}[?]` | ON/OFF, acquired CHANn, and `DC|ACRMS|ACDC`; `:DVM:CURRent?` reads volts. |
-| `:COUNter:{ENABle|SOURce|MODE|NDIGits}[?]` | ON/OFF, acquired CHANn, `FREQuency|PERiod|TOTalize`, digits 3..7. |
+| `:DVM:SOURce[?]`, `:COUNter:SOURce[?]` | Acquired CHANn. |
+| `:DVM:CURRent?` | Reads volts. |
 | `:COUNter:CURRent?` / `:COUNter:TOTalize:CLEar` | Current result / reset accumulated counter statistics. |
 
 Cursor changes preserve capture statistics and an armed Single. Track values use the selected native/reference waveform and physical origin; positions remain viewport fractions. DVM/counter sources are acquired channels, not references; physical meter/counter parity is not established.
+
+### DVM and counter settings
+
+The switches and modes of the DVM and the counter, their commands and their place in a setup file. They are declared
+once, in `ui/src/settings/meters.rs`; these tables are written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`. Each meter keeps its settings in one setup line,
+`dvm = <on> <source> <mode>` and `counter = <on> <source> <mode> <digits>` (the modes by their place in the list);
+the sources (above) are written by hand.
+
+<!-- settings:dvm:begin -->
+| Command | Takes | Setup key | DVM and counter menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:DVM:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `dvm` (on) | DVM | The voltmeter's reading of its source in the readouts; from the DVM block where it is switched on and the board has one (docs/fork/dvm.md), else from the measurements of the records. |
+| `:DVM:MODE[?]` | `DC`, `ACRMs`, `ACDCrms` (also `ACDC`); the query answers `DC`, `ACRMS` or `ACDC` | `dvm` (mode) | DVM mode | What the voltmeter reads: the mean (DC), the rms without the mean (AC rms) or the whole rms (AC+DC rms). |
+<!-- settings:dvm:end -->
+
+<!-- settings:counter:begin -->
+| Command | Takes | Setup key | DVM and counter menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:COUNter:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `counter` (on) | Counter | The counter's reading of its source in the readouts (docs/protocols/counter.md). |
+| `:COUNter:MODE[?]` | `FREQuency`, `PERiod`, `TOTalize` | `counter` (mode) | Count mode | What the counter shows: the frequency, the period, or the edges counted since `:COUNter:TOTalize:CLEar`. |
+| `:COUNter:NDIGits[?]` | a whole number from 3 to 7 | `counter` (digits) | Digits | The digits of the counter's reading. |
+<!-- settings:counter:end -->
 
 ## Reference storage, SIM and decoding
 
@@ -453,7 +477,7 @@ Statistics count accepted observations. A stopped reference can have a valid cur
 | `:MATH<n>:SOURce1[?]`, `:SOURce2[?]` | CH/ref/earlier-Math identity, preserving native physical timing. |
 | `:MATH<n>:SCALe[?]`, `:OFFSet[?]` | Math display scale and offset. FFT scale uses its dB ladder. |
 | `:MATH<n>:EXPRession[?]` | Root formula parser, including loaded reference names such as `R1 - R2`. |
-| `:MATH<n>:FFT:SOURce[?]`, `:WINDow[?]`, `:SCALe[?]` | FFT input, supported window and dB display scale. |
+| `:MATH<n>:FFT:SOURce[?]`, `:SCALe[?]` | FFT input and dB display scale; the window is below. |
 | `:MATH<n>:FILTer:TYPE[?]`, `:W1[?]`, `:W2[?]` | Supported low/high/band-pass/stop filter and valid corner frequencies. |
 | `:BUS<n>:MODE[?]`, `:DISPlay[?]`, `:FORMat[?]` | Decoder protocol, visibility, `HEX|ASCii` formatting. |
 | `:BUS<n>:EVENt[?]` | Shared decode event-table visibility. |
@@ -466,6 +490,22 @@ Statistics count accepted observations. A stopped reference can have a valid cur
 | `:BUS<n>:SPI:DBITs[?]` | Supported SPI word length. |
 
 Decoder headers preserve the existing `DECode` source schema, including references. Configuring an inactive decoder does not select it as the acquisition trigger. For an active Bus trigger, the decoder's actual primary input owns qualification. Required inputs must overlap in physical time; no synthetic hardware/LA input is invented for a reference. Other protocol-specific Rigol BUS subtrees remain unsupported unless listed.
+
+### Math settings
+
+The settings of the selected math channel that are one value each, their `:MATH<n>` commands and their keys in a
+setup file. They are declared once, in `ui/src/settings/math.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A command sets
+math channel `<n>`, the setup key the selected one (the others are `m<N>.win`, `m<N>.fc`, `m<N>.bw`). A value a
+command does not take is refused with `-224`.
+
+<!-- settings:math:begin -->
+| Command | Takes | Setup key | Math menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MATH<n>:FFT:WINDow[?]` | `RECTangle`, `HANNing`, `HAMMing`, `BLACkman`, `FLATtop` | `fft_win` | Window | The window the FFT multiplies the record with before the transform. |
+| none | set through `:MATH<n>:FILTer:W1` and `:W2`, the corner frequencies (below) | `math_bw` | Bandwidth | The width of the band of the band-pass and band-stop filters. The menu steps 1-2-5 in periods. |
+| none | set through `:MATH<n>:FILTer:W1` and `:W2`, the corner frequencies (below) | `math_fc` | Frequency | The cut-off frequency of the low- and high-pass filters, the centre of the band filters. The menu steps 1-2-5 in periods. |
+<!-- settings:math:end -->
 
 ### Track cursors, mask and histogram
 

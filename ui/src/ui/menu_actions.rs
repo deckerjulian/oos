@@ -514,13 +514,8 @@ impl Ui {
                 let next = self.step_wave(cur, d);
                 self.set_cursor_b_source(next);
             }
-            Item::DvmOn => m.dvm_on = !m.dvm_on,
             Item::DvmSrc => m.dvm_src = src_step(m.dvm_src, NCH, d),
-            Item::DvmMode => m.dvm_mode = (m.dvm_mode as i32 + d).rem_euclid(3) as usize,
-            Item::CntOn => m.cnt_on = !m.cnt_on,
             Item::CntSrc => m.cnt_src = src_step(m.cnt_src, NCH, d),
-            Item::CntMode => m.cnt_mode = (m.cnt_mode as i32 + d).rem_euclid(3) as usize,
-            Item::CntDigits => m.cnt_digits = (m.cnt_digits as i32 + d).clamp(3, 7) as u32,
             Item::MathLinA => m.math_lin.0 = (m.math_lin.0 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::CurMode => {
@@ -629,27 +624,11 @@ impl Ui {
                     self.math_fam = m.math.family();
                 }
             }
-            Item::MathBw => {
-                let l = time_ladder();
-                let per = 1.0 / m.math_bw.max(1e-6);
-                let i = l.iter().position(|&x| x >= per * 0.999).unwrap_or(0);
-                m.math_bw = 1.0 / l[step_index(i, l.len(), -d)];
-            }
             Item::MathScale => {
                 let n = if m.math == MathOp::Fft { FFT_DB.len() } else { math_scales().len() };
                 m.math_scale = step_index(m.math_scale, n, d);
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
-            Item::FftWin => {
-                let i = WINDOWS.iter().position(|&w| w == m.fft_win).unwrap_or(0);
-                m.fft_win = WINDOWS[cycle(i, WINDOWS.len(), d)];
-            }
-            Item::MathFc => {
-                let l = time_ladder();
-                let per = 1.0 / m.math_fc.max(1e-6);
-                let i = l.iter().position(|&x| x >= per * 0.999).unwrap_or(0);
-                m.math_fc = 1.0 / l[step_index(i, l.len(), -d)];
-            }
             Item::MeasStats => self.stats_on = !self.stats_on,
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
             Item::StripDock => {

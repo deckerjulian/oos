@@ -44,14 +44,6 @@ impl Scpi {
             self.push_err(format!("-113,\"Undefined header\" :DISPlay:{}", n.join(":")));
             return None;
         };
-        if query {
-            return Some(row.query(&ui.m).into_bytes());
-        }
-        if !row.take(&mut ui.m, arg) {
-            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-            return None;
-        }
-        ui.mark_changed();
-        None
+        self.setting_cmd(ui, row, query, arg)
     }
 }

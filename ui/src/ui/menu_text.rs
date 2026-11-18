@@ -150,11 +150,8 @@ impl Ui {
             | Item::RefOffset
             | Item::MathLinA
             | Item::MathLinB
-            | Item::CntDigits
             | Item::MathScale
             | Item::MathOffset
-            | Item::MathFc
-            | Item::MathBw
             | Item::ZScale
             | Item::ZDelay
             | Item::DecThr => Kind::Value,
@@ -331,9 +328,6 @@ impl Ui {
             Item::MathB => "Source B",
             Item::MathScale => "Scale",
             Item::MathOffset => "Offset",
-            Item::FftWin => "Window",
-            Item::MathFc => "Frequency",
-            Item::MathBw => "Bandwidth",
             Item::MathSel => "Channel",
             Item::MathAuto => "Auto scale",
             Item::Open(MenuId::MeasSelected) => "Selected",
@@ -375,13 +369,8 @@ impl Ui {
             Item::MeasCopyTo => "Copy meas. to",
             Item::MeasSrcB => "Source B",
             Item::MeasPair(k) => tools::PAIRS[k.min(tools::PAIRS.len() - 1)].0,
-            Item::DvmOn => "DVM",
             Item::DvmSrc => "DVM source",
-            Item::DvmMode => "DVM mode",
-            Item::CntOn => "Counter",
             Item::CntSrc => "Count source",
-            Item::CntMode => "Count mode",
-            Item::CntDigits => "Digits",
             Item::CntClear => "Clear counter",
             Item::ChLabel(_) => "Name",
             Item::MathExprI => "Formula",
@@ -570,13 +559,8 @@ impl Ui {
                 self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
             }
             Item::RefOffset => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
-            Item::DvmOn => onoff(m.dvm_on),
             Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
-            Item::DvmMode => tools::DVM_MODES[m.dvm_mode.min(2)].into(),
-            Item::CntOn => onoff(m.cnt_on),
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
-            Item::CntMode => tools::CNT_MODES[m.cnt_mode.min(2)].into(),
-            Item::CntDigits => m.cnt_digits.to_string(),
             Item::MathLinA => format!("{:.3}", m.math_lin.0),
             Item::MathLinB => format!("{:.3}", m.math_lin.1),
             Item::CurMode => format!("{:?}", m.cursor),
@@ -687,11 +671,8 @@ impl Ui {
             Item::MathA => src_name(m.math_a),
             Item::MathB => src_name(m.math_b),
             Item::MathSel => format!("M{}", m.math_sel + 1),
-            Item::MathBw => si_short(m.math_bw as f64, "Hz"),
             Item::MathScale => self.math_scale_text(),
             Item::MathOffset => format!("{:.2} div", m.math_offset),
-            Item::FftWin => m.fft_win.name().into(),
-            Item::MathFc => si_short(m.math_fc as f64, "Hz"),
             Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
             Item::MaskOn => onoff(m.mask_on),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),

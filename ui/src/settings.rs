@@ -4,12 +4,13 @@
 //! One declaration per setting (docs/adr/code/0043): a row of a const table names a setting's key in setup files, its
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
-//! `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs), the menu rows (ui/setting_items.rs) and the tables in
-//! docs/scpi.md follow from it. Rows only read and write the model; what a change sets off on the screen (redraw,
-//! statistics) stays with the caller.
+//! `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs), the menu rows
+//! (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read and write the model; what a
+//! change sets off on the screen (redraw, statistics) stays with the caller.
 //!
-//! The Display group (settings/display.rs), the trigger values (settings/trigger.rs) and the acquisition settings
-//! (settings/acquisition.rs) have tables; the other settings are still written out by hand in each of those places.
+//! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
+//! (settings/acquisition.rs), the math settings (settings/math.rs) and the meters (settings/meters.rs) have tables;
+//! the other settings are still written out by hand in each of those places.
 //! A new setting of a group with a table is a row there, its `Item` with its place in a menu (ui/item.rs,
 //! ui/menu_items.rs, ui/setting_items.rs), its query in ui/tests/scpi.txt, and
 //! `OOS_BLESS=1 cargo test --locked -q settings::tests` for the docs table.
@@ -18,6 +19,8 @@ use crate::model::{cycle, si_short, step_index, Model};
 
 pub mod acquisition;
 pub mod display;
+pub mod math;
+pub mod meters;
 pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
@@ -55,6 +58,7 @@ pub enum Ty {
     /// Off/On in the menu, a step toggles
     Bool,
     /// a whole number, kept within `min..=max` wherever it comes from; the menu steps by `step` and shows `<n> <unit>`
+    /// (`<n>` without a unit)
     U32 { min: u32, max: u32, step: u32, unit: &'static str },
     /// a whole number the menu offers as a list of steps: a setup reads any (0 as 1); over SCPI one from the first
     /// step, set to the step at or below it; the menu steps along the list, from the default's step when the value is
@@ -65,6 +69,8 @@ pub enum Ty {
     /// seconds, any finite number in a setup; over SCPI a number (within `accept` when the row has it), the query
     /// answers it as `1.000000E-06`; the menu steps along `ladder` and shows `<n> s`, or `zero` for 0 and below
     Seconds { ladder: fn(f32, i32) -> f32, zero: Option<&'static str> },
+    /// hertz, as `Seconds` without `zero`; the menu shows `<n> Hz`
+    Hertz { ladder: fn(f32, i32) -> f32 },
     /// a setting whose words follow none of the rules above
     Custom(&'static CustomIo),
 }
@@ -117,7 +123,8 @@ pub enum Scpi {
 }
 
 pub struct Setting {
-    /// the key in setup files; stored keys never change once released
+    /// the key in setup files; stored keys never change once released. `<line> <field>` (`dvm mode`) names a field of
+    /// a setup line that holds several settings, which store.rs writes and reads by hand (`Setting::line`)
     pub key: &'static str,
     pub scpi: Scpi,
     pub ty: Ty,
@@ -135,7 +142,14 @@ pub struct Setting {
 
 /// Every row of every table.
 pub fn all() -> impl Iterator<Item = &'static Setting> {
-    display::SLICES.into_iter().chain(trigger::SLICES).chain(acquisition::SLICES).flat_map(|g| g.iter())
+    display::SLICES
+        .into_iter()
+        .chain(trigger::SLICES)
+        .chain(acquisition::SLICES)
+        .chain(math::SLICES)
+        .chain(meters::DVM_SLICES)
+        .chain(meters::COUNTER_SLICES)
+        .flat_map(|g| g.iter())
 }
 
 /// The row of `slices` whose command the nodes below the subsystem name, each in its long or short form.
@@ -149,7 +163,7 @@ pub fn command(slices: &[&'static [Setting]], nodes: &[&str]) -> Option<&'static
     })
 }
 
-/// The row of a setup key.
+/// The row of a key (a setup key, or a field of a setup line).
 pub fn find(key: &str) -> Option<&'static Setting> {
     all().find(|s| s.key == key)
 }
@@ -162,11 +176,16 @@ pub fn write(rows: &[Setting], m: &Model, kv: &mut dyn FnMut(&str, String)) {
 }
 
 impl Setting {
+    /// The key of the setup line that holds this setting as one of its fields; None when the key is its own.
+    pub fn line(&self) -> Option<&'static str> {
+        self.key.split_once(' ').map(|(line, _)| line)
+    }
+
     /// The value as a setup file writes it.
     pub fn store(&self, m: &Model) -> String {
         let v = (self.get)(m);
         match &self.ty {
-            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } => match v {
+            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. } => match v {
                 Val::Bool(b) => b.to_string(),
                 Val::F32(x) => x.to_string(),
                 v => v.index().to_string(),
@@ -190,7 +209,7 @@ impl Setting {
                     }
                 })?)
             }
-            Ty::Seconds { .. } => Val::F32(crate::store::p_f32(text)?),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => Val::F32(crate::store::p_f32(text)?),
             Ty::Custom(io) => (io.load)(text)?,
         };
         (self.put)(m, v);
@@ -204,7 +223,7 @@ impl Setting {
             Ty::Bool => if v.index() != 0 { "1" } else { "0" }.to_string(),
             Ty::U32 { .. } | Ty::Steps(_) => v.index().to_string(),
             Ty::Choice(list, ..) => short(list[v.index()].scpi),
-            Ty::Seconds { .. } => crate::scpi::e(v.secs() as f64),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::e(v.secs() as f64),
             Ty::Custom(io) => (io.query)(v),
         }
     }
@@ -232,7 +251,7 @@ impl Setting {
                 let a = arg.to_ascii_uppercase();
                 list.iter().position(|c| a.starts_with(&short(c.scpi))).map(Val::Index)
             }
-            Ty::Seconds { .. } => crate::scpi::num(arg)
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::num(arg)
                 .filter(|&x| self.accept.is_none_or(|(lo, hi)| (lo..=hi).contains(&(x as f64))))
                 .map(Val::F32),
             Ty::Custom(io) => (io.take)(arg),
@@ -242,7 +261,7 @@ impl Setting {
 
     /// The menu row is a number with - and + (a choice otherwise).
     pub fn is_number(&self) -> bool {
-        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. })
+        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. })
     }
 
     /// The menu's options (none for a number but the steps of `Steps`).
@@ -250,7 +269,7 @@ impl Setting {
         let labels: Vec<&str> = match &self.ty {
             Ty::Steps(list) => return list.iter().map(u32::to_string).collect(),
             Ty::Bool => vec!["Off", "On"],
-            Ty::U32 { .. } | Ty::Seconds { .. } => Vec::new(),
+            Ty::U32 { .. } | Ty::Seconds { .. } | Ty::Hertz { .. } => Vec::new(),
             Ty::Choice(list, ..) => list.iter().map(|c| c.label).collect(),
             Ty::Custom(io) => io.labels.to_vec(),
         };
@@ -261,10 +280,12 @@ impl Setting {
     pub fn shown(&self, m: &Model) -> String {
         let v = (self.get)(m);
         match &self.ty {
+            Ty::U32 { unit: "", .. } => v.index().to_string(),
             Ty::U32 { unit, .. } => format!("{} {}", v.index(), unit),
             Ty::Steps(_) => v.index().to_string(),
             Ty::Seconds { zero: Some(z), .. } if v.secs() <= 0.0 => z.to_string(),
             Ty::Seconds { .. } => si_short(v.secs() as f64, "s"),
+            Ty::Hertz { .. } => si_short(v.secs() as f64, "Hz"),
             _ => self.options()[v.index()].clone(),
         }
     }
@@ -283,7 +304,7 @@ impl Setting {
                 let i = i.or_else(|| list.iter().position(|&n| Val::U32(n) == (self.get)(&Model::default())));
                 Val::U32(list[step_index(i.unwrap_or(0), list.len(), d)])
             }
-            (Ty::Seconds { ladder, .. }, v) => Val::F32(ladder(v.secs(), d)),
+            (Ty::Seconds { ladder, .. } | Ty::Hertz { ladder }, v) => Val::F32(ladder(v.secs(), d)),
             (_, v) => {
                 let n = self.options().len();
                 Val::Index(if n == 2 { 1 - v.index() } else { cycle(v.index(), n, d) })
@@ -299,7 +320,11 @@ impl Setting {
             Ty::Bool => "`ON`, `OFF`, `1`, `0`; the query answers `1` or `0`".into(),
             Ty::U32 { min, max, unit, .. } => {
                 let (lo, hi) = self.accept.unwrap_or((*min as f64, *max as f64));
-                format!("a whole number from {} to {}, set within {} to {} {}", lo, hi, min, max, unit)
+                if (lo, hi) == (*min as f64, *max as f64) {
+                    format!("a whole number from {} to {} {}", lo, hi, unit).trim_end().to_string()
+                } else {
+                    format!("a whole number from {} to {}, set within {} to {} {}", lo, hi, min, max, unit)
+                }
             }
             Ty::Steps(list) => format!(
                 "a whole number from {}, set to the step at or below it: {}",
@@ -317,6 +342,7 @@ impl Setting {
                 Some((lo, hi)) => format!("seconds from {} to {}", lo, hi),
                 None => "seconds".into(),
             },
+            Ty::Hertz { .. } => "hertz".into(),
             Ty::Custom(io) => io.values.into(),
         }
     }
@@ -338,7 +364,11 @@ pub fn docs_table(rows: &[&[Setting]], subsystem: &str, menu: &str) -> String {
             Scpi::Cmd(c) => (format!("`{}:{}[?]`", subsystem, c), r.takes()),
             Scpi::None { why } => ("none".to_string(), why.to_string()),
         };
-        s.push_str(&format!("| {} | {} | `{}` | {} | {} |\n", cmd, takes, r.key, r.label, r.doc));
+        let key = match r.key.split_once(' ') {
+            Some((line, field)) => format!("`{}` ({})", line, field),
+            None => format!("`{}`", r.key),
+        };
+        s.push_str(&format!("| {} | {} | {} | {} | {} |\n", cmd, takes, key, r.label, r.doc));
     }
     s
 }
