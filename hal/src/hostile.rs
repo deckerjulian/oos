@@ -23,6 +23,12 @@ pub(crate) const KNOWN: &[Known] = &[
         repro: crate::update::hostile_tests::hostile_known_fdt_nesting_not_bounded,
     },
     Known {
+        name: "rsce-table-not-bounded",
+        what: "update::fdt::rsce_file takes a table longer than its container: entries of no blocks are read up to \
+               2^32 times",
+        repro: crate::update::hostile_tests::hostile_known_rsce_table_not_bounded,
+    },
+    Known {
         name: "unhex-takes-a-plus-sign",
         what: "update::hash::unhex takes a plus sign for a hex digit: '+f' is the byte 0x0f",
         repro: crate::update::hostile_tests::hostile_known_unhex_takes_a_plus_sign,

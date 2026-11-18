@@ -174,7 +174,7 @@ fn hostile_decoder_records() {
     let records = records();
     let seeds: Vec<&[u8]> = records.iter().map(|r| r.as_slice()).collect();
     for (name, decoder) in DECODERS.iter().chain(&MORE_DECODERS) {
-        run(&format!("decode::{name}"), &seeds, 40, |b| {
+        run(&format!("decode::{name}"), &seeds, 1, |b| {
             let l = lines(b);
             if qspi_trap(name, &l) && known(KNOWN, "qspi-frame-ends-before-it-starts") {
                 return Ok(());

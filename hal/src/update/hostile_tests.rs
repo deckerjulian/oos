@@ -39,8 +39,8 @@ fn hostile_update_packages() {
     });
 }
 
-/// `pkg::parse_keys` (`/etc/oos/trusted-keys`, a file of the image): returns for any text; every key it gives is a
-/// line of 64 hex digits of the text.
+/// `pkg::parse_keys` (`/etc/oos/trusted-keys`, a file of the image): returns for any text; every key it gives is the
+/// first word of a line outside its comment, 64 hex digits, and there are not more keys than such words.
 #[test]
 fn hostile_trusted_keys() {
     let file = format!("# trusted keys\n{}  # release\n\n{}\nnot a key\n", hash::hex(&pk()), hash::hex(&[0x5a; 32]));
@@ -54,10 +54,10 @@ fn hostile_trusted_keys() {
         if plus && known(KNOWN, "unhex-takes-a-plus-sign") {
             return Ok(());
         }
-        let lower = text.to_ascii_lowercase();
-        match keys.iter().find(|k| !lower.contains(&hash::hex(&k[..]))) {
-            Some(k) => Err(format!("a key that is not in the text: {}", hash::hex(k))),
-            None if keys.len() > text.lines().count() => Err("more keys than lines".into()),
+        let words: Vec<String> = text.lines().filter_map(key_of).map(|w| w.to_ascii_lowercase()).collect();
+        match keys.iter().find(|k| !words.contains(&hash::hex(&k[..]))) {
+            Some(k) => Err(format!("a key that is no first word of a line outside its comment: {}", hash::hex(k))),
+            None if keys.len() > words.len() => Err("more keys than lines with a word".into()),
             None => Ok(()),
         }
     });
@@ -68,6 +68,15 @@ fn hostile_trusted_keys() {
 pub(crate) fn hostile_known_unhex_takes_a_plus_sign() {
     assert_eq!(hash::unhex("+f"), None);
     assert!(pkg::parse_keys(&format!("{}+f\n", "00".repeat(31))).is_empty());
+}
+
+#[test]
+#[ignore = "fdt::rsce_file walks a table of any length: entries of no blocks are read up to 2^32 times, #181"]
+pub(crate) fn hostile_known_rsce_table_not_bounded() {
+    let mut b = rsce(fdt::TREE, b"tree");
+    b[10] = 0; // entries of no blocks: every entry is the first
+    b[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(rsce_file(&b, fdt::TREE).is_err(), "a table of 2^32 - 1 entries in a container of {} bytes", b.len());
 }
 
 /// `card::image_header`, `card::check_image`, `kexec::parts`, `kexec::tree_at` and `inflate::image_build` (the boot
@@ -172,8 +181,7 @@ fn rsce(name: &str, file: &[u8]) -> Vec<u8> {
 }
 
 /// An RSCE container whose table makes `rsce_file` read the same entry again and again: entries of no blocks, and
-/// more of them than the test waits for. Reported with the findings; no test can tell a slow answer from a fast one
-/// without a clock (ADR 0020), so the run keeps these out instead of naming them in `KNOWN`.
+/// more of them than the test waits for (the finding `rsce-table-not-bounded`).
 fn rsce_reads_one_entry_for_ever(b: &[u8]) -> bool {
     b.len() >= 16 && b[10] == 0 && u32::from_le_bytes([b[12], b[13], b[14], b[15]]) > 4096
 }
@@ -242,7 +250,7 @@ fn hostile_device_trees() {
                 other => return Err(format!("written out it reads as {:?}", other.map(|t| t.root.name))),
             }
         }
-        if !rsce_reads_one_entry_for_ever(b) {
+        if !(rsce_reads_one_entry_for_ever(b) && known(KNOWN, "rsce-table-not-bounded")) {
             if let Ok(f) = rsce_file(b, fdt::TREE) {
                 if f.as_ptr_range().start < b.as_ptr_range().start || f.as_ptr_range().end > b.as_ptr_range().end {
                     return Err(format!("a file of {} bytes outside the container", f.len()));
