@@ -52,14 +52,10 @@ fn raw_oracle(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either
 fn smooth_oracle(
     v: &[f32],
     pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    span: usize,
-    length: usize,
+    seek: EdgeSeek,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<(f64, bool)>) {
+    let EdgeSeek { level, hyst, rising, either, span, l: length } = seek;
     let length = length.max(1);
     let a = pre.saturating_sub(span + length);
     let b = pre.saturating_add(span + length).min(v.len());
@@ -159,14 +155,9 @@ fn nearest_raw_and_smoothed_search_match_independent_oracles() {
                             // Admit/reject different boundary edges as well as testing direction.
                             let fits =
                                 |t: f64| t >= pre.saturating_sub(span / 2) as f64 && t <= (pre + span / 2) as f64;
-                            let got = edge_smooth(
-                                &values,
-                                pre,
-                                EdgeSeek::new(0.1, hysteresis, rising, either, span, length),
-                                fits,
-                            );
-                            let expected =
-                                smooth_oracle(&values, pre, 0.1, hysteresis, rising, either, span, length, fits);
+                            let seek = EdgeSeek::new(0.1, hysteresis, rising, either, span, length);
+                            let got = edge_smooth(&values, pre, seek, fits);
+                            let expected = smooth_oracle(&values, pre, seek, fits);
                             same(got.0, expected.0, "smoothed oracle");
                             same(got.1.map(|e| e.t), expected.1.map(|e| e.0), "either diagnostic");
                             assert_eq!(got.1.map(|e| e.rising), expected.1.map(|e| e.1));
@@ -197,18 +188,15 @@ fn record_trigger_origin_matches_full_oracle_for_admissible_near_edges() {
         let window = 4096e-9;
         let first = -window / 2.0;
         let fits = |t: f64| t >= -first / frame.dt && t <= frame.ch[0].len() as f64 - 1.0 - (first + window) / frame.dt;
-        let expected = smooth_oracle(
-            &frame.ch[0],
-            pre,
+        let seek = EdgeSeek::new(
             0.0,
             model.trig_hyst_div() * model.ch[0].volts_per_div(),
             direction != Slope::Fall,
             direction == Slope::Either,
             2048,
             1,
-            fits,
-        )
-        .0;
+        );
+        let expected = smooth_oracle(&frame.ch[0], pre, seek, fits).0;
         let record = crate::board::to_record(&frame, &model, 3600, window, first);
         assert!(record.triggered);
         let Raw { t0, i0, .. } = record.raw.unwrap();

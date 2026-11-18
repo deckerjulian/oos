@@ -63,9 +63,10 @@ A decision that touches two categories goes where its consequences are largest a
 | [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted |
 | [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
 | [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted |
-| [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | proposed |
-| [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | proposed |
+| [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | accepted |
+| [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | accepted |
 | [0045](process/0045-the-toolchain-and-the-base-images-are-pinned.md) | process | The Rust tool chain and the base images of the containers are pinned; the weekly run tries the newest Rust (amends ADR 0017) | proposed |
+| [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only (amends ADR 0017) | proposed |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | proposed |
 
 ## Reading order for agents
