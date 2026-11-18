@@ -1,4 +1,4 @@
 150 fields-scpi
-0 queries-tests
+5 queries-tests
 0 words-docs
-46 words-tests
+23 words-tests

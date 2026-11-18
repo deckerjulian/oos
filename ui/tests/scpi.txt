@@ -220,3 +220,54 @@ scpi $S/scpi-answers.txt :BUS1:IIC:SDA:SOURce?
 scpi $S/scpi-answers.txt :BUS1:SPI:MOSI:SOURce?
 scpi $S/scpi-answers.txt :BUS1:SPI:SS:SOURce?
 scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the queries that docs/scpi.md names outside the first cell of a table row, and in its running text
+scpi $S/scpi-answers.txt :TRIG:EDGE:SOUR?
+scpi $S/scpi-answers.txt :SYST:ERR?
+scpi $S/scpi-answers.txt :ACQ:SRAT?
+scpi $S/scpi-answers.txt :TRIGger:TYPe?
+scpi $S/scpi-answers.txt :POWer:ITEM? VRMS,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :POWer:HARMonics? CHANnel1
+scpi $S/scpi-answers.txt :SPECtrum:ITEM? THD,CHANnel1
+scpi $S/scpi-answers.txt :MAGnetic:ITEM? L,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :INVerter:ITEM? FREQ,CHANnel1,CHANnel2,CHANnel3
+scpi $S/scpi-answers.txt :DPT:ITEM? VPEAK,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :BANDwidth:ITEM? RISE,CHANnel1
+scpi $S/scpi-answers.txt :BODE:MODE?
+scpi $S/scpi-answers.txt :BODE:DATA?
+scpi $S/scpi-answers.txt :BODE:GENerator?
+scpi $S/scpi-answers.txt :LA:STATe?
+scpi $S/scpi-answers.txt :LA:DIGital0:DISPlay?
+scpi $S/scpi-answers.txt :LA:POD1:THReshold?
+scpi $S/scpi-answers.txt :IDENtify?
+scpi $S/scpi-answers.txt :CALibrate:STATus?
+scpi $S/scpi-answers.txt :SYSTem:GET? tdiv
+scpi $S/scpi-answers.txt :CURSor:MEASure:INDicator?
+scpi $S/scpi-answers.txt :CURSor:TRACk:SOURce1?
+scpi $S/scpi-answers.txt :CURSor:TRACk:SOURce2?
+scpi $S/scpi-answers.txt :MASK:ENABle?
+scpi $S/scpi-answers.txt :MASK:SOURce?
+scpi $S/scpi-answers.txt :MASK:X?
+scpi $S/scpi-answers.txt :MASK:Y?
+scpi $S/scpi-answers.txt :MASK:OPERate?
+scpi $S/scpi-answers.txt :MASK:FAILed?
+scpi $S/scpi-answers.txt :MASK:PASSed?
+scpi $S/scpi-answers.txt :MASK:TOTal?
+scpi $S/scpi-answers.txt :HISTogram:ENABle?
+scpi $S/scpi-answers.txt :HISTogram:TYPE?
+scpi $S/scpi-answers.txt :HISTogram:SOURce?
+scpi $S/scpi-answers.txt :HISTogram:STATistics:RESult?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# what the running text says is refused, each with the error it leaves: a catalog row as a measurement item, the
+# queries of actions
+scpi $S/scpi-answers.txt :MEAS:ITEM? CAT1
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :RUN?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :STOP?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :SING?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt *CLS?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt *RST?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?

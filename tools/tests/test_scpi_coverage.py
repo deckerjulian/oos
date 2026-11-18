@@ -49,6 +49,7 @@ scpi $S/a.txt :timebase:main:scale?
 scpi $S/a.txt :CURSor:TRACk:AXValue?
 scpi $S/a.txt :MEASure:ITEM? VPP,CHAN1
 scpi $S/a.txt :CHANnel1:OFFSet 0.5
+scpi $S/a.txt :CHAN1:POS?
 """
 
 STORE_RS = """fn helper(m: &Model, kv: &mut dyn FnMut(&str, String)) {
@@ -110,12 +111,44 @@ class Coverage(unittest.TestCase):
     def test_documented_queries(self):
         self.assertEqual(cov.documented_queries(SCPI_MD), [
             ":CHANnel<n>:SCALe[?]", ":CHANnel<n>:OFFSet[?]", ":CURSor:{MANual|TRACk}:{AXValue|BXValue}?",
-            ":CURSor:CAX[?]", ":CURSor:CBX[?]", ":TIMebase[:MAIN]:SCALe[?]", ":MEASure:ITEM?"])
+            ":CURSor:CAX[?]", ":CURSor:CBX[?]", ":TIMebase[:MAIN]:SCALe[?]", ":CHAN1:POSition?", ":MEASure:ITEM?"])
+
+    def test_commands_of_every_cell_and_of_the_running_text(self):
+        # a command in a later cell of a row counts, with the rule of the first cell within its own cell; values,
+        # setup keys and argument syntax in backticks are no commands, and the arguments of a command are cut off
+        md = ("| Bode | `:BODE:MODE[?] LOOP|PSRR|IMPedance`, `:BODE:RUN ON|OFF`, `:BODE:DATA?`, `LOOP` |\n"
+              "| `:MEASure:INDicator[?]` | Labels; `:CURSor:MEASure:INDicator[?]` is an alias, key `meas_ind`. |\n"
+              "| none | set through `:MATH<n>:FILTer:W1[?]` and `:W2[?]` | `math_bw` |\n")
+        self.assertEqual(cov.documented_queries(md), [
+            ":BODE:MODE[?]", ":BODE:DATA?", ":MEASure:INDicator[?]", ":CURSor:MEASure:INDicator[?]",
+            ":MATH<n>:FILTer:W1[?]", ":MATH<n>:FILTer:W2[?]"])
+        # in the running text a relative command refers to the last absolute one of its sentence, also across a line
+        # break of the paragraph; a new sentence starts afresh (`:RUN?` is no `:SYSTem:RUN?`)
+        md = ("Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:CREate`,\n`:FAILed?`. Read `:SYSTem:ERRor?` until\n"
+              "`0,\"No error\"`. Action queries such as `:RUN?`, `:STOP?` and `*RST?` are unsupported.\n\n"
+              "Calibration `:CALibrate:STARt 0..4[,ZERO]`, `:CALibrate:STATus?`; the short form `:SYST:ERR?`.\n")
+        self.assertEqual(cov.documented_queries(md), [
+            ":MASK:ENABle[?]", ":MASK:SOURce[?]", ":MASK:FAILed?", ":SYSTem:ERRor?", ":RUN?", ":STOP?", "*RST?",
+            ":CALibrate:STATus?", ":SYST:ERR?"])
+        # a command that starts with the first node of the one before is absolute, though it has fewer nodes; one
+        # with as many nodes is absolute too, so a relative command of two nodes after one of two cannot be written
+        md = ("Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POINts?`.\n\n"
+              "Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:STATistics:RESult?`.\n")
+        self.assertEqual(cov.documented_queries(md), [
+            ":LA:STATe[?]", ":LA:DIGital<n>:DISPlay[?]", ":LA:POINts?", ":HISTogram:ENABle[?]", ":HISTogram:TYPE[?]",
+            ":STATistics:RESult?"])
+        # fenced code is no running text
+        md = "Read it:\n\n```python\nprint(query(`:NOT:DOCumented?`))\n```\n\nThen `:RUN`.\n"
+        self.assertEqual(cov.documented_queries(md), [])
+        self.assertEqual(cov.sentences("A `:X:Y?` is `1.5`. B `:Z?`, e.g. two."),
+                         ["A `:X:Y?` is `1.5`.", " B `:Z?`, e.g.", " two."])
 
     def test_every_command_of_the_first_cell(self):
         # a relative command replaces as many last nodes of the first one as it has, after `, ` or ` / `; one with as
-        # many nodes or more is absolute; a `|` inside backticks is no end of the cell; the other cells do not count
-        row = cov.row_commands
+        # many nodes or more is absolute; a `|` inside backticks is no end of the cell, the first cell ends at ` | `
+        def row(line):
+            return cov.relative(cov.spans(cov.cells(line)[0]))
+
         self.assertEqual(row("| `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom, `:TIM:X?`. |"),
                          [":TIMebase:DELay:ENABle[?]", ":TIMebase:DELay:SCALe[?]", ":TIMebase:DELay:OFFSet[?]"])
         self.assertEqual(row("| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Volts. |"),
@@ -134,9 +167,10 @@ class Coverage(unittest.TestCase):
         self.assertEqual(row("| Command | Meaning |"), [])
 
     def test_queries_not_asked(self):
-        # the OFFSet line sets, it does not ask; `:CBX[?]` is the second command of the CAX row
+        # the OFFSet line sets, it does not ask; `:CBX[?]` is the second command of the CAX row; the query in the
+        # second cell of the RUN row is asked in its short form
         self.assertEqual(self.result()["queries-tests"],
-                         ([":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]", ":CURSor:CBX[?]"], 7))
+                         ([":CHANnel<n>:OFFSet[?]", ":CURSor:CAX[?]", ":CURSor:CBX[?]"], 8))
 
     def test_query_pattern(self):
         pat = cov.query_pattern(":TIMebase[:MAIN]:SCALe[?]")
@@ -177,7 +211,7 @@ class Coverage(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cov.main([str(self.root)]), 0)
-        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 4/8, queries-tests 3/7, "
+        self.assertEqual(out.getvalue(), "scpi-coverage: words-docs 2/8, words-tests 4/8, queries-tests 3/8, "
                                          "fields-scpi 2/4 missing (--list names them)\n")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
