@@ -7,25 +7,6 @@
 
 use super::*;
 
-const POWER_MODES: [PowerMode; 6] = [
-    PowerMode::Quality,
-    PowerMode::Harmonics,
-    PowerMode::Switching,
-    PowerMode::Ripple,
-    PowerMode::Capacitance,
-    PowerMode::Rail,
-];
-
-fn power_page(p: PowerMode) -> &'static str {
-    match p {
-        PowerMode::Quality => "Quality",
-        PowerMode::Harmonics => "Harmonics",
-        PowerMode::Switching => "Switching",
-        PowerMode::Ripple => "Ripple",
-        PowerMode::Capacitance => "Cin",
-        PowerMode::Rail => "Rail",
-    }
-}
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 use crate::settings::spectrum::freq_step as step_ladder;
@@ -41,9 +22,7 @@ impl Ui {
 
     pub(in crate::ui) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::SpecSpan | Item::SpecRbw | Item::EyeRate | Item::PowFline | Item::PowFsw | Item::PowRef => {
-                Kind::Value
-            }
+            Item::SpecSpan | Item::SpecRbw | Item::EyeRate | Item::PowRef => Kind::Value,
             Item::SpecPeak
             | Item::SpecLimitSet
             | Item::SpecLimitClear
@@ -63,7 +42,6 @@ impl Ui {
             | Item::PowOn
             | Item::PowV
             | Item::PowI
-            | Item::PowMode
             | Item::PowVin
             | Item::PowClk => Kind::Choice,
             _ => return None,
@@ -92,9 +70,6 @@ impl Ui {
             Item::EyeClear => "Clear eye",
             Item::PowV => "Voltage",
             Item::PowI => "Current",
-            Item::PowMode => "Page",
-            Item::PowFline => "Line f",
-            Item::PowFsw => "Switch f",
             Item::PowVin => "Input",
             Item::PowRef => "Reference",
             Item::PowClk => "Clock",
@@ -137,21 +112,6 @@ impl Ui {
             }
             Item::EyeB => m.eye_b.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::EyeRail => m.eye_rail.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
-            Item::PowMode => power_page(m.pw_mode).into(),
-            Item::PowFline => {
-                if m.pw_fline > 0.0 {
-                    si_short(m.pw_fline, "Hz")
-                } else {
-                    "auto".into()
-                }
-            }
-            Item::PowFsw => {
-                if m.pw_fsw > 0.0 {
-                    si_short(m.pw_fsw, "Hz")
-                } else {
-                    "auto".into()
-                }
-            }
             Item::PowVin => m.pw_vin.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::PowRef => m.pw_ref.map(|v| si_short(v, "V")).unwrap_or_else(|| "Top".into()),
             Item::PowClk => m.pw_clk.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
@@ -176,7 +136,6 @@ impl Ui {
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
             Item::SpecHarm => panes::harm_names(),
-            Item::PowMode => POWER_MODES.iter().map(|p| power_page(*p).to_string()).collect(),
             Item::IdFind(_) => vec![self.ana_value(it).unwrap_or_default()],
             _ => return None,
         })
@@ -257,16 +216,10 @@ impl Ui {
                 m.eye_rate = step_ladder(m.eye_rate, d);
                 m.eye_from_record = false;
             }
-            Item::PowFline => m.pw_fline = step_ladder(m.pw_fline, d),
-            Item::PowFsw => m.pw_fsw = step_ladder(m.pw_fsw, d),
             Item::PowRef => {
                 let cur = m.pw_ref.unwrap_or(0.0);
                 let next = step_ladder(cur, d);
                 m.pw_ref = if next == 0.0 { None } else { Some(next) };
-            }
-            Item::PowMode => {
-                m.pw_mode = POWER_MODES
-                    [cycle(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), POWER_MODES.len(), d)]
             }
             _ => return false,
         }

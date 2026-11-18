@@ -534,17 +534,7 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             }
             m.pw_v = WaveId::parse(w[0])?;
             m.pw_i = WaveId::parse(w[1])?;
-            m.pw_mode = p_enum(
-                w[2],
-                &[
-                    PowerMode::Quality,
-                    PowerMode::Harmonics,
-                    PowerMode::Switching,
-                    PowerMode::Ripple,
-                    PowerMode::Capacitance,
-                    PowerMode::Rail,
-                ],
-            )?;
+            m.pw_mode = p_enum(w[2], &crate::settings::power::MODES)?;
         }
         "magnetic" => {
             let w: Vec<&str> = v.split_whitespace().collect();
@@ -760,8 +750,8 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [fline, fsw, vin, reference, clk] = w[..] else { return Err("power_more".into()) };
             let opt = |s: &str| if s == "-" { Ok(None) } else { WaveId::parse(s).map(Some) };
-            m.pw_fline = fline.parse::<f64>().map_err(|e| e.to_string())?;
-            m.pw_fsw = fsw.parse::<f64>().map_err(|e| e.to_string())?;
+            m.pw_fline = p_f64(fline)?;
+            m.pw_fsw = p_f64(fsw)?;
             m.pw_vin = opt(vin)?;
             m.pw_ref = if reference == "-" { None } else { Some(reference.parse::<f64>().map_err(|e| e.to_string())?) };
             m.pw_clk = opt(clk)?;

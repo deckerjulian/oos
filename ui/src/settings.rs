@@ -12,8 +12,8 @@
 //! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
 //! settings (settings/channel.rs), the draw path (settings/system.rs), the switches of the mask test
 //! (settings/mask.rs), the histogram (settings/histogram.rs), the Bode page (settings/bode.rs), the
-//! switch of the logic analyser (settings/la.rs), the spectrum page (settings/spectrum.rs) and the eye page
-//! (settings/eye.rs) have tables; the other
+//! switch of the logic analyser (settings/la.rs), the spectrum page (settings/spectrum.rs), the eye page
+//! (settings/eye.rs) and the power analysis (settings/power.rs) have tables; the other
 //! settings are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real`
 //! rows (f64 fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key
 //! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
@@ -34,6 +34,7 @@ pub mod la;
 pub mod mask;
 pub mod math;
 pub mod meters;
+pub mod power;
 pub mod spectrum;
 pub mod system;
 pub mod trigger;
@@ -197,6 +198,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(la::SLICES)
         .chain(spectrum::SLICES)
         .chain(eye::SLICES)
+        .chain(power::SLICES)
         .flat_map(|g| g.iter())
 }
 

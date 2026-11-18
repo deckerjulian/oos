@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 72] = [
+const ITEMS: [(Item, &str); 75] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -81,6 +81,9 @@ const ITEMS: [(Item, &str); 72] = [
     (Item::EyeNpj, "eye_more npj"),
     (Item::EyeNotch, "eye_more notch"),
     (Item::EyeHp, "eye_more hp"),
+    (Item::PowMode, "power mode"),
+    (Item::PowFline, "power_more fline"),
+    (Item::PowFsw, "power_more fsw"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -173,7 +176,10 @@ impl Ui {
             | Item::EyePnHi
             | Item::EyeNpj
             | Item::EyeNotch
-            | Item::EyeHp => {
+            | Item::EyeHp
+            | Item::PowMode
+            | Item::PowFline
+            | Item::PowFsw => {
                 self.ana_restart();
                 return true;
             }
@@ -228,6 +234,13 @@ mod tests {
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))
         {
+            return true;
+        }
+        // the rows of each page of the power analysis
+        if crate::settings::power::MODES.iter().any(|&p| {
+            u.m.pw_mode = p;
+            u.items(MenuId::Power).contains(&it)
+        }) {
             return true;
         }
         // the free sweep's rows (with no input channel, so the reference level shows), the connection of an external

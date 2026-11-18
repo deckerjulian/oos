@@ -351,6 +351,17 @@ sets them yet. The source, the bit rate, the rail and the clock are written by h
 | none | none yet: the page is set in its menu and by a setup file | `eye_more` (hp) | Highpass | The 30 kHz high-pass on the common mode before its peak-to-peak is measured. |
 <!-- settings:eye:end -->
 
+The settings of the power analysis and their keys in a setup file, declared in `ui/src/settings/power.rs`. No command
+sets them yet. The voltage, the current, the input, the clock and the reference of the rail are written by hand.
+
+<!-- settings:power:begin -->
+| Command | Takes | Setup key | Power menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | none yet: the page is set in its menu and by a setup file | `power` (mode) | Page | What the page analyses: the power quality, the harmonics, the switching losses, the ripple, the input capacitance or a supply rail. |
+| none | none yet: the page is set in its menu and by a setup file | `power_more` (fline) | Line f | The line frequency of the pages that need one, measured from the record when 0 (auto). The menu steps 1-2-5 from 0. |
+| none | none yet: the page is set in its menu and by a setup file | `power_more` (fsw) | Switch f | The switching frequency of the ripple page, measured from the record when 0 (auto). The menu steps 1-2-5 from 0. |
+<!-- settings:power:end -->
+
 ## Cursors, DVM and counter
 
 | Command | Meaning |
