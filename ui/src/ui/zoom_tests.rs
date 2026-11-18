@@ -249,7 +249,7 @@ fn vertical_detail_phosphor_and_reference_pixels_follow_the_same_transform_as_ma
 }
 
 #[test]
-fn ac_source_has_no_absolute_trigger_marker_and_dc_drag_draws_thin_guide() {
+fn ac_demo_source_has_no_absolute_trigger_marker_and_dc_drag_draws_thin_guide() {
     for coupling in [Coupling::Ac, Coupling::Dc] {
         let mut ui = mixed();
         ui.refs[0] = None;
@@ -292,6 +292,15 @@ fn ac_source_has_no_absolute_trigger_marker_and_dc_drag_draws_thin_guide() {
     reference.m.set_trigger_wave(WaveId::Ref(0), false);
     reference.set_zoom(true);
     assert!(reference.trigger_level_y(0.1, false).is_some());
+    // On the scope the AFE couples before the ADC, so the level is on the AC trace as drawn: the marker stays. Breaks
+    // when channel AC coupling hides the marker of a hardware source again (#46).
+    let mut scope = Ui::new(Source::Hw { shared: Default::default(), seen: 0 });
+    scope.m.ch[0].on = true;
+    scope.m.ch[0].coupling = Coupling::Ac;
+    scope.m.ch[0].offset = 0.4;
+    scope.m.set_trigger_wave(WaveId::Ch(0), false);
+    assert!(scope.trigger_absolute_level_visible(false));
+    assert_eq!(scope.trigger_level_y(0.3, false), Some(scope.y_of_volts(0, 0.3)));
 }
 
 #[test]

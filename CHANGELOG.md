@@ -114,6 +114,9 @@ Changed:
 
 Fixed:
 
+- The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
+  the ADC, so the level is a level on the AC trace as drawn. Only the demo, which triggers before it takes the mean
+  out, still hides it (on the unit: assumed, not yet checked).
 - The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
   dark before (contributed by halma1).
 - DCC decodes the signal of a live track (contributed by halma1, tested on a layout with an ESU ECoS): a phase slip no
