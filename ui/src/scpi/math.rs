@@ -162,29 +162,7 @@ impl Scpi {
             return None;
         }
         if n.len() == 1 && kw(n0, "DISPlay") {
-            if query {
-                return t(if ui.m.math_ch(k).op == MathOp::Off { "0" } else { "1" });
-            }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    let mut c = ui.m.math_ch(k);
-                    c.op = if on {
-                        if c.op == MathOp::Off {
-                            MathOp::Add
-                        } else {
-                            c.op
-                        }
-                    } else {
-                        MathOp::Off
-                    };
-                    put_math(ui, k, c);
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.math_display(ui, k, query, arg);
         }
         if n.len() == 1 && kw(n0, "OPERator") {
             if query {
@@ -200,50 +178,10 @@ impl Scpi {
             return None;
         }
         if n.len() == 1 && (kw(n0, "SOURce1") || kw(n0, "SOURce2")) {
-            let second = kw(n0, "SOURce2");
-            if query {
-                let c = ui.m.math_ch(k);
-                return t(&math_src_name(if second { c.b } else { c.a }));
-            }
-            let Some(src) = parse_math_src(arg, k) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
-                self.push_err("-230,\"Math reference source is empty\"".into());
-                return None;
-            }
-            let mut c = ui.m.math_ch(k);
-            if second {
-                c.b = src;
-            } else {
-                c.a = src;
-            }
-            put_math(ui, k, c);
-            return None;
+            return self.math_source(ui, k, kw(n0, "SOURce2"), query, arg);
         }
         if n.len() == 1 && kw(n0, "SCALe") {
-            let c = ui.m.math_ch(k);
-            if query {
-                let v = if c.op == MathOp::Fft {
-                    FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64
-                } else {
-                    math_scales()[c.scale.min(math_scales().len() - 1)]
-                };
-                return t(&e(v));
-            }
-            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let mut c = ui.m.math_ch(k);
-            c.scale = if c.op == MathOp::Fft {
-                nearest_index(&FFT_DB.map(|x| x as f64), v)
-            } else {
-                nearest_index(&math_scales(), v)
-            };
-            put_math(ui, k, c);
-            return None;
+            return self.math_scale(ui, k, query, arg);
         }
         if n.len() == 1 && kw(n0, "OFFSet") {
             if query {
@@ -274,100 +212,202 @@ impl Scpi {
             return None;
         }
         if n.len() == 2 && kw(n0, "FFT") && kw(n[1], "SOURce") {
-            if query {
-                return t(&math_src_name(ui.m.math_ch(k).a));
-            }
-            let Some(src) = parse_math_src(arg, k) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
-                self.push_err("-230,\"Math reference source is empty\"".into());
-                return None;
-            }
-            let mut c = ui.m.math_ch(k);
-            c.a = src;
-            c.op = MathOp::Fft;
-            put_math(ui, k, c);
-            return None;
+            return self.math_fft_source(ui, k, query, arg);
         }
         if n.len() == 2 && kw(n0, "FFT") && kw(n[1], "SCALe") {
-            if query {
-                let c = ui.m.math_ch(k);
-                return t(&e(FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64));
-            }
-            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let mut c = ui.m.math_ch(k);
-            c.op = MathOp::Fft;
-            c.scale = nearest_index(&FFT_DB.map(|x| x as f64), v);
-            put_math(ui, k, c);
-            return None;
+            return self.math_fft_scale(ui, k, query, arg);
         }
         if n.len() == 2 && kw(n0, "FILTer") && kw(n[1], "TYPE") {
-            if query {
-                return t(match ui.m.math_ch(k).op {
-                    MathOp::Lpf => "LPAS",
-                    MathOp::Hpf => "HPAS",
-                    MathOp::Bpf => "BPAS",
-                    MathOp::Bsf => "BST",
-                    _ => "LPAS",
-                });
-            }
-            let op = if kw(arg, "LPASs") {
-                MathOp::Lpf
-            } else if kw(arg, "HPASs") {
-                MathOp::Hpf
-            } else if kw(arg, "BPASs") {
-                MathOp::Bpf
-            } else if kw(arg, "BSTop") {
-                MathOp::Bsf
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let mut c = ui.m.math_ch(k);
-            c.op = op;
-            put_math(ui, k, c);
-            return None;
+            return self.math_filter_type(ui, k, query, arg);
         }
         if n.len() == 2 && kw(n0, "FILTer") && (kw(n[1], "W1") || kw(n[1], "W2")) {
-            let high = kw(n[1], "W2");
+            return self.math_filter_corner(ui, k, kw(n[1], "W2"), query, arg);
+        }
+        self.push_err(format!("-113,\"Undefined header\" :MATH{}:{}", k + 1, n.join(":")));
+        None
+    }
+
+    /// `:MATH<n>:DISPlay`: the trace on (keeping its operator, else ADD) or off.
+    fn math_display(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(if ui.m.math_ch(k).op == MathOp::Off { "0" } else { "1" });
+        }
+        match parse_bool(arg) {
+            Some(on) => {
+                let mut c = ui.m.math_ch(k);
+                c.op = if on {
+                    if c.op == MathOp::Off {
+                        MathOp::Add
+                    } else {
+                        c.op
+                    }
+                } else {
+                    MathOp::Off
+                };
+                put_math(ui, k, c);
+                None
+            }
+            None => {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                None
+            }
+        }
+    }
+
+    /// `:MATH<n>:SOURce1` and `SOURce2`: a channel, an earlier math trace or a filled reference.
+    fn math_source(&mut self, ui: &mut Ui, k: usize, second: bool, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
             let c = ui.m.math_ch(k);
-            let band = matches!(c.op, MathOp::Bpf | MathOp::Bsf);
-            if !c.op.has_fc() || (high && !band) {
-                if query {
-                    return t("9.9E37");
-                }
+            return t(&math_src_name(if second { c.b } else { c.a }));
+        }
+        let Some(src) = parse_math_src(arg, k) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
+            self.push_err("-230,\"Math reference source is empty\"".into());
+            return None;
+        }
+        let mut c = ui.m.math_ch(k);
+        if second {
+            c.b = src;
+        } else {
+            c.a = src;
+        }
+        put_math(ui, k, c);
+        None
+    }
+
+    /// `:MATH<n>:SCALe`: the nearest step of the trace's scale list (dB for an FFT).
+    fn math_scale(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let c = ui.m.math_ch(k);
+        if query {
+            let v = if c.op == MathOp::Fft {
+                FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64
+            } else {
+                math_scales()[c.scale.min(math_scales().len() - 1)]
+            };
+            return t(&e(v));
+        }
+        let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let mut c = ui.m.math_ch(k);
+        c.scale = if c.op == MathOp::Fft {
+            nearest_index(&FFT_DB.map(|x| x as f64), v)
+        } else {
+            nearest_index(&math_scales(), v)
+        };
+        put_math(ui, k, c);
+        None
+    }
+
+    /// `:MATH<n>:FFT:SOURce`: the source of an FFT; setting it makes the trace an FFT.
+    fn math_fft_source(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(&math_src_name(ui.m.math_ch(k).a));
+        }
+        let Some(src) = parse_math_src(arg, k) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        if src >= MATH_REF_BASE && ui.ref_info(src - MATH_REF_BASE).is_none() {
+            self.push_err("-230,\"Math reference source is empty\"".into());
+            return None;
+        }
+        let mut c = ui.m.math_ch(k);
+        c.a = src;
+        c.op = MathOp::Fft;
+        put_math(ui, k, c);
+        None
+    }
+
+    /// `:MATH<n>:FFT:SCALe`: the nearest dB step; setting it makes the trace an FFT.
+    fn math_fft_scale(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            let c = ui.m.math_ch(k);
+            return t(&e(FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64));
+        }
+        let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let mut c = ui.m.math_ch(k);
+        c.op = MathOp::Fft;
+        c.scale = nearest_index(&FFT_DB.map(|x| x as f64), v);
+        put_math(ui, k, c);
+        None
+    }
+
+    /// `:MATH<n>:FILTer:TYPE`: low pass, high pass, band pass or band stop.
+    fn math_filter_type(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if query {
+            return t(match ui.m.math_ch(k).op {
+                MathOp::Lpf => "LPAS",
+                MathOp::Hpf => "HPAS",
+                MathOp::Bpf => "BPAS",
+                MathOp::Bsf => "BST",
+                _ => "LPAS",
+            });
+        }
+        let op = if kw(arg, "LPASs") {
+            MathOp::Lpf
+        } else if kw(arg, "HPASs") {
+            MathOp::Hpf
+        } else if kw(arg, "BPASs") {
+            MathOp::Bpf
+        } else if kw(arg, "BSTop") {
+            MathOp::Bsf
+        } else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let mut c = ui.m.math_ch(k);
+        c.op = op;
+        put_math(ui, k, c);
+        None
+    }
+
+    /// `:MATH<n>:FILTer:W1` and `W2`: the corner of a filter, the low and high edge of a band.
+    fn math_filter_corner(&mut self, ui: &mut Ui, k: usize, high: bool, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let c = ui.m.math_ch(k);
+        let band = matches!(c.op, MathOp::Bpf | MathOp::Bsf);
+        if !c.op.has_fc() || (high && !band) {
+            if query {
+                return t("9.9E37");
+            }
+            self.push_err("-221,\"Settings conflict\"".into());
+            return None;
+        }
+        let (lo, hi) = if band { (c.fc - c.bw / 2.0, c.fc + c.bw / 2.0) } else { (c.fc, c.fc) };
+        if query {
+            return t(&e(if high { hi } else { lo } as f64));
+        }
+        let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let mut c = c;
+        if band {
+            let (lo, hi) = if high { (lo, v as f32) } else { (v as f32, hi) };
+            if lo >= hi {
                 self.push_err("-221,\"Settings conflict\"".into());
                 return None;
             }
-            let (lo, hi) = if band { (c.fc - c.bw / 2.0, c.fc + c.bw / 2.0) } else { (c.fc, c.fc) };
-            if query {
-                return t(&e(if high { hi } else { lo } as f64));
-            }
-            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let mut c = c;
-            if band {
-                let (lo, hi) = if high { (lo, v as f32) } else { (v as f32, hi) };
-                if lo >= hi {
-                    self.push_err("-221,\"Settings conflict\"".into());
-                    return None;
-                }
-                c.fc = (lo + hi) / 2.0;
-                c.bw = hi - lo;
-            } else {
-                c.fc = v as f32;
-            }
-            put_math(ui, k, c);
-            return None;
+            c.fc = (lo + hi) / 2.0;
+            c.bw = hi - lo;
+        } else {
+            c.fc = v as f32;
         }
-        self.push_err(format!("-113,\"Undefined header\" :MATH{}:{}", k + 1, n.join(":")));
+        put_math(ui, k, c);
         None
     }
 }

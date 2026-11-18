@@ -229,7 +229,15 @@ impl Ui {
         if let Some(l) = PARTS.iter().find_map(|p| p.label.and_then(|f| f(it))) {
             return l;
         }
-        match it {
+        Self::label_menus(it)
+            .or_else(|| Self::label_decode(it))
+            .or_else(|| Self::label_inputs(it))
+            .unwrap_or_else(|| Self::label_system(it))
+    }
+
+    /// Labels of the menu entries, the storage and mask rows and the measurement display rows.
+    fn label_menus(it: Item) -> Option<&'static str> {
+        Some(match it {
             Item::Open(MenuId::Acquire) => "Acquire",
             Item::Open(MenuId::Trigger) => "Trigger",
             Item::Open(MenuId::Horizontal) => "Horizontal",
@@ -274,6 +282,13 @@ impl Ui {
             Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
             Item::AutoRoll => "Auto Roll",
+            _ => return None,
+        })
+    }
+
+    /// Labels of the decoder, event, bus trigger, zoom, reference and math rows; "" for the other menu entries.
+    fn label_decode(it: Item) -> Option<&'static str> {
+        Some(match it {
             Item::Open(MenuId::Decode) => "Decode",
             Item::DecOn => "Decoder",
             Item::DecSel => "Decoder no.",
@@ -332,6 +347,13 @@ impl Ui {
             Item::MathAuto => "Auto scale",
             Item::Open(MenuId::MeasSelected) => "Selected",
             Item::Open(_) => "",
+            _ => return None,
+        })
+    }
+
+    /// Labels of the channel, horizontal, trigger, acquire, measure, logger, slot and catalogue rows.
+    fn label_inputs(it: Item) -> Option<&'static str> {
+        Some(match it {
             Item::ChCoupling(_) => "Coupling",
             Item::ChProbe(_) => "Probe",
             Item::ChScale(_) => "Scale",
@@ -397,6 +419,13 @@ impl Ui {
             Item::MeasRemove(_) => "Remove",
             Item::CatSourceC => "Source C",
             Item::CatSourceD => "Source D",
+            _ => return None,
+        })
+    }
+
+    /// Labels of the cursor, display, zone, system, network and key rows; "" for the rest.
+    fn label_system(it: Item) -> &'static str {
+        match it {
             Item::CurMode => "Mode",
             Item::CurSrcB => "Cursor B source",
             Item::CurA => "Cursor A",
@@ -467,9 +496,17 @@ impl Ui {
         if let Some(v) = PARTS.iter().find_map(|p| p.value.and_then(|f| f(self, it))) {
             return v;
         }
+        self.value_inputs(it)
+            .or_else(|| self.value_measure(it))
+            .or_else(|| self.value_decode(it))
+            .unwrap_or_else(|| self.value_system(it))
+    }
+
+    /// Values of the channel, horizontal, trigger and acquire rows.
+    fn value_inputs(&self, it: Item) -> Option<String> {
         let m = &self.m;
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-        match it {
+        Some(match it {
             Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
             Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
             Item::ChScale(c) => si_short(m.ch[c].volts_per_div() as f64, m.unit(c)),
@@ -524,6 +561,15 @@ impl Ui {
             Item::AcqAlias => {
                 self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))
             }
+            _ => return None,
+        })
+    }
+
+    /// Values of the measure, cursor, logger, slot, display, zone, math operator and view rows.
+    fn value_measure(&self, it: Item) -> Option<String> {
+        let m = &self.m;
+        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
+        Some(match it {
             Item::MeasSrc => self.wave_name(self.meas_src),
             Item::MeasCopyTo => "Pick".into(),
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
@@ -580,6 +626,15 @@ impl Ui {
             Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => onoff(m.zoom),
             Item::AutoRoll => onoff(m.auto_roll),
+            _ => return None,
+        })
+    }
+
+    /// Values of the decoder, pane, trend, bus trigger, zoom and XY rows.
+    fn value_decode(&self, it: Item) -> Option<String> {
+        let m = &self.m;
+        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
+        Some(match it {
             Item::DecOn => onoff(m.dec_on),
             Item::DecSel => format!("D{}", m.dec_sel + 1),
             Item::PaneSel => tables::PANES[m.pane.min(tables::PANES.len() - 1)].into(),
@@ -643,6 +698,15 @@ impl Ui {
                     "YT".into()
                 }
             }
+            _ => return None,
+        })
+    }
+
+    /// Values of the system, network, reference, math, storage and mask rows; empty for the rest.
+    fn value_system(&self, it: Item) -> String {
+        let m = &self.m;
+        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
+        match it {
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.clock_next),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),

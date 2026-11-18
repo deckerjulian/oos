@@ -205,89 +205,9 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
             }
         }
-        Trigger::Slope { src, slope, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new(); // (t, is_hi, rising)
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            let (mut up, mut down) = (None, None);
-            for (t, is_hi, rising) in ev {
-                match (is_hi, rising) {
-                    (false, true) => up = Some(t),
-                    (false, false) => {
-                        up = None;
-                        if let Some(s) = down.take() {
-                            if slope.matches(false) && when.ok((t - s) * dt) {
-                                out.push(t);
-                            }
-                        }
-                    }
-                    (true, false) => down = Some(t),
-                    (true, true) => {
-                        down = None;
-                        if let Some(s) = up.take() {
-                            if slope.matches(true) && when.ok((t - s) * dt) {
-                                out.push(t);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Trigger::Runt { src, pol, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new();
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            // positive runt: rises through lo, never reaches hi, falls back through lo (negative: mirrored)
-            let (open_hi, start_rising) = if pol == Pol::Pos { (false, true) } else { (true, false) };
-            let mut start: Option<f64> = None;
-            let mut spoiled = false;
-            for (t, is_hi, rising) in ev {
-                if is_hi == open_hi {
-                    if rising == start_rising {
-                        start = Some(t);
-                        spoiled = false;
-                    } else if let Some(s) = start.take() {
-                        if !spoiled && when.is_none_or(|w| w.ok((t - s) * dt)) {
-                            out.push(t);
-                        }
-                    }
-                } else if start.is_some() && rising == start_rising {
-                    spoiled = true; // reached the other threshold: a full pulse
-                }
-            }
-        }
-        Trigger::Window { src, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new();
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            let mut entered: Option<f64> = None;
-            for (t, is_hi, rising) in ev {
-                // entering: up through lo or down through hi; leaving: the opposite
-                let enter = (!is_hi && rising) || (is_hi && !rising);
-                if enter {
-                    entered = Some(t);
-                    if when == WinWhen::Enter {
-                        out.push(t);
-                    }
-                } else {
-                    match when {
-                        WinWhen::Exit => out.push(t),
-                        WinWhen::Inside(w) => {
-                            if let Some(s) = entered {
-                                if w.ok((t - s) * dt) {
-                                    out.push(t);
-                                }
-                            }
-                        }
-                        WinWhen::Enter => {}
-                    }
-                    entered = None;
-                }
-            }
-        }
+        Trigger::Slope { src, slope, lo, hi, when } => out = transition(inp, src, slope, lo, hi, when),
+        Trigger::Runt { src, pol, lo, hi, when } => out = runt(inp, src, pol, lo, hi, when),
+        Trigger::Window { src, lo, hi, when } => out = window(inp, src, lo, hi, when),
         Trigger::Timeout { src, slope, level, time } => {
             let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
             let n = inp.ch[src].len() as f64;
@@ -336,26 +256,7 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
             }
         }
-        Trigger::NthEdge { src, slope, level, idle, n } => {
-            let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
-            let lim = idle / dt;
-            let mut count = 0u32;
-            let mut prev: Option<f64> = None;
-            for &t in &e {
-                let gap = prev.map_or(t, |p| t - p);
-                count = if gap >= lim {
-                    1
-                } else if count > 0 {
-                    count + 1
-                } else {
-                    0
-                };
-                if count == n {
-                    out.push(t);
-                }
-                prev = Some(t);
-            }
-        }
+        Trigger::NthEdge { src, slope, level, idle, n } => out = nth_edge(inp, src, slope, level, idle, n),
         Trigger::Pattern { bits, levels } | Trigger::Duration { bits, levels, .. } => {
             let duration = if let Trigger::Duration { when, .. } = *trig { Some(when) } else { None };
             out = pattern(inp, bits, levels, duration);
@@ -368,6 +269,129 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
 /// First trigger point after `from` (fractional index).
 pub fn find_first(trig: &Trigger, inp: &Input, from: f64) -> Option<f64> {
     find_all(trig, inp).into_iter().find(|&t| t > from)
+}
+
+/// Ends of transitions between `lo` and `hi` whose time satisfies `when`.
+fn transition(inp: &Input, src: usize, slope: Slope, lo: f32, hi: f32, when: When) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new(); // (t, is_hi, rising)
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let (mut up, mut down) = (None, None);
+    for (t, is_hi, rising) in ev {
+        match (is_hi, rising) {
+            (false, true) => up = Some(t),
+            (false, false) => {
+                up = None;
+                if let Some(s) = down.take() {
+                    if slope.matches(false) && when.ok((t - s) * dt) {
+                        out.push(t);
+                    }
+                }
+            }
+            (true, false) => down = Some(t),
+            (true, true) => {
+                down = None;
+                if let Some(s) = up.take() {
+                    if slope.matches(true) && when.ok((t - s) * dt) {
+                        out.push(t);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Closing edges of runt pulses: through one threshold and back without the other, width within `when`.
+fn runt(inp: &Input, src: usize, pol: Pol, lo: f32, hi: f32, when: Option<When>) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new();
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    // positive runt: rises through lo, never reaches hi, falls back through lo (negative: mirrored)
+    let (open_hi, start_rising) = if pol == Pol::Pos { (false, true) } else { (true, false) };
+    let mut start: Option<f64> = None;
+    let mut spoiled = false;
+    for (t, is_hi, rising) in ev {
+        if is_hi == open_hi {
+            if rising == start_rising {
+                start = Some(t);
+                spoiled = false;
+            } else if let Some(s) = start.take() {
+                if !spoiled && when.is_none_or(|w| w.ok((t - s) * dt)) {
+                    out.push(t);
+                }
+            }
+        } else if start.is_some() && rising == start_rising {
+            spoiled = true; // reached the other threshold: a full pulse
+        }
+    }
+    out
+}
+
+/// Entries into or exits from the window between `lo` and `hi`, as `when` asks.
+fn window(inp: &Input, src: usize, lo: f32, hi: f32, when: WinWhen) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new();
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let mut entered: Option<f64> = None;
+    for (t, is_hi, rising) in ev {
+        // entering: up through lo or down through hi; leaving: the opposite
+        let enter = (!is_hi && rising) || (is_hi && !rising);
+        if enter {
+            entered = Some(t);
+            if when == WinWhen::Enter {
+                out.push(t);
+            }
+        } else {
+            match when {
+                WinWhen::Exit => out.push(t),
+                WinWhen::Inside(w) => {
+                    if let Some(s) = entered {
+                        if w.ok((t - s) * dt) {
+                            out.push(t);
+                        }
+                    }
+                }
+                WinWhen::Enter => {}
+            }
+            entered = None;
+        }
+    }
+    out
+}
+
+/// The n-th edge of `slope` after an idle time of at least `idle`.
+fn nth_edge(inp: &Input, src: usize, slope: Slope, level: f32, idle: f64, n: u32) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
+    let lim = idle / dt;
+    let mut count = 0u32;
+    let mut prev: Option<f64> = None;
+    for &t in &e {
+        let gap = prev.map_or(t, |p| t - p);
+        count = if gap >= lim {
+            1
+        } else if count > 0 {
+            count + 1
+        } else {
+            0
+        };
+        if count == n {
+            out.push(t);
+        }
+        prev = Some(t);
+    }
+    out
 }
 
 fn pattern(inp: &Input, bits: [Bit; CHANNELS], levels: [f32; CHANNELS], duration: Option<When>) -> Vec<f64> {
