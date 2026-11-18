@@ -11,7 +11,7 @@
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
 //! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
 //! settings (settings/channel.rs), the draw path (settings/system.rs), the switches of the mask test
-//! (settings/mask.rs), the histogram (settings/histogram.rs), the mode of the Bode page (settings/bode.rs), the
+//! (settings/mask.rs), the histogram (settings/histogram.rs), the Bode page (settings/bode.rs), the
 //! switch of the logic analyser (settings/la.rs) and the spectrum page (settings/spectrum.rs) have tables; the other
 //! settings are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real`
 //! rows (f64 fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key

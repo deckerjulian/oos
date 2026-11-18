@@ -296,21 +296,31 @@ Additional OOS families accept item names defined by their analysis page/source 
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
-The mode of the Bode page, its command and its key in a setup file. It is declared once, in `ui/src/settings/bode.rs`;
-this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails
-when the two differ. A value the command does not take is refused with `-224`. The sweep and the generator are written
-by hand.
+The settings of the Bode page, the command of the mode and their keys in a setup file. They are declared once, in
+`ui/src/settings/bode.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/`), and a test fails when the two differ. A value the command does not take is refused with `-224`. A key of two
+words names a field of a setup line of several values (`bode` (start) is the start field of the `bode` line). The
+input, the output, the generator with its address and `:BODE:GENerator`, and the sync channel are written by hand.
 
 <!-- settings:bode:begin -->
 | Command | Takes | Setup key | Bode menu | What it does |
 | --- | --- | --- | --- | --- |
 | `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (start) | Start freq | The first frequency of the sweep. The menu steps 1-2-5 and keeps it at or below half the stop. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (stop) | Stop freq | The last frequency of the sweep. The menu steps 1-2-5 and keeps it at or above twice the start. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (points) | Points | The number of frequencies of the sweep, logarithmically spaced. The menu steps by 5 from 5 to 200; a setup line keeps 2 to 1000. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp. |
+| none | set with the address by `:BODE:GENerator` | `bode_link` | Connection | How an external generator is reached: on the network at its address, or on the USB-A port. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (time) | Sweep time | How long the generator takes for one sweep. The menu steps 1-2-5 from 1 ms to 500 s. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (log) | Sweep | Whether the generator sweeps the frequency linearly or logarithmically over the sweep time. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (edge) | Sync edge | The edge of the sync channel that marks the start of a sweep. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (level) | Sync level | The level of the sync edge. The menu steps by 0.1 V from -20 V to 20 V. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (ref) | Ref level | The level the gain is measured against when the free sweep has no input channel, in dBV. The menu steps by 1 dB from -80 to 40 dBV. |
 <!-- settings:bode:end -->
 
 The settings of the spectrum page and their keys in a setup file. No command sets them yet. They are declared once,
-in `ui/src/settings/spectrum.rs`, and this table is written from there like the one above. A key of two words names a
-field of a setup line of several values (`spec` (center) is the centre field of the `spec` line). The source, the
-span, the RBW and the harmonics of the pane are written by hand.
+in `ui/src/settings/spectrum.rs`, and this table is written from there like the one above. The source, the span, the
+RBW and the harmonics of the pane are written by hand.
 
 <!-- settings:spectrum:begin -->
 | Command | Takes | Setup key | Spectrum menu | What it does |

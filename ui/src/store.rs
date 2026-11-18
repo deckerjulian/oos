@@ -309,7 +309,7 @@ fn analysis_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         ),
     );
     // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
-    kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
+    crate::settings::write(&crate::settings::bode::LINK, m, 0, kv);
     // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
     kv(
         "bode_sweep",

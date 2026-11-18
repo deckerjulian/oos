@@ -242,9 +242,6 @@ fn gen_thread(
     tx
 }
 
-/// The generator amplitudes of the knob, 1-2-5 over the allowed 10 mVpp .. 20 Vpp.
-const BODE_AMPS: [f64; 11] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
-
 impl Ui {
     pub(super) fn bode_items(&self) -> Vec<Item> {
         if self.bode_gen() == FREE {
@@ -288,24 +285,9 @@ impl Ui {
 
     pub(super) fn bode_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::BodeStart
-            | Item::BodeStop
-            | Item::BodePoints
-            | Item::BodeAmp
-            | Item::BodeAddr
-            | Item::BodeCur
-            | Item::BodeSwTime
-            | Item::BodeSyncLvl
-            | Item::BodeRef => Kind::Value,
+            Item::BodeAddr | Item::BodeCur => Kind::Value,
             Item::BodeRun => Kind::Action,
-            Item::BodeOn
-            | Item::BodeIn
-            | Item::BodeOut
-            | Item::BodeGen
-            | Item::BodeLink
-            | Item::BodeSwLog
-            | Item::BodeSync
-            | Item::BodeSyncEdge => Kind::Choice,
+            Item::BodeOn | Item::BodeIn | Item::BodeOut | Item::BodeGen | Item::BodeSync => Kind::Choice,
             _ => return None,
         })
     }
@@ -315,22 +297,12 @@ impl Ui {
             Item::Open(MenuId::Bode) => "Bode",
             Item::BodeOn => "View",
             Item::BodeRun => "Start / stop sweep",
-            Item::BodeStart => "Start freq",
-            Item::BodeStop => "Stop freq",
-            Item::BodePoints => "Points",
-            Item::BodeAmp => "Amplitude",
             Item::BodeIn => "Input (ref)",
             Item::BodeOut => "Output",
             Item::BodeGen => "Generator",
             Item::BodeCur => "Cursor",
             Item::BodeAddr => "Gen address",
-            Item::BodeLink => "Connection",
-            Item::BodeSwTime => "Sweep time",
-            Item::BodeSwLog => "Sweep",
             Item::BodeSync => "Sync",
-            Item::BodeSyncEdge => "Sync edge",
-            Item::BodeSyncLvl => "Sync level",
-            Item::BodeRef => "Ref level",
             _ => return None,
         })
     }
@@ -346,10 +318,6 @@ impl Ui {
                 }
             }
             Item::BodeRun => String::new(),
-            Item::BodeStart => si_short(m.bode_start, "Hz"),
-            Item::BodeStop => si_short(m.bode_stop, "Hz"),
-            Item::BodePoints => m.bode_points.to_string(),
-            Item::BodeAmp => si_short(m.bode_amp, "Vpp"),
             Item::BodeIn if self.bode_gen() == FREE => match m.bode_sw_in {
                 0 => "Off".into(),
                 k => format!("CH{}", k),
@@ -358,32 +326,8 @@ impl Ui {
             Item::BodeOut => self.wave_name(m.bode_out),
             Item::BodeGen => GENERATORS[m.bode_gen.min(GENERATORS.len() - 1)].name.into(),
             Item::BodeAddr => m.bode_addr.clone(),
-            Item::BodeLink => {
-                if m.bode_usb {
-                    "USB".into()
-                } else {
-                    "LAN".into()
-                }
-            }
             Item::BodeCur => self.bode_cursor_text(),
-            Item::BodeSwTime => si_short(m.bode_sw_time, "s"),
-            Item::BodeSwLog => {
-                if m.bode_sw_log {
-                    "Log".into()
-                } else {
-                    "Lin".into()
-                }
-            }
             Item::BodeSync => format!("CH{}", m.bode_sync + 1),
-            Item::BodeSyncEdge => {
-                if m.bode_sync_slope == Slope::Fall {
-                    "Falling".into()
-                } else {
-                    "Rising".into()
-                }
-            }
-            Item::BodeSyncLvl => si_short(m.bode_sync_level as f64, "V"),
-            Item::BodeRef => format!("{:.1} dBV", m.bode_ref),
             _ => return None,
         })
     }
@@ -396,9 +340,6 @@ impl Ui {
             Item::BodeIn | Item::BodeOut => self.wave_names(),
             Item::BodeSync => ch_names(),
             Item::BodeGen => GENERATORS.iter().map(|g| g.name.to_string()).collect(),
-            Item::BodeLink => v(&["LAN", "USB"]),
-            Item::BodeSwLog => v(&["Lin", "Log"]),
-            Item::BodeSyncEdge => v(&["Rising", "Falling"]),
             _ => return None,
         })
     }
@@ -417,33 +358,10 @@ impl Ui {
             return true;
         }
         let m = &mut self.m;
-        let step = |l: &[f64], x: f64, d: i32| ladder_step(l, x, d, l.len() - 1);
-        let freqs = decades(0, 10, false);
-        let ladder = |x: f64, d: i32| step(&freqs, x, d);
         match it {
             Item::BodeOn => m.view = if m.view == AView::Bode { AView::Scope } else { AView::Bode },
-            Item::BodeStart => m.bode_start = ladder(m.bode_start, d).min(m.bode_stop / 2.0),
-            Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
-            Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,
-            Item::BodeAmp => m.bode_amp = step(&BODE_AMPS, m.bode_amp, d),
             Item::BodeIn if free => m.bode_sw_in = opt_src_step(m.bode_sw_in, d),
-            Item::BodeSwTime => {
-                // 1-2-5 steps from 1 ms to 500 s
-                m.bode_sw_time = step(&decades(-3, 3, false), m.bode_sw_time, d);
-            }
-            // two choices: an odd step switches
-            Item::BodeSwLog => m.bode_sw_log ^= d % 2 != 0,
-            Item::BodeLink => m.bode_usb ^= d % 2 != 0,
-            Item::BodeSyncEdge if d % 2 != 0 => {
-                m.bode_sync_slope = if m.bode_sync_slope == Slope::Fall { Slope::Rise } else { Slope::Fall }
-            }
-            Item::BodeSyncEdge => {}
             Item::BodeSync => m.bode_sync = src_step(m.bode_sync, NCH, d),
-            Item::BodeSyncLvl => {
-                m.bode_sync_level =
-                    (((m.bode_sync_level * 10.0).round() as i64 + d as i64).clamp(-200, 200) as f32) / 10.0
-            }
-            Item::BodeRef => m.bode_ref = (m.bode_ref.round() + d as f64).clamp(-80.0, 40.0),
             Item::BodeGen => m.bode_gen = (m.bode_gen as i32 + d).rem_euclid(GENERATORS.len() as i32) as usize,
             Item::BodeCur => {
                 let n = self.bode.points.len() as i32;

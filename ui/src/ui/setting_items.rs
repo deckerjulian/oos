@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 55] = [
+const ITEMS: [(Item, &str); 65] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -54,6 +54,16 @@ const ITEMS: [(Item, &str); 55] = [
     (Item::MaskInvert, "mask_inv"),
     (Item::Histogram, "hist"),
     (Item::BodeMode, "bode_mode"),
+    (Item::BodeStart, "bode start"),
+    (Item::BodeStop, "bode stop"),
+    (Item::BodePoints, "bode points"),
+    (Item::BodeAmp, "bode amp"),
+    (Item::BodeLink, "bode_link"),
+    (Item::BodeSwTime, "bode_sweep time"),
+    (Item::BodeSwLog, "bode_sweep log"),
+    (Item::BodeSyncEdge, "bode_sweep edge"),
+    (Item::BodeSyncLvl, "bode_sweep level"),
+    (Item::BodeRef, "bode_sweep ref"),
     (Item::LaOn, "la on"),
     (Item::SpecCenter, "spec center"),
     (Item::SpecWin, "spec win"),
@@ -154,6 +164,17 @@ impl Ui {
                 self.ana_restart();
                 return true;
             }
+            // the rest of the Bode page, likewise
+            Item::BodeStart
+            | Item::BodeStop
+            | Item::BodePoints
+            | Item::BodeAmp
+            | Item::BodeLink
+            | Item::BodeSwTime
+            | Item::BodeSwLog
+            | Item::BodeSyncEdge
+            | Item::BodeSyncLvl
+            | Item::BodeRef => return true,
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -185,6 +206,15 @@ mod tests {
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))
         {
+            return true;
+        }
+        // the free sweep's rows (with no input channel, so the reference level shows), the connection of an external
+        // generator
+        u.m.bode_sw_in = 0;
+        if (0..crate::ui::bode::GENERATORS.len()).any(|g| {
+            u.m.bode_gen = g;
+            u.items(MenuId::Bode).contains(&it)
+        }) {
             return true;
         }
         if crate::math::MATH_OPS.iter().any(|&op| {

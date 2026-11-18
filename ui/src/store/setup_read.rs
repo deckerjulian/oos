@@ -485,28 +485,19 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             if w.len() < 7 {
                 return Err("bode: want 8 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            (m.bode_start, m.bode_stop, m.bode_amp) = (f(w[0])?, f(w[1])?, f(w[3])?);
+            (m.bode_start, m.bode_stop, m.bode_amp) = (p_f64(w[0])?, p_f64(w[1])?, p_f64(w[3])?);
             m.bode_points = p_u32(w[2])?.clamp(2, 1000) as usize;
             m.bode_in = WaveId::parse(w[4])?;
             m.bode_out = WaveId::parse(w[5])?;
             m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
         }
-        "bode_link" => {
-            m.bode_usb = match v.trim() {
-                "usb" => true,
-                "lan" => false,
-                _ => return Err(format!("not lan or usb: {}", v)),
-            }
-        }
         "bode_sweep" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() != 7 {
                 return Err("bode_sweep: want 7 values".into());
             }
-            let f = |s: &str| s.parse::<f64>().map_err(|e| e.to_string());
-            m.bode_sw_time = f(w[0])?;
+            m.bode_sw_time = p_f64(w[0])?;
             if !m.bode_sw_time.is_finite() || m.bode_sw_time <= 0.0 {
                 return Err("bode_sweep: the sweep time must be above 0".into());
             }
@@ -515,7 +506,7 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             m.bode_sync_slope = p_enum(w[3], &crate::settings::trigger::SLOPES[..2])?;
             m.bode_sync_level = p_f32(w[4])?;
             m.bode_sw_in = p_idx(w[5], NCH + 1)?;
-            m.bode_ref = f(w[6])?;
+            m.bode_ref = p_f64(w[6])?;
         }
         "spec" => {
             let w: Vec<&str> = v.split_whitespace().collect();
