@@ -646,12 +646,9 @@ fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         }
         "z_src" => m.z_src = if v.trim() == "off" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
         "hist" => m.hist = p_enum(v, &[Hist::Off, Hist::Vertical, Hist::Horizontal])?,
-        "mask_on" => m.mask_on = p_bool(v)?,
         "mask_src" => m.mask_src = p_idx(v, NCH)?,
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,
-        "mask_stop" => m.mask_stop = p_bool(v)?,
-        "mask_inv" => m.mask_inv = p_bool(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
         "text_size" => m.text_size = p_enum(v, &TEXT_SIZES)?,
         "la" => m.la = crate::ui::la::LaSet::parse(v)?,

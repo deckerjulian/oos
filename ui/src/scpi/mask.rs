@@ -1,34 +1,22 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:MASK`: `ENABle`, `SOURce`, `X`, `Y`, `CREate`, `RESet`, `OPERate` and the counts `FAILed?`, `PASSed?`,
-//! `TOTal?` of the pass/fail test. A new `:MASK` command goes into `mask_cmd` here, with its line in docs/scpi.md
-//! and its query in ui/tests/scpi.txt (AGENTS.md).
+//! `:MASK`: `ENABle` (a row of settings/mask.rs), `SOURce`, `X`, `Y`, `CREate`, `RESet`, `OPERate` and the counts
+//! `FAILed?`, `PASSed?`, `TOTal?` of the pass/fail test. A new `:MASK` setting of a setup file is a row of that table,
+//! another command goes into `mask_cmd` here, with its line in docs/scpi.md; either with its query in
+//! ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, num, parse_bool, parse_ch, Scpi};
+use super::{e, kw, num, parse_ch, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
 impl Scpi {
     pub(super) fn mask_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        if let Some(row) = crate::settings::command(&crate::settings::mask::SLICES, n) {
+            return self.setting_cmd(ui, row, query, arg);
+        }
         let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
-        if n.len() == 1 && kw(n0, "ENABle") {
-            if query {
-                return t(if ui.m.mask_on { "1" } else { "0" });
-            }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.mask_on = on;
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
-        }
         if n.len() == 1 && kw(n0, "SOURce") {
             if query {
                 return t(&format!("CHAN{}", ui.m.mask_src.min(n_ch() - 1) + 1));

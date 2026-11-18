@@ -267,12 +267,9 @@ impl Ui {
             Item::StorePng => "Save screenshot (PNG)",
             Item::StoreFfSave => "Save fast-frame",
             Item::StoreFfLoad => "Load fast-frame",
-            Item::MaskOn => "Mask test",
             Item::MaskSrc => "Source",
             Item::MaskX => "Tolerance X",
             Item::MaskY => "Tolerance Y",
-            Item::MaskAction => "On fail",
-            Item::MaskInvert => "Invert",
             Item::MaskCreate => "Create from CH",
             Item::MaskFromRef => "Create from ref",
             Item::MaskReset => "Reset counts",
@@ -620,7 +617,6 @@ impl Ui {
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math_fam.name().into(),
             Item::StoreDest => self.store_dest.name().into(),
-            Item::MaskInvert => onoff(m.mask_inv),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
             Item::StripDock => self.m.strip_dock.label().into(),
@@ -705,7 +701,6 @@ impl Ui {
     /// Values of the system, network, reference, math, storage and mask rows; empty for the rest.
     fn value_system(&self, it: Item) -> String {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         match it {
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.clock_next),
@@ -724,17 +719,9 @@ impl Ui {
             Item::MathScale => self.math_scale_text(),
             Item::MathOffset => format!("{:.2} div", m.math_offset),
             Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
-            Item::MaskOn => onoff(m.mask_on),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
             Item::MaskX => format!("{:.2} div", m.mask_x),
             Item::MaskY => format!("{:.2} div", m.mask_y),
-            Item::MaskAction => {
-                if m.mask_stop {
-                    "Stop".into()
-                } else {
-                    "None".into()
-                }
-            }
             Item::QuickAct => m.quick.name().into(),
             _ => String::new(),
         }

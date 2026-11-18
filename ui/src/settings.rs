@@ -5,12 +5,13 @@
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
 //! `:CHANnel`, `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs,
-//! scpi/system.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
+//! scpi/system.rs, scpi/mask.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
 //! and write the model; what a change sets off on the screen (redraw, statistics) stays with the caller.
 //!
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
 //! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
-//! settings (settings/channel.rs) and the draw path (settings/system.rs) have tables; the other settings are still
+//! settings (settings/channel.rs), the draw path (settings/system.rs) and the switches of the mask test
+//! (settings/mask.rs) have tables; the other settings are still
 //! written out by hand in each of those places. A numbered family is one row for all its instances: `<n>` in its key
 //! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
 //! numbered).
@@ -23,6 +24,7 @@ use crate::model::{cycle, si_short, step_index, Model};
 pub mod acquisition;
 pub mod channel;
 pub mod display;
+pub mod mask;
 pub mod math;
 pub mod meters;
 pub mod system;
@@ -160,6 +162,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(meters::COUNTER_SLICES)
         .chain(channel::SLICES)
         .chain(system::SLICES)
+        .chain(mask::SLICES)
         .flat_map(|g| g.iter())
 }
 

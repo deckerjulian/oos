@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 40] = [
+const ITEMS: [(Item, &str); 43] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -49,6 +49,9 @@ const ITEMS: [(Item, &str); 40] = [
     (Item::ChFine, "fine_v"),
     (Item::ChExpand, "v_expand_gnd"),
     (Item::AcqDrawPath, "draw_path"),
+    (Item::MaskOn, "mask_on"),
+    (Item::MaskAction, "mask_stop"),
+    (Item::MaskInvert, "mask_inv"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -100,6 +103,9 @@ impl Ui {
             // the persistence map of the old time does not hold for the new one
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar | Item::AcqDrawPath => self.dirty_map = true,
+            // a switched-on test without a mask builds one from the source
+            Item::MaskOn if self.m.mask_on && self.mask.is_none() => self.create_mask(),
+            Item::MaskInvert => self.build_mask(),
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,
             // the hardware switches of the Acquire menu leave the rest as it is (no `settings_changed`), as before
@@ -126,7 +132,7 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Acquire menu (in Average mode with segments, so their
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Acquire menu (in Average mode with segments, so their
     /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
     /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
     /// limits show).
@@ -135,7 +141,7 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))

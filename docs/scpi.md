@@ -564,5 +564,18 @@ Track cursor B now has its own CH/ref source: `:CURSor:TRACk:SOURce1[?]` and `:S
 
 Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:X[?]`, `:Y[?]`, `:CREate`, `:RESet`, `:OPERate[?]`, `:FAILed?`, `:PASSed?`, `:TOTal?`. Mask sources are physical CH roles, not reference or Math inputs. A mask needs accepted channel data; enabling a page or querying a counter does not prove a valid mask or physical pass/fail result.
 
+The switches of the mask test, their command and their keys in a setup file. They are declared once, in
+`ui/src/settings/mask.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+command does not take is refused with `-224`. The source and the tolerances are written by hand.
+
+<!-- settings:mask:begin -->
+| Command | Takes | Setup key | Mask menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MASK:ENABle[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `mask_on` | Mask test | The pass/fail test of the source against the mask. A mask needs accepted channel data; enabling it does not prove a valid mask or a physical pass/fail result. |
+| none | a choice of the Mask menu that no remote command sets | `mask_stop` | On fail | What a failed waveform does: None goes on, Stop stops the acquisition. |
+| none | a choice of the Mask menu that no remote command sets | `mask_inv` | Invert | Turns the mask round: the band becomes the forbidden region, and a waveform passes where it stays outside it. |
+<!-- settings:mask:end -->
+
 Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:HISTogram:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
 
