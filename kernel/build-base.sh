@@ -2,7 +2,7 @@
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-base.sh - build the OOS kernel from kernel/ alone: the base source, patches in `series` order, board device
-# trees, firmware, config, xdma. Inside Docker, results in kernel/out/base/.
+# trees, firmware, config, xdma, rtw89. Inside Docker, results in kernel/out/base/.
 #
 # Why Docker: the kernel tree has file names that differ only in case; macOS' default file system is case-insensitive.
 # Everything happens in the Docker volume "oos-kbuild". The container has the host's architecture: on an arm64 host
@@ -73,9 +73,14 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	cp -r /k/modules/xdma "$X"
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/xdma" modules > "$W/xdma.log" 2>&1 || { tail -n 20 "$W/xdma.log"; exit 1; }
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/xdma" INSTALL_MOD_PATH="$W/modroot" INSTALL_MOD_STRIP=1 modules_install >/dev/null
+	# rtw89 of a newer kernel for the RTL8851BU (USB WLAN), with the patch for the mac80211 of 6.12
+	cp -r /k/modules/rtw89 "$X/rtw89"
+	patch -p1 -s -d "$X/rtw89" --no-backup-if-mismatch < /k/modules/rtw89-linux-6.12.patch
+	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw89" -j"$JOBS" modules > "$W/rtw89.log" 2>&1 || { tail -n 20 "$W/rtw89.log"; exit 1; }
+	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw89" INSTALL_MOD_PATH="$W/modroot" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 	grep -qx "CONFIG_PCIE_ROCKCHIP_HOST=m" "$O/.config"
 	R=$(cat "$O/include/config/kernel.release"); M="$W/modroot/lib/modules/$R"
-	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko; do [ -f "$M/$m" ]; done
+	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko updates/rtw89_8851bu.ko; do [ -f "$M/$m" ]; done
 	cp "$O/arch/arm64/boot/Image" /out/Image
 	# the board and its opt-in variants (rk3399-rigol-dho900-uhs.dtb: boot card in UHS-I)
 	for d in /k/dts/*.dts; do cp "$O/arch/arm64/boot/dts/rockchip/$(basename "$d" .dts).dtb" /out; done

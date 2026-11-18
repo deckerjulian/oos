@@ -9,7 +9,7 @@
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
-# modules for later FPGA bring-up (pcierockchiphost, xdma), the touch panel (edt-ft5x06), the beeper (pwm-gpio) and WLAN (rtl8xxxu),
+# modules for later FPGA bring-up (pcierockchiphost, xdma), the touch panel (edt-ft5x06), the beeper (pwm-gpio) and WLAN (rtl8xxxu, rtw89),
 # wpa_supplicant, oos-hw and the scope screen oos-ui (started by etc/rcS).
 # The image only exists as a file; installing it is a separate, explicit step.
 set -eu

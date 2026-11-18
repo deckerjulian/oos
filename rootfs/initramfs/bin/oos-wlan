@@ -30,12 +30,33 @@ dhcp_stop() {
 	ip -4 addr flush dev wlan0 2>/dev/null
 }
 
+# a vendor-specific USB interface without a driver whose id is one of driver $1's (modules.alias: shell patterns)
+knows() {
+	A=$(grep " $1\$" /lib/modules/$(uname -r)/modules.alias 2>/dev/null)
+	[ -n "$A" ] || return 1
+	for i in /sys/bus/usb/devices/[0-9]*-[1-9]*:*; do
+		[ "$(cat $i/bInterfaceClass 2>/dev/null)" = ff ] && [ ! -e $i/driver ] || continue
+		a=$(cat $i/modalias)
+		echo "$A" | while read -r _ p _; do case "$a" in $p) echo y; break ;; esac; done | grep -q y && return 0
+	done
+	return 1
+}
+
+# rtw89 (RTL8851BU: TP-Link Archer TX10UB and others) for the sticks it knows, else rtl8xxxu (RTL8188EU and others)
 load() {
-	[ -e /sys/module/rtl8xxxu ] && return
-	for m in lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211 drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu; do
+	if knows rtw89_8851bu; then
+		[ -e /sys/module/rtw89_8851bu ] && return
+		set -- lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211
+		for m in rtw89_core rtw89_usb rtw89_8851b rtw89_8851bu; do set -- "$@" ../updates/$m; done
+	else
+		[ -e /sys/module/rtl8xxxu ] && return
+		set -- lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211 drivers/net/wireless/realtek/rtl8xxxu/rtl8xxxu
+	fi
+	for m in "$@"; do
 		insmod $K/$m.ko 2>&1 | grep -v 'File exists'
 	done
-	echo "oos-wlan: driver loaded"
+	m=$(basename "$m")
+	if [ -e /sys/module/$m ]; then echo "oos-wlan: driver loaded ($m)"; else echo "oos-wlan: driver $m not loaded"; fi
 }
 
 start() {
