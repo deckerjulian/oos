@@ -12,7 +12,9 @@
 //! build register sequences are pure (they return `(offset, value)` lists and update software shadows of the
 //! write-only registers), so they are unit-tested on the host; `dho::bus` applies them to the hardware.
 
+pub mod bluez;
 pub mod bootstatus;
+pub mod dbus;
 pub mod fsutil;
 #[cfg(test)]
 mod hostile;

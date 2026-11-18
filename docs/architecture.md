@@ -121,9 +121,9 @@ Pure functions build lists of `(offset, value)` writes and update software shado
 host tests check them against fixtures from the Python models (`tools/*model.py`) and the device logs. Applying a list
 is a separate step through `dho::bus::Bus` (`Bar1` on the unit, `Recorder` in tests).
 
-The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `bootstatus`, `vendorkeys`. Everything
-of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board family adds a module next to
-it ([porting.md](porting.md)).
+The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `dbus`, `bluez`, `bootstatus`,
+`vendorkeys`. Everything of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board
+family adds a module next to it ([porting.md](porting.md)).
 
 | Module (in `dho` unless noted) | Role |
 |---|---|
@@ -139,6 +139,8 @@ it ([porting.md](porting.md)).
 | `model` (root) | model identity, capabilities and limits (`models.md`) |
 | `update` (root) | signed updates with rollback (`update.md`) |
 | `wlan` (root) | control socket of wpa_supplicant, its answers, key derivation (`wlan.md`) |
+| `dbus` (root) | a D-Bus client of its own: the wire format, SASL EXTERNAL, calls and the calls that come in |
+| `bluez` (root) | bluetoothd's objects and calls for mice and keyboards, the pairing agent |
 
 ### oos-dsp: signal processing
 
