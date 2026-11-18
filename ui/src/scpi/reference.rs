@@ -107,66 +107,13 @@ impl Scpi {
             };
         }
         if kw(n0, "SOURce") {
-            let (slot, rest) = self.ref_pair(ui, arg);
-            let slot = slot?;
-            if query {
-                return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
-            }
-            return match parse_ch(&rest) {
-                Some(c) if ui.ref_source_set(slot, c) => {
-                    ui.mark_changed();
-                    None
-                }
-                _ => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.ref_source(ui, query, arg);
         }
         if kw(n0, "VSCale") || kw(n0, "VOFFset") {
-            let scale = kw(n0, "VSCale");
-            let (slot, rest) = self.ref_pair(ui, arg);
-            let slot = slot?;
-            if query {
-                let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
-                return match v {
-                    Some(v) => t(&e(v as f64)),
-                    None => {
-                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                        None
-                    }
-                };
-            }
-            let Some(v) = num(&rest) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
-            if ok {
-                ui.mark_changed();
-            } else {
-                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-            }
-            return None;
+            return self.ref_scale(ui, n0, query, arg);
         }
         if n.len() >= 2 && kw(n0, "LABel") && kw(n[1], "CONTent") {
-            let (slot, rest) = self.ref_pair(ui, arg);
-            let slot = slot?;
-            if query {
-                return match ui.ref_label(slot) {
-                    Some(s) => t(&s),
-                    None => {
-                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                        None
-                    }
-                };
-            }
-            if ui.ref_label_set(slot, rest) {
-                ui.mark_changed();
-            } else {
-                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-            }
-            return None;
+            return self.ref_label(ui, query, arg);
         }
         if kw(n0, "RESet") && !query {
             let (slot, _) = self.ref_pair(ui, arg);
@@ -179,27 +126,7 @@ impl Scpi {
             return None;
         }
         if kw(n0, "COLor") {
-            let (slot, rest) = self.ref_pair(ui, arg);
-            let slot = slot?;
-            if query {
-                return match ui.ref_color(slot) {
-                    Some(i) => t(Self::ref_color_name(i)),
-                    None => {
-                        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                        None
-                    }
-                };
-            }
-            let Some(i) = ref_color_index(&rest) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            if ui.ref_color_set(slot, i) {
-                ui.mark_changed();
-            } else {
-                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-            }
-            return None;
+            return self.ref_color_cmd(ui, query, arg);
         }
         if kw(n0, "CLEar") && !query {
             ui.ref_clear_all();
@@ -207,25 +134,7 @@ impl Scpi {
             return None;
         }
         if kw(n0, "SAVE") && !query {
-            if !arg.trim().is_empty() {
-                match parse_slot(arg) {
-                    Some(i) if ui.ref_slot_set(i) => {}
-                    _ => {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return None;
-                    }
-                }
-            }
-            return match ui.ref_save_slot() {
-                Ok(()) => {
-                    ui.mark_changed();
-                    None
-                }
-                Err(e) => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", e));
-                    None
-                }
-            };
+            return self.ref_save(ui, arg);
         }
         if kw(n0, "LOAD") && !query {
             if arg.trim().is_empty() {
@@ -241,6 +150,126 @@ impl Scpi {
         }
         self.push_err(format!("-113,\"Undefined header\" :REF:{}", n.join(":")));
         None
+    }
+
+    /// `:REFerence:SOURce`: the channel a save of a slot copies.
+    fn ref_source(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let (slot, rest) = self.ref_pair(ui, arg);
+        let slot = slot?;
+        if query {
+            return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
+        }
+        match parse_ch(&rest) {
+            Some(c) if ui.ref_source_set(slot, c) => {
+                ui.mark_changed();
+                None
+            }
+            _ => {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                None
+            }
+        }
+    }
+
+    /// `:REFerence:VSCale|VOFFset` (`n0`) of a slot.
+    fn ref_scale(&mut self, ui: &mut Ui, n0: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let scale = kw(n0, "VSCale");
+        let (slot, rest) = self.ref_pair(ui, arg);
+        let slot = slot?;
+        if query {
+            let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
+            return match v {
+                Some(v) => t(&e(v as f64)),
+                None => {
+                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                    None
+                }
+            };
+        }
+        let Some(v) = num(&rest) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
+        if ok {
+            ui.mark_changed();
+        } else {
+            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+        }
+        None
+    }
+
+    /// `:REFerence:LABel:CONTent` of a slot.
+    fn ref_label(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let (slot, rest) = self.ref_pair(ui, arg);
+        let slot = slot?;
+        if query {
+            return match ui.ref_label(slot) {
+                Some(s) => t(&s),
+                None => {
+                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                    None
+                }
+            };
+        }
+        if ui.ref_label_set(slot, rest) {
+            ui.mark_changed();
+        } else {
+            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+        }
+        None
+    }
+
+    /// `:REFerence:COLor` of a slot.
+    fn ref_color_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let (slot, rest) = self.ref_pair(ui, arg);
+        let slot = slot?;
+        if query {
+            return match ui.ref_color(slot) {
+                Some(i) => t(Self::ref_color_name(i)),
+                None => {
+                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+                    None
+                }
+            };
+        }
+        let Some(i) = ref_color_index(&rest) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        if ui.ref_color_set(slot, i) {
+            ui.mark_changed();
+        } else {
+            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+        }
+        None
+    }
+
+    /// `:REFerence:SAVE`: the Source channel into the selected slot, or into the one `arg` names.
+    fn ref_save(&mut self, ui: &mut Ui, arg: &str) -> Option<Vec<u8>> {
+        if !arg.trim().is_empty() {
+            match parse_slot(arg) {
+                Some(i) if ui.ref_slot_set(i) => {}
+                _ => {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return None;
+                }
+            }
+        }
+        match ui.ref_save_slot() {
+            Ok(()) => {
+                ui.mark_changed();
+                None
+            }
+            Err(e) => {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", e));
+                None
+            }
+        }
     }
 
     fn ref_loaded(&mut self, ui: &mut Ui, r: Result<(), String>) -> Option<Vec<u8>> {
