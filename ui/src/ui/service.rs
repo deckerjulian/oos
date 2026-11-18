@@ -28,7 +28,14 @@ impl<J: Send + 'static, R: Send + 'static> Service<J, R> {
     /// Starts the thread `name` with `run`, unless it runs already (or this is `cargo test`). When the thread cannot
     /// be started, the service stays empty and the next `start` tries again.
     pub(in crate::ui) fn start(&mut self, name: &str, run: fn(Receiver<J>, Sender<R>)) {
-        if self.tx.is_some() || cfg!(test) {
+        if !cfg!(test) {
+            self.spawn(name, run);
+        }
+    }
+
+    /// `start` without the guard of the tests.
+    fn spawn(&mut self, name: &str, run: fn(Receiver<J>, Sender<R>)) {
+        if self.tx.is_some() {
             return;
         }
         let (tx, jobs) = channel();
@@ -55,6 +62,7 @@ impl<J, R> Service<J, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn echo(jobs: Receiver<u32>, out: Sender<u32>) {
         while let Ok(j) = jobs.recv() {
@@ -70,16 +78,29 @@ mod tests {
         assert!(s.take().is_none());
     }
 
+    /// The thread says whether it has the name `echo-svc` (1) or not (0), then answers each job.
+    fn named(jobs: Receiver<u32>, out: Sender<u32>) {
+        let _ = out.send(u32::from(std::thread::current().name() == Some("echo-svc")));
+        echo(jobs, out);
+    }
+
     #[test]
-    fn a_started_service_answers_its_jobs_and_ends_with_it() {
-        let (tx, jobs) = channel();
-        let (out, rx) = channel();
-        let t = std::thread::spawn(move || echo(jobs, out));
-        let s = Service { tx: Some(tx), rx: Some(rx) };
+    fn a_started_service_runs_one_named_thread_answers_its_jobs_and_ends_with_it() {
+        let mut s: Service<u32, u32> = Service::default();
+        s.spawn("echo-svc", named);
+        s.spawn("echo-svc", named);
+        let next = |s: &Service<u32, u32>| s.rx.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(5)).ok());
+        assert_eq!(next(&s), Some(1), "the thread has the name it was given");
         assert!(s.send(41));
-        let got = s.rx.as_ref().map(|rx| rx.recv_timeout(std::time::Duration::from_secs(5)));
-        assert_eq!(got.map(Result::ok), Some(Some(42)));
-        drop(s);
-        t.join().expect("the thread ends when the service is dropped");
+        // a second thread would have said its name first
+        assert_eq!(next(&s), Some(42), "a second start starts nothing");
+        let (tx, rx) = (s.tx.take(), s.rx.take());
+        drop(tx);
+        let end = rx.map(|rx| rx.recv_timeout(Duration::from_secs(5)));
+        assert!(
+            matches!(end, Some(Err(std::sync::mpsc::RecvTimeoutError::Disconnected))),
+            "the thread ended: {:?}",
+            end
+        );
     }
 }
