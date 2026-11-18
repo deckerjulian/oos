@@ -534,7 +534,8 @@ pub(super) fn num(x: Option<f64>, unit: &str) -> String {
     }
 }
 
-fn pad(lo: f64, hi: f64) -> (f64, f64) {
+/// The range `lo..hi` of a plot axis with 8 % room each side; an empty or not finite one is `lo` +- 1 (0 +- 1).
+pub(super) fn pad(lo: f64, hi: f64) -> (f64, f64) {
     if !lo.is_finite() || !hi.is_finite() || hi - lo < 1e-15 {
         let c = if lo.is_finite() { lo } else { 0.0 };
         return (c - 1.0, c + 1.0);

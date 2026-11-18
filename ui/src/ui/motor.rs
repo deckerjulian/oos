@@ -3,7 +3,7 @@
 
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
-use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash, Taken};
+use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, pad, wave_clash, Taken};
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
@@ -647,15 +647,6 @@ fn step_index(n: Option<u8>, d: i32) -> Option<u8> {
     } else {
         Some((j - 1) as u8)
     }
-}
-
-fn pad(lo: f64, hi: f64) -> (f64, f64) {
-    if !lo.is_finite() || !hi.is_finite() || hi - lo < 1e-15 {
-        let c = if lo.is_finite() { lo } else { 0.0 };
-        return (c - 1.0, c + 1.0);
-    }
-    let p = (hi - lo) * 0.08;
-    (lo - p, hi + p)
 }
 
 /// The inverter page (motor drive: phases, DQ0, shaft).
