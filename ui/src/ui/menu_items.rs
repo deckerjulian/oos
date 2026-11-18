@@ -25,46 +25,9 @@ impl Ui {
     pub(super) fn off_sources(&self, menu: MenuId) -> Vec<usize> {
         let m = &self.m;
         let ch = WaveId::Ch;
+        let page = pages::page(menu);
         let want: Vec<WaveId> = match menu {
-            MenuId::Power if matches!(m.pw_mode, PowerMode::Ripple | PowerMode::Rail) => vec![m.pw_v],
-            MenuId::Power => vec![m.pw_v, m.pw_i],
-            MenuId::Spectrum => vec![m.spec_src],
-            MenuId::Eye => vec![m.eye_src],
-            MenuId::Bode if m.bode_gen == bode::FREE => {
-                [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(ch), Some(ch(m.bode_sync))]
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            }
-            MenuId::Bode => vec![m.bode_in, m.bode_out],
-            MenuId::Magnetic => vec![m.mag_v, m.mag_i],
-            MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
-                let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
-                if m.inv_ang == InvAngle::Analog {
-                    v.push(m.inv_an);
-                }
-                v
-            }
-            MenuId::Inverter => {
-                let mut v = match m.inv_ang {
-                    InvAngle::Analog => vec![m.inv_an],
-                    InvAngle::Quad | InvAngle::Hall | InvAngle::Off => Vec::new(),
-                    InvAngle::Phase => vec![m.inv_a, m.inv_b, m.inv_c],
-                };
-                v.extend(m.inv_tq);
-                v.extend(m.inv_ev);
-                v.extend(m.inv_ei);
-                v
-            }
-            MenuId::Dpt => {
-                let mut v = vec![m.dpt_v, m.dpt_i, m.dpt_g];
-                if m.dpt_4th != DptFourth::Off {
-                    v.push(m.dpt_4ch);
-                }
-                v
-            }
-            MenuId::BwTest => vec![ch(m.bw_src)],
-            MenuId::Mask => vec![ch(m.mask_src)],
+            _ if page.is_some() => page.and_then(|p| p.sources).map_or(Vec::new(), |f| f(self)),
             MenuId::Dvm if self.offline => Vec::new(),
             MenuId::Dvm => {
                 [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect()
@@ -103,35 +66,20 @@ impl Ui {
             MenuId::MeasHold => vec![Item::AddMeas],
             MenuId::Decode => self.decode_items(),
             MenuId::Bus => self.bus_items(),
-            MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
             MenuId::Ref => self.ref_items(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasSelected => self.measurement_catalog(),
             MenuId::Cursor => self.cursor_items(),
             MenuId::Display => self.display_items(),
             MenuId::Storage => self.storage_items(),
-            MenuId::Spectrum => self.spectrum_items(),
-            MenuId::Eye => self.eye_items(),
-            MenuId::Power => self.power_items(),
-            MenuId::Identify => self.identify_items(),
-            MenuId::SelfCal => self.cal_items(),
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
-            MenuId::Bode => self.bode_items(),
             MenuId::Sim => self.sim_items(),
             MenuId::SimAdvanced => self.sim_advanced_items(),
-            MenuId::Magnetic => self.magnetic_items(),
-            MenuId::Inverter => self.inverter_items(),
-            MenuId::Dpt => self.dpt_items(),
             MenuId::Afg => self.afg_items(),
-            MenuId::BwTest => self.bw_items(),
             MenuId::ViewMore => self.view_more_items(),
             MenuId::La => self.la_items(),
             MenuId::LaLines => self.la_line_items(),
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
-            MenuId::Windows => self.win_items(),
-            MenuId::Zone => self.zone_items(),
-            MenuId::Mask => self.mask_items(),
-            MenuId::Utility => self.utility_items(),
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -322,7 +270,7 @@ impl Ui {
     }
 
     /// The spectrum menu.
-    fn spectrum_items(&self) -> Vec<Item> {
+    pub(super) fn spectrum_items(&self) -> Vec<Item> {
         vec![
             Item::SpecOn,
             Item::SpecSrc,
@@ -345,7 +293,7 @@ impl Ui {
     }
 
     /// The eye diagram menu.
-    fn eye_items(&self) -> Vec<Item> {
+    pub(super) fn eye_items(&self) -> Vec<Item> {
         vec![
             Item::EyeAct,
             Item::EyeOn,
@@ -365,7 +313,7 @@ impl Ui {
     }
 
     /// The power analysis menu, with the rows of its mode.
-    fn power_items(&self) -> Vec<Item> {
+    pub(super) fn power_items(&self) -> Vec<Item> {
         let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
         match self.m.pw_mode {
             PowerMode::Ripple => v.extend([Item::PowFline, Item::PowFsw, Item::PowVin]),
@@ -392,7 +340,7 @@ impl Ui {
     }
 
     /// The zone trigger menu.
-    fn zone_items(&self) -> Vec<Item> {
+    pub(super) fn zone_items(&self) -> Vec<Item> {
         vec![
             Item::ZoneSel,
             Item::ZoneOn,
@@ -405,7 +353,7 @@ impl Ui {
     }
 
     /// The mask test menu.
-    fn mask_items(&self) -> Vec<Item> {
+    pub(super) fn mask_items(&self) -> Vec<Item> {
         vec![
             Item::MaskOn,
             Item::MaskSrc,
@@ -423,7 +371,7 @@ impl Ui {
     }
 
     /// The utility menu; Overclock only when it is switched on.
-    fn utility_items(&self) -> Vec<Item> {
+    pub(super) fn utility_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::Offline,
             Item::QuickAct,
