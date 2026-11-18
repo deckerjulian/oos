@@ -220,9 +220,6 @@ fn hostile_public_keys() {
     run("ssh::parse_line", &seeds, 1, |b| {
         let text = String::from_utf8_lossy(b);
         for line in text.lines() {
-            if rsa_without_a_modulus(line) && is_known("ssh-rsa-empty-modulus") {
-                return Ok(());
-            }
             let Ok(k) = crate::ssh::parse_line(line) else { continue };
             let named = k.blob.get(4..4 + k.kind.len());
             if named != Some(k.kind.as_bytes()) || k.short_kind() == "key" {
@@ -248,25 +245,9 @@ fn hostile_public_keys() {
     });
 }
 
-/// The finding `ssh-rsa-empty-modulus`: an `ssh-rsa` line whose blob names its type and whose modulus has no bit
-/// set.
-pub(super) fn rsa_without_a_modulus(line: &str) -> bool {
-    let Some(at) = line.find("ssh-rsa") else { return false };
-    let mut w = line[at..].split_whitespace();
-    let Some(blob) = w.nth(1).and_then(crate::ssh::base64_decode) else { return false };
-    let mut p = 0;
-    let mut next = || {
-        let n = u32::from_be_bytes(blob.get(p..p + 4)?.try_into().ok()?) as usize;
-        let s = blob.get(p + 4..(p + 4).checked_add(n)?)?;
-        p += 4 + n;
-        Some(s)
-    };
-    next() == Some(b"ssh-rsa") && next().is_some() && next().is_some_and(|n| n.iter().all(|&b| b == 0))
-}
-
+// Break it catches: the bits of an RSA modulus counted from its first byte when it has none (#181)
 #[test]
-#[ignore = "ssh::parse_line subtracts past zero on an RSA key whose modulus has no bit set, #181"]
-pub(super) fn hostile_known_ssh_rsa_empty_modulus() {
+fn hostile_ssh_rsa_empty_modulus() {
     // in a build without overflow checks the key is taken as one of 2^64 bits
     assert!(crate::ssh::parse_line(&key_line("ssh-rsa", &[&[1, 0, 1], &[]], "no modulus")).is_err());
 }

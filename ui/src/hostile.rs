@@ -57,11 +57,6 @@ pub(crate) const KNOWN: &[Known] = &[
         what: "sysconf::SysConf::parse takes a word of features.off that starts with '#': written out it is a comment",
         repro: conf::hostile_known_sysconf_list_word_with_hash,
     },
-    Known {
-        name: "ssh-rsa-empty-modulus",
-        what: "ssh::parse_line subtracts past zero on an RSA key whose modulus has no bit set",
-        repro: conf::hostile_known_ssh_rsa_empty_modulus,
-    },
     #[cfg(feature = "dec-qspi")]
     Known {
         name: "qspi-zero-frame",
