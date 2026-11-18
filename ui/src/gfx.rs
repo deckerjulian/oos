@@ -151,16 +151,13 @@ impl Canvas {
         }
     }
 
-    /// A command covering `(x0, y0, x1, y1)`, already clipped.
+    /// A command covering `(x0, y0, x1, y1)`, already clipped, with its source `(ax, ay, aw)` (`Cmd`).
     #[inline]
-    #[allow(clippy::too_many_arguments)]
     fn cmd(
         &mut self,
         (x0, y0, x1, y1): (i32, i32, i32, i32),
         kind: u16,
-        ax: i32,
-        ay: i32,
-        aw: i32,
+        (ax, ay, aw): (i32, i32, i32),
         off: u32,
         col: u32,
     ) {
@@ -220,7 +217,7 @@ impl Canvas {
             r.img.clear();
             r.fonts.clear();
             if !self.layer || c != 0 {
-                self.cmd((0, 0, self.w, self.h), CMD_RECT, 0, 0, 0, 0, 0xff00_0000 | (c & 0xff_ffff));
+                self.cmd((0, 0, self.w, self.h), CMD_RECT, (0, 0, 0), 0, 0xff00_0000 | (c & 0xff_ffff));
             }
             return;
         }
@@ -252,7 +249,7 @@ impl Canvas {
         if let Some(rec) = self.rec.as_mut() {
             let off = rec.img.len() as u32;
             rec.img.extend_from_slice(&px[..(r.w * r.h) as usize]);
-            return self.cmd(c, if key { CMD_IMAGE_KEY } else { CMD_IMAGE }, r.x, r.y, r.w, off, 0);
+            return self.cmd(c, if key { CMD_IMAGE_KEY } else { CMD_IMAGE }, (r.x, r.y, r.w), off, 0);
         }
         let (x0, y0, x1, y1) = c;
         let solid = |p: u32| if self.layer { p | 0xff00_0000 } else { p };
@@ -270,7 +267,7 @@ impl Canvas {
     pub fn fill(&mut self, r: Rect, c: Rgb) {
         if self.rec.is_some() {
             if let Some(cl) = self.clipr(r) {
-                self.cmd(cl, CMD_RECT, 0, 0, 0, 0, 0xff00_0000 | (c & 0xff_ffff));
+                self.cmd(cl, CMD_RECT, (0, 0, 0), 0, 0xff00_0000 | (c & 0xff_ffff));
             }
             return;
         }
@@ -292,7 +289,7 @@ impl Canvas {
         }
         if self.rec.is_some() {
             if let Some(cl) = self.clipr(r) {
-                self.cmd(cl, CMD_RECT, 0, 0, 0, 0, a << 24 | (c & 0xff_ffff));
+                self.cmd(cl, CMD_RECT, (0, 0, 0), 0, a << 24 | (c & 0xff_ffff));
             }
             return;
         }
@@ -314,7 +311,7 @@ impl Canvas {
             return;
         }
         if self.rec.is_some() {
-            return self.cmd((x, y, x + 1, y + 1), CMD_RECT, 0, 0, 0, 0, a.min(255) << 24 | (c & 0xff_ffff));
+            return self.cmd((x, y, x + 1, y + 1), CMD_RECT, (0, 0, 0), 0, a.min(255) << 24 | (c & 0xff_ffff));
         }
         let (layer, solid) = (self.layer, self.solid(c));
         let p = &mut self.px[(y * self.w + x) as usize];
@@ -449,7 +446,7 @@ impl Canvas {
             let bx = if m & 1 == 0 { ax } else { ax - rad + 1 };
             let by = if m & 2 == 0 { ay } else { ay - rad + 1 };
             if let Some(cl) = self.clipr(Rect::new(bx, by, rad, rad)) {
-                self.cmd(cl, kind | m << 8, ax, ay, rad, 0, col);
+                self.cmd(cl, kind | m << 8, (ax, ay, rad), 0, col);
             }
         }
     }
@@ -481,9 +478,7 @@ impl Canvas {
                 self.cmd(
                     cl,
                     if steep { CMD_LINE_STEEP } else { CMD_LINE },
-                    x0,
-                    y0,
-                    0,
+                    (x0, y0, 0),
                     grad as u32,
                     0xff00_0000 | (c & 0xff_ffff),
                 );
@@ -570,7 +565,7 @@ impl Canvas {
                 let (gx, gy) = (x + g.x0, y + g.y0);
                 if let Some(cl) = self.clipr(Rect::new(gx, gy, g.w, g.h)) {
                     let font = self.rec.as_mut().map_or(0, |r| r.font(f.alpha));
-                    self.cmd(cl, CMD_GLYPH | font << 8, gx, gy, g.w, g.off as u32, 0xff00_0000 | (c & 0xff_ffff));
+                    self.cmd(cl, CMD_GLYPH | font << 8, (gx, gy, g.w), g.off as u32, 0xff00_0000 | (c & 0xff_ffff));
                 }
                 x += g.adv;
             }

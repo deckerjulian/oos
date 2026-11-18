@@ -18,6 +18,7 @@
 //! OOS_PIPELINE=frames starts with the old path, kept as the way back.
 
 use crate::board::Frame;
+use crate::fastdraw::EdgeSeek;
 use crate::model::*;
 use crate::wave::Phosphor;
 use std::any::Any;
@@ -56,8 +57,8 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     }
     let src = &f.ch[m.trig_src];
     let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true)
+    let refine = |s: EdgeSeek| {
+        crate::trignear::edge_smooth_near(src, f.pre, s.level, s.hyst, s.rising, s.either, s.span, s.l, |_| true)
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
@@ -68,23 +69,29 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
             crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
         }
     };
-    dense(ph, m, f, x_per_sample, pairs, present, stats, refine, deposit)
+    dense(ph, m, f, Dense { x_per_sample, pairs, present }, stats, refine, deposit)
+}
+
+/// How `dense` lays out a frame: `x_per_sample` columns a sample, min/max `pairs` (live compression), the channels
+/// `present` in the frame.
+struct Dense {
+    x_per_sample: f64,
+    pairs: bool,
+    present: [bool; NCH],
 }
 
 /// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger
 /// refinement on the source channel, and `deposit`, one channel into its map): trigger statistics, mapping, channels.
-#[allow(clippy::too_many_arguments)]
 fn dense(
     ph: &mut Phosphor,
     m: &Model,
     f: &Frame,
-    x_per_sample: f64,
-    pairs: bool,
-    present: [bool; NCH],
+    lay: Dense,
     stats: Option<Stats>,
-    refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
+    refine: impl FnOnce(EdgeSeek) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
     mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map),
 ) -> bool {
+    let Dense { x_per_sample, pairs, present } = lay;
     let (w, h) = (ph.w, ph.h);
     let col = if pairs {
         crate::compress::smooth_len(x_per_sample)
@@ -117,12 +124,13 @@ pub struct Trigger {
 }
 
 /// The trigger of the dense frame `f`, smoothed to `col` samples. `refine` (level, hysteresis, rising, either, half a
-/// screen in samples, `col`) finds the edge on the source channel: each draw path keeps its own choice of search.
+/// screen in samples as the span, `col` as the smoothing) finds the edge on the source channel: each draw path keeps
+/// its own choice of search.
 pub fn refine_edge(
     m: &Model,
     f: &Frame,
     col: usize,
-    refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
+    refine: impl FnOnce(EdgeSeek) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
 ) -> Trigger {
     let tdiv = m.time_per_div() as f64;
     // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
@@ -135,7 +143,7 @@ pub fn refine_edge(
     let (edge, class) = if on_la {
         (None, None)
     } else {
-        let (e, any) = refine(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col);
+        let (e, any) = refine(EdgeSeek::new(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col));
         let class = match (e, any) {
             (None, _) => (3, 0.0),
             (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),
@@ -245,27 +253,25 @@ pub fn draw_frame_codes(
         return None;
     }
     let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
-    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+    let refine = |s: EdgeSeek| {
         let src = lay.channel(bytes, m.trig_src);
         TRIG.with(|t| {
             let v = &mut *t.borrow_mut();
-            let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
+            let (a, b) = crate::trignear::near_window(f.pre, src.n, s.l);
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            if let Some(r) =
-                crate::trignear::edge_near_window(v, a, src.n, f.pre, level, hyst, rising, either, half, col, |_| true)
-            {
+            if let Some(r) = crate::trignear::edge_near_window(v, a, src.n, f.pre, s, |_| true) {
                 return r;
             }
             #[cfg(test)]
             WIDE.with(|n| n.set(n.get() + 1));
             (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            crate::trignear::edge_smooth_near(v, f.pre, level, hyst, rising, either, half, col, |_| true)
+            crate::trignear::edge_smooth_near(v, f.pre, s.level, s.hyst, s.rising, s.either, s.span, s.l, |_| true)
         })
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24)
     };
-    Some(dense(ph, m, f, x_per_sample, false, present, stats, refine, deposit))
+    Some(dense(ph, m, f, Dense { x_per_sample, pairs: false, present }, stats, refine, deposit))
 }
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
