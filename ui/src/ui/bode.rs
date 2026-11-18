@@ -941,7 +941,7 @@ impl Ui {
             )
         } else if mode == oos_dsp::bode::Mode::Loop {
             if let Some(&(hz, g, p)) =
-                self.bode.points.iter().min_by(|a, b| ((a.1 + 3.0).abs()).partial_cmp(&(b.1 + 3.0).abs()).unwrap())
+                self.bode.points.iter().min_by(|a, b| (a.1 + 3.0).abs().total_cmp(&(b.1 + 3.0).abs()))
             {
                 let ph = if p.is_nan() { String::new() } else { format!(", {:.0}\u{b0}", p) };
                 format!("{} points; nearest -3 dB: {} ({:.1} dB{})", self.bode.points.len(), si_short(hz, "Hz"), g, ph)
@@ -988,6 +988,16 @@ impl super::analysers::Analyser for BodePage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gain of NaN among the points: the point nearest -3 dB was chosen with `partial_cmp(..).unwrap()`, which
+    /// panicked; a NaN distance is now the largest.
+    #[test]
+    fn status_passes_over_a_nan_gain() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.bode.points = vec![(1e3, f64::NAN, f64::NAN), (2e3, -2.5, -40.0), (3e3, -6.0, -60.0)];
+        let s = ui.bode_status(false, oos_dsp::bode::Mode::Loop);
+        assert!(s.contains("nearest -3 dB: 2 kHz (-2.5 dB"), "{s}");
+    }
 
     /// A free log sweep 20 Hz .. 20 kHz in 0.5 s, its record handed in as the SINGLE record: CH1 the generator, CH2
     /// a first-order low-pass at 1 kHz, CH4 the sync pulse at the start.

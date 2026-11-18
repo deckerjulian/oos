@@ -725,7 +725,7 @@ impl Ui {
 }
 
 fn nearest_vdiv(want: f32) -> f32 {
-    VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
+    VSCALES.iter().copied().min_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs())).unwrap_or(0.2)
 }
 
 fn nearest_tscale(want: f64) -> usize {
@@ -733,7 +733,7 @@ fn nearest_tscale(want: f64) -> usize {
     ts.iter()
         .copied()
         .enumerate()
-        .min_by(|(_, a), (_, b)| (*a as f64 - want).abs().partial_cmp(&(*b as f64 - want).abs()).unwrap())
+        .min_by(|(_, a), (_, b)| (*a as f64 - want).abs().total_cmp(&(*b as f64 - want).abs()))
         .map(|(i, _)| i)
         .unwrap_or(0)
 }

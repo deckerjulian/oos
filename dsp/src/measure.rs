@@ -909,7 +909,7 @@ pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     let ea = if p.0 { &a.rises } else { &a.falls };
     let eb = if p.1 { &b.rises } else { &b.falls };
     let Some(&ta) = ea.first() else { return f64::NAN };
-    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap()).unwrap_or(f64::NAN)
+    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().total_cmp(&y.abs())).unwrap_or(f64::NAN)
 }
 
 /// Phase of B relative to A in degrees (delay / period of A x 360).
@@ -1004,6 +1004,15 @@ pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crossing of NaN on B: the nearest edge was chosen with `partial_cmp(..).unwrap()`, which panicked; a NaN
+    /// distance is now the largest.
+    #[test]
+    fn delay_passes_over_a_nan_edge() {
+        let a = Analysis { valid: true, rises: vec![5e-9], ..Analysis::default() };
+        let b = Analysis { valid: true, rises: vec![f64::NAN, 7e-9, 4e-9], ..Analysis::default() };
+        assert_eq!(delay(&a, &b, Pair(true, true)), 4e-9 - 5e-9);
+    }
 
     /// A sine as the roll stream of the unit holds it: pair j every `span` samples, the maximum and minimum of the
     /// `2 * span` samples around the middle of its two points, as `board::resample` places a pair (the spans of
