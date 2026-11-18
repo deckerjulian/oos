@@ -106,8 +106,8 @@ impl MeasRow {
     }
 }
 
-/// Units a measurement value carries without an SI prefix: "500 m%" or "1.50 krpm" is not how they are written.
-const NO_PREFIX: [&str; 5] = ["%", "dB", "ppm", "rpm", "rpm/s"];
+/// Units that are not SI and take no prefix: "1.50 krpm" or "12.0 nppm" is not how they are written.
+const NO_PREFIX: [&str; 3] = ["ppm", "rpm", "rpm/s"];
 
 /// A measurement value as the screen writes it. A count (no unit, a whole number below 1e6) is an integer: "12". A
 /// ratio (no unit) and a unit of `NO_PREFIX` are a plain decimal with `digits` significant digits, in exponent form

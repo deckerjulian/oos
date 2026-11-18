@@ -164,12 +164,11 @@ fn measurement_values_without_an_si_unit_take_no_prefix() {
     // a large count and a tiny ratio go to exponent form
     assert_eq!(tools::meas_digits(2.5e7, "", 3), "2.50e7");
     assert_eq!(tools::meas_digits(1.5e-5, "", 3), "1.50e-5");
-    // breaks when the units that are not SI get a prefix again ("1.50 krpm", "12.0 nppm", "500 m%")
+    // breaks when the units that are not SI get a prefix again ("1.50 krpm", "12.0 nppm")
     assert_eq!(tools::meas_digits(1500.0, "rpm", 3), "1500 rpm");
     assert_eq!(tools::meas_digits(-250.0, "rpm/s", 3), "-250 rpm/s");
     assert_eq!(tools::meas_digits(12.0, "ppm", 3), "12.0 ppm");
-    assert_eq!(tools::meas_digits(0.5, "%", 3), "0.500 %");
-    assert_eq!(tools::meas_digits(-45.26, "dB", 3), "-45.3 dB");
+    assert_eq!(tools::meas_digits(0.012, "ppm", 3), "0.0120 ppm");
     assert_eq!(tools::meas_digits(f64::NAN, "ppm", 3), "---- ppm");
     // the SI units keep their prefix
     assert_eq!(tools::meas_digits(0.498, "V", 3), si_digits(0.498, "V", 3));

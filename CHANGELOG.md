@@ -115,7 +115,7 @@ Changed:
 Fixed:
 
 - Measurements without an SI unit take no SI prefix: a ratio reads `0.498`, not `498 m`, a count `1`, not `1.00`, and
-  `%`, `dB`, `ppm`, `rpm` and `rpm/s` are plain decimals (`1500 rpm`, not `1.50 krpm`).
+  `ppm`, `rpm` and `rpm/s` are plain decimals (`1500 rpm`, not `1.50 krpm`).
 - The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
   dark before (contributed by halma1).
 - DCC decodes the signal of a live track (contributed by halma1, tested on a layout with an ESU ECoS): a phase slip no

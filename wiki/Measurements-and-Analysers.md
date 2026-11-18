@@ -7,8 +7,8 @@ statistics. In **Measure > Add item** a tap adds a measurement of the source cha
 removes it again. **Measure > Dock** moves the strip to the left, the right, or above the trace.
 
 A value with an SI unit takes its prefix (`2.00 mV`). A count reads as a whole number (`12`), a ratio without unit as a
-plain decimal (`0.498`), and `%`, `dB`, `ppm`, `rpm` and `rpm/s` take no prefix (`1500 rpm`). Over SCPI
-(`:MEAS:STRIP?`) the values come in exponent form.
+plain decimal (`0.498`), and `ppm`, `rpm` and `rpm/s` take no prefix (`1500 rpm`). Over SCPI (`:MEAS:STRIP?`)
+the values come in exponent form.
 
 **Labels on trace** in the Measure menu draws what each measurement means, with level lines and arrows:
 
