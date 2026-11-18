@@ -43,8 +43,9 @@ The registry moves a tag to a new build whenever the distribution publishes one.
 ## Consequences
 
 - A new Rust changes nothing until its bump. The bump is one pull request: the new `channel` and the fixes for what
-  the new release finds, apart from every feature, as ADR 0017 wanted. It runs every part of CI and the comparison
-  (the file is none of the paths `tools/ci-parts.sh` knows).
+  the new release finds, apart from every feature, as ADR 0017 wanted. It runs every part of CI and the comparison,
+  and the job `scope` (`tools/ci-parts.sh` counts the file among the hardware paths, `tools/pr-labels.sh` labels it
+  `risk/hardware`).
 - The canary says when a bump needs work: it fails and the weekly issue names it. When it passes it only leaves a
   notice in the run that a newer release exists. Nothing forces a bump, so the pin can fall behind.
 - A bump changes every program for the scope. `rust-toolchain.toml` is therefore a hardware path of the gate

@@ -341,6 +341,8 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.labels(), {"area/ui", "type/test"})
         self.pull(["wiki/Home.md"], title="Docs: something")
         self.assertEqual(self.labels(), {"area/docs", "type/docs"})
+        self.pull(["rust-toolchain.toml"], title="CI: something")
+        self.assertIn("risk/hardware", self.labels(), "the compiler builds every program for the scope")
 
 
 if __name__ == "__main__":
