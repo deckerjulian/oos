@@ -430,6 +430,41 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     analyze_refs(v, dt, min_amp, 0.1, 0.9)
 }
 
+/// `analyze_min` of min/max pairs (peak-detect decimation, roll and scan: two neighbouring points are the extremes of
+/// one span, in either order). Maximum, minimum, top and base come from the pairs, as the envelope shows them;
+/// everything else, the times of the extremes too, from the mean of each two neighbouring points, which takes out the
+/// zigzag between the extremes wherever the pairs begin (a record resampled from the frame need not start on a pair);
+/// a mean lies half a point after its first point, and its times are moved there. On an
+/// edge the two points of a pair lie a whole span apart: where that is more than the hysteresis, the pairs crossed the
+/// middle level again and again (a 25 Hz sine in roll at 0.2 s/div read 50 Hz, depending on its phase; #118).
+pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
+    let mid: Vec<f32> = v.windows(2).map(|w| (w[0] + w[1]) * 0.5).collect();
+    let mut a = analyze_refs(&mid, dt, min_amp, lpct, hpct);
+    if !a.valid {
+        return a;
+    }
+    let half = 0.5 * dt;
+    for t in [&mut a.rises, &mut a.falls, &mut a.hi_rises, &mut a.hi_falls, &mut a.lo_rises, &mut a.lo_falls] {
+        t.iter_mut().for_each(|x| *x += half);
+    }
+    (a.t_vmax, a.t_vmin, a.lin_int) = (a.t_vmax + half, a.t_vmin + half, a.lin_int - a.lin_slope * half);
+    let (mut imax, mut imin) = (None::<usize>, None::<usize>);
+    for (i, &x) in v.iter().enumerate().filter(|(_, x)| x.is_finite()) {
+        if imax.is_none_or(|j| x > v[j]) {
+            imax = Some(i);
+        }
+        if imin.is_none_or(|j| x < v[j]) {
+            imin = Some(i);
+        }
+    }
+    if let (Some(hi), Some(lo)) = (imax, imin) {
+        (a.vmax, a.vmin) = (v[hi] as f64, v[lo] as f64);
+        let finite: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+        (a.top, a.base) = top_base(&finite, v[lo], v[hi]);
+    }
+    a
+}
+
 /// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
     // the finite samples: the record itself when it has no gap (a copy of 100 kpts per channel otherwise)
@@ -967,6 +1002,56 @@ pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sine as the roll stream of the unit holds it: pair j every `span` samples, the maximum and minimum of the
+    /// `2 * span` samples around the middle of its two points, as `board::resample` places a pair (the spans of
+    /// neighbouring pairs overlap: seen on the unit, a pair's maximum lies above the previous pair's minimum on a
+    /// falling edge).
+    fn sine_pairs(f: f64, dt: f64, span: usize, n: usize, phase: f64) -> Vec<f32> {
+        let x = |i: i64| (2.0 * std::f64::consts::PI * f * i as f64 * dt + phase).sin() as f32;
+        (0..n as i64)
+            .flat_map(|j| {
+                let mid = j * span as i64 + span as i64 / 4;
+                let s: Vec<f32> = (mid - span as i64..mid + span as i64).map(x).collect();
+                let (lo, hi) = s.iter().fold((f32::MAX, f32::MIN), |(l, h), &y| (l.min(y), h.max(y)));
+                [hi, lo]
+            })
+            .collect()
+    }
+
+    // Break it catches: edges counted on the zigzag of min/max pairs (each pair spans more than the hysteresis on an
+    // edge), which doubled the frequency of a sine in roll mode; extremes taken from the middles, which cut the peaks.
+    #[test]
+    fn min_max_pairs_give_the_frequency_of_the_signal() {
+        // roll at 0.2 s/div: 1800 pairs over 2 s, one every 1.1 ms, each the extremes of 2.2 ms of a 1 V sine. On the
+        // unit noise lifted the zigzag of 25 Hz (0.17 V) over the hysteresis (0.2 V) now and then; 40 Hz always does
+        let (span, dt) = (40, 2.0 / 1800.0 / 40.0);
+        for phase in [0.0, 0.3, 1.1, 2.0] {
+            let v = sine_pairs(40.0, dt, span, 1800, phase);
+            let pdt = span as f64 * dt / 2.0;
+            assert!((analyze_min(&v, pdt, 0.4).get(Meas::Freq) - 40.0).abs() > 5.0, "the zigzag must be a test here");
+            let a = analyze_pairs(&v, pdt, 0.4, 0.1, 0.9);
+            assert!((a.get(Meas::Freq) - 40.0).abs() < 0.05, "phase {}: {}", phase, a.get(Meas::Freq));
+            // a record that does not start on a pair, and one resampled between the points (the screen record)
+            let shifted = analyze_pairs(&v[1..], pdt, 0.4, 0.1, 0.9).get(Meas::Freq);
+            let between: Vec<f32> = v.windows(2).map(|w| 0.3 * w[0] + 0.7 * w[1]).collect();
+            let resampled = analyze_pairs(&between, pdt, 0.4, 0.1, 0.9).get(Meas::Freq);
+            assert!((shifted - 40.0).abs() < 0.05 && (resampled - 40.0).abs() < 0.05, "{} {}", shifted, resampled);
+            assert!(a.vmax > 0.999 && a.vmin < -0.999, "{} {}", a.vmax, a.vmin);
+            // the time of a rise is that of the signal, within a point: the sine rises through 0 at t = -phase / w
+            let (w, period) = (2.0 * std::f64::consts::PI * 40.0, 1.0 / 40.0);
+            let off = (a.rises[0] + phase / w).rem_euclid(period);
+            assert!(
+                off.min(period - off) < 0.25 * pdt,
+                "phase {}: rise {} is {} off",
+                phase,
+                a.rises[0],
+                off.min(period - off)
+            );
+            let env = analyze_min(&v, pdt, 0.4);
+            assert_eq!((a.top, a.base, a.get(Meas::Vpp)), (env.top, env.base, env.get(Meas::Vpp)), "phase {}", phase);
+        }
+    }
 
     #[test]
     fn complete_pulse_join_matches_suffix_reference_with_duplicate_and_nan_edges() {

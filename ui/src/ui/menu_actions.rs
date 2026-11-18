@@ -609,11 +609,6 @@ impl Ui {
                     r.offset += 0.1 * r.vpd * d as f32;
                 }
             }
-            Item::Persist => {
-                m.persist = cycle(m.persist, PERSIST.len(), d);
-                self.ph.clear();
-            }
-            Item::Intensity => m.intensity = (m.intensity as i32 + d * 5).clamp(10, 100) as u32,
             Item::ZoneSel => self.zone_sel = cycle(self.zone_sel, 2, d),
             Item::ZoneOn => {
                 let z = &mut m.zones[self.zone_sel];
@@ -626,14 +621,6 @@ impl Ui {
             Item::ZoneMode => {
                 let z = &mut m.zones[self.zone_sel];
                 z.inside = !z.inside;
-            }
-            Item::Dots => {
-                m.dots = !m.dots;
-                self.dirty_map = true;
-            }
-            Item::BottomBar => {
-                m.bar_compact = !m.bar_compact;
-                self.dirty_map = true;
             }
             Item::AcqCores => m.cores = !m.cores,
             Item::AcqDrawPath => {
@@ -662,18 +649,11 @@ impl Ui {
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
                 m.hist = all[cycle(i, 3, d)];
             }
-            Item::GridBright => m.grid_bright = (m.grid_bright as i32 + 10 * d).clamp(10, 100) as u32,
-            Item::GridFrame => m.grid_frame = !m.grid_frame,
             Item::TrigNoise => m.trig_nrej = !m.trig_nrej,
             Item::TrigAutoNoise => m.auto_nrej = !m.auto_nrej,
             Item::TrigCoup => {
                 let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
                 m.trig_coup = TRIG_COUPS[cycle(i, TRIG_COUPS.len(), d)];
-            }
-            Item::GridStyle => {
-                let all = [Grid::Full, Grid::Light, Grid::None];
-                let i = all.iter().position(|&x| x == m.grid).unwrap();
-                m.grid = all[cycle(i, 3, d)];
             }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
@@ -857,7 +837,6 @@ impl Ui {
             Item::XyMode => self.xy = !self.xy,
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
-            Item::ColorGrade => self.m.color_grade = !self.m.color_grade,
             Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
             Item::StoreDest => {
                 let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);

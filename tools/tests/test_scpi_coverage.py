@@ -137,6 +137,20 @@ class Coverage(unittest.TestCase):
         self.assertEqual(self.result()["words-docs"], (["SOURce", "SECRet", "GRID"], 9))
         self.assertEqual(self.result()["fields-scpi"], ([], 4))
 
+    def test_the_rows_of_the_settings_table_count(self):
+        # a row with a command adds its nodes as words and its fields as reached; a row without one only its fields
+        folder = self.root / cov.SETTINGS_DIR
+        folder.mkdir(parents=True)
+        (folder / "display.rs").write_text(
+            'const T: [Setting; 2] = [\n'
+            '    Setting { key: "grid", scpi: Scpi::Cmd("GRID:STYLe"), get: |m| m.grid, put: |m, v| m.grid = v },\n'
+            '    Setting { key: "bar", scpi: Scpi::None { why: "x" }, get: |m| m.bar, put: |m, v| m.bar = v },\n'
+            '];\n')
+        (folder / "tests.rs").write_text('fn t() { let s = Setting { scpi: Scpi::Cmd("TEST") }; }\n')
+        self.assertEqual(cov.settings_rows(str(self.root)), [("GRID:STYLe", ["grid"]), (None, ["bar"])])
+        self.assertEqual(self.result()["words-docs"], (["SOURce", "SECRet", "GRID", "STYLe"], 10))
+        self.assertEqual(self.result()["fields-scpi"], (["bus", "bar"], 5))
+
     def test_prints_and_exits_0(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

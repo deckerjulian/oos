@@ -123,7 +123,6 @@ const VSYNCS: [VSync; 5] = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Eve
 const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
 const CURSORS: [CursorMode; 5] =
     [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
-const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 const VIDEO_STDS: [VideoStd; 2] = [VideoStd::Pal, VideoStd::Ntsc];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
 const POLS: [Pol; 2] = [Pol::Pos, Pol::Neg];
@@ -289,11 +288,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("seg_hw", m.seg_hw.to_string());
     kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
-    kv("persist", m.persist.to_string());
-    kv("intensity", m.intensity.to_string());
-    kv("grid", name(m.grid));
-    kv("grid_bright", m.grid_bright.to_string());
-    kv("grid_frame", m.grid_frame.to_string());
+    crate::settings::write(&crate::settings::display::VIEW, m, &mut kv);
     kv("windows", name(m.win_layout));
     kv("density", name(m.density));
     kv("split_pane", m.split_pane.to_string());
@@ -379,9 +374,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("auto_roll", m.auto_roll.to_string());
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
-    kv("color_grade", m.color_grade.to_string());
-    kv("dots", m.dots.to_string());
-    kv("bar", if m.bar_compact { "compact" } else { "cards" }.to_string());
+    crate::settings::write(&crate::settings::display::DRAW, m, &mut kv);
     kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
@@ -595,7 +588,7 @@ pub fn setup_text(m: &Model) -> String {
     s
 }
 
-fn p_bool(v: &str) -> Result<bool, String> {
+pub(crate) fn p_bool(v: &str) -> Result<bool, String> {
     match v {
         "true" | "on" | "1" => Ok(true),
         "false" | "off" | "0" => Ok(false),
@@ -607,7 +600,7 @@ fn p_f32(v: &str) -> Result<f32, String> {
     v.parse::<f32>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v))
 }
 
-fn p_u32(v: &str) -> Result<u32, String> {
+pub(crate) fn p_u32(v: &str) -> Result<u32, String> {
     v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
 }
 
@@ -624,7 +617,7 @@ fn tdiv_index(v: &str) -> Result<usize, String> {
     tscales().iter().position(|&s| (s - x).abs() <= s * 1e-3).ok_or_else(|| format!("no time/div step {}", v))
 }
 
-fn p_idx(v: &str, n: usize) -> Result<usize, String> {
+pub(crate) fn p_idx(v: &str, n: usize) -> Result<usize, String> {
     let i = v.parse::<usize>().map_err(|_| format!("not an index: {}", v))?;
     if i < n {
         Ok(i)
@@ -753,6 +746,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         return Ok(());
     }
+    // the keys of the settings table (settings.rs)
+    if let Some(s) = crate::settings::find(k) {
+        return s.load(m, v);
+    }
     let ntime = tscales().len();
     match k {
         "active" => m.active = p_idx(v, NCH)?,
@@ -817,11 +814,6 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "seg_hw" => m.seg_hw = p_bool(v)?,
         "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
-        "persist" => m.persist = p_idx(v, PERSIST.len())?,
-        "intensity" => m.intensity = p_u32(v)?.clamp(10, 100),
-        "grid" => m.grid = p_enum(v, &GRIDS)?,
-        "grid_bright" => m.grid_bright = p_u32(v)?.clamp(10, 100),
-        "grid_frame" => m.grid_frame = p_bool(v)?,
         "windows" => m.win_layout = p_enum(v, &WinLayout::ALL)?,
         "density" => m.density = p_enum(v, &Density::ALL)?,
         "split_pane" => m.split_pane = p_idx(v, crate::ui::PANES_N)?,
@@ -992,20 +984,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
         "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
-        "color_grade" => m.color_grade = p_bool(v)?,
-        "dots" => m.dots = p_bool(v)?,
         "draw_path" => {
             m.draw_batch = match v.trim() {
                 "batch" => true,
                 "standard" => false,
                 _ => return Err(format!("{:?}: standard or batch", v)),
-            }
-        }
-        "bar" => {
-            m.bar_compact = match v.trim() {
-                "compact" => true,
-                "cards" => false,
-                _ => return Err(format!("{:?}: cards or compact", v)),
             }
         }
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,

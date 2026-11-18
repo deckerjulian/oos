@@ -9,13 +9,15 @@
 ROOT is the top of a tree (default: this tree). Read from it as it is:
   words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs and the files of its
                  folder ui/src/scpi/, where <node> holds a node of the header (NODE below; not an argument such as
-                 `arg` or `item`), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
+                 `arg` or `item`), and the nodes of the commands of the settings table (`Scpi::Cmd("A:B")` in
+                 ui/src/settings/), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
                  in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
   queries-tests  the queries of docs/scpi.md (the first command of a table row, without its arguments, when it ends
                  in `?` or `[?]`) that no `scpi` line of ui/tests/scpi.txt asks, in the long or the short form;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
-                 and in the functions it hands `m` to) that the interpreter never names as `.field`. An upper bound:
+                 and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
+                 interpreter never names as `.field` and no row with a command reaches. An upper bound:
                  a field can be set by a command under another name, and some fields are no setting a remote
                  command should have.
 
@@ -32,6 +34,7 @@ SCPI_DIR = "ui/src/scpi"  # the rest of the interpreter, one file per subsystem
 SCPI_MD = "docs/scpi.md"
 SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
+SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
 
 # The expressions scpi.rs passes to kw() that hold a node of the header. Not counted: `a`, `arg`, `s`, `item`, `first`,
 # `z`, which hold arguments (`kw(first, "MAXimum")` reads the first argument of :MEASure:STATistic:ITEM?).
@@ -41,6 +44,8 @@ FIELD = re.compile(r"\bm\.([a-z_][a-z0-9_]*)\b(?!\s*\()")
 HANDS_M = re.compile(r"\b([a-z_][a-z0-9_]*)\(\s*m\s*,")
 SCPI_LINE = re.compile(r"^scpi\s+\S+\s+(.+)$")
 ROW = re.compile(r"^\|\s*`([^`]+)`")
+SETTING = re.compile(r"\bSetting\s*\{")
+SETTING_CMD = re.compile(r'Scpi::Cmd\("([A-Za-z0-9:]+)"\)')
 
 
 def read(root, rel):
@@ -153,14 +158,33 @@ def setup_fields(store_rs):
     return seen
 
 
+def settings_rows(root):
+    """The rows of the settings tables (the .rs files of ui/src/settings/ but its tests), in the order of the files:
+    for each its command (None without one) and the fields of the model it reaches (`m.<field>`)."""
+    folder = os.path.join(root, SETTINGS_DIR)
+    names = os.listdir(folder) if os.path.isdir(folder) else []
+    names = sorted(f for f in names if f.endswith(".rs") and f != "tests.rs")
+    rows = []
+    for name in names:
+        for part in SETTING.split(read(root, SETTINGS_DIR + "/" + name))[1:]:
+            cmd = SETTING_CMD.search(part)
+            rows.append((cmd.group(1) if cmd else None, list(dict.fromkeys(FIELD.findall(part)))))
+    return rows
+
+
 def counts(root):
     """The four gaps as (key, what, missing, total); missing is a list of names. The keys name the gaps in the
     summary, and are what a later --enforce keeps a number for."""
     scpi_rs, scpi_md, scpi_txt = read_interpreter(root), read(root, SCPI_MD), read(root, SCPI_TXT)
+    rows = settings_rows(root)
     words = command_words(scpi_rs)
+    for cmd, _ in rows:
+        words += [w for w in (cmd or "").split(":") if w and w.upper() not in (x.upper() for x in words)]
     queries = documented_queries(scpi_md)
     cmds = asked(scpi_txt)
     fields = setup_fields(read(root, STORE_RS))
+    fields += [f for f in dict.fromkeys(f for _, fs in rows for f in fs) if f not in fields]
+    reached = {f for cmd, fs in rows if cmd for f in fs}
     unasked = []
     for q in queries:
         pat = re.compile(query_pattern(q), re.IGNORECASE)
@@ -173,7 +197,7 @@ def counts(root):
          [w for w in words if not named(w, scpi_txt)], len(words)),
         ("queries-tests", "queries of %s not asked in %s" % (SCPI_MD, SCPI_TXT), unasked, len(queries)),
         ("fields-scpi", "setup fields of %s not named in %s (an upper bound)" % (STORE_RS, SCPI_RS),
-         [f for f in fields if not re.search(r"\." + f + r"\b", scpi_rs)], len(fields)),
+         [f for f in fields if f not in reached and not re.search(r"\." + f + r"\b", scpi_rs)], len(fields)),
     ]
 
 
