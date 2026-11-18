@@ -94,6 +94,37 @@ fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
 
+/// The waveform files named on the command line: every `--open FILE`, or a file given as the only argument (a
+/// file dropped on the program, or opened with it).
+fn files_to_open(args: &[String]) -> Vec<String> {
+    let mut files: Vec<String> = args.windows(2).filter(|pair| pair[0] == "--open").map(|pair| pair[1].clone()).collect();
+    if files.is_empty() && args.len() == 2 && !args[1].starts_with("--") {
+        files.push(args[1].clone());
+    }
+    files
+}
+
+/// Loads the files of `files_to_open` into the first empty reference slots, in order, and turns the analog
+/// inputs off unless the hardware was asked for: a capture is opened to be analysed, not shown over a demo signal.
+/// A file that cannot be read ends the program with its reason, before any window opens.
+fn open_files(ui: &mut Ui, args: &[String]) {
+    let files = files_to_open(args);
+    if files.is_empty() {
+        return;
+    }
+    if !args.iter().any(|a| a == "--hw" || a == "--fpga-live") {
+        ui.set_offline(true);
+    }
+    for file in &files {
+        let path = std::path::Path::new(file);
+        let loaded = store::read_waveform_file(path).and_then(|bytes| ui.load_waveform_auto(&bytes, &store::file_name(path)));
+        if let Err(reason) = loaded {
+            eprintln!("oos-ui: --open {file}: {reason}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn source(args: &[String]) -> Source {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--fpga-live") {
@@ -175,6 +206,8 @@ fn main() {
     if experimental {
         ui.toast("Experimental limits active (limits.conf), see System > System info");
     }
+    // before the script, the headless server or a window: all three start on the opened files
+    open_files(&mut ui, &args);
     if let Some(script) = arg(&args, "--script") {
         // host test runs store next to the script (build.sh: target/test-shots)
         if let Some(d) = std::path::Path::new(&script).parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -1094,5 +1127,28 @@ mod tests {
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/hdmi-workspace.png", d), store::png_of(&hc));
         }
+    }
+}
+
+#[cfg(test)]
+mod open_argument_tests {
+    use super::files_to_open;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("oos-ui").chain(list.iter().copied()).map(String::from).collect()
+    }
+
+    #[test]
+    fn every_open_flag_names_a_file_in_order() {
+        assert_eq!(files_to_open(&args(&["--open", "a.pwwf", "--size", "1672x941", "--open", "b.csv"])), ["a.pwwf", "b.csv"]);
+        assert!(files_to_open(&args(&["--offline", "--size", "1672x941"])).is_empty());
+        assert!(files_to_open(&args(&["--open"])).is_empty());
+    }
+
+    #[test]
+    fn a_file_as_the_only_argument_is_opened() {
+        assert_eq!(files_to_open(&args(&["captures/ch1.pwwf"])), ["captures/ch1.pwwf"]);
+        assert!(files_to_open(&args(&["--serve"])).is_empty());
+        assert!(files_to_open(&args(&["1672x941", "--offline"])).is_empty());
     }
 }
