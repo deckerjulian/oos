@@ -62,9 +62,14 @@ jobs:
           platforms: arm64
       - name: Rust
         run: |
-          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
+          # rustup without a Rust of its own: the tree's is the one rust-toolchain.toml names, with the scope's target
+          # (ADR 0045)
+          if ! command -v rustup >/dev/null; then
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+          rustup toolchain install --no-self-update
       - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
         env:
           GH_TOKEN: ${{ github.token }}

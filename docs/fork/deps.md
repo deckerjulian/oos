@@ -21,9 +21,10 @@ of its own.
 - What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
   `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
   ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
-- Not in the manifest: the Docker base images (`alpine:3.22` and `ubuntu:26.04`, named once in `tools/lib/docker.sh`),
-  busybox (Ubuntu's `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of
-  each build), the kernel base archive (`kernel/base.sha256`) and Rust crates (`Cargo.lock`).
+- Not in the manifest: the Rust tool chain (`rust-toolchain.toml`) and the Docker base images (`alpine:3.22` and
+  `ubuntu:26.04`, named once in `tools/lib/docker.sh` with their digests), both pinned (below), busybox (Ubuntu's
+  `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of each build), the
+  kernel base archive (`kernel/base.sha256`) and Rust crates (`Cargo.lock`).
 
 ## Rust crates
 
@@ -31,6 +32,30 @@ The four crates depend on `libc` and on each other only; `tools/check.sh target`
 ([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)). There is no build with
 platform crates any more: the Windows desktop build, which used `minifb` and `windows-sys`, is gone
 ([ADR 0033](../adr/process/0033-development-on-linux-macos-and-wsl.md)).
+
+## The Rust tool chain and the base images
+
+Both are pinned, so a build takes the same compiler and the same base images until a pull request changes them
+([ADR 0045](../adr/process/0045-the-toolchain-and-the-base-images-are-pinned.md)).
+
+- **Rust:** `rust-toolchain.toml` at the root of the tree names the release (`channel`), the components (rustfmt,
+  Clippy) and the target of the scope. rustup reads it from the folder of a crate upwards: `cargo` anywhere in the
+  tree runs that release, and `rustup toolchain install` in the tree installs it (CI does that; on a computer rustup
+  also fetches it when cargo first runs in the tree). Nothing installs Rust inside a container: the Rust programs
+  are built on the host.
+
+  To bump: set `channel` to the new release, run `tools/check.sh`, fix what it finds (a new Clippy lint, a changed
+  layout of rustfmt), all in one pull request. The weekly run tries the newest stable release against the tree (job
+  `canary`) and opens an issue when it fails.
+- **Base images:** `OOS_ALPINE` and `OOS_UBUNTU` in `tools/lib/docker.sh` are `name:tag@sha256:<digest>`. Docker takes
+  the image by its digest; the tag only says which release that is. The digest is the one of the index for all
+  platforms, so the same name serves an arm64 and an x86-64 host. It pins the base image, not what a build installs
+  on top: `apt-get install` and `apk add` take the packages of that release as they are on the day of the build.
+
+  To bump: `docker buildx imagetools inspect alpine:3.22` (and `ubuntu:26.04`) prints the `Digest:` the tag points
+  to now. Write it behind the tag, then build the image and run the sims (`boot/build-dev-image.sh`,
+  `tools/check.sh sim`); the build images are made again by themselves, their tag is a hash of their Dockerfile. A
+  new release of the distribution is the same edit with another tag. Nothing looks for a newer digest by itself.
 
 ## Checking for updates
 

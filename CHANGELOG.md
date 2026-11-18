@@ -55,6 +55,9 @@ Changed:
 - Image build: a new version in `rootfs/deps.lock` or a changed build script rebuilds wpa_supplicant, e2fsck, kexec,
   the GPU helper and Mesa by itself. Mesa comes from archive.mesa3d.org (same SHA-256), no Ubuntu source package is
   needed. Build images are made again when their Dockerfile changes.
+- Build: the Rust release (`rust-toolchain.toml`, 1.100.0) and the Docker base images (by digest, in
+  `tools/lib/docker.sh`) are pinned. `rustup toolchain install` in the tree installs that release, with the target for
+  the scope; CI and the image build use the same one (ADR 0045).
 - Card tools: `card-install.py`, `switch.py`, `sdcard-layout.py` and the image's `oos-oneshot` check the same stock
   partition-table marks, now including `recovery`.
 - Docs: overclocking above 1.25 GHz loses about 5 % of the samples at the full rate (unit), so frequencies read too
