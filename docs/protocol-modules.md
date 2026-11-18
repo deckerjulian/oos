@@ -28,8 +28,9 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
 1. **The decoder** goes into `oos-dsp` when it is more than a few lines: a function from `&[f32]` samples (volts, fixed
    `dt`) to `Vec<oos_dsp::decode::Packet>`, in the file of its protocol family under `dsp/src/decode/` (a new family
    gets its own file there), and a generator for its tests in `dsp/src/decode/gen/` (`decode::gen` shows the pattern:
-   a function that returns an `oos_dsp::sim::Logic`); its tests go into the family's module of `dsp/tests/decode/`. Packet times are fractional sample
-   indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
+   a function that returns an `oos_dsp::sim::Logic`); its tests go into the family's module of `dsp/tests/decode/`
+   (`dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` fails for a family without one). Packet times are
+   fractional sample indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.
@@ -38,11 +39,16 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
    list so that it is on by default). The position in the list is
    the position in the Decode menu, after the seven core protocols, which keep the first places.
 4. **Test**: `(cd ui && cargo test)`. Every module is checked automatically: key and name unique, option defaults in
-   range, and, when it has demo traffic, that it decodes its own demo without errors (`protocols::tests`). The Decode
-   menu of every protocol goes through the layout lints. Add the module's own tests next to it, and add it to the
-   list in `extended_decoders_decode_their_demo` (`ui/src/ui.rs`) with a time base that shows a whole frame and a field
+   range, and, when it has demo traffic, that it decodes its own demo without errors
+   (`ui/src/protocols/mod.rs::modules_decode_their_demo`). The Decode menu of every protocol goes through the layout
+   lints. Add the module's own tests next to it, and with demo traffic its case in
+   `ui/src/ui/tests.rs::extended_decoders_decode_their_demo`, with a time base that shows a whole frame and a field
    that must appear.
-5. **Try it** on the host: `cargo run` in `ui/` ([wiki/Building.md](../wiki/Building.md#try-it-without-a-scope)),
+5. **What is around it**: `ui/src/protocols/mod.rs::every_decoder_is_complete` names what a module still lacks. Its
+   key in `ui/tests/golden/decoder-keys.txt` (`OOS_BLESS=1 cargo test --locked -q protocols::tests` in `ui/` adds the
+   line), its name under Protocol decoders in `wiki/Features.md` and the number of decoders there and in `README.md`,
+   demo traffic or its entry in `NO_DEMO` with the reason, and the feature of its file.
+6. **Try it** on the host: `cargo run` in `ui/` ([wiki/Building.md](../wiki/Building.md#try-it-without-a-scope)),
    Decode > Protocol, decoder on. With demo traffic the signals come up on their channels by themselves.
 
 ## Leaving decoders out of a build

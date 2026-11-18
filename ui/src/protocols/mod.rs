@@ -537,4 +537,88 @@ mod tests {
             assert!(bad.is_none(), "{}: errors in its own demo: {:?}", m.name(), bad);
         }
     }
+
+    /// The modules without demo traffic, each with the reason: `modules_decode_their_demo` runs none of them, and
+    /// the host build shows no signal for them. A module in this list that has demo traffic fails the test, so the
+    /// list only gets shorter.
+    const NO_DEMO: [(&str, &str); 10] = [
+        ("Uart", "the demo source has UART traffic on CH3 by itself, whatever the decoder"),
+        ("Parallel", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/parallel.rs)"),
+        ("Cphy", "none written yet; the decoder is tested in oos-dsp (dsp/src/cphy.rs)"),
+        ("Manchester", "none written yet; the decoder is tested in oos-dsp (dsp/src/linecode.rs)"),
+        ("Mlt3", "none written yet; the decoder is tested in oos-dsp (dsp/src/linecode.rs)"),
+        ("ModbusAscii", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/modbus.rs)"),
+        ("Ds2482", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/onewire.rs)"),
+        ("Jtag", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/debug.rs)"),
+        ("Qspi", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/qspi.rs)"),
+        ("I3c", "none written yet; the decoder is tested in oos-dsp (dsp/tests/decode/i3c.rs)"),
+    ];
+
+    /// What a decoder needs besides its module, each failure with its name and the part that is missing: its key in
+    /// ui/tests/golden/decoder-keys.txt (a key never changes: `OOS_BLESS=1 cargo test --locked -q protocols::tests`
+    /// adds the line of a new one and no other), its name under Protocol decoders in wiki/Features.md, demo traffic
+    /// or the reason it has none, with demo traffic its case in `extended_decoders_decode_their_demo`, and for its
+    /// file the Cargo feature among the default ones. The number of decoders the wiki and README.md give is the
+    /// number registered.
+    #[test]
+    fn every_decoder_is_complete() {
+        use crate::ui::testkit::{count_of, document, exempt_once, names, section, stored_names};
+        let wiki = section(&document("wiki/Features.md"), "**Protocol decoders");
+        // the example module is compiled in the tests only
+        let mods: Vec<_> = MODULES.iter().filter(|m| m.key() != "Example").collect();
+        for m in &mods {
+            assert!(names(&wiki, m.name()), "{}: not named under Protocol decoders in wiki/Features.md", m.name());
+            match NO_DEMO.iter().find(|x| x.0 == m.key()) {
+                Some(x) => {
+                    assert!(m.demo().is_none(), "{}: it has demo traffic, take it out of NO_DEMO", m.key());
+                    assert!(!x.1.is_empty(), "{}: in NO_DEMO without a reason", m.key());
+                }
+                None => assert!(m.demo().is_some(), "{}: no demo traffic, and no reason in NO_DEMO", m.key()),
+            }
+        }
+        // the optional modules with demo traffic are shown on the screen of the demo by a test
+        let shown = include_str!("../ui/tests.rs");
+        let shown = shown.split_once("fn extended_decoders_decode_their_demo()").expect("the test of the demos").1;
+        let shown = shown.split_once("\n}\n").expect("its end").0;
+        for m in mods.iter().skip(7).filter(|m| m.demo().is_some()) {
+            let case = format!("m(\"{}\")", m.key());
+            assert!(
+                shown.contains(&case),
+                "{}: no case {} in extended_decoders_decode_their_demo (ui/src/ui/tests.rs)",
+                m.name(),
+                case
+            );
+        }
+        // a build with fewer decoders has fewer keys than the list, and fewer than the texts count
+        let whole = cfg!(feature = "decoders");
+        let keys: Vec<&str> = mods.iter().map(|m| m.key()).collect();
+        exempt_once("NO_DEMO", &NO_DEMO.map(|x| x.0), &keys, whole);
+        stored_names("decoder-keys.txt", &mods.iter().map(|m| m.key().to_string()).collect::<Vec<_>>(), whole);
+        if whole {
+            assert_eq!(count_of(&wiki, "Protocol decoders"), Some(mods.len()), "the number in wiki/Features.md");
+            assert_eq!(
+                count_of(&document("README.md"), "protocol decoders"),
+                Some(mods.len()),
+                "the number in README.md"
+            );
+        }
+        // every file here but the core ones is a feature of its own, on by default
+        let (toml, this) = (include_str!("../../Cargo.toml"), include_str!("mod.rs"));
+        let default = toml.lines().find(|l| l.starts_with("decoders = ")).expect("the decoders of ui/Cargo.toml");
+        for file in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src/protocols")).unwrap() {
+            let file = file.unwrap().file_name().into_string().unwrap();
+            let Some(name) = file.strip_suffix(".rs").filter(|n| !["mod", "core", "example"].contains(n)) else {
+                continue;
+            };
+            assert!(
+                toml.contains(&format!("\ndec-{} = []\n", name)),
+                "{}: no feature dec-{} in ui/Cargo.toml",
+                file,
+                name
+            );
+            assert!(default.contains(&format!("\"dec-{}\"", name)), "{}: dec-{} is not in `decoders`", file, name);
+            let line = format!("#[cfg(feature = \"dec-{}\")]\nmod {};\n", name, name);
+            assert!(this.contains(&line), "{}: no `mod {};` behind its feature in protocols/mod.rs", file, name);
+        }
+    }
 }

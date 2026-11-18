@@ -1,0 +1,33 @@
+# The keys of the protocol modules, as setups (`dec_proto = <key>`) and `decoders.off` of system.conf store them.
+# A key never changes and is never given to another decoder (docs/adr/code/0002): this list only gains lines.
+# `OOS_BLESS=1 cargo test --locked -q protocols::tests` in ui/ adds the line of a new decoder
+# (ui/src/protocols/mod.rs, every_decoder_is_complete).
+Uart
+I2c
+Spi
+Can
+Lin
+Parallel
+Cphy
+Dmx512
+Spdif
+UsbPd
+Dcc
+Manchester
+Mlt3
+Uart9
+ModbusRtu
+ModbusAscii
+OneWire
+Ds2482
+Swd
+Jtag
+Qspi
+I3c
+CanFd
+FlexRay
+Sent
+Arinc429
+Mil1553
+I2s
+Usb

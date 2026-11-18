@@ -228,6 +228,33 @@ A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everyw
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
 
+## Where a change goes
+
+Each kind of change has its place. The first seven are the kinds of extension: each has one place where it is
+declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and a test that names what is missing
+([ADR 0046](adr/process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md)).
+
+| A change of | Goes into | Kept complete by |
+|---|---|---|
+| a setting | a row of its group's table in `ui/src/settings/`; the setup file, SCPI, the menu row and the docs table follow | `ui/src/settings/tests.rs::every_row_is_complete` |
+| a measurement | a measurement module in `ui/src/measures/`, its numbers in `dsp/src/` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
+| a protocol decoder | a protocol module in `ui/src/protocols/`, the decoder in `dsp/src/decode/` | `ui/src/protocols/mod.rs::every_decoder_is_complete` |
+| a trigger type | `ui/src/model/trigger.rs`, the software trigger in `dsp/src/trigger.rs`, the hardware trigger in `hal/src/dho/tpu.rs` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
+| an analyser page | its file in `ui/src/ui/`, registered in `ui/src/ui/analysers.rs` | `ui/src/ui/analysers.rs::every_page_is_complete` |
+| a remote command | the interpreter, `ui/src/scpi.rs` and its subsystem's file in `ui/src/scpi/`; never a transport | `tools/scpi-coverage.py` |
+| a register sequence, a hardware fact | first `docs/protocols/`, then the block's module in `hal/src/dho/` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test`, `tools/compare-base.sh` |
+| a menu, a row, a dialog | `ui/src/ui/`: `item.rs` (the items and their parts), `menu_items.rs`, `menu_text.rs`, `menu_actions.rs`, `menu_dialog.rs` | `ui/src/ui/lint/menu_layout.rs::every_menu_fits`, `ui/src/ui/item.rs::no_menu_item_has_two_parts` |
+| the state of the scope, a default | `ui/src/model.rs` and `ui/src/model/` | the tests of `ui/src/model.rs` |
+| what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
+| signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
+| what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
+| a remote transport, a network service | its file in `ui/src/` (`http.rs`, `vxi11.rs`, `hislip.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
+| a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |
+| a decision others build on | a record in `docs/adr/` and its row in `docs/adr/README.md` | the pull request (ADR 0031) |
+
+The texts a change brings along are listed in [AGENTS.md](../AGENTS.md#keeping-the-texts-true).
+
 ## Data path of one acquisition (`hal::dho::seq`)
 
 ```
