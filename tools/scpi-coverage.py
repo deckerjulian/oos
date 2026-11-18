@@ -180,12 +180,13 @@ def cells(line):
 
 
 def sentences(text):
-    """The sentences of a paragraph, split at a `.` outside backticks that ends the text or is followed by a space."""
+    """The sentences of a paragraph, split at a `.`, `?` or `!` outside backticks that ends the text or is followed by a
+    space."""
     out, cur, inside = [], "", False
     for i, ch in enumerate(text):
         inside ^= ch == "`"
         cur += ch
-        if ch == "." and not inside and text[i + 1:i + 2] in ("", " "):
+        if ch in ".?!" and not inside and text[i + 1:i + 2] in ("", " "):
             out.append(cur)
             cur = ""
     return out + [cur] if cur.strip() else out

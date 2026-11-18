@@ -146,6 +146,9 @@ class Coverage(unittest.TestCase):
         self.assertEqual(cov.documented_queries(md), [])
         self.assertEqual(cov.sentences("A `:X:Y?` is `1.5`. B `:Z?`, e.g. two."),
                          ["A `:X:Y?` is `1.5`.", " B `:Z?`, e.g.", " two."])
+        # a sentence that ends with `?` or `!` ends the scope too
+        self.assertEqual(cov.documented_queries("Is `:SYSTem:ERRor?` empty? Then `:RUN?` fails! Ask `:STOP?`.\n"),
+                         [":SYSTem:ERRor?", ":RUN?", ":STOP?"])
 
     def test_every_command_of_the_first_cell(self):
         # a relative command replaces as many last nodes of the first one as it has, after `, ` or ` / `; one with as
