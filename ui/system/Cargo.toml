@@ -1,0 +1,24 @@
+[package]
+name = "oos-system"
+version = "0.0.0"
+repository = "https://github.com/dekajoule/oos"
+edition = "2021"
+description = "OOS: the system services of oos-ui (network, clock, system.conf, thread placement)"
+license = "GPL-2.0-or-later"
+publish = false
+
+# `testkit`: the helpers that the tests of oos-ui use too (a scratch directory, the test switches of netacl and
+# sysconf). oos-ui turns it on for its tests only (its dev-dependency); the program for the scope is built without.
+[features]
+testkit = []
+
+[dependencies]
+libc = "0.2"
+oos-hal = { path = "../../hal" }
+
+# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same two in every crate.
+[lints.clippy]
+# `!(dt > 0.0)` is meant: it is also true for NaN, and the signal paths rely on that
+neg_cmp_op_on_partial_ord = "allow"
+# index loops over several buffers of the same length read better than zipped iterators
+needless_range_loop = "allow"

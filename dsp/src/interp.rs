@@ -88,6 +88,16 @@ fn table_norm() -> &'static [f32] {
     })
 }
 
+/// The `2 * A` samples of `v` from `first` on, None when one of them is missing.
+fn window(v: &[f32], first: i64) -> Option<&[f32; 2 * A]> {
+    v.get(usize::try_from(first).ok()?..)?.first_chunk()
+}
+
+/// The `2 * A` weights of phase `p` in a kernel table (`table` or `table_norm`).
+fn weights(t: &[f32], p: usize) -> &[f32; 2 * A] {
+    &t.as_chunks().0[p]
+}
+
 /// The 16-term dot product of `lanczos8`, in four partial sums (vector registers; one long chain otherwise).
 #[inline(always)]
 fn dot16(s: &[f32; 2 * A], w: &[f32; 2 * A]) -> f32 {
@@ -109,14 +119,12 @@ pub fn lanczos8(v: &[f32], x: f64) -> Option<f32> {
     let i0 = x.floor() as i64;
     let p = (((x - i0 as f64) * PHASES as f64).round() as usize).min(PHASES);
     let first = i0 - A as i64 + 1;
-    if first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
+    if let Some(s) = window(v, first) {
         // inner part: all neighbours present, the weights of the phase sum to 1
-        let s: &[f32; 2 * A] = v[first as usize..first as usize + 2 * A].try_into().unwrap();
-        let w: &[f32; 2 * A] = table_norm()[p * 2 * A..(p + 1) * 2 * A].try_into().unwrap();
-        let y = dot16(s, w);
+        let y = dot16(s, weights(table_norm(), p));
         return if y.is_finite() { Some(y) } else { linear(v, x) };
     }
-    let w = &table()[p * 2 * A..(p + 1) * 2 * A];
+    let w = weights(table(), p);
     let (mut sum, mut wsum) = (0.0f32, 0.0f32);
     for (j, &wj) in w.iter().enumerate() {
         let i = first + j as i64;
@@ -142,14 +150,13 @@ pub fn lanczos8_grid(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>
         let x = x0 + k as f64 * step;
         let i0 = x.floor();
         let first = i0 as i64 - A as i64 + 1;
-        if x >= 0.0 && first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
-            let p = (((x - i0) * PHASES as f64).round() as usize).min(PHASES);
-            let s: &[f32; 2 * A] = v[first as usize..first as usize + 2 * A].try_into().unwrap();
-            let w: &[f32; 2 * A] = tn[p * 2 * A..(p + 1) * 2 * A].try_into().unwrap();
-            let y = dot16(s, w);
-            out.push(if y.is_finite() { y } else { linear(v, x).unwrap_or(f32::NAN) });
-        } else {
-            out.push(lanczos8(v, x).unwrap_or(f32::NAN));
+        match window(v, first) {
+            Some(s) if x >= 0.0 => {
+                let p = (((x - i0) * PHASES as f64).round() as usize).min(PHASES);
+                let y = dot16(s, weights(tn, p));
+                out.push(if y.is_finite() { y } else { linear(v, x).unwrap_or(f32::NAN) });
+            }
+            _ => out.push(lanczos8(v, x).unwrap_or(f32::NAN)),
         }
     }
 }

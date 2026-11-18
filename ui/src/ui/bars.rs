@@ -747,7 +747,8 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
     StatusBox {
         label: "WLAN",
         shown: |u| u.wlan_stick,
-        width: |u| if u.m.text_size == TextSize::Normal { 104 } else { u.net_box().w },
+        // as wide as LAN: room for an address (issue #23: at the normal text size 104 px were too narrow)
+        width: |u| u.net_box().w,
         chip: false,
         draw: |u, cv, r, label| u.draw_link(cv, r, label, u.addr_of(oos_hal::wlan::IFACE)),
         page: MenuId::Network,

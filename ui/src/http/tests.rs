@@ -1014,14 +1014,6 @@ fn empty_bode_address_keeps_the_setup_readable() {
     assert!(!ui.m.bode_usb && ui.m.bode_addr == "10.0.0.10");
 }
 
-#[test]
-fn base64_rfc4648() {
-    assert_eq!(base64(b""), "");
-    assert_eq!(base64(b"f"), "Zg==");
-    assert_eq!(base64(b"fo"), "Zm8=");
-    assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-}
-
 /// A port still taken when the web page and SCPI open theirs (the oos-ui before this one, ending; seen on the unit,
 /// #212): neither listens, and once the port is free `listen_again` takes it. Before, they stayed off until the next
 /// start.

@@ -12,7 +12,7 @@
 //! menu offers the ones the unit has, or the references while it measures them offline).
 
 use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
-use crate::ui::{CNT_MODES, DVM_MODES};
+use crate::model::{CNT_MODES, DVM_MODES};
 
 /// The rows of `:DVM`, for the docs table and the SCPI handler.
 pub const DVM_SLICES: [&[Setting]; 1] = [&DVM];
@@ -101,10 +101,10 @@ const DVM_NAMES: [&str; 3] = ["DC", "ACRMS", "ACDC"];
 /// `ACRMS`; the query answers `DC`, `ACRMS` or `ACDC`.
 const DVM_MODE_IO: CustomIo = CustomIo {
     store: |v| v.index().to_string(),
-    load: |t| crate::store::p_idx(t, DVM_NAMES.len()).map(Val::Index),
+    load: |t| crate::words::p_idx(t, DVM_NAMES.len()).map(Val::Index),
     query: |v| DVM_NAMES[v.index()].to_string(),
     take: |a| {
-        let kw = crate::scpi::kw;
+        let kw = crate::words::kw;
         if kw(a, "DC") {
             Some(Val::Index(0))
         } else if kw(a, "ACRMs") || a.eq_ignore_ascii_case("ACRMS") {

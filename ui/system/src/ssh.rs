@@ -57,7 +57,7 @@ impl Key {
     /// As `ssh-keygen -l` prints it: `SHA256:` and the unpadded base64 of the SHA-256 of the key.
     pub fn fingerprint(&self) -> String {
         let h = oos_hal::update::hash::sha256(&self.blob);
-        format!("SHA256:{}", crate::http::base64(&h).trim_end_matches('='))
+        format!("SHA256:{}", crate::base64::encode(&h).trim_end_matches('='))
     }
 
     pub fn short_kind(&self) -> &'static str {
@@ -74,45 +74,13 @@ impl Key {
 
     /// The line it is saved as.
     fn line(&self) -> String {
-        let b = crate::http::base64(&self.blob);
+        let b = crate::base64::encode(&self.blob);
         if self.comment.is_empty() {
             format!("{} {}", self.kind, b)
         } else {
             format!("{} {} {}", self.kind, b, self.comment)
         }
     }
-}
-
-fn b64_val(c: u8) -> Option<u32> {
-    Some(match c {
-        b'A'..=b'Z' => c - b'A',
-        b'a'..=b'z' => c - b'a' + 26,
-        b'0'..=b'9' => c - b'0' + 52,
-        b'+' => 62,
-        b'/' => 63,
-        _ => return None,
-    } as u32)
-}
-
-/// Standard base64 (RFC 4648), padding optional; None for anything else.
-pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    let t = s.trim_end_matches('=');
-    if s.len() - t.len() > 2 || t.len() % 4 == 1 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(t.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0);
-    for &c in t.as_bytes() {
-        acc = (acc << 6) | b64_val(c)?;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-            acc &= (1 << bits) - 1;
-        }
-    }
-    // the bits left over must be zero (one encoding per key)
-    (acc == 0).then_some(out)
 }
 
 /// The next SSH wire string (u32 big-endian length, bytes) of `b` from `*at`.
@@ -156,7 +124,7 @@ pub fn parse_line(line: &str) -> Result<Key, String> {
             "not a public key".into()
         });
     }
-    let blob = w.next().and_then(base64_decode).ok_or("key data is not base64")?;
+    let blob = w.next().and_then(crate::base64::decode).ok_or("key data is not base64")?;
     let mut at = 0;
     if wire_string(&blob, &mut at) != Some(kind.as_bytes()) {
         return Err("key data does not match its type".into());
@@ -397,18 +365,7 @@ mod tests {
     fn rsa_line(bits: usize) -> String {
         let mut n = vec![0u8; 1 + bits / 8];
         n[1] = 0x80;
-        format!("ssh-rsa {} r@h", crate::http::base64(&wire(&[b"ssh-rsa", &[1, 0, 1], &n])))
-    }
-
-    #[test]
-    fn base64_round_trip_and_rejects() {
-        for v in [&b""[..], b"f", b"fo", b"foo", b"foobar", &[0u8, 255, 128, 7, 9]] {
-            assert_eq!(base64_decode(&crate::http::base64(v)).as_deref(), Some(v));
-        }
-        assert_eq!(base64_decode("Zm9vYg").as_deref(), Some(&b"foob"[..]));
-        for bad in ["Zm9v!", "Z", "Zm9vY===", "Zh=="] {
-            assert_eq!(base64_decode(bad), None, "{}", bad);
-        }
+        format!("ssh-rsa {} r@h", crate::base64::encode(&wire(&[b"ssh-rsa", &[1, 0, 1], &n])))
     }
 
     #[test]
@@ -500,7 +457,7 @@ mod tests {
     #[test]
     fn saved_loaded_and_found_on_a_stick() {
         use std::os::unix::fs::PermissionsExt;
-        let d = crate::ui::testkit::Scratch::new("ssh");
+        let d = crate::testkit::Scratch::new("ssh");
         let _ = std::fs::remove_dir_all(&d);
         let ssh = d.join("ssh");
         assert_eq!(Keys::load(&ssh).unwrap(), Keys::default());

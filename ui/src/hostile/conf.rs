@@ -201,7 +201,7 @@ fn key_line(kind: &str, parts: &[&[u8]], comment: &str) -> String {
     for p in parts {
         blob.extend(wire(p));
     }
-    format!("{} {} {}", kind, crate::http::base64(&blob), comment)
+    format!("{} {} {}", kind, crate::base64::encode(&blob), comment)
 }
 
 /// `ssh::parse_line` and `Keys::import` (public keys from a stick, the trusted keys file): return for any text; a

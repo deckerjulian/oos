@@ -102,67 +102,8 @@ fn lower_priority() {
     #[cfg(target_os = "linux")]
     if !cfg!(test) {
         let tid = crate::system::idle_current_thread(WEB_NICE);
-        let _ = crate::system::pin_thread(tid, &little_cores());
+        let _ = crate::system::pin_thread(tid, &crate::placement::little_cores());
     }
-}
-
-/// The cores with less than the largest `cpu_capacity` (empty on a SoC whose cores are all alike, or without the
-/// file): where the background threads go.
-#[cfg(target_os = "linux")]
-fn little_cores() -> Vec<usize> {
-    static L: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        let cap: Vec<(usize, u32)> = (0..64)
-            .filter_map(|c| {
-                std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c))
-                    .ok()
-                    .and_then(|v| v.trim().parse().ok())
-                    .map(|v| (c, v))
-            })
-            .collect();
-        let max = cap.iter().map(|x| x.1).max().unwrap_or(0);
-        cap.iter().filter(|x| x.1 < max).map(|x| x.0).collect()
-    })
-    .clone()
-}
-
-/// The slower cores of a big.LITTLE SoC (RK3399: 0-3), empty where the cores are all alike.
-pub fn little_core_list() -> Vec<usize> {
-    #[cfg(target_os = "linux")]
-    return little_cores();
-    #[cfg(not(target_os = "linux"))]
-    Vec::new()
-}
-
-/// The calling thread onto `cores` (nothing when it is empty).
-pub fn pin_to(cores: &[usize]) {
-    #[cfg(target_os = "linux")]
-    let _ = crate::system::pin_current_thread(cores);
-    #[cfg(not(target_os = "linux"))]
-    let _ = cores;
-}
-
-/// The calling thread onto the slower cores of a big.LITTLE SoC (RK3399: the four A53), at normal priority: the
-/// measurements in the background (`ui::MeasWorker`); the threads it starts after this stay there too.
-pub fn to_little_cores() {
-    #[cfg(target_os = "linux")]
-    let _ = crate::system::pin_current_thread(&little_cores());
-}
-
-/// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
-/// System > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
-/// frame's compare took three times as long).
-#[cfg(target_os = "linux")]
-pub fn pin_to_big_cores() {
-    let little = little_cores();
-    let all: Vec<usize> = (0..64)
-        .filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists())
-        .collect();
-    let big: Vec<usize> = all.into_iter().filter(|c| !little.contains(c)).collect();
-    if big.is_empty() || little.is_empty() {
-        return;
-    }
-    let _ = crate::system::pin_current_thread(&big);
 }
 
 /// The fastest the live picture is made: 20 a second.
@@ -1145,18 +1086,6 @@ fn lxi_identification(o: &Offer) -> String {
     )
 }
 
-pub fn base64(d: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut o = String::with_capacity(d.len().div_ceil(3) * 4);
-    for c in d.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
-        for k in 0..4 {
-            o.push(if k <= c.len() { T[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' });
-        }
-    }
-    o
-}
-
 /// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
 pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Option<String> {
     use crate::json::{parse, J};
@@ -1224,7 +1153,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 J::Arr(vec![J::obj(&[
                     ("type", J::s("image")),
                     ("mimeType", J::s("image/png")),
-                    ("data", J::Str(base64(&crate::store::png_of(cv)))),
+                    ("data", J::Str(crate::base64::encode(&crate::store::png_of(cv)))),
                 ])]),
             )]),
             _ => return Some(err(id, -32602.0, "unknown tool")),

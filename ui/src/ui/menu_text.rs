@@ -66,23 +66,11 @@ impl Ui {
                 format!("Storage \u{b7} {} (lost at power-off)", self.save_dir().display())
             }
             MenuId::Storage => format!("Storage \u{b7} {}", self.save_dir().display()),
-            MenuId::Mask => "Mask test".into(),
-            MenuId::Zone => "Zone trigger".into(),
-            MenuId::Spectrum => "Spectrum analyser".into(),
-            MenuId::Eye => "Eye diagram / jitter".into(),
-            MenuId::Power => "Power analysis".into(),
-            MenuId::Identify => "Identify: tap to apply".into(),
-            MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Features => "Features".into(),
             MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
-            MenuId::Bode => "Bode plot".into(),
             MenuId::Sim => "SIM".into(),
             MenuId::SimAdvanced => "SIM advanced".into(),
-            MenuId::Magnetic => "Magnetic".into(),
-            MenuId::Inverter => "Inverter".into(),
-            MenuId::Dpt => "Double pulse".into(),
             MenuId::Afg => "Generator (GI/GO)".into(),
-            MenuId::BwTest => "Bandwidth test (step response)".into(),
             MenuId::ViewMore => self.view_name().into(),
             MenuId::La => self.la_title(),
             MenuId::LaLines => "Logic analyser \u{b7} lines shown".into(),
@@ -103,14 +91,11 @@ impl Ui {
                 self.pair_source_caption(self.meas_src_b)
             ),
             MenuId::Dvm => "DVM and counter".into(),
-            MenuId::Logger => "Data logger".into(),
             MenuId::Cursor => format!(
                 "Cursor · {}",
                 self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))
             ),
             MenuId::Display => "Display".into(),
-            MenuId::Windows => "Windows".into(),
-            MenuId::Utility => "System".into(),
             MenuId::Math => "Math".into(),
             MenuId::Ref => {
                 self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1), |r| {
@@ -121,6 +106,7 @@ impl Ui {
             MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
+                Some(p) if p.it == Item::NumEntry => self.numpad_title(),
                 Some(p) if p.it == Item::AfgFreqEntry => {
                     format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz"))
                 }

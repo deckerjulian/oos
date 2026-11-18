@@ -44,7 +44,7 @@ pub enum PairKind {
 }
 
 /// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still means the same row.
-pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
+pub const PAIRS: [(&str, PairKind, bool, bool); PAIRS_N] = [
     ("Delay rise-rise", PairKind::Delay, true, true),
     ("Delay fall-fall", PairKind::Delay, false, false),
     ("Delay rise-fall", PairKind::Delay, true, false),
@@ -63,10 +63,6 @@ pub const PAIRS: [(&str, PairKind, bool, bool); 17] = [
     ("Setup fall", PairKind::Setup, false, true),
     ("Hold fall", PairKind::Hold, false, true),
 ];
-
-/// DVM modes and counter modes.
-pub const DVM_MODES: [&str; 3] = ["DC", "AC rms", "AC+DC rms"];
-pub const CNT_MODES: [&str; 3] = ["Frequency", "Period", "Totalize"];
 
 /// One measurement as the screen shows it.
 pub(super) struct MeasRow {
@@ -101,8 +97,37 @@ impl MeasRow {
         } else if self.unit == "\u{b0}" {
             format!("{:.1}\u{b0}", v)
         } else {
-            si_digits(v, self.unit, digits)
+            meas_digits(v, self.unit, digits)
         }
+    }
+}
+
+/// Units that are not SI and take no prefix: "1.50 krpm" or "12.0 nppm" is not how they are written.
+const NO_PREFIX: [&str; 3] = ["ppm", "rpm", "rpm/s"];
+
+/// A measurement value as the screen writes it. A count (no unit, a whole number below 1e6) is an integer: "12". A
+/// ratio (no unit) and a unit of `NO_PREFIX` are a plain decimal with `digits` significant digits, in exponent form
+/// outside 1e-4..1e7: "0.498", "1500 rpm". Every other unit takes its SI prefix (`si_digits`).
+pub(super) fn meas_digits(v: f64, unit: &str, digits: usize) -> String {
+    if !unit.is_empty() && !NO_PREFIX.contains(&unit) {
+        return si_digits(v, unit, digits);
+    }
+    let text = if !v.is_finite() {
+        "----".to_string()
+    } else if unit.is_empty() && v == v.round() && v.abs() < 1e6 {
+        format!("{v:.0}")
+    } else if v != 0.0 && !(1e-4..1e7).contains(&v.abs()) {
+        format!("{:.*e}", digits.saturating_sub(1), v)
+    } else {
+        // the exponent after rounding to `digits`, so 9.996 is "10.0", not "10.00"
+        let e = format!("{:.*e}", digits.saturating_sub(1), v);
+        let exp = e.rsplit('e').next().and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
+        format!("{:.*}", (digits as i64 - 1 - exp).max(0) as usize, v)
+    };
+    if unit.is_empty() {
+        text
+    } else {
+        format!("{text} {unit}")
     }
 }
 

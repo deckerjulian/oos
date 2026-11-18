@@ -19,6 +19,8 @@ mod decode;
 mod defaults;
 mod display;
 mod generator;
+pub mod la;
+mod limits;
 mod math;
 mod trigger;
 
@@ -28,6 +30,7 @@ pub use channels::*;
 pub use decode::*;
 pub use display::*;
 pub use generator::*;
+pub use limits::*;
 pub use math::*;
 pub use trigger::*;
 
@@ -250,6 +253,17 @@ pub const HW_MIN_TDIV: f32 = 1e-9;
 
 /// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
 /// `HW_MIN_TDIV` (`hw_time_per_div`).
+/// The step of `ladder` nearest to `v`, by ratio (a 1-2-5 ladder: 0.37 is nearer to 0.5 than to 0.2).
+pub fn nearest_step(ladder: &[f32], v: f32) -> usize {
+    let mut best = 0;
+    for (i, &x) in ladder.iter().enumerate() {
+        if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
+            best = i;
+        }
+    }
+    best
+}
+
 pub fn tscales() -> Vec<f32> {
     // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn with the
     // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
@@ -480,7 +494,7 @@ pub struct Model {
     /// the one shown (0-based)
     pub view_cur: usize,
     /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
-    pub view_slots: [String; crate::ui::VIEWS_MAX],
+    pub view_slots: [String; VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -664,7 +678,7 @@ pub struct Model {
     /// size of the text on the screen
     pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
-    pub la: crate::ui::la::LaSet,
+    pub la: crate::model::la::LaSet,
     /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,

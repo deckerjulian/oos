@@ -88,8 +88,8 @@ fn segment_settings_round_trip() {
     let back = parse_setup(&setup_text(&m)).unwrap();
     assert_eq!((back.segments, back.seg_hw, back.seg_ivl), (20_000, true, 1e-3));
     let d = parse_setup("segments = 900000\nseg_interval = -1\n").unwrap();
-    assert_eq!((d.segments, d.seg_hw, d.seg_ivl), (crate::ui::SEG_HW_MAX, false, 0.0));
-    assert_eq!(parse_setup("seg_interval = 1e9\n").unwrap().seg_ivl, crate::ui::SEG_IVL_MAX);
+    assert_eq!((d.segments, d.seg_hw, d.seg_ivl), (crate::model::SEG_HW_MAX, false, 0.0));
+    assert_eq!(parse_setup("seg_interval = 1e9\n").unwrap().seg_ivl, crate::model::SEG_IVL_MAX);
 }
 
 #[test]
@@ -231,7 +231,7 @@ pub(super) fn custom() -> Model {
     m.mask_y = 1.25;
     m.mask_stop = true;
     m.quick = Quick::SaveCsv;
-    m.la = crate::ui::la::LaSet {
+    m.la = crate::model::la::LaSet {
         on: true,
         show: 0x0f0f,
         preset: [2, crate::ui::la::USER],
