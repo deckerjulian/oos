@@ -34,11 +34,13 @@ down and never one that went up. The layer `ratchet` of tools/check.sh runs --en
 reads files, touches no scope.
 """
 import argparse
+import importlib.util
 import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(TOOLS)
 SCPI_RS = "ui/src/scpi.rs"
 SCPI_DIR = "ui/src/scpi"  # the rest of the interpreter, one file per subsystem
 SCPI_MD = "docs/scpi.md"
@@ -46,6 +48,11 @@ SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
 SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
 NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
+
+# the file of the numbers that only go down, loaded by its path: `python3 -I` puts no folder of the tools on the path
+_spec = importlib.util.spec_from_file_location("ratchet_numbers", os.path.join(TOOLS, "ratchet_numbers.py"))
+numbers = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(numbers)
 
 # The queries of docs/scpi.md, as documented_queries spells them, that ui/tests/scpi.txt cannot ask, each with its
 # reason (like LEFT_OUT of the settings snapshot). They do not count toward queries-tests. A listed query that the
@@ -309,56 +316,8 @@ def counts(root):
 
 
 def read_numbers(root):
-    """tools/scpi-coverage.txt as {key: number}; empty when there is none. A line that is not `<count> <key>` is an
-    error."""
-    path = os.path.join(root, NUMBERS)
-    if not os.path.exists(path):
-        return {}
-    out = {}
-    for n, line in enumerate(read(root, NUMBERS).split("\n"), 1):
-        if not line.strip():
-            continue
-        parts = line.split()
-        if len(parts) != 2 or not parts[0].isdigit():
-            raise ValueError("%s:%d: not `<count> <key>`: %r" % (NUMBERS, n, line))
-        out[parts[1]] = int(parts[0])
-    return out
-
-
-def enforce(root, result, lower):
-    """Compares the count of each key with its number in tools/scpi-coverage.txt and prints a line for each; with
-    `lower` writes the counts that went down. Returns 0 when every count is its number (after --lower: when none went
-    up), else 1."""
-    kept = read_numbers(root)
-    now = {key: len(missing) for key, _, missing, _ in result}
-    bad, out = 0, {}
-    for key in sorted(set(kept) | set(now)):
-        was, count = kept.get(key), now.get(key)
-        if count is None:
-            print("unknown: %s %d is no count of this tool: remove its line" % (key, was))
-            bad = 1
-        elif was is None:
-            print("up: %s is new with %d: add `%d %s` to %s" % (key, count, count, key, NUMBERS))
-            bad = 1
-        elif count > was:
-            print("up: %s %d -> %d (--list names them)" % (key, was, count))
-            bad = 1
-            out[key] = was
-        elif count < was and lower:
-            print("lowered: %s %d -> %d" % (key, was, count))
-            out[key] = count
-        elif count < was:
-            print("down: %s %d -> %d (run tools/scpi-coverage.py --lower)" % (key, was, count))
-            bad = 1
-            out[key] = was
-        else:
-            out[key] = count
-    if lower:
-        with open(os.path.join(root, NUMBERS), "w", encoding="utf-8") as f:
-            f.write("".join("%d %s\n" % (out[k], k) for k in sorted(out)))
-    if not bad:
-        print("scpi-coverage: %d numbers as recorded in %s" % (len(out), NUMBERS))
-    return bad
+    """tools/scpi-coverage.txt as {key: number} (tools/ratchet_numbers.py)."""
+    return numbers.read(root, NUMBERS)
 
 
 def main(argv):
@@ -383,7 +342,7 @@ def main(argv):
         print("scpi-coverage: " + ", ".join("%s %d/%d" % (k, len(m), t) for k, _, m, t in result) +
               " missing (--list names them)")
     if args.enforce or args.lower:
-        return enforce(args.root, result, args.lower)
+        return numbers.enforce(args.root, NUMBERS, {k: len(m) for k, _, m, _ in result}, args.lower)
     return 0
 
 
