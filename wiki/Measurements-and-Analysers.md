@@ -6,6 +6,10 @@ A default set-up shows six measurements in the strip under the plot. The **Measu
 statistics. In **Measure > Add item** a tap adds a measurement of the source channel, and from 0.1.6 a second tap
 removes it again. **Measure > Dock** moves the strip to the left, the right, or above the trace.
 
+A value with an SI unit takes its prefix (`2.00 mV`). A count reads as a whole number (`12`), a ratio without unit as a
+plain decimal (`0.498`), and `ppm`, `rpm` and `rpm/s` take no prefix (`1500 rpm`). Over SCPI (`:MEAS:STRIP?`)
+the values come in exponent form.
+
 **Labels on trace** in the Measure menu draws what each measurement means, with level lines and arrows:
 
 ![Labels](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/labels.png)

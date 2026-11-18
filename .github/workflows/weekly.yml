@@ -68,7 +68,7 @@ jobs:
             echo "|---|---|---|"
           } >> "$GITHUB_STEP_SUMMARY"
           for c in hal dsp ui fpgad; do
-            (cd "$c" && cargo llvm-cov --locked --summary-only --json > "$RUNNER_TEMP/$c.json")
+            (cd "$c" && cargo llvm-cov --locked --workspace --summary-only --json > "$RUNNER_TEMP/$c.json")
             jq -r --arg c "$c" '.data[0].totals.lines | "| \($c) | \(.count) | \(.percent * 10 | round / 10) % |"' \
               "$RUNNER_TEMP/$c.json" | tee -a "$GITHUB_STEP_SUMMARY"
           done

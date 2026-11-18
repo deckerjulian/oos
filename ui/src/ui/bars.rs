@@ -33,11 +33,24 @@ impl Ui {
         Rect::new(top.right() - METRICS.edge - w, top.y + 5 - 2 * k, w, 30 + 4 * k)
     }
 
-    /// Left of the network box while a WLAN stick is plugged in.
-    pub(super) fn wlan_box(&self) -> Rect {
+    /// The status boxes that are there now, with where they stand: from the right edge of the bar to the left, in the
+    /// order of `STATUS_BOXES` (ADR 0063), 6 px apart.
+    pub(super) fn status_boxes(&self) -> Vec<(&'static StatusBox, Rect)> {
         let n = self.net_box();
-        let w = if self.m.text_size == TextSize::Normal { 104 } else { n.w };
-        Rect::new(n.x - 6 - w, n.y, w, n.h)
+        let mut x = n.right() + 6;
+        let mut out = Vec::new();
+        for b in STATUS_BOXES.iter().filter(|b| (b.shown)(self)) {
+            let w = (b.width)(self);
+            x -= 6 + w;
+            out.push((b, if b.chip { Rect::new(x, 5, w, 30) } else { Rect::new(x, n.y, w, n.h) }));
+        }
+        out
+    }
+
+    /// Where the status box `label` stands, while it is there.
+    #[cfg(test)]
+    pub(super) fn status_box(&self, label: &str) -> Option<Rect> {
+        self.status_boxes().into_iter().find(|(b, _)| b.label == label).map(|(_, r)| r)
     }
     /// Start menu button left of the channel cards (all menus and key functions by touch).
     /// The fork's compact bottom bar on the panel; `menu_btn` follows the frame on other screens.
@@ -125,37 +138,23 @@ impl Ui {
         (caption, live)
     }
 
-    /// While a Bluetooth stick is there: left of the network and WLAN boxes (a combo stick brings both).
-    pub(super) fn bt_box(&self) -> Rect {
-        let next = if self.wlan_stick { self.wlan_box().x } else { self.net_box().x };
-        Rect::new(next - 52, 5, 46, 30)
-    }
-
-    /// While a USB stick is mounted: left of the network, WLAN and Bluetooth boxes; the top-bar buttons move over for
-    /// it.
-    pub(super) fn usb_box(&self) -> Rect {
-        let next = match (self.bt_stick, self.wlan_stick) {
-            (true, _) => self.bt_box().x,
-            (false, true) => self.wlan_box().x,
-            _ => self.net_box().x,
-        };
-        Rect::new(next - 52, 5, 46, 30)
-    }
-
-    /// Where the buttons of the top bar end: the leftmost of the boxes on the right.
+    /// Where the buttons of the top bar end: the leftmost of the status boxes.
     pub(super) fn top_right(&self) -> i32 {
-        match (self.usb, self.bt_stick, self.wlan_stick) {
-            (true, _, _) => self.usb_box().x,
-            (false, true, _) => self.bt_box().x,
-            (false, false, true) => self.wlan_box().x,
-            _ => self.net_box().x,
+        self.status_boxes().last().map_or(self.net_box().x, |(_, r)| r.x)
+    }
+
+    /// The status boxes: drawn with their dot and text, the border in the accent while their page is open.
+    fn draw_status_boxes(&self, cv: &mut Canvas) {
+        for (b, r) in self.status_boxes() {
+            let open = self.menu_open && self.menu_root() == b.page;
+            cv.round(r, 5, if open { ACCENT } else { BTN_BORDER }, 255);
+            cv.round(r.inset(1), 4, BG, 255);
+            (b.draw)(self, cv, r, b.label);
         }
     }
 
-    /// A small box of the top bar: a dot (green: in use) and a short name, the border in the accent while `open`.
-    fn draw_chip(&self, cv: &mut Canvas, r: Rect, name: &str, used: bool, open: bool) {
-        cv.round(r, 5, if open { ACCENT } else { BTN_BORDER }, 255);
-        cv.round(r.inset(1), 4, BG, 255);
+    /// A small box of the top bar: a dot (green: in use) and a short name.
+    fn draw_chip(&self, cv: &mut Canvas, r: Rect, name: &str, used: bool) {
         cv.circle(r.x + 9, r.y + 15, 3, if used { GREEN } else { DIM });
         cv.text(&self.fonts().sb, r.x + 16, r.y + 20, name, TEXT);
     }
@@ -163,8 +162,6 @@ impl Ui {
     /// A box of the top bar with a state dot and two lines.
     fn draw_link(&self, cv: &mut Canvas, r: Rect, l1: &str, addr: Option<&str>) {
         let f = self.fonts();
-        cv.round(r, 5, if self.menu_open && self.menu_root() == MenuId::Network { ACCENT } else { BTN_BORDER }, 255);
-        cv.round(r.inset(1), 4, BG, 255);
         // first line under the top edge, the second on the bottom edge
         let (cap, y1) = (f.s.size * 72 / 100, r.y + 5 + f.s.size * 72 / 100);
         cv.circle(r.x + 11, y1 - cap / 2 + 1, 3, if addr.is_some() { GREEN } else { DIM });
@@ -274,32 +271,7 @@ impl Ui {
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
         }
-        // LAN: an address without a cable is only the fallback waiting for one
-        let lan = self.addr_of("eth0").filter(|_| self.eth_link);
-        self.draw_link(
-            cv,
-            self.net_box(),
-            if lan.is_none() {
-                "LAN"
-            } else if self.net_fixed {
-                "LAN \u{b7} local"
-            } else {
-                "LAN \u{b7} DHCP"
-            },
-            lan,
-        );
-        // WLAN, Bluetooth and USB sticks, while they are there; Bluetooth's dot is green while a device is connected
-        if self.wlan_stick {
-            self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
-        }
-        if self.bt_stick {
-            let open = self.menu_open && self.menu_root() == MenuId::Bluetooth;
-            self.draw_chip(cv, self.bt_box(), "BT", self.bt_inputs > 0, open);
-        }
-        if self.usb {
-            let open = self.menu_open && self.menu_root() == MenuId::Storage;
-            self.draw_chip(cv, self.usb_box(), "USB", true, open);
-        }
+        self.draw_status_boxes(cv);
     }
 
     /// Messages as an amber pill at the top centre of the plot; next to or under an open menu dialog that would
@@ -733,6 +705,71 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
         }
     }
 }
+
+/// A status box of the top bar (ADR 0063): something plugged in or connected, with its state, and its page a tap opens.
+pub(super) struct StatusBox {
+    /// its name, which a small box shows
+    pub label: &'static str,
+    /// whether it is there now
+    pub shown: fn(&Ui) -> bool,
+    /// its width
+    pub width: fn(&Ui) -> i32,
+    /// a small box of one line (30 px high) or, else, a box of two lines as high as the LAN box
+    pub chip: bool,
+    /// its dot and its text, inside the border; it is given the box's label
+    pub draw: fn(&Ui, &mut Canvas, Rect, &'static str),
+    /// the page a tap opens, and whose open menu lights its border
+    pub page: MenuId,
+}
+
+/// The status boxes, from the right edge of the top bar to the left: LAN always, WLAN, Bluetooth and USB while their
+/// stick is there. At most five (ADR 0063).
+pub(super) const STATUS_BOXES: [StatusBox; 4] = [
+    StatusBox {
+        label: "LAN",
+        shown: |_| true,
+        width: |u| u.net_box().w,
+        chip: false,
+        // an address without a cable is only the fallback waiting for one
+        draw: |u, cv, r, _| {
+            let lan = u.addr_of("eth0").filter(|_| u.eth_link);
+            let l1 = if lan.is_none() {
+                "LAN"
+            } else if u.net_fixed {
+                "LAN \u{b7} local"
+            } else {
+                "LAN \u{b7} DHCP"
+            };
+            u.draw_link(cv, r, l1, lan)
+        },
+        page: MenuId::Network,
+    },
+    StatusBox {
+        label: "WLAN",
+        shown: |u| u.wlan_stick,
+        width: |u| if u.m.text_size == TextSize::Normal { 104 } else { u.net_box().w },
+        chip: false,
+        draw: |u, cv, r, label| u.draw_link(cv, r, label, u.addr_of(oos_hal::wlan::IFACE)),
+        page: MenuId::Network,
+    },
+    // green while a mouse or keyboard is connected through the stick
+    StatusBox {
+        label: "BT",
+        shown: |u| u.bt_stick,
+        width: |_| 46,
+        chip: true,
+        draw: |u, cv, r, label| u.draw_chip(cv, r, label, u.bt_inputs > 0),
+        page: MenuId::Bluetooth,
+    },
+    StatusBox {
+        label: "USB",
+        shown: |u| u.usb,
+        width: |_| 46,
+        chip: true,
+        draw: |u, cv, r, label| u.draw_chip(cv, r, label, true),
+        page: MenuId::Storage,
+    },
+];
 
 #[cfg(test)]
 mod tests {

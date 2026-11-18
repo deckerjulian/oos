@@ -613,8 +613,8 @@ mod tests {
     fn the_top_bar_box_opens_the_page() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
         (u.bt_stick, u.wlan_stick) = (true, true);
-        let b = u.bt_box();
-        assert!(b.right() < u.wlan_box().x && u.top_right() == b.x);
+        let b = u.status_box("BT").unwrap();
+        assert!(b.right() < u.status_box("WLAN").unwrap().x && u.top_right() == b.x);
         u.tap(b.x + 5, b.y + 5);
         assert!(u.menu_open && u.menu == MenuId::Bluetooth);
         let at = |u: &mut Ui| {

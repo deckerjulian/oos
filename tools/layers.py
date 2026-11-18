@@ -70,16 +70,20 @@ DEPENDS = {  # Cargo.toml: (its count, the dependencies it may have)
     "dsp/Cargo.toml": ("dsp-hw", set()),
 }
 UI = "ui/src/"  # the sources of oos-ui
+# the crates of the workspace ui/ that a layer became (ADR 0064): main.rs brings their modules into the crate root of
+# oos-ui, so oos-ui names them from there (`crate::sysconf`) and they keep their rows in UI_LAYERS
+UI_CRATES = ("ui/system/src/",)
 OWN_FOLDER = ("main", "lib", "mod")  # files that are the module of their folder: main.rs, lib.rs, mod.rs
 # The layers inside oos-ui, lowest first (ADR 0049): (layer, the key of its count, the other layers it may name, its
 # modules). A module is named from the crate root (`board`, or `ui::la` for one file of a folder); the longest row
 # that begins a file's module places it. The last row is the wiring: the crate root (main.rs) belongs to it without
-# being named, and it may name everything.
+# being named, and it may name everything. The system services of base are the crate oos-system (ui/system/,
+# ADR 0064): main.rs brings them into the crate root, so oos-ui names them `crate::sysconf` and their rows stay here.
 UI_LAYERS = (
     ("base", "ui-base-up", "",
-     "clock drm ethlink font gfx hid hostname json layout mdns net net6 netacl placement remote sntp ssh sysconf system"
+     "base64 clock drm ethlink font gfx hid hostname json layout mdns net net6 netacl placement remote sntp ssh sysconf system"
      " usbtmc vpu"),
-    ("model", "ui-model-up", "base", "decode math model zone"),
+    ("model", "ui-model-up", "base", "decode math model words zone"),
     ("settings", "ui-settings-up", "base model", "settings"),
     ("board", "ui-board-up", "base model", "board"),
     ("signal", "ui-signal-up", "base model board",
@@ -205,6 +209,17 @@ def ui_modules(toks_of):
         return names[:-1] if names[-1] in OWN_FOLDER else names
 
     return {rel: module(rel) for rel in toks_of}
+
+
+def crate_modules(rels):
+    """The top modules of the crates of UI_CRATES among the paths `rels`: their files and folders below `src/`."""
+    out = set()
+    for rel in rels:
+        for src in UI_CRATES:
+            if rel.startswith(src):
+                top = rel[len(src):].split("/")[0]
+                out.add(top[:-len(".rs")] if top.endswith(".rs") else top)
+    return out - {"lib", "testkit"}
 
 
 def ui_layer(names, tops):

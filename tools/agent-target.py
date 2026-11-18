@@ -38,7 +38,7 @@ def needs_unit(path):
 
 def findings(crate):
     """{lint: {file: count}} of one crate; a finding in two targets of the crate counts once."""
-    run = subprocess.run(("cargo", "clippy", "--locked", "--all-targets", "--message-format=json"),
+    run = subprocess.run(("cargo", "clippy", "--locked", "--workspace", "--all-targets", "--message-format=json"),
                          cwd=os.path.join(ROOT, crate), capture_output=True, text=True)
     seen, out = set(), collections.defaultdict(collections.Counter)
     for line in run.stdout.splitlines():

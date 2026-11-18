@@ -6,6 +6,7 @@
 //! in `set`, and written in `setup_text` of store.rs; a key of the settings table (settings.rs) needs neither.
 
 use super::*;
+pub(crate) use crate::words::{p_bool, p_f32, p_f64, p_idx, p_u32};
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
@@ -15,47 +16,16 @@ const CURSORS: [CursorMode; 5] =
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
 const PARITIES: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
 
-pub(crate) fn p_bool(v: &str) -> Result<bool, String> {
-    match v {
-        "true" | "on" | "1" => Ok(true),
-        "false" | "off" | "0" => Ok(false),
-        _ => Err(format!("not a boolean: {}", v)),
-    }
-}
-
-pub(crate) fn p_f32(v: &str) -> Result<f32, String> {
-    v.parse::<f32>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v))
-}
-
-/// A number of an f64 field, as `str::parse` reads it: also `inf` and `NaN`, with its error text.
-pub(crate) fn p_f64(v: &str) -> Result<f64, String> {
-    v.parse::<f64>().map_err(|e| e.to_string())
-}
-
-pub(crate) fn p_u32(v: &str) -> Result<u32, String> {
-    v.parse::<u32>().map_err(|_| format!("not an integer: {}", v))
-}
-
 /// Old setup files stored an index into the 5 ns .. 1000 s ladder.
 fn legacy_tscale(v: &str, ntime: usize) -> Result<usize, String> {
     let five = tscales().iter().position(|&t| t >= 4.9e-9).unwrap_or(0);
     Ok(five.saturating_add(p_idx(v, ntime.saturating_sub(five).max(1))?))
 }
 
-/// Index below n.
 /// A time/div value as an index into `tscales()` (exact step, 0.1 % tolerance).
 fn tdiv_index(v: &str) -> Result<usize, String> {
     let x = p_f32(v)?;
     tscales().iter().position(|&s| (s - x).abs() <= s * 1e-3).ok_or_else(|| format!("no time/div step {}", v))
-}
-
-pub(crate) fn p_idx(v: &str, n: usize) -> Result<usize, String> {
-    let i = v.parse::<usize>().map_err(|_| format!("not an index: {}", v))?;
-    if i < n {
-        Ok(i)
-    } else {
-        Err(format!("{} out of range (< {})", i, n))
-    }
 }
 
 fn p_decode_source(v: &str) -> Result<usize, String> {
