@@ -86,6 +86,28 @@ class Duplicates(unittest.TestCase):
         self.assertEqual(self.blocks(root), ([], 0))
         self.assertEqual(self.blocks(root, loose=True), ([], 0))
 
+    def test_attributes_between_the_test_attribute_and_its_module(self):
+        # `#[cfg(test)]`, then `#[path]` or another attribute, then `mod`: test code as without them; the file a
+        # `#[path]` names is built for tests only, whatever its name
+        by_path = '#[cfg(test)]\n#[path = "helper.rs"]\nmod checks;\n'
+        allowed = "#[cfg(test)]\n#[allow(dead_code)]\n#[rustfmt::skip]\nmod tests {\n" + func("t", body(10)) + "}\n"
+        own = '#[path = "own.rs"]\nmod own;\n'  # no test: `#[cfg(test)]` is not above it
+        root = self.tree({
+            "ui/src/lib.rs": func("f", body(10)) + by_path + own + allowed,
+            "ui/src/helper.rs": func("h", body(10)),
+            "ui/src/checks.rs": "pub fn not_declared_by_that_name() {}\n",
+            "ui/src/own.rs": "pub fn own() {}\n",
+            "ui/src/ui/page.rs": '#[cfg(test)]\n#[path = "../shared_checks.rs"]\nmod shared;\n',
+            "ui/src/shared_checks.rs": func("s", body(10)),
+        })
+        texts = dup.read_tree(root)
+        self.assertEqual(sorted(texts), ["ui/src/checks.rs", "ui/src/lib.rs", "ui/src/own.rs", "ui/src/ui/page.rs"])
+        lines = texts["ui/src/lib.rs"].split("\n")
+        self.assertEqual(lines[12:20], ["", "", "mod checks;", '#[path = "own.rs"]', "mod own;", "", "", ""],
+                         "the attributes of a test module are blanked with it, the lines keep their numbers")
+        self.assertNotIn("fn t()", texts["ui/src/lib.rs"])
+        self.assertEqual(self.blocks(root), ([], 0))
+
     def test_the_test_attribute_does_not_lengthen_a_block(self):
         # the same 8 lines, each followed by `#[cfg(test)]` on a test-only function that differs: the attribute is
         # test syntax and must not count as a ninth equal line

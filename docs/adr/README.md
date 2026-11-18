@@ -66,6 +66,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | accepted |
 | [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | accepted |
 | [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only (amends ADR 0017) | proposed |
+| [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings are numbers that only go down | proposed |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | proposed |
 | [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit, and the comparison with the base covers the live paths | proposed |
 
