@@ -362,8 +362,9 @@ pub fn install(
 }
 
 /// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the device tree section
-/// the start runs with), the build; and for an image with another device tree, the tree to start it with (the new one
-/// with the loader's changes, `fdt::with_loader_changes`), which `kexec::load_with_tree` takes.
+/// the start runs with), the build; and, when the running build has kexec-tools, the tree to start it with
+/// (`fdt::with_loader_changes`: the new tree, or the running one for the same tree), which `kexec::load_with_tree`
+/// takes. None only without kexec-tools: then `kexec::load` (kexec_file_load) with the running tree.
 #[derive(Debug)]
 pub struct Staged {
     pub kernel: Vec<u8>,
@@ -379,8 +380,9 @@ pub struct Staged {
 ///
 /// `booted_dt`: the device tree section of the image the loader started (`kexec::BOOTED_DT`, saved by `oos-update
 /// boot`); without it only an image in `recovery` that is the running build (`running`) tells. `running_tree`: the tree
-/// the running kernel got (`/sys/firmware/fdt`), given when a kexec start with another tree can be made
-/// (`kexec::TOOL`); without it an image with another tree is refused.
+/// the running kernel got (`/sys/firmware/fdt`), given when the build has kexec-tools (`kexec::TOOL`): every kexec
+/// start then goes through them, also for the same tree. Without it an image with another tree is refused, and the
+/// same tree is started with kexec_file_load.
 pub fn kexec_stage(
     card: &mut Card,
     state_path: &Path,

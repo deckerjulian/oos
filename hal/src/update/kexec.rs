@@ -11,12 +11,15 @@
 //! device tree the scope started with (`/oos-kexec.dt`). Only that start, once it reached rcS and found the card and
 //! /oos, installs it (`oos-update boot`). A hang there: power-cycle; `recovery` still holds the running build.
 //!
-//! The device tree: `kexec_file_load` gives the new kernel the tree of the running one. An image whose `second` (the
-//! RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) is started with
-//! `kexec_load` instead, through kexec-tools (`TOOL`, `kexec -c --dtb`), with its own tree and the changes the loader
-//! made to the running one (`fdt::with_loader_changes`): the tree a power-on would give it. A build without the tool
-//! (0.1.6 and older) refuses such an image. What it does not try: the start runs on warm hardware, so a kernel that
-//! only fails from a cold start passes.
+//! The device tree and where the segments go: a build with kexec-tools (`TOOL`, 0.1.7 and later) starts every image
+//! with `kexec_load` through them (`kexec -c --dtb`, `load_with_tree`), above `segments_from`. An image whose `second`
+//! (the RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) gets its own tree
+//! with the changes the loader made to the running one (`fdt::with_loader_changes`): the tree a power-on would give
+//! it; the same tree is the running one without the old ramdisk. `kexec_file_load` (`load`) is left for a build
+//! without the tool: it keeps the running tree, but puts the initramfs right behind the new kernel, low in memory,
+//! over the loader's reserved ramdisk area and the GIC's tables when it is large (a 68 MB one on the unit: no root).
+//! A build without the tool refuses an image with another tree. What it does not try: the start runs on warm
+//! hardware, so a kernel that only fails from a cold start passes.
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
 //! `trial kexec` (`LINE`), which `oos-update pack` writes. Older packages install the direct way.
