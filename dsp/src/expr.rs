@@ -89,33 +89,26 @@ impl Parser<'_> {
         if depth > DEPTH_MAX {
             return Err("Nested too deep".into());
         }
-        self.product(depth)?;
-        loop {
-            if self.eat(b'+') {
-                self.product(depth)?;
-                self.ops.push(Op::Add);
-            } else if self.eat(b'-') {
-                self.product(depth)?;
-                self.ops.push(Op::Sub);
-            } else {
-                return Ok(());
-            }
-        }
+        self.left(depth, Self::product, [(b'+', Op::Add), (b'-', Op::Sub)])
     }
 
     fn product(&mut self, depth: usize) -> Result<(), String> {
-        self.unary(depth)?;
-        loop {
-            if self.eat(b'*') {
-                self.unary(depth)?;
-                self.ops.push(Op::Mul);
-            } else if self.eat(b'/') {
-                self.unary(depth)?;
-                self.ops.push(Op::Div);
-            } else {
-                return Ok(());
-            }
+        self.left(depth, Self::unary, [(b'*', Op::Mul), (b'/', Op::Div)])
+    }
+
+    /// A left-associative level: operands from `next`, joined by the operators `ops` (character, operation).
+    fn left(
+        &mut self,
+        depth: usize,
+        next: fn(&mut Self, usize) -> Result<(), String>,
+        ops: [(u8, Op); 2],
+    ) -> Result<(), String> {
+        next(self, depth)?;
+        while let Some(&(_, op)) = ops.iter().find(|(c, _)| self.eat(*c)) {
+            next(self, depth)?;
+            self.ops.push(op);
         }
+        Ok(())
     }
 
     fn unary(&mut self, depth: usize) -> Result<(), String> {
