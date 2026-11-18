@@ -59,13 +59,14 @@ dry=0
 # and a run that ends on that leaves the four answers as they were
 tries=${OOS_API_TRIES:-3}
 
-# gh api, tried again after a failure, 3 s apart; the output of the call that succeeded
+# gh api, tried again after a failure, 3 s apart (OOS_API_WAIT); the output of the call that succeeded. A status
+# written twice is harmless: GitHub shows the newest of a context, and both say the same.
 api() {
 	k=1
 	while ! out=$(gh api "$@"); do
 		[ "$k" -lt "$tries" ] || return 1
 		k=$((k + 1))
-		sleep 3
+		sleep "${OOS_API_WAIT:-3}"
 	done
 	printf '%s\n' "$out"
 }

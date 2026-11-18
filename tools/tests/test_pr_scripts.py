@@ -31,6 +31,8 @@ while [ $# -gt 0 ]; do
 done
 case $path in graphql) path="graphql_$(printf '%s' "$expr" | tr -dc 'a-z' | cut -c1-12)" ;; esac
 file="$FAKE_GH/$(printf '%s' "$path" | tr '/?=' '___').json"
+# a call that fails once: the marker goes with the first call
+[ -f "$file.fail" ] && { rm -f "$file.fail"; echo "unexpected end of JSON input" >&2; exit 1; }
 [ -f "$file" ] || { echo "no stand-in for $path" >&2; exit 1; }
 if [ -n "$expr" ]; then jq -r "$expr" "$file"; else cat "$file"; fi
 '''
@@ -133,11 +135,11 @@ class PullRequests(unittest.TestCase):
             {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs),
                                                          ("compare-calibrated", calibrated)) if keep]}))
 
-    def run_tool(self, tool):
+    def run_tool(self, tool, tries="1", ok=True):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
-                   OOS_REPO="owner/oos", OOS_API_TRIES="1")
+                   OOS_REPO="owner/oos", OOS_API_TRIES=tries, OOS_API_WAIT="0")
         out = subprocess.run(["sh", str(ROOT / "tools" / tool), "--dry", "7"], env=env, capture_output=True, text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.returncode == 0, ok, out.stderr)
         return out.stdout
 
     def gate(self):
@@ -193,6 +195,16 @@ class PullRequests(unittest.TestCase):
         for path in ("hal/src/dho/seq.rs", ".github/workflows/ci.yml", "tools/check.sh", "ui/tools/layout-check.sh"):
             self.pull(["ui/src/ui.rs", path], author="someone", body=unchanged)
             self.assertEqual(self.gate()["waited"], "pending", f"{path} is not seen by the comparison")
+
+    def test_a_failed_call_is_tried_again(self):
+        self.pull(["ui/src/ui.rs"])
+        self.copilot("### Looks good\n\n**No open issues** 🎉\n")
+        fail = lambda: (self.dir / "repos_owner_oos_pulls_7.json.fail").write_text("")
+        fail()
+        self.run_tool("pr-gate.sh", tries="1", ok=False)
+        fail()
+        gate = {l.split()[0]: l.split()[1] for l in self.run_tool("pr-gate.sh", tries="2").splitlines()}
+        self.assertEqual(gate["review"], "success", "the second try reads the pull request")
 
     def test_the_review(self):
         self.pull(["ui/src/ui.rs"], draft=True)
