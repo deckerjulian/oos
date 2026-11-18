@@ -160,7 +160,7 @@ fn hostile_mask_files() {
             if mf.v.is_empty() || mf.src.is_some_and(|s| s >= NCH) {
                 return Err(format!("accepted a mask of {} points for source {:?}", mf.v.len(), mf.src));
             }
-            if [mf.x, mf.y].iter().flatten().any(|t| !t.is_finite()) && !is_known("mask-tolerance-not-finite") {
+            if [mf.x, mf.y].iter().flatten().any(|t| !t.is_finite()) {
                 return Err(format!("accepted the tolerances {:?} and {:?}", mf.x, mf.y));
             }
             Ok(())
@@ -250,9 +250,9 @@ fn hostile_ppm_size_overflows() {
     assert_eq!(ppm_into(b"P6 65536 65536 255\n", &mut Canvas::new(16, 8)), None);
 }
 
+// Break it catches: a tolerance of the mask file taken without asking for a number (#181)
 #[test]
-#[ignore = "parse_mask takes tolerances that are infinite or no number, #181"]
-pub(crate) fn hostile_known_mask_tolerance_not_finite() {
+fn hostile_mask_tolerance_not_finite() {
     assert!(parse_mask("# OOS mask\nx=inf\n---\n1\n2\n").is_err(), "x = inf");
     assert!(parse_mask("# OOS mask\ny=NaN\n---\n1\n2\n").is_err(), "y = NaN");
 }

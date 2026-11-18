@@ -28,11 +28,6 @@ use crate::store::hostile_tests as files;
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
 pub(crate) const KNOWN: &[Known] = &[
     Known {
-        name: "mask-tolerance-not-finite",
-        what: "store::parse_mask takes tolerances that are infinite or no number",
-        repro: files::hostile_known_mask_tolerance_not_finite,
-    },
-    Known {
         name: "mdns-answer-it-cannot-read",
         what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
         repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,

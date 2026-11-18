@@ -180,6 +180,8 @@ Fixed:
   that `*IDN?` failed.
 - Waveform import: a CSV whose time column gives an infinite time step or start (`inf` as a time) is refused, as an
   `OOSW` file with such a time base is. It became a reference with an infinite time step.
+- Mask test: a mask file whose tolerance `x` or `y` is `inf` or `NaN` is refused with "Load failed"; such a
+  tolerance became the mask's margin.
 
 ## 0.1.13
 
