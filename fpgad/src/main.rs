@@ -231,28 +231,7 @@ fn main() {
     );
     oos_hal::model::init(platform);
     if cmd == "model" {
-        let p = oos_hal::model::platform();
-        println!("model     {}", p.ident());
-        println!("caps      {}", p.caps_line());
-        println!("series    {}, bandwidth code {}, EDU {}", p.caps.series, p.caps.bw_code, p.caps.edu);
-        println!("mac       {}", p.mac.as_deref().unwrap_or("-"));
-        let l = &p.limits;
-        println!("srate     {:?} Sa/s (1 / 2 / 3-4 channels)", l.max_srate);
-        println!("mem       {:?} pts, LA on {:?}", l.max_mem, l.max_mem_la);
-        println!(
-            "afg max   sine {} square {} ramp {} pulse {} noise {} Hz",
-            l.afg_max_hz.sine, l.afg_max_hz.square, l.afg_max_hz.ramp, l.afg_max_hz.pulse, l.afg_max_hz.noise
-        );
-        println!("clocks    ADC {} Hz, generator {} Hz", l.adc_clock_hz, l.afg_clock_hz);
-        for u in &p.unit {
-            println!("unit      {} ({})", u, oos_hal::model::UNIT_CONF);
-        }
-        for o in &p.overrides {
-            println!("EXPERIMENTAL  {}", o);
-        }
-        for w in &p.warnings {
-            println!("warning   {}", w);
-        }
+        print_model();
         return;
     }
     // another board (docs/porting.md): its registers are not those of the DHO800/DHO900
@@ -298,6 +277,37 @@ fn main() {
         }
         return;
     }
+    plan_run(cmd, &args);
+}
+
+/// `model`: model, serial, capabilities and limits of the unit, read only.
+fn print_model() {
+    let p = oos_hal::model::platform();
+    println!("model     {}", p.ident());
+    println!("caps      {}", p.caps_line());
+    println!("series    {}, bandwidth code {}, EDU {}", p.caps.series, p.caps.bw_code, p.caps.edu);
+    println!("mac       {}", p.mac.as_deref().unwrap_or("-"));
+    let l = &p.limits;
+    println!("srate     {:?} Sa/s (1 / 2 / 3-4 channels)", l.max_srate);
+    println!("mem       {:?} pts, LA on {:?}", l.max_mem, l.max_mem_la);
+    println!(
+        "afg max   sine {} square {} ramp {} pulse {} noise {} Hz",
+        l.afg_max_hz.sine, l.afg_max_hz.square, l.afg_max_hz.ramp, l.afg_max_hz.pulse, l.afg_max_hz.noise
+    );
+    println!("clocks    ADC {} Hz, generator {} Hz", l.adc_clock_hz, l.afg_clock_hz);
+    for u in &p.unit {
+        println!("unit      {} ({})", u, oos_hal::model::UNIT_CONF);
+    }
+    for o in &p.overrides {
+        println!("EXPERIMENTAL  {}", o);
+    }
+    for w in &p.warnings {
+        println!("warning   {}", w);
+    }
+}
+
+/// `plan` and `run`: the acquisition sequence of the options, printed, or with `run --execute` run on the unit.
+fn plan_run(cmd: &str, args: &[String]) {
     let o = match parse(&args[2..]) {
         Ok(o) => o,
         Err(e) => {
@@ -332,59 +342,63 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     {
-        let mut run = || -> Result<(), String> {
-            let mut bar = bar_checked()?;
-            let mut afe_bus =
-                if o.s.afe { Some(afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?) } else { None };
-            let mut c2h = c2h()?;
-            let t0 = std::time::Instant::now();
-            let log = |m: String| eprintln!("{:8.1} ms  {}", t0.elapsed().as_secs_f64() * 1e3, m);
-            let mut raw = oos_hal::dho::bus::DmaBuf::new();
-            let bytes = if o.s.frames > 1 {
-                // batch: configuration, then arm / wait for the ring / read the recorded frames (max 30 ms extra)
-                let mut state = seq::State::handover(o.app_mask, cal_adc.as_ref());
-                let (cfg, p) = state.configure(&o.s, cal.as_ref(), cal_adc.as_ref())?;
-                seq::execute(&cfg, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
-                let mut dma = oos_hal::dho::bus::DmaBuf::new();
-                let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
-                eprintln!(
-                    "{:8.1} ms  {} frames of {} bytes",
-                    t0.elapsed().as_secs_f64() * 1e3,
-                    n,
-                    seq::frame_bytes(&o.s, &p)
-                );
-                if o.raw_too {
-                    seq::read_raw_again(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut raw, n.max(1) - 1, log)?;
-                }
-                dma.into_vec()
-            } else {
-                let b = seq::execute(&st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
-                if o.raw_too {
-                    seq::read_raw_again(&mut state, &o.s, &plan_p, &mut bar, &mut c2h, &mut raw, 0, log)?;
-                }
-                b
-            };
-            if o.raw_too {
-                let path = format!("{}.raw", o.out);
-                std::fs::write(&path, raw.data()).map_err(|e| format!("{}: {}", path, e))?;
-                eprintln!(
-                    "{:8.1} ms  {} raw bytes of the same record -> {}",
-                    t0.elapsed().as_secs_f64() * 1e3,
-                    raw.data().len(),
-                    path
-                );
-            }
-            std::fs::write(&o.out, &bytes).map_err(|e| format!("{}: {}", o.out, e))?;
-            eprintln!("{:8.1} ms  {} bytes -> {}", t0.elapsed().as_secs_f64() * 1e3, bytes.len(), o.out);
-            Ok(())
-        };
-        if let Err(e) = run() {
+        if let Err(e) = run_execute(&o, &st, &mut state, &plan_p, cal.as_ref(), cal_adc.as_ref()) {
             eprintln!("oos-fpgad: {}", e);
             std::process::exit(1);
         }
     }
     #[cfg(not(target_os = "linux"))]
     eprintln!("oos-fpgad: run needs the unit (Linux)");
+}
+
+/// `run --execute`: the sequence (or the batch) on the unit, the frame to `--out`, with --raw-too the raw record.
+#[cfg(target_os = "linux")]
+fn run_execute(
+    o: &Opt,
+    st: &[Step],
+    state: &mut seq::State,
+    plan_p: &oos_hal::dho::hz::Params,
+    cal: Option<&afe::Cal>,
+    cal_adc: Option<&adc::CalAdc>,
+) -> Result<(), String> {
+    let mut bar = bar_checked()?;
+    let mut afe_bus = if o.s.afe { Some(afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?) } else { None };
+    let mut c2h = c2h()?;
+    let t0 = std::time::Instant::now();
+    let log = |m: String| eprintln!("{:8.1} ms  {}", t0.elapsed().as_secs_f64() * 1e3, m);
+    let mut raw = oos_hal::dho::bus::DmaBuf::new();
+    let bytes = if o.s.frames > 1 {
+        // batch: configuration, then arm / wait for the ring / read the recorded frames (max 30 ms extra)
+        let mut state = seq::State::handover(o.app_mask, cal_adc);
+        let (cfg, p) = state.configure(&o.s, cal, cal_adc)?;
+        seq::execute(&cfg, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
+        let mut dma = oos_hal::dho::bus::DmaBuf::new();
+        let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
+        eprintln!("{:8.1} ms  {} frames of {} bytes", t0.elapsed().as_secs_f64() * 1e3, n, seq::frame_bytes(&o.s, &p));
+        if o.raw_too {
+            seq::read_raw_again(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut raw, n.max(1) - 1, log)?;
+        }
+        dma.into_vec()
+    } else {
+        let b = seq::execute(st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
+        if o.raw_too {
+            seq::read_raw_again(state, &o.s, plan_p, &mut bar, &mut c2h, &mut raw, 0, log)?;
+        }
+        b
+    };
+    if o.raw_too {
+        let path = format!("{}.raw", o.out);
+        std::fs::write(&path, raw.data()).map_err(|e| format!("{}: {}", path, e))?;
+        eprintln!(
+            "{:8.1} ms  {} raw bytes of the same record -> {}",
+            t0.elapsed().as_secs_f64() * 1e3,
+            raw.data().len(),
+            path
+        );
+    }
+    std::fs::write(&o.out, &bytes).map_err(|e| format!("{}: {}", o.out, e))?;
+    eprintln!("{:8.1} ms  {} bytes -> {}", t0.elapsed().as_secs_f64() * 1e3, bytes.len(), o.out);
+    Ok(())
 }
 
 /// A made-up calibration set in the folder named (`oos_hal::dho::madeup`); no hardware access.

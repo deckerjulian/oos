@@ -60,8 +60,7 @@ impl oos_hal::dho::selfcal::CalHw for UnitHw {
 }
 
 pub(super) fn selfcal(a: &[String]) -> Result<(), String> {
-    #[cfg_attr(not(target_os = "linux"), allow(unused_imports))]
-    use oos_hal::dho::{calfile, selfcal as sc};
+    use oos_hal::dho::selfcal as sc;
     let what = a.first().map(|s| s.as_str()).ok_or("selfcal entry|zero|vertical --ch N ...")?;
     let get = |k: &str| opt(a, k).cloned();
     let has = |k: &str| flag(a, k);
@@ -97,16 +96,7 @@ pub(super) fn selfcal(a: &[String]) -> Result<(), String> {
         entries.len()
     );
     if !has("--execute") {
-        match what {
-            "zero" => println!("  3 AFE configurations {:?}, binary searches against the AFE comparators (reg 0 bits 1..3); the offset DAC is switched off meanwhile; table now {:?}", sc::ZERO_CONFIGS, cal.zero_trims(ch)),
-            _ => {
-                for g in &tuples {
-                    let e = entries.iter().find(|e| &e.g == g);
-                    println!("  {:?}: table scale {} nV/div, zero {}", g, e.map_or(f64::NAN, |e| e.scale), e.map_or(0, |e| e.zero));
-                }
-            }
-        }
-        eprintln!("oos-fpgad: dry run; add --execute (writes AFE registers and the offset DAC of CH{} only)", ch + 1);
+        selfcal_dry(what, ch, &cal, &entries, &tuples);
         return Ok(());
     }
     #[cfg(target_os = "linux")]
@@ -120,171 +110,249 @@ pub(super) fn selfcal(a: &[String]) -> Result<(), String> {
         let (steps, _) = state.configure(&st, Some(&cal), cal_adc.as_ref())?;
         let mut c2h = c2h()?;
         seq::execute(&steps, &mut bar, Some(&mut afe_bus), &mut c2h, |_| {})?;
+        let x = &Job {
+            args: a,
+            what,
+            ch,
+            var,
+            rigol: &rigol,
+            cal: &cal,
+            block: &block,
+            entries: &entries,
+            tuples: &tuples,
+        };
         if what == "adc" {
-            // only the ADC core gains/offsets of this channel (mode = the channel alone); --save writes /oos/cal
-            let cancel = || false;
-            let (mut bar, mut afe_bus) = (bar, afe_bus);
-            let base = cal_adc.as_ref().ok_or("no cal_adc.hex")?;
-            let mut unit = sc::Unit {
-                bar: &mut bar,
-                afe: &mut afe_bus,
-                c2h: &mut c2h,
-                state: &mut state,
-                cal: &cal,
-                cal_adc: Some(base),
-                cancel: &cancel,
-                adc_new: None,
-            };
-            let t0 = std::time::Instant::now();
-            let new = sc::adc_cores(&mut unit, base, &[ch], &mut |d, t, s| {
-                println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s)
-            })?;
-            use oos_hal::dho::adc::CalAdc;
-            let row = |c: &CalAdc, f: &dyn Fn(usize) -> usize| (0..8).map(|n| c.get16(f(n))).collect::<Vec<_>>();
-            println!(
-                "  gains   new {:?}  old {:?}",
-                row(&new, &|n| CalAdc::gain_at(ch, n)),
-                row(base, &|n| CalAdc::gain_at(ch, n))
-            );
-            println!(
-                "  offsets new {:?}  old {:?}",
-                row(&new, &|n| CalAdc::off_at(ch, n)),
-                row(base, &|n| CalAdc::off_at(ch, n))
-            );
-            if has("--save") {
-                calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", new.payload(), calfile::now())
-                    .map_err(|e| e.to_string())?;
-                println!("  saved {}/cal_adc.hex", calfile::OOS_CAL_DIR);
-            }
-            return Ok(());
+            return selfcal_adc(x, bar, afe_bus, &mut c2h, &mut state, cal_adc.as_ref());
         }
         if what == "all" {
-            // the whole self-cal of this channel through hal (as System > Self-cal): [--adc] ADC cores first,
-            // [--zero] AFE zero, the four vertical passes; --save writes /oos/cal
-            let cancel = || false;
-            let mut bar = bar;
-            let mut afe_bus = afe_bus;
-            let mut unit = sc::Unit {
-                bar: &mut bar,
-                afe: &mut afe_bus,
-                c2h: &mut c2h,
-                state: &mut state,
-                cal: &cal,
-                cal_adc: cal_adc.as_ref(),
-                cancel: &cancel,
-                adc_new: None,
-            };
-            let adc_base = if has("--adc") { cal_adc.as_ref() } else { None };
-            let t0 = std::time::Instant::now();
-            let mut last = String::new();
-            let r = sc::run_all_with(&mut unit, &cal, adc_base, &[ch], has("--zero"), &mut |d, t, s| {
-                if s != last {
-                    println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s);
-                    last = s.to_string();
-                }
-            })?;
-            println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
-            if has("--save") {
-                for f in sc::save(&r, &rigol)? {
-                    println!("  saved {}", f);
-                }
-            }
-            return Ok(());
+            return selfcal_all(x, bar, afe_bus, &mut c2h, &mut state, cal_adc.as_ref());
         }
-        let mut a = state.afe[ch].clone();
-        let mut hw = UnitHw { bar, afe: afe_bus, steps: 0 };
-        let t0 = std::time::Instant::now();
-        match what {
-            "zero" => {
-                let z = sc::afe_zero(&mut hw, &mut a, cal.zero_trims(ch))?;
-                println!("  new  {:?}\n  table {:?}  ({:.1} s)", z, cal.zero_trims(ch), t0.elapsed().as_secs_f64());
-                if has("--save") {
-                    let (b, from) = calfile::load_first("cal_afe_zero.hex", &[calfile::OOS_CAL_DIR, &rigol])
-                        .ok_or("no cal_afe_zero.hex")?;
-                    let p = sc::zero_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, ch, &z);
-                    calfile::save(calfile::OOS_CAL_DIR, "cal_afe_zero.hex", &p, calfile::now())
-                        .map_err(|e| e.to_string())?;
-                    println!("  saved {}/cal_afe_zero.hex (base: {})", calfile::OOS_CAL_DIR, from);
-                }
-            }
-            "probe" => {
-                // diagnostic: ADC means of the first configuration over the DAC window
-                use oos_hal::dho::selfcal::CalHw;
-                let g = tuples[0];
-                let mut o = Vec::new();
-                a.set_tuple(&mut o, g);
-                o.push(afe::Op::Gear { ch, gear: 1 });
-                a.apply_zero_trims(&mut o, &cal.zero_trims(ch), g[0], g[1]);
-                hw.apply(&o);
-                hw.sleep_ms(1000);
-                for code in [20000, 25000, 30000, 32000, 32768, 33500, 35000, 40000] {
-                    let mut o = Vec::new();
-                    a.set_dac(&mut o, code);
-                    hw.apply(&o);
-                    hw.sleep_ms(20);
-                    let m = oos_hal::dho::adc::measure(&mut hw.bar, &mut |ms| {
-                        std::thread::sleep(std::time::Duration::from_millis(ms as u64))
-                    });
-                    println!("  DAC {:5}: {:?}", code, m.map(|c| c.map(|x| x as u32)));
-                }
-            }
-            "entry" | "vertical" => {
-                let zt = cal.zero_trims(ch);
-                let mut got = Vec::new();
-                for g in &tuples {
-                    let Some(e) = sc::vertical_entry(&mut hw, &mut a, &cal, *g, &zt) else {
-                        println!("  {:?}: no result", g);
-                        continue;
-                    };
-                    let t = entries.iter().find(|x| x.g == *g);
-                    println!(
-                        "  {:?}: scale {:.0} nV/div (table {:.0}, {:+.2} %), zero {} (table {})  t {:.0} s",
-                        g,
-                        e.scale,
-                        t.map_or(f64::NAN, |t| t.scale),
-                        t.map_or(f64::NAN, |t| (e.scale / t.scale - 1.0) * 100.0),
-                        e.zero,
-                        t.map_or(0, |t| t.zero),
-                        t0.elapsed().as_secs_f64()
-                    );
-                    got.push(e);
-                }
-                if what == "vertical" && has("--save") {
-                    if got.len() < entries.len() {
-                        return Err(format!(
-                            "only {} of {} configurations measured: not saved",
-                            got.len(),
-                            entries.len()
-                        ));
-                    }
-                    let keys: Vec<i64> = (0..801).map(|i| cal.key(i)).collect();
-                    let mut nb = block.clone();
-                    sc::rebuild_scales(&mut nb, &keys, &got);
-                    let (b, from) = calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, &rigol])
-                        .ok_or("no cal_vertical.hex")?;
-                    let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, &[(var, ch, nb)]);
-                    calfile::save(calfile::OOS_CAL_DIR, "cal_vertical.hex", &p, calfile::now())
-                        .map_err(|e| e.to_string())?;
-                    println!(
-                        "  saved {}/cal_vertical.hex block group {} CH{} (base: {})",
-                        calfile::OOS_CAL_DIR,
-                        var,
-                        ch + 1,
-                        from
-                    );
-                }
-            }
-            _ => return Err("selfcal entry|zero|vertical".into()),
-        }
-        println!(
-            "  {} AFE write groups; re-run the normal set-up (oos-ui does) to leave the cal configuration",
-            hw.steps
-        );
-        Ok(())
+        selfcal_afe(x, bar, afe_bus, &state)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (tuples, block);
         Err("selfcal --execute needs the unit (Linux)".into())
     }
+}
+
+/// The dry run: what `what` would measure on channel `ch` and the table's values, nothing written.
+fn selfcal_dry(what: &str, ch: usize, cal: &afe::Cal, entries: &[oos_hal::dho::selfcal::Entry], tuples: &[[i32; 7]]) {
+    use oos_hal::dho::selfcal as sc;
+    match what {
+        "zero" => println!("  3 AFE configurations {:?}, binary searches against the AFE comparators (reg 0 bits 1..3); the offset DAC is switched off meanwhile; table now {:?}", sc::ZERO_CONFIGS, cal.zero_trims(ch)),
+        _ => {
+            for g in tuples {
+                let e = entries.iter().find(|e| &e.g == g);
+                println!("  {:?}: table scale {} nV/div, zero {}", g, e.map_or(f64::NAN, |e| e.scale), e.map_or(0, |e| e.zero));
+            }
+        }
+    }
+    eprintln!("oos-fpgad: dry run; add --execute (writes AFE registers and the offset DAC of CH{} only)", ch + 1);
+}
+
+/// What `selfcal` read from its options and the calibration files, for the runs on the unit.
+#[cfg(target_os = "linux")]
+struct Job<'a> {
+    args: &'a [String],
+    what: &'a str,
+    ch: usize,
+    var: usize,
+    rigol: &'a str,
+    cal: &'a afe::Cal,
+    block: &'a Vec<afe::Rec>,
+    entries: &'a [oos_hal::dho::selfcal::Entry],
+    tuples: &'a [[i32; 7]],
+}
+
+/// `selfcal adc`: only the ADC core gains/offsets of the channel; --save writes /oos/cal.
+#[cfg(target_os = "linux")]
+fn selfcal_adc(
+    x: &Job,
+    bar: oos_hal::dho::bus::Bar1,
+    afe_bus: afe::GpioAfe,
+    c2h: &mut std::fs::File,
+    state: &mut seq::State,
+    cal_adc: Option<&adc::CalAdc>,
+) -> Result<(), String> {
+    use oos_hal::dho::{calfile, selfcal as sc};
+    let has = |k: &str| flag(x.args, k);
+    let (ch, cal) = (x.ch, x.cal);
+    // only the ADC core gains/offsets of this channel (mode = the channel alone); --save writes /oos/cal
+    let cancel = || false;
+    let (mut bar, mut afe_bus) = (bar, afe_bus);
+    let base = cal_adc.ok_or("no cal_adc.hex")?;
+    let mut unit = sc::Unit {
+        bar: &mut bar,
+        afe: &mut afe_bus,
+        c2h,
+        state,
+        cal,
+        cal_adc: Some(base),
+        cancel: &cancel,
+        adc_new: None,
+    };
+    let t0 = std::time::Instant::now();
+    let new = sc::adc_cores(&mut unit, base, &[ch], &mut |d, t, s| {
+        println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s)
+    })?;
+    use oos_hal::dho::adc::CalAdc;
+    let row = |c: &CalAdc, f: &dyn Fn(usize) -> usize| (0..8).map(|n| c.get16(f(n))).collect::<Vec<_>>();
+    println!(
+        "  gains   new {:?}  old {:?}",
+        row(&new, &|n| CalAdc::gain_at(ch, n)),
+        row(base, &|n| CalAdc::gain_at(ch, n))
+    );
+    println!(
+        "  offsets new {:?}  old {:?}",
+        row(&new, &|n| CalAdc::off_at(ch, n)),
+        row(base, &|n| CalAdc::off_at(ch, n))
+    );
+    if has("--save") {
+        calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", new.payload(), calfile::now()).map_err(|e| e.to_string())?;
+        println!("  saved {}/cal_adc.hex", calfile::OOS_CAL_DIR);
+    }
+    Ok(())
+}
+
+/// `selfcal all`: the whole self-cal of the channel through hal (as System > Self-cal); --save writes /oos/cal.
+#[cfg(target_os = "linux")]
+fn selfcal_all(
+    x: &Job,
+    bar: oos_hal::dho::bus::Bar1,
+    afe_bus: afe::GpioAfe,
+    c2h: &mut std::fs::File,
+    state: &mut seq::State,
+    cal_adc: Option<&adc::CalAdc>,
+) -> Result<(), String> {
+    use oos_hal::dho::selfcal as sc;
+    let has = |k: &str| flag(x.args, k);
+    let (ch, cal, rigol) = (x.ch, x.cal, x.rigol);
+    // the whole self-cal of this channel through hal (as System > Self-cal): [--adc] ADC cores first,
+    // [--zero] AFE zero, the four vertical passes; --save writes /oos/cal
+    let cancel = || false;
+    let mut bar = bar;
+    let mut afe_bus = afe_bus;
+    let mut unit =
+        sc::Unit { bar: &mut bar, afe: &mut afe_bus, c2h, state, cal, cal_adc, cancel: &cancel, adc_new: None };
+    let adc_base = if has("--adc") { cal_adc } else { None };
+    let t0 = std::time::Instant::now();
+    let mut last = String::new();
+    let r = sc::run_all_with(&mut unit, cal, adc_base, &[ch], has("--zero"), &mut |d, t, s| {
+        if s != last {
+            println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s);
+            last = s.to_string();
+        }
+    })?;
+    println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
+    if has("--save") {
+        for f in sc::save(&r, rigol)? {
+            println!("  saved {}", f);
+        }
+    }
+    Ok(())
+}
+
+/// `selfcal zero|probe|entry|vertical`: the AFE passes of the channel through `UnitHw`.
+#[cfg(target_os = "linux")]
+fn selfcal_afe(x: &Job, bar: oos_hal::dho::bus::Bar1, afe_bus: afe::GpioAfe, state: &seq::State) -> Result<(), String> {
+    let (what, ch) = (x.what, x.ch);
+    let mut a = state.afe[ch].clone();
+    let mut hw = UnitHw { bar, afe: afe_bus, steps: 0 };
+    let t0 = std::time::Instant::now();
+    match what {
+        "zero" => selfcal_zero(x, &mut hw, &mut a, t0)?,
+        "probe" => selfcal_probe(x, &mut hw, &mut a)?,
+        "entry" | "vertical" => selfcal_vertical(x, &mut hw, &mut a, t0)?,
+        _ => return Err("selfcal entry|zero|vertical".into()),
+    }
+    println!("  {} AFE write groups; re-run the normal set-up (oos-ui does) to leave the cal configuration", hw.steps);
+    Ok(())
+}
+
+/// `selfcal zero`: the AFE zero trims against the table; --save writes /oos/cal.
+#[cfg(target_os = "linux")]
+fn selfcal_zero(x: &Job, hw: &mut UnitHw, a: &mut afe::Afe, t0: std::time::Instant) -> Result<(), String> {
+    use oos_hal::dho::{calfile, selfcal as sc};
+    let has = |k: &str| flag(x.args, k);
+    let (ch, cal, rigol) = (x.ch, x.cal, x.rigol);
+    let z = sc::afe_zero(hw, a, cal.zero_trims(ch))?;
+    println!("  new  {:?}\n  table {:?}  ({:.1} s)", z, cal.zero_trims(ch), t0.elapsed().as_secs_f64());
+    if has("--save") {
+        let (b, from) =
+            calfile::load_first("cal_afe_zero.hex", &[calfile::OOS_CAL_DIR, rigol]).ok_or("no cal_afe_zero.hex")?;
+        let p = sc::zero_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, ch, &z);
+        calfile::save(calfile::OOS_CAL_DIR, "cal_afe_zero.hex", &p, calfile::now()).map_err(|e| e.to_string())?;
+        println!("  saved {}/cal_afe_zero.hex (base: {})", calfile::OOS_CAL_DIR, from);
+    }
+    Ok(())
+}
+
+/// `selfcal probe`: ADC means of the first configuration over the DAC window (diagnostic).
+#[cfg(target_os = "linux")]
+fn selfcal_probe(x: &Job, hw: &mut UnitHw, a: &mut afe::Afe) -> Result<(), String> {
+    let (ch, cal, tuples) = (x.ch, x.cal, x.tuples);
+    // diagnostic: ADC means of the first configuration over the DAC window
+    use oos_hal::dho::selfcal::CalHw;
+    let g = tuples[0];
+    let mut o = Vec::new();
+    a.set_tuple(&mut o, g);
+    o.push(afe::Op::Gear { ch, gear: 1 });
+    a.apply_zero_trims(&mut o, &cal.zero_trims(ch), g[0], g[1]);
+    hw.apply(&o);
+    hw.sleep_ms(1000);
+    for code in [20000, 25000, 30000, 32000, 32768, 33500, 35000, 40000] {
+        let mut o = Vec::new();
+        a.set_dac(&mut o, code);
+        hw.apply(&o);
+        hw.sleep_ms(20);
+        let m = oos_hal::dho::adc::measure(&mut hw.bar, &mut |ms| {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64))
+        });
+        println!("  DAC {:5}: {:?}", code, m.map(|c| c.map(|x| x as u32)));
+    }
+    Ok(())
+}
+
+/// `selfcal entry|vertical`: the gain configurations against the table; vertical --save writes /oos/cal.
+#[cfg(target_os = "linux")]
+fn selfcal_vertical(x: &Job, hw: &mut UnitHw, a: &mut afe::Afe, t0: std::time::Instant) -> Result<(), String> {
+    use oos_hal::dho::{calfile, selfcal as sc};
+    let has = |k: &str| flag(x.args, k);
+    let (what, ch, var, rigol) = (x.what, x.ch, x.var, x.rigol);
+    let (cal, block, entries, tuples) = (x.cal, x.block, x.entries, x.tuples);
+    let zt = cal.zero_trims(ch);
+    let mut got = Vec::new();
+    for g in tuples {
+        let Some(e) = sc::vertical_entry(hw, a, cal, *g, &zt) else {
+            println!("  {:?}: no result", g);
+            continue;
+        };
+        let t = entries.iter().find(|x| x.g == *g);
+        println!(
+            "  {:?}: scale {:.0} nV/div (table {:.0}, {:+.2} %), zero {} (table {})  t {:.0} s",
+            g,
+            e.scale,
+            t.map_or(f64::NAN, |t| t.scale),
+            t.map_or(f64::NAN, |t| (e.scale / t.scale - 1.0) * 100.0),
+            e.zero,
+            t.map_or(0, |t| t.zero),
+            t0.elapsed().as_secs_f64()
+        );
+        got.push(e);
+    }
+    if what == "vertical" && has("--save") {
+        if got.len() < entries.len() {
+            return Err(format!("only {} of {} configurations measured: not saved", got.len(), entries.len()));
+        }
+        let keys: Vec<i64> = (0..801).map(|i| cal.key(i)).collect();
+        let mut nb = block.clone();
+        sc::rebuild_scales(&mut nb, &keys, &got);
+        let (b, from) =
+            calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, rigol]).ok_or("no cal_vertical.hex")?;
+        let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, &[(var, ch, nb)]);
+        calfile::save(calfile::OOS_CAL_DIR, "cal_vertical.hex", &p, calfile::now()).map_err(|e| e.to_string())?;
+        println!("  saved {}/cal_vertical.hex block group {} CH{} (base: {})", calfile::OOS_CAL_DIR, var, ch + 1, from);
+    }
+    Ok(())
 }
