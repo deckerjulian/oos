@@ -36,7 +36,6 @@ import importlib.util
 import os
 import re
 import sys
-import tomllib
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TOOLS)
@@ -153,22 +152,28 @@ def crossings(rel, text):
 
 def dependencies(root, rel):
     """[(line, name, text of the line)] of the dependencies of a Cargo.toml that build the crate: `[dependencies]`,
-    `[build-dependencies]`, and the same under `[target.*]`; not `[dev-dependencies]`."""
+    `[build-dependencies]`, and the same under `[target.*]`; not `[dev-dependencies]`. Read line by line (keys at the
+    start of a line, or a table `[...dependencies.<name>]`), so it runs on every Python 3 the tree's hosts have."""
     path = os.path.join(root, rel)
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        text = f.read()
-    data = tomllib.loads(text)
-    tables = [data] + list(data.get("target", {}).values())
-    parts = ("dependencies", "build-dependencies")
-    names = sorted({name for t in tables for part in parts for name in t.get(part, {})})
-    lines = text.split("\n")
-    out = []
-    for name in names:
-        at = re.compile(r"^\s*(?:" + re.escape(name) + r"\s*[.=]|\[.*dependencies\." + re.escape(name) + r"\])")
-        line = next((i for i, l in enumerate(lines, 1) if at.match(l)), 1)
-        out.append((line, name, lines[line - 1].strip()))
+        lines = f.read().split("\n")
+    table = re.compile(r"^\s*\[\s*(?:target\.(?:'[^']*'|\"[^\"]*\"|[^.\]]+)\.)?(build-dependencies|dependencies|[^\]]*)"
+                       r"(?:\.([A-Za-z0-9_-]+))?\s*\]")
+    key = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*[.=]")
+    out, inside = [], False
+    for i, line in enumerate(lines, 1):
+        t = table.match(line)
+        if t:
+            builds = t.group(1) in ("dependencies", "build-dependencies")
+            inside = builds and t.group(2) is None
+            if builds and t.group(2):
+                out.append((i, t.group(2), line.strip()))
+            continue
+        k = key.match(line) if inside else None
+        if k:
+            out.append((i, k.group(1), line.strip()))
     return out
 
 
