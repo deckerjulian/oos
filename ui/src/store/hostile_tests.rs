@@ -227,31 +227,6 @@ pub(crate) fn hostile_known_setup_refused_line_half_applied() {
     assert_eq!(m.bode_sw_time, Model::default().bode_sw_time, "and the refused line changes nothing");
 }
 
-/// The finding an input of `ppm_into` runs into, if any: the header read as the reader reads it.
-fn ppm_trap(b: &[u8]) -> Option<&'static str> {
-    if !b.starts_with(b"P6") {
-        return None;
-    }
-    let (mut p, mut fields) = (2, Vec::new());
-    while fields.len() < 3 {
-        while p < b.len() && (b[p].is_ascii_whitespace() || b[p] == b'#') {
-            if b[p] == b'#' {
-                while p < b.len() && b[p] != b'\n' {
-                    p += 1;
-                }
-            }
-            p += 1;
-        }
-        let s = p;
-        while p < b.len() && b[p].is_ascii_digit() {
-            p += 1;
-        }
-        fields.push(std::str::from_utf8(b.get(s..p)?).ok()?.parse::<i32>().ok()?);
-    }
-    let (w, h, max) = (fields[0] as i64, fields[1] as i64, fields[2]);
-    (max == 255 && w > 0 && h > 0 && w * h * 3 > i32::MAX as i64).then_some("ppm-size-overflows")
-}
-
 /// `ppm_into` (the power-on picture, `/etc/oos/splash.ppm` or one copied from removable media): returns for any
 /// bytes; a picture it takes has a size above zero whose pixels are all in the file.
 #[test]
@@ -262,16 +237,11 @@ fn hostile_power_on_picture() {
     wide.extend((0..40 * 3 * 3).map(|k| k as u8));
     let seeds: [&[u8]; 2] = [&small, &wide];
     let mut cv = Canvas::new(16, 8);
-    run("store::ppm_into", &seeds, 1, |b| {
-        if ppm_trap(b).is_some_and(is_known) {
-            return Ok(());
+    run("store::ppm_into", &seeds, 1, |b| match ppm_into(b, &mut cv) {
+        Some((w, h)) if w <= 0 || h <= 0 || (w as usize * h as usize * 3) > b.len() => {
+            Err(format!("took a picture of {w} x {h} from {} bytes", b.len()))
         }
-        match ppm_into(b, &mut cv) {
-            Some((w, h)) if w <= 0 || h <= 0 || (w as usize * h as usize * 3) > b.len() => {
-                Err(format!("took a picture of {w} x {h} from {} bytes", b.len()))
-            }
-            _ => Ok(()),
-        }
+        _ => Ok(()),
     });
 }
 
@@ -281,9 +251,9 @@ fn hostile_ppm_header_ends_in_a_comment() {
     assert_eq!(ppm_into(b"P6\n#", &mut Canvas::new(16, 8)), None);
 }
 
+// Break it catches: a size whose pixels are counted in i32 (#181)
 #[test]
-#[ignore = "ppm_into multiplies width and height as i32 and panics on a size past 2^31, #181"]
-pub(crate) fn hostile_known_ppm_size_overflows() {
+fn hostile_ppm_size_overflows() {
     assert_eq!(ppm_into(b"P6 65536 65536 255\n", &mut Canvas::new(16, 8)), None);
 }
 

@@ -173,6 +173,8 @@ Fixed:
   checkout without `local/`.
 - The power-on picture (`/etc/oos/splash.ppm`): one whose header ends inside a comment no longer ends oos-ui at the
   start; it is left out like any picture oos-ui cannot read.
+- The power-on picture: one that claims a size of 2^31 bytes of pixels or more (65536 x 65536) no longer ends
+  oos-ui; it is refused unless the file holds all its pixels.
 
 ## 0.1.13
 

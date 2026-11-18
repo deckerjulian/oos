@@ -28,11 +28,6 @@ use crate::store::hostile_tests as files;
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
 pub(crate) const KNOWN: &[Known] = &[
     Known {
-        name: "ppm-size-overflows",
-        what: "store::ppm_into multiplies width and height as i32 and panics on a size past 2^31",
-        repro: files::hostile_known_ppm_size_overflows,
-    },
-    Known {
         name: "mask-tolerance-not-finite",
         what: "store::parse_mask takes tolerances that are infinite or no number",
         repro: files::hostile_known_mask_tolerance_not_finite,
