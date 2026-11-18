@@ -73,7 +73,7 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
 pub(super) const FIRST_LEFT_MAX_S: f64 = 0.05;
 
 /// Whether frame 0 of a batch of several frames is left out (issue #5): on unless `acq.frame0 = keep` in
-/// system.conf.
+/// system.conf. In a small batch it is kept when its edge is at the trigger point (`frame0_left_out`).
 pub(super) fn frame0_drop() -> bool {
     static K: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *K.get_or_init(|| !FRAME0_KEEP.get())
@@ -82,13 +82,53 @@ pub(super) fn frame0_drop() -> bool {
 pub(super) const FRAME0_KEEP: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.frame0", env: None, on: "keep" };
 
 #[cfg(any(target_os = "linux", test))]
+/// Largest batch whose frame 0 is checked at the trigger point instead of left out unseen (issue #220). Frame 0 is the
+/// frame the FPGA held across the read-out and the arm (issue #5): usually a good trigger from just before the arm,
+/// now and then joined with older memory. At slow time bases a batch holds few frames (1 ms/div, 100 kpts: the held
+/// one and one more in the 25 ms wait), so leaving frame 0 out halved the records in the picture (unit 2026-11-18:
+/// 18 of 37 a second with 1 channel). Up to this size frame 0 is a quarter of the batch or more; a longer batch keeps
+/// the rule of #5 as it was verified on the unit (batches of 26 to 32 frames at 10 us/div).
+pub(super) const FRAME0_CHECK_MAX_FRAMES: usize = 4;
+
+/// Whether frame 0 of a batch of `avail` frames is worth the edge check (one more decode): the rule of #5 is on
+/// (`drop`), the batch holds several frames and at most `FRAME0_CHECK_MAX_FRAMES`, and the record is short enough for
+/// the decode (`FRAME1_CHECK_MAX` points).
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn frame0_check_wanted(avail: usize, drop: bool, memsel: u32) -> bool {
+    drop && (2..=FRAME0_CHECK_MAX_FRAMES).contains(&avail) && memsel <= FRAME1_CHECK_MAX
+}
+
+/// Whether frame 0 of a batch of `avail` frames is left out: never with the rule of #5 off (`drop` false) or in a
+/// batch of one (its only frame; the first batch after a change of settings has a rule of its own); in a batch of up
+/// to `FRAME0_CHECK_MAX_FRAMES` frames only when the edge check (`edge` of frame 0, None when not checked) does not put
+/// its edge at the trigger point; always in a longer batch. A trigger the check cannot judge leaves frame 0 out, as
+/// before.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn frame0_left_out(avail: usize, drop: bool, edge: Option<Edge>) -> bool {
+    drop && avail > 1 && !(avail <= FRAME0_CHECK_MAX_FRAMES && edge == Some(Edge::At))
+}
+
+/// What the edge check of a frame found (`edge_check`).
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Edge {
+    /// a trigger type, source or coupling the check cannot judge, or a frame too short for it
+    Unchecked,
+    /// a crossing of the level in the trigger's direction near the trigger point
+    At,
+    /// none: the frame is not the trigger it claims to be
+    Off,
+}
+
+#[cfg(any(target_os = "linux", test))]
 /// Samples around the trigger point in which frame 1's edge must lie (`frame1_off_trigger`); the hardware puts it
 /// within a few samples (unit 2026-11-16: +6.5 at 6.25 MSa/s).
 const FRAME1_SPAN: usize = 32;
 
-#[cfg(target_os = "linux")]
-/// Largest record whose frame 1 the batch path decodes for `frame1_off_trigger`: one more decode per batch, cheap for
-/// the short records batches are made of; a longer record is searched for its edge by the fast path anyway.
+#[cfg(any(target_os = "linux", test))]
+/// Largest record whose frame 1 the batch path decodes for `frame1_off_trigger` (and frame 0 of a small batch for
+/// `frame0_left_out`): one more decode per batch, cheap for the short records batches are made of; a longer record is
+/// searched for its edge by the fast path anyway.
 pub(super) const FRAME1_CHECK_MAX: u32 = 100_000;
 
 /// Counts a frame 1 left out (`frame1_off_trigger`) and logs the count at 1, 2, 4, 8, ...
@@ -112,18 +152,25 @@ pub(super) fn frame1_left_out() {
 /// reject coupling and no rising (falling, either) crossing of the level within `FRAME1_SPAN` samples of `pre`. Other
 /// trigger types cannot be checked this way and keep their frame 1.
 pub(super) fn frame1_off_trigger(f: &Frame, s: &Settings) -> bool {
+    edge_check(f, s) == Edge::Off
+}
+
+#[cfg(any(target_os = "linux", test))]
+/// The check of `frame1_off_trigger`: whether `f` has a crossing of the level in the trigger's direction within
+/// `FRAME1_SPAN` samples of `pre`, for an edge trigger on a channel with DC or HF reject coupling.
+pub(super) fn edge_check(f: &Frame, s: &Settings) -> Edge {
     use oos_hal::dho::tpu::{Coupling, Slope};
     if !matches!(s.trigger, oos_hal::dho::seq::Trig::Edge)
         || !(1..=4).contains(&s.trig_src)
         || !matches!(s.trig_couple, Coupling::Dc | Coupling::HfReject)
         || f.envelope
     {
-        return false;
+        return Edge::Unchecked;
     }
     let tc = (s.trig_src - 1) as usize;
     let v = &f.ch[tc];
     if v.len() < 2 * FRAME1_SPAN || f.pre >= v.len() {
-        return false;
+        return Edge::Unchecked;
     }
     // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
     let hyst = (0.2 * s.ch[tc].scale) as f32;
@@ -136,7 +183,7 @@ pub(super) fn frame1_off_trigger(f: &Frame, s: &Settings) -> bool {
         s.slope == Slope::Either,
         FRAME1_SPAN,
     )
-    .is_none()
+    .map_or(Edge::Off, |_| Edge::At)
 }
 
 /// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.

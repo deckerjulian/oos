@@ -114,6 +114,10 @@ Changed:
 
 Fixed:
 
+- Slow time bases put about every record in the picture again (issue #220): at 1 ms/div a batch holds the frame the
+  scope kept from before the arm and one more, and the first was always left out (issue #5), so only 18 of 37 records
+  a second were drawn. In a batch of up to four frames that frame is now kept when its edge is at the trigger point;
+  with other trigger types, and in longer batches, it is still left out. Host only; a run on a unit is to come.
 - SCPI and the web page come up when their port was still taken at the start (by the oos-ui before, ending): the
   port is tried again every second. Before, both stayed off until the next start, while mDNS still announced them.
 - Update: an image with a larger initramfs (a 48 MB package) stopped in a kernel panic at the restart into it

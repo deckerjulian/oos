@@ -297,8 +297,10 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   read) and waits up to 25 ms for them; a batch of two frames gives the screen one, as frame 0 is left out of a batch
   of several (issue #5, since 2026-11-16), in the batch path and the path without batches alike. The frame loop uses
   every record of batches of one frame (`batch_mode_uses_every_record_at_1_ms_per_div`), with the fast path's helpers
-  as before batch mode's changes, and the batch sizes are the acquisition thread's. Not yet known on the unit: whether
-  the batches there hold two frames (the `acquire_batch` log line, or `acq.frame0 = keep` as a check).
+  as before batch mode's changes, and the batch sizes are the acquisition thread's. Issue #220: the batches there hold
+  two frames (frame 0, held from before the arm, and one more in the 25 ms wait for a 16 ms record); frame 0 of a batch
+  of up to four is now kept when its edge is at the trigger point (acquisition-start.md, "Frames 0 and 1 of a batch").
+  Not yet run on the unit.
   `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
   40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53

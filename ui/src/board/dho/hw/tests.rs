@@ -6,8 +6,9 @@
 
 use super::decode::decode;
 use super::plan::{
-    batch_plan, deep_raw_settings, final_replay, frame1_off_trigger, prearm_keeps_replay, stop_plan, zone_batch,
-    zone_batch_from, FRAME0_KEEP, PREARM,
+    batch_plan, deep_raw_settings, edge_check, final_replay, frame0_check_wanted, frame0_left_out, frame1_off_trigger,
+    prearm_keeps_replay, stop_plan, zone_batch, zone_batch_from, Edge, FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP,
+    FRAME1_CHECK_MAX, PREARM,
 };
 use super::serial::{i2c_of, serial_debug, serial_lines_acquired, spi_of, uart_debug, uart_of, SERIAL_HW};
 use super::settings::{
@@ -603,6 +604,42 @@ fn frame1_without_its_edge_is_found() {
     assert!(!frame1_off_trigger(&frame(410), &Settings { trig_couple: oos_hal::dho::tpu::Coupling::Ac, ..s.clone() }));
     assert!(!frame1_off_trigger(&Frame { envelope: true, ..frame(410) }, &s));
     assert!(!frame1_off_trigger(&frame(410), &Settings { trig_src: 9, ..s.clone() }));
+}
+
+// Issue #220 on the unit (2026-11-18): at 1 ms/div a batch holds the held frame 0 and one more, so leaving frame 0
+// out unseen put 18 of 37 records a second in the picture. Break it catches: frame 0 of a small batch left out though
+// its edge is at the trigger point; frame 0 kept unchecked, kept when the check cannot judge it or finds it off, or
+// kept in a long batch (the rule of #5 as verified at 10 us/div); the extra decode for a batch of one or a long one.
+#[test]
+fn frame0_of_a_small_batch_is_kept_at_the_trigger_point() {
+    let s = Settings { level: 0.0, ..Settings::default() };
+    let frame = |edge: usize| {
+        let mut f = Frame { pre: 500, ..Frame::default() };
+        f.ch[0] = (0..1000).map(|i| if i >= edge { 1.0 } else { -1.0 }).collect();
+        f
+    };
+    assert_eq!(edge_check(&frame(506), &s), Edge::At);
+    assert_eq!(edge_check(&frame(410), &s), Edge::Off);
+    let timeout = Settings { trigger: oos_hal::dho::seq::Trig::Timeout { time: 1e-6 }, ..s.clone() };
+    assert_eq!(edge_check(&frame(410), &timeout), Edge::Unchecked);
+    // 1 ms/div, 100 kpts: a batch of two, frame 0 at the trigger point is kept
+    assert!(frame0_check_wanted(2, true, 100_000));
+    assert!(!frame0_left_out(2, true, Some(Edge::At)));
+    for small in 2..=FRAME0_CHECK_MAX_FRAMES {
+        assert!(frame0_left_out(small, true, Some(Edge::Off)), "{} frames, off the trigger", small);
+        assert!(frame0_left_out(small, true, Some(Edge::Unchecked)), "{} frames, a trigger not checked", small);
+        assert!(frame0_left_out(small, true, None), "{} frames, no check", small);
+    }
+    // a long batch (10 us/div: 26 to 32 frames) leaves it out whatever the check, and does not decode it for one
+    let long = FRAME0_CHECK_MAX_FRAMES + 1;
+    assert!(frame0_left_out(long, true, Some(Edge::At)));
+    assert!(!frame0_check_wanted(long, true, 1000));
+    // a batch of one keeps its only frame; `acq.frame0 = keep` keeps it everywhere, unchecked
+    assert!(!frame0_left_out(1, true, None) && !frame0_check_wanted(1, true, 1000));
+    assert!(!frame0_left_out(2, false, None) && !frame0_left_out(long, false, None));
+    assert!(!frame0_check_wanted(2, false, 1000));
+    // a record too long for the extra decode: left out unseen, as before
+    assert!(!frame0_check_wanted(2, true, FRAME1_CHECK_MAX + 1));
 }
 
 // Round 15: a trim right after the start-up mode switches read a settling front end. Break it catches: a trim
