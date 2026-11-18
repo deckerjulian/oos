@@ -76,6 +76,10 @@ class Headers(unittest.TestCase):
         self.assertFalse(met.has_header(spdx + "use a::b;\n//! too late\n"))
         self.assertFalse(met.has_header("/// a doc comment of an item\nfn f() {}\n"))
         self.assertFalse(met.has_header(""))
+        self.assertFalse(met.has_header("/* an example:\n//! not a header\n*/\nfn f() {}\n"))
+        self.assertFalse(met.has_header("/* outer /* nested */\n//! still a comment */\nfn f() {}\n"))
+        self.assertTrue(met.has_header("/* a note */\n/*! What it is for. */\nfn f() {}\n"))
+        self.assertTrue(met.has_header("#![cfg_attr(\n    test,\n    allow(dead_code)\n)]\n//! What it is for.\n"))
 
 
 class Tree(unittest.TestCase):

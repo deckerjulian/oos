@@ -108,12 +108,32 @@ def unwraps(text):
 
 
 def has_header(text):
-    """Whether a `//!` line comes before the first line of code; comments and inner attributes are no code."""
-    for line in text.split("\n"):
-        s = line.strip()
-        if s.startswith("//!"):
+    """Whether an inner doc comment (`//!` or `/*!`) comes before the first code; line and block comments (nested too)
+    and inner attributes (`#![..]`) are no code."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i].isspace():
+            i += 1
+        elif text.startswith(("//!", "/*!"), i):
             return True
-        if s and not s.startswith(("//", "#![")):
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif text.startswith("/*", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if text.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif text.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+        elif text.startswith("#![", i):
+            depth, i = 1, i + 3
+            while i < n and depth:
+                depth += {"[": 1, "]": -1}.get(text[i], 0)
+                i += 1
+        else:
             return False
     return False
 
