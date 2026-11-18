@@ -356,7 +356,15 @@ impl Ui {
     pub fn decode_busy(&self) -> bool {
         for k in 0..DECODERS {
             let model = self.m.dec_view(k);
-            if model.dec_on && Self::decoder_uses_refs(&model) {
+            if !model.dec_on {
+                continue;
+            }
+            let uses_raw = self.last[0].as_ref().is_some_and(|rec| {
+                rec.raw.as_ref().is_some_and(|raw| {
+                    !raw.frame.envelope && raw.frame.ch.get(model.dec_src).is_some_and(|v| v.len() >= 2)
+                })
+            });
+            if Self::decoder_uses_refs(&model) || uses_raw || model.deskew_ch.iter().any(|&shift| shift != 0.0) {
                 let _ = self.reference_decode_packets(&model);
             }
         }
