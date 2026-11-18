@@ -24,19 +24,7 @@ pub(crate) use gen::*;
 
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
-pub(crate) const KNOWN: &[Known] = &[
-    #[cfg(feature = "dec-qspi")]
-    Known {
-        name: "qspi-zero-frame",
-        what: "the QSPI decoder (oos-dsp) panics on a CS# frame that ends where it starts with a clock edge there",
-        repro: signals::hostile_known_qspi_zero_frame,
-    },
-];
-
-/// Whether the finding `name` is on `KNOWN`.
-pub(crate) fn is_known(name: &str) -> bool {
-    known(KNOWN, name)
-}
+pub(crate) const KNOWN: &[Known] = &[];
 
 // Break it catches: a finding that was fixed and is still stepped over
 #[test]

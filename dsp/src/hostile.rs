@@ -14,15 +14,11 @@ mod gen;
 
 use crate::decode::{self, Packet, Parity, QspiCfg, UsbSpeed};
 use crate::trigger::{find_all, Bit, Input, Pol, Slope, Trigger, VideoSync, When, WinWhen};
-use gen::{known, run, still_stand, Known};
+use gen::{run, still_stand, Known};
 
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
-const KNOWN: &[Known] = &[Known {
-    name: "qspi-frame-ends-before-it-starts",
-    what: "decode::qspi panics on a CS# frame that ends where it starts with a clock edge at that instant",
-    repro: hostile_known_qspi_frame_ends_before_it_starts,
-}];
+const KNOWN: &[Known] = &[];
 
 // Break it catches: a finding that was fixed and is still stepped over
 #[test]
@@ -176,9 +172,6 @@ fn hostile_decoder_records() {
     for (name, decoder) in DECODERS.iter().chain(&MORE_DECODERS) {
         run(&format!("decode::{name}"), &seeds, 1, |b| {
             let l = lines(b);
-            if qspi_trap(name, &l) && known(KNOWN, "qspi-frame-ends-before-it-starts") {
-                return Ok(());
-            }
             let p = decoder(&l);
             if let Some(x) = p.iter().find(|x| !(x.t0.is_finite() && x.t1.is_finite())) {
                 return Err(format!("a packet from {} to {}: {:?}", x.t0, x.t1, x.kind));
@@ -191,34 +184,13 @@ fn hostile_decoder_records() {
     }
 }
 
-/// The finding `qspi-frame-ends-before-it-starts`, if this record runs into it: a CS# frame that ends at or before
-/// its start (samples so far apart that both crossings land on one instant) with a clock edge at that instant.
-fn qspi_trap(name: &str, l: &[Vec<f32>; 4]) -> bool {
-    if !name.starts_with("qspi") {
-        return false;
-    }
-    let (cs, sck) = (&l[2], &l[1]);
-    let clk: Vec<f64> = crate::edges::edges(sck, THR, HY).iter().filter(|e| e.rising).map(|e| e.t).collect();
-    let low = crate::edges::states(cs, THR, HY).iter().flatten().next() == Some(&false);
-    let mut open = low.then_some(0.0);
-    for e in crate::edges::edges(cs, THR, HY) {
-        if !e.rising {
-            open = Some(e.t);
-        } else if let Some(start) = open.take() {
-            if clk.iter().any(|&t| t <= start && t >= e.t) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
+// Break it catches: a CS# frame that ends where it starts, with a clock edge at that instant, panics (#181)
 #[test]
-#[ignore = "decode::qspi panics on a CS# frame that ends where it starts with a clock edge there, #181"]
-fn hostile_known_qspi_frame_ends_before_it_starts() {
+fn hostile_qspi_frame_ends_before_it_starts() {
     // CS# falls and rises between samples so far apart that both crossings are at sample 1; so is the clock's edge
     let (cs, sck) = ([1e30f32, 0.0, 1e17], [0.0f32, 0.0, 1e30]);
-    decode::qspi(&cs, &sck, &[&cs], &QspiCfg::new(1, 1, 1, 3, 0, false), true, THR, HY);
+    let p = decode::qspi(&cs, &sck, &[&cs], &QspiCfg::new(1, 1, 1, 3, 0, false), true, THR, HY);
+    assert!(p.is_empty(), "a frame of no time holds no clock edge: {p:?}");
 }
 
 /// `edges`, `trigger_edges`, `states` (the comparators under every trigger and decoder) and `trigger::find_all`
