@@ -150,6 +150,22 @@ fn jitter_pll_tracks_slow_wander() {
     assert!(e.eye_width(p.period) > 0.5e-6, "{}", e.eye_width(p.period));
 }
 
+/// A loop bandwidth at or above the edge rate (the gain grew without bound, the period went to zero or below and the
+/// tick loop ran until memory ran out) gives a clock with one tick per UI over the record.
+#[test]
+fn jitter_pll_with_a_bandwidth_near_the_edge_rate_ends() {
+    let rate = 1e6;
+    let mut g = Gauss(7);
+    let bits = prbs7(2000);
+    let (v, dt) = nrz(&bits, rate, 16, 0.2, &mut |_, _| g.next(0.02e-6));
+    for bw in [0.5 * rate, rate, 10.0 * rate, 1e12, f64::INFINITY] {
+        let p = eye::recover_clock_pll(&v, dt, 0.5, 0.1, Some(rate), bw, true).unwrap();
+        assert!(p.ticks.windows(2).all(|w| w[1] > w[0]), "bw {bw}: a tick step is not positive");
+        let n = p.ticks.len() as f64;
+        assert!(close(n, 2000.0, 0.1 * 2000.0), "bw {bw}: {n} ticks for 2000 UI");
+    }
+}
+
 /// Square of 0/1 V edges at `rate` UI/s with ramps of `tr` s, quantised to `lsb`, `n` samples of `dt`.
 fn clean_square(rate: f64, tr: f64, dt: f64, n: usize, lsb: f64, noise: f64, g: &mut Gauss) -> Vec<f32> {
     let ui = 1.0 / rate;
