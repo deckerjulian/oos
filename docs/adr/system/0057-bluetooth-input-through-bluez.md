@@ -58,7 +58,7 @@ its clients over D-Bus.
 - How it is known (ADR 0015): verified on the unit (DHO924S, 2026-11-15 to 18): the stick's ids and interfaces, the
   modules and the firmware load, a BLE keyboard with touchpad paired, used and reconnected after a power cycle, and on
   2026-11-18 the oos-ui of main after #216 (Bluetooth page, input through sysfs, the `BT` box). Not yet verified on
-  hardware: a classic (BR/EDR) device, two at once.
+  hardware: a classic (BR/EDR) device, two at once, long runs.
 - Worth a second look if BlueZ's size in the image becomes a problem. The WLAN half of the stick: ADR 0027.
 
 ## References
