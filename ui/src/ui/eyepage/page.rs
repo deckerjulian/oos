@@ -313,21 +313,28 @@ impl From<&Model> for FactSettings {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What the facts of the page are computed from: the clock with the TIE of its edges and the trend of that, the
+/// jitter and the eye measured so far, the samples of the eye source (`wave`, `dt` seconds apart) and the edge means.
+#[derive(Clone, Copy)]
+pub(super) struct FactInput<'a> {
+    pub clk: &'a eye::Clock,
+    pub tie: &'a [f64],
+    pub trend: &'a [f32],
+    pub j: &'a Jitter,
+    pub meas: &'a eye::EyeMeas,
+    pub wave: &'a [f32],
+    pub dt: f64,
+    pub means: &'a EdgeMeans,
+}
+
 pub(super) fn populate_eye_facts(
     page: &mut Page,
     settings: FactSettings,
-    clk: &eye::Clock,
-    tie: &[f64],
-    trend: &[f32],
-    j: &Jitter,
-    meas: &eye::EyeMeas,
-    wave: &[f32],
-    dt: f64,
-    means: &EdgeMeans,
+    input: FactInput,
     rail: Option<(&[f32], f64)>,
     companion: Option<(&[f32], &[f32], f64)>,
 ) -> (Vec<Cell>, Vec<Cell>, Vec<Cell>) {
+    let FactInput { clk, tie, trend, j, meas, wave, dt, means } = input;
     let few = format!("needs {} edges", eye::MIN_EDGES);
     let miss = |l| cell(l, few.clone(), Kind::Missing);
     if j.fit == JitterFit::TooFew {
