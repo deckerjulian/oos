@@ -7,15 +7,15 @@
     tools/scpi-coverage.py --list [ROOT]   each count with the names behind it
 
 ROOT is the top of a tree (default: this tree). Read from it as it is:
-  words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs where <node> holds a
-                 node of the header (NODE below; not an argument such as `arg` or `item`), that docs/scpi.md does
-                 not name. A word is named in a file when `[:*]Word\\b` is in it, ignoring case, or when it follows
-                 `{` or `|` as one of the choices of `{A|B}`;
+  words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs and the files of its
+                 folder ui/src/scpi/, where <node> holds a node of the header (NODE below; not an argument such as
+                 `arg` or `item`), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
+                 in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
   queries-tests  the queries of docs/scpi.md (the first command of a table row, without its arguments, when it ends
                  in `?` or `[?]`) that no `scpi` line of ui/tests/scpi.txt asks, in the long or the short form;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
-                 and in the functions it hands `m` to) that ui/src/scpi.rs never names as `.field`. An upper bound:
+                 and in the functions it hands `m` to) that the interpreter never names as `.field`. An upper bound:
                  a field can be set by a command under another name, and some fields are no setting a remote
                  command should have.
 
@@ -28,6 +28,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCPI_RS = "ui/src/scpi.rs"
+SCPI_DIR = "ui/src/scpi"  # the rest of the interpreter, one file per subsystem
 SCPI_MD = "docs/scpi.md"
 SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
@@ -45,6 +46,16 @@ ROW = re.compile(r"^\|\s*`([^`]+)`")
 def read(root, rel):
     with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as f:
         return f.read()
+
+
+def read_interpreter(root):
+    """ui/src/scpi.rs and every .rs file below ui/src/scpi/, in the order of their paths, as one text."""
+    text = read(root, SCPI_RS)
+    for top, dirs, files in sorted(os.walk(os.path.join(root, SCPI_DIR))):
+        dirs.sort()
+        for name in sorted(f for f in files if f.endswith(".rs")):
+            text += "\n" + read(root, os.path.relpath(os.path.join(top, name), root))
+    return text
 
 
 def named(word, text):
@@ -145,7 +156,7 @@ def setup_fields(store_rs):
 def counts(root):
     """The four gaps as (key, what, missing, total); missing is a list of names. The keys name the gaps in the
     summary, and are what a later --enforce keeps a number for."""
-    scpi_rs, scpi_md, scpi_txt = read(root, SCPI_RS), read(root, SCPI_MD), read(root, SCPI_TXT)
+    scpi_rs, scpi_md, scpi_txt = read_interpreter(root), read(root, SCPI_MD), read(root, SCPI_TXT)
     words = command_words(scpi_rs)
     queries = documented_queries(scpi_md)
     cmds = asked(scpi_txt)
