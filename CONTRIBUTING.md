@@ -6,6 +6,8 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 
 ## Ground rules
 
+- **Be kind.** Issues, pull requests, reviews and the forum follow the
+  [code of conduct](CODE_OF_CONDUCT.md) (the Contributor Covenant 2.1). Where to ask what: [SUPPORT.md](SUPPORT.md).
 - **Independent reimplementation.** The tree holds only black-box descriptions of the scope and code written to them.
   A description says what goes in and comes out at the scope's interfaces (registers, buses, signals, the stock SCPI,
   the vendor's published documents), as behaviour, in your own words. A hardware fact your code needs and `docs/`
