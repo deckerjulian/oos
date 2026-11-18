@@ -85,38 +85,14 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
 /// limit and mask of `m.ser`; I2C addresses and data need the frame around them (`points`).
 pub fn matches(m: &Model, p: &Packet) -> bool {
     let v = m.trig_bus_val;
-    if let Some(r) = m.dec_proto.module().and_then(|x| x.trigger_match(m.trig_bus, v as u32, p)) {
-        return r;
-    }
-    let v32 = v as u32;
     if matches!(m.dec_proto, Proto::UART | Proto::SPI) && m.trig_bus == BusWhat::Data {
         return p.kind == Kind::Data && m.ser.rel.test(p.value as u64, v, m.ser.max, m.ser.mask);
     }
     if m.dec_proto == Proto::I2C && matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
         return false;
     }
-    let v = v32;
-    match m.trig_bus {
-        BusWhat::Frame => match p.kind {
-            Kind::Start | Kind::Break | Kind::Word { cmd: true } => true,
-            Kind::Data => matches!(m.dec_proto, Proto::UART | Proto::SPI | Proto::PARALLEL),
-            Kind::Sample { right: false } => true,
-            // the first field of a frame of the extended decoders
-            Kind::Field(l) => matches!(l, "!RESET" | "PRE" | "TSS" | "CMD" | "REQ" | "BLK" | "IR" | "DR" | "SYNC"),
-            _ => false,
-        },
-        // USB: the token address or the PID byte
-        BusWhat::Id => {
-            (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true })
-                || p.kind == Kind::Field("ROM")
-                || p.kind == Kind::Field("CMD")
-                || p.kind == Kind::Field("HDR")
-                || p.kind == Kind::Field("STAT"))
-                && p.value == v
-        }
-        BusWhat::Data => matches!(p.kind, Kind::Data | Kind::Sample { .. } | Kind::Word { cmd: false }) && p.value == v,
-        BusWhat::Error => !p.ok,
-    }
+    let Proto::Module(i) = m.dec_proto;
+    crate::protocols::get(i).info().trigger_match(m.trig_bus, v as u32, p)
 }
 
 /// The trigger points (packet ends) of `m`'s protocol condition among `packets`: `matches` per packet, and for I2C

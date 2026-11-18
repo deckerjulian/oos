@@ -8,14 +8,15 @@
 //! setups, the protocol trigger (bit time, what a frame start is, the starting value), the packet labels on the trace
 //! and in the event table, the demo traffic of the host build and the protocol's own view in the pane under the plot
 //! all come from the trait. The decoder itself lives in `oos-dsp`, with its [`ModuleInfo`] (key, name, the lines it
-//! takes) next to it and listed in `oos_dsp::protocols::MODULES`; the module names that info and calls the decoder.
+//! takes, what the protocol trigger finds and starts with) next to it and listed in `oos_dsp::protocols::MODULES`;
+//! the module names that info and calls the decoder.
 //!
 //! Every decoder is a module. The seven core protocols (`core.rs`: UART, I2C, SPI, CAN, LIN, Parallel, C-PHY) are
 //! always built and keep the first places, since the hardware trigger types and SCPI name them (`Proto::UART` ...).
 //! Every other file is behind a Cargo feature (`dec-<file>`, all on by default), so a build can leave decoders out.
 //! `docs/protocol-modules.md` walks through writing one, and `example.rs` (compiled in the tests) uses every hook.
 
-use crate::model::{BusWhat, Slope};
+use crate::model::Slope;
 use oos_dsp::decode::Packet;
 use oos_dsp::protocols::ModuleInfo;
 
@@ -342,8 +343,9 @@ pub struct Section {
 /// A protocol module. Only `info`, `bit_time` and `decode` are required; everything else has a default that
 /// fits a single-line serial protocol.
 pub trait Protocol: Sync {
-    /// What oos-dsp says of the decoder: its stable key, its name, the lines it takes and whether the main one may
-    /// be a differential pair, next to the decoder in its family's file (`oos_dsp::protocols::MODULES`).
+    /// What oos-dsp says of the decoder: its stable key, its name, the lines it takes, whether the main one may be a
+    /// differential pair and the rule and start value of the protocol trigger, next to the decoder in its family's
+    /// file (`oos_dsp::protocols::MODULES`).
     fn info(&self) -> &'static ModuleInfo;
 
     /// The option rows of the Decode menu.
@@ -371,17 +373,6 @@ pub trait Protocol: Sync {
     /// passed), instead of one row per field. `None` = a row per field with `text`.
     fn events(&self, _p: &[Packet], _opt: &[usize; OPTS]) -> Option<Vec<(f64, String, bool)>> {
         None
-    }
-
-    /// Protocol trigger: whether `p` satisfies "`what` = `value`"; `None` = the generic rule (frame starts, IDs and
-    /// addresses, data, failed checks).
-    fn trigger_match(&self, _what: BusWhat, _value: u32, _p: &Packet) -> Option<bool> {
-        None
-    }
-
-    /// What the protocol trigger looks for when it is switched on: a value the demo traffic contains.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Frame, 0x40)
     }
 
     /// The edge a frame starts with, for the hardware trigger in front of the protocol trigger.

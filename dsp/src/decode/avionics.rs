@@ -9,10 +9,10 @@
 
 use super::{Kind, Packet};
 use crate::edges::{edges, states};
-use crate::protocols::ModuleInfo;
+use crate::protocols::{BusWhat, ModuleInfo};
 
 /// MIL-STD-1553 on one line.
-pub static MIL1553: ModuleInfo = ModuleInfo::new("Mil1553", "1553", "avionics");
+pub static MIL1553: ModuleInfo = ModuleInfo::new("Mil1553", "1553", "avionics").starts_on(BusWhat::Id, 0x0c23);
 
 /// MIL-STD-1553: Manchester II at 1 Mbit/s on a bipolar bus signal (threshold normally 0 V). A word = 3 us sync
 /// (command/status: 1.5 us positive then 1.5 us negative; data: the inverse), 16 data bits MSB first (1 = positive
@@ -84,7 +84,15 @@ fn mid(p: &Pulse) -> f64 {
 }
 
 /// ARINC 429 on one line against ground, or a pair.
-pub static ARINC429: ModuleInfo = ModuleInfo::new("Arinc429", "ARINC 429", "avionics").differential();
+pub static ARINC429: ModuleInfo = ModuleInfo::new("Arinc429", "ARINC 429", "avionics")
+    .differential()
+    .trigger(arinc429_trigger)
+    .starts_on(BusWhat::Id, 0o310);
+
+/// ARINC 429's rule of the protocol trigger: a word starts with its label.
+fn arinc429_trigger(what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
+    (what == BusWhat::Frame && matches!(p.kind, Kind::Id { .. })).then_some(true)
+}
 
 /// ARINC 429 (ARINC Specification 429 Part 1): bipolar return-to-zero, a 1 = HI and a 0 = LO for the first half of
 /// the bit, NULL for the second; `v` = A − B (or one line against ground at half the amplitude). HI is above `thr`,

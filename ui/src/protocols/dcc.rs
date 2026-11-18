@@ -72,10 +72,6 @@ impl Protocol for Dcc {
         }
         Some(v)
     }
-    /// Locomotive 3 of the demo traffic.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 3)
-    }
     /// The signal never idles: every edge may start a packet.
     fn start_edge(&self) -> Slope {
         Slope::Either

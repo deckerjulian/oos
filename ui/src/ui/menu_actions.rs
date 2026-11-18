@@ -182,7 +182,7 @@ impl Ui {
             m.trig_type = t;
             // a value the protocol's demo traffic contains
             let Proto::Module(i) = p;
-            let (what, val) = crate::protocols::get(i).trigger_default();
+            let (what, val) = crate::protocols::get(i).info().trigger_default;
             (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
             self.dirty_map = true;
             return;

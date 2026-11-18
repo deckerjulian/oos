@@ -9,10 +9,10 @@
 
 use super::{can_crc15, can_fd_crc, Kind, Packet};
 use crate::edges::{edges, states, Edge};
-use crate::protocols::ModuleInfo;
+use crate::protocols::{BusWhat, ModuleInfo};
 
 /// CAN on the RX level or CAN_H, or a pair.
-pub static CAN: ModuleInfo = ModuleInfo::new("Can", "CAN", "can").differential();
+pub static CAN: ModuleInfo = ModuleInfo::new("Can", "CAN", "can").differential().starts_on(BusWhat::Id, 0x123);
 
 /// CAN 2.0A/B data and remote frames at `bitrate`. `invert` = false: logic level as on the RX/TX pin (dominant low,
 /// idle high); true for CAN_H probed against ground (dominant high). Hard sync on the start of frame after at least 7

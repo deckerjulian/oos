@@ -9,7 +9,7 @@
 
 use super::{flexray_frame_crc, flexray_header_crc, sent_crc, uart, Kind, Packet, Parity};
 use crate::edges::{edges, states};
-use crate::protocols::ModuleInfo;
+use crate::protocols::{BusWhat, ModuleInfo};
 
 /// LIN protected identifier: ID with the two parity bits P0 = ID0^ID1^ID2^ID4, P1 = !(ID1^ID3^ID4^ID5).
 pub fn lin_pid(id: u8) -> u8 {
@@ -32,7 +32,7 @@ pub fn lin_checksum(bytes: &[u8]) -> u8 {
 }
 
 /// LIN on one line or a pair.
-pub static LIN: ModuleInfo = ModuleInfo::new("Lin", "LIN", "automotive").differential();
+pub static LIN: ModuleInfo = ModuleInfo::new("Lin", "LIN", "automotive").differential().starts_on(BusWhat::Id, 0x21);
 
 /// LIN frames: break (dominant >= 11 bit times), sync 0x55, protected ID, data bytes and the checksum (the last byte
 /// before the next break or the end; classic or enhanced checksum accepted). Bytes are UART 8N1, idle high.
@@ -82,7 +82,8 @@ pub fn lin(v: &[f32], dt: f64, baud: f64, thr: f32, hyst: f32) -> Vec<Packet> {
 }
 
 /// FlexRay at 10 Mbit/s on RxD or a pair.
-pub static FLEXRAY: ModuleInfo = ModuleInfo::new("FlexRay", "FlexRay", "automotive").differential();
+pub static FLEXRAY: ModuleInfo =
+    ModuleInfo::new("FlexRay", "FlexRay", "automotive").differential().starts_on(BusWhat::Id, 0x2a);
 
 /// FlexRay frames (FlexRay Protocol Specification V3.0.1) on one channel at `rate` (normally 10 Mbit/s), as on the
 /// transceiver RxD pin (idle high; `invert` = low) or a BP − BM difference from `diff` (idle 0 V reads as high).
@@ -201,7 +202,7 @@ pub fn flexray(v: &[f32], dt: f64, rate: f64, thr: f32, hyst: f32, invert: bool)
 }
 
 /// SENT (SAE J2716) on one line.
-pub static SENT: ModuleInfo = ModuleInfo::new("Sent", "SENT", "automotive");
+pub static SENT: ModuleInfo = ModuleInfo::new("Sent", "SENT", "automotive").starts_on(BusWhat::Data, 0x7f480b);
 
 /// SENT (SAE J2716, fast channel): every nibble is the time between two falling edges in clock ticks, 12 + value.
 /// A frame: synchronisation / calibration pulse of 56 ticks, status nibble, `nibbles` data nibbles (1..6), CRC

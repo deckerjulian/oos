@@ -45,14 +45,6 @@ impl Protocol for Arinc429 {
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         matches!(p.kind, Kind::Id { .. }).then(|| format!("L {:03o}", p.value))
     }
-    /// A word starts with its label.
-    fn trigger_match(&self, what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Frame && matches!(p.kind, Kind::Id { .. })).then_some(true)
-    }
-    /// Label 310 (octal) of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0o310)
-    }
     /// A word starts with a pulse of either sign.
     fn start_edge(&self) -> Slope {
         Slope::Either
@@ -89,10 +81,6 @@ impl Protocol for Mil1553 {
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(oos_dsp::decode::mil1553(l.main(), l.dt, l.thr, l.hy))
-    }
-    /// The command word of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x0c23)
     }
     /// The sync of a word goes either way.
     fn start_edge(&self) -> Slope {

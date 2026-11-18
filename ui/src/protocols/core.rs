@@ -56,10 +56,6 @@ impl Protocol for I2c {
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(i2c(l.main(), l.need(1, "source channel off")?, l.thr, l.hy))
     }
-    /// The demo device's address.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x50)
-    }
     /// SDA on CH3, SCL on CH4 (LA: D13, D12); the trigger on the start (first SDA fall after a quiet bus).
     fn setup(&self) -> Setup {
         Setup {
@@ -161,10 +157,6 @@ impl Protocol for Can {
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(can(l.main(), l.dt, l.sh.can_rate, l.thr, l.hy, l.sh.canh))
     }
-    /// The standard frame of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x123)
-    }
     /// 500 kbit/s on CH3 (RX level); the trigger on the start of frame after the bus idle.
     fn setup(&self) -> Setup {
         Setup { rows: &[(Row::CanRate, 2), (Row::CanH, 0)], trig: idle_fall(20e-6), ..Setup::default() }
@@ -202,10 +194,6 @@ impl Protocol for Lin {
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(lin(l.main(), l.dt, l.sh.baud, l.thr, l.hy))
-    }
-    /// The frame of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x21)
     }
     /// 19200 baud on CH3; the trigger on the break after the bus idle.
     fn setup(&self) -> Setup {
