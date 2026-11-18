@@ -1,6 +1,6 @@
 # ADR 0044: The settings table holds the real numbers of the analyser pages, and a row may step in its own way
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-18
 - Category: code
 
