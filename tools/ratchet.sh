@@ -6,7 +6,8 @@
 #   lines FILE     the lines of every Rust file with more than 2000 lines; a file without a line here has at most
 #                  2000. A test module inside the file (`#[cfg(test)] mod name {` to its closing brace, both at the
 #                  start of a line) is not counted, so a test never costs room.
-#   allow CRATE    how often a crate switches a lint off (`allow(`)
+#   allow CRATE    the lines of a crate that switch a lint off with an attribute (`#[allow(`, `#![allow(`,
+#                  `#[cfg_attr(COND, allow(`) before any comment on the line; a call like `net_allow(` is no lint
 #   unsafe CRATE   the lines of a crate with `unsafe` in the code
 #
 #   tools/ratchet.sh                 measure and compare with tools/ratchet.txt; exit 1 when a number differs
@@ -36,8 +37,9 @@ measure() {
 	done
 	for c in hal dsp ui fpgad; do
 		git ls-files -- "$c" | grep '\.rs$' >"$tmp/rs"
+		# an `allow` attribute before any comment on the line
 		# shellcheck disable=SC2046
-		echo "$(cat $(cat "$tmp/rs") | grep -c 'allow(') allow $c"
+		echo "$(cat $(cat "$tmp/rs") | grep -cE '^([^/]|/[^/])*#!?\[(allow|cfg_attr\(.*[^A-Za-z0-9_]allow)\(') allow $c"
 		# `unsafe` before any comment on the line
 		# shellcheck disable=SC2046
 		echo "$(cat $(cat "$tmp/rs") | grep -cE '^([^/]|/[^/])*\<unsafe\>') unsafe $c"
