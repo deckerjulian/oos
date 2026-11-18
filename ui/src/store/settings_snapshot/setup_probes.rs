@@ -541,10 +541,10 @@ fn family(k: &str) -> String {
 /// `set` is a match on text besides the settings table, so its source and the table are the lists of what it reads. When it changes shape this
 /// scan fails by its own checks below and has to follow it.
 fn set_keys() -> Vec<String> {
-    let src = include_str!("../../store.rs");
-    let start = src.find("\npub fn set(").expect("store.rs has no `pub fn set(`: update this scan");
-    let end =
-        start + src[start..].find("\npub fn parse_setup(").expect("store.rs has no `pub fn parse_setup(` after set");
+    let src = include_str!("../setup_read.rs");
+    let start = src.find("\npub fn set(").expect("setup_read.rs has no `pub fn set(`: update this scan");
+    let end = start
+        + src[start..].find("\npub fn parse_setup(").expect("setup_read.rs has no `pub fn parse_setup(` after set");
     let mut keys = Vec::new();
     // the prefix of the current block, and the indentation of its arms once its match is seen
     let (mut prefix, mut arms): (Option<&str>, Option<usize>) = (None, None);
