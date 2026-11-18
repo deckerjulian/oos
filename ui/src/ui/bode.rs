@@ -876,7 +876,6 @@ impl Ui {
             .join(";")
     }
 
-    /// Gain (top) and phase (bottom) over log frequency.
     /// The point under the cursor: frequency, gain, phase.
     fn bode_cursor_text(&self) -> String {
         let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
@@ -889,6 +888,7 @@ impl Ui {
         }
     }
 
+    /// Gain (top) and phase (bottom) over log frequency.
     pub(super) fn draw_bode(&self, cv: &mut Canvas) {
         let a = self.area;
         let f = self.fonts();
@@ -896,21 +896,7 @@ impl Ui {
         let x_of = |hz: f64| a.x + ((hz.ln() - f0) / (f1 - f0) * a.w as f64).round() as i32;
         let (gt, gb) = (a.y + 8, a.y + a.h / 2 - 8);
         let (pt, pb) = (a.y + a.h / 2 + 8, a.y + a.h - 24);
-        // loop and PSRR: the measured range rounded to 10 dB. Impedance is a linear ratio, padded by about 10 %.
-        let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
-        let (gmin, gmax) = self.bode.points.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
-        let (gmin, gmax) = if z {
-            if gmin > gmax {
-                (0.0, 2.0)
-            } else {
-                let pad = (gmax - gmin).abs().max(gmax.abs()).max(1e-3) * 0.1;
-                (gmin - pad, gmax + pad)
-            }
-        } else if gmin > gmax {
-            (-40.0, 10.0)
-        } else {
-            ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0)
-        };
+        let (gmin, gmax) = self.bode_gain_range();
         let gy = |g: f64| gb - ((g - gmin) / (gmax - gmin) * (gb - gt) as f64).round() as i32;
         let py = |p: f64| pb - ((p + 180.0) / 360.0 * (pb - pt) as f64).round() as i32;
         // decade lines
@@ -976,6 +962,49 @@ impl Ui {
             _ => "Phase -180 .. 180\u{b0}",
         };
         cv.text(&f.s, a.x + 6, pt + 14, phase_text, ACCENT);
+        let status = self.bode_status(free, mode);
+        // an open loop passes one of these two; a filter sweep neither
+        let mg = oos_dsp::bode::margins(&self.bode.points);
+        if mode == oos_dsp::bode::Mode::Loop && !self.bode.running && (mg.gain.is_some() || mg.phase.is_some()) {
+            let gm = mg.gain.map_or("Gain margin -".to_string(), |(v, hz)| {
+                format!("Gain margin {:.1} dB at {}", v, si_short(hz, "Hz"))
+            });
+            let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| {
+                format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz"))
+            });
+            cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
+        }
+        // right-aligned, but left of the full-screen, zoom and more buttons in the corner, and inside the plot
+        let right = (self.full_home().0.x - 8).min(a.x + a.w - 8);
+        let w = (f.s.width(&status) + 16).min((right - a.x - 8).max(40));
+        let r = Rect::new(right - w, a.y + 22, w, 20);
+        cv.round(r, 4, PANEL_BG, 230);
+        cv.set_clip(r);
+        cv.text_in(&f.s, r, 1, &status, TEXT);
+        cv.no_clip();
+    }
+
+    /// The ends of the gain axis for the points measured so far.
+    fn bode_gain_range(&self) -> (f64, f64) {
+        // loop and PSRR: the measured range rounded to 10 dB. Impedance is a linear ratio, padded by about 10 %.
+        let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
+        let (gmin, gmax) = self.bode.points.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+        if z {
+            if gmin > gmax {
+                (0.0, 2.0)
+            } else {
+                let pad = (gmax - gmin).abs().max(gmax.abs()).max(1e-3) * 0.1;
+                (gmin - pad, gmax + pad)
+            }
+        } else if gmin > gmax {
+            (-40.0, 10.0)
+        } else {
+            ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0)
+        }
+    }
+
+    /// The status line of the Bode page: what the sweep does, its result, or how to start it.
+    fn bode_status(&self, free: bool, mode: oos_dsp::bode::Mode) -> String {
         let sync_text = || {
             let edge = if self.m.bode_sync_slope == Slope::Fall { "falling" } else { "rising" };
             format!(
@@ -1002,7 +1031,7 @@ impl Ui {
                 format!("generator {} at {} (Bode > Start)", GENERATORS[self.bode_gen()].name, at)
             }
         };
-        let status = if self.bode.running && self.bode.free {
+        if self.bode.running && self.bode.free {
             if self.bode.capturing {
                 format!("recording the sweep ({})", si_short(self.m.bode_sw_time, "s"))
             } else {
@@ -1028,26 +1057,7 @@ impl Ui {
             idle()
         } else {
             format!("{} points", self.bode.points.len())
-        };
-        // an open loop passes one of these two; a filter sweep neither
-        let mg = oos_dsp::bode::margins(&self.bode.points);
-        if mode == oos_dsp::bode::Mode::Loop && !self.bode.running && (mg.gain.is_some() || mg.phase.is_some()) {
-            let gm = mg.gain.map_or("Gain margin -".to_string(), |(v, hz)| {
-                format!("Gain margin {:.1} dB at {}", v, si_short(hz, "Hz"))
-            });
-            let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| {
-                format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz"))
-            });
-            cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
         }
-        // right-aligned, but left of the full-screen, zoom and more buttons in the corner, and inside the plot
-        let right = (self.full_home().0.x - 8).min(a.x + a.w - 8);
-        let w = (f.s.width(&status) + 16).min((right - a.x - 8).max(40));
-        let r = Rect::new(right - w, a.y + 22, w, 20);
-        cv.round(r, 4, PANEL_BG, 230);
-        cv.set_clip(r);
-        cv.text_in(&f.s, r, 1, &status, TEXT);
-        cv.no_clip();
     }
 }
 
