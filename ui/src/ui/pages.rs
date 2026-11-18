@@ -32,6 +32,8 @@ pub(super) struct Page {
     pub pick: fn(&mut Ui, Item, usize),
     /// the pickers that are one wide column, for long lines (network and device names)
     pub wide: fn(Item) -> bool,
+    /// the signals it reads: a channel among them that is off gets a button to switch it on (`off_sources`)
+    pub sources: Option<fn(&Ui) -> Vec<WaveId>>,
 }
 
 /// Below the LAN box of the top bar: the pages of the network.
@@ -41,7 +43,25 @@ fn none(_: Item) -> bool {
     false
 }
 
-pub(super) const PAGES: [Page; 5] = [
+fn no_pick(_: &mut Ui, _: Item, _: usize) {}
+
+/// A page of rows and a title, its signals, no pickers of its own and the dialog where it always was.
+macro_rules! page {
+    ($id:expr, $title:expr, $items:expr, $sources:expr) => {
+        Page {
+            id: $id,
+            title: |_, _| $title.into(),
+            items: $items,
+            anchor: None,
+            picks: none,
+            pick: no_pick,
+            wide: none,
+            sources: $sources,
+        }
+    };
+}
+
+pub(super) const PAGES: [Page; 20] = [
     Page {
         id: MenuId::Network,
         title: |_, _| "Network".into(),
@@ -50,6 +70,7 @@ pub(super) const PAGES: [Page; 5] = [
         picks: |it| matches!(it, Item::WlanNet | Item::WlanForgetNet),
         pick: |u, it, k| if it == Item::WlanNet { u.wlan_pick(k) } else { u.wlan_forget_pick(k) },
         wide: |it| matches!(it, Item::WlanNet | Item::WlanForgetNet),
+        sources: None,
     },
     Page {
         id: MenuId::Remote,
@@ -59,6 +80,7 @@ pub(super) const PAGES: [Page; 5] = [
         picks: |it| matches!(it, Item::RemName | Item::RemAllow),
         pick: Ui::time_pick,
         wide: none,
+        sources: None,
     },
     Page {
         id: MenuId::Ssh,
@@ -68,6 +90,7 @@ pub(super) const PAGES: [Page; 5] = [
         picks: |it| it == Item::SshRemoveKey,
         pick: |u, _, k| u.ssh_remove_pick(k),
         wide: |it| it == Item::SshRemoveKey,
+        sources: None,
     },
     Page {
         id: MenuId::Bluetooth,
@@ -77,6 +100,7 @@ pub(super) const PAGES: [Page; 5] = [
         picks: Ui::bt_is_pick,
         pick: Ui::bt_pick,
         wide: Ui::bt_is_pick,
+        sources: None,
     },
     Page {
         id: MenuId::Time,
@@ -86,7 +110,86 @@ pub(super) const PAGES: [Page; 5] = [
         picks: |it| matches!(it, Item::NtpServer | Item::TimeZone),
         pick: Ui::time_pick,
         wide: none,
+        sources: None,
     },
+    page!(MenuId::Logger, "Data logger", |_, _| vec![Item::LogOn, Item::LogIvl, Item::LogInfo], None),
+    page!(
+        MenuId::Power,
+        "Power analysis",
+        |u, _| u.power_items(),
+        Some(|u| match u.m.pw_mode {
+            PowerMode::Ripple | PowerMode::Rail => vec![u.m.pw_v],
+            _ => vec![u.m.pw_v, u.m.pw_i],
+        })
+    ),
+    page!(MenuId::Spectrum, "Spectrum analyser", |u, _| u.spectrum_items(), Some(|u| vec![u.m.spec_src])),
+    page!(MenuId::Eye, "Eye diagram / jitter", |u, _| u.eye_items(), Some(|u| vec![u.m.eye_src])),
+    page!(
+        MenuId::Bode,
+        "Bode plot",
+        |u, _| u.bode_items(),
+        Some(|u| {
+            let m = &u.m;
+            if m.bode_gen == bode::FREE {
+                [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(WaveId::Ch), Some(WaveId::Ch(m.bode_sync))]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            } else {
+                vec![m.bode_in, m.bode_out]
+            }
+        })
+    ),
+    page!(MenuId::Magnetic, "Magnetic", |u, _| u.magnetic_items(), Some(|u| vec![u.m.mag_v, u.m.mag_i])),
+    page!(
+        MenuId::Inverter,
+        "Inverter",
+        |u, _| u.inverter_items(),
+        Some(|u| {
+            let m = &u.m;
+            if m.inv_page == InvPage::Dq0 {
+                let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
+                if m.inv_ang == InvAngle::Analog {
+                    v.push(m.inv_an);
+                }
+                return v;
+            }
+            let mut v = match m.inv_ang {
+                InvAngle::Analog => vec![m.inv_an],
+                InvAngle::Quad | InvAngle::Hall | InvAngle::Off => Vec::new(),
+                InvAngle::Phase => vec![m.inv_a, m.inv_b, m.inv_c],
+            };
+            v.extend(m.inv_tq);
+            v.extend(m.inv_ev);
+            v.extend(m.inv_ei);
+            v
+        })
+    ),
+    page!(
+        MenuId::Dpt,
+        "Double pulse",
+        |u, _| u.dpt_items(),
+        Some(|u| {
+            let m = &u.m;
+            let mut v = vec![m.dpt_v, m.dpt_i, m.dpt_g];
+            if m.dpt_4th != DptFourth::Off {
+                v.push(m.dpt_4ch);
+            }
+            v
+        })
+    ),
+    page!(
+        MenuId::BwTest,
+        "Bandwidth test (step response)",
+        |u, _| u.bw_items(),
+        Some(|u| vec![WaveId::Ch(u.m.bw_src)])
+    ),
+    page!(MenuId::Identify, "Identify: tap to apply", |u, _| u.identify_items(), None),
+    page!(MenuId::SelfCal, "Self-calibration", |u, _| u.cal_items(), None),
+    page!(MenuId::Windows, "Windows", |u, _| u.win_items(), None),
+    page!(MenuId::Zone, "Zone trigger", |u, _| u.zone_items(), None),
+    page!(MenuId::Mask, "Mask test", |u, _| u.mask_items(), Some(|u| vec![WaveId::Ch(u.m.mask_src)])),
+    page!(MenuId::Utility, "System", |u, _| u.utility_items(), None),
 ];
 
 /// The entry of the kind of `m`.
@@ -194,11 +297,10 @@ pub(super) const LAYOUTS: &[Layout] = &[
 /// The kinds whose pages are still answered by the arms of `menu_items.rs`, `menu_text.rs`, `menu_dialog.rs` and
 /// `menu_actions.rs`, until they move into `PAGES` (ADR 0060). Only gets shorter.
 #[cfg(test)]
-const NOT_YET_IN_PAGES: [MenuId; 43] = [
+const NOT_YET_IN_PAGES: [MenuId; 28] = [
     MenuId::Main,
     MenuId::Channel(0),
     MenuId::ChMore(0),
-    MenuId::Logger,
     MenuId::Horizontal,
     MenuId::Trigger,
     MenuId::Acquire,
@@ -209,34 +311,20 @@ const NOT_YET_IN_PAGES: [MenuId; 43] = [
     MenuId::Dvm,
     MenuId::Cursor,
     MenuId::Display,
-    MenuId::Utility,
     MenuId::Math,
     MenuId::Ref,
     MenuId::Decode,
     MenuId::Bus,
     MenuId::Storage,
-    MenuId::Mask,
-    MenuId::Zone,
-    MenuId::Spectrum,
-    MenuId::Eye,
-    MenuId::Power,
-    MenuId::Magnetic,
-    MenuId::Inverter,
-    MenuId::Dpt,
-    MenuId::Identify,
-    MenuId::SelfCal,
     MenuId::Features,
     MenuId::Decoders(0),
-    MenuId::Bode,
     MenuId::Sim,
     MenuId::SimAdvanced,
     MenuId::Afg,
-    MenuId::BwTest,
     MenuId::ViewMore,
     MenuId::La,
     MenuId::LaLines,
     MenuId::LaPat,
-    MenuId::Windows,
     MenuId::MeasSelected,
 ];
 
