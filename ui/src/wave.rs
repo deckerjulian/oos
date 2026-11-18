@@ -668,33 +668,7 @@ impl Source {
         let t_first = m.delay as f64 - window / 2.0; // relative to the trigger
         let level = m.trig_level as f64;
         if let Source::Hw { shared, seen } = self {
-            let mut g = shared.lock().unwrap();
-            g.want = Some(board().want(m));
-            g.deep_raw = crate::deepmeas::want(m);
-            g.slow = board().slow_mode(m);
-            // running: no STOP view any more, the thread acquires again
-            (g.stop_view, g.replay) = (None, None);
-            g.stamp = m.hw_stamp;
-            g.cores = m.cores;
-            g.avg_clear = m.hw_avg_clear;
-            // SINGLE takes nothing from before the key press
-            let fresh = loop {
-                match g.queue.pop_front() {
-                    Some(f) if m.trig_mode == TrigMode::Single && f.stamp < m.hw_stamp => continue,
-                    f => break f,
-                }
-            };
-            let Some(f) = fresh else {
-                // a SINGLE scan is complete and SINGLE was pressed again: next sweep
-                if g.halted {
-                    g.halted = false;
-                    g.rearm = true;
-                }
-                return None;
-            };
-            *seen = f.seq;
-            drop(g);
-            return Some(hw_record(m, f));
+            return acquire_hw(m, shared, seen);
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();
@@ -712,191 +686,246 @@ impl Source {
             }
             return r;
         }
+        let g = ScreenGrid { window, n, dt, t_first, level };
         match self {
-            Source::Demo { t } => {
-                *t += dt_wall;
-                let start = *t + rng.uniform() * 1e-3;
-                // software trigger (oos-dsp) on the noise-free signals of the channels the trigger reads, sampled finely
-                // enough for the trigger's time condition and long enough to decide it
-                let cfg = DemoCfg::of(m);
-                let used = m.trig_channels();
-                let span = window * 1.5 + m.trig_span();
-                let mut dts = dt.min(m.trig_feature()).max(1e-9);
-                let mut ns = (span / dts).ceil() as usize;
-                if ns > 400_000 {
-                    ns = 400_000;
-                    dts = span / ns as f64;
-                }
-                let ns = ns.max(64);
-                let bufs: Vec<Vec<f32>> = (0..NCH)
-                    .map(|c| {
-                        if !used[c] {
-                            return Vec::new();
-                        }
-                        let sg = if m.ch[c].invert { -1.0 } else { 1.0 };
-                        let (bias, skew) = (m.ch[c].bias as f64, m.ch[c].skew as f64);
-                        (0..ns)
-                            .map(|k| (sg * (demo_signal(cfg, c, start + k as f64 * dts - skew) - bias)) as f32)
-                            .collect()
-                    })
-                    .collect();
-                let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
-                let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| &bufs[c][..]), dt: dts, hyst };
-                // a pattern with D lines: 1 where the demo lines and the channels match; the same trigger type on this one
-                // wave then gives the begin of the pattern, or its time condition for a duration trigger
-                let la_pat = m.pat_on_la().then(|| {
-                    use oos_dsp::trigger::Trigger;
-                    let hit: Vec<f32> = (0..ns)
-                        .map(|k| {
-                            let w = demo_la(start + k as f64 * dts);
-                            let ch = (0..NCH).all(|c| match m.pat[c] {
-                                Bit::H => bufs[c].get(k).is_some_and(|&v| v > m.pat_levels[c]),
-                                Bit::L => bufs[c].get(k).is_some_and(|&v| v <= m.pat_levels[c]),
-                                _ => true,
-                            });
-                            (ch && crate::ui::la::pattern_is(w, &m.pat_la)) as u8 as f32
-                        })
-                        .collect();
-                    let e: [f32; 0] = [];
-                    let inp = oos_dsp::trigger::Input {
-                        ch: std::array::from_fn(|c| if c == 0 { &hit[..] } else { &e[..] }),
-                        dt: dts,
-                        hyst: [0.1; NCH],
-                    };
-                    let bits = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
-                    let t = match m.when() {
-                        Some(when) if m.trig_type == TrigType::Duration => {
-                            Trigger::Duration { bits, levels: [0.5; NCH], when }
-                        }
-                        _ => Trigger::Pattern { bits, levels: [0.5; NCH] },
-                    };
-                    oos_dsp::trigger::find_first(&t, &inp, 0.0)
-                });
-                let found = match m.trig_line() {
-                    _ if la_pat.is_some() => la_pat.flatten(),
-                    // protocol trigger on LA lines: the decoder over the demo lines
-                    _ if m.bus_on_la() => {
-                        let lines: Vec<u16> = (0..ns).map(|k| demo_la(start + k as f64 * dts)).collect();
-                        crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default())
-                            .first()
-                            .copied()
-                    }
-                    // LA line: 0 / 1 samples of the demo line, the same trigger on them at level 0.5
-                    Some(n) => {
-                        let line: Vec<f32> =
-                            (0..ns).map(|k| (demo_la(start + k as f64 * dts) >> n & 1) as f32).collect();
-                        let e: [f32; 0] = [];
-                        let inp = oos_dsp::trigger::Input {
-                            ch: std::array::from_fn(|c| if c == 0 { &line[..] } else { &e[..] }),
-                            dt: dts,
-                            hyst: [0.1; NCH],
-                        };
-                        let mut s = m.clone();
-                        (s.trig_la, s.trig_src, s.trig_level) = (None, 0, 0.5);
-                        oos_dsp::trigger::find_first(&s.trigger(), &inp, 0.0)
-                    }
-                    None => crate::trig::find_first(m, &inp, 0.0),
-                }
-                .map(|i| start + i * dts);
-                let (ttrig, triggered) = match found {
-                    Some(tt) => (tt, true),
-                    None => {
-                        if m.trig_mode != TrigMode::Auto {
-                            return None;
-                        }
-                        (start, false)
-                    }
-                };
-                // trigger jitter of a real ADC: +-0.3 sample
-                let jitter = (rng.uniform() - 0.5) * 0.6 * dt.min(8e-10);
-                let mut chs: [Vec<f32>; NCH] = Default::default();
-                for c in 0..NCH {
-                    if !m.ch[c].on {
-                        continue;
-                    }
-                    let mut v = Vec::with_capacity(n);
-                    let noise = NOISE[c]
-                        * if m.acq == AcqMode::HiRes { 0.3 } else { 1.0 }
-                        * if cfg.gen.is_some() { 0.02 } else { 1.0 };
-                    let (bias, skew) = (m.ch[c].bias, m.ch[c].skew as f64);
-                    for k in 0..n {
-                        let tk = ttrig + jitter + t_first + k as f64 * dt;
-                        v.push(demo_signal(cfg, c, tk - skew) as f32 - bias + noise * rng.gauss());
-                    }
-                    chs[c] = v;
-                }
-                // the 16 logic lines over the same window, finer than the analog points (bus-style bands show)
-                let la = m.la_on().then(|| {
-                    let nl = crate::ui::la::DEMO_SAMPLES;
-                    let dl = window / nl as f64;
-                    let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
-                    crate::ui::la::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
-                });
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
-            }
+            Source::Demo { t } => acquire_demo(m, t, dt_wall, rng, &g),
             Source::Replay { words, xinc, yinc, yorg, yref } => {
-                let mut volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - *yorg - *yref) * *yinc) as f32).collect();
-                condition(m, 0, &mut volts, *xinc);
-                // software trigger (oos-dsp) on the stored samples; only CH1 is stored, other sources: edge on CH1
-                let trig = if m.trig_channels().iter().enumerate().all(|(c, &u)| !u || c == 0) {
-                    m.trigger()
-                } else {
-                    oos_dsp::trigger::Trigger::Edge {
-                        src: 0,
-                        slope: oos_dsp::trigger::Slope::Rising,
-                        level: level as f32,
-                    }
-                };
-                let e: [f32; 0] = [];
-                let inp = oos_dsp::trigger::Input {
-                    ch: std::array::from_fn(|c| if c == 0 { &volts[..] } else { &e[..] }),
-                    dt: *xinc,
-                    hyst: [0.1 * m.ch[0].volts_per_div(); NCH],
-                };
-                let ti = oos_dsp::trigger::find_first(&trig, &inp, 0.0);
-                let triggered = ti.is_some();
-                let ti = ti.unwrap_or(volts.len() as f64 / 2.0);
-                // resample the stored record onto the screen grid (linear interpolation)
-                let mut v = Vec::with_capacity(n);
-                for k in 0..n {
-                    let ts = t_first + k as f64 * dt; // relative to trigger
-                    let x = ti + ts / *xinc;
-                    if x < 0.0 || x >= (volts.len() - 1) as f64 {
-                        v.push(f32::NAN);
-                    } else {
-                        let i = x as usize;
-                        let f = (x - i as f64) as f32;
-                        v.push(volts[i] * (1.0 - f) + volts[i + 1] * f);
-                    }
-                }
-                let mut chs: [Vec<f32>; NCH] = Default::default();
-                chs[0] = v;
-                let mut native: [Vec<f32>; NCH] = Default::default();
-                native[0] = volts;
-                let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&native[c]));
-                let native_len = native[0].len();
-                let frame = std::sync::Arc::new(crate::board::Frame {
-                    seq: 1,
-                    dt: *xinc,
-                    pre: ti.round().clamp(0.0, native_len.saturating_sub(1) as f64) as usize,
-                    ch: native,
-                    roll: false,
-                    envelope: false,
-                    scan: false,
-                    partial: false,
-                    acq: (1.0 / *xinc, native_len),
-                    stamp: 0,
-                    basic,
-                    la: None,
-                    fixed_ti: None,
-                    hw_avg: false,
-                });
-                let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * *xinc, conditioned: true });
-                Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false })
+                acquire_replay(m, &g, words, *xinc, *yinc, *yorg, *yref)
             }
             Source::Live { .. } | Source::Hw { .. } => None, // handled above
         }
     }
+}
+
+/// The screen grid of one acquisition: window, points, spacing, first time from the trigger, trigger level.
+struct ScreenGrid {
+    window: f64,
+    n: usize,
+    dt: f64,
+    t_first: f64,
+    level: f64,
+}
+
+/// A hardware acquisition: the newest frame of the board thread, or None.
+fn acquire_hw(m: &Model, shared: &crate::board::HwShared, seen: &mut u64) -> Option<Record> {
+    let mut g = shared.lock().unwrap();
+    g.want = Some(board().want(m));
+    g.deep_raw = crate::deepmeas::want(m);
+    g.slow = board().slow_mode(m);
+    // running: no STOP view any more, the thread acquires again
+    (g.stop_view, g.replay) = (None, None);
+    g.stamp = m.hw_stamp;
+    g.cores = m.cores;
+    g.avg_clear = m.hw_avg_clear;
+    // SINGLE takes nothing from before the key press
+    let fresh = loop {
+        match g.queue.pop_front() {
+            Some(f) if m.trig_mode == TrigMode::Single && f.stamp < m.hw_stamp => continue,
+            f => break f,
+        }
+    };
+    let Some(f) = fresh else {
+        // a SINGLE scan is complete and SINGLE was pressed again: next sweep
+        if g.halted {
+            g.halted = false;
+            g.rearm = true;
+        }
+        return None;
+    };
+    *seen = f.seq;
+    drop(g);
+    Some(hw_record(m, f))
+}
+
+/// A demo acquisition at the wall time `t`, triggered in software; None when Normal/Single finds no trigger.
+fn acquire_demo(m: &Model, t: &mut f64, dt_wall: f64, rng: &mut Rng, g: &ScreenGrid) -> Option<Record> {
+    let ScreenGrid { window, n, dt, t_first, .. } = *g;
+    *t += dt_wall;
+    let start = *t + rng.uniform() * 1e-3;
+    // software trigger (oos-dsp) on the noise-free signals of the channels the trigger reads, sampled finely
+    // enough for the trigger's time condition and long enough to decide it
+    let cfg = DemoCfg::of(m);
+    let found = demo_trigger(m, cfg, start, window, dt);
+    let (ttrig, triggered) = match found {
+        Some(tt) => (tt, true),
+        None => {
+            if m.trig_mode != TrigMode::Auto {
+                return None;
+            }
+            (start, false)
+        }
+    };
+    // trigger jitter of a real ADC: +-0.3 sample
+    let jitter = (rng.uniform() - 0.5) * 0.6 * dt.min(8e-10);
+    let mut chs: [Vec<f32>; NCH] = Default::default();
+    for c in 0..NCH {
+        if !m.ch[c].on {
+            continue;
+        }
+        let mut v = Vec::with_capacity(n);
+        let noise =
+            NOISE[c] * if m.acq == AcqMode::HiRes { 0.3 } else { 1.0 } * if cfg.gen.is_some() { 0.02 } else { 1.0 };
+        let (bias, skew) = (m.ch[c].bias, m.ch[c].skew as f64);
+        for k in 0..n {
+            let tk = ttrig + jitter + t_first + k as f64 * dt;
+            v.push(demo_signal(cfg, c, tk - skew) as f32 - bias + noise * rng.gauss());
+        }
+        chs[c] = v;
+    }
+    // the 16 logic lines over the same window, finer than the analog points (bus-style bands show)
+    let la = m.la_on().then(|| {
+        let nl = crate::ui::la::DEMO_SAMPLES;
+        let dl = window / nl as f64;
+        let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
+        crate::ui::la::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
+    });
+    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
+}
+
+/// Where the demo signals from `start` trigger, in seconds; None when they do not.
+fn demo_trigger(m: &Model, cfg: DemoCfg, start: f64, window: f64, dt: f64) -> Option<f64> {
+    let used = m.trig_channels();
+    let span = window * 1.5 + m.trig_span();
+    let mut dts = dt.min(m.trig_feature()).max(1e-9);
+    let mut ns = (span / dts).ceil() as usize;
+    if ns > 400_000 {
+        ns = 400_000;
+        dts = span / ns as f64;
+    }
+    let ns = ns.max(64);
+    let bufs: Vec<Vec<f32>> = (0..NCH)
+        .map(|c| {
+            if !used[c] {
+                return Vec::new();
+            }
+            let sg = if m.ch[c].invert { -1.0 } else { 1.0 };
+            let (bias, skew) = (m.ch[c].bias as f64, m.ch[c].skew as f64);
+            (0..ns).map(|k| (sg * (demo_signal(cfg, c, start + k as f64 * dts - skew) - bias)) as f32).collect()
+        })
+        .collect();
+    let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * m.ch[c].volts_per_div());
+    let inp = oos_dsp::trigger::Input { ch: std::array::from_fn(|c| &bufs[c][..]), dt: dts, hyst };
+    // a pattern with D lines: 1 where the demo lines and the channels match; the same trigger type on this one
+    // wave then gives the begin of the pattern, or its time condition for a duration trigger
+    let la_pat = m.pat_on_la().then(|| demo_la_pattern(m, &bufs, start, dts, ns));
+    match m.trig_line() {
+        _ if la_pat.is_some() => la_pat.flatten(),
+        // protocol trigger on LA lines: the decoder over the demo lines
+        _ if m.bus_on_la() => {
+            let lines: Vec<u16> = (0..ns).map(|k| demo_la(start + k as f64 * dts)).collect();
+            crate::trig::points(m, &crate::trig::decode_la(m, &lines, dts).unwrap_or_default()).first().copied()
+        }
+        // LA line: 0 / 1 samples of the demo line, the same trigger on them at level 0.5
+        Some(n) => {
+            let line: Vec<f32> = (0..ns).map(|k| (demo_la(start + k as f64 * dts) >> n & 1) as f32).collect();
+            let e: [f32; 0] = [];
+            let inp = oos_dsp::trigger::Input {
+                ch: std::array::from_fn(|c| if c == 0 { &line[..] } else { &e[..] }),
+                dt: dts,
+                hyst: [0.1; NCH],
+            };
+            let mut s = m.clone();
+            (s.trig_la, s.trig_src, s.trig_level) = (None, 0, 0.5);
+            oos_dsp::trigger::find_first(&s.trigger(), &inp, 0.0)
+        }
+        None => crate::trig::find_first(m, &inp, 0.0),
+    }
+    .map(|i| start + i * dts)
+}
+
+/// Where a pattern with D lines begins (or its duration condition holds) in the demo, in samples of `dts`.
+fn demo_la_pattern(m: &Model, bufs: &[Vec<f32>], start: f64, dts: f64, ns: usize) -> Option<f64> {
+    use oos_dsp::trigger::Trigger;
+    let hit: Vec<f32> = (0..ns)
+        .map(|k| {
+            let w = demo_la(start + k as f64 * dts);
+            let ch = (0..NCH).all(|c| match m.pat[c] {
+                Bit::H => bufs[c].get(k).is_some_and(|&v| v > m.pat_levels[c]),
+                Bit::L => bufs[c].get(k).is_some_and(|&v| v <= m.pat_levels[c]),
+                _ => true,
+            });
+            (ch && crate::ui::la::pattern_is(w, &m.pat_la)) as u8 as f32
+        })
+        .collect();
+    let e: [f32; 0] = [];
+    let inp = oos_dsp::trigger::Input {
+        ch: std::array::from_fn(|c| if c == 0 { &hit[..] } else { &e[..] }),
+        dt: dts,
+        hyst: [0.1; NCH],
+    };
+    let bits = std::array::from_fn(|i| if i == 0 { Bit::H } else { Bit::X });
+    let t = match m.when() {
+        Some(when) if m.trig_type == TrigType::Duration => Trigger::Duration { bits, levels: [0.5; NCH], when },
+        _ => Trigger::Pattern { bits, levels: [0.5; NCH] },
+    };
+    oos_dsp::trigger::find_first(&t, &inp, 0.0)
+}
+
+/// A replay acquisition: the stored CH1 record, triggered in software and resampled onto the screen grid.
+fn acquire_replay(
+    m: &Model,
+    g: &ScreenGrid,
+    words: &[u16],
+    xinc: f64,
+    yinc: f64,
+    yorg: f64,
+    yref: f64,
+) -> Option<Record> {
+    let ScreenGrid { n, dt, t_first, level, .. } = *g;
+    let mut volts: Vec<f32> = words.iter().map(|&w| ((w as f64 - yorg - yref) * yinc) as f32).collect();
+    condition(m, 0, &mut volts, xinc);
+    // software trigger (oos-dsp) on the stored samples; only CH1 is stored, other sources: edge on CH1
+    let trig = if m.trig_channels().iter().enumerate().all(|(c, &u)| !u || c == 0) {
+        m.trigger()
+    } else {
+        oos_dsp::trigger::Trigger::Edge { src: 0, slope: oos_dsp::trigger::Slope::Rising, level: level as f32 }
+    };
+    let e: [f32; 0] = [];
+    let inp = oos_dsp::trigger::Input {
+        ch: std::array::from_fn(|c| if c == 0 { &volts[..] } else { &e[..] }),
+        dt: xinc,
+        hyst: [0.1 * m.ch[0].volts_per_div(); NCH],
+    };
+    let ti = oos_dsp::trigger::find_first(&trig, &inp, 0.0);
+    let triggered = ti.is_some();
+    let ti = ti.unwrap_or(volts.len() as f64 / 2.0);
+    // resample the stored record onto the screen grid (linear interpolation)
+    let mut v = Vec::with_capacity(n);
+    for k in 0..n {
+        let ts = t_first + k as f64 * dt; // relative to trigger
+        let x = ti + ts / xinc;
+        if x < 0.0 || x >= (volts.len() - 1) as f64 {
+            v.push(f32::NAN);
+        } else {
+            let i = x as usize;
+            let f = (x - i as f64) as f32;
+            v.push(volts[i] * (1.0 - f) + volts[i + 1] * f);
+        }
+    }
+    let mut chs: [Vec<f32>; NCH] = Default::default();
+    chs[0] = v;
+    let mut native: [Vec<f32>; NCH] = Default::default();
+    native[0] = volts;
+    let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&native[c]));
+    let native_len = native[0].len();
+    let frame = std::sync::Arc::new(crate::board::Frame {
+        seq: 1,
+        dt: xinc,
+        pre: ti.round().clamp(0.0, native_len.saturating_sub(1) as f64) as usize,
+        ch: native,
+        roll: false,
+        envelope: false,
+        scan: false,
+        partial: false,
+        acq: (1.0 / xinc, native_len),
+        stamp: 0,
+        basic,
+        la: None,
+        fixed_ti: None,
+        hw_avg: false,
+    });
+    let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * xinc, conditioned: true });
+    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false })
 }
 
 /// Applies coupling, bandwidth limit and inversion to a record channel (display path).
