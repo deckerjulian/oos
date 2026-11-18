@@ -50,6 +50,7 @@ mod menu_text;
 mod motor;
 mod offline;
 mod overclock;
+mod pages;
 mod panes;
 mod plot_layout;
 pub mod pointer;

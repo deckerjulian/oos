@@ -40,7 +40,7 @@ fn eye_ideal_prbs7_is_open_without_jitter() {
     e.accumulate(&v, dt, &c);
     let m = e.measure(c.period);
     assert!(close(m.amplitude, 1.0, 0.02) && close(m.height, 1.0, 0.03), "{:?}", m);
-    assert!(m.width > 0.95e-6 && m.width <= 1e-6, "{:?}", m);
+    assert!(m.width > 0.99e-6 && m.width <= c.period, "{:?}", m);
     assert!(close(m.crossing_pct, 50.0, 3.0), "{:?}", m);
     assert!(close(m.rise, 0.15e-6, 0.02e-6) && close(m.fall, 0.15e-6, 0.02e-6), "{:?}", m);
     assert!(m.q_factor > 20.0, "{:?}", m);
@@ -148,6 +148,39 @@ fn jitter_pll_tracks_slow_wander() {
     let mut e = Eye::new(128, 64, 1, -0.25, 1.25);
     e.accumulate(&v, dt, &p);
     assert!(e.eye_width(p.period) > 0.5e-6, "{}", e.eye_width(p.period));
+}
+
+/// A loop bandwidth at or above the edge rate (the gain grew without bound, the period went to zero or below and the
+/// tick loop ran until memory ran out) gives a clock with one tick per UI over the record.
+#[test]
+fn jitter_pll_with_a_bandwidth_near_the_edge_rate_ends() {
+    let rate = 1e6;
+    let mut g = Gauss(7);
+    let bits = prbs7(2000);
+    let (v, dt) = nrz(&bits, rate, 16, 0.2, &mut |_, _| g.next(0.02e-6));
+    for bw in [0.5 * rate, rate, 10.0 * rate, 1e12, f64::INFINITY] {
+        let p = eye::recover_clock_pll(&v, dt, 0.5, 0.1, Some(rate), bw, true).unwrap();
+        assert!(p.ticks.windows(2).all(|w| w[1] > w[0]), "bw {bw}: a tick step is not positive");
+        let n = p.ticks.len() as f64;
+        assert!(close(n, 2000.0, 0.1 * 2000.0), "bw {bw}: {n} ticks for 2000 UI");
+    }
+}
+
+/// The eye width of a 2-UI eye of 96 columns (the width without the picture's own spread of half a column read 6 % of
+/// the UI short: 937.5 ps for a signal without jitter, 874.5 ps for 20 ps RJ).
+#[test]
+fn eye_width_leaves_out_the_pictures_own_spread() {
+    let rate = 1e9;
+    let bits = prbs7(6000);
+    for (rj, want, tol) in [(0.0, 1000e-12, 2e-12), (20e-12, 880e-12, 3e-12), (50e-12, 700e-12, 5e-12)] {
+        let mut g = Gauss(11);
+        let (v, dt) = nrz(&bits, rate, 32, 0.25, &mut |_, _| g.next(rj));
+        let c = eye::recover_clock(&v, dt, 0.5, 0.1, Some(rate)).unwrap();
+        let mut e = Eye::new(96, 96, 2, -0.25, 1.25);
+        e.accumulate(&v, dt, &c);
+        let width = e.eye_width(c.period);
+        assert!(close(width, want, tol), "RJ {rj:e}: width {width:e}, want {want:e}");
+    }
 }
 
 /// Square of 0/1 V edges at `rate` UI/s with ramps of `tr` s, quantised to `lsb`, `n` samples of `dt`.

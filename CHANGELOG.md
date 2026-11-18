@@ -117,6 +117,12 @@ Changed:
 
 Fixed:
 
+- Eye Width no longer reads short by the picture's own spread (issue #195): a crossing without jitter lights two
+  columns of the eye and read half a column of jitter, 6 % of the unit interval in a 96-column eye. That spread is
+  now taken out, so a signal without jitter reads 1 UI and one with 20 ps RJ on 1 ns reads 880 ps.
+- The PLL clock recovery of the eye in `oos-dsp` ends for every loop bandwidth (issue #194): one near the edge rate
+  drove the recovered period to zero or below, and the clock's ticks were added until memory ran out. The scope itself
+  only asks for the default bandwidth (rate / 1667), which never got there.
 - The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
   dark before (contributed by halma1).
 - DCC decodes the signal of a live track (contributed by halma1, tested on a layout with an ESU ECoS): a phase slip no

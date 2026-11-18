@@ -874,31 +874,12 @@ impl Ui {
                     }
                 }
                 Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::WlanNet) => {
-                    self.close_picker();
-                    self.wlan_pick(k);
-                }
-                Item::PickOpt(k)
-                    if self.pick.is_some_and(|p| {
-                        matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName | Item::RemAllow)
-                    }) =>
-                {
-                    let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
-                    self.close_picker();
-                    self.time_pick(it, k);
-                }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::WlanForgetNet) => {
-                    self.close_picker();
-                    self.wlan_forget_pick(k);
-                }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::SshRemoveKey) => {
-                    self.close_picker();
-                    self.ssh_remove_pick(k);
-                }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::bt_is_pick(p.it)) => {
-                    let it = self.pick.map(|p| p.it).unwrap_or(Item::BtFound);
-                    self.close_picker();
-                    self.bt_pick(it, k);
+                // a picker its page answers for (ADR 0060)
+                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::page_of_pick(p.it).is_some()) => {
+                    if let Some((it, page)) = self.pick.and_then(|p| Some((p.it, Self::page_of_pick(p.it)?))) {
+                        self.close_picker();
+                        (page.pick)(self, it, k);
+                    }
                 }
                 Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
                     let p = self.ref_files.get(k).cloned();
