@@ -8,11 +8,15 @@
 //! (ADR 0002).
 
 use super::{field_be, modbus_crc, uart, Byte, Kind, Packet, Parity};
+use crate::protocols::ModuleInfo;
 
 /// Modbus ASCII LRC: two's complement of the 8-bit sum.
 pub fn modbus_lrc(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0u8, |a, &b| a.wrapping_add(b)).wrapping_neg()
 }
+
+/// Modbus RTU on one line or an RS-485 pair.
+pub static MODBUS_RTU: ModuleInfo = ModuleInfo::new("ModbusRtu", "Modbus RTU", "modbus").differential();
 
 /// Modbus RTU (Modbus over serial line V1.02): characters from `decode::uart` (8 data bits, `parity`), frames
 /// separated by a silence of 3.5 character times (fixed 1.75 ms above 19200 baud; 20 % tolerance). Per frame: `Addr`
@@ -57,6 +61,9 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
     flush(&mut frame, &mut out);
     out
 }
+
+/// Modbus ASCII on one line or an RS-485 pair.
+pub static MODBUS_ASCII: ModuleInfo = ModuleInfo::new("ModbusAscii", "Modbus ASCII", "modbus").differential();
 
 /// Modbus ASCII (Modbus over serial line V1.02, 2.5.2): characters from `decode::uart` (`bits` = 7 normally, 8 also
 /// accepted); Start at ':', hex pairs (address, PDU, LRC), Stop at CR LF. Same fields as `modbus_rtu`, the LRC as

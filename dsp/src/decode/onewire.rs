@@ -9,6 +9,7 @@
 
 use super::{ow_crc8, Kind, Packet};
 use crate::edges::edges;
+use crate::protocols::ModuleInfo;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum OwPhase {
@@ -128,6 +129,9 @@ impl OwNet {
     }
 }
 
+/// 1-Wire on its data line.
+pub static ONE_WIRE: ModuleInfo = ModuleInfo::new("OneWire", "1-Wire", "onewire");
+
 /// 1-Wire (timings of Maxim/Analog Devices AN126, standard and overdrive speed) on the bus line, idle high. Low
 /// pulses are classified by length: standard: < 15 us = 1, < 150 us = 0, >= 300 us = reset; overdrive: < 2 us = 1,
 /// < 40 us = 0, >= 40 us = reset; a reset >= 400 us returns to standard speed, OVERDRIVE SKIP/MATCH ROM (0x3C/0x69)
@@ -197,6 +201,10 @@ enum DsPend {
 /// completed at the next command.
 /// One I2C transaction of the DS2482: (read, t0, bytes with their start and end).
 type Xfer = (bool, f64, Vec<(u8, f64, f64)>);
+
+/// 1-Wire through a DS2482 bridge, read from its I2C bus.
+pub static DS2482: ModuleInfo =
+    ModuleInfo::new("Ds2482", "DS2482", "onewire").roles([Some("SDA"), Some("SCL"), None, None]);
 
 pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
     let mut net = OwNet::new(false);

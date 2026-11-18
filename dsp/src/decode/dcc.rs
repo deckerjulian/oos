@@ -9,6 +9,7 @@
 
 use super::{Kind, Packet};
 use crate::edges::edges;
+use crate::protocols::ModuleInfo;
 
 /// Nominal half-bit time of a DCC `1` (58 us high + 58 us low).
 pub const DCC_ONE_HALF: f64 = 58e-6;
@@ -20,6 +21,10 @@ pub const DCC_ZERO_HALF: f64 = 100e-6;
 pub fn dcc_xor(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0, |a, &b| a ^ b)
 }
+
+/// NMRA DCC between the rails: one line or the two rails as a pair.
+pub static DCC: ModuleInfo =
+    ModuleInfo::new("Dcc", "DCC", "dcc").roles([Some("Rail"), None, None, None]).differential();
 
 /// NMRA DCC (S-9.2) on one channel (rail vs ground, or a differential A−B): edges mark half-bit boundaries.
 /// A short half (~58 us) is a `1`, a long half (>= ~80 us, up to several ms for a stretched zero) is a `0`. Bits are

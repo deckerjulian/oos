@@ -12,6 +12,10 @@ use oos_dsp::decode::{uart, Kind, Parity};
 
 pub struct Example;
 
+/// What a decoder is: a module of the scope declares it next to its decoder in oos-dsp, in the file of its family
+/// (`decode/<family>.rs`), and lists it in `oos_dsp::protocols::MODULES`; the example keeps it here, out of the scope.
+static INFO: ModuleInfo = ModuleInfo::new("Example", "Example", "serial").roles([Some("Data"), None, None, None]);
+
 const RATES: [f64; 3] = [9600.0, 19200.0, 115200.0];
 
 static OPTIONS: [Opt; 2] = [
@@ -20,14 +24,8 @@ static OPTIONS: [Opt; 2] = [
 ];
 
 impl Protocol for Example {
-    fn key(&self) -> &'static str {
-        "Example"
-    }
-    fn name(&self) -> &'static str {
-        "Example"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("Data"), None, None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &INFO
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS

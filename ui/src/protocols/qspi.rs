@@ -11,14 +11,8 @@ use oos_dsp::decode;
 pub struct Qspi;
 
 impl Protocol for Qspi {
-    fn key(&self) -> &'static str {
-        "Qspi"
-    }
-    fn name(&self) -> &'static str {
-        "Quad-SPI"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::QSPI
     }
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
         0.5e-6

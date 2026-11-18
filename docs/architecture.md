@@ -144,8 +144,9 @@ family adds a module next to it ([porting.md](porting.md)).
 
 ### oos-dsp: signal processing
 
-Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, UART/I2C/SPI
-decoders, mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
+Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, the protocol
+decoders and their registry (`protocols`: key, name and lines of each), mask test, signal generators for tests and the
+demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
 
 ### oos-ui: the scope screen
 
@@ -240,7 +241,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 |---|---|---|
 | a setting | a row of its group's table in `ui/src/settings/`; the setup file, SCPI, the menu row and the docs table follow | `ui/src/settings/tests.rs::every_row_is_complete` |
 | a measurement | a measurement module in `ui/src/measures/`, its numbers in `dsp/src/` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
-| a protocol decoder | a protocol module in `ui/src/protocols/`, the decoder in `dsp/src/decode/` | `ui/src/protocols/mod.rs::every_decoder_is_complete` |
+| a protocol decoder | the decoder and its `ModuleInfo` in its family file of `dsp/src/decode/` (C-PHY in `dsp/src/cphy.rs`, the line codes in `dsp/src/linecode.rs`), a protocol module in `ui/src/protocols/` | `ui/src/protocols/mod.rs::every_decoder_is_complete` |
 | a trigger type | `ui/src/model/trigger.rs`, the software trigger in `dsp/src/trigger.rs`, the hardware trigger in `hal/src/dho/tpu.rs` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
 | an analyser page | its file in `ui/src/ui/`, registered in `ui/src/ui/analysers.rs` | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | a remote command | the interpreter, `ui/src/scpi.rs` and its subsystem's file in `ui/src/scpi/`; never a transport | `tools/scpi-coverage.py` |

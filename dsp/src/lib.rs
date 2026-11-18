@@ -16,6 +16,7 @@
 //! - `motor`: Clarke/Park DQ0, shaft speed and the mechanical power ratio
 //! - `dpt`: wide-bandgap double-pulse timings, recovery and Qoss
 //! - `sim`: signal generators for tests and the demo source (pulse trains with glitches/runts, composite video, ...)
+//! - `protocols`: the protocol decoders as modules (key, name, family, lines), the registry `oos-ui` builds on
 //! - `serial`: nominal high-speed serial records for the SIM menu (PRBS, tanh edges, Butterworth, de-emphasis)
 //!
 //! Waveforms are `&[f32]` volts sampled every `dt` seconds; times inside a waveform are fractional sample indices.
@@ -44,6 +45,7 @@ pub mod math;
 pub mod measure;
 pub mod motor;
 pub mod power;
+pub mod protocols;
 pub mod serial;
 pub mod sim;
 pub mod spectrum;

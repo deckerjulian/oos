@@ -17,11 +17,8 @@ const OPTIONS: [Opt; 1] = [Opt { name: "Baud", choices: &BAUD_NAMES, default: BA
 pub struct Manchester;
 
 impl Protocol for Manchester {
-    fn key(&self) -> &'static str {
-        "Manchester"
-    }
-    fn name(&self) -> &'static str {
-        "Manchester"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::linecode::MANCHESTER
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
@@ -40,11 +37,8 @@ impl Protocol for Manchester {
 pub struct Mlt3;
 
 impl Protocol for Mlt3 {
-    fn key(&self) -> &'static str {
-        "Mlt3"
-    }
-    fn name(&self) -> &'static str {
-        "MLT-3"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::linecode::MLT3
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS

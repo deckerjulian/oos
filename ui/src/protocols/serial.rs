@@ -40,14 +40,8 @@ pub struct Uart9;
 const UART9_OPTIONS: [Opt; 1] = [Opt { name: "Baud", choices: &BAUD_NAMES, default: 3 }];
 
 impl Protocol for Uart9 {
-    fn key(&self) -> &'static str {
-        "Uart9"
-    }
-    fn name(&self) -> &'static str {
-        "UART 9-bit"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::UART9
     }
     fn options(&self) -> &'static [Opt] {
         &UART9_OPTIONS
@@ -81,14 +75,8 @@ const RTU_OPTIONS: [Opt; 2] = [
 ];
 
 impl Protocol for ModbusRtu {
-    fn key(&self) -> &'static str {
-        "ModbusRtu"
-    }
-    fn name(&self) -> &'static str {
-        "Modbus RTU"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MODBUS_RTU
     }
     fn options(&self) -> &'static [Opt] {
         &RTU_OPTIONS
@@ -123,14 +111,8 @@ const ASCII_OPTIONS: [Opt; 3] = [
 ];
 
 impl Protocol for ModbusAscii {
-    fn key(&self) -> &'static str {
-        "ModbusAscii"
-    }
-    fn name(&self) -> &'static str {
-        "Modbus ASCII"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MODBUS_ASCII
     }
     fn options(&self) -> &'static [Opt] {
         &ASCII_OPTIONS

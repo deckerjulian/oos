@@ -9,6 +9,10 @@
 
 use super::{Kind, Packet, Parity};
 use crate::edges::{edges, states};
+use crate::protocols::ModuleInfo;
+
+/// UART on one line or an RS-485 pair.
+pub static UART: ModuleInfo = ModuleInfo::new("Uart", "UART", "serial").differential();
 
 /// UART: start bit, `bits` data bits LSB first, parity, 1 stop bit; idle high (`invert` = idle low). Samples each
 /// bit in its middle, timed from the start-bit edge.
@@ -74,6 +78,9 @@ pub fn uart(
     out
 }
 
+/// I2C on SDA and SCL.
+pub static I2C: ModuleInfo = ModuleInfo::new("I2c", "I2C", "serial").roles([Some("SDA"), Some("SCL"), None, None]);
+
 /// I2C: START/STOP from SDA edges while SCL is high, bits sampled at SCL rising edges, 9th bit = ACK (low).
 /// One threshold and hysteresis for both lines.
 pub fn i2c(sda: &[f32], scl: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
@@ -133,6 +140,10 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
     }
     out
 }
+
+/// SPI: data, clock and an optional chip select.
+pub static SPI: ModuleInfo =
+    ModuleInfo::new("Spi", "SPI", "serial").roles([Some("MOSI"), Some("Clock"), Some("CS"), None]);
 
 /// SPI: words of `bits` bits sampled on the capture edge of `mode` (0/3: rising, 1/2: falling); a word ends after
 /// `bits` edges; `cs` (active low) delimits frames, without CS a clock pause longer than `gap` samples restarts.
@@ -245,6 +256,9 @@ pub fn uart_baud(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Option<f64> {
 pub fn diff(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b).map(|(x, y)| x - y).collect()
 }
+
+/// 9-bit UART: the ninth bit marks an address.
+pub static UART9: ModuleInfo = ModuleInfo::new("Uart9", "UART 9-bit", "serial").differential();
 
 /// 9-bit multidrop UART (start, 9 data bits LSB first, stop; the 9th bit marks an address character, as in RS-485
 /// multidrop / MDB): `Addr { read: false }` with value = the low 8 bits when the 9th bit is set, else Data;

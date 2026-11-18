@@ -6,6 +6,7 @@
 //! Basic Theory to Practical Implementation", pp14-16. This is not base-five
 //! decoding, eighteen-wirestate mode, lane merging, or a CSI/DSI packet parser.
 use crate::decode::{Kind, Packet};
+use crate::protocols::ModuleInfo;
 
 const SYNC: [u8; 7] = [3, 4, 4, 4, 4, 4, 3];
 const LIMIT: usize = 250_000;
@@ -131,6 +132,9 @@ struct Run {
     start: usize,
     end: usize,
 }
+
+/// MIPI C-PHY on the three lines of a trio.
+pub static CPHY: ModuleInfo = ModuleInfo::new("Cphy", "C-PHY", "cphy").roles([Some("A"), Some("B"), Some("C"), None]);
 
 /// Returns packet times as native sample indices, like the other DSP decoders.
 /// Unaligned mid-burst captures expose electrical symbols rather than guessed words.

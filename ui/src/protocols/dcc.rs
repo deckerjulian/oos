@@ -18,18 +18,8 @@ use oos_dsp::decode::Kind;
 pub struct Dcc;
 
 impl Protocol for Dcc {
-    fn key(&self) -> &'static str {
-        "Dcc"
-    }
-    fn name(&self) -> &'static str {
-        "DCC"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("Rail"), None, None, None]
-    }
-    /// The two rails as a pair.
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::DCC
     }
     /// A `1` bit: two halves of 58 us.
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {

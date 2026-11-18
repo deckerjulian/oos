@@ -12,14 +12,8 @@ use oos_dsp::decode::{self, UsbSpeed, USB_FULL, USB_LOW};
 pub struct Usb;
 
 impl Protocol for Usb {
-    fn key(&self) -> &'static str {
-        "Usb"
-    }
-    fn name(&self) -> &'static str {
-        "USB"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("D+"), None, Some("D-"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::USB
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::UsbSpeed]
