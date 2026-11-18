@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 29] = [
+const ITEMS: [(Item, &str); 32] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -38,6 +38,9 @@ const ITEMS: [(Item, &str); 29] = [
     (Item::AcqAvg, "avg_count"),
     (Item::AcqAvgHw, "avg_hw"),
     (Item::AcqSegHw, "seg_hw"),
+    (Item::FftWin, "fft_win"),
+    (Item::MathFc, "math_fc"),
+    (Item::MathBw, "math_bw"),
 ];
 
 fn row(it: Item) -> Option<&'static Setting> {
@@ -94,13 +97,19 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the Acquire menu (in Average mode with segments, so their rows show; HW
-    /// average shows only with a hardware source, which the demo is not), or in the Trigger menu of a trigger type
-    /// (with a time range, so both limits show).
+    /// The item is in the Display menu, in the Acquire menu (in Average mode with segments, so their
+    /// rows show; HW average shows only with a hardware source, which the demo is not), in the Math menu of an
+    /// operator, or in the Trigger menu of a trigger type (with a time range, so both limits show).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         if it == Item::AcqAvgHw || [MenuId::Display, MenuId::Acquire].iter().any(|&m| u.items(m).contains(&it)) {
+            return true;
+        }
+        if crate::math::MATH_OPS.iter().any(|&op| {
+            u.m.math = op;
+            u.items(MenuId::Math).contains(&it)
+        }) {
             return true;
         }
         u.m.trig_when = WhenKind::In;

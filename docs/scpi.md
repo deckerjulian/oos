@@ -453,7 +453,7 @@ Statistics count accepted observations. A stopped reference can have a valid cur
 | `:MATH<n>:SOURce1[?]`, `:SOURce2[?]` | CH/ref/earlier-Math identity, preserving native physical timing. |
 | `:MATH<n>:SCALe[?]`, `:OFFSet[?]` | Math display scale and offset. FFT scale uses its dB ladder. |
 | `:MATH<n>:EXPRession[?]` | Root formula parser, including loaded reference names such as `R1 - R2`. |
-| `:MATH<n>:FFT:SOURce[?]`, `:WINDow[?]`, `:SCALe[?]` | FFT input, supported window and dB display scale. |
+| `:MATH<n>:FFT:SOURce[?]`, `:SCALe[?]` | FFT input and dB display scale; the window is below. |
 | `:MATH<n>:FILTer:TYPE[?]`, `:W1[?]`, `:W2[?]` | Supported low/high/band-pass/stop filter and valid corner frequencies. |
 | `:BUS<n>:MODE[?]`, `:DISPlay[?]`, `:FORMat[?]` | Decoder protocol, visibility, `HEX|ASCii` formatting. |
 | `:BUS<n>:EVENt[?]` | Shared decode event-table visibility. |
@@ -466,6 +466,22 @@ Statistics count accepted observations. A stopped reference can have a valid cur
 | `:BUS<n>:SPI:DBITs[?]` | Supported SPI word length. |
 
 Decoder headers preserve the existing `DECode` source schema, including references. Configuring an inactive decoder does not select it as the acquisition trigger. For an active Bus trigger, the decoder's actual primary input owns qualification. Required inputs must overlap in physical time; no synthetic hardware/LA input is invented for a reference. Other protocol-specific Rigol BUS subtrees remain unsupported unless listed.
+
+### Math settings
+
+The settings of the selected math channel that are one value each, their `:MATH<n>` commands and their keys in a
+setup file. They are declared once, in `ui/src/settings/math.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A command sets
+math channel `<n>`, the setup key the selected one (the others are `m<N>.win`, `m<N>.fc`, `m<N>.bw`). A value a
+command does not take is refused with `-224`.
+
+<!-- settings:math:begin -->
+| Command | Takes | Setup key | Math menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MATH<n>:FFT:WINDow[?]` | `RECTangle`, `HANNing`, `HAMMing`, `BLACkman`, `FLATtop` | `fft_win` | Window | The window the FFT multiplies the record with before the transform. |
+| none | set through `:MATH<n>:FILTer:W1` and `:W2`, the corner frequencies (below) | `math_bw` | Bandwidth | The width of the band of the band-pass and band-stop filters. The menu steps 1-2-5 in periods. |
+| none | set through `:MATH<n>:FILTer:W1` and `:W2`, the corner frequencies (below) | `math_fc` | Frequency | The cut-off frequency of the low- and high-pass filters, the centre of the band filters. The menu steps 1-2-5 in periods. |
+<!-- settings:math:end -->
 
 ### Track cursors, mask and histogram
 

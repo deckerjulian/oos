@@ -215,7 +215,6 @@ impl Ui {
             Item::DvmMode => &tools::DVM_MODES,
             Item::CntMode => &tools::CNT_MODES,
             Item::BootMode => &["One-shot", "Persist"],
-            Item::FftWin => &["Rect", "Hann", "Hamming", "Blackman", "Flattop"],
             // long lists: shown as a picker (see `ctl`)
             Item::MathOpI => return self.math_ops_in_family().iter().map(|o| o.name().to_string()).collect(),
             Item::MathFam => return MathFamily::ALL.iter().map(|f| f.name().to_string()).collect(),

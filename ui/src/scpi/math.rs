@@ -1,12 +1,14 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:MATH<n>`: `DISPlay`, `OPERator`, `SOURce1|SOURce2`, `SCALe`, `OFFSet`, `EXPRession`, `FFT:SOURce|WINDow|SCALe`
-//! and `FILTer:TYPE|W1|W2` of the eight math traces (the traces themselves are `crate::math`). A new `:MATH`
-//! command goes into `math_cmd` here, with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
+//! `:MATH<n>`: `DISPlay`, `OPERator`, `SOURce1|SOURce2`, `SCALe`, `OFFSet`, `EXPRession`, `FFT:SOURce|SCALe` and
+//! `FILTer:TYPE|W1|W2` of the eight math traces (the traces themselves are `crate::math`), and `FFT:WINDow`, declared
+//! in settings/math.rs. A new `:MATH` setting of one value is a row of that table, another command goes into
+//! `math_cmd` here; either with its query in ui/tests/scpi.txt, docs/scpi.md gets the row's line from the table, the
+//! other's by hand (AGENTS.md).
 
 use super::{e, kw, nearest_index, parse_bool, parse_wave, suffix, Scpi};
-use crate::math::{math_scales, MathCh, MathOp, Window, MATH_REF_BASE, NMATH};
+use crate::math::{math_scales, MathCh, MathOp, MATH_REF_BASE, NMATH};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -144,6 +146,21 @@ impl Scpi {
     pub(super) fn math_cmd(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
         let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
+        // the rows of settings/math.rs hold the selected channel: channel k is read and set in a copy of the model
+        // that selects it
+        if let Some(row) = crate::settings::command(&crate::settings::math::SLICES, n) {
+            let mut m = ui.m.clone();
+            m.math_select(k);
+            if query {
+                return t(&row.query(&m));
+            }
+            if !row.take(&mut m, arg) {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return None;
+            }
+            put_math(ui, k, m.math_ch(k));
+            return None;
+        }
         if n.len() == 1 && kw(n0, "DISPlay") {
             if query {
                 return t(if ui.m.math_ch(k).op == MathOp::Off { "0" } else { "1" });
@@ -271,35 +288,6 @@ impl Scpi {
             let mut c = ui.m.math_ch(k);
             c.a = src;
             c.op = MathOp::Fft;
-            put_math(ui, k, c);
-            return None;
-        }
-        if n.len() == 2 && kw(n0, "FFT") && kw(n[1], "WINDow") {
-            if query {
-                return t(match ui.m.math_ch(k).win {
-                    Window::Rect => "RECT",
-                    Window::Blackman => "BLAC",
-                    Window::Hann => "HANN",
-                    Window::Hamming => "HAMM",
-                    Window::Flattop => "FLAT",
-                });
-            }
-            let win = if kw(arg, "RECTangle") {
-                Window::Rect
-            } else if kw(arg, "BLACkman") {
-                Window::Blackman
-            } else if kw(arg, "HANNing") {
-                Window::Hann
-            } else if kw(arg, "HAMMing") {
-                Window::Hamming
-            } else if kw(arg, "FLATtop") {
-                Window::Flattop
-            } else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            let mut c = ui.m.math_ch(k);
-            c.win = win;
             put_math(ui, k, c);
             return None;
         }

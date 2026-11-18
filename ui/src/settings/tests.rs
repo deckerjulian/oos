@@ -11,10 +11,11 @@ const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-const GROUPS: [(&[&[Setting]], &str, &str, &str); 3] = [
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 4] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
+    (&math::SLICES, ":MATH<n>", "math", "Math"),
 ];
 
 /// Rows with a command whose query ui/tests/scpi.txt does not ask yet, and why. Adding the query changes the answers
@@ -26,11 +27,14 @@ const NOT_ASKED: &[(&str, &str)] = &[
     (":ACQuire:CORes", "not asked before the table"),
     (":ACQuire:AVERages:HARDware", "not asked before the table"),
     (":ACQuire:SEGMents:HARDware", "not asked before the table"),
+    (":MATH1:FFT:WINDow", "not asked before the table; settings_snapshot probes it"),
 ];
 
-/// Every row with the SCPI root of its group.
-fn rows() -> impl Iterator<Item = (&'static Setting, &'static str)> {
-    GROUPS.into_iter().flat_map(|(slices, root, _, _)| slices.iter().flat_map(|g| g.iter()).map(move |s| (s, root)))
+/// Every row with the SCPI root of its group, the first channel for `<n>`.
+fn rows() -> impl Iterator<Item = (&'static Setting, String)> {
+    GROUPS.into_iter().flat_map(|(slices, root, _, _)| {
+        slices.iter().flat_map(|g| g.iter()).map(move |s| (s, root.replace("<n>", "1")))
+    })
 }
 
 /// A value other than the default: one step of the menu, the other way at the end of a range.

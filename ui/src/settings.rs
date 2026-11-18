@@ -4,12 +4,12 @@
 //! One declaration per setting (docs/adr/code/0043): a row of a const table names a setting's key in setup files, its
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
-//! `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs), the menu rows (ui/setting_items.rs) and the tables in
-//! docs/scpi.md follow from it. Rows only read and write the model; what a change sets off on the screen (redraw,
-//! statistics) stays with the caller.
+//! `:TRIGger` and `:ACQuire` branches of scpi/dispatch.rs, scpi/math.rs), the menu rows (ui/setting_items.rs)
+//! and the tables in docs/scpi.md follow from it. Rows only read and write the model; what a
+//! change sets off on the screen (redraw, statistics) stays with the caller.
 //!
-//! The Display group (settings/display.rs), the trigger values (settings/trigger.rs) and the acquisition settings
-//! (settings/acquisition.rs) have tables; the other settings are still written out by hand in each of those places.
+//! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
+//! (settings/acquisition.rs) and the math settings (settings/math.rs) have tables; the other settings are still written out by hand in each of those places.
 //! A new setting of a group with a table is a row there, its `Item` with its place in a menu (ui/item.rs,
 //! ui/menu_items.rs, ui/setting_items.rs), its query in ui/tests/scpi.txt, and
 //! `OOS_BLESS=1 cargo test --locked -q settings::tests` for the docs table.
@@ -18,6 +18,7 @@ use crate::model::{cycle, si_short, step_index, Model};
 
 pub mod acquisition;
 pub mod display;
+pub mod math;
 pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
@@ -65,6 +66,8 @@ pub enum Ty {
     /// seconds, any finite number in a setup; over SCPI a number (within `accept` when the row has it), the query
     /// answers it as `1.000000E-06`; the menu steps along `ladder` and shows `<n> s`, or `zero` for 0 and below
     Seconds { ladder: fn(f32, i32) -> f32, zero: Option<&'static str> },
+    /// hertz, as `Seconds` without `zero`; the menu shows `<n> Hz`
+    Hertz { ladder: fn(f32, i32) -> f32 },
     /// a setting whose words follow none of the rules above
     Custom(&'static CustomIo),
 }
@@ -135,7 +138,12 @@ pub struct Setting {
 
 /// Every row of every table.
 pub fn all() -> impl Iterator<Item = &'static Setting> {
-    display::SLICES.into_iter().chain(trigger::SLICES).chain(acquisition::SLICES).flat_map(|g| g.iter())
+    display::SLICES
+        .into_iter()
+        .chain(trigger::SLICES)
+        .chain(acquisition::SLICES)
+        .chain(math::SLICES)
+        .flat_map(|g| g.iter())
 }
 
 /// The row of `slices` whose command the nodes below the subsystem name, each in its long or short form.
@@ -166,7 +174,7 @@ impl Setting {
     pub fn store(&self, m: &Model) -> String {
         let v = (self.get)(m);
         match &self.ty {
-            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } => match v {
+            Ty::Bool | Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. } => match v {
                 Val::Bool(b) => b.to_string(),
                 Val::F32(x) => x.to_string(),
                 v => v.index().to_string(),
@@ -190,7 +198,7 @@ impl Setting {
                     }
                 })?)
             }
-            Ty::Seconds { .. } => Val::F32(crate::store::p_f32(text)?),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => Val::F32(crate::store::p_f32(text)?),
             Ty::Custom(io) => (io.load)(text)?,
         };
         (self.put)(m, v);
@@ -204,7 +212,7 @@ impl Setting {
             Ty::Bool => if v.index() != 0 { "1" } else { "0" }.to_string(),
             Ty::U32 { .. } | Ty::Steps(_) => v.index().to_string(),
             Ty::Choice(list, ..) => short(list[v.index()].scpi),
-            Ty::Seconds { .. } => crate::scpi::e(v.secs() as f64),
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::e(v.secs() as f64),
             Ty::Custom(io) => (io.query)(v),
         }
     }
@@ -232,7 +240,7 @@ impl Setting {
                 let a = arg.to_ascii_uppercase();
                 list.iter().position(|c| a.starts_with(&short(c.scpi))).map(Val::Index)
             }
-            Ty::Seconds { .. } => crate::scpi::num(arg)
+            Ty::Seconds { .. } | Ty::Hertz { .. } => crate::scpi::num(arg)
                 .filter(|&x| self.accept.is_none_or(|(lo, hi)| (lo..=hi).contains(&(x as f64))))
                 .map(Val::F32),
             Ty::Custom(io) => (io.take)(arg),
@@ -242,7 +250,7 @@ impl Setting {
 
     /// The menu row is a number with - and + (a choice otherwise).
     pub fn is_number(&self) -> bool {
-        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. })
+        matches!(self.ty, Ty::U32 { .. } | Ty::Steps(_) | Ty::Seconds { .. } | Ty::Hertz { .. })
     }
 
     /// The menu's options (none for a number but the steps of `Steps`).
@@ -250,7 +258,7 @@ impl Setting {
         let labels: Vec<&str> = match &self.ty {
             Ty::Steps(list) => return list.iter().map(u32::to_string).collect(),
             Ty::Bool => vec!["Off", "On"],
-            Ty::U32 { .. } | Ty::Seconds { .. } => Vec::new(),
+            Ty::U32 { .. } | Ty::Seconds { .. } | Ty::Hertz { .. } => Vec::new(),
             Ty::Choice(list, ..) => list.iter().map(|c| c.label).collect(),
             Ty::Custom(io) => io.labels.to_vec(),
         };
@@ -265,6 +273,7 @@ impl Setting {
             Ty::Steps(_) => v.index().to_string(),
             Ty::Seconds { zero: Some(z), .. } if v.secs() <= 0.0 => z.to_string(),
             Ty::Seconds { .. } => si_short(v.secs() as f64, "s"),
+            Ty::Hertz { .. } => si_short(v.secs() as f64, "Hz"),
             _ => self.options()[v.index()].clone(),
         }
     }
@@ -283,7 +292,7 @@ impl Setting {
                 let i = i.or_else(|| list.iter().position(|&n| Val::U32(n) == (self.get)(&Model::default())));
                 Val::U32(list[step_index(i.unwrap_or(0), list.len(), d)])
             }
-            (Ty::Seconds { ladder, .. }, v) => Val::F32(ladder(v.secs(), d)),
+            (Ty::Seconds { ladder, .. } | Ty::Hertz { ladder }, v) => Val::F32(ladder(v.secs(), d)),
             (_, v) => {
                 let n = self.options().len();
                 Val::Index(if n == 2 { 1 - v.index() } else { cycle(v.index(), n, d) })
@@ -317,6 +326,7 @@ impl Setting {
                 Some((lo, hi)) => format!("seconds from {} to {}", lo, hi),
                 None => "seconds".into(),
             },
+            Ty::Hertz { .. } => "hertz".into(),
             Ty::Custom(io) => io.values.into(),
         }
     }

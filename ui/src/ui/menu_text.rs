@@ -153,8 +153,6 @@ impl Ui {
             | Item::CntDigits
             | Item::MathScale
             | Item::MathOffset
-            | Item::MathFc
-            | Item::MathBw
             | Item::ZScale
             | Item::ZDelay
             | Item::DecThr => Kind::Value,
@@ -331,9 +329,6 @@ impl Ui {
             Item::MathB => "Source B",
             Item::MathScale => "Scale",
             Item::MathOffset => "Offset",
-            Item::FftWin => "Window",
-            Item::MathFc => "Frequency",
-            Item::MathBw => "Bandwidth",
             Item::MathSel => "Channel",
             Item::MathAuto => "Auto scale",
             Item::Open(MenuId::MeasSelected) => "Selected",
@@ -687,11 +682,8 @@ impl Ui {
             Item::MathA => src_name(m.math_a),
             Item::MathB => src_name(m.math_b),
             Item::MathSel => format!("M{}", m.math_sel + 1),
-            Item::MathBw => si_short(m.math_bw as f64, "Hz"),
             Item::MathScale => self.math_scale_text(),
             Item::MathOffset => format!("{:.2} div", m.math_offset),
-            Item::FftWin => m.fft_win.name().into(),
-            Item::MathFc => si_short(m.math_fc as f64, "Hz"),
             Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
             Item::MaskOn => onoff(m.mask_on),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
