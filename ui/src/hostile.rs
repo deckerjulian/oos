@@ -22,56 +22,9 @@ mod signals;
 
 pub(crate) use gen::*;
 
-use crate::store::hostile_tests as files;
-
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
 pub(crate) const KNOWN: &[Known] = &[
-    Known {
-        name: "ppm-header-ends-in-a-comment",
-        what: "store::ppm_into panics on a power-on picture whose header ends inside a comment",
-        repro: files::hostile_known_ppm_header_ends_in_a_comment,
-    },
-    Known {
-        name: "ppm-size-overflows",
-        what: "store::ppm_into multiplies width and height as i32 and panics on a size past 2^31",
-        repro: files::hostile_known_ppm_size_overflows,
-    },
-    Known {
-        name: "mask-tolerance-not-finite",
-        what: "store::parse_mask takes tolerances that are infinite or no number",
-        repro: files::hostile_known_mask_tolerance_not_finite,
-    },
-    Known {
-        name: "mdns-answer-it-cannot-read",
-        what: "mdns: the answer to a question of control bytes and pointers is a packet mdns::parse refuses",
-        repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
-    },
-    Known {
-        name: "usbtmc-empty-transfers-forever",
-        what: "usbtmc::Usbtmc::read asks for ever while a device answers with transfers of no data and no end",
-        repro: network::hostile_known_usbtmc_empty_transfers_forever,
-    },
-    Known {
-        name: "setup-refused-line-half-applied",
-        what: "store::set applies the first values of a line it then refuses: an infinite Bode sweep time stays",
-        repro: files::hostile_known_setup_refused_line_half_applied,
-    },
-    Known {
-        name: "csv-time-not-finite",
-        what: "store::parse_wave takes a CSV whose time column holds inf: dt or t0 is infinite",
-        repro: files::hostile_known_csv_time_not_finite,
-    },
-    Known {
-        name: "sysconf-list-word-with-hash",
-        what: "sysconf::SysConf::parse takes a word of features.off that starts with '#': written out it is a comment",
-        repro: conf::hostile_known_sysconf_list_word_with_hash,
-    },
-    Known {
-        name: "ssh-rsa-empty-modulus",
-        what: "ssh::parse_line subtracts past zero on an RSA key whose modulus has no bit set",
-        repro: conf::hostile_known_ssh_rsa_empty_modulus,
-    },
     #[cfg(feature = "dec-qspi")]
     Known {
         name: "qspi-zero-frame",

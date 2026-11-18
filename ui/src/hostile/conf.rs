@@ -4,7 +4,7 @@
 //! Hostile input for the readers of settings a person, a stick or the network writes: `system.conf`, `net.allow`,
 //! time zone strings (also from a DHCP lease), a date typed on the screen, public keys from a stick, JSON of MCP.
 
-use super::{is_known, run};
+use super::run;
 use crate::clock::{Local, Tz};
 use crate::netacl::{canonical, Acl};
 use crate::sysconf::{server_ok, SysConf, DHCP};
@@ -44,10 +44,6 @@ fn hostile_system_conf() {
         if !c.net_name.is_empty() && !crate::mdns::name_ok(&c.net_name) {
             return Err(format!("took the name {:?}", c.net_name));
         }
-        let hash = c.features_off.iter().chain(&c.decoders_off).any(|w| w.starts_with('#'));
-        if hash && is_known("sysconf-list-word-with-hash") {
-            return Ok(());
-        }
         // a line this version does not know is kept as it is, but for a carriage return at its end
         let written = c.text().replace("\r\n", "\n");
         let (again, bad) = SysConf::parse(&written);
@@ -66,11 +62,15 @@ fn hostile_system_conf() {
     });
 }
 
+// Break it catches: a word of a list that becomes a comment once the list is written out (#181)
 #[test]
-#[ignore = "SysConf::parse takes a word of features.off that starts with '#', a comment once written, #181"]
-pub(super) fn hostile_known_sysconf_list_word_with_hash() {
+fn hostile_sysconf_list_word_with_hash() {
     let (c, _) = SysConf::parse("features.off =#eye bode\n");
     assert_eq!(SysConf::parse(&c.text()).0.features_off, c.features_off, "written as {:?}", c.text());
+    // the word is left out and named, the others stand: the file still loads
+    let (c, bad) = SysConf::parse("features.off =#eye bode\ndecoders.off = Uart\u{3000}#x Spi\n");
+    assert_eq!((c.features_off, c.decoders_off), (vec!["bode".to_string()], vec!["Uart".to_string(), "Spi".into()]));
+    assert_eq!(bad.len(), 2, "{bad:?}");
 }
 
 /// `Acl::parse`, `Acl::from_value` and `canonical` (`net.allow`: who may send commands and updates): return for any
@@ -220,9 +220,6 @@ fn hostile_public_keys() {
     run("ssh::parse_line", &seeds, 1, |b| {
         let text = String::from_utf8_lossy(b);
         for line in text.lines() {
-            if rsa_without_a_modulus(line) && is_known("ssh-rsa-empty-modulus") {
-                return Ok(());
-            }
             let Ok(k) = crate::ssh::parse_line(line) else { continue };
             let named = k.blob.get(4..4 + k.kind.len());
             if named != Some(k.kind.as_bytes()) || k.short_kind() == "key" {
@@ -248,25 +245,9 @@ fn hostile_public_keys() {
     });
 }
 
-/// The finding `ssh-rsa-empty-modulus`: an `ssh-rsa` line whose blob names its type and whose modulus has no bit
-/// set.
-pub(super) fn rsa_without_a_modulus(line: &str) -> bool {
-    let Some(at) = line.find("ssh-rsa") else { return false };
-    let mut w = line[at..].split_whitespace();
-    let Some(blob) = w.nth(1).and_then(crate::ssh::base64_decode) else { return false };
-    let mut p = 0;
-    let mut next = || {
-        let n = u32::from_be_bytes(blob.get(p..p + 4)?.try_into().ok()?) as usize;
-        let s = blob.get(p + 4..(p + 4).checked_add(n)?)?;
-        p += 4 + n;
-        Some(s)
-    };
-    next() == Some(b"ssh-rsa") && next().is_some() && next().is_some_and(|n| n.iter().all(|&b| b == 0))
-}
-
+// Break it catches: the bits of an RSA modulus counted from its first byte when it has none (#181)
 #[test]
-#[ignore = "ssh::parse_line subtracts past zero on an RSA key whose modulus has no bit set, #181"]
-pub(super) fn hostile_known_ssh_rsa_empty_modulus() {
+fn hostile_ssh_rsa_empty_modulus() {
     // in a build without overflow checks the key is taken as one of 2^64 bits
     assert!(crate::ssh::parse_line(&key_line("ssh-rsa", &[&[1, 0, 1], &[]], "no modulus")).is_err());
 }

@@ -246,6 +246,12 @@ pub fn mask_text(src: usize, x: f32, y: f32, inv: bool, v: &[f32]) -> String {
 }
 
 pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
+    // a tolerance is a number: inf or NaN would become the margin of the mask in the model
+    let tolerance = |v: &str| match v.trim().parse::<f32>() {
+        Ok(t) if t.is_finite() => Ok(t),
+        Ok(t) => Err(format!("mask tolerance {}", t)),
+        Err(e) => Err(e.to_string()),
+    };
     let mut lines = text.lines().peekable();
     let mut src = None;
     let mut x = None;
@@ -272,8 +278,8 @@ pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
                     }
                     src = Some(n - 1);
                 }
-                "x" => x = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
-                "y" => y = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "x" => x = Some(tolerance(v)?),
+                "y" => y = Some(tolerance(v)?),
                 "inv" => inv = Some(matches!(v.trim(), "1" | "true" | "on")),
                 _ => {}
             }

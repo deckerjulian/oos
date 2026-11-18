@@ -5,7 +5,7 @@
 //! device and the frames of the front-panel MCU. HiSLIP, mDNS and HTTP are tested in their own modules, where their
 //! private parts are.
 
-use super::{is_known, run};
+use super::run;
 use crate::board::Board;
 use crate::vxi11::{core, parse_call, portmap, take_record, Link, CORE_PROG, PMAP_PROG};
 
@@ -117,17 +117,20 @@ fn hostile_sntp_answers() {
 
 /// A USBTMC device that answers with the transfers of the input, again and again: each transfer is a length byte
 /// and that many bytes (twice the length byte when it is odd, so a transfer can be long). It echoes the tag of the
-/// request, as a device does.
+/// request, as a device does. `data` counts the bytes the reader takes as data: those after the header of the
+/// transfer that answers a request, and all of a transfer that continues it.
 struct Device {
     transfers: Vec<Vec<u8>>,
     asked: usize,
     tag: u8,
     data: usize,
+    requested: bool,
 }
 
 impl crate::usbtmc::Bulk for Device {
     fn bulk_out(&mut self, data: &[u8], _: u32) -> std::io::Result<usize> {
         self.tag = data.get(1).copied().unwrap_or(0);
+        self.requested = true;
         Ok(data.len())
     }
 
@@ -143,7 +146,7 @@ impl crate::usbtmc::Bulk for Device {
         }
         let n = t.len().min(buf.len());
         buf[..n].copy_from_slice(&t[..n]);
-        self.data += n.saturating_sub(crate::usbtmc::HEADER);
+        self.data += if std::mem::take(&mut self.requested) { n.saturating_sub(crate::usbtmc::HEADER) } else { n };
         Ok(n)
     }
 
@@ -185,26 +188,27 @@ fn hostile_usbtmc_answers() {
                 }
             }
         }
-        let mut dev = crate::usbtmc::Usbtmc::new(Device { transfers, asked: 0, tag: 0, data: 0 });
+        let mut dev = crate::usbtmc::Usbtmc::new(Device { transfers, asked: 0, tag: 0, data: 0, requested: false });
         let answer = dev.read();
         if let Ok(a) = &answer {
             if a.len() > (1 << 20) + 4096 {
                 return Err(format!("an answer of {} bytes", a.len()));
             }
         }
-        if dev.bus.asked >= 300 && dev.bus.data == 0 && !is_known("usbtmc-empty-transfers-forever") {
+        if dev.bus.asked >= 300 && dev.bus.data == 0 {
             return Err("still asking after 300 transfers without a byte of data and without an end".into());
         }
         Ok(())
     });
 }
 
+// Break it catches: a read that asks for ever while the device sends neither data nor the end (#181)
 #[test]
-#[ignore = "Usbtmc::read asks for ever while a device sends transfers of no data and no end, #181"]
-pub(super) fn hostile_known_usbtmc_empty_transfers_forever() {
+fn hostile_usbtmc_empty_transfers_forever() {
     // one transfer: the header of an answer of no bytes that is not the end of the message
     let empty = vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let mut dev = crate::usbtmc::Usbtmc::new(Device { transfers: vec![empty], asked: 0, tag: 0, data: 0 });
+    let mut dev =
+        crate::usbtmc::Usbtmc::new(Device { transfers: vec![empty], asked: 0, tag: 0, data: 0, requested: false });
     let answer = dev.read();
     assert!(dev.bus.asked < 300, "still asking after {} empty transfers: {:?}", dev.bus.asked, answer);
 }

@@ -8,7 +8,7 @@
 use super::header_import_tests::{ag_f32, isf_i16, raw_f64, tr0_f32, wavedesc_i16, wfmx_f32};
 use super::tests::{custom, wfm_f32};
 use super::*;
-use crate::hostile::{is_known, run};
+use crate::hostile::run;
 
 /// A record of two channels, as a capture stores it.
 fn record() -> (Record, Model) {
@@ -89,22 +89,15 @@ fn hostile_waveform_files() {
     let seeds: Vec<&[u8]> = files.iter().map(|f| f.as_slice()).collect();
     run("store::parse_wave", &seeds, 1, |b| match parse_wave(b, "hostile.bin") {
         Ok(traces) if traces.is_empty() => Err("accepted a file without a trace".into()),
-        Ok(_) if csv_time_not_finite(b) && is_known("csv-time-not-finite") => Ok(()),
         Ok(traces) => traces.iter().try_for_each(trace_ok),
         Err(e) if e.is_empty() => Err("refused without a message".into()),
         Err(_) => Ok(()),
     });
 }
 
-/// The finding `csv-time-not-finite`: text the CSV reader takes with a time step or a start time that is infinite.
-fn csv_time_not_finite(b: &[u8]) -> bool {
-    let csv = std::str::from_utf8(b).ok().and_then(|text| parse_wave_csv(text, "hostile.csv").ok());
-    csv.is_some_and(|traces| traces.iter().any(|t| !(t.dt.is_finite() && t.t0.is_finite())))
-}
-
+// Break it catches: a CSV time base taken without the check of the binary readers (#181)
 #[test]
-#[ignore = "parse_wave takes a CSV whose time column holds inf: dt or t0 is infinite, #181"]
-pub(crate) fn hostile_known_csv_time_not_finite() {
+fn hostile_csv_time_not_finite() {
     assert!(parse_wave(b"0,1\ninf,2\n", "a.csv").is_err(), "the second time is inf: dt = inf");
     assert!(parse_wave(b"-inf,1\n0,2\n", "a.csv").is_err(), "the first time is -inf: t0 = -inf");
 }
@@ -167,7 +160,7 @@ fn hostile_mask_files() {
             if mf.v.is_empty() || mf.src.is_some_and(|s| s >= NCH) {
                 return Err(format!("accepted a mask of {} points for source {:?}", mf.v.len(), mf.src));
             }
-            if [mf.x, mf.y].iter().flatten().any(|t| !t.is_finite()) && !is_known("mask-tolerance-not-finite") {
+            if [mf.x, mf.y].iter().flatten().any(|t| !t.is_finite()) {
                 return Err(format!("accepted the tolerances {:?} and {:?}", mf.x, mf.y));
             }
             Ok(())
@@ -198,11 +191,6 @@ fn hostile_setup_files() {
         let written = setup_text(&m);
         let (again, bad_again) = parse_setup_lenient(&written);
         if let Some(e) = bad_again.first() {
-            // the finding `setup-refused-line-half-applied`: the key refused now is one refused in the input
-            let key = |e: &str| e.split(": ").nth(1).unwrap_or("").to_string();
-            if bad.iter().any(|b| key(b) == key(e)) && is_known("setup-refused-line-half-applied") {
-                return Ok(());
-            }
             return Err(format!("accepted a setup the reader refuses when it is written out: {e}"));
         }
         let rewritten = setup_text(&again);
@@ -219,40 +207,12 @@ fn hostile_setup_files() {
     });
 }
 
+// Break it catches: a setup line that takes its first values before a later one is refused (#181)
 #[test]
-#[ignore = "a setup line that is refused for a later value leaves its first values in the model, #181"]
-pub(crate) fn hostile_known_setup_refused_line_half_applied() {
+fn hostile_setup_refused_line_half_applied() {
     let (m, bad) = parse_setup_lenient("bode_sweep = inf true 1 Rise 0 1 0\n");
     assert_eq!(bad.len(), 1, "an infinite sweep time is refused: {bad:?}");
     assert_eq!(m.bode_sw_time, Model::default().bode_sw_time, "and the refused line changes nothing");
-}
-
-/// The finding an input of `ppm_into` runs into, if any: the header read as the reader reads it.
-fn ppm_trap(b: &[u8]) -> Option<&'static str> {
-    if !b.starts_with(b"P6") {
-        return None;
-    }
-    let (mut p, mut fields) = (2, Vec::new());
-    while fields.len() < 3 {
-        while p < b.len() && (b[p].is_ascii_whitespace() || b[p] == b'#') {
-            if b[p] == b'#' {
-                while p < b.len() && b[p] != b'\n' {
-                    p += 1;
-                }
-            }
-            p += 1;
-        }
-        if p > b.len() {
-            return Some("ppm-header-ends-in-a-comment");
-        }
-        let s = p;
-        while p < b.len() && b[p].is_ascii_digit() {
-            p += 1;
-        }
-        fields.push(std::str::from_utf8(&b[s..p]).ok()?.parse::<i32>().ok()?);
-    }
-    let (w, h, max) = (fields[0] as i64, fields[1] as i64, fields[2]);
-    (max == 255 && w > 0 && h > 0 && w * h * 3 > i32::MAX as i64).then_some("ppm-size-overflows")
 }
 
 /// `ppm_into` (the power-on picture, `/etc/oos/splash.ppm` or one copied from removable media): returns for any
@@ -265,34 +225,29 @@ fn hostile_power_on_picture() {
     wide.extend((0..40 * 3 * 3).map(|k| k as u8));
     let seeds: [&[u8]; 2] = [&small, &wide];
     let mut cv = Canvas::new(16, 8);
-    run("store::ppm_into", &seeds, 1, |b| {
-        if ppm_trap(b).is_some_and(is_known) {
-            return Ok(());
+    run("store::ppm_into", &seeds, 1, |b| match ppm_into(b, &mut cv) {
+        Some((w, h)) if w <= 0 || h <= 0 || (w as usize * h as usize * 3) > b.len() => {
+            Err(format!("took a picture of {w} x {h} from {} bytes", b.len()))
         }
-        match ppm_into(b, &mut cv) {
-            Some((w, h)) if w <= 0 || h <= 0 || (w as usize * h as usize * 3) > b.len() => {
-                Err(format!("took a picture of {w} x {h} from {} bytes", b.len()))
-            }
-            _ => Ok(()),
-        }
+        _ => Ok(()),
     });
 }
 
+// Break it catches: a header that ends inside a comment (#181)
 #[test]
-#[ignore = "ppm_into panics on a header that ends inside a comment, #181"]
-pub(crate) fn hostile_known_ppm_header_ends_in_a_comment() {
+fn hostile_ppm_header_ends_in_a_comment() {
     assert_eq!(ppm_into(b"P6\n#", &mut Canvas::new(16, 8)), None);
 }
 
+// Break it catches: a size whose pixels are counted in i32 (#181)
 #[test]
-#[ignore = "ppm_into multiplies width and height as i32 and panics on a size past 2^31, #181"]
-pub(crate) fn hostile_known_ppm_size_overflows() {
+fn hostile_ppm_size_overflows() {
     assert_eq!(ppm_into(b"P6 65536 65536 255\n", &mut Canvas::new(16, 8)), None);
 }
 
+// Break it catches: a tolerance of the mask file taken without asking for a number (#181)
 #[test]
-#[ignore = "parse_mask takes tolerances that are infinite or no number, #181"]
-pub(crate) fn hostile_known_mask_tolerance_not_finite() {
+fn hostile_mask_tolerance_not_finite() {
     assert!(parse_mask("# OOS mask\nx=inf\n---\n1\n2\n").is_err(), "x = inf");
     assert!(parse_mask("# OOS mask\ny=NaN\n---\n1\n2\n").is_err(), "y = NaN");
 }

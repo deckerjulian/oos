@@ -171,6 +171,19 @@ Fixed:
   than the rail no longer crashes.
 - Tests no longer depend on the speed of the computer (wall-time limits replaced), and the SSH key tests run in a
   checkout without `local/`.
+- The power-on picture (`/etc/oos/splash.ppm`): one whose header ends inside a comment no longer ends oos-ui at the
+  start; it is left out like any picture oos-ui cannot read.
+- The power-on picture: one that claims a size of 2^31 bytes of pixels or more (65536 x 65536) no longer ends
+  oos-ui; it is refused unless the file holds all its pixels.
+- Bode with a generator on the USB port: a device that answers with transfers of no data and never ends the answer
+  no longer holds the generator's thread for ever. After 16 such transfers the read fails, and the Bode page says
+  that `*IDN?` failed.
+- Waveform import: a CSV whose time column gives an infinite time step or start (`inf` as a time) is refused, as an
+  `OOSW` file with such a time base is. It became a reference with an infinite time step.
+- Mask test: a mask file whose tolerance `x` or `y` is `inf` or `NaN` is refused with "Load failed"; such a
+  tolerance became the mask's margin.
+- Setup recall: a `bode_sweep` line that is refused (a sweep time of 0 or `inf`, or a later value that is wrong) no
+  longer leaves its first values in the Bode settings; the line changes nothing.
 
 ## 0.1.13
 

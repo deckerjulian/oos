@@ -232,11 +232,11 @@ impl SysConf {
                     v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some()
                 }
                 "features.off" => {
-                    c.features_off = v.split_whitespace().map(str::to_string).collect();
+                    c.features_off = id_list(k, v, &mut bad);
                     true
                 }
                 "decoders.off" => {
-                    c.decoders_off = v.split_whitespace().map(str::to_string).collect();
+                    c.decoders_off = id_list(k, v, &mut bad);
                     true
                 }
                 _ => {
@@ -376,6 +376,17 @@ pub fn fork_text() -> String {
 /// `fork_text` from the two files' text.
 pub fn fork_text_of(settings: &str, image: &str) -> String {
     format!("{}\n{}", image, settings)
+}
+
+/// The ids of a list (`features.off`, `decoders.off`). A word that starts with `#` is no id, and written out after
+/// its space it would start a comment: it is left out and named in `bad`, the other words stand, so a file with one
+/// still loads.
+fn id_list(k: &str, v: &str, bad: &mut Vec<String>) -> Vec<String> {
+    let (ids, hash): (Vec<&str>, Vec<&str>) = v.split_whitespace().partition(|w| !w.starts_with('#'));
+    if !hash.is_empty() {
+        bad.push(format!("{}: {:?} left out, no id starts with '#'", k, hash.join(" ")));
+    }
+    ids.into_iter().map(str::to_string).collect()
 }
 
 /// The end of a value: a comment starts with `#` after a space or a tab.

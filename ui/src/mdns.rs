@@ -295,7 +295,7 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     const ETH: u32 = 2;
@@ -950,11 +950,7 @@ pub(crate) mod tests {
         pointer.extend([1, b'a', 5, b'l', b'o', b'c', b'a', b'l', 0, 0, 1, 0, 1]);
         pointer.extend([1, b'b', 0xc0, 14, 0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 192, 0, 2, 1]);
         let seeds: [&[u8]; 4] = [&ask, &taken, &srv, &pointer];
-        let finding = answer_it_cannot_read();
         crate::hostile::run("mdns::receive", &seeds, 1, |b| {
-            if b == finding.as_slice() && crate::hostile::is_known("mdns-answer-it-cannot-read") {
-                return Ok(());
-            }
             if let Some(m) = parse(b) {
                 let count = |at: usize| u16::from_be_bytes([b[at], b[at + 1]]) as usize;
                 if (m.qs.len(), m.an.len(), m.ns.len(), m.ar.len()) != (count(4), count(6), count(8), count(10)) {
@@ -983,18 +979,25 @@ pub(crate) mod tests {
     }
 
     /// The finding `mdns-answer-it-cannot-read`, the input of the weekly run (#191): a question whose service name
-    /// holds control bytes and many pointers; what the responder sends back is a packet `parse` refuses.
+    /// holds bytes that are no UTF-8 and many pointers. The legacy answer wrote it from its text, in which each such
+    /// byte had become U+FFFD of three bytes: the name grew past 255 bytes, which `parse` refuses.
+    // Break it catches: a legacy answer that repeats a question other than it came (#181)
     #[test]
-    #[ignore = "mdns: the answer to a question of control bytes and pointers is a packet parse refuses, #181"]
-    pub(crate) fn hostile_known_mdns_answer_it_cannot_read() {
+    fn hostile_mdns_answer_it_cannot_read() {
         let b = answer_it_cannot_read();
+        let asked: Vec<Vec<u8>> = parse(&b).unwrap().qs.into_iter().map(|q| q.wire).collect();
         for (port, to_group) in [(PORT, true), (PORT, false), (40000, true), (40000, false)] {
             let mut r = running();
             let mut out = r.receive(10.0, &b, peer(port), ETH, to_group);
             out.extend(r.tick(10.5));
             out.extend(r.tick(12.0));
             for o in out {
-                assert!(parse(&o.pkt).is_some(), "sent a packet of {} bytes it cannot read itself", o.pkt.len());
+                let m = parse(&o.pkt);
+                assert!(m.is_some(), "sent a packet of {} bytes it cannot read itself", o.pkt.len());
+                if port != PORT && o.dest == Dest::To(peer(port)) {
+                    let repeated: Vec<Vec<u8>> = m.unwrap().qs.into_iter().map(|q| q.wire).collect();
+                    assert_eq!(repeated, asked, "the legacy answer repeats the questions as they came");
+                }
             }
         }
     }

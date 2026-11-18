@@ -322,11 +322,13 @@ pub fn ppm_into(b: &[u8], cv: &mut Canvas) -> Option<(i32, i32)> {
         while p < b.len() && b[p].is_ascii_digit() {
             p += 1;
         }
-        fields.push(std::str::from_utf8(&b[s..p]).ok()?.parse::<i32>().ok()?);
+        // a header that ends inside a comment leaves p one past the end: no field
+        fields.push(std::str::from_utf8(b.get(s..p)?).ok()?.parse::<i32>().ok()?);
     }
     let (w, h, max) = (fields[0], fields[1], fields[2]);
     p += 1;
-    if max != 255 || w <= 0 || h <= 0 || b.len() < p + (w * h * 3) as usize {
+    // the size in usize (64 bits hold 3 * 2^31 * 2^31): in i32 it overflows past 2^31
+    if max != 255 || w <= 0 || h <= 0 || b.len() < p + w as usize * h as usize * 3 {
         return None;
     }
     cv.fill(crate::gfx::Rect::new(0, 0, cv.w, cv.h), 0);
@@ -335,7 +337,7 @@ pub fn ppm_into(b: &[u8], cv: &mut Canvas) -> Option<(i32, i32)> {
         for x in 0..w {
             let (cx, cy) = (ox + x, oy + y);
             if (0..cv.w).contains(&cx) && (0..cv.h).contains(&cy) {
-                let k = p + ((y * w + x) * 3) as usize;
+                let k = p + (y as usize * w as usize + x as usize) * 3;
                 cv.px[(cy * cv.w + cx) as usize] = crate::gfx::rgb(b[k] as u32, b[k + 1] as u32, b[k + 2] as u32);
             }
         }

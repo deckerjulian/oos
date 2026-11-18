@@ -167,6 +167,9 @@ impl Rec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Q {
     pub name: Name,
+    /// the name as it came, uncompressed: what a legacy answer repeats (`name` reads bytes that are no UTF-8 as
+    /// U+FFFD, three bytes each, so written from `name` it can be another name and longer than 255 bytes)
+    pub wire: Vec<u8>,
     pub qtype: u16,
     /// the class without the QU bit
     pub qclass: u16,
@@ -215,9 +218,21 @@ fn u32_at(b: &[u8], p: usize) -> Option<u32> {
     Some(u32::from_be_bytes(b.get(p..p + 4)?.try_into().ok()?))
 }
 
-/// The name at `start` and where the bytes after it begin. Compression pointers (RFC 1035 §4.1.4) must each point
-/// before the place the previous jump went to, so a loop cannot be built; a name stays within 255 bytes.
+/// The name at `start` and where the bytes after it begin (`read_labels`).
 fn read_name(b: &[u8], start: usize) -> Option<(Name, usize)> {
+    let (labels, end) = read_labels(b, start)?;
+    Some((name_of(&labels), end))
+}
+
+/// Labels as text: bytes that are no UTF-8 become U+FFFD.
+fn name_of(labels: &[&[u8]]) -> Name {
+    labels.iter().map(|l| String::from_utf8_lossy(l).into_owned()).collect()
+}
+
+/// The labels of the name at `start` as they are, and where the bytes after it begin. Compression pointers (RFC 1035
+/// §4.1.4) must each point before the place the previous jump went to, so a loop cannot be built; a name stays within
+/// 255 bytes.
+fn read_labels(b: &[u8], start: usize) -> Option<(Vec<&[u8]>, usize)> {
     let mut labels = Vec::new();
     let (mut p, mut end, mut floor, mut total) = (start, None, start, 0usize);
     loop {
@@ -232,7 +247,7 @@ fn read_name(b: &[u8], start: usize) -> Option<(Name, usize)> {
                 if total > 254 {
                     return None;
                 }
-                labels.push(String::from_utf8_lossy(l).into_owned());
+                labels.push(l);
                 p += 1 + len;
             }
             0xc0 => {
@@ -291,9 +306,16 @@ pub(crate) fn parse_ends(b: &[u8]) -> Option<(Msg, usize, usize)> {
         Msg { id: u16_at(b, 0)?, flags: u16_at(b, 2)?, qs: Vec::new(), an: Vec::new(), ns: Vec::new(), ar: Vec::new() };
     let mut p = 12;
     for _ in 0..counts[0] {
-        let (name, e) = read_name(b, p)?;
+        let (labels, e) = read_labels(b, p)?;
+        let name = name_of(&labels);
+        let mut wire = Vec::new();
+        for l in &labels {
+            wire.push(l.len() as u8);
+            wire.extend(*l);
+        }
+        wire.push(0);
         let (qtype, class) = (u16_at(b, e)?, u16_at(b, e + 2)?);
-        m.qs.push(Q { name, qtype, qclass: class & !TOP, qu: class & TOP != 0 });
+        m.qs.push(Q { name, wire, qtype, qclass: class & !TOP, qu: class & TOP != 0 });
         p = e + 4;
     }
     let questions_end = p;
@@ -427,8 +449,11 @@ pub(super) fn responses(id: u16, qs: &[Q], an: &[Rec], ar: &[Rec], s: Style) -> 
     let mut i = 0;
     loop {
         let mut w = Wr::new(id, RESPONSE);
+        // each question as it came, uncompressed: the bytes the reader took, so within 255
         for q in qs {
-            w.question(&q.name, q.qtype, q.qclass | if q.qu { TOP } else { 0 });
+            w.b.extend(&q.wire);
+            w.u16(q.qtype);
+            w.u16(q.qclass | if q.qu { TOP } else { 0 });
         }
         let mut n_an = 0;
         while i < an.len() {
