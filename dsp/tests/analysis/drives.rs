@@ -242,6 +242,63 @@ fn double_pulse_timings_peak_and_recovery_charge() {
 }
 
 #[test]
+fn double_pulse_peaks_are_the_turn_on_peak_not_the_end_of_the_inductor_ramp() {
+    // breaks when Ipeak and Irrm take the largest current of the second pulse again (#197): the inductor charges on
+    // after the turn-on, from 10 A to 15 A, above the 12 A turn-on peak, and Trr and Qrr stayed empty
+    let dt = 1e-9;
+    let n = 13_000;
+    let gate = [
+        (0.0, 0.0),
+        (1e-6, 0.0),
+        (1.02e-6, 10.0),
+        (6e-6, 10.0),
+        (6.02e-6, 0.0),
+        (10e-6, 0.0),
+        (10.02e-6, 10.0),
+        (12e-6, 10.0),
+        (12.02e-6, 0.0),
+    ];
+    let id = [
+        (0.0, 0.0),
+        (1.1e-6, 0.0),
+        (1.2e-6, 10.0),
+        (6.05e-6, 10.0),
+        (6.15e-6, 0.0),
+        (10.05e-6, 0.0),
+        (10.15e-6, 10.0),
+        (10.25e-6, 12.0),
+        (10.35e-6, 10.0),
+        (12e-6, 15.0),
+        (12.1e-6, 0.0),
+    ];
+    let vds = [
+        (0.0, 400.0),
+        (1.05e-6, 400.0),
+        (1.15e-6, 1.0),
+        (6.1e-6, 1.0),
+        (6.2e-6, 400.0),
+        (10.05e-6, 400.0),
+        (10.15e-6, 1.0),
+        (12e-6, 1.0),
+    ];
+    let g = sample(|t| pwl(&gate, t), 0.0, dt, n);
+    let i = sample(|t| pwl(&id, t), 0.0, dt, n);
+    let v = sample(|t| pwl(&vds, t), 0.0, dt, n);
+    let p = oos_dsp::dpt::measure(&v, &i, Some(&g), oos_dsp::dpt::Fourth::Off, dt, 10.0);
+    assert!(close(p.il.unwrap(), 10.0, 1e-3), "il {:?}", p.il);
+    assert!(close(p.ipeak.unwrap(), 12.0, 1e-3), "ipeak {:?}", p.ipeak);
+    assert!(close(p.marks.ipeak.unwrap(), 10.25e-6, 2e-9), "ipeak at {:?}", p.marks.ipeak);
+    assert!(close(p.irrm.unwrap(), 2.0, 0.05), "irrm {:?}", p.irrm);
+    // the recovery triangle of 200 ns: Trr ends at 10 % of Irrm, 190 ns after the current passes I_L
+    assert!(close(p.trr.unwrap(), 190e-9, 3e-9), "trr {:?}", p.trr);
+    assert!(close(p.qrr.unwrap(), 0.5 * 200e-9 * 2.0, 0.01 * 0.5 * 200e-9 * 2.0), "qrr {:?}", p.qrr);
+    assert!(close(p.diode_didt.unwrap(), 2.0 / 100e-9, 0.05 * 2.0 / 100e-9), "diode di/dt {:?}", p.diode_didt);
+    // Err over the same interval: Vds sits at 1 V, so Vbus - Vds is 399 V times the charge up to the end of Trr
+    let q_trr = 0.5 * 200e-9 * 2.0 - 0.5 * 10e-9 * 0.2;
+    assert!(close(p.err.unwrap(), 399.0 * q_trr, 0.01 * 399.0 * q_trr), "err {:?}", p.err);
+}
+
+#[test]
 fn double_pulse_one_pulse_no_dead_time_and_inverted_current() {
     let dt = 1e-9;
     let n = (8e-6 / dt) as usize;
