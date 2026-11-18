@@ -124,7 +124,6 @@ impl Ui {
             | Item::AutoRoll
             | Item::DecOn
             | Item::SearchOn
-            | Item::ColorGrade
             | Item::MaskOn
             | Item::MaskInvert => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
@@ -197,10 +196,7 @@ impl Ui {
             Item::DecParity => &["None", "Even", "Odd"],
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
-            Item::GridStyle => &["Full", "Light", "None"],
-            Item::GridFrame | Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
-            Item::Dots | Item::ZoneOn => &["Off", "On"],
-            Item::BottomBar => &["Cards", "Compact"],
+            Item::TrigNoise | Item::TrigAutoNoise | Item::ZoneOn => &["Off", "On"],
             Item::AcqCores => &["Raw", "Matched"],
             Item::AcqDrawPath => &["Standard", "Batch"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
@@ -239,7 +235,6 @@ impl Ui {
             Item::TrigType => return TRIG_TYPES.iter().map(|t| t.name().to_string()).collect(),
             Item::AcqDepth => return mdepths().iter().map(|d| d.0.to_string()).collect(),
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
-            Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
             Item::AcqSeg => {
                 return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect()

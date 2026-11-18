@@ -527,7 +527,7 @@ const NO_PART: Part =
 
 /// The parts of the menus, asked by `kind`, `label`, `value`, `adjust`, `activate`, `options` and `ctl` before the
 /// items `ui.rs` keeps itself. `remote` answers for `ssh` too, except the actions.
-pub(super) const PARTS: [Part; 22] = [
+pub(super) const PARTS: [Part; 23] = [
     Part {
         kind: Some(Ui::meas_kind),
         label: Some(Ui::meas_cfg_label),
@@ -702,6 +702,14 @@ pub(super) const PARTS: [Part; 22] = [
         ..NO_PART
     },
     Part { activate: Some(Ui::ssh_activate), ..NO_PART },
+    Part {
+        kind: Some(Ui::setting_kind),
+        label: Some(Ui::setting_label),
+        value: Some(Ui::setting_value),
+        adjust: Some(Ui::setting_adjust),
+        options: Some(Ui::setting_options),
+        ..NO_PART
+    },
 ];
 
 #[cfg(test)]

@@ -90,6 +90,7 @@ mod reference_search;
 mod remote;
 #[cfg(test)]
 mod session_tests;
+mod setting_items;
 mod ssh;
 mod time;
 pub mod views;
