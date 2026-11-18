@@ -1,6 +1,6 @@
 # ADR 0059: Batch is the only draw path
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 

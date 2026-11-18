@@ -41,7 +41,7 @@ The keys, the host key and the password stay on the data partition (`/oos/ssh`) 
 `tools/device-deploy.sh` restarts `oos-ui` with the new programs; it does not start the scope. What runs once at boot
 is not reached: `oos-fpgad cold-boot` and `fpga-boot` from the installed image, the scripts of the initramfs, the
 kernel, an update. A change there needs the image installed and the scope started from power off, with a person at
-the unit, before the label `unit-tested` is set (ADR 0052, proposed). `tools/pr-gate.sh` names the classes: `$proven`
+the unit, before the label `unit-tested` is set (ADR 0052). `tools/pr-gate.sh` names the classes: `$proven`
 (the comparison proves a refactoring), `$live` (a run from RAM or more).
 
 ## Only what the change can affect

@@ -1,6 +1,6 @@
 # ADR 0057: Bluetooth mice and keyboards through BlueZ on a system bus of their own
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18 (drafted 2026-11-15 as 0026; 0026 and 0055 went to other records meanwhile)
 - Category: system (touches process: ADR 0013, ADR 0033)
 

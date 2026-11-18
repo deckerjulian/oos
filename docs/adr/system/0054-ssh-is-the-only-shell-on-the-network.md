@@ -1,6 +1,6 @@
 # ADR 0054: SSH is the only shell on the network; there is no telnet
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: system
 

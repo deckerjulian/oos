@@ -1,6 +1,6 @@
 # ADR 0047: Every parser of outside input has a hostile-input test in `cargo test`
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 

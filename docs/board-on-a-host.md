@@ -1,7 +1,7 @@
 # The board code on a host: plan
 
 **This page is a plan, not a description of what exists.** It belongs to
-[ADR 0053](adr/code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) (proposed) and to goal T1 of
+[ADR 0053](adr/code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) and to goal T1 of
 issue #120: the board code runs on a host against a simulated FPGA, so the comparison with the base covers the live
 paths. Sections 1 and 2 describe the tree as it is (read on 2026-11-18, main at 604a2771). Sections 3 to 8 say what
 is to be built. A name given as a Rust path without a file (`oos_hal::dho::sim`, `hw::run`, `hw::Port`) is planned

@@ -5,8 +5,8 @@ switches it, [network.md](network.md) 4). Every route is one arm of the `match` 
 (`ui/src/http.rs`); the MCP tools are in `mcp` of the same file. This page lists each of them with what it takes and
 what it answers, read from the code. SCPI through MCP is the interpreter of [scpi.md](scpi.md).
 
-Each entry carries one mark of [ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md) (proposed;
-the marks below are its first proposal, and the interface has no version query yet):
+Each entry carries one mark of [ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md) (the
+marks below are its first ones, and the interface has no version query yet):
 
 - **stable**: a client may build on it; a change that can break a client comes only after a deprecation;
 - **experimental**: may change or go in any release;

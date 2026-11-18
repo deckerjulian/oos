@@ -1,6 +1,6 @@
 # ADR 0027: A WLAN driver of a newer kernel comes as a module beside 6.12, with a patch of its own
 
-- Status: proposed
+- Status: accepted (2026-11-18, by the maintainer)
 - Date: 2026-11-16
 - Category: system (touches ADR 0013, ADR 0026)
 
