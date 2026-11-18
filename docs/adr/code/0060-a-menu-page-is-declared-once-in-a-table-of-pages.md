@@ -25,12 +25,15 @@ everything around a page, and `every_page_is_complete` names what one lacks.
 
 ## Decision
 
-Every `MenuId` has one entry in `PAGES`, a table in `ui/src/ui/pages.rs` beside `PARTS`, in the same style: a struct
-of optional functions, filled in by the module that owns the page.
+Every kind of `MenuId` has one entry in `PAGES`, a table in `ui/src/ui/pages.rs` beside `PARTS`, in the same style: a
+struct of optional functions, filled in by the module that owns the page. The kind is the variant: `Channel(c)`,
+`ChMore(c)` and `Decoders(k)` are one entry each, and its functions get the `MenuId` with its parameter. `Pick` is no
+page: it is the picker of a row, drawn by the shared code from that row's options, and the page that opened it
+answers for what a picked line does (`pick` below).
 
 | Field | What it answers | Today in |
 |---|---|---|
-| `id` | the `MenuId` | |
+| `id` | the kind of `MenuId` it answers for | |
 | `title` | the title of the dialog | `menu_text.rs` |
 | `items` | its rows, in order | `menu_items.rs` |
 | `parent` | the menu Back leads to, and the root the top bar lights | `menu_items.rs`, `bars.rs::menu_root` |
@@ -43,13 +46,15 @@ for gets the field, for every page, in a pull request of its own.
 
 - **One file and one line.** A new page is its module and its line in `PAGES`; it touches `MenuId` and `Item` for its
   variants and nothing else of the shared menu code.
-- **The check.** `pages.rs::every_page_is_complete` walks `MenuId` (a list of every variant, kept by a test that
-  fails on a variant missing from it) and names each one without an entry, without a title or without rows. The
+- **The check.** `pages.rs::every_page_is_complete` walks one `MenuId` of every kind but `Pick` (a list in the test;
+  an exhaustive `match` on `MenuId` beside it fails to compile when a new variant is not in it) and names each one
+  without an entry, without a title or without rows. The
   layout lint opens every page of `PAGES` with every state of its `layouts` and every picker of its rows, so a page
   cannot be left out of it. The recipe goes into the table of AGENTS.md ("Adding something") and CONTRIBUTING.md.
-- **A number that only goes down** (ADR 0037): `tools/code-metrics.py` counts the arms on `MenuId` outside
-  `pages.rs` and the page modules (`ui-menu-arms` in `tools/code-metrics.txt`). The pages move into the table one
-  group per pull request, each a refactoring that keeps every pixel (ADR 0014), until the number is 0.
+- **A number that only goes down** (ADR 0037): the pull request that adds `PAGES` adds a count of the lines that name
+  a `MenuId` in the shared menu files to `tools/code-metrics.py` (`ui-menu-arms` in `tools/code-metrics.txt`). The
+  pages move into the table one group per pull request, each a refactoring that keeps every pixel (ADR 0014), and the
+  number goes down with each.
 - **Analyser pages stay as they are.** `ANALYSERS` is the registry of a page kind with more parts (SCPI, Features,
   setups, drawing); its pages get their `PAGES` lines from it, not by hand.
 

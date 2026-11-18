@@ -22,9 +22,9 @@ two more shared files a feature pull request touches (ADR 0060).
   or `new`, and `Ui` holds one field of that type. Fields only that part reads or writes move into it; a field two
   parts use stays in `Ui` or moves to the part that owns it, with a method for the other.
 - **A new part adds one field to `Ui`**, its state struct, and none of its loose values.
-- **A number that only goes down** (ADR 0037): `tools/code-metrics.py` counts the fields of `Ui` that are not a
-  part's state struct (`ui-fields` in `tools/code-metrics.txt`, 208 when this record was written). The layer
-  `ratchet` fails when it rises.
+- **A number that only goes down** (ADR 0037): the first pull request that moves fields adds a count of the fields
+  of `Ui` that are not a part's state struct to `tools/code-metrics.py` (`ui-fields` in `tools/code-metrics.txt`; 208
+  when this record was written). From then on the layer `ratchet` fails when it rises.
 - **The move** goes part by part, beside the move of the pages (ADR 0060): a pull request that moves a page into
   `PAGES` moves its loose fields into its state too, as one refactoring that keeps every pixel (ADR 0014).
 - **What stays in `Ui`**: what the whole screen shares, the model `m`, the source, the screen size, the open menu and

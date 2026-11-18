@@ -18,9 +18,10 @@ would touch all of them again and double the combinations.
 
 ## Decision
 
-- **The boxes are a list**, `STATUS_BOXES` in `ui/src/ui/bars.rs`, in the order they stand from the left: LAN, WLAN,
-  BT, USB. An entry says when the box is there, its label, its dot (off, on, warning), the page it opens and the menu
-  root that lights it (ADR 0060). Placing, drawing, hit testing and lighting are one function each for every box.
+- **The boxes are a list**, `STATUS_BOXES` in `ui/src/ui/bars.rs`, in the order they stand from the right edge of
+  the bar, as they do today: LAN, then WLAN, BT and USB to its left. An entry says when the box is there, its label,
+  its dot (off, on, warning), the page it opens and the menu root that lights it (ADR 0060). Placing, drawing, hit
+  testing and lighting are one function each for every box.
 - **They are status, not entries.** They do not count against the four entries of ADR 0007. A box shows the state of
   something plugged in or connected and opens its page; a function that is not a state gets no box (ADR 0007 still
   holds: it starts as a row of its menu).

@@ -30,7 +30,9 @@ hand; when the call is forgotten, the part silently never updates.
   `cargo test`, so a test never reaches a daemon of the computer it runs on. What differs between services is their
   worker function and when their part calls `start`; what a part shows while a job runs stays the part's.
 - **The parts are polled from one list.** `POLLS` in `ui/src/ui/acquire.rs`, beside `Ui::step`, holds the polls of
-  the services and the hardware probes, in one order; `step` runs the list and names none of them.
+  the services and the hardware probes, in one order; `step` runs the list and names none of them. The ticks of the
+  screen's own timers (`math_fit_tick`, `meas_hold_tick`, `workspace_hold_tick`, `log_tick`) are no parts with a
+  thread or a probe; they stay calls in `step`, where their place in the frame is part of what they do.
 - **The check.** `every_poll_is_in_polls` fails on a `fn *_poll(&mut self)` of the screen that is neither in `POLLS`
   nor in `POLLED_ELSEWHERE`, the polls called from another place on purpose, each with that place; that list may
   only get shorter. The recipe "a service" goes into AGENTS.md ("Adding something") with this test.
