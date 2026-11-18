@@ -295,6 +295,13 @@ impl Ui {
     /// does not wait. A change made while a run is out waits for its answer.
     fn allow_run(&mut self, run: Runner, now: &str) {
         let steps = crate::remote::allow_steps(self.sys.remote_ssh, !now.is_empty());
+        self.remote.failed = false;
+        self.allow_submit((run, steps));
+    }
+
+    /// Hands a run to the thread of the runs, which it starts first when there is none; while one is out, the run
+    /// waits in its place.
+    fn allow_submit(&mut self, job: (Runner, Vec<Step>)) {
         if self.remote.runs.is_none() {
             match Worker::spawn("net-allow", |(run, steps): (Runner, Vec<Step>)| {
                 let mut r = Ok(());
@@ -310,24 +317,25 @@ impl Ui {
                 Err(e) => return self.allow_done(Err(format!("no thread for the firewall: {}", e))),
             }
         }
-        self.remote.failed = false;
-        self.allow_submit((run, steps));
-    }
-
-    fn allow_submit(&mut self, job: (Runner, Vec<Step>)) {
         let Some(runs) = self.remote.runs.as_mut() else { return };
         match runs.submit(job) {
             Ok(()) => {}
             Err(TrySendError::Full(job)) => self.remote.waiting = Some(job),
-            Err(TrySendError::Disconnected(_)) => self.allow_gone(),
+            Err(TrySendError::Disconnected(job)) => {
+                self.remote.waiting = Some(job);
+                self.allow_gone();
+            }
         }
     }
 
-    /// The thread of the runs ended: the next change starts another.
+    /// The thread of the runs ended without an answer: the run that waited goes on a new thread, so the newest
+    /// change is still put in force; without one the change that was out failed.
     fn allow_gone(&mut self) {
         self.remote.runs = None;
-        self.remote.waiting = None;
-        self.allow_done(Err("the firewall's run ended without an answer".into()));
+        match self.remote.waiting.take() {
+            Some(job) => self.allow_submit(job),
+            None => self.allow_done(Err("the firewall's run ended without an answer".into())),
+        }
     }
 
     /// A run of a change is out or waiting: the Firewall row says "applying".
@@ -359,7 +367,8 @@ impl Ui {
         while let Some(runs) = self.remote.runs.as_mut().filter(|w| w.busy()) {
             match runs.wait(std::time::Duration::from_secs(60)) {
                 Ok(r) => self.allow_answer(r),
-                Err(_) => return self.allow_gone(),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => self.allow_gone(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("the firewall's run did not answer in 60 s"),
             }
         }
     }
@@ -731,5 +740,67 @@ mod tests {
         assert_eq!(u.toast.as_ref().unwrap().0, toast);
         assert_eq!(u.value(Item::RemFirewall), "failed: see the log");
         assert!(u.acl().permits("203.0.113.9".parse().unwrap()) && !u.acl().permits("192.0.2.9".parse().unwrap()));
+    }
+
+    /// A runner that keeps what it ran and waits for a release before each step, so a test can make changes while a
+    /// run is out; `panic_first` makes the first step end the thread.
+    fn gated(panic_first: bool) -> (Runner, std::sync::Arc<Mutex<Vec<String>>>, std::sync::mpsc::Sender<()>) {
+        let ran = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let first = std::sync::atomic::AtomicBool::new(panic_first);
+        let r = ran.clone();
+        let run: Runner = std::sync::Arc::new(move |s: &crate::remote::Step| {
+            let _ = gate.lock().unwrap().recv();
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                panic!("the test ends the thread of the runs");
+            }
+            r.lock().unwrap().push(format!("{} {}", s.prog, s.arg));
+            Ok(())
+        });
+        (run, ran, release)
+    }
+
+    // Break it catches: changes made while a run is out that each run again (stale lists, SSH stopped and started for
+    // nothing), the answer of an old run shown as the new one's, the newest change lost when the thread ends
+    #[test]
+    fn changes_while_a_run_is_out_wait_and_only_the_newest_runs() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let (run, ran, release) = gated(false);
+        u.set_allow_runner(run);
+        u.open_menu(MenuId::Remote);
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        assert!(u.allow_osk_done("198.51.100.0/24"));
+        u.sys.remote_ssh = true;
+        assert!(u.allow_osk_done(""));
+        assert!(u.allow_applying());
+        assert_eq!(u.value(Item::RemFirewall), "applying");
+        // the first run (the firewall), then the newest change alone (the firewall, SSH stopped and started)
+        for _ in 0..4 {
+            release.send(()).unwrap();
+        }
+        u.allow_wait();
+        let fw = "/bin/oos-firewall reload".to_string();
+        let ssh = |a: &str| format!("/bin/oos-ssh {}", a);
+        assert_eq!(*ran.lock().unwrap(), vec![fw.clone(), fw, ssh("stop"), ssh("start")]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert!(!u.allow_applying());
+    }
+
+    #[test]
+    fn the_newest_change_still_runs_when_the_thread_of_the_runs_ends() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let (run, ran, release) = gated(true);
+        u.set_allow_runner(run);
+        u.open_menu(MenuId::Remote);
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        assert!(u.allow_osk_done("198.51.100.0/24"));
+        // the first run ends its thread; the change that waited goes on a new one
+        release.send(()).unwrap();
+        release.send(()).unwrap();
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec!["/bin/oos-firewall reload".to_string()]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 198.51.100.0/24, in force");
+        assert_eq!(u.value(Item::RemFirewall), "on");
     }
 }
