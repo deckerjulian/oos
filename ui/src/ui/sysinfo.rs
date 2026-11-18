@@ -120,8 +120,19 @@ impl Ui {
         let p = oos_hal::model::platform();
         let (c, l, base) = (&p.caps, &p.limits, oos_hal::model::Limits::standard());
         let readings = self.src.hw_board();
+        let a = self.sysinfo_unit(p, c, readings);
+        let b = sysinfo_temps(readings);
+        let d = self.sysinfo_limits(p, c, l, &base);
+        [a, b, d]
+    }
 
-        // ---- column 1: unit and software
+    /// Column 1 of System info: the unit and its software.
+    fn sysinfo_unit(
+        &self,
+        p: &oos_hal::model::Platform,
+        c: &oos_hal::model::Caps,
+        readings: Option<(u32, Option<(f32, f32)>)>,
+    ) -> Vec<Row> {
         let mut a = vec![Row::Head("Unit".into())];
         a.push(kv("Model", format!("Rigol {}", c.name)));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
@@ -157,59 +168,17 @@ impl Ui {
             kv("Network", self.net.clone())
         });
         a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.fps)));
+        a
+    }
 
-        // ---- column 2: temperatures, load
-        let mut b = vec![Row::Head("Temperatures".into())];
-        let zones = board().thermal_zones();
-        let (soc, fpga) = board().temp_limits();
-        for z in &zones {
-            let name = match z.name.as_str() {
-                "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
-                "gpu-thermal" => "SoC (GPU)".to_string(),
-                n => n.trim_end_matches("-thermal").to_string(),
-            };
-            b.push(kvc(&name, format!("{:.1} \u{b0}C", z.temp), temp_col(z.temp, 70.0, soc)));
-        }
-        if zones.is_empty() {
-            b.push(kvc("SoC", "-", DIM));
-        }
-        match readings.and_then(|b| b.1) {
-            Some((t, v)) => {
-                b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));
-                b.push(kvc(
-                    "FPGA VCCINT",
-                    format!("{:.3} V", v),
-                    if (0.95..=1.05).contains(&v) { TEXT } else { AMBER },
-                ));
-            }
-            None => b.push(kvc("FPGA die", "-", DIM)),
-        }
-        b.push(kv("Fan", "always on (GPIO hog)"));
-        b.push(Row::Head("Temperature limits".into()));
-        b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
-        b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
-        b.push(kv("FPGA alarm", format!("{:.0} \u{b0}C", fpga)));
-        b.push(Row::Head("Load".into()));
-        if let Some(la) = read("/proc/loadavg") {
-            b.push(kv("CPU load", la.split_whitespace().take(3).collect::<Vec<_>>().join("  ")));
-        }
-        if let (Some(lo), Some(hi)) = (cpu_hz(0), cpu_hz(4)) {
-            b.push(kv("CPU clock", format!("A53 {}  A72 {}", si_short(lo, "Hz"), si_short(hi, "Hz"))));
-        }
-        match memory() {
-            Some((avail, total)) => b.push(kv("RAM", format!("{} free of {}", bytes(avail), bytes(total)))),
-            None => b.push(kvc("RAM", "-", DIM)),
-        }
-        match disk("/oos") {
-            Some((free, total)) => b.push(kvc(
-                "/oos",
-                format!("{} free of {}", bytes(free), bytes(total)),
-                if free < total / 20 { AMBER } else { TEXT },
-            )),
-            None => b.push(kvc("/oos", "-", DIM)),
-        }
-
-        // ---- column 3: limits, acquisition, overrides, warnings
+    /// Column 3 of System info: the limits in effect, the acquisition now, overrides and warnings.
+    fn sysinfo_limits(
+        &self,
+        p: &oos_hal::model::Platform,
+        c: &oos_hal::model::Caps,
+        l: &oos_hal::model::Limits,
+        base: &oos_hal::model::Limits,
+    ) -> Vec<Row> {
         let src = if p.experimental() { "standard + limits.conf" } else { "standard" };
         let mut d = vec![Row::Head(format!("Limits ({})", src))];
         // values that differ from the standard limits in amber (experimental)
@@ -281,7 +250,7 @@ impl Ui {
             d.push(Row::Head("Warnings".into()));
             d.extend(p.warnings.iter().map(|w| Row::Note(w.clone(), AMBER)));
         }
-        [a, b, d]
+        d
     }
 
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
@@ -354,6 +323,56 @@ impl Ui {
             cv.no_clip();
         }
     }
+}
+
+/// Column 2 of System info: temperatures with their limits, and the load.
+fn sysinfo_temps(readings: Option<(u32, Option<(f32, f32)>)>) -> Vec<Row> {
+    let mut b = vec![Row::Head("Temperatures".into())];
+    let zones = board().thermal_zones();
+    let (soc, fpga) = board().temp_limits();
+    for z in &zones {
+        let name = match z.name.as_str() {
+            "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
+            "gpu-thermal" => "SoC (GPU)".to_string(),
+            n => n.trim_end_matches("-thermal").to_string(),
+        };
+        b.push(kvc(&name, format!("{:.1} \u{b0}C", z.temp), temp_col(z.temp, 70.0, soc)));
+    }
+    if zones.is_empty() {
+        b.push(kvc("SoC", "-", DIM));
+    }
+    match readings.and_then(|b| b.1) {
+        Some((t, v)) => {
+            b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));
+            b.push(kvc("FPGA VCCINT", format!("{:.3} V", v), if (0.95..=1.05).contains(&v) { TEXT } else { AMBER }));
+        }
+        None => b.push(kvc("FPGA die", "-", DIM)),
+    }
+    b.push(kv("Fan", "always on (GPIO hog)"));
+    b.push(Row::Head("Temperature limits".into()));
+    b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
+    b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
+    b.push(kv("FPGA alarm", format!("{:.0} \u{b0}C", fpga)));
+    b.push(Row::Head("Load".into()));
+    if let Some(la) = read("/proc/loadavg") {
+        b.push(kv("CPU load", la.split_whitespace().take(3).collect::<Vec<_>>().join("  ")));
+    }
+    if let (Some(lo), Some(hi)) = (cpu_hz(0), cpu_hz(4)) {
+        b.push(kv("CPU clock", format!("A53 {}  A72 {}", si_short(lo, "Hz"), si_short(hi, "Hz"))));
+    }
+    match memory() {
+        Some((avail, total)) => b.push(kv("RAM", format!("{} free of {}", bytes(avail), bytes(total)))),
+        None => b.push(kvc("RAM", "-", DIM)),
+    }
+    match disk("/oos") {
+        Some((free, total)) => b.push(kvc(
+            "/oos",
+            format!("{} free of {}", bytes(free), bytes(total)),
+            if free < total / 20 { AMBER } else { TEXT },
+        )),
+        None => b.push(kvc("/oos", "-", DIM)),
+    }
+    b
 }
 
 #[cfg(test)]
