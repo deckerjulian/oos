@@ -107,11 +107,11 @@ const NO_TESTS_HERE: [(&str, &str); 3] = [
 #[test]
 fn every_decoder_family_has_its_tests() {
     let (families, here) = (include_str!("../../src/decode.rs"), include_str!("main.rs"));
-    let mut n = 0;
+    let mut seen = Vec::new();
     for line in families.lines() {
         let line = line.strip_prefix("pub(crate) ").or(line.strip_prefix("pub ")).unwrap_or(line);
         let Some(family) = line.strip_prefix("mod ").and_then(|l| l.strip_suffix(';')) else { continue };
-        n += 1;
+        seen.push(family);
         let tested = here.lines().any(|l| l == format!("mod {};", family));
         match NO_TESTS_HERE.iter().find(|x| x.0 == family) {
             Some(x) => {
@@ -129,5 +129,10 @@ fn every_decoder_family_has_its_tests() {
             }
         }
     }
-    assert!(n > NO_TESTS_HERE.len(), "dsp/src/decode.rs names its families as `mod <family>;`");
+    assert!(seen.len() > NO_TESTS_HERE.len(), "dsp/src/decode.rs names its families as `mod <family>;`");
+    // an entry left behind by a removed or renamed family fails, and so does one that stands twice
+    for (i, (key, _)) in NO_TESTS_HERE.iter().enumerate() {
+        assert!(seen.contains(key), "NO_TESTS_HERE: {} is no family of dsp/src/decode.rs, take it out", key);
+        assert!(NO_TESTS_HERE[..i].iter().all(|x| x.0 != *key), "NO_TESTS_HERE: {} stands twice", key);
+    }
 }

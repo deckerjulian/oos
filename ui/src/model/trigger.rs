@@ -567,7 +567,7 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::testkit::{document, names, q, scpi_session, section};
+    use crate::ui::testkit::{document, exempt_once, names, q, scpi_session, section};
 
     /// Every trigger type with its words: the one a setup stores (`trig_type = <word>`, the variant's name), the one
     /// `:TRIGger:MODE` takes and the one its query answers. A word that was released never changes: setups and
@@ -626,6 +626,7 @@ mod tests {
         let features = section(&document("wiki/Features.md"), "**Trigger**");
         let shots = include_str!("../../tests/triggers.txt");
         assert_eq!(TRIG_TYPES.len(), TYPES.len(), "TRIG_TYPES and TYPES list the same types");
+        exempt_once("NOT_SHOT", &NOT_SHOT.map(|x| x.0), &TRIG_TYPES, true);
         let mut seen = std::collections::HashSet::new();
         for (k, (t, stored, long, short)) in TYPES.into_iter().enumerate() {
             assert_eq!(row(t), k, "{:?}: its row in TYPES", t);

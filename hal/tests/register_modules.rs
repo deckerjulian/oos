@@ -68,13 +68,25 @@ fn every_module_names_its_page_and_has_a_test() {
     let list = std::fs::read_to_string(dho().join("mod.rs")).unwrap();
     let modules: Vec<&str> = list.lines().filter_map(|l| l.strip_prefix("pub mod ")?.strip_suffix(';')).collect();
     assert!(modules.len() > 30, "hal/src/dho/mod.rs lists the modules as `pub mod <name>;`");
-    for m in modules {
+    let names = |l: &[(&'static str, &'static str)]| l.iter().map(|x| x.0).collect::<Vec<_>>();
+    known_once("NO_PAGE", &names(&NO_PAGE), &modules);
+    known_once("NO_TEST", &names(&NO_TEST), &modules);
+    let pairs: Vec<String> = PAGE_NOT_THERE.iter().map(|x| format!("{} {}", x.0, x.1)).collect();
+    for (i, x) in PAGE_NOT_THERE.iter().enumerate() {
+        assert!(modules.contains(&x.0), "PAGE_NOT_THERE: {} is no module of hal/src/dho/mod.rs, take it out", x.0);
+        assert!(!pairs[..i].contains(&pairs[i]), "PAGE_NOT_THERE: {} stands twice", pairs[i]);
+    }
+    let mut not_there_seen = Vec::new();
+    for &m in &modules {
         let texts: Vec<String> = files(m).iter().map(|f| std::fs::read_to_string(f).unwrap()).collect();
         assert!(!texts.is_empty(), "{}: no file hal/src/dho/{}.rs and none below hal/src/dho/{}/", m, m, m);
         let named: Vec<String> = texts.iter().flat_map(|t| pages(t)).collect();
         for page in &named {
             let there = FOLDERS.iter().any(|f| top.join(f).join(page).is_file());
             let listed = PAGE_NOT_THERE.iter().any(|x| x.0 == m && x.1 == page);
+            if listed {
+                not_there_seen.push(format!("{} {}", m, page));
+            }
             assert!(
                 there != listed,
                 "{}: its header names {}, which is {}",
@@ -93,5 +105,17 @@ fn every_module_names_its_page_and_has_a_test() {
             Some(x) => assert!(!has_test && !x.1.is_empty(), "{}: it has a test, take it out of NO_TEST", m),
             None => assert!(has_test, "{}: no test in hal/src/dho/{}*, and no reason in NO_TEST", m, m),
         }
+    }
+    for p in &pairs {
+        assert!(not_there_seen.contains(p), "PAGE_NOT_THERE: {}: the header names that page no more, take it out", p);
+    }
+}
+
+/// Every name of an exemption list is a module of `hal/src/dho/mod.rs`, and stands in the list once: an entry left
+/// behind by a removed or renamed module fails, so the list cannot hold debt that is not there.
+fn known_once(list: &str, keys: &[&str], modules: &[&str]) {
+    for (i, k) in keys.iter().enumerate() {
+        assert!(modules.contains(k), "{}: {} is no module of hal/src/dho/mod.rs, take it out", list, k);
+        assert!(!keys[..i].contains(k), "{}: {} stands twice", list, k);
     }
 }

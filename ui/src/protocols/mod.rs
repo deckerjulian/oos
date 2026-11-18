@@ -562,7 +562,7 @@ mod tests {
     /// number registered.
     #[test]
     fn every_decoder_is_complete() {
-        use crate::ui::testkit::{count_of, document, names, section, stored_names};
+        use crate::ui::testkit::{count_of, document, exempt_once, names, section, stored_names};
         let wiki = section(&document("wiki/Features.md"), "**Protocol decoders");
         // the example module is compiled in the tests only
         let mods: Vec<_> = MODULES.iter().filter(|m| m.key() != "Example").collect();
@@ -591,6 +591,8 @@ mod tests {
         }
         // a build with fewer decoders has fewer keys than the list, and fewer than the texts count
         let whole = cfg!(feature = "decoders");
+        let keys: Vec<&str> = mods.iter().map(|m| m.key()).collect();
+        exempt_once("NO_DEMO", &NO_DEMO.map(|x| x.0), &keys, whole);
         stored_names("decoder-keys.txt", &mods.iter().map(|m| m.key().to_string()).collect::<Vec<_>>(), whole);
         if whole {
             assert_eq!(count_of(&wiki, "Protocol decoders"), Some(mods.len()), "the number in wiki/Features.md");
