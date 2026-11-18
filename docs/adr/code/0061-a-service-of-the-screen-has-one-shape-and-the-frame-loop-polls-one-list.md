@@ -29,12 +29,11 @@ hand; when the call is forgotten, the part silently never updates.
   (`send`), a report channel (`take`, which never blocks), and an end when it is dropped. No thread is started in
   `cargo test`, so a test never reaches a daemon of the computer it runs on. What differs between services is their
   worker function and when their part calls `start`; what a part shows while a job runs stays the part's.
-- **The parts are polled from one list.** `POLLS` in `ui/src/ui/pages.rs` (ADR 0060) holds every function the frame
-  loop calls on each frame, in one order, each with a line that says why it stands where it stands where the order
-  matters. `Ui::step` runs the list and names no part. A page's `poll` field is its line in the list.
-- **The check.** A test fails on a `*_poll` method of `Ui` that is not in `POLLS` and not in a named list of methods
-  that are called elsewhere on purpose, with the reason; the list may only get shorter. The recipe "a service" goes
-  into AGENTS.md ("Adding something") with this test.
+- **The parts are polled from one list.** `POLLS` in `ui/src/ui/acquire.rs`, beside `Ui::step`, holds the polls of
+  the services and the hardware probes, in one order; `step` runs the list and names none of them.
+- **The check.** `every_poll_is_in_polls` fails on a `fn *_poll(&mut self)` of the screen that is neither in `POLLS`
+  nor in `POLLED_ELSEWHERE`, the polls called from another place on purpose, each with that place; that list may
+  only get shorter. The recipe "a service" goes into AGENTS.md ("Adding something") with this test.
 - **A job is a `Worker<J, R>`**, the firewall run included; the update stays a child process, which is what
   `oos-update` is, and its poll is a line of `POLLS` like every other.
 - **The move.** The three services in one pull request, then the firewall run, then `POLLS`, each a refactoring that
@@ -62,4 +61,4 @@ hand; when the call is forgotten, the part silently never updates.
 ## References
 
 `ui/src/ui/worker.rs`, `ui/src/ui/acquire.rs` (`Ui::step`), `ui/src/ui/bt.rs`, `ui/src/ui/wlan.rs`,
-`ui/src/ui/time.rs`, `ui/src/ui/remote.rs`, ADR 0013, ADR 0021, ADR 0022, ADR 0046, ADR 0060.
+`ui/src/ui/time.rs`, `ui/src/ui/remote.rs`, `ui/src/ui/service.rs` (#231), ADR 0013, ADR 0021, ADR 0022, ADR 0046.

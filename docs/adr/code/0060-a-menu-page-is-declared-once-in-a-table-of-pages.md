@@ -36,7 +36,6 @@ of optional functions, filled in by the module that owns the page.
 | `parent` | the menu Back leads to, and the root the top bar lights | `menu_items.rs`, `bars.rs::menu_root` |
 | `anchor` | where the dialog stands (beside a top-bar box, a card, the start menu) | `menu_dialog.rs` |
 | `pick` | what a picked line of one of its pickers does, and whether the picker is wide | `menu_actions.rs`, `menu_dialog.rs` |
-| `poll` | what it reads or receives on each frame (ADR 0061) | `acquire.rs`, `save_recall.rs` |
 | `layouts` | the states the layout lint opens it in, beyond the default one | `lint/menu_layout.rs` |
 
 The shared code asks `PAGES` and keeps no arm for a single page. A page that needs something the table has no field
