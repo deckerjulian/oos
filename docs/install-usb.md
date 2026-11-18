@@ -7,7 +7,8 @@ Tested on a file laid out like a stock card, with the stock update script, in a 
 system (`tools/gel-sim.sh`), and by unit tests. Run on a DHO924S (2026-11-08, package 0.1.1) through Storage > Upgrade:
 the dry run, the first install over the stock `recovery` (rescue set with the stock `recovery`, image written and
 read back, OOS selected, OOS started) and the run again on a card that already holds OOS ("already holds", OOS
-selected). The stock system of that unit is a modified one; an unmodified stock system has not run it yet.
+selected). The stock system of that unit is a modified one. A user ran the same install of 0.1.13 on a DHO802 with an
+unmodified stock system (00.01.05), with `oos-any-model.txt`: dry run, install, and OOS started (issue #19).
 
 Compared with the card route ([wiki/Installation.md](../wiki/Installation.md#on-a-second-card)):
 
@@ -52,8 +53,8 @@ start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: Sys
 
 The same install also runs over ADB, without a stick: `oos-update gel-install` is the same code, only `/rigol/data` has
 to be saved by hand. It ran on the same DHO924S (2026-11-07). You need `adb` on your computer and a scope that answers
-on its network port 55555 with root access; this is known from a modified stock system and has not been checked on an
-unmodified one.
+on its network port 55555 with root access; this is known from a modified stock system, and a user found the same on
+the unmodified stock system of a DHO802 (issue #19).
 
 ```sh
 adb connect <scope>:55555
