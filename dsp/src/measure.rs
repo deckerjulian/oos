@@ -432,8 +432,9 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
 
 /// `analyze_min` of min/max pairs (peak-detect decimation, roll and scan: two neighbouring points are the extremes of
 /// one span, in either order). Maximum, minimum, top and base come from the pairs, as the envelope shows them;
-/// everything else from the mean of each two neighbouring points, half a point later, which takes out the zigzag
-/// between the extremes wherever the pairs begin (a record resampled from the frame need not start on a pair). On an
+/// everything else, the times of the extremes too, from the mean of each two neighbouring points, which takes out the
+/// zigzag between the extremes wherever the pairs begin (a record resampled from the frame need not start on a pair);
+/// a mean lies half a point after its first point, and its times are moved there. On an
 /// edge the two points of a pair lie a whole span apart: where that is more than the hysteresis, the pairs crossed the
 /// middle level again and again (a 25 Hz sine in roll at 0.2 s/div read 50 Hz, depending on its phase; #118).
 pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
@@ -442,6 +443,11 @@ pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> 
     if !a.valid {
         return a;
     }
+    let half = 0.5 * dt;
+    for t in [&mut a.rises, &mut a.falls, &mut a.hi_rises, &mut a.hi_falls, &mut a.lo_rises, &mut a.lo_falls] {
+        t.iter_mut().for_each(|x| *x += half);
+    }
+    (a.t_vmax, a.t_vmin, a.lin_int) = (a.t_vmax + half, a.t_vmin + half, a.lin_int - a.lin_slope * half);
     let (mut imax, mut imin) = (None::<usize>, None::<usize>);
     for (i, &x) in v.iter().enumerate().filter(|(_, x)| x.is_finite()) {
         if imax.is_none_or(|j| x > v[j]) {
@@ -452,7 +458,7 @@ pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> 
         }
     }
     if let (Some(hi), Some(lo)) = (imax, imin) {
-        (a.vmax, a.vmin, a.t_vmax, a.t_vmin) = (v[hi] as f64, v[lo] as f64, hi as f64 * dt, lo as f64 * dt);
+        (a.vmax, a.vmin) = (v[hi] as f64, v[lo] as f64);
         let finite: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
         (a.top, a.base) = top_base(&finite, v[lo], v[hi]);
     }
@@ -998,13 +1004,15 @@ mod tests {
     use super::*;
 
     /// A sine as the roll stream of the unit holds it: pair j every `span` samples, the maximum and minimum of the
-    /// `2 * span` samples from there (the spans of neighbouring pairs overlap: seen on the unit, a pair's maximum lies
-    /// above the previous pair's minimum on a falling edge).
+    /// `2 * span` samples around the middle of its two points, as `board::resample` places a pair (the spans of
+    /// neighbouring pairs overlap: seen on the unit, a pair's maximum lies above the previous pair's minimum on a
+    /// falling edge).
     fn sine_pairs(f: f64, dt: f64, span: usize, n: usize, phase: f64) -> Vec<f32> {
-        let x = |i: usize| (2.0 * std::f64::consts::PI * f * i as f64 * dt + phase).sin() as f32;
-        (0..n)
+        let x = |i: i64| (2.0 * std::f64::consts::PI * f * i as f64 * dt + phase).sin() as f32;
+        (0..n as i64)
             .flat_map(|j| {
-                let s: Vec<f32> = (j * span..(j + 2) * span).map(x).collect();
+                let mid = j * span as i64 + span as i64 / 4;
+                let s: Vec<f32> = (mid - span as i64..mid + span as i64).map(x).collect();
                 let (lo, hi) = s.iter().fold((f32::MAX, f32::MIN), |(l, h), &y| (l.min(y), h.max(y)));
                 [hi, lo]
             })
@@ -1030,6 +1038,16 @@ mod tests {
             let resampled = analyze_pairs(&between, pdt, 0.4, 0.1, 0.9).get(Meas::Freq);
             assert!((shifted - 40.0).abs() < 0.05 && (resampled - 40.0).abs() < 0.05, "{} {}", shifted, resampled);
             assert!(a.vmax > 0.999 && a.vmin < -0.999, "{} {}", a.vmax, a.vmin);
+            // the time of a rise is that of the signal, within a point: the sine rises through 0 at t = -phase / w
+            let (w, period) = (2.0 * std::f64::consts::PI * 40.0, 1.0 / 40.0);
+            let off = (a.rises[0] + phase / w).rem_euclid(period);
+            assert!(
+                off.min(period - off) < 0.25 * pdt,
+                "phase {}: rise {} is {} off",
+                phase,
+                a.rises[0],
+                off.min(period - off)
+            );
             let env = analyze_min(&v, pdt, 0.4);
             assert_eq!((a.top, a.base, a.get(Meas::Vpp)), (env.top, env.base, env.get(Meas::Vpp)), "phase {}", phase);
         }

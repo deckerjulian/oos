@@ -145,10 +145,7 @@ impl Ui {
             min_amp: 0.4 * f32::from_bits(k.vpd) as f64,
             low: f64::from_bits(k.low),
             high: f64::from_bits(k.high),
-            pairs: match key.source {
-                WaveId::Ch(c) => self.last[0].as_ref().is_some_and(|r| self.measurement_on_pairs(r, c)),
-                WaveId::Ref(_) => false,
-            },
+            pairs: k.pairs,
             own: true,
             analysis,
         })

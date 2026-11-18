@@ -45,6 +45,9 @@ pub(super) struct RefMeasureKey {
     data: bool,
     conditioning: (u8, bool, usize),
     capture: u64,
+    /// the samples are min/max pairs (`Ui::measurement_on_pairs`): part of the key, so a cached analysis is not taken
+    /// across a change of it (high res switched while stopped)
+    pairs: bool,
 }
 
 struct RefMeasureCache {
@@ -399,6 +402,7 @@ impl Ui {
             data: self.m.meas_data,
             conditioning: (0, false, 0),
             capture: 0,
+            pairs: false,
         };
         Some((key, t0 + lo as f64 * r.dt))
     }
@@ -485,6 +489,7 @@ impl Ui {
                 data: self.m.meas_data,
                 conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
                 capture: self.wfm_total,
+                pairs: self.measurement_on_pairs(record, channel),
             },
             t0,
         ))
@@ -575,7 +580,7 @@ impl Ui {
                     min_amp: 0.4 * self.m.ch[channel].volts_per_div() as f64,
                     low: self.m.meas_lpct,
                     high: self.m.meas_hpct,
-                    pairs: self.measurement_on_pairs(record, channel),
+                    pairs: key.pairs,
                     own: false,
                     analysis: None,
                 };
@@ -589,7 +594,7 @@ impl Ui {
             0.4 * self.m.ch[channel].volts_per_div() as f64,
             self.m.meas_lpct,
             self.m.meas_hpct,
-            self.measurement_on_pairs(record, channel),
+            key.pairs,
         ));
         let readings = scalar_readings(&analysis, key);
         *self.azr.ch_measure[channel].borrow_mut() =
