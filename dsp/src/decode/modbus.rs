@@ -15,9 +15,14 @@ pub fn modbus_lrc(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0u8, |a, &b| a.wrapping_add(b)).wrapping_neg()
 }
 
+/// The parities of Modbus RTU's option row.
+pub const PARITIES: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
+
 /// Modbus RTU on one line or an RS-485 pair.
-pub static MODBUS_RTU: ModuleInfo =
-    ModuleInfo::new("ModbusRtu", "Modbus RTU", "modbus").differential().bit(|opt, _| 1.0 / opt_baud(opt, 0));
+pub static MODBUS_RTU: ModuleInfo = ModuleInfo::new("ModbusRtu", "Modbus RTU", "modbus")
+    .differential()
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(modbus_rtu(l.main(), l.dt, opt_baud(&l.opt, 0), PARITIES[l.opt[1]], l.thr, l.hy, false)));
 
 /// Modbus RTU (Modbus over serial line V1.02): characters from `decode::uart` (8 data bits, `parity`), frames
 /// separated by a silence of 3.5 character times (fixed 1.75 ms above 19200 baud; 20 % tolerance). Per frame: `Addr`
@@ -64,8 +69,14 @@ pub fn modbus_rtu(v: &[f32], dt: f64, baud: f64, parity: Parity, thr: f32, hyst:
 }
 
 /// Modbus ASCII on one line or an RS-485 pair.
-pub static MODBUS_ASCII: ModuleInfo =
-    ModuleInfo::new("ModbusAscii", "Modbus ASCII", "modbus").differential().bit(|opt, _| 1.0 / opt_baud(opt, 0));
+pub static MODBUS_ASCII: ModuleInfo = ModuleInfo::new("ModbusAscii", "Modbus ASCII", "modbus")
+    .differential()
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| {
+        // always a parity bit
+        let parity = if l.opt[2] == 1 { Parity::Odd } else { Parity::Even };
+        Ok(modbus_ascii(l.main(), l.dt, opt_baud(&l.opt, 0), 7 + l.opt[1] as u32, parity, l.thr, l.hy, false))
+    });
 
 /// Modbus ASCII (Modbus over serial line V1.02, 2.5.2): characters from `decode::uart` (`bits` = 7 normally, 8 also
 /// accepted); Start at ':', hex pairs (address, PDU, LRC), Stop at CR LF. Same fields as `modbus_rtu`, the LRC as

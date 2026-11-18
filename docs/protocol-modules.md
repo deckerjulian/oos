@@ -2,10 +2,10 @@
 
 A protocol decoder is a module in `oos-dsp` and one in `oos-ui`. In `oos-dsp`, next to the decoder in the file of its
 family, an `oos_dsp::protocols::ModuleInfo` says what it is: its stable key, its name, its family, the lines it takes,
-whether the main one may be a differential pair, and what the protocol trigger finds in its packets and starts with;
-`oos_dsp::protocols::MODULES` lists them. In `oos-ui`, a type
-that implements `protocols::Protocol` names that info and brings everything the scope shows around it, with one line
-that registers it:
+whether the main one may be a differential pair, how the decoder is called with the options and shared rows, its bit
+time, and what the protocol trigger finds in its packets and starts with; `oos_dsp::protocols::MODULES` lists them.
+In `oos-ui`, a type that implements `protocols::Protocol` names that info and brings what the scope shows of it (menu
+rows, labels, the first settings, demo traffic, a view), with one line that registers it:
 
 | What | Where it shows | Hook (default) |
 |---|---|---|
@@ -14,7 +14,7 @@ that registers it:
 | differential input | the "B line (A-B)" row for an RS-485 style pair | `info`: `diff_ok` (off) |
 | shared rows | Decode menu rows several protocols use (Baud, Bits, Parity, SPI mode, CAN rate, USB speed ...), saved under their own setup keys; a decoder reads their values (`Shared`) | `shared` (none) |
 | options | Decode menu rows with a list of choices, saved in setups (`dec_opt`) | `options` (none) |
-| the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `decode` (required) |
+| the decoder | trace band, event table, Events pane, protocol trigger, CSV export | `info`: `decoder` (required) |
 | field text | the labels on the trace and in the event table | `text` (the generic text of each kind) |
 | protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger`, the protocol's own rule (none: `ModuleInfo::trigger_match` uses the generic rule of `dsp/src/protocols.rs`) |
 | trigger start value | what Trigger > Bus looks for when it is switched on | `info`: `trigger_default` (Frame) |
@@ -25,7 +25,9 @@ that registers it:
 | demo traffic | the host build's simulated signals, on the channels of `setup` | `demo` (none) |
 | own view | Display > Second pane > Bus view: a status line and columns of rows, with a memory across records | `view` (none) |
 
-Only `info` with its `bit`, and `decode` are required. The defaults fit a single-line serial protocol on CH3.
+Only `info` is required, and in it the `decoder` and the `bit` time
+(`dsp/src/protocols.rs::every_module_has_its_decoder_and_bit_time`). The defaults fit a single-line serial protocol on
+CH3.
 
 ## Steps
 
@@ -35,11 +37,13 @@ Only `info` with its `bit`, and `decode` are required. The defaults fit a single
    a function that returns an `oos_dsp::sim::Logic`); its tests go into the family's module of `dsp/tests/decode/`
    (`dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` fails for a family without one). Packet times are
    fractional sample indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
-   Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`; a trigger
-   rule of its own with `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`, the bit
-   time from the options and the shared rows with `.bit`), and at the end of `MODULES` in `dsp/src/protocols.rs` its
-   line.
-2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
+   Next to the decoder goes its `ModuleInfo` (`pub static`, made with `ModuleInfo::new(key, name, family)`): the call
+   of the decoder on its `Lines` with `.decoder(|l| ...)` (option rows as indices in `l.opt`, shared rows in `l.sh`,
+   the tables an option chooses from next to the decoder), the bit time with `.bit`, a trigger rule of its own with
+   `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`; and at the end of `MODULES`
+   in `dsp/src/protocols.rs` its line.
+2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook;
+   it is the one module that keeps its `ModuleInfo` in its own file, since it is compiled in the tests only.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.
 3. **Register it** in `ui/src/protocols/mod.rs`: `mod <name>;` and one entry in `MODULES`, both under
@@ -98,6 +102,6 @@ chosen.
 
 Every decoder is a module, the core ones too: UART, I2C, SPI, CAN, LIN, Parallel and C-PHY are in
 `ui/src/protocols/core.rs` and take the first places in `MODULES` (their order is fixed, saved setups and SCPI refer
-to it). Their decoders are in `oos-dsp`; the values several of them share (baud rate, bits, parity ...) are shared
-rows, so a setup keeps one baud rate when you switch between UART and LIN. Setups saved before a protocol became a
+to it). Their decoders and `ModuleInfo`s are in `oos-dsp`; the values several of them share (baud rate, bits, parity
+...) are shared rows, so a setup keeps one baud rate when you switch between UART and LIN. Setups saved before a protocol became a
 module keep working: its key is the old name, and `legacy` maps the old setup keys onto its options.

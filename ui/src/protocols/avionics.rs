@@ -24,9 +24,6 @@ impl Protocol for Arinc429 {
     fn options(&self) -> &'static [Opt] {
         &ARINC_OPTIONS
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::arinc429(l.main(), l.dt, decode::arinc_rate(&l.opt), l.thr, l.hy))
-    }
     /// The label in octal.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         matches!(p.kind, Kind::Id { .. }).then(|| format!("L {:03o}", p.value))
@@ -61,9 +58,6 @@ pub struct Mil1553;
 impl Protocol for Mil1553 {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::MIL1553
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::decode::mil1553(l.main(), l.dt, l.thr, l.hy))
     }
     /// The sync of a word goes either way.
     fn start_edge(&self) -> Slope {

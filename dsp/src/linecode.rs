@@ -298,8 +298,9 @@ fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
 }
 
 /// Manchester (IEEE 802.3) on one line.
-pub static MANCHESTER: ModuleInfo =
-    ModuleInfo::new("Manchester", "Manchester", "linecode").bit(|opt, _| 1.0 / opt_baud(opt, 0));
+pub static MANCHESTER: ModuleInfo = ModuleInfo::new("Manchester", "Manchester", "linecode")
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(manchester(l.main(), l.dt, opt_baud(&l.opt, 0), l.thr, l.hy)));
 
 /// IEEE 802.3 Manchester: a 1 is low→high in the bit cell (mid-cell rising). `bitrate` 0 = from the edge spacings.
 pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<Packet> {
@@ -340,7 +341,9 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
 }
 
 /// MLT-3 on one line.
-pub static MLT3: ModuleInfo = ModuleInfo::new("Mlt3", "MLT-3", "linecode").bit(|opt, _| 1.0 / opt_baud(opt, 0));
+pub static MLT3: ModuleInfo = ModuleInfo::new("Mlt3", "MLT-3", "linecode")
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(mlt3(l.main(), l.dt, opt_baud(&l.opt, 0), l.thr, l.hy)));
 
 /// MLT-3: cycling −A / 0 / +A; every change of level is a 1, a hold is a 0. The line is sliced to its three levels
 /// with two comparators at ±A/2 around the middle of its outer levels (the 1st and 99th percentile), each with the

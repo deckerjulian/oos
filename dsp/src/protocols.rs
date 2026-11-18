@@ -1,7 +1,8 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The protocol decoders as modules: what each one is, independent of how a screen shows it. A decoder's
+//! The protocol decoders as modules: what each one is, how it is called with the settings of the Decode menu, its
+//! timing and what the protocol trigger finds in its packets, independent of how a screen shows it. A decoder's
 //! [`ModuleInfo`] stands next to its decoder, in the file of its family (`decode/<family>.rs`; C-PHY and the line
 //! codes in `cphy.rs` and `linecode.rs`), and [`MODULES`] lists them all in the order setups and SCPI count them.
 //! The scope's side of a decoder (menu rows, labels, demo traffic, its view) is a protocol module of `oos-ui` that
@@ -50,6 +51,44 @@ pub struct Shared {
     pub spi_cs_high: bool,
 }
 
+/// The lines a decoder runs on, as voltages, in the order of [`ModuleInfo::roles`]. `lines[0]` is always there (the
+/// main source; with a differential pair the difference A - B); a role the protocol does not name, or an optional
+/// role set to "none", is `None`.
+pub struct Lines<'a> {
+    pub lines: [Option<&'a [f32]>; 4],
+    /// sample spacing (s)
+    pub dt: f64,
+    /// decision threshold and hysteresis (V)
+    pub thr: f32,
+    pub hy: f32,
+    /// the option settings, indices into the choices of the module's option rows, already in range
+    pub opt: [usize; OPTS],
+    /// the shared rows
+    pub sh: Shared,
+    /// every analog channel (None: off) and the channel of each role, for a protocol whose lines are not its roles
+    /// (Parallel: the data lines from the main source upwards)
+    pub chans: [Option<&'a [f32]>; 4],
+    pub src: [Option<usize>; 4],
+}
+
+impl<'a> Lines<'a> {
+    /// The main line.
+    pub fn main(&self) -> &'a [f32] {
+        self.lines[0].unwrap_or(&[])
+    }
+
+    /// Line `k`, or the error the scope shows when it is missing.
+    pub fn need(&self, k: usize, what: &'static str) -> Result<&'a [f32], &'static str> {
+        self.lines[k].ok_or(what)
+    }
+}
+
+/// A decoder on its lines: the packets, times as fractional sample indices, or the error the scope shows.
+pub type Decoder = fn(&Lines<'_>) -> Result<Vec<Packet>, &'static str>;
+
+/// The error of a module that was given no decoder.
+const NO_DECODER: &str = "no decoder";
+
 /// The bit time (s) of a decoder with these options and shared rows.
 pub type BitTime = fn(&[usize; OPTS], &Shared) -> f64;
 
@@ -60,7 +99,8 @@ pub type FrameSpan = fn(&[usize; OPTS], &Shared) -> Option<f64>;
 /// rule.
 pub type TriggerRule = fn(BusWhat, u32, &Packet) -> Option<bool>;
 
-/// A protocol decoder as setups, SCPI and the menus know it.
+/// A protocol decoder as a module: its identity, its lines, the call of its decoder, its timing and its protocol
+/// trigger.
 #[derive(Clone, Copy, Debug)]
 pub struct ModuleInfo {
     /// Stable name in saved setups and over SCPI: letters and digits only, never changed once released (ADR 0002).
@@ -78,6 +118,8 @@ pub struct ModuleInfo {
     pub trigger: TriggerRule,
     /// What the protocol trigger looks for when it is switched on: a value the demo traffic contains.
     pub trigger_default: (BusWhat, u32),
+    /// The call of the decoder with the module's options and shared rows ([`ModuleInfo::decode`]).
+    pub decoder: Decoder,
     /// The bit time ([`ModuleInfo::bit_time`]); a decoder without one has 0.
     pub bit: BitTime,
     /// The record length the protocol trigger needs, when 200 bit times are not right ([`ModuleInfo::frame_span`]).
@@ -95,6 +137,7 @@ impl ModuleInfo {
             diff_ok: false,
             trigger: |_, _, _| None,
             trigger_default: (BusWhat::Frame, 0x40),
+            decoder: |_| Err(NO_DECODER),
             bit: |_, _| 0.0,
             span: |_, _| None,
         }
@@ -120,6 +163,11 @@ impl ModuleInfo {
         ModuleInfo { trigger_default: (what, value), ..self }
     }
 
+    /// The module with this call of its decoder.
+    pub const fn decoder(self, decoder: Decoder) -> ModuleInfo {
+        ModuleInfo { decoder, ..self }
+    }
+
     /// The decoder with this bit time.
     pub const fn bit(self, bit: BitTime) -> ModuleInfo {
         ModuleInfo { bit, ..self }
@@ -128,6 +176,11 @@ impl ModuleInfo {
     /// The decoder with this record length for the protocol trigger.
     pub const fn span(self, span: FrameSpan) -> ModuleInfo {
         ModuleInfo { span, ..self }
+    }
+
+    /// Decodes the lines.
+    pub fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
+        (self.decoder)(l)
     }
 
     /// Bit time (s) with these options and shared rows: the protocol trigger samples at a twentieth of it and searches
@@ -295,9 +348,10 @@ mod tests {
         assert_eq!(SPDIF.trigger_default, (Frame, 0x40));
     }
 
-    // Break it catches: a decoder without its bit time, which the protocol trigger samples by
+    // Break it catches: a module without the call of its decoder, or without its bit time, which the protocol trigger
+    // samples by
     #[test]
-    fn every_module_has_its_bit_time() {
+    fn every_module_has_its_decoder_and_bit_time() {
         let sh = Shared {
             baud: 9600.0,
             bits: 8,
@@ -311,7 +365,19 @@ mod tests {
             spi_timeout: 0.0,
             spi_cs_high: false,
         };
+        let flat = [0.0f32; 100];
+        let l = Lines {
+            lines: [Some(&flat[..]), None, None, None],
+            dt: 1e-9,
+            thr: 0.5,
+            hy: 0.1,
+            opt: [0; OPTS],
+            sh,
+            chans: [None; 4],
+            src: [None; 4],
+        };
         for m in MODULES {
+            assert_ne!(m.decode(&l).err(), Some(NO_DECODER), "{}: no decoder (ModuleInfo::decoder)", m.key);
             let t = m.bit_time(&[0; OPTS], &sh);
             assert!(t > 0.0 && t < 1.0, "{}: bit time {} (ModuleInfo::bit)", m.key, t);
         }

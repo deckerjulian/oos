@@ -4,9 +4,7 @@
 //! Decoder settings tables (the decoders themselves are in oos-dsp `decode`, and the tables their options choose
 //! from with them).
 
-pub use oos_dsp::decode::{ARINC_RATES, BAUDS, CAN_RATES, SENT_TICKS};
-/// CAN-FD data phase bit rates.
-pub const FD_RATES: [f64; 5] = [1e6, 2e6, 4e6, 5e6, 8e6];
+pub use oos_dsp::decode::{ARINC_RATES, BAUDS, CAN_RATES, FD_RATES, SENT_TICKS};
 /// USB speed settings (auto: from the idle state and the SYNC).
 pub const USB_SPEEDS: [oos_dsp::decode::UsbSpeed; 3] =
     [oos_dsp::decode::UsbSpeed::Auto, oos_dsp::decode::UsbSpeed::Low, oos_dsp::decode::UsbSpeed::Full];

@@ -272,8 +272,10 @@ fn pd_frame(b: &[(f64, f64, bool)], out: &mut Vec<Packet>) {
 }
 
 /// USB Power Delivery on the CC line.
-pub static USB_PD: ModuleInfo =
-    ModuleInfo::new("UsbPd", "USB PD", "usbpd").roles([Some("CC"), None, None, None]).bit(|_, _| 3.33e-6);
+pub static USB_PD: ModuleInfo = ModuleInfo::new("UsbPd", "USB PD", "usbpd")
+    .roles([Some("CC"), None, None, None])
+    .bit(|_, _| 3.33e-6)
+    .decoder(|l| Ok(usbpd(l.main(), l.dt, l.thr, l.hy)));
 
 /// USB Power Delivery (USB PD r3.1 chapter 5) on the CC line: BMC at 300 kbit/s +-10 % (the bit time is tracked
 /// from the nominal value), preamble, 4b5b symbols LSB first. Per message: `Field("PRE")` (value = preamble bits),

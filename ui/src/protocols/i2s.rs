@@ -19,10 +19,6 @@ impl Protocol for I2s {
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]
     }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let sck = l.need(1, "source channel off")?;
-        Ok(oos_dsp::decode::i2s(sck, l.lines[2], l.main(), l.sh.bits, l.thr, l.hy))
-    }
     /// A frame starts at a change of WS, either way.
     fn start_edge(&self) -> Slope {
         Slope::Either

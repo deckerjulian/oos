@@ -69,7 +69,7 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
     ];
     let chans: [Option<&[f32]>; 4] = std::array::from_fn(|c| ch.get(c).copied().filter(|v| !v.is_empty()));
     let src = [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4];
-    p.decode(&crate::protocols::Lines {
+    p.info().decode(&crate::protocols::Lines {
         lines,
         dt,
         thr,

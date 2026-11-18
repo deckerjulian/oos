@@ -6,30 +6,12 @@
 //! generated traffic.
 
 use super::*;
-use oos_dsp::decode;
 
 pub struct Qspi;
 
 impl Protocol for Qspi {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::QSPI
-    }
-    /// Single-line opcode and three address bytes to start with; the opcode switches the lines from there.
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let cs = l.need(2, "CS# source missing")?;
-        let mut io = vec![l.main()];
-        if let Some(c) = l.lines[3] {
-            io.push(c);
-        }
-        Ok(decode::qspi(
-            cs,
-            l.need(1, "SCK source missing")?,
-            &io,
-            &decode::QspiCfg::new(1, 1, 1, 3, 0, false),
-            true,
-            l.thr,
-            l.hy,
-        ))
     }
     /// IO0, SCK, CS#, IO1 on CH1 to CH4.
     fn setup(&self) -> Setup {
@@ -68,6 +50,6 @@ mod tests {
             chans: [None; 4],
             src: [None; 4],
         };
-        assert_eq!(Qspi.decode(&l).unwrap_err(), "CS# source missing");
+        assert_eq!(Qspi.info().decode(&l).unwrap_err(), "CS# source missing");
     }
 }

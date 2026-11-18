@@ -9,7 +9,7 @@
 
 use super::{Kind, Packet, Parity};
 use crate::edges::{edges, states};
-use crate::protocols::{every_word_is_a_frame, BusWhat, ModuleInfo, OPTS};
+use crate::protocols::{every_word_is_a_frame, BusWhat, Lines, ModuleInfo, OPTS};
 
 /// The baud rates of the Decode menu, as the options of a module choose them.
 pub const BAUDS: [f64; 10] = [1200.0, 2400.0, 4800.0, 9600.0, 19200.0, 38400.0, 57600.0, 115200.0, 460800.0, 921600.0];
@@ -20,8 +20,11 @@ pub fn opt_baud(opt: &[usize; OPTS], k: usize) -> f64 {
 }
 
 /// UART on one line or an RS-485 pair.
-pub static UART: ModuleInfo =
-    ModuleInfo::new("Uart", "UART", "serial").differential().trigger(every_word_is_a_frame).bit(|_, sh| 1.0 / sh.baud);
+pub static UART: ModuleInfo = ModuleInfo::new("Uart", "UART", "serial")
+    .differential()
+    .trigger(every_word_is_a_frame)
+    .bit(|_, sh| 1.0 / sh.baud)
+    .decoder(|l| Ok(uart(l.main(), l.dt, l.sh.baud, l.sh.bits, l.sh.parity, l.thr, l.hy, l.sh.uart_inv)));
 
 /// UART: start bit, `bits` data bits LSB first, parity, 1 stop bit; idle high (`invert` = idle low). Samples each
 /// bit in its middle, timed from the start-bit edge.
@@ -91,7 +94,8 @@ pub fn uart(
 pub static I2C: ModuleInfo = ModuleInfo::new("I2c", "I2C", "serial")
     .roles([Some("SDA"), Some("SCL"), None, None])
     .starts_on(BusWhat::Id, 0x50)
-    .bit(|_, _| 2.5e-6);
+    .bit(|_, _| 2.5e-6)
+    .decoder(|l| Ok(i2c(l.main(), l.need(1, "source channel off")?, l.thr, l.hy)));
 
 /// I2C: START/STOP from SDA edges while SCL is high, bits sampled at SCL rising edges, 9th bit = ACK (low).
 /// One threshold and hysteresis for both lines.
@@ -157,7 +161,22 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
 pub static SPI: ModuleInfo = ModuleInfo::new("Spi", "SPI", "serial")
     .roles([Some("MOSI"), Some("Clock"), Some("CS"), None])
     .trigger(every_word_is_a_frame)
-    .bit(|_, _| 0.5e-6);
+    .bit(|_, _| 0.5e-6)
+    .decoder(spi_lines);
+
+/// SPI on the lines of its module, with the shared rows: a clock pause of the trigger's timeout starts a frame (else
+/// 20 samples), and an active-high CS is mirrored at the threshold, since `spi` takes CS active low.
+fn spi_lines(l: &Lines) -> Result<Vec<Packet>, &'static str> {
+    let clk = l.need(1, "source channel off")?;
+    let bit = 1e-9f64.max(l.dt);
+    let gap = if l.sh.spi_timeout > 0.0 { l.sh.spi_timeout / l.dt } else { 20.0 * bit / l.dt };
+    let cs_hi: Option<Vec<f32>> = match (l.sh.spi_cs_high, l.lines[2]) {
+        (true, Some(c)) => Some(c.iter().map(|&x| 2.0 * l.thr - x).collect()),
+        _ => None,
+    };
+    let cs = cs_hi.as_deref().or(l.lines[2]);
+    Ok(spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap))
+}
 
 /// SPI: words of `bits` bits sampled on the capture edge of `mode` (0/3: rising, 1/2: falling); a word ends after
 /// `bits` edges; `cs` (active low) delimits frames, without CS a clock pause longer than `gap` samples restarts.
@@ -275,7 +294,8 @@ pub fn diff(a: &[f32], b: &[f32]) -> Vec<f32> {
 pub static UART9: ModuleInfo = ModuleInfo::new("Uart9", "UART 9-bit", "serial")
     .differential()
     .trigger(every_word_is_a_frame)
-    .bit(|opt, _| 1.0 / opt_baud(opt, 0));
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(uart9(l.main(), l.dt, opt_baud(&l.opt, 0), l.thr, l.hy, false)));
 
 /// 9-bit multidrop UART (start, 9 data bits LSB first, stop; the 9th bit marks an address character, as in RS-485
 /// multidrop / MDB): `Addr { read: false }` with value = the low 8 bits when the 9th bit is set, else Data;

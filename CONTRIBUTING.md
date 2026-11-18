@@ -86,10 +86,14 @@ when a user notices it.
 
 ### A new protocol decoder
 
-- **Declare it** as a `ModuleInfo` next to its decoder in `oos-dsp`, with its line at the end of `MODULES`
-  (`dsp/src/protocols.rs`), and as a type that implements `Protocol` in a file of `ui/src/protocols/` that names
-  it, with its line in `MODULES` (`ui/src/protocols/mod.rs`). The Decode menu, setups, the protocol trigger, the
-  labels, the demo traffic and its view follow. [docs/protocol-modules.md](docs/protocol-modules.md) walks through it.
+- **Declare it** twice. In `oos-dsp`, what the decoder is: its `ModuleInfo` next to the decoder in the file of its
+  family under `dsp/src/decode/` (key, name, family, lines, the call of the decoder with its options and shared rows,
+  its bit time, a trigger rule of its own and the trigger's start value), with its line at the end of `MODULES`
+  (`dsp/src/protocols.rs`). In `oos-ui`, what the scope shows of it: a type that implements `Protocol` in a file of
+  `ui/src/protocols/` that names the `ModuleInfo` and brings the option rows, labels, the first settings, the demo
+  traffic and a view, with its line in `MODULES` (`ui/src/protocols/mod.rs`). The Decode menu, setups, the protocol
+  trigger, the labels, the demo traffic and its view follow. [docs/protocol-modules.md](docs/protocol-modules.md)
+  walks through it.
 - **Also touch** the decoder in the file of its family under `dsp/src/decode/`, its generator in
   `dsp/src/decode/gen.rs` or `dsp/src/decode/gen/` and its tests in the family's module of `dsp/tests/decode/`; for a
   new file of `ui/src/protocols/` its `mod` line and its feature `dec-<file>` in `ui/Cargo.toml` (the feature and the
@@ -103,7 +107,8 @@ when a user notices it.
   module, and on a number of decoders in the texts that is not the number registered;
   `dsp/src/protocols.rs::every_declared_module_is_registered` on a `ModuleInfo` that is not in the registry of
   `oos-dsp`, `dsp/src/protocols.rs::modules_are_well_formed` on a key or a name used twice or an info that is not in
-  the file of its family;
+  the file of its family, `dsp/src/protocols.rs::every_module_has_its_decoder_and_bit_time` on an info without the
+  call of its decoder or without its bit time;
   `ui/src/protocols/mod.rs::modules_are_well_formed` on a key or a name used twice;
   `ui/src/protocols/mod.rs::modules_decode_their_demo` on demo traffic the module does not decode;
   `dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` on a family of `dsp/src/decode/` without tests.
