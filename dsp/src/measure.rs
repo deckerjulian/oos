@@ -465,16 +465,18 @@ pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> 
     a
 }
 
+/// The finite samples of `v`: `v` itself when it has no gap, else a copy without the gaps.
+pub fn finite_samples(v: &[f32]) -> std::borrow::Cow<'_, [f32]> {
+    if v.iter().all(|x| x.is_finite()) {
+        std::borrow::Cow::Borrowed(v)
+    } else {
+        std::borrow::Cow::Owned(v.iter().copied().filter(|x| x.is_finite()).collect())
+    }
+}
+
 /// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
-    // the finite samples: the record itself when it has no gap (a copy of 100 kpts per channel otherwise)
-    let own: Vec<f32>;
-    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
-        v
-    } else {
-        own = v.iter().copied().filter(|x| x.is_finite()).collect();
-        &own
-    };
+    let f: &[f32] = &finite_samples(v);
     if f.len() < 4 {
         return Analysis::default();
     }
