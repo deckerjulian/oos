@@ -10,8 +10,8 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
-//!                           # remote.mdns)
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
+//!                           # remote.mdns; remote.telnet of an older version is read and dropped: no telnet, ADR 0054)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-123456 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
@@ -60,8 +60,6 @@ pub struct SysConf {
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
-    /// the telnet shell (23, read by rcS too): on by default as before, a shell without password
-    pub remote_telnet: bool,
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
@@ -97,7 +95,6 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
-            remote_telnet: true,
             remote_ssh: false,
             ssh_password: true,
             remote_mdns: true,
@@ -214,7 +211,9 @@ impl SysConf {
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
-                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                // the telnet shell of earlier versions (ADR 0054): taken with any value and dropped, so an older file
+                // loads without a refused line and the key is not written again
+                "remote.telnet" => true,
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
@@ -264,7 +263,6 @@ impl SysConf {
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
-        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
@@ -508,8 +506,7 @@ mod tests {
             eth_retry_10m: false,
             ..Default::default()
         };
-        (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
-            (false, false, true, false, false);
+        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -662,10 +659,23 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
-        // telnet and SSH are separate switches: telnet stays on by default, SSH off
-        let (c, bad) = SysConf::parse("remote.telnet = off\n");
-        assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
-        assert!(SysConf::default().remote_telnet);
+    }
+
+    // Break it catches: a settings file of a version with telnet (ADR 0054) that no longer loads cleanly, or whose
+    // `remote.telnet` line is kept and written again, or that switches SSH on
+    #[test]
+    fn an_old_telnet_line_is_taken_and_dropped() {
+        for v in ["on", "off", "maybe"] {
+            let old = format!("ntp = on\nremote.telnet = {} # bring-up\nremote.ssh = off\n", v);
+            let (c, bad) = SysConf::parse(&old);
+            assert!(bad.is_empty(), "{}: {:?}", v, bad);
+            assert!(c.ntp && !c.remote_ssh);
+            assert_eq!(c, SysConf { ntp: true, ..Default::default() });
+            assert!(!c.text().contains("telnet"), "{}", c.text());
+        }
+        let (base, bad) = SysConf::image_defaults("net.allow = 192.0.2.0/24\nremote.telnet = off\n");
+        assert!(bad.is_empty() && !base.text().contains("telnet"), "{:?}", bad);
+        assert!(!SysConf::default().text().contains("telnet"));
     }
 
     // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's

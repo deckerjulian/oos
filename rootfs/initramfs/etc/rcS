@@ -72,12 +72,10 @@ ip link set eth0 up 2>/dev/null
 		rm -f /tmp/oos-net.fallback
 	fi
 ) < /dev/null > /dev/null 2>&1 &
-# 3) remote shells: SSH (Dropbear, oos-ssh, docs/network.md 7; off unless remote.ssh = on and net.allow is set) after
-#    the firewall, in the background: the first start makes the password and the host keys in /oos/ssh. telnet for
-#    bring-up (UNAUTHENTICATED: use on the bench LAN only); off with System > Network > Remote services > telnet
-#    (remote.telnet = off in /oos/system.conf, mounted in 0b)
+# 3) the remote shell: SSH (Dropbear, oos-ssh, docs/network.md 7; off unless remote.ssh = on and net.allow is set)
+#    after the firewall, in the background: the first start makes the password and the host keys in /oos/ssh. There
+#    is no telnet (ADR 0054); `remote.telnet` in an old /oos/system.conf is ignored
 (setsid sh -c '/bin/oos-ssh start >> /tmp/oos-ssh.log 2>&1' < /dev/null > /dev/null 2>&1 &)
-case "$(/bin/oos-conf remote.telnet)" in off | false | 0) ;; *) telnetd -l /bin/sh ;; esac
 # 4) banner on the panel and the serial console
 /bin/oos-info | tee /dev/tty1 > /dev/kmsg
 # 4b) what the data partition (0b) keeps for the screen

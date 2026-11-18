@@ -1125,6 +1125,7 @@ impl Ui {
                 Item::StoreFfSave => self.ff_save(),
                 Item::StoreFfLoad => self.ff_load(),
                 Item::Stock => self.stock_tap(),
+                Item::BootAgain => self.boot_again_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
                 Item::SrcOn => {

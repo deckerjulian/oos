@@ -15,8 +15,7 @@ Added:
 - `oos-fpgad made-up-cal DIR` writes a made-up calibration set: every calibration file the register sequences read,
   with invented values that mean nothing for a scope. `tools/compare-base.sh` uses it when there are no files of a
   unit, so CI now also compares the register values that calibration changes.
-- `tools/device-deploy.sh` deploys over SSH too (`OOS_SHELL=ssh`) and checks every uploaded file with SHA-256
-  (unit, over telnet); `device-deploy-ssh.sh` is gone.
+- `tools/device-deploy.sh` checks every uploaded file with SHA-256 (unit); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
 - `tools/device-test.py --changed BASE` runs only the device tests a change reaches (documents and CI: the six smoke
   tests). A failed test runs again (`--retries`); one that passes then is reported as FLAKY. A failure that a known
@@ -32,9 +31,20 @@ Added:
   - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
   - SSH starts or stops with the list.
   The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
+- System > **Start OOS again**, right under Boot mode: two taps within 5 s select OOS for the next power-on once more,
+  as `oos-boot-oos-again` does (it runs the same `oos-update arm`), and a dialog shows the result. With Boot mode
+  Persist it only says that OOS starts anyway. One-shot users no longer need a shell for this step (host-tested; not
+  yet run on a unit).
 
 Removed:
 
+- Telnet. The scope no longer starts a shell without password on port 23, and System > Network > Remote services has
+  no telnet switch. SSH is the only shell on the network: switch it on under Remote services, set **Allowed** to your
+  network, and log in with the password from SSH settings > Show password, then add a key with `ssh-copy-id`
+  ([Remote Control](wiki/Remote-Control.md), [docs/ssh.md](docs/ssh.md)). The serial console keeps its shell.
+  `remote.telnet` in an older `/oos/system.conf` is ignored and no longer written. `tools/device-deploy.sh` and
+  `tools/device-test.py` reach the scope over SSH only (`OOS_SHELL` is gone); a bench unit needs SSH and a key once
+  ([docs/device-testing.md](docs/device-testing.md)). ADR 0054 (host-tested; not yet run on a unit).
 - The native Windows build: `build-windows.ps1`, `run-windows.ps1` and the desktop window with its keyboard and mouse
   shortcuts and its file dialog. On a computer OOS runs with `oos-ui --serve` and the web remote in a browser, on
   Linux, macOS and Windows inside WSL 2 (ADR 0033). The scope is not affected.

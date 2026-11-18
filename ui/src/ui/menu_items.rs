@@ -428,6 +428,7 @@ impl Ui {
             Item::QuickAct,
             Item::AuxOut,
             Item::BootMode,
+            Item::BootAgain,
             Item::Overclock,
             Item::Graphics,
             Item::Shot,

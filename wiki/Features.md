@@ -83,7 +83,7 @@ in the README. How to use it: the guides listed on [[Home]].
 
 **Remote control**
 - Web remote, SCPI over TCP, VXI-11, HiSLIP (on a computer), LXI identification, MCP for AI
-  assistants, telnet, SSH, mDNS and DNS-SD: every interface with its port is on [[Remote Control]], the commands on
+  assistants, SSH, mDNS and DNS-SD: every interface with its port is on [[Remote Control]], the commands on
   [[SCPI and VXI-11]]
 - None of them slows the scope down; all of them run over Ethernet and over WLAN with an RTL8188EU stick or a TP-Link Archer TX10UB Nano
 

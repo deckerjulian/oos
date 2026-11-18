@@ -62,7 +62,8 @@ The `misc` boot request is not on the power-on path.
 **Switch used by OOS:** replace the magic `KRNL` at the start of `boot` (LBA 122880) with `OOSK`. The loader then
 boots `recovery`, and if it refuses that image it boots `backup`, which holds a copy of the stock boot image
 (`card-install.py --fallback-stock`), in its first 32 MiB. Back to stock: write `KRNL` again. `boot/switch.py` does this
-on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-shot), and `oos-boot-oos-again` sets `OOSK`.
+on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-shot), and `oos-boot-oos-again` sets `OOSK`
+(on the screen: System > Start OOS again; both run `oos-update arm`, docs/update.md).
 
 ### Ramdisk length must be a multiple of 4
 
