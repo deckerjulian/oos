@@ -128,6 +128,7 @@ missing part, when one is forgotten (ADR 0046). The steps, with the commands for
 | trigger type | `TrigType` in `ui/src/model/trigger.rs` | `dsp/src/trigger.rs`, `hal/src/dho/tpu.rs`, `ui/src/scpi/dispatch.rs`, `docs/scpi.md`, the wiki, `ui/tests/triggers.txt` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
 | analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
+| HTTP route or MCP tool | an arm of `Http::answer` in `ui/src/http.rs` | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
 | register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, `tools/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
 
 `tools/link-check.py` (layer `text`) keeps this table and the recipes true: every file and every test they name
@@ -143,6 +144,7 @@ request that changes one of these brings the text along:
 | You change | Bring along |
 |---|---|
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
+| an HTTP route or MCP tool (`ui/src/http.rs`, `ui/src/http/`) | `docs/http.md`, `wiki/Remote-Control.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
 | an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
