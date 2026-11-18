@@ -107,7 +107,9 @@ pub fn tnt_ratio(v: &[f32], dt: f64, c: &Clock) -> f64 {
     }
     occupied.sort_unstable();
     occupied.dedup();
-    let (u0, u1) = (*occupied.first().unwrap(), *occupied.last().unwrap());
+    let (Some(&u0), Some(&u1)) = (occupied.first(), occupied.last()) else {
+        return f64::NAN;
+    };
     let mut last = f64::NAN;
     let mut ratios = Vec::new();
     for u in u0..=u1 {
