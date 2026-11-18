@@ -25,6 +25,37 @@ pub enum BusWhat {
     Error,
 }
 
+/// Option rows a module may have (bit rate, word size, variant ...); a decoder gets the index of the choice of each.
+pub const OPTS: usize = 4;
+
+/// The values of the rows of the Decode menu several protocols share (baud rate, bits, parity ...): `oos-ui` keeps
+/// them in fields of their own, which SCPI, the hardware protocol triggers and the setups name.
+#[derive(Clone, Copy, Debug)]
+pub struct Shared {
+    pub baud: f64,
+    pub bits: u32,
+    pub parity: Parity,
+    /// SPI mode 0..3
+    pub spi_mode: u8,
+    pub can_rate: f64,
+    /// CAN: the line is CAN-H (else CAN-L or a transceiver's RX)
+    pub canh: bool,
+    pub usb_speed: UsbSpeed,
+    /// 0 = auto
+    pub cphy_rate: f64,
+    /// the UART line is inverted (the protocol trigger's polarity)
+    pub uart_inv: bool,
+    /// SPI: a clock pause (s) that starts a frame (0: 20 bit times), and CS active high (the protocol trigger's)
+    pub spi_timeout: f64,
+    pub spi_cs_high: bool,
+}
+
+/// The bit time (s) of a decoder with these options and shared rows.
+pub type BitTime = fn(&[usize; OPTS], &Shared) -> f64;
+
+/// The record length (s) the protocol trigger needs before the trigger point; `None` = 200 bit times.
+pub type FrameSpan = fn(&[usize; OPTS], &Shared) -> Option<f64>;
+
 /// A protocol's own rule of the protocol trigger: whether a packet satisfies "`what` = `value`"; `None` = the generic
 /// rule.
 pub type TriggerRule = fn(BusWhat, u32, &Packet) -> Option<bool>;
@@ -47,6 +78,10 @@ pub struct ModuleInfo {
     pub trigger: TriggerRule,
     /// What the protocol trigger looks for when it is switched on: a value the demo traffic contains.
     pub trigger_default: (BusWhat, u32),
+    /// The bit time ([`ModuleInfo::bit_time`]); a decoder without one has 0.
+    pub bit: BitTime,
+    /// The record length the protocol trigger needs, when 200 bit times are not right ([`ModuleInfo::frame_span`]).
+    pub span: FrameSpan,
 }
 
 impl ModuleInfo {
@@ -60,6 +95,8 @@ impl ModuleInfo {
             diff_ok: false,
             trigger: |_, _, _| None,
             trigger_default: (BusWhat::Frame, 0x40),
+            bit: |_, _| 0.0,
+            span: |_, _| None,
         }
     }
 
@@ -81,6 +118,27 @@ impl ModuleInfo {
     /// The decoder with the protocol trigger starting on "`what` = `value`".
     pub const fn starts_on(self, what: BusWhat, value: u32) -> ModuleInfo {
         ModuleInfo { trigger_default: (what, value), ..self }
+    }
+
+    /// The decoder with this bit time.
+    pub const fn bit(self, bit: BitTime) -> ModuleInfo {
+        ModuleInfo { bit, ..self }
+    }
+
+    /// The decoder with this record length for the protocol trigger.
+    pub const fn span(self, span: FrameSpan) -> ModuleInfo {
+        ModuleInfo { span, ..self }
+    }
+
+    /// Bit time (s) with these options and shared rows: the protocol trigger samples at a twentieth of it and searches
+    /// 200 of them.
+    pub fn bit_time(&self, opt: &[usize; OPTS], sh: &Shared) -> f64 {
+        (self.bit)(opt, sh)
+    }
+
+    /// Record length (s) the protocol trigger needs before the trigger point, when 200 bit times are not right.
+    pub fn frame_span(&self, opt: &[usize; OPTS], sh: &Shared) -> Option<f64> {
+        (self.span)(opt, sh)
     }
 
     /// Whether `p` satisfies the protocol trigger "`what` = `value`" on its own: the module's rule, else the generic
@@ -235,6 +293,28 @@ mod tests {
         assert!(SPI.trigger_match(Error, 0, &pk(Kind::Data, 0, false)) && !SPI.trigger_match(Error, 0, &data));
         // a module without a rule of its own starts on a frame
         assert_eq!(SPDIF.trigger_default, (Frame, 0x40));
+    }
+
+    // Break it catches: a decoder without its bit time, which the protocol trigger samples by
+    #[test]
+    fn every_module_has_its_bit_time() {
+        let sh = Shared {
+            baud: 9600.0,
+            bits: 8,
+            parity: Parity::None,
+            spi_mode: 0,
+            can_rate: 500e3,
+            canh: false,
+            usb_speed: UsbSpeed::Auto,
+            cphy_rate: 0.0,
+            uart_inv: false,
+            spi_timeout: 0.0,
+            spi_cs_high: false,
+        };
+        for m in MODULES {
+            let t = m.bit_time(&[0; OPTS], &sh);
+            assert!(t > 0.0 && t < 1.0, "{}: bit time {} (ModuleInfo::bit)", m.key, t);
+        }
     }
 
     // Break it catches: a decoder whose ModuleInfo is declared but not in MODULES, so the scope never offers it

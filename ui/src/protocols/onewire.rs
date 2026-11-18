@@ -14,10 +14,6 @@ impl Protocol for OneWire {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::ONE_WIRE
     }
-    /// The shortest standard-speed slot.
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        15e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::onewire(l.main(), l.dt, l.thr, l.hy, false))
     }
@@ -43,10 +39,6 @@ pub struct Ds2482;
 impl Protocol for Ds2482 {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::DS2482
-    }
-    /// An I2C bit at 400 kHz.
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        2.5e-6
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let scl = l.need(1, "SCL source missing")?;

@@ -111,7 +111,7 @@ impl Model {
     /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
     pub fn bus_bit(&self) -> f64 {
         let Proto::Module(i) = self.dec_proto;
-        crate::protocols::get(i).bit_time_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))
+        crate::protocols::get(i).info().bit_time(&self.dec_opts(), &crate::protocols::shared(self))
     }
 
     /// The settings of the decoder the menu edits.

@@ -14,9 +14,6 @@ impl Protocol for Qspi {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::QSPI
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
     /// Single-line opcode and three address bytes to start with; the opcode switches the lines from there.
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let cs = l.need(2, "CS# source missing")?;
@@ -67,7 +64,7 @@ mod tests {
             thr: 1.65,
             hy: 0.1,
             opt: [0; OPTS],
-            sh: Shared::default(),
+            sh: shared(&Default::default()),
             chans: [None; 4],
             src: [None; 4],
         };

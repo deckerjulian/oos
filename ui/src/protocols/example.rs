@@ -18,7 +18,10 @@ pub struct Example;
 static INFO: ModuleInfo = ModuleInfo::new("Example", "Example", "serial")
     .roles([Some("Data"), None, None, None])
     .trigger(trigger)
-    .starts_on(BusWhat::Data, 0x4f);
+    .starts_on(BusWhat::Data, 0x4f)
+    .bit(|opt, _| 1.0 / RATES[opt[0]])
+    // a frame is ten bits; 200 bit times would be enough, this shows the hook
+    .span(|opt, _| Some(40.0 / RATES[opt[0]]));
 
 /// The protocol trigger: Frame = every byte; Data = the byte value; the generic rule for the rest.
 fn trigger(what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
@@ -42,13 +45,6 @@ impl Protocol for Example {
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / RATES[opt[0]]
-    }
-    /// A frame is ten bits; 200 bit times would be enough, this shows the hook.
-    fn frame_span(&self, opt: &[usize; OPTS]) -> Option<f64> {
-        Some(40.0 * self.bit_time(opt))
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(uart(l.need(0, "data line missing")?, l.dt, RATES[l.opt[0]], 8, Parity::None, l.thr, l.hy, false))

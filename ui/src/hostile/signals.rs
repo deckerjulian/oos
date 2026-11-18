@@ -5,7 +5,7 @@
 //! one sample, or hold samples that are no numbers (a channel without data).
 
 use super::{is_known, run};
-use crate::protocols::{demo, opt_default, opt_fit, Lines, Shared, MODULES};
+use crate::protocols::{demo, opt_default, opt_fit, shared, Lines, MODULES};
 
 /// Every decoder of the registry (`Protocol::decode`) on records made from its own demo traffic: returns for any
 /// samples, also none, one, and ones that are no numbers; it gives packets or says what is missing; the times of a
@@ -15,7 +15,8 @@ fn hostile_decoder_records() {
     for (i, m) in MODULES.iter().enumerate() {
         let i = i as u8;
         let opt = opt_fit(i, opt_default(i));
-        let dt = m.bit_time(&opt) / 8.0;
+        let sh = shared(&Default::default());
+        let dt = m.info().bit_time(&opt, &sh) / 8.0;
         // the role slots the module uses, at their places (USB and Parallel leave slots 1 and 3 empty)
         let mut slots: Vec<usize> = (0..4).filter(|&k| m.info().roles[k].is_some()).collect();
         if slots.is_empty() {
@@ -51,7 +52,7 @@ fn hostile_decoder_records() {
                 thr: s.thr,
                 hy: 0.1,
                 opt,
-                sh: Shared::default(),
+                sh,
                 chans: std::array::from_fn(|k| used(k).then(|| waves[k].as_slice())),
                 src: std::array::from_fn(|k| used(k).then_some(k)),
             };
@@ -102,7 +103,15 @@ pub(super) fn hostile_known_qspi_zero_frame() {
     // CS# falls and rises between samples so far apart that both crossings are at sample 1; so is the clock's edge
     let (cs, sck) = ([1e30f32, 0.0, 1e17], [0.0f32, 0.0, 1e30]);
     let lines = [Some(&cs[..]), Some(&sck[..]), Some(&cs[..]), None];
-    let l =
-        Lines { lines, dt: 1e-7, thr: 1.65, hy: 0.1, opt: [0; 4], sh: Shared::default(), chans: lines, src: [None; 4] };
+    let l = Lines {
+        lines,
+        dt: 1e-7,
+        thr: 1.65,
+        hy: 0.1,
+        opt: [0; 4],
+        sh: shared(&Default::default()),
+        chans: lines,
+        src: [None; 4],
+    };
     let _ = m.decode(&l);
 }

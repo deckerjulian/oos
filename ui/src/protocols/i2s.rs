@@ -19,9 +19,6 @@ impl Protocol for I2s {
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.6e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let sck = l.need(1, "source channel off")?;
         Ok(oos_dsp::decode::i2s(sck, l.lines[2], l.main(), l.sh.bits, l.thr, l.hy))

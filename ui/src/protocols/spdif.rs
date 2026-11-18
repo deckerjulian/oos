@@ -12,9 +12,6 @@ impl Protocol for Spdif {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::SPDIF
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.15e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::spdif(l.main(), l.thr, l.hy))
     }

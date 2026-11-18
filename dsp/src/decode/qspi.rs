@@ -141,8 +141,9 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
 }
 
 /// Quad-SPI flash: IO0, SCK, CS# and IO1.
-pub static QSPI: ModuleInfo =
-    ModuleInfo::new("Qspi", "Quad-SPI", "qspi").roles([Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")]);
+pub static QSPI: ModuleInfo = ModuleInfo::new("Qspi", "Quad-SPI", "qspi")
+    .roles([Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")])
+    .bit(|_, _| 0.5e-6);
 
 /// Quad-SPI flash / PSRAM: CS# active low frames, all lines sampled on the rising SCK edge (SPI mode 0 or 3), MSB
 /// first; on 2/4 lines IO1/IO3 carries the most significant bit of each cycle. `io` = IO0..IO3 (missing lines read

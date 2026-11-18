@@ -15,9 +15,6 @@ impl Protocol for Swd {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::SWD
     }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::swd(l.need(1, "SWCLK source missing")?, l.main(), l.thr, l.hy))
     }
@@ -48,9 +45,6 @@ pub struct Jtag;
 impl Protocol for Jtag {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::JTAG
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         let tdi = l.need(2, "TDI source missing")?;
@@ -95,7 +89,7 @@ mod tests {
                 thr: 1.65,
                 hy: 0.1,
                 opt: [0; OPTS],
-                sh: Shared::default(),
+                sh: shared(&Default::default()),
                 chans: [None; 4],
                 src: [None; 4],
             })

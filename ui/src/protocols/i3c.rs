@@ -13,10 +13,6 @@ impl Protocol for I3c {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::I3C
     }
-    /// A bit at 10 MHz (SDR).
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.1e-6
-    }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
         Ok(decode::i3c(l.main(), l.need(1, "SCL source missing")?, &[], l.thr, l.hy))
     }

@@ -112,8 +112,7 @@ pub static MODULES: &[&dyn Protocol] = &[
     &example::Example,
 ];
 
-/// Option rows a module may have (bit rate, word size, variant ...).
-pub const OPTS: usize = 4;
+pub use oos_dsp::protocols::{Shared, OPTS};
 
 /// A row of the Decode menu several protocols share, kept in its own field of the model (`dec_baud`, `dec_bits` ...):
 /// SCPI (`:BUS<n>:RS232:BAUD` ...), the hardware protocol triggers and the setups use those fields by name, so a
@@ -136,48 +135,20 @@ pub enum Row {
     Fmt,
 }
 
-/// The values of the shared rows.
-#[derive(Clone, Copy, Debug)]
-pub struct Shared {
-    pub baud: f64,
-    pub bits: u32,
-    pub parity: oos_dsp::decode::Parity,
-    pub spi_mode: u8,
-    pub can_rate: f64,
-    pub canh: bool,
-    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-    pub usb_speed: oos_dsp::decode::UsbSpeed,
-    /// 0 = auto
-    pub cphy_rate: f64,
-    /// the UART line is inverted (the protocol trigger's polarity)
-    pub uart_inv: bool,
-    /// SPI: a clock pause (s) that starts a frame (0: 20 bit times), and CS active high (the protocol trigger's)
-    pub spi_timeout: f64,
-    pub spi_cs_high: bool,
-}
-
-impl Default for Shared {
-    /// What a new model has.
-    fn default() -> Shared {
-        Shared::of(&crate::model::Model::default())
-    }
-}
-
-impl Shared {
-    pub fn of(m: &crate::model::Model) -> Shared {
-        Shared {
-            baud: crate::decode::BAUDS[m.dec_baud.min(crate::decode::BAUDS.len() - 1)],
-            bits: m.dec_bits,
-            parity: m.dec_parity,
-            spi_mode: m.dec_mode,
-            can_rate: crate::decode::CAN_RATES[m.dec_canrate.min(crate::decode::CAN_RATES.len() - 1)],
-            canh: m.dec_canh,
-            usb_speed: crate::decode::USB_SPEEDS[m.dec_uspeed.min(crate::decode::USB_SPEEDS.len() - 1)],
-            cphy_rate: m.dec_cphy_rate,
-            uart_inv: m.ser.uart_inv,
-            spi_timeout: m.ser.spi_timeout as f64,
-            spi_cs_high: m.ser.spi_cs_high,
-        }
+/// The values of the shared rows in `m`.
+pub fn shared(m: &crate::model::Model) -> Shared {
+    Shared {
+        baud: crate::decode::BAUDS[m.dec_baud.min(crate::decode::BAUDS.len() - 1)],
+        bits: m.dec_bits,
+        parity: m.dec_parity,
+        spi_mode: m.dec_mode,
+        can_rate: crate::decode::CAN_RATES[m.dec_canrate.min(crate::decode::CAN_RATES.len() - 1)],
+        canh: m.dec_canh,
+        usb_speed: crate::decode::USB_SPEEDS[m.dec_uspeed.min(crate::decode::USB_SPEEDS.len() - 1)],
+        cphy_rate: m.dec_cphy_rate,
+        uart_inv: m.ser.uart_inv,
+        spi_timeout: m.ser.spi_timeout as f64,
+        spi_cs_high: m.ser.spi_cs_high,
     }
 }
 
@@ -340,7 +311,7 @@ pub struct Section {
     pub rows: Vec<String>,
 }
 
-/// A protocol module. Only `info`, `bit_time` and `decode` are required; everything else has a default that
+/// A protocol module. Only `info` and `decode` are required; everything else has a default that
 /// fits a single-line serial protocol.
 pub trait Protocol: Sync {
     /// What oos-dsp says of the decoder: its stable key, its name, the lines it takes, whether the main one may be a
@@ -351,14 +322,6 @@ pub trait Protocol: Sync {
     /// The option rows of the Decode menu.
     fn options(&self) -> &'static [Opt] {
         &[]
-    }
-
-    /// Bit time (s) with these options: the protocol trigger samples at a twentieth of it and searches 200 of them.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64;
-
-    /// Record length (s) the protocol trigger needs before the trigger point, when 200 bit times are not right.
-    fn frame_span(&self, _opt: &[usize; OPTS]) -> Option<f64> {
-        None
     }
 
     /// Decodes the lines. Packet times are fractional sample indices.
@@ -400,16 +363,6 @@ pub trait Protocol: Sync {
     /// The shared rows of the Decode menu the protocol shows, before its own options ([`Row`]).
     fn shared(&self) -> &'static [Row] {
         &[]
-    }
-
-    /// `bit_time` when it depends on a shared row (`Row::Baud` ...).
-    fn bit_time_sh(&self, opt: &[usize; OPTS], _sh: &Shared) -> f64 {
-        self.bit_time(opt)
-    }
-
-    /// `frame_span` when it depends on a shared row.
-    fn frame_span_sh(&self, opt: &[usize; OPTS], _sh: &Shared) -> Option<f64> {
-        self.frame_span(opt)
     }
 
     /// The role whose line frames start on, where the hardware trigger in front of the protocol trigger looks
@@ -479,7 +432,6 @@ mod tests {
                 assert!(o.default < o.choices.len(), "{}: {} default", m.name(), o.name);
             }
             assert!(m.info().roles[0].is_some(), "{}: no main role", m.name());
-            assert!(m.bit_time(&[0; OPTS]) > 0.0, "{}: bit time", m.name());
         }
         // the core decoders at their fixed places (`Proto::UART` ...)
         for (p, key) in [
@@ -500,7 +452,8 @@ mod tests {
     fn modules_decode_their_demo() {
         for (i, m) in MODULES.iter().enumerate() {
             let Some(d) = demo(i as u8) else { continue };
-            let dt = m.bit_time(&opt_fit(i as u8, opt_default(i as u8))) / 40.0;
+            let sh = shared(&Default::default());
+            let dt = m.info().bit_time(&opt_fit(i as u8, opt_default(i as u8)), &sh) / 40.0;
             let n = (3.0 * d.period / dt) as usize;
             let waves: Vec<Option<Vec<f32>>> = d
                 .lines
@@ -514,7 +467,7 @@ mod tests {
                 thr: s.thr,
                 hy: 0.1,
                 opt: opt_fit(i as u8, opt_default(i as u8)),
-                sh: Shared::default(),
+                sh,
                 chans: [None; 4],
                 src: [None; 4],
             };
