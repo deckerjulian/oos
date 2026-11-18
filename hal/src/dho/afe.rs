@@ -41,6 +41,20 @@ pub struct Rec {
 
 const HDR: usize = 28;
 
+/// One block group of cal_vertical: four channels of 801 records.
+const GROUP_RECS: usize = 4 * 801;
+
+/// Bytes per cal_vertical record for a payload of `len` bytes. 56 on the units seen so far (three or four block groups);
+/// a DHO804 was reported with one group of 64-byte records, the 56 bytes and two more i32 (issue #37). A payload that is
+/// no whole number of either keeps 56, as before.
+pub fn vertical_stride(len: usize) -> usize {
+    if !len.is_multiple_of(GROUP_RECS * 56) && len.is_multiple_of(GROUP_RECS * 64) {
+        64
+    } else {
+        56
+    }
+}
+
 fn i32_at(b: &[u8], o: usize) -> i32 {
     i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
@@ -86,17 +100,28 @@ impl Cal {
         let (lsb, zero, bw, vert) =
             (rd("cal_lsb.hex")?, rd("cal_afe_zero.hex")?, rd("cal_afe_bandwidth.hex")?, rd("cal_vertical.hex")?);
         // a good CRC says nothing about the length: `from_bytes` needs these sizes
-        if lsb.len() < HDR + 128 || zero.len() < HDR + 320 || bw.len() < HDR + 320 || vert.len() < HDR + 4 * 801 * 56 {
+        if lsb.len() < HDR + 128 || zero.len() < HDR + 320 || bw.len() < HDR + 320 || vert.len() < HDR + GROUP_RECS * 56
+        {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "calibration file too short"));
         }
-        Ok((Cal::from_bytes(&lsb, &zero, &bw, vert), from))
+        let cal = Cal::from_bytes(&lsb, &zero, &bw, vert);
+        // records read at the wrong place give scale keys out of order, and gain codes that index past their tables
+        // (issue #37): such a file is not used, the scope starts uncalibrated instead of stopping
+        if !cal.keys_in_order() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cal_vertical.hex: scale keys out of order",
+            ));
+        }
+        Ok((cal, from))
     }
 
     /// Record `idx` of channel `ch` in block group `var`. Older files have 12 blocks instead of 16: their last group
     /// stands in for the one they lack [A].
     pub fn rec(&self, var: usize, ch: usize, idx: usize) -> Rec {
-        let groups = ((self.vertical.len() - HDR) / (4 * 801 * 56)).max(1);
-        let o = HDR + ((var.min(groups - 1) * 4 + ch) * 801 + idx) * 56;
+        let stride = vertical_stride(self.vertical.len() - HDR);
+        let groups = ((self.vertical.len() - HDR) / (GROUP_RECS * stride)).max(1);
+        let o = HDR + ((var.min(groups - 1) * 4 + ch) * 801 + idx) * stride;
         let b = &self.vertical[o..o + 56];
         let mut g = [0; 8];
         for (k, x) in g.iter_mut().enumerate() {
@@ -114,6 +139,11 @@ impl Cal {
     /// V per offset-DAC code of channel `ch` on input-gain path `ig` (cal_lsb, factory only).
     pub fn lsb(&self, ch: usize, ig: usize) -> f64 {
         self.lsb[ch * 4 + ig.min(3)]
+    }
+
+    /// Whether the scale keys of the first block rise from a positive start, as the rows of every unit's file do.
+    pub fn keys_in_order(&self) -> bool {
+        self.keys.first().is_some_and(|&k| k > 0) && self.keys.windows(2).all(|w| w[0] <= w[1])
     }
 
     /// Scale key (nV/div) of row `i` of every block.
@@ -890,6 +920,57 @@ pub fn configure_ch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #37 (a DHO804 with 0.1.13): its cal_vertical.hex holds one block group of 64-byte records, the 56 bytes
+    // and two more i32. Read at 56 bytes a record, the gain codes came from the wrong place and oos-ui stopped. Breaks
+    // it catches: a 64-byte file read at 56 bytes; a missing group not standing in for the others; the usual 56-byte
+    // file of four groups read another way; a file whose keys are out of order taken as calibration.
+    #[test]
+    fn vertical_records_of_56_and_64_bytes() {
+        let keys = scale_ladder();
+        let rec = |var: usize, ch: usize, i: usize| super::Rec {
+            key: keys[i],
+            g: [(i / 200) as i32, 1, 2, 3, var as i32, 5, ch as i32, 0],
+            gain: 1.0 + i as f64 / 1000.0,
+            zero: 32000 + i as i32,
+            last: 7,
+        };
+        let file = |groups: usize, stride: usize| {
+            let mut v = vec![0u8; HDR];
+            for var in 0..groups {
+                for ch in 0..4 {
+                    for i in 0..801 {
+                        v.extend_from_slice(&crate::dho::selfcal::rec_bytes(&rec(var, ch, i)));
+                        v.extend(std::iter::repeat_n(0xee, stride - 56));
+                    }
+                }
+            }
+            Cal::from_bytes(&[0; HDR + 128], &[0; HDR + 320], &[0; HDR + 320], v)
+        };
+        let c = file(1, 64);
+        for (ch, i) in [(0, 0), (1, 400), (3, 800)] {
+            assert_eq!(c.rec(0, ch, i), rec(0, ch, i));
+            assert_eq!(c.rec(3, ch, i), rec(0, ch, i), "the one group stands in for the others");
+        }
+        assert!(c.keys_in_order());
+        let c = file(4, 56);
+        for (var, ch, i) in [(0, 0, 0), (2, 1, 400), (3, 3, 800)] {
+            assert_eq!(c.rec(var, ch, i), rec(var, ch, i));
+        }
+        // the 64-byte file read at 56 bytes a record, as before: its keys are out of order
+        let mut v = vec![0u8; HDR];
+        for i in 0..GROUP_RECS {
+            v.extend_from_slice(&crate::dho::selfcal::rec_bytes(&rec(0, i / 801, i % 801)));
+            v.extend([0xee; 8]);
+        }
+        let keys56: Vec<i64> =
+            (0..801).map(|i| i64::from_le_bytes(v[HDR + 56 * i..HDR + 56 * i + 8].try_into().unwrap())).collect();
+        assert!(!(keys56[0] > 0 && keys56.windows(2).all(|w| w[0] <= w[1])), "read at 56, the keys are garbage");
+        assert_eq!(vertical_stride(v.len() - HDR), 64);
+        assert_eq!(vertical_stride(4 * GROUP_RECS * 56), 56);
+        assert_eq!(vertical_stride(3 * GROUP_RECS * 56), 56);
+        assert_eq!(vertical_stride(GROUP_RECS * 56 + 5), 56, "no whole number: 56 as before");
+    }
 
     #[derive(Default)]
     struct Rec {

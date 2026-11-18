@@ -47,13 +47,18 @@ All calibration files have a 28-byte header (`self-cal.md` 7.1). Payloads:
 | LSB table `f64 lsb[4 ch][4 inputgain]`, V per offset-DAC code | `cal_lsb.hex` (128 B) |
 | vertical table, 16 blocks of 801 x 56 B, block = variant * 4 + ch | `cal_vertical.hex`, 16 x 801 x 56 B |
 | older vertical table, 12 blocks | `cal_vertical.hex`, 12 x 801 x 56 B |
+| one block group with 64-byte records (the 56 B record and two s32) | `cal_vertical.hex`, 4 x 801 x 64 B |
 | bandwidth trim, 4 ch x 20 s32 | `cal_afe_bandwidth.hex` (320 B) |
 | zero (offset) trim, 4 ch x 20 s32 | `cal_afe_zero.hex` (320 B) |
 
 File header (7 x u32): [0] header CRC32, [1] 0x14, [2] 0, [3] time, [4] date (0x7dd01 = January 2013), [5] payload size,
 [6] payload CRC32. Location order: `/oos/cal`, `/rigol/data`, `/rigol/data/default`.
 
-A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads the 16-block layout.
+A 12-block `cal_vertical.hex` has no group 3. `hal::dho::afe::Cal` reads the 16-block layout; a file with fewer groups
+uses its last group for the ones it lacks. The 64-byte layout was reported from a DHO804's factory file (issue #37, a
+user report; not seen on the developer's unit): its first 56 bytes are the usual record, the two s32 after them are not
+used. `hal::dho::afe::vertical_stride` takes 64 bytes a record for a payload that is a whole number of 64-byte groups and
+not of 56-byte ones. A file whose scale keys (row 0 of block 0 onwards) do not rise is not used.
 
 In `cal_afe_bandwidth.hex`, ints 4/10/16 of each channel are replaced by 110/97/97 after loading. The stock system also
 saves them back to the file. Under OOS these ints have no effect (5.4).

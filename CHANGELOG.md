@@ -114,6 +114,9 @@ Changed:
 
 Fixed:
 
+- A `cal_vertical.hex` with 64-byte records (one block group, seen on a DHO804) is read at 64 bytes a record instead
+  of stopping oos-ui at every start; a calibration file whose scale keys are out of order is not used, and the scope
+  starts uncalibrated instead of stopping (issue #37; host tests, and the usual 56-byte file still loads on a DHO924S).
 - The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
   dark before (contributed by halma1).
 - DCC decodes the signal of a live track (contributed by halma1, tested on a layout with an ESU ECoS): a phase slip no
