@@ -16,7 +16,7 @@
 //! last bits (the running sum starts at another sample, the window offset is added in another order), far below 1e-6
 //! sample.
 
-use crate::fastdraw::{edge_smooth, smoothed};
+use crate::fastdraw::{edge_smooth, smoothed, EdgeSeek};
 use oos_dsp::edges::Edge;
 
 /// Half width of the near search in screen columns (plus `NEAR_PAD` samples).
@@ -36,10 +36,11 @@ pub fn edge_smooth_near(
     l: usize,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<Edge>) {
-    if let Some(r) = edge_near_window(v, 0, v.len(), pre, level, hyst, rising, either, span, l, &fits) {
+    let seek = EdgeSeek::new(level, hyst, rising, either, span, l);
+    if let Some(r) = edge_near_window(v, 0, v.len(), pre, seek, &fits) {
         return r;
     }
-    edge_smooth(v, pre, level, hyst, rising, either, span, l, fits)
+    edge_smooth(v, pre, seek, fits)
 }
 
 /// Samples `edge_near_window` needs of a frame of `len` samples: `near_window(pre, len, l)` = start..end.
@@ -52,20 +53,15 @@ pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
 /// The near search of `edge_smooth_near` alone, on a window of the samples: `v` holds samples `base..` of a frame of
 /// `len` samples and covers `near_window`. Some where `edge_smooth_near` answers from the near search (the same
 /// answer, the same arithmetic), None where it runs the wide search (then call it on all samples).
-#[allow(clippy::too_many_arguments)]
 pub fn edge_near_window(
     v: &[f32],
     base: usize,
     len: usize,
     pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    span: usize,
-    l: usize,
+    seek: EdgeSeek,
     fits: impl Fn(f64) -> bool,
 ) -> Option<(Option<f64>, Option<Edge>)> {
+    let EdgeSeek { level, hyst, rising, either, span, l } = seek;
     let l = l.max(1);
     let near = NEAR_COLS * l + NEAR_PAD;
     if near >= span {
@@ -183,7 +179,8 @@ mod tests {
                                 let fits_all = |_: f64| true;
                                 let lo = pre as f64 - 50.0;
                                 let fits_some = |t: f64| t >= lo;
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_all);
+                                let w =
+                                    edge_smooth(&v, pre, EdgeSeek::new(level, hyst, rising, either, span, l), fits_all);
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_all);
                                 assert!(
                                     same(w, n),
@@ -198,7 +195,12 @@ mod tests {
                                     w,
                                     n
                                 );
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_some);
+                                let w = edge_smooth(
+                                    &v,
+                                    pre,
+                                    EdgeSeek::new(level, hyst, rising, either, span, l),
+                                    fits_some,
+                                );
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_some);
                                 assert!(same(w, n), "{} (fits) pre {} l {}: wide {:?} near {:?}", name, pre, l, w, n);
                                 cases += 2;
@@ -207,12 +209,7 @@ mod tests {
                                     0,
                                     v.len(),
                                     pre,
-                                    level,
-                                    hyst,
-                                    rising,
-                                    either,
-                                    span,
-                                    l,
+                                    EdgeSeek::new(level, hyst, rising, either, span, l),
                                     fits_all,
                                 )
                                 .is_some() as usize;
@@ -267,9 +264,11 @@ mod tests {
             })
             .collect();
         for (v, rising) in [(armed_before, false), (early, true)] {
-            let wide = edge_smooth(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true);
+            let wide = edge_smooth(&v, pre, EdgeSeek::new(0.0, 0.3, true, true, 4000, 1), |_| true);
             assert!(wide.1.is_some_and(|e| e.rising == rising), "{:?}", wide);
-            assert!(edge_near_window(&v, 0, v.len(), pre, 0.0, 0.3, true, true, 4000, 1, |_| true).is_none());
+            assert!(
+                edge_near_window(&v, 0, v.len(), pre, EdgeSeek::new(0.0, 0.3, true, true, 4000, 1), |_| true).is_none()
+            );
             assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
         }
     }
@@ -288,7 +287,10 @@ mod tests {
             let t0 = std::time::Instant::now();
             let mut acc = 0.0;
             for _ in 0..reps {
-                acc += edge_smooth(std::hint::black_box(&v), pre, 0.0, 0.06, true, false, span, l, |_| true)
+                acc +=
+                    edge_smooth(std::hint::black_box(&v), pre, EdgeSeek::new(0.0, 0.06, true, false, span, l), |_| {
+                        true
+                    })
                     .0
                     .unwrap_or(0.0);
             }

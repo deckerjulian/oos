@@ -360,18 +360,16 @@ impl GpuLayers {
 }
 
 /// The monitor's picture on the GPU (Display > HDMI with Graphics = GPU), right after the panel's: Mirror and
-/// Waveform take the panel's layers again without a new upload (quad 0); Layout draws the monitor's own layers.
-#[allow(clippy::too_many_arguments)]
+/// Waveform take the panel's layers again without a new upload (quad 0); Layout draws the monitor's own layers. The
+/// monitor is `mw` x `mh`; the picture goes to `target`, read back with `read` (as `Gpu::submit`).
 fn hdmi_gpu_frame(
     ui: &mut Ui,
     g: &mut gpu::Gpu,
     panel: &GpuLayers,
     view: &mut GpuLayers,
     head: &mut Option<Canvas>,
-    mw: i32,
-    mh: i32,
-    target: usize,
-    read: bool,
+    (mw, mh): (i32, i32),
+    (target, read): (usize, bool),
 ) -> Result<gpu::Ticket, String> {
     let whole = gfx::Rect::new(0, 0, ui.scr.w, ui.scr.h);
     let fit_of = |sw: i32, sh: i32, dw: i32, dh: i32| {
@@ -512,7 +510,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                 println!("shot {}", p);
                 if let (Some(g), Some(hc)) = (gpu.as_mut(), hdmi_cv.as_mut()) {
                     let (w, h) = (hc.w, hc.h);
-                    if let Err(e) = hdmi_gpu_frame(ui, g, &gl, &mut gl_view, &mut gl_head, w, h, 2, true)
+                    if let Err(e) = hdmi_gpu_frame(ui, g, &gl, &mut gl_view, &mut gl_head, (w, h), (2, true))
                         .and_then(|t| g.collect(t, Some(hc)))
                     {
                         eprintln!("oos-ui: GPU HDMI: {}", e);
@@ -1105,10 +1103,8 @@ impl Device {
                                 &self.gl,
                                 &mut self.gl_view,
                                 &mut self.gl_head,
-                                h.width,
-                                h.height,
-                                self.hdmi_base + b2,
-                                false,
+                                (h.width, h.height),
+                                (self.hdmi_base + b2, false),
                             )?,
                             b2,
                         ))

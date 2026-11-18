@@ -159,7 +159,12 @@ fn nearest_raw_and_smoothed_search_match_independent_oracles() {
                             // Admit/reject different boundary edges as well as testing direction.
                             let fits =
                                 |t: f64| t >= pre.saturating_sub(span / 2) as f64 && t <= (pre + span / 2) as f64;
-                            let got = edge_smooth(&values, pre, 0.1, hysteresis, rising, either, span, length, fits);
+                            let got = edge_smooth(
+                                &values,
+                                pre,
+                                EdgeSeek::new(0.1, hysteresis, rising, either, span, length),
+                                fits,
+                            );
                             let expected =
                                 smooth_oracle(&values, pre, 0.1, hysteresis, rising, either, span, length, fits);
                             same(got.0, expected.0, "smoothed oracle");
@@ -226,8 +231,8 @@ fn benchmark_near_and_full_edge_search() {
         })
         .collect();
     let fits = |t: f64| (t - pre as f64).abs() <= 2048.0;
-    let near = || edge_smooth(black_box(&values), pre, 0.0, 0.1, true, false, 2048, 16, fits).0;
-    let full = || edge_smooth(black_box(&values), pre, 0.0, 0.1, true, false, count, 16, fits).0;
+    let near = || edge_smooth(black_box(&values), pre, EdgeSeek::new(0.0, 0.1, true, false, 2048, 16), fits).0;
+    let full = || edge_smooth(black_box(&values), pre, EdgeSeek::new(0.0, 0.1, true, false, count, 16), fits).0;
     same(near(), full(), "near/full benchmark equivalence");
     let median = |f: &dyn Fn() -> Option<f64>| {
         let mut times = Vec::new();

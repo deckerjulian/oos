@@ -8,6 +8,16 @@
 
 use super::*;
 
+/// What `Ui::draw_aux_card` shows: the card's name and colour, on and selected, its value `big` and the line under it.
+struct AuxCard<'a> {
+    name: &'a str,
+    col: Rgb,
+    on: bool,
+    sel: bool,
+    big: &'a str,
+    sub: &'a str,
+}
+
 impl Ui {
     /// Run state pill at the left of the top bar (wider for the larger text sizes).
     pub(super) fn run_pill(&self) -> Rect {
@@ -445,8 +455,8 @@ impl Ui {
     }
 
     /// A card like the channels': on, wide with its values; on, narrow with a full dot; off, with a ring.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_aux_card(&self, cv: &mut Canvas, r: Rect, name: &str, col: Rgb, on: bool, sel: bool, big: &str, sub: &str) {
+    fn draw_aux_card(&self, cv: &mut Canvas, r: Rect, card: AuxCard) {
+        let AuxCard { name, col, on, sel, big, sub } = card;
         let f = self.fonts();
         cv.round(r, 7, if sel || on { col } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
@@ -524,11 +534,17 @@ impl Ui {
             let sub = format!("{} \u{b7} {}", si_short(l.thr(0) as f64, "V"), si_short(l.thr(1) as f64, "V"));
             // grey without a probe: nothing to switch on
             let col = if l.on || self.la_probe_ok() { la::line_color(0) } else { CARD_BORDER };
-            self.draw_aux_card(cv, r, "LA", col, l.on, sel, &format!("{} lines", l.lines().len()), &sub);
+            let big = format!("{} lines", l.lines().len());
+            self.draw_aux_card(cv, r, AuxCard { name: "LA", col, on: l.on, sel, big: &big, sub: &sub });
         }
         if let Some(r) = gen {
             let (big, sub) = self.afg_card_text();
-            self.draw_aux_card(cv, r, "GEN", GEN_COLOR, self.m.afg_on, root == Some(MenuId::Afg), &big, &sub);
+            let sel = root == Some(MenuId::Afg);
+            self.draw_aux_card(
+                cv,
+                r,
+                AuxCard { name: "GEN", col: GEN_COLOR, on: self.m.afg_on, sel, big: &big, sub: &sub },
+            );
         }
         // time base (sample rate and depth are in the top bar)
         let r = tr;

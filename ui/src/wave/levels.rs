@@ -8,12 +8,9 @@
 use super::*;
 
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)] // vavg, vrms: set (ui/analysis.rs) but read by nothing; the measurements come from oos-dsp
 pub struct Stats {
     pub vmax: f32,
     pub vmin: f32,
-    pub vavg: f32,
-    pub vrms: f32,
     pub top: f32,
     pub base: f32,
     pub period: f64,
@@ -30,9 +27,6 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     }
     let vmax = f.iter().copied().fold(f32::MIN, f32::max);
     let vmin = f.iter().copied().fold(f32::MAX, f32::min);
-    let n = f.len() as f32;
-    let vavg = f.iter().sum::<f32>() / n;
-    let vrms = (f.iter().map(|x| x * x).sum::<f32>() / n).sqrt();
     // top/base: histogram modes of the upper and lower 40 %
     let span = (vmax - vmin).max(1e-9);
     let mut hist = [0u32; 256];
@@ -52,8 +46,6 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     let mut s = Stats {
         vmax,
         vmin,
-        vavg,
-        vrms,
         top,
         base,
         period: f64::NAN,

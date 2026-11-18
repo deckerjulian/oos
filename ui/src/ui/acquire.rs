@@ -773,7 +773,7 @@ impl Ui {
         }
         crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
             for (f, p) in frames.iter().zip(&placed) {
-                fast_deposit_t(m, w, h, c, band, c_lo, f, &p.plan);
+                fast_deposit_t(m, (w, h), c, band, c_lo, f, &p.plan);
             }
         });
         // the rows the frames touched, per channel: only those are added (a trace covers a part of the height)
@@ -871,9 +871,7 @@ pub fn fast_plan(
     let src = &f.ch[m.trig_src];
     let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
     // the full search of `fastdraw::edge_smooth` (the Batch path takes `trignear::edge_smooth_near`)
-    let t = crate::drawpipe::refine_edge(m, f, col, |level, hyst, rising, either, half, col| {
-        crate::fastdraw::edge_smooth(src, f.pre, level, hyst, rising, either, half, col, |_| true)
-    });
+    let t = crate::drawpipe::refine_edge(m, f, col, |s| crate::fastdraw::edge_smooth(src, f.pre, s, |_| true));
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
     let ti = t.ti;
     let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
@@ -909,11 +907,9 @@ fn rec_rows(m: &Model, h: usize, c: usize, v: &[f32]) -> (usize, usize) {
 
 /// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
 /// `c_lo ..` of a map `w` x `h`, `h + 1` rows of them.
-#[allow(clippy::too_many_arguments)]
 pub fn fast_deposit_t(
     m: &Model,
-    w: usize,
-    h: usize,
+    (w, h): (usize, usize),
     c: usize,
     band: &mut [u16],
     c_lo: usize,

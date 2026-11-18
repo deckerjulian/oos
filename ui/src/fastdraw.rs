@@ -50,6 +50,25 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
     best
 }
 
+/// The edge `edge_smooth` (and `trignear::edge_near_window`) looks for: the trigger `level` with hysteresis `hyst`,
+/// the direction (`rising`, or `either`), +-`span` samples around the point, smoothed over `l` samples.
+#[derive(Clone, Copy)]
+pub struct EdgeSeek {
+    pub level: f32,
+    pub hyst: f32,
+    pub rising: bool,
+    pub either: bool,
+    pub span: usize,
+    pub l: usize,
+}
+
+impl EdgeSeek {
+    /// The fields in the order `edge_smooth` took them as arguments.
+    pub const fn new(level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize) -> Self {
+        EdgeSeek { level, hyst, rising, either, span, l }
+    }
+}
+
 /// Where the edge of the set direction is, seen at the resolution of the screen: `v` around `pre` (+-`span` samples)
 /// smoothed by a centred moving average of `l` samples (one screen column), then the hardware's comparators with
 /// hysteresis `hyst` (`oos_dsp::edges::trigger_edges`: a rising edge arms below level - `hyst` and fires at the level),
@@ -57,18 +76,13 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
 /// (a slow sine at a high rate) cannot make an edge of the other direction look right, which a test on single samples
 /// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
 /// (for the statistics).
-#[allow(clippy::too_many_arguments)]
 pub fn edge_smooth(
     v: &[f32],
     pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    span: usize,
-    l: usize,
+    seek: EdgeSeek,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
+    let EdgeSeek { level, hyst, rising, either, span, l } = seek;
     let l = l.max(1);
     let Some((a, s)) = smoothed(v, 0, v.len(), pre, span, l, level) else {
         return (None, None);
@@ -922,7 +936,7 @@ pub mod whole {
     /// row (signals change slowly from column to column); both give the same picture.
     pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
         let mut runs = false;
-        dots_walk(w, v.len(), m, |c, a, b| dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
+        dots_walk(w, v.len(), m, |c, a, b| dots_column(map, (w, h), c, &v[a..b], m, wgt, &mut runs));
     }
 
     /// The column walk of `deposit_dots` over `n` samples: `col(c, a, b)` for each column c with samples a..b.
@@ -945,9 +959,8 @@ pub mod whole {
     }
 
     /// The dots of column `c` (samples `s`); `runs`: add in runs (in: this column, out: the next).
-    #[allow(clippy::too_many_arguments)]
     #[inline]
-    fn dots_column(map: &mut [u16], w: usize, h: usize, c: usize, s: &[f32], m: &Map, wgt: u16, runs: &mut bool) {
+    fn dots_column(map: &mut [u16], (w, h): (usize, usize), c: usize, s: &[f32], m: &Map, wgt: u16, runs: &mut bool) {
         let hf = h as f32;
         // the row of a sample, None off the map (NaN fails both comparisons)
         let row = |x: f32| {
@@ -1315,19 +1328,23 @@ mod tests {
             })
             .collect();
         for pre in [6250 + 130, 6250 - 40, 6250, 18750 + 200] {
-            let (e, any) = edge_smooth(&v, pre, 0.0, 0.06, true, false, 31_250, 62, |_| true);
+            let (e, any) = edge_smooth(&v, pre, EdgeSeek::new(0.0, 0.06, true, false, 31_250, 62), |_| true);
             let t = e.unwrap();
             assert!((t - 12500.0).abs() < 60.0 || (t - 25000.0).abs() < 60.0, "pre {}: {}", pre, t);
             assert!(!any.unwrap().rising, "pre {}: the nearest edge is the falling one", pre);
         }
         // at the rising edge itself
         assert!(
-            (edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0
+            (edge_smooth(&v, 12_480, EdgeSeek::new(0.0, 0.06, true, false, 31_250, 62), |_| true).0.unwrap() - 12500.0)
+                .abs()
+                < 60.0
         );
         // falling, nearer the one at 6250 than the one at 18750 (from 12480 both are about as far: the comparators fire
         // at the first crossing, so the noise decides which is nearer)
         assert!(
-            (edge_smooth(&v, 11_000, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0
+            (edge_smooth(&v, 11_000, EdgeSeek::new(0.0, 0.06, false, false, 31_250, 62), |_| true).0.unwrap() - 6250.0)
+                .abs()
+                < 60.0
         );
     }
 
@@ -1345,14 +1362,14 @@ mod tests {
             .collect();
         for l in [1usize, 4, 16] {
             for pre in [1000, 2500, 12_000] {
-                let (e, any) = edge_smooth(&v, pre, 0.15, 0.3, true, false, 9000, l, |_| true);
+                let (e, any) = edge_smooth(&v, pre, EdgeSeek::new(0.15, 0.3, true, false, 9000, l), |_| true);
                 assert_eq!(e, None, "l {} pre {}", l, pre);
                 // the falling edges arm (from 5 V) and fire
                 assert!(any.is_some_and(|x| !x.rising), "l {} pre {}", l, pre);
             }
         }
         // the level in the middle: the rising edges are found at their crossings
-        let (e, _) = edge_smooth(&v, 5100, 2.5, 0.3, true, false, 9000, 1, |_| true);
+        let (e, _) = edge_smooth(&v, 5100, EdgeSeek::new(2.5, 0.3, true, false, 9000, 1), |_| true);
         assert!((e.unwrap() - 5000.0).abs() < 1.0);
     }
 
