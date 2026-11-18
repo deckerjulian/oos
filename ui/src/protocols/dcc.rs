@@ -1,7 +1,7 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode_ext3::dcc` and a
+//! NMRA DCC (S-9.2), the digital command signal of model railways: the decoder of `oos_dsp::decode::dcc` and a
 //! view of the layout it controls (`oos_dsp::dcc_yard`): locomotives with direction, speed and functions, turnouts,
 //! signals, and whether the track is live or in emergency stop. The view collects over the records until the display
 //! is cleared.
@@ -12,8 +12,8 @@
 
 use super::*;
 use oos_dsp::dcc_yard::{functions_text, TrackStatus, Yard};
+use oos_dsp::decode;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext3 as x3;
 
 pub struct Dcc;
 
@@ -33,10 +33,10 @@ impl Protocol for Dcc {
     }
     /// A `1` bit: two halves of 58 us.
     fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        2.0 * x3::DCC_ONE_HALF
+        2.0 * decode::DCC_ONE_HALF
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x3::dcc(l.main(), l.dt, l.thr, l.hy))
+        Ok(decode::dcc(l.main(), l.dt, l.thr, l.hy))
     }
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         Some(match p.kind {
@@ -95,7 +95,7 @@ impl Protocol for Dcc {
     }
     /// Five locomotives running (light and horn on number 3), five turnouts, five signals, idle packets between.
     fn demo(&self) -> Option<Demo> {
-        let fr = |address: u8, data: Vec<u8>| x3::gen::DccFrame { address, data, xor: None, preamble: 12 };
+        let fr = |address: u8, data: Vec<u8>| decode::gen::DccFrame { address, data, xor: None, preamble: 12 };
         // 128-step speed byte: direction in bit 7, speed + 1 below (0 = stop, 1 = emergency stop)
         let speed = |fwd: bool, s: u8| if fwd { 0x80 | (s + 1) } else { s + 1 };
         // accessory n (1..) on board (n - 1) / 4 + 1, output pair (n - 1) % 4
@@ -118,7 +118,7 @@ impl Protocol for Dcc {
             v.push(fr(a1, vec![0x70 | pair << 1 | 1, aspect]));
         }
         v.push(fr(0xFF, vec![0x00]));
-        let l = x3::gen::dcc(&v, -3.0, 3.0);
+        let l = decode::gen::dcc(&v, -3.0, 3.0);
         // a short pause at the end (a gap the decoder must survive) that also keeps the period from being a whole
         // fraction of the screen's refresh: successive records then see different parts of the traffic
         let period = l.seg.last().map_or(1e-3, |s| s.0) + 3.7e-3;
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn demo_layout_and_emergency_stop() {
         let d = Dcc.demo().unwrap();
-        let dt = x3::DCC_ONE_HALF / 10.0;
+        let dt = decode::DCC_ONE_HALF / 10.0;
         let v: Vec<f32> =
             (0..(1.2 * d.period / dt) as usize).map(|k| d.lines[0].as_ref().unwrap()(k as f64 * dt) as f32).collect();
         let p = Dcc

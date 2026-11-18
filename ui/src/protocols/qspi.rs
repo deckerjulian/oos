@@ -6,7 +6,7 @@
 //! generated traffic.
 
 use super::*;
-use oos_dsp::decode_ext2 as x2;
+use oos_dsp::decode;
 
 pub struct Qspi;
 
@@ -30,11 +30,11 @@ impl Protocol for Qspi {
         if let Some(c) = l.lines[3] {
             io.push(c);
         }
-        Ok(x2::qspi(
+        Ok(decode::qspi(
             cs,
             l.need(1, "SCK source missing")?,
             &io,
-            &x2::QspiCfg::new(1, 1, 1, 3, 0, false),
+            &decode::QspiCfg::new(1, 1, 1, 3, 0, false),
             true,
             l.thr,
             l.hy,

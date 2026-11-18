@@ -5,7 +5,7 @@
 //! since; the key is the name of the old setups. Checked against generated traffic.
 
 use super::*;
-use oos_dsp::decode_ext2 as x2;
+use oos_dsp::decode;
 
 pub struct I3c;
 
@@ -24,7 +24,7 @@ impl Protocol for I3c {
         0.1e-6
     }
     fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x2::i3c(l.main(), l.need(1, "SCL source missing")?, &[], l.thr, l.hy))
+        Ok(decode::i3c(l.main(), l.need(1, "SCL source missing")?, &[], l.thr, l.hy))
     }
     /// SDA on CH3, SCL on CH4; on the LA the I2C lines of the demo (D13 SDA, D12 SCL).
     fn setup(&self) -> Setup {

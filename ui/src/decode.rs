@@ -12,8 +12,8 @@ pub const ARINC_RATES: [f64; 3] = [0.0, 12.5e3, 100e3];
 /// SENT clock ticks (s); 0 = any tick (from the sync pulses).
 pub const SENT_TICKS: [f64; 8] = [3e-6, 5e-6, 10e-6, 20e-6, 30e-6, 50e-6, 90e-6, 0.0];
 /// USB speed settings (auto: from the idle state and the SYNC).
-pub const USB_SPEEDS: [oos_dsp::decode_ext3::UsbSpeed; 3] =
-    [oos_dsp::decode_ext3::UsbSpeed::Auto, oos_dsp::decode_ext3::UsbSpeed::Low, oos_dsp::decode_ext3::UsbSpeed::Full];
+pub const USB_SPEEDS: [oos_dsp::decode::UsbSpeed; 3] =
+    [oos_dsp::decode::UsbSpeed::Auto, oos_dsp::decode::UsbSpeed::Low, oos_dsp::decode::UsbSpeed::Full];
 pub const BAUDS: [f64; 10] = [1200.0, 2400.0, 4800.0, 9600.0, 19200.0, 38400.0, 57600.0, 115200.0, 460800.0, 921600.0];
 
 pub const CPHY_RATES: [f64; 19] =

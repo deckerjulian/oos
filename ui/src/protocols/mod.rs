@@ -144,7 +144,7 @@ pub struct Shared {
     pub can_rate: f64,
     pub canh: bool,
     #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
-    pub usb_speed: oos_dsp::decode_ext3::UsbSpeed,
+    pub usb_speed: oos_dsp::decode::UsbSpeed,
     /// 0 = auto
     pub cphy_rate: f64,
     /// the UART line is inverted (the protocol trigger's polarity)

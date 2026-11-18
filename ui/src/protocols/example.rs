@@ -65,7 +65,7 @@ impl Protocol for Example {
     /// "OOS" at 19200 bit/s, 3.3 V.
     fn demo(&self) -> Option<Demo> {
         let baud = RATES[OPTIONS[0].default];
-        let mut w = oos_dsp::decode_ext::gen::Wave::new(0.0, 3.3, 20e-9);
+        let mut w = oos_dsp::decode::gen::Wave::new(0.0, 3.3, 20e-9);
         w.level(true, 5.0 / baud);
         for b in *b"OOS" {
             w.uart(b as u32, 8, Parity::None, 1, baud);

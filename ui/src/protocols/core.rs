@@ -7,8 +7,8 @@
 //! name, so they stay where they were. They stand first in `MODULES` at fixed places, which `Proto::UART` ... name.
 
 use super::*;
+use oos_dsp::decode;
 use oos_dsp::decode::{can, i2c, lin, spi, uart};
-use oos_dsp::decode_ext as x1;
 
 /// Demo traffic on one line: `a` repeated every `period` seconds.
 fn one_line(a: oos_dsp::sim::Logic, period: f64) -> Demo {
@@ -275,7 +275,7 @@ impl Protocol for Parallel {
             .take(l.sh.bits.clamp(1, 4) as usize)
             .map(|c| l.chans[c].ok_or("source channel off"))
             .collect::<Result<_, _>>()?;
-        Ok(x1::parallel(&lines, l.lines[2], oos_dsp::trigger::Slope::Rising, l.thr, l.hy))
+        Ok(decode::parallel(&lines, l.lines[2], oos_dsp::trigger::Slope::Rising, l.thr, l.hy))
     }
     /// D0..D2 on CH1..CH3, the clock on CH4, every channel on (LA: D0).
     fn setup(&self) -> Setup {
