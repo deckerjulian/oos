@@ -250,6 +250,19 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   dropped ..` at the end of the line), System info "Frames used".
   Guards: batch picture == frames mode over the same frames (dense, sparse, dots, 1-2 channels, split over 2 workers),
   trigger statistics equal, buffers come back, stale/busy work dropped and counted with dropped = fed - taken.
+  The frame loop's share (issue #186, unit at 10 us/div: batch 14-19 frames a second on screen, frames 20-25): each
+  worker and the helper had a mailbox, and the UI added every map of each, 4 x 970 x 448 pixels per mailbox, also the
+  maps of channels that are off; in the host test about 4.9 sets a screen, 8.5 M pixel adds (about 50 MB read and
+  written, a memory-bound pass that the A72 cannot keep in its cache), plus waits for a worker that added into its
+  mailbox under the lock. Now the workers and the helper fold their maps into one set on their own cores (the set
+  taken out of the shared mailbox and added outside the lock: the UI never waits, and finds the set being folded at
+  the next screen), the UI swaps that set in for minimum persistence (no pixel touched) or adds the maps of the
+  channels on (one map per channel), and a set is cleared only in the maps it used. Pictures equal to before (guards above, and the merge of 12 batches while the workers
+  fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div` (host M3, 16 frames of 250 kB
+  a step, 4 workers): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum persistence and 0.03-0.13 ms
+  (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame loop per step 1 / 2 / 4 channels
+  5.4 / 3.3 / 3.3 ms before, 4.8 / 2.8 / 2.7 ms after, frames mode 7.5-8.7 / 5.0-5.4 / 4.3-4.7 ms. The host does not
+  show the unit's gap (its memory and cores keep up); the unit's rate is not measured yet.
   `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
   40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53
