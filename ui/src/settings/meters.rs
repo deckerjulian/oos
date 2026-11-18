@@ -101,10 +101,10 @@ const DVM_NAMES: [&str; 3] = ["DC", "ACRMS", "ACDC"];
 /// `ACRMS`; the query answers `DC`, `ACRMS` or `ACDC`.
 const DVM_MODE_IO: CustomIo = CustomIo {
     store: |v| v.index().to_string(),
-    load: |t| crate::store::p_idx(t, DVM_NAMES.len()).map(Val::Index),
+    load: |t| crate::words::p_idx(t, DVM_NAMES.len()).map(Val::Index),
     query: |v| DVM_NAMES[v.index()].to_string(),
     take: |a| {
-        let kw = crate::scpi::kw;
+        let kw = crate::words::kw;
         if kw(a, "DC") {
             Some(Val::Index(0))
         } else if kw(a, "ACRMs") || a.eq_ignore_ascii_case("ACRMS") {

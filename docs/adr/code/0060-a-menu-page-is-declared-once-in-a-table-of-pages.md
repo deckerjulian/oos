@@ -39,6 +39,7 @@ answers for what a picked line does (`pick` below).
 | `anchor` | where the dialog stands (below a top-bar box; none: as before) | `menu_dialog.rs` |
 | `picks`, `pick` | the pickers it answers for, and what a picked line of one does | `menu_actions.rs` |
 | `wide` | which of its pickers are one wide column | `menu_dialog.rs` |
+| `sources` | the signals it reads; a channel among them that is off gets the button to switch it on | `menu_items.rs::off_sources` |
 
 Back follows the menus the user came through (`menu_history`), not a field of the page; the menu a top-bar entry
 lights for stays `menu_root`. The states the layout lint opens a page in, beyond the default one, are lines of
