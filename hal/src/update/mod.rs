@@ -714,4 +714,6 @@ pub fn judge(h: &Health) -> Verdict {
 }
 
 #[cfg(test)]
+pub(crate) mod hostile_tests;
+#[cfg(test)]
 mod tests;

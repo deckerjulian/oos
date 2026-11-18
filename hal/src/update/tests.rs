@@ -9,14 +9,14 @@ use super::card::*;
 use super::*;
 use std::path::PathBuf;
 
-const SEED: [u8; 32] = [9; 32];
+pub(super) const SEED: [u8; 32] = [9; 32];
 
-fn pk() -> [u8; 32] {
+pub(super) fn pk() -> [u8; 32] {
     ed25519::public_key(&SEED)
 }
 
 /// A boot image as boot/oos-bootimg.py builds it (tiny sections, distinct content per `tag`).
-fn bootimg(tag: u8) -> Vec<u8> {
+pub(super) fn bootimg(tag: u8) -> Vec<u8> {
     bootimg_dt(tag, tag ^ 0xaa)
 }
 
@@ -26,19 +26,19 @@ fn bootimg_dt(tag: u8, dt: u8) -> Vec<u8> {
 }
 
 /// `bootimg` with this device tree section.
-fn bootimg_second(tag: u8, second: Vec<u8>) -> Vec<u8> {
+pub(super) fn bootimg_second(tag: u8, second: Vec<u8>) -> Vec<u8> {
     bootimg_parts(tag, vec![tag ^ 0x55; 1000], second)
 }
 
 /// `bootimg` whose initramfs names its build (gzip of a newc archive with etc/oos-build, as a real image).
-fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
+pub(super) fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
     let cpio = kexec::newc(&[("etc/oos-build", 0o100644, format!("{}\n", build).as_bytes())]);
     let mut rd = inflate::tests::gzip_stored(&cpio);
     rd.resize(rd.len().div_ceil(4) * 4, 0);
     bootimg_parts(tag, rd, vec![tag ^ 0xaa; 300])
 }
 
-fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
+pub(super) fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     let page = 2048usize;
     let mut kernel = vec![tag; 4096 + 512];
     kernel[0x38..0x3c].copy_from_slice(b"ARM\x64");
@@ -70,7 +70,7 @@ fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     out
 }
 
-fn package(tag: u8, build: &str) -> Vec<u8> {
+pub(super) fn package(tag: u8, build: &str) -> Vec<u8> {
     pkg::build(&SEED, build, "6.12.115+", &bootimg(tag)).unwrap()
 }
 

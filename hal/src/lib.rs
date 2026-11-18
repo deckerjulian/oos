@@ -14,6 +14,8 @@
 
 pub mod bootstatus;
 pub mod fsutil;
+#[cfg(test)]
+mod hostile;
 pub mod model;
 pub mod procs;
 pub mod target;
