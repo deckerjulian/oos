@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Deposit pipeline (fork, docs/fork/perf-plan.md item 1): every acquired frame is used. In `batch` mode the
-//! acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
+//! Deposit pipeline (fork, docs/fork/perf-plan.md item 1), the draw path of the hardware (ADR 0059): every acquired
+//! frame is used. The acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
 //! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
 //! one per little core. The workers claim the frames a few at a time; while the FPGA's ring fills with the next batch
 //! the acquisition thread claims single frames too (`help`, from `seq::acquire_batch_idle`). Each frame is
-//! decoded into kept vectors and drawn with the fast path (`draw_frame`, one frame at a time; the frames mode draws
-//! the same picture with `Ui::fast_draw_all`) into the claimer's own maps, with the screen mapping the UI published
+//! decoded into kept vectors and drawn with the fast path (`draw_frame`, one frame at a time; the frame loop draws
+//! the same picture of the frames in its queue with `Ui::fast_draw_all`) into the claimer's own maps, with the screen mapping the UI published
 //! (`View`); the trigger statistics and the cheap measurements (framestats.rs) are counted with it. Each claimer
 //! draws on into its maps over its batches and, once a screen, folds them into one set in a shared mailbox, on its
 //! own core (`hand`, `publish`); once per screen refresh the UI takes that set (`merge`): it swaps the maps in for
 //! minimum persistence, else adds those of the channels on. It never iterates the frames, and never waits for the
 //! workers.
 //!
-//! The picture is the one of the `frames` mode (every frame through the queue) for the same frames: the workers run
-//! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
-//! A batch whose workers are still busy, frames of older settings and maps of an older mapping are dropped and
-//! counted (`Counters`). Where the fast path does not apply (no view), the acquisition thread queues every frame as in
-//! `frames` mode. Batch is the only draw path of the hardware (ADR 0059); the other sources have no batches.
+//! The picture is the one of `draw_frame` on every frame, one by one: the workers run it on the frames of a batch but
+//! the newest, which takes the UI's path. A batch whose workers are still busy, frames of older settings and maps of
+//! an older mapping are dropped and counted (`Counters`). Where the workers do not take a batch (no view: the fast
+//! path does not apply; batches of one frame; the hardware average) the acquisition thread queues its frames for the
+//! frame loop. The other sources (demo, replay, live, SIM) have no batches and no workers.
 
 use crate::board::Frame;
 use crate::fastdraw::EdgeSeek;
@@ -115,7 +115,7 @@ fn dense(
     t.triggered
 }
 
-/// The trigger of a dense frame on the fast path, as both draw paths find it (`refine_edge`).
+/// The trigger of a dense frame on the fast path, as the workers and the frame loop find it (`refine_edge`).
 pub struct Trigger {
     /// the trigger's sample: the refined edge, else the hardware trigger point
     pub ti: f64,
@@ -126,8 +126,8 @@ pub struct Trigger {
 }
 
 /// The trigger of the dense frame `f`, smoothed to `col` samples. `refine` (level, hysteresis, rising, either, half a
-/// screen in samples as the span, `col` as the smoothing) finds the edge on the source channel: each draw path keeps
-/// its own choice of search.
+/// screen in samples as the span, `col` as the smoothing) finds the edge on the source channel: the workers and the
+/// frame loop's fast path each keep their own choice of search.
 pub fn refine_edge(
     m: &Model,
     f: &Frame,
@@ -276,7 +276,7 @@ pub fn draw_frame_codes(
     Some(dense(ph, m, f, Dense { x_per_sample, pairs: false, present }, stats, refine, deposit))
 }
 
-/// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
+/// Frames acquired, used (drawn into the picture) and dropped, since the start.
 #[derive(Default)]
 pub struct Counters {
     pub acquired: AtomicU64,
@@ -300,13 +300,6 @@ impl Counters {
     pub fn read(&self) -> (u64, u64, u64) {
         (self.acquired.load(Ordering::Relaxed), self.used.load(Ordering::Relaxed), self.dropped.load(Ordering::Relaxed))
     }
-}
-
-/// The pipeline mode: `batch` (this pipeline) or `frames` (every frame through the UI queue).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Frames,
-    Batch,
 }
 
 /// A read-out buffer of the board (the acquisition thread's DMA target), lent to the workers.
@@ -967,7 +960,7 @@ pub fn set_enabled(on: bool) {
     }
 }
 
-/// The pipe in `batch` mode (started on first use), else None.
+/// The pipe while the source is the hardware (started on first use), else None.
 pub fn pipe() -> Option<&'static Pipe> {
     if !ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
@@ -981,12 +974,13 @@ pub fn start_for_tests(n: usize) -> &'static Pipe {
     PIPE.get_or_init(|| Pipe::start(n, false, counters()))
 }
 
-/// The mode in force, for the status line.
-pub fn mode() -> Mode {
-    if pipe().is_some() {
-        Mode::Batch
+/// The status line's word for the workers (`pipeline ...` of `:SYSTem:STATe?`): `Batch` while they draw the
+/// hardware's batches, `Off` with another source.
+pub fn status() -> &'static str {
+    if ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        "Batch"
     } else {
-        Mode::Frames
+        "Off"
     }
 }
 
@@ -1103,9 +1097,9 @@ mod tests {
     }
 
     // Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
-    // other trigger statistics than the frames mode, or frames lost on it
+    // other trigger statistics than `draw_frame` on every frame, or frames lost on it
     #[test]
-    fn batch_picture_from_the_codes_equals_the_frames_mode() {
+    fn batch_picture_from_the_codes_equals_each_frame_drawn() {
         let (w, h) = (970, 448);
         let sig = |k: usize, c: usize, i: usize| {
             0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0)
@@ -1313,7 +1307,7 @@ mod tests {
         (sum, px)
     }
 
-    /// The frames mode for the same frames: `draw_frame` and the per-frame statistics on every frame, one by one.
+    /// The same frames one by one: `draw_frame` and the per-frame statistics on every frame.
     fn reference(
         bytes: &[u8],
         fb: usize,
@@ -1334,12 +1328,12 @@ mod tests {
         (want, trig, edges, off, folds)
     }
 
-    // Break it catches: a batch picture that differs from the frames mode for the same frames (decode into kept
+    // Break it catches: a batch picture that differs from `draw_frame` on every frame (decode into kept
     // vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
     // trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not
     // clear for minimum persistence, a buffer that does not come back.
     #[test]
-    fn batch_picture_equals_the_frames_mode() {
+    fn batch_picture_equals_each_frame_drawn() {
         let (w, h) = (970, 448);
         for (tdiv, memsel, two, dots, workers, helper) in [
             (1e-6, 12_512u32, false, false, 2, false),
@@ -1576,8 +1570,9 @@ mod tests {
             };
             let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + draw_frame on one thread (its measurements: a few records a second), against
-            // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
+            // decode + draw_frame on one thread (the frame's work without the pipeline; its measurements: a few
+            // records a second), against one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are
+            // reported only
             let mut ph = Phosphor::new(w, h);
             let one = Pipe::start(1, false, fresh());
             one.set_view(Some(&m), w, h);
@@ -1613,8 +1608,8 @@ mod tests {
                 per.push(t0.elapsed() / (3 * frames) as u32);
             }
             let r = per[0].as_secs_f64() / old.as_secs_f64();
-            println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
-            assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than in the frames mode: {:.2}", r);
+            println!("{} s/div {} pt, frame statistics {}: one by one {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
+            assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than one by one: {:.2}", r);
         }
     }
 
@@ -1634,11 +1629,12 @@ mod tests {
     }
 
     /// The frame loop's time per step at 10 us/div, 1, 2 and 4 channels (250 kB frames, 16 a batch, as the unit reads
-    /// them), batch against frames mode for the same frames, one batch a step (issue #186). In batch mode the workers
-    /// (4, as on the unit) and the acquisition thread's share have drawn the batch before the step, so what is timed
-    /// is the frame loop's own work; in frames mode the frame loop draws the frames (with its helpers). Also the merge
-    /// alone, with minimum persistence (the maps swapped in) and with persistence (added): its time and the pixels
-    /// it adds. Guarded: batch must not cost the frame loop more than the frames mode. Run by tools/perf-guard.sh.
+    /// them), the workers against the queue for the same frames, one batch a step (issue #186). With the workers (4,
+    /// as on the unit) they and the acquisition thread's share have drawn the batch before the step, so what is timed
+    /// is the frame loop's own work; through the queue the frame loop draws the frames itself (with its helpers), as
+    /// it does with the frames of a batch the workers do not take. Also the merge alone, with minimum persistence (the
+    /// maps swapped in) and with persistence (added): its time and the pixels it adds. Guarded: the workers must not
+    /// cost the frame loop more than the queue. Run by tools/perf-guard.sh.
     #[test]
     #[ignore]
     fn perf_guard_batch_step_at_10_us_per_div() {
@@ -1694,7 +1690,7 @@ mod tests {
                 // every frame drawn (fast path or pipeline), 15 a step
                 assert_eq!(ui.wfm_total, 15 * 40, "{} frames drawn", ui.wfm_total);
                 per[k] = median(times);
-                let mode = if batch { "batch" } else { "frames" };
+                let mode = if batch { "workers" } else { "queue" };
                 println!("10 us/div mask {:#x} {} pt, {}: frame loop {:.2} ms a step (median)", mask, n, mode, per[k]);
             }
             // the merge alone, with the mapping of the last step's view
@@ -1719,7 +1715,7 @@ mod tests {
             }
             worst = worst.max(per[1] / per[0]);
         }
-        assert!(worst <= 1.0, "batch must not cost the frame loop more than the frames mode: ratio {:.2}", worst);
+        assert!(worst <= 1.0, "the workers must not cost the frame loop more than the queue: ratio {:.2}", worst);
     }
 
     // Break it catches (unit 2026-11-18, more batches dropped for want of a buffer): a batch's buffer kept until every
