@@ -27,12 +27,12 @@ path twice on one line counts once. A dependency is one of `[dependencies]` and 
 
 Inside oos-ui every module has a layer and every layer a list of the layers it may name: the table UI_LAYERS below
 (ADR 0049). A file's module is its place below ui/src (`ui/src/store/png.rs` is `store::png`), or what a `#[path =
-"file.rs"] mod name;` says of it; its layer is the one of the longest row that begins its name, so the row `ui`
-places every file below ui/src/ui/. A path counts where it is written from `crate`, `super` or `self`, also as a leaf
-of a `use`, and names a layer the file's layer may not name; a name a `use` brought in counts at the `use`, not where
-it is used after it. `super` and `self` are read from the module the path stands in, also one written out in the
-file (`mod imp { ... }`); the brackets of a visibility (`pub(crate)`, `pub(in crate::ui)`) name nothing. One count per
-layer, for the paths that leave what it may name:
+"file.rs"] mod name;` says of it, below the modules written out around that declaration; its layer is the one of the
+longest row that begins its name, so the row `ui` places every file below ui/src/ui/. A path counts where it is
+written from `crate`, `super` or `self`, also as a leaf of a `use`, and names a layer the file's layer may not name;
+a name a `use` brought in counts at the `use`, not where it is used after it. `super` and `self` are read from the
+module the path stands in, also one written out in the file (`mod imp { ... }`); the brackets of a visibility
+(`pub(crate)`, `pub(in crate::ui)`) name nothing. One count per layer, for the paths that leave what it may name:
   ui-base-up         base (helpers and services without the scope's state) naming any other layer
   ui-model-up        the model naming more than base
   ui-settings-up     the settings table naming more than base and the model
@@ -70,6 +70,7 @@ DEPENDS = {  # Cargo.toml: (its count, the dependencies it may have)
     "dsp/Cargo.toml": ("dsp-hw", set()),
 }
 UI = "ui/src/"  # the sources of oos-ui
+OWN_FOLDER = ("main", "lib", "mod")  # files that are the module of their folder: main.rs, lib.rs, mod.rs
 # The layers inside oos-ui, lowest first (ADR 0049): (layer, the key of its count, the other layers it may name, its
 # modules). A module is named from the crate root (`board`, or `ui::la` for one file of a folder); the longest row
 # that begins a file's module places it. The last row is the wiring: the crate root (main.rs) belongs to it without
@@ -180,22 +181,28 @@ def board_path(rel, names):
 def ui_modules(toks_of):
     """{file: its module as names from the crate root} of the files of oos-ui (`toks_of`: {file: its tokens}). A
     module is the file's place below ui/src: ui/src/a/b.rs is [a, b], ui/src/a/mod.rs is [a], ui/src/main.rs is [].
-    A file another one declares with `#[path = "b.rs"] mod c;` is [.., c] below that file's module instead."""
-    said = {}  # file: (the file that declares it, the name it is declared with)
+    A file another one declares with `#[path = "b.rs"] mod c;` is [.., c] below that file's module instead, with the
+    modules written out around the declaration between them (`mod o { #[path = "b.rs"] mod c; }` is [.., o, c]); the
+    file is looked for as Rust does, from the folder of the declaring file, inside a module written out from the
+    folder of that module."""
+    said = {}  # file: (the file that declares it, the names it is declared with below that file's module)
     for rel, toks in toks_of.items():
-        toks = without_visibility(toks)
+        inner, toks = inner_modules(toks), without_visibility(toks)
+        folder, stem = os.path.dirname(rel), os.path.basename(rel)[:-len(".rs")]
         for i in range(len(toks) - 7):
             if [t[2] for t in toks[i:i + 4]] == ["#", "[", "path", "="] and toks[i + 5][2] == "]":
                 j = i + 7 if toks[i + 6][2] == "pub" else i + 6
                 if toks[j][2] == "mod" and j + 2 < len(toks) and toks[j + 2][2] == ";":
-                    file = os.path.normpath(os.path.join(os.path.dirname(rel), toks[i + 4][2].strip('"')))
-                    said[file.replace(os.sep, "/")] = (rel, toks[j + 1][2])
+                    around = innermost(inner, toks[j][0])
+                    start = [folder] + ([] if stem in OWN_FOLDER or not around else [stem]) + around
+                    file = os.path.normpath(os.path.join(*start, toks[i + 4][2].strip('"')))
+                    said[file.replace(os.sep, "/")] = (rel, around + [toks[j + 1][2]])
 
     def module(rel, seen=()):
         if rel in said and rel not in seen:
-            return module(said[rel][0], seen + (rel,)) + [said[rel][1]]
+            return module(said[rel][0], seen + (rel,)) + said[rel][1]
         names = rel[len(UI):-len(".rs")].split("/")
-        return names[:-1] if names[-1] in ("main", "lib", "mod") else names
+        return names[:-1] if names[-1] in OWN_FOLDER else names
 
     return {rel: module(rel) for rel in toks_of}
 
@@ -228,6 +235,11 @@ def inner_modules(toks):
                 _, first, name = inside.pop()
                 out.append((first, line, [n for _, _, n in inside] + [name]))
     return out
+
+
+def innermost(inner, line):
+    """The names of the innermost module of `inner` (see inner_modules) that holds `line`; [] outside all of them."""
+    return max((names for first, last, names in inner if first <= line <= last), key=len, default=[])
 
 
 def without_visibility(toks):
@@ -275,8 +287,7 @@ def ui_crossings(module, toks, tops):
     inner = inner_modules(toks)
     found = []
     for line, names in paths(without_visibility(toks)):
-        here = max((mods for first, last, mods in inner if first <= line <= last), key=len, default=[])
-        target = ui_target(module + here, names)
+        target = ui_target(module + innermost(inner, line), names)
         named = ui_layer(target, tops) if target else None
         if named and named != layer and named not in may:
             found.append((key, line, "%s names %s: %s" % (layer, named, "::".join(names))))

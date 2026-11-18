@@ -190,6 +190,24 @@ class UiTable(unittest.TestCase):
         text = "mod a {\n    fn f() {\n    }\n    pub mod b {\n    }\n}\nfn g() {\n}\nmod c;\n"
         self.assertEqual(lay.inner_modules(list(lay.dup.tokens(text))), [(4, 5, ["a", "b"]), (1, 6, ["a"])])
 
+    def test_a_file_declared_with_a_path_is_the_module_its_declaration_says(self):
+        files = {
+            "ui/src/main.rs": "mod store;\nmod board;\n",
+            "ui/src/store.rs": ('#[path = "odd.rs"]\nmod odd;\nmod outer {\n    pub mod deep {\n'
+                                '        #[path = "part.rs"]\n        pub(crate) mod inner;\n    }\n}\n'),
+            "ui/src/odd.rs": "",
+            "ui/src/store/outer/deep/part.rs": "",
+            "ui/src/board/mod.rs": 'mod a {\n    #[path = "b.rs"]\n    mod c;\n}\n',
+            "ui/src/board/a/b.rs": "",
+        }
+        modules = lay.ui_modules({rel: list(lay.dup.tokens(text)) for rel, text in files.items()})
+        self.assertEqual(modules, {
+            "ui/src/main.rs": [], "ui/src/store.rs": ["store"], "ui/src/board/mod.rs": ["board"],
+            "ui/src/odd.rs": ["store", "odd"],
+            "ui/src/store/outer/deep/part.rs": ["store", "outer", "deep", "inner"],
+            "ui/src/board/a/b.rs": ["board", "a", "c"],
+        }, "with the modules written out around the declaration, and the file where Rust looks for it")
+
     def test_a_path_is_read_from_its_module(self):
         target = lay.ui_target
         self.assertEqual(target(["store", "png"], ["crate", "ui", "Ui"]), ["ui", "Ui"])
@@ -328,6 +346,18 @@ class UiTree(unittest.TestCase):
             "ui/src/http.rs:5 fn f() { crate::store::png(); crate::model::NCH; }  "
             "(transport names store: crate::store::png)",
         ], "another transport (hislip), base and the interpreter are its own")
+
+    def test_super_in_a_path_module_inside_a_module_written_out(self):
+        root = made_up(self, {
+            "ui/src/main.rs": "mod ui;\nmod wave;\n",
+            "ui/src/ui.rs": "pub struct Ui;\n",
+            "ui/src/wave.rs": 'pub struct Record;\nmod outer {\n    #[path = "../part.rs"]\n    mod inner;\n}\n',
+            "ui/src/wave/part.rs": "use super::super::Record;\nuse super::super::super::ui::Ui;\n",
+        })
+        self.assertEqual([items for _, _, items in lay.counts(str(root)) if items], [[
+            "ui/src/wave/part.rs:2 use super::super::super::ui::Ui;  "
+            "(signal names screen: super::super::super::ui::Ui)",
+        ]], "part.rs is `wave::outer::inner`, not `wave::part`: two `super` are wave, three the crate root")
 
     def test_a_module_without_a_layer_is_counted_and_its_paths_are_not(self):
         self.assertEqual(self.result["ui-unplaced"], [
