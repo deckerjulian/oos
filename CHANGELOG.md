@@ -29,6 +29,10 @@ Added:
   - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
   - SSH starts or stops with the list.
   The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
+- System > **Start OOS again**, right under Boot mode: two taps within 5 s select OOS for the next power-on once more,
+  as `oos-boot-oos-again` does (it runs the same `oos-update arm`), and a dialog shows the result. With Boot mode
+  Persist it only says that OOS starts anyway. One-shot users no longer need a shell for this step (host-tested; not
+  yet run on a unit).
 
 Removed:
 

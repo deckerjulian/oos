@@ -8,8 +8,8 @@ less accurate. The version and the build stand at the bottom of the start-up scr
 
 The IP address comes from DHCP and is shown at the top right. Without DHCP the scope takes a link-local address, 169.254.x.y, as computers do (from 0.1.9; before, `192.168.177.64/24`): a computer connected straight to the scope reaches it without any set-up.
 
-**OOS starts in one-shot mode:** the next power-on starts the stock system. When OOS works for you, set **System >
-Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS. More:
+**OOS starts in one-shot mode:** the next power-on starts the stock system. **System > Start OOS again** (two taps)
+starts OOS once more at the next power-on. When OOS works for you, set **System > Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS. More:
 [[Installation]], How OOS starts.
 
 ## The screen

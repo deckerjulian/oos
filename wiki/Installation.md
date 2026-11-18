@@ -75,8 +75,8 @@ What each run writes, and what to do when Storage does not show the stick:
 ### After the install
 
 OOS starts once, then the next power-on starts stock again ([how OOS starts](#how-oos-starts)). To start OOS once
-more, run the same install from the stock system: it writes nothing but the selection. To stay on OOS, set
-**System > Boot mode** to **Persist** on OOS.
+more, tap **System > Start OOS again** on OOS before you switch off, or run the same install from the stock system:
+it writes nothing but the selection. To stay on OOS, set **System > Boot mode** to **Persist** on OOS.
 
 The stock `recovery` is replaced by OOS. Everyday stock use does not need it, but anything that starts into it no
 longer works. Putting it back needs the card in a reader (so the scope has to be opened) and `recovery.bin` from the
@@ -235,8 +235,10 @@ in bytes on Linux. More detail:
 By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
 system**. This is the safe mode for a new installation.
 
-To start OOS once more, run this in an SSH session (first login: [[Remote Control]]) or on the serial console and
-power-cycle the scope:
+To start OOS once more, tap **System > Start OOS again** (right under Boot mode) twice within 5 seconds, then
+power-cycle the scope. A dialog says what it did: `next boot: OOS`, or why it did not select OOS (an update job
+running, no image in `recovery` the loader takes). With Boot mode Persist it is not needed. In an SSH session (first
+login: [[Remote Control]]) or on the serial console the same is:
 
 ```sh
 oos-boot-oos-again

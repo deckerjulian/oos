@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Signed updates in the GUI (docs/update.md): System > Update shows the update state, System > Roll back update
-//! writes the kept image back (two taps within 5 s), the web page /update takes a package (http.rs). The work is
-//! done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a dialog.
+//! writes the kept image back (two taps within 5 s), System > Start OOS again selects OOS for the next power-on once
+//! more (two taps, `oos-update arm`, what `oos-boot-oos-again` runs), the web page /update takes a package (http.rs).
+//! The work is done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a
+//! dialog.
 //! A notice from the start-up watcher (/tmp/oos-update.notice: rolled back after a failed start) is shown once.
 
 use super::*;
@@ -20,6 +22,8 @@ pub(super) struct UpdateUi {
     job: Option<(std::process::Child, String)>,
     /// first tap on Roll back: the second must come before this time
     arm_until: f64,
+    /// the same for Start OOS again
+    again_until: f64,
     next_check: f64,
     notice_shown: String,
     /// output of the last job (web page)
@@ -94,6 +98,26 @@ impl Ui {
         } else {
             self.toast("Power-cycle the scope: stock boots next");
         }
+    }
+
+    /// System > Start OOS again: with Boot mode One-shot, the next power-on starts OOS once more instead of stock.
+    /// First tap asks, the second (within 5 s) runs `oos-update arm`, the command `oos-boot-oos-again` runs: it checks
+    /// that `recovery` holds an image the loader takes and only then writes the magic of `boot` (docs/boot.md). The
+    /// dialog of the job says what it did.
+    pub(super) fn boot_again_tap(&mut self) {
+        if self.update_busy() {
+            return self.toast("An update job is running");
+        }
+        if state().is_some_and(|s| s.persist) {
+            return self.toast("Boot mode is Persist: OOS starts at every power-on");
+        }
+        // armed only between the first tap and 5 s later (none before a first tap, also at `now` 0)
+        if self.upd.again_until == 0.0 || self.now > self.upd.again_until {
+            self.upd.again_until = self.now + 5.0;
+            return self.toast("Tap again: OOS starts at the next power-on, once more");
+        }
+        self.upd.again_until = 0.0;
+        self.update_spawn(&["arm"], "Start OOS again");
     }
 
     /// System > Roll back update: first tap asks, second (within 5 s) runs it.
@@ -265,6 +289,23 @@ mod tests {
             l.join(" "),
             "Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored."
         );
+    }
+
+    // Break it catches: Start OOS again writing the card on a single tap, or standing away from Boot mode
+    #[test]
+    fn start_oos_again_asks_first_and_stands_under_boot_mode() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let items = u.items(MenuId::Utility);
+        let i = items.iter().position(|&it| it == Item::BootMode).unwrap();
+        assert_eq!(items.get(i + 1), Some(&Item::BootAgain));
+        assert!(matches!(Ui::kind(Item::BootAgain), Kind::Action));
+        u.boot_again_tap();
+        assert!(u.upd.job.is_none(), "one tap writes nothing");
+        assert!(u.toast.as_ref().unwrap().0.starts_with("Tap again"), "{:?}", u.toast);
+        // the second tap only after the first has run out: asks again
+        u.now += 6.0;
+        u.boot_again_tap();
+        assert!(u.upd.job.is_none() && u.toast.as_ref().unwrap().0.starts_with("Tap again"));
     }
 
     #[test]

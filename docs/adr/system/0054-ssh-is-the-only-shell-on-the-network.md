@@ -38,9 +38,9 @@ over SSH with `OOS_SHELL=ssh`.
 - A scope has no shell on the network until SSH is switched on and Allowed holds a list. The first login is on the
   screen (Remote services > Allowed, SSH on, Show password; ssh.md, "The first login"); a bench unit for the tools
   needs that once, with a key ([device-testing.md](../../device-testing.md)).
-- What a shell was used for after an installation (`oos-boot-oos-again` to start OOS once more, reading the logs) needs
-  SSH or the serial console; System > Boot mode = Persist and running the install again from stock do not need a
-  shell.
+- Starting OOS once more after a one-shot start needs no shell: System > Start OOS again runs the same
+  `oos-update arm` as `oos-boot-oos-again`, and Boot mode = Persist or the install run again from stock do as well.
+  Reading the logs needs SSH or the serial console.
 - The busybox of the image still holds the `telnetd` applet (the Ubuntu `busybox-static` package): nothing starts it,
   and taking it out would need a busybox of our own.
 - How it is known (ADR 0015): the settings file and the page are tested on the host (`sysconf::tests`,

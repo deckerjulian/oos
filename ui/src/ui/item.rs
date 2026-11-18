@@ -341,6 +341,8 @@ pub(super) enum Item {
     Update,
     UpdateRollback,
     BootMode,
+    /// System > Start OOS again: OOS at the next power-on once more (`oos-update arm`, as `oos-boot-oos-again`)
+    BootAgain,
     Overclock,
     ViewExit,
     ViewSettings,
