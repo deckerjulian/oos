@@ -75,6 +75,9 @@ Removed:
 
 Changed:
 
+- The DHO802 and DHO812 count as verified ([models.md](docs/models.md) 2.1): a user installed OOS 0.1.13 on a DHO802
+  from the USB stick and it started, answered SCPI and the web page (issue #19). The first install from the stock
+  system now takes both models without `oos-any-model.txt`.
 - Batch draw path: at 10 us/div the screen shows about 29 pictures a second with one,
   two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
   cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
@@ -116,6 +119,9 @@ Fixed:
 
 - Measurements without an SI unit take no SI prefix: a ratio reads `0.498`, not `498 m`, a count `1`, not `1.00`, and
   `ppm`, `rpm` and `rpm/s` are plain decimals (`1500 rpm`, not `1.50 krpm`).
+- The trigger level marker stays when the source channel is on AC coupling (#46): the scope couples ahead of
+  the ADC, so the level is a level on the AC trace as drawn. Only the demo, which triggers before it takes the mean
+  out, still hides it (on the unit: assumed, not yet checked).
 - Eye Width no longer reads short by the picture's own spread (issue #195): a crossing without jitter lights two
   columns of the eye and read half a column of jitter, 6 % of the unit interval in a 96-column eye. That spread is
   now taken out, so a signal without jitter reads 1 UI and one with 20 ps RJ on 1 ns reads 880 ps.

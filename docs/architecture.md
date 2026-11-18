@@ -91,12 +91,15 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
 ```mermaid
 flowchart TB
     subgraph uiP["oos-ui (ui/)"]
-        remote["Remote control<br/>SCPI, web, VXI-11, HiSLIP, mDNS"]
+        remote["Remote control<br/>SCPI, web, VXI-11, HiSLIP"]
         mainloop["Main loop<br/>events, model, analysis, render"]
         mods["Modules<br/>protocols, measurements, analysers"]
         draw["Renderer<br/>gfx, font, drm, GPU helper"]
         board["board::Board<br/>the one door to the hardware"]
         acq["Acquisition thread<br/>board/dho/hw.rs"]
+    end
+    subgraph sysP["oos-system (ui/system/), a crate of the workspace ui/"]
+        sys["System services<br/>mDNS, SNTP, SSH, USBTMC, net.allow, clock, system.conf, thread placement"]
     end
     subgraph fpgadP["oos-fpgad (fpgad/)"]
         cli["Command line<br/>plan, run, cold-boot, status"]
@@ -105,6 +108,8 @@ flowchart TB
     hal["oos-hal (hal/)<br/>register sequences as step lists, buses, cold boot"]
     dev["Device files<br/>xdma0_bypass, xdma0_c2h_0, gpiochipN, ttyS0, sysfs"]
     remote -- "commands, read without waiting" --> mainloop
+    remote -- "sockets, net.allow" --> sys
+    mainloop -- "switches, settings" --> sys
     mods -- "menu rows, tiles, pages, through traits" --> mainloop
     mainloop -- "picture" --> draw
     mainloop -- "settings" --> board
@@ -117,12 +122,17 @@ flowchart TB
     hal -- "Bus trait, GPIO lines, sysfs" --> dev
 ```
 
-Drawn from: `ui/src/main.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
+Drawn from: `ui/src/main.rs`, `ui/system/src/lib.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
 `ui/src/measures/mod.rs`, `fpgad/src/main.rs`, `hal/src/dho/`. `oos-ui` also offers the control FIFO
 `/tmp/oos-ui.ctl`, and takes its signal from one of four sources: Demo, Replay, Live or Hw (below).
 
 Rule for all crates: no vendor code is in the tree. Only dependency of the four crates: `libc` (ADR 0013,
-[fork/deps.md](fork/deps.md)).
+[fork/deps.md](fork/deps.md)). `ui/` is a Cargo workspace: a layer of `oos-ui` that names nothing above it leaves it
+as a crate of its own below `ui/`, with one lock file and one target folder for all of them
+([ADR 0064](adr/code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md)). The first is
+`oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`. `oos-ui` brings its modules into its crate
+root (`main.rs`), so they are named `crate::sysconf` there as before, and the compiler refuses a path from
+`oos-system` back into `oos-ui`.
 
 ### oos-hal: hardware layer
 
@@ -187,7 +197,7 @@ Threads:
 | web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 | bt | System > Network > Bluetooth's client of bluetoothd (`ui/src/ui/bt.rs` over `hal::bluez`): the state every 2 s, scan, pair, connect, forget, and the pairing agent's answers; started with the first look at the page, so the frame loop never waits on the radio |
-| ntp | SNTP exchange and clock step when Time from NTP is on (`ui/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
+| ntp | SNTP exchange and clock step when Time from NTP is on (`ui/system/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
@@ -214,7 +224,7 @@ flowchart TB
         settings["settings<br/>settings<br/>one row per setting"]
         board["board<br/>board<br/>the one door to the hardware"]
         model["model<br/>model, math, zone, decode<br/>what the user has set"]
-        base["base<br/>gfx, font, layout, clock, sysconf, system, net, netacl, mdns, ssh and ten more<br/>no state of the scope"]
+        base["base<br/>gfx, font, layout, drm, vpu, hid; in the crate oos-system (ui/system/): clock, sysconf, system, net, netacl, mdns, ssh and nine more<br/>no state of the scope"]
     end
     hal["oos_hal::dho (hal/src/dho/)<br/>the registers of the DHO800/DHO900 board"]
     main -- "wires up" --> transport
@@ -234,7 +244,8 @@ flowchart TB
 Drawn from: `tools/layers.py` (`UI_LAYERS`, which places every module and is what `tools/layers.py --list` checks
 the paths against), `ui/src/main.rs` (the modules and the frame loop), `ui/src/board/mod.rs`. The code does not hold
 the arrows everywhere yet: the paths against them are counted in `tools/layers.txt` and may only become fewer
-(ADR 0037, ADR 0049). A new module gets its row in `UI_LAYERS` before the checks pass.
+(ADR 0037, ADR 0049). A new module gets its row in `UI_LAYERS` before the checks pass. The part of base in
+`oos-system` is held by the compiler instead: it is a crate of its own and cannot name `oos-ui` (ADR 0064).
 
 ### oos-fpgad: bring-up and service tool
 
@@ -262,7 +273,8 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
-| a remote transport, a network service | its file in `ui/src/` (`http.rs`, `vxi11.rs`, `hislip.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a remote transport | its file in `ui/src/` (`http.rs`, `vxi11.rs`, `hislip.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
 | the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
 | a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |
 | a decision others build on | a record in `docs/adr/` and its row in `docs/adr/README.md` | the pull request (ADR 0031) |
