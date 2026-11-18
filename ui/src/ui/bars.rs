@@ -125,19 +125,39 @@ impl Ui {
         (caption, live)
     }
 
-    /// While a USB stick is mounted: left of the network and WLAN boxes; the top-bar buttons move over for it.
-    pub(super) fn usb_box(&self) -> Rect {
+    /// While a Bluetooth stick is there: left of the network and WLAN boxes (a combo stick brings both).
+    pub(super) fn bt_box(&self) -> Rect {
         let next = if self.wlan_stick { self.wlan_box().x } else { self.net_box().x };
+        Rect::new(next - 52, 5, 46, 30)
+    }
+
+    /// While a USB stick is mounted: left of the network, WLAN and Bluetooth boxes; the top-bar buttons move over for
+    /// it.
+    pub(super) fn usb_box(&self) -> Rect {
+        let next = match (self.bt_stick, self.wlan_stick) {
+            (true, _) => self.bt_box().x,
+            (false, true) => self.wlan_box().x,
+            _ => self.net_box().x,
+        };
         Rect::new(next - 52, 5, 46, 30)
     }
 
     /// Where the buttons of the top bar end: the leftmost of the boxes on the right.
     pub(super) fn top_right(&self) -> i32 {
-        match (self.usb, self.wlan_stick) {
-            (true, _) => self.usb_box().x,
-            (false, true) => self.wlan_box().x,
+        match (self.usb, self.bt_stick, self.wlan_stick) {
+            (true, _, _) => self.usb_box().x,
+            (false, true, _) => self.bt_box().x,
+            (false, false, true) => self.wlan_box().x,
             _ => self.net_box().x,
         }
+    }
+
+    /// A small box of the top bar: a dot (green: in use) and a short name, the border in the accent while `open`.
+    fn draw_chip(&self, cv: &mut Canvas, r: Rect, name: &str, used: bool, open: bool) {
+        cv.round(r, 5, if open { ACCENT } else { BTN_BORDER }, 255);
+        cv.round(r.inset(1), 4, BG, 255);
+        cv.circle(r.x + 9, r.y + 15, 3, if used { GREEN } else { DIM });
+        cv.text(&self.fonts().sb, r.x + 16, r.y + 20, name, TEXT);
     }
 
     /// A box of the top bar with a state dot and two lines.
@@ -268,21 +288,17 @@ impl Ui {
             },
             lan,
         );
-        // WLAN and USB sticks, while they are there
+        // WLAN, Bluetooth and USB sticks, while they are there; Bluetooth's dot is green while a device is connected
         if self.wlan_stick {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
+        if self.bt_stick {
+            let open = self.menu_open && self.menu_root() == MenuId::Bluetooth;
+            self.draw_chip(cv, self.bt_box(), "BT", self.bt_inputs > 0, open);
+        }
         if self.usb {
-            let r = self.usb_box();
-            cv.round(
-                r,
-                5,
-                if self.menu_open && self.menu_root() == MenuId::Storage { ACCENT } else { BTN_BORDER },
-                255,
-            );
-            cv.round(r.inset(1), 4, BG, 255);
-            cv.circle(r.x + 9, r.y + 15, 3, GREEN);
-            cv.text(&f.sb, r.x + 16, r.y + 20, "USB", TEXT);
+            let open = self.menu_open && self.menu_root() == MenuId::Storage;
+            self.draw_chip(cv, self.usb_box(), "USB", true, open);
         }
     }
 

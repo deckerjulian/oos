@@ -23,6 +23,7 @@ mod batch2_tests;
 #[cfg(test)]
 mod batch5_tests;
 pub mod bode;
+mod bt;
 mod bus;
 mod busview;
 mod deskew;
@@ -51,6 +52,7 @@ mod offline;
 mod overclock;
 mod panes;
 mod plot_layout;
+pub mod pointer;
 mod records;
 mod reflook;
 mod render;
@@ -460,6 +462,8 @@ pub enum MenuId {
     Remote,
     /// the SSH server: password, host key, trusted keys (ui/ssh.rs)
     Ssh,
+    /// mice and keyboards through a Bluetooth stick (ui/bt.rs)
+    Bluetooth,
     /// clock, NTP and time zone (ui/time.rs)
     Time,
     Bode,
@@ -553,21 +557,8 @@ enum Kind {
 
 pub enum Ev {
     Key(u8),
-    Touch {
-        id: i32,
-        phase: Phase,
-        x: i32,
-        y: i32,
-    },
-    #[cfg_attr(not(test), allow(dead_code))] // only the tests make it
-    Wheel {
-        x: i32,
-        y: i32,
-        steps: i32,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    },
+    Touch { id: i32, phase: Phase, x: i32, y: i32 },
+    Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -974,6 +965,13 @@ pub struct Ui {
     pub net_fixed: bool,
     /// a WLAN stick is plugged in (its interface exists)
     wlan_stick: bool,
+    /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
+    pub mouse: pointer::Mouse,
+    /// System > Network > Bluetooth (ui/bt.rs); a Bluetooth stick is plugged in (`hci0`), and how many devices are
+    /// connected through it as inputs (the top bar)
+    bt: bt::BtUi,
+    bt_stick: bool,
+    bt_inputs: usize,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,

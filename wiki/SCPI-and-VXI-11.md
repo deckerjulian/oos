@@ -484,4 +484,4 @@ After configuring, read back the settings and check `:SYST:ERR?`: an OOS value c
 | value `9.9E37` | not available yet or not measurable: wait and ask again, check source and gating |
 | `*OPC?` never answers | a `:SINGle` without a trigger: `:TFORce`, or a timeout |
 
-Logs: `/tmp/oos-ui.log` on the scope (telnet or SSH). Report problems with the command, the answer and `:SYST:ERR?` in an [issue](https://github.com/dekajoule/oos/issues).
+Logs: `/tmp/oos-ui.log` on the scope (over SSH). Report problems with the command, the answer and `:SYST:ERR?` in an [issue](https://github.com/dekajoule/oos/issues).

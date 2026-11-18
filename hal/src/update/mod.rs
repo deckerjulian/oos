@@ -362,8 +362,9 @@ pub fn install(
 }
 
 /// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the device tree section
-/// the start runs with), the build; and for an image with another device tree, the tree to start it with (the new one
-/// with the loader's changes, `fdt::with_loader_changes`), which `kexec::load_with_tree` takes.
+/// the start runs with), the build; and, when the running build has kexec-tools, the tree to start it with
+/// (`fdt::with_loader_changes`: the new tree, or the running one for the same tree), which `kexec::load_with_tree`
+/// takes. None only without kexec-tools: then `kexec::load` (kexec_file_load) with the running tree.
 #[derive(Debug)]
 pub struct Staged {
     pub kernel: Vec<u8>,
@@ -379,8 +380,9 @@ pub struct Staged {
 ///
 /// `booted_dt`: the device tree section of the image the loader started (`kexec::BOOTED_DT`, saved by `oos-update
 /// boot`); without it only an image in `recovery` that is the running build (`running`) tells. `running_tree`: the tree
-/// the running kernel got (`/sys/firmware/fdt`), given when a kexec start with another tree can be made
-/// (`kexec::TOOL`); without it an image with another tree is refused.
+/// the running kernel got (`/sys/firmware/fdt`), given when the build has kexec-tools (`kexec::TOOL`): every kexec
+/// start then goes through them, also for the same tree. Without it an image with another tree is refused, and the
+/// same tree is started with kexec_file_load.
 pub fn kexec_stage(
     card: &mut Card,
     state_path: &Path,
@@ -422,7 +424,19 @@ pub fn kexec_stage(
     };
     let tree = if booted == dt {
         r.say("device tree: the same as the running one");
-        None
+        // with kexec-tools the start goes its way even so: kexec_file_load puts the initramfs right behind the new
+        // kernel, low in memory, where the loader's reserved ramdisk area and the GIC's tables lie; a larger initramfs
+        // reached into them and the started kernel found no root (seen on the unit). kexec-tools loads above them.
+        match running_tree {
+            Some(run) => {
+                let old_dt = fdt::rsce_file(&booted, fdt::TREE)
+                    .map_err(|e| format!("the running image's device tree: {}", e))?;
+                let (t, _) =
+                    fdt::with_loader_changes(old_dt, old_dt, run).map_err(|e| format!("the device tree: {}", e))?;
+                Some(t)
+            }
+            None => None,
+        }
     } else {
         let Some(run) = running_tree else {
             return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
@@ -713,5 +727,7 @@ pub fn judge(h: &Health) -> Verdict {
     Verdict::Wait
 }
 
+#[cfg(test)]
+pub(crate) mod hostile_tests;
 #[cfg(test)]
 mod tests;

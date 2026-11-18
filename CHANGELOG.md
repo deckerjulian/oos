@@ -7,13 +7,26 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- USB and Bluetooth mice and keyboards ([First Steps](wiki/First-Steps.md#mouse-and-keyboard)): the mouse is the
+  finger, with a pointer while it is in use that moves in even steps; the keys stand in for the front panel and type
+  into the on-screen keyboard. oos-ui takes them for itself, so no key reaches the console shell behind the screen
+  (unit, with a BLE keyboard and touchpad).
+- Bluetooth through a USB stick ([bluetooth.md](docs/bluetooth.md), ADR 0057): a TP-Link Archer TX10UB Nano is
+  switched out of its driver-CD mode, its Realtek 8851BU gets its firmware, and BlueZ runs on a system bus of its own;
+  pairings are kept on the data partition (unit: a BLE keyboard with touchpad paired, used, and reconnected after a
+  power cycle).
+- System > Network > Bluetooth ([bluetooth.md](docs/bluetooth.md#on-the-scope)): find, pair, connect, disconnect and
+  forget mice and keyboards; a keyboard's passkey is shown on the scope. While a Bluetooth stick is there, a `BT` box
+  in the top bar beside the WLAN box: green while a device is connected, a tap opens the page (unit).
+- WLAN on the TP-Link Archer TX10UB Nano (Realtek RTL8851BU, 2.4 and 5 GHz; [wlan.md](docs/wlan.md), ADR 0027):
+  `rtw89` of Linux 6.18.63 is built as modules beside the 6.12 kernel, and `oos-wlan` picks it by the stick's id
+  (unit: a saved WPA2 network joined on 5 GHz, DHCP, about 84 Mbit/s sent).
 - `tools/plan-matrix.sh` also covers averaging, the logic analyser, roll and scan, the generator, LA thresholds, the
   cold-boot dry run and the PLL table of another clock.
 - `oos-fpgad made-up-cal DIR` writes a made-up calibration set: every calibration file the register sequences read,
   with invented values that mean nothing for a scope. `tools/compare-base.sh` uses it when there are no files of a
   unit, so CI now also compares the register values that calibration changes.
-- `tools/device-deploy.sh` deploys over SSH too (`OOS_SHELL=ssh`) and checks every uploaded file with SHA-256
-  (unit, over telnet); `device-deploy-ssh.sh` is gone.
+- `tools/device-deploy.sh` checks every uploaded file with SHA-256 (unit); `device-deploy-ssh.sh` is gone.
 - `tools/check.sh` has a `sim` layer (not enforced) for the Docker and QEMU simulations.
 - `tools/device-test.py --changed BASE` runs only the device tests a change reaches (documents and CI: the six smoke
   tests). A failed test runs again (`--retries`); one that passes then is reported as FLAKY. A failure that a known
@@ -29,22 +42,47 @@ Added:
   - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
   - SSH starts or stops with the list.
   The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
+- System > **Start OOS again**, right under Boot mode: two taps within 5 s select OOS for the next power-on once more,
+  as `oos-boot-oos-again` does (it runs the same `oos-update arm`), and a dialog shows the result. With Boot mode
+  Persist it only says that OOS starts anyway. One-shot users no longer need a shell for this step (host-tested; not
+  yet run on a unit).
+- [docs/http.md](docs/http.md), the reference of the web remote's HTTP routes and the MCP tools `scpi` and
+  `screenshot` (issue #205): method, query, body, status codes, content type, limits and `net.allow` of each, and
+  the mark of ADR 0055 (proposed): stable, experimental or internal. The behaviour is unchanged.
+  `tools/http-coverage.py`, in the layer `ratchet` of `tools/check.sh`, fails when a route or tool has no entry or
+  mark there, or an entry names a route the code does not answer.
 
 Removed:
 
+- Telnet. The scope no longer starts a shell without password on port 23, and System > Network > Remote services has
+  no telnet switch. SSH is the only shell on the network: switch it on under Remote services, set **Allowed** to your
+  network, and log in with the password from SSH settings > Show password, then add a key with `ssh-copy-id`
+  ([Remote Control](wiki/Remote-Control.md), [docs/ssh.md](docs/ssh.md)). The serial console keeps its shell.
+  `remote.telnet` in an older `/oos/system.conf` is ignored and no longer written. `tools/device-deploy.sh` and
+  `tools/device-test.py` reach the scope over SSH only (`OOS_SHELL` is gone); a bench unit needs SSH and a key once
+  ([docs/device-testing.md](docs/device-testing.md)). ADR 0054 (host-tested; not yet run on a unit).
 - The native Windows build: `build-windows.ps1`, `run-windows.ps1` and the desktop window with its keyboard and mouse
   shortcuts and its file dialog. On a computer OOS runs with `oos-ui --serve` and the web remote in a browser, on
   Linux, macOS and Windows inside WSL 2 (ADR 0033). The scope is not affected.
+- The frames draw path (Standard) and its switch: Acquire > Draw path is gone, the scope always draws with Batch,
+  which puts every acquired frame into the picture and now holds the screen rate (issue #186, ADR 0059).
+  `acq.pipeline` in an older `/oos/system.conf` is ignored and no longer written, `OOS_PIPELINE` is not read, and
+  `draw_path` in an older setup is passed over. `:SYSTem:PIPeline?` answers `BATC`, `:SYSTem:PIPeline BATCh` is
+  taken and changes nothing, `FRAMes` and `STANdard` are refused with -224. The status line says `pipeline Off`
+  instead of `pipeline Frames` with a source other than the hardware, and System info no longer names the path
+  (unit: starts in Batch, `:SYSTem:PIPeline` as above, about 29 pictures a second; the Acquire menu was checked on
+  the host only).
 
 Changed:
 
+- Batch draw path: at 10 us/div the screen shows about 29 pictures a second with one,
+  two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
+  cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
 - System > Overclock is only in the menu with `adc.overclock = on` in `/oos/system.conf`, or while `limits.conf` already
   sets another clock: above 1.25 GHz every step boots, but records at the full rate lose samples (unit). Every step
   above 1.25 GHz is marked "(test)".
-- The waveform is drawn with the Batch path by default (Acquire > Draw path): from 100 ns to 500 us/div it draws 1.2 to
+- The waveform is drawn with the Batch path (the only one, see Removed): from 100 ns to 500 us/div it draws 1.2 to
   3.4 times as many of the acquired frames, 5269 instead of 1563 a second with one channel at 100 ns/div (unit).
-  `acq.pipeline = frames` in system.conf starts with Standard; the path at start-up comes from system.conf, not from
-  the last setup (ADR 0029).
 - system.conf: of two lines with the same key the last one wins, and `#` starts a comment only at the start of a line
   or after a space or tab, as `oos-conf` reads it.
 - `trig.serial_hw`, `acq.frame0`, `zone.batch` and `mask.map.*` are also taken from the image defaults
@@ -55,6 +93,9 @@ Changed:
 - Image build: a new version in `rootfs/deps.lock` or a changed build script rebuilds wpa_supplicant, e2fsck, kexec,
   the GPU helper and Mesa by itself. Mesa comes from archive.mesa3d.org (same SHA-256), no Ubuntu source package is
   needed. Build images are made again when their Dockerfile changes.
+- Build: the Rust release (`rust-toolchain.toml`, 1.100.0) and the Docker base images (by digest, in
+  `tools/lib/docker.sh`) are pinned. `rustup toolchain install` in the tree installs that release, with the target for
+  the scope; CI and the image build use the same one (ADR 0045).
 - Card tools: `card-install.py`, `switch.py`, `sdcard-layout.py` and the image's `oos-oneshot` check the same stock
   partition-table marks, now including `recovery`.
 - Docs: overclocking above 1.25 GHz loses about 5 % of the samples at the full rate (unit), so frequencies read too
@@ -73,6 +114,12 @@ Changed:
 
 Fixed:
 
+- SCPI and the web page come up when their port was still taken at the start (by the oos-ui before, ending): the
+  port is tried again every second. Before, both stayed off until the next start, while mDNS still announced them.
+- Update: an image with a larger initramfs (a 48 MB package) stopped in a kernel panic at the restart into it
+  ("unknown-block(0,0)"); a power cycle brought the previous build back, nothing was written. The restart now places
+  the new initramfs above 1 GiB through kexec-tools, also when the device tree stays the same (unit). An update to such
+  an image needs this build installed first.
 - Measure in roll and scan, and on compressed deep records: the frequency, the period and the other time values of
   a slow signal read up to twice the true value now and then (25 Hz read as 50 Hz at 0.2 s/div). Their points are
   min/max pairs, and on an edge each pair spans more than the hysteresis of the edge search; the time values are now
@@ -83,6 +130,8 @@ Fixed:
 - Measure: a burst idle, setup or hold time above 5 s (set over SCPI) steps down to 5 s instead of turning off, also
   in a measurement's own settings.
 - Waveform import: a damaged file is refused with "truncated waveform" wherever a field lies past its end.
+- Fast-frame load (`frame-NNN.bin`): a frame whose time step or start is not a finite number, or with fewer than two
+  samples per channel, is refused, as the waveform import already refused such an `OOSW` file.
 - `oos-fpgad` without a command, or with `help`, prints its usage again (it printed nothing).
 - Tests no longer depend on the speed of the computer in the UI either (wall-time limits replaced).
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
@@ -134,6 +183,25 @@ Fixed:
   than the rail no longer crashes.
 - Tests no longer depend on the speed of the computer (wall-time limits replaced), and the SSH key tests run in a
   checkout without `local/`.
+- The power-on picture (`/etc/oos/splash.ppm`): one whose header ends inside a comment no longer ends oos-ui at the
+  start; it is left out like any picture oos-ui cannot read.
+- The power-on picture: one that claims a size of 2^31 bytes of pixels or more (65536 x 65536) no longer ends
+  oos-ui; it is refused unless the file holds all its pixels.
+- Bode with a generator on the USB port: a device that answers with transfers of no data and never ends the answer
+  no longer holds the generator's thread for ever. After 16 such transfers the read fails, and the Bode page says
+  that `*IDN?` failed.
+- Waveform import: a CSV whose time column gives an infinite time step or start (`inf` as a time) is refused, as an
+  `OOSW` file with such a time base is. It became a reference with an infinite time step.
+- Mask test: a mask file whose tolerance `x` or `y` is `inf` or `NaN` is refused with "Load failed"; such a
+  tolerance became the mask's margin.
+- Setup recall: a `bode_sweep` line that is refused (a sweep time of 0 or `inf`, or a later value that is wrong) no
+  longer leaves its first values in the Bode settings; the line changes nothing.
+- Decoders: Quad-SPI no longer ends oos-ui on a CS# frame that ends where it starts (both edges between the same two
+  samples) with a clock edge at that instant; such a frame holds no data.
+- Update: an image whose device tree nests deeper than 64 levels is refused with a message; oos-update ended on
+  one (from about 30 000 levels the stack overflowed).
+- Update: an image whose device tree section (RSCE) names a table longer than the section is refused; one with
+  entries of no length was read up to 2^32 times before the install went on.
 
 ## 0.1.13
 

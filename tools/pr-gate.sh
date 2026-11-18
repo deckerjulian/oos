@@ -37,10 +37,11 @@ repo=${OOS_REPO:-${GITHUB_REPOSITORY:-dekajoule/oos}}
 maintainer=${OOS_MAINTAINER:-${repo%%/*}}
 agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 # paths whose effect is only seen on a unit: register sequences and the board, updates, how the scope starts
-hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/)'
+# (and the compiler: rust-toolchain.toml builds every program for the scope, ADR 0045)
+hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
+live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
 live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
@@ -54,23 +55,38 @@ proven="${proven}wpu|zone|zonegeom)\.rs$)"
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
 dry=0
+# tries of one call of GitHub's API: now and then it answers with a cut-off body (gh: "unexpected end of JSON input"),
+# and a run that ends on that leaves the four answers as they were
+tries=${OOS_API_TRIES:-3}
+
+# gh api, tried again after a failure, 3 s apart (OOS_API_WAIT); the output of the call that succeeded. A status
+# written twice is harmless: GitHub shows the newest of a context, and both say the same.
+api() {
+	k=1
+	while ! out=$(gh api "$@"); do
+		[ "$k" -lt "$tries" ] || return 1
+		k=$((k + 1))
+		sleep "${OOS_API_WAIT:-3}"
+	done
+	printf '%s\n' "$out"
+}
 
 # the run of CI for the commit $sha, asked for once: the conclusion of one of its jobs, and how many artifacts of a name
 # it kept (when that cannot be read: the second argument, else 1)
 run=
 ci_run() {
-	[ -n "$run" ] || run=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request&per_page=20" \
+	[ -n "$run" ] || run=$(api "repos/$repo/actions/runs?head_sha=$sha&event=pull_request&per_page=20" \
 		--jq '[.workflow_runs[] | select(.name == "CI")] | first | .id // empty' 2>/dev/null || true)
 	[ -n "$run" ]
 }
 ci_job() {
 	ci_run || return 0
-	gh api "repos/$repo/actions/runs/$run/jobs?per_page=100" \
+	api "repos/$repo/actions/runs/$run/jobs?per_page=100" \
 		--jq "[.jobs[] | select(.name == \"$1\")] | first | .conclusion // empty" 2>/dev/null || true
 }
 ci_kept() {
 	ci_run || { echo "${2:-1}"; return 0; }
-	gh api "repos/$repo/actions/runs/$run/artifacts" \
+	api "repos/$repo/actions/runs/$run/artifacts" \
 		--jq "[.artifacts[] | select(.name == \"$1\")] | length" 2>/dev/null || echo "${2:-1}"
 }
 
@@ -78,14 +94,14 @@ status() { # status SHA CONTEXT STATE TEXT
 	if [ $dry = 1 ]; then
 		printf '%-7s %-8s %s\n' "$2" "$3" "$4"
 	else
-		gh api --method POST "repos/$repo/statuses/$1" -f context="$2" -f state="$3" -f description="$4" >/dev/null
+		api --method POST "repos/$repo/statuses/$1" -f context="$2" -f state="$3" -f description="$4" >/dev/null
 	fi
 }
 
 one() {
 	n=$1
 	run=
-	pr=$(gh api "repos/$repo/pulls/$n")
+	pr=$(api "repos/$repo/pulls/$n")
 	sha=$(printf '%s' "$pr" | jq -r .head.sha)
 	author=$(printf '%s' "$pr" | jq -r .user.login)
 	here=$(printf '%s' "$pr" | jq -r '.head.repo.full_name == .base.repo.full_name')
@@ -103,12 +119,12 @@ one() {
 	elif [ "$here" = true ] && [ "$author" = "$agent_login" ]; then
 		own="the maintainer's development agent"
 	fi
-	files=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename')
+	files=$(api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename')
 	# Dependabot's that changes nothing but lines that name an action, in workflow files
 	bump=false
 	if [ "$here" = true ] && [ "$author" = 'dependabot[bot]' ]; then
 		other=$(printf '%s\n' "$files" | grep -v '^\.github/workflows/' || true)
-		lines=$(gh api --paginate "repos/$repo/pulls/$n/files" --jq '.[].patch // ""' |
+		lines=$(api --paginate "repos/$repo/pulls/$n/files" --jq '.[].patch // ""' |
 			grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' | grep -Evc '^[+-] *(- )?uses: ' || true)
 		[ -n "$other" ] || [ "$lines" != 0 ] || bump=true
 	fi
@@ -144,7 +160,7 @@ one() {
 	fi
 
 	# owner
-	approved=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
+	approved=$(api --paginate "repos/$repo/pulls/$n/reviews" |
 		jq -s --arg m "$maintainer" --arg s "$sha" \
 			'add | [.[] | select(.user.login == $m and .commit_id == $s)] | last | .state == "APPROVED"')
 	held=false
@@ -164,7 +180,7 @@ one() {
 	fi
 
 	# review: Copilot's newest review; "No open issues" in its overview, or every thread of its resolved
-	review=$(gh api --paginate "repos/$repo/pulls/$n/reviews" |
+	review=$(api --paginate "repos/$repo/pulls/$n/reviews" |
 		jq -s 'add | [.[] | select(.is_copilot_code_review == true)] | last // empty')
 	if [ "$draft" = true ]; then
 		status "$sha" review pending "a draft: the review comes when it is ready for review"
@@ -175,15 +191,18 @@ one() {
 	else
 		query="{repository(owner:\"${repo%%/*}\",name:\"${repo#*/}\"){pullRequest(number:$n){"
 		query="${query}reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}"
-		open_threads=$(gh api graphql -f query="$query" --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+		# not read: unknown, never none
+		open_threads=$(api graphql -f query="$query" --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
 			| select(.isResolved == false) | select(.comments.nodes[0].author.login | test("copilot"; "i"))]
-			| length' 2>/dev/null || echo 0)
+			| length' 2>/dev/null || echo '?')
 		effort=$(printf '%s' "$review" | jq -r '.copilot_code_review_effort // "?"')
 		[ "$(printf '%s' "$review" | jq -r .commit_id)" = "$sha" ] || effort="$effort, of an earlier commit"
 		if printf '%s' "$review" | jq -r .body | grep -q 'No open issues'; then
 			status "$sha" review success "Copilot: no open issues ($effort)"
 		elif [ "$open_threads" = 0 ]; then
 			status "$sha" review success "Copilot's comments are all resolved"
+		elif [ "$open_threads" = '?' ]; then
+			status "$sha" review pending "Copilot's comments could not be read: the next run asks again"
 		else
 			status "$sha" review pending "Copilot left $open_threads open comment(s): answer and resolve them"
 		fi
@@ -215,7 +234,7 @@ one() {
 }
 
 case ${1:-} in
---all) for n in $(gh api --paginate "repos/$repo/pulls?state=open" --jq '.[].number'); do one "$n"; done ;;
+--all) for n in $(api --paginate "repos/$repo/pulls?state=open" --jq '.[].number'); do one "$n"; done ;;
 --dry) dry=1; one "${2:?number}" ;;
 '' | -*) echo "usage: $0 NUMBER | --all | --dry NUMBER" >&2; exit 2 ;;
 *) one "$1" ;;

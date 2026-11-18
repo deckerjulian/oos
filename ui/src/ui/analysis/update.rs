@@ -234,10 +234,7 @@ impl Ui {
             T::None => {}
         }
         let nearest = |l: &[f64], x: f64| {
-            l.iter()
-                .enumerate()
-                .min_by(|a, b| (a.1 - x).abs().partial_cmp(&(b.1 - x).abs()).unwrap())
-                .map_or(0, |e| e.0)
+            l.iter().enumerate().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |e| e.0)
         };
         let Some(d) = &f.decoder else { return };
         m.dec_on = true;

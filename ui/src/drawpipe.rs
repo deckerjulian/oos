@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Deposit pipeline (fork, docs/fork/perf-plan.md item 1): every acquired frame is used. In `batch` mode the
-//! acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
+//! Deposit pipeline (fork, docs/fork/perf-plan.md item 1), the draw path of the hardware (ADR 0059): every acquired
+//! frame is used. The acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
 //! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
 //! one per little core. The workers claim the frames a few at a time; while the FPGA's ring fills with the next batch
 //! the acquisition thread claims single frames too (`help`, from `seq::acquire_batch_idle`). Each frame is
-//! decoded into kept vectors and drawn with the fast path (`draw_frame`, one frame at a time; the frames mode draws
-//! the same picture with `Ui::fast_draw_all`) into the claimer's own maps, with the screen mapping the UI published
-//! (`View`); the trigger statistics and the cheap measurements (framestats.rs) are counted with it. Once per screen
-//! refresh the UI adds the maps to its phosphor (`merge`); it never iterates the frames.
+//! decoded into kept vectors and drawn with the fast path (`draw_frame`, one frame at a time; the frame loop draws
+//! the same picture of the frames in its queue with `Ui::fast_draw_all`) into the claimer's own maps, with the screen mapping the UI published
+//! (`View`); the trigger statistics and the cheap measurements (framestats.rs) are counted with it. Each claimer
+//! draws on into its maps over its batches and, once a screen, folds them into one set in a shared mailbox, on its
+//! own core (`hand`, `publish`); once per screen refresh the UI takes that set (`merge`): it swaps the maps in for
+//! minimum persistence, else adds those of the channels on. It never iterates the frames, and never waits for the
+//! workers.
 //!
-//! The picture is the one of the `frames` mode (every frame through the queue) for the same frames: the workers run
-//! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
-//! A batch whose workers are still busy, frames of older settings and maps of an older mapping are dropped and
-//! counted (`Counters`). Where the fast path does not apply (no view), the acquisition thread queues every frame as in
-//! `frames` mode. Batch is the default draw path (ADR 0029); `acq.pipeline = frames` in system.conf or
-//! OOS_PIPELINE=frames starts with the old path, kept as the way back.
+//! The picture is the one of `draw_frame` on every frame, one by one: the workers run it on the frames of a batch but
+//! the newest, which takes the UI's path. A batch whose workers are still busy, frames of older settings and maps of
+//! an older mapping are dropped and counted (`Counters`). Where the workers do not take a batch (no view: the fast
+//! path does not apply; batches of one frame; the hardware average) the acquisition thread queues its frames for the
+//! frame loop. The other sources (demo, replay, live, SIM) have no batches and no workers.
 
 use crate::board::Frame;
 use crate::fastdraw::EdgeSeek;
@@ -113,7 +115,7 @@ fn dense(
     t.triggered
 }
 
-/// The trigger of a dense frame on the fast path, as both draw paths find it (`refine_edge`).
+/// The trigger of a dense frame on the fast path, as the workers and the frame loop find it (`refine_edge`).
 pub struct Trigger {
     /// the trigger's sample: the refined edge, else the hardware trigger point
     pub ti: f64,
@@ -124,8 +126,8 @@ pub struct Trigger {
 }
 
 /// The trigger of the dense frame `f`, smoothed to `col` samples. `refine` (level, hysteresis, rising, either, half a
-/// screen in samples as the span, `col` as the smoothing) finds the edge on the source channel: each draw path keeps
-/// its own choice of search.
+/// screen in samples as the span, `col` as the smoothing) finds the edge on the source channel: the workers and the
+/// frame loop's fast path each keep their own choice of search.
 pub fn refine_edge(
     m: &Model,
     f: &Frame,
@@ -274,7 +276,7 @@ pub fn draw_frame_codes(
     Some(dense(ph, m, f, Dense { x_per_sample, pairs: false, present }, stats, refine, deposit))
 }
 
-/// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
+/// Frames acquired, used (drawn into the picture) and dropped, since the start.
 #[derive(Default)]
 pub struct Counters {
     pub acquired: AtomicU64,
@@ -300,21 +302,6 @@ impl Counters {
     }
 }
 
-/// The pipeline mode: `batch` (this pipeline) or `frames` (every frame through the UI queue).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Frames,
-    Batch,
-}
-
-/// OOS_PIPELINE, else the `acq.pipeline` line of system.conf: `frames` (or `standard`) for the old path, else batch.
-pub fn mode_from(env: Option<&str>, conf: &str) -> Mode {
-    match crate::sysconf::setting_of(env, conf, "acq.pipeline") {
-        Some("frames" | "standard") => Mode::Frames,
-        _ => Mode::Batch,
-    }
-}
-
 /// A read-out buffer of the board (the acquisition thread's DMA target), lent to the workers.
 pub trait RawBatch: Send + Sync {
     fn bytes(&self) -> &[u8];
@@ -324,7 +311,7 @@ pub trait RawBatch: Send + Sync {
 /// Decodes the frame bytes into a kept frame (the board's decoder with the batch's settings).
 pub type DecodeInto = Arc<dyn Fn(&[u8], &mut Frame) + Send + Sync>;
 
-/// The buffer while the workers have it: back to the acquisition thread's pool when the last share is done.
+/// The buffer while the drawers have it: back to the acquisition thread's pool when the last share is drawn.
 struct Lease {
     raw: Option<Box<dyn RawBatch>>,
     home: Sender<Box<dyn RawBatch>>,
@@ -342,13 +329,17 @@ impl Drop for Lease {
 /// A batch with the workers: its frames are claimed a few at a time by whoever is free (the workers, and the
 /// acquisition thread while it waits for the next batch: `help`). Frames never claimed count as dropped.
 pub(crate) struct Batch {
-    lease: Lease,
+    /// the buffer until the last frames are claimed; then only their claimers hold it, while they draw: it goes back
+    /// with the last frame drawn, not when a worker that still holds the batch (folding its maps, or with the batch
+    /// in its queue) lets it go
+    lease: Mutex<Option<Arc<Lease>>>,
     fb: usize,
     frames: usize,
     decode: DecodeInto,
     /// the board's view without decoding (`draw_frame_codes`), where it has one
     codes: Option<CodesInto>,
     stamp: u64,
+    /// the first frame nobody has claimed; written under `lease`
     next: AtomicUsize,
     counters: &'static Counters,
     /// batches not done yet (`Pipe::live`)
@@ -356,10 +347,17 @@ pub(crate) struct Batch {
 }
 
 impl Batch {
-    /// The next `n` frames nobody has taken yet.
-    fn claim(&self, n: usize) -> Option<Range<usize>> {
-        let i = self.next.fetch_add(n, Ordering::Relaxed);
-        (i < self.frames).then(|| i..(i + n).min(self.frames))
+    /// The next `n` frames nobody has taken yet, with a share of the buffer to draw them from.
+    fn claim(&self, n: usize) -> Option<(Range<usize>, Arc<Lease>)> {
+        let mut lease = self.lease.lock().unwrap();
+        let i = self.next.load(Ordering::Relaxed);
+        if i >= self.frames {
+            return None;
+        }
+        let end = (i + n).min(self.frames);
+        self.next.store(end, Ordering::Relaxed);
+        let share = if end == self.frames { lease.take() } else { lease.clone() };
+        share.map(|s| (i..end, s))
     }
 }
 
@@ -421,6 +419,9 @@ impl Key {
 struct Acc {
     gen: u64,
     ph: Phosphor,
+    /// the maps that may hold counts: the channels on in the view drawn with (drawing writes no other map), all of
+    /// them for maps that were the UI's picture (`Pipe::merge`); only these are cleared and added
+    used: [bool; NCH],
     /// statistics of the cheap measurements over the frames (framestats.rs)
     folds: crate::framestats::Folds,
     frames: u64,
@@ -431,16 +432,25 @@ struct Acc {
 
 impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
+        let ph = Phosphor::new(w, h);
+        Acc { gen, ph, used: [false; NCH], folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
-        self.ph.clear();
+        for (m, u) in self.ph.map.iter_mut().zip(&mut self.used) {
+            if std::mem::take(u) {
+                clear_map(m);
+            }
+        }
         self.folds.clear();
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
+    /// `o` added: its maps (the ones it uses), statistics and counts.
     fn add(&mut self, o: &Acc) {
-        add(&mut self.ph, &o.ph);
+        for c in (0..NCH).filter(|&c| o.used[c]) {
+            add_map(&mut self.ph.map[c], &o.ph.map[c]);
+            self.used[c] = true;
+        }
         crate::framestats::add_folds(&mut self.folds, &o.folds);
         self.frames += o.frames;
         self.triggered += o.triggered;
@@ -451,19 +461,50 @@ impl Acc {
     }
 }
 
-/// A worker's mailbox: the drawn maps the UI takes, and the maps it gives back to be cleared and reused.
+/// The mailbox of the workers and the helper (the drawers): the set the UI takes next (`full`), each drawer's own set
+/// between its batches (`parked`), and the maps given back to be cleared and reused. A drawer hands its set on once a
+/// screen, after its first batch since a merge, folded into `full` (`publish`); after its other batches it parks the
+/// set and draws on into it with the next one (`hand`). So the sets are folded a few times a screen, not once a batch
+/// and drawer, and `full` is whole long before the UI takes it. Held only to move a set in or out, never while maps
+/// are added: the UI never waits for the drawers.
 #[derive(Default)]
 struct Mail {
     full: Option<Acc>,
-    spare: Option<Acc>,
+    /// one slot per drawer: the workers', then the helper's
+    parked: Vec<Option<Acc>>,
+    spare: Vec<Acc>,
+    /// merges so far
+    epoch: u64,
+    /// sets folded into another (`publish`)
+    #[cfg(test)]
+    folds: u64,
 }
 
-/// The acquisition thread's state as a helper (`Pipe::help`): its maps and its kept frame.
+impl Mail {
+    /// Sets kept for reuse at most: one per drawer and the UI's, more are freed.
+    const SPARES: usize = 8;
+
+    /// The mailbox locked. It is whole between two moves, so a drawer that panicked stops neither the others nor the
+    /// UI.
+    fn lock(m: &Mutex<Mail>) -> std::sync::MutexGuard<'_, Mail> {
+        m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn keep(&mut self, a: Acc) {
+        if self.spare.len() < Self::SPARES {
+            self.spare.push(a);
+        }
+    }
+}
+
+/// The acquisition thread's state as a helper (`Pipe::help`): its maps, its kept frame, and the merge it last
+/// handed its maps on after.
 #[derive(Default)]
 pub struct Helper {
     acc: Option<Acc>,
     spare: Option<Acc>,
     f: Frame,
+    seen: Option<u64>,
 }
 
 /// The view and the settings stamp the UI is at; None while the fast path does not apply.
@@ -479,8 +520,10 @@ pub struct Pipe {
     view: Arc<Mutex<ViewState>>,
     counters: &'static Counters,
     workers: Vec<SyncSender<Arc<Batch>>>,
-    /// the workers' mailboxes and, last, the helper's
-    mails: Vec<Arc<Mutex<Mail>>>,
+    /// the mailbox of the workers and the helper
+    mail: Arc<Mutex<Mail>>,
+    /// the helper's slot in it, after the workers'
+    helper: usize,
     /// batches the helper may take frames of, oldest first
     open: Mutex<std::collections::VecDeque<std::sync::Weak<Batch>>>,
     /// batches fed and not done (drawn and handed on, or dropped)
@@ -489,45 +532,46 @@ pub struct Pipe {
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
 }
 
-/// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them.
+/// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them, and
+/// the pixels the merge added on the caller's thread (none when the maps were swapped in; else the blocks of the maps
+/// of the channels on that hold counts, `add_map`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Merged {
     pub frames: u64,
     pub triggered: u64,
     pub folds: crate::framestats::Folds,
+    pub px: u64,
 }
 
 impl Pipe {
     /// A pipe with `n` workers counting into `counters`; `little`: the workers go to the little cores.
     pub fn start(n: usize, little: bool, counters: &'static Counters) -> Pipe {
         let view: Arc<Mutex<ViewState>> = Default::default();
-        let mut mails = Vec::new();
+        // a slot for each worker and, last, the helper's
+        let mail = Arc::new(Mutex::new(Mail { parked: (0..=n).map(|_| None).collect(), ..Default::default() }));
         let mut workers = Vec::new();
         for k in 0..n {
-            // batches are bounded by the read-out buffers (`hw::POOL`), a few at most
+            // a few batches at most: their buffers (`hw::POOL`) come back with the last frame drawn, and a worker
+            // behind finds nothing left to claim in the ones the others drew
             let (tx, rx) = sync_channel::<Arc<Batch>>(16);
-            let mail: Arc<Mutex<Mail>> = Default::default();
             let (v, m) = (view.clone(), mail.clone());
             match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
                 if little {
                     crate::http::to_little_cores();
                 }
-                work(rx, &v, &m)
+                work(k, rx, &v, &m)
             }) {
-                Ok(_) => {
-                    workers.push(tx);
-                    mails.push(mail);
-                }
+                Ok(_) => workers.push(tx),
                 Err(e) => eprintln!("oos-ui: deposit worker: {}", e),
             }
         }
-        mails.push(Default::default());
         let (home, pool) = channel();
         Pipe {
             view,
             counters,
             workers,
-            mails,
+            mail,
+            helper: n,
             open: Default::default(),
             live: Default::default(),
             home,
@@ -549,6 +593,11 @@ impl Pipe {
             v.key = Some(key);
         }
         v.stamp = m.hw_stamp;
+    }
+
+    /// The workers have batches to draw (fed and not done).
+    pub fn busy(&self) -> bool {
+        self.live.load(Ordering::Relaxed) > 0
     }
 
     /// The fast path applies: the workers take frames.
@@ -586,7 +635,7 @@ impl Pipe {
         let frames = raw.bytes().len().checked_div(fb).map_or(0, |n| frames.min(n));
         let next = AtomicUsize::new(first.min(frames));
         let b = Arc::new(Batch {
-            lease: Lease { raw: Some(raw), home: self.home.clone() },
+            lease: Mutex::new(Some(Arc::new(Lease { raw: Some(raw), home: self.home.clone() }))),
             fb,
             frames,
             decode,
@@ -603,7 +652,7 @@ impl Pipe {
             open.push_back(Arc::downgrade(&b));
         }
         for w in &self.workers {
-            // full only if the workers are far behind: the others take its frames
+            // full only if the worker is far behind: the others take its frames (all of them: dropped, counted)
             if let Err(TrySendError::Disconnected(_)) = w.try_send(b.clone()) {
                 eprintln!("oos-ui: deposit worker gone");
             }
@@ -630,9 +679,8 @@ impl Pipe {
             self.help_done(h);
             return false;
         };
-        let Some(r) = b.claim(1) else { return true };
+        let Some((r, lease)) = b.claim(1) else { return true };
         let (v, stamp) = self.view_now();
-        let mails = self.mails.last().expect("helper mailbox");
         match v.filter(|_| b.stamp >= stamp) {
             None => Counters::add(&self.counters.dropped, r.len() as u64),
             Some(v) => {
@@ -640,22 +688,19 @@ impl Pipe {
                     self.help_done(h);
                 }
                 if h.acc.is_none() {
-                    let spare = h.spare.take().or_else(|| mails.lock().unwrap().spare.take());
-                    h.acc = Some(fresh_acc(spare, &v));
+                    h.acc = Some(take_set(&self.mail, self.helper, &mut h.spare, &v, self.counters));
                 }
                 let a = h.acc.as_mut().expect("helper maps");
-                draw_range(&b, r, &v, a, &mut h.f, self.counters);
+                draw_range(&b, &lease, r, &v, a, &mut h.f, self.counters);
             }
         }
         true
     }
 
-    /// The helper's maps to the UI.
+    /// The helper's maps to the UI: handed on or parked (`hand`), as a worker's after a batch.
     pub fn help_done(&self, h: &mut Helper) {
-        match h.acc.take() {
-            Some(a) if a.frames > 0 => h.spare = publish(self.mails.last().expect("helper mailbox"), a, self.counters),
-            Some(a) => h.spare = Some(a),
-            None => {}
+        if let Some(s) = hand(&self.mail, self.helper, &mut h.seen, h.acc.take(), self.counters) {
+            h.spare = Some(s);
         }
     }
 
@@ -665,32 +710,45 @@ impl Pipe {
     }
 
     /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
-    /// `clear`: minimum persistence, the picture is replaced: cleared first if anything is merged.
+    /// `clear`: minimum persistence, the picture is replaced: by the drawn maps themselves if anything is merged.
+    /// One set of maps a call, whatever the number of workers (they fold theirs into one, `publish`): the frame loop
+    /// adds the maps of the channels on, or with `clear` swaps them in and adds nothing (issue #186). Without a
+    /// whole set it takes a parked one: the frames of a drawer that has no more batches come with a later screen.
     pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
         let gen = self.view.lock().unwrap().view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
-        for mail in &self.mails {
-            let full = mail.lock().unwrap().full.take();
-            let Some(a) = full else { continue };
-            if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
-                if *clear {
-                    ph.clear();
-                    *clear = false;
-                }
-                add(ph, &a.ph);
-                for (x, y) in edges.iter_mut().zip(a.edges) {
-                    *x += y;
-                }
-                *off = (off.0 + a.off.0, off.1.max(a.off.1));
-                got.frames += a.frames;
-                got.triggered += a.triggered;
-                crate::framestats::add_folds(&mut got.folds, &a.folds);
-            } else {
-                Counters::add(&self.counters.dropped, a.frames);
+        let full = {
+            let mut mb = Mail::lock(&self.mail);
+            mb.epoch += 1;
+            match mb.full.take() {
+                Some(a) => Some(a),
+                None => mb.parked.iter_mut().find_map(Option::take),
             }
-            // back to the worker, which clears it
-            mail.lock().unwrap().spare = Some(a);
+        };
+        let Some(mut a) = full else { return got };
+        if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
+            if *clear {
+                // the picture cleared and the maps added is the maps: the old picture goes back to be cleared
+                std::mem::swap(&mut ph.map, &mut a.ph.map);
+                a.used = [true; NCH];
+                *clear = false;
+            } else {
+                for c in (0..NCH).filter(|&c| a.used[c]) {
+                    got.px += add_map(&mut ph.map[c], &a.ph.map[c]);
+                }
+            }
+            for (x, y) in edges.iter_mut().zip(a.edges) {
+                *x += y;
+            }
+            *off = (off.0 + a.off.0, off.1.max(a.off.1));
+            got.frames += a.frames;
+            got.triggered += a.triggered;
+            crate::framestats::add_folds(&mut got.folds, &a.folds);
+        } else {
+            Counters::add(&self.counters.dropped, a.frames);
         }
+        // back to the drawers, which clear it
+        Mail::lock(&self.mail).keep(a);
         got
     }
 }
@@ -704,13 +762,59 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
         }
         _ => Acc::new(v.gen, v.w, v.h),
     };
+    a.used = std::array::from_fn(|c| v.m.ch[c].on);
     a.folds = crate::framestats::folds_for(&v.m);
     a
 }
 
-/// Frames `r` of batch `b` decoded into `f` and drawn into `a`.
-fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
-    let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
+/// Maps for drawer `id` to draw into with view `v`: its parked set when that was drawn with `v`, else empty ones
+/// (from `spare` or the mailbox's). A parked set of an older mapping is dropped (the UI would drop it).
+fn take_set(mail: &Mutex<Mail>, id: usize, spare: &mut Option<Acc>, v: &View, counters: &Counters) -> Acc {
+    let mut mb = Mail::lock(mail);
+    match mb.parked[id].take() {
+        Some(a) if a.gen == v.gen && (a.ph.w, a.ph.h) == (v.w, v.h) => return a,
+        Some(old) => {
+            Counters::add(&counters.dropped, old.frames);
+            mb.keep(old);
+        }
+        None => {}
+    }
+    let s = spare.take().or_else(|| mb.spare.pop());
+    drop(mb);
+    fresh_acc(s, v)
+}
+
+/// Drawer `id` after a batch, with the maps it drew into (`a`; None: it drew nothing, then its parked set is meant):
+/// handed on (`publish`) when a merge came since it last did (`seen`), else parked, to draw on into with the next
+/// batch. Returns maps for the next set when it has some to spare.
+fn hand(mail: &Mutex<Mail>, id: usize, seen: &mut Option<u64>, a: Option<Acc>, counters: &Counters) -> Option<Acc> {
+    let a = {
+        let mut mb = Mail::lock(mail);
+        let a = match a {
+            Some(a) if a.frames == 0 => return Some(a),
+            Some(a) => a,
+            None => match mb.parked[id].take() {
+                Some(p) if *seen != Some(mb.epoch) => p,
+                p => {
+                    mb.parked[id] = p;
+                    return None;
+                }
+            },
+        };
+        if *seen == Some(mb.epoch) {
+            // the slot is empty: the drawer took its set out to draw (`take_set`)
+            mb.parked[id] = Some(a);
+            return None;
+        }
+        *seen = Some(mb.epoch);
+        a
+    };
+    publish(mail, a, counters)
+}
+
+/// Frames `r` of batch `b` (in `lease`) decoded into `f` and drawn into `a`.
+fn draw_range(b: &Batch, lease: &Lease, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
+    let Some(bytes) = lease.raw.as_ref().map(|x| x.bytes()) else { return };
     for i in r {
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
         // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
@@ -733,28 +837,51 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
     }
 }
 
-/// Hands drawn maps to `mail` (added to what the UI has not taken yet); returns maps to draw the next ones into.
-fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
-    let mut mb = mail.lock().unwrap();
-    match mb.full.as_mut() {
-        Some(full) if full.gen == a.gen && (full.ph.w, full.ph.h) == (a.ph.w, a.ph.h) => {
-            full.add(&a);
-            Some(a)
-        }
-        _ => {
-            if let Some(old) = mb.full.take() {
-                Counters::add(&counters.dropped, old.frames);
+/// Hands drawn maps to `mail`, folded into what the UI has not taken yet, and returns maps to draw the next ones into.
+/// The set there is taken out and added to outside the lock, on the drawer's core; meanwhile the UI finds the
+/// mailbox without it (those frames come with the next merge), and a set another drawer puts in is folded too. Of two
+/// sets of different mappings the older one is dropped (the UI drops it anyway).
+fn publish(mail: &Mutex<Mail>, mut a: Acc, counters: &Counters) -> Option<Acc> {
+    // the maps of the last set folded in (returned for the next drawing), and one more kept at the next look
+    let (mut free, mut extra): (Option<Acc>, Option<Acc>) = (None, None);
+    loop {
+        let other = {
+            let mut mb = Mail::lock(mail);
+            if let Some(x) = extra.take() {
+                mb.keep(x);
             }
-            mb.full = Some(a);
-            mb.spare.take()
-        }
+            match mb.full.take() {
+                Some(o) if o.gen == a.gen && (o.ph.w, o.ph.h) == (a.ph.w, a.ph.h) => {
+                    #[cfg(test)]
+                    {
+                        mb.folds += 1;
+                    }
+                    o
+                }
+                o => {
+                    let (keep, old) = match o {
+                        Some(o) if o.gen > a.gen => (o, Some(a)),
+                        o => (a, o),
+                    };
+                    if let Some(old) = old {
+                        Counters::add(&counters.dropped, old.frames);
+                        mb.keep(old);
+                    }
+                    mb.full = Some(keep);
+                    return free.or_else(|| mb.spare.pop());
+                }
+            }
+        };
+        a.add(&other);
+        extra = free.replace(other);
     }
 }
 
-/// A worker: claims frames of each batch until none are left, draws them into its own maps, then hands them on.
-fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
+/// Worker `id`: claims frames of each batch until none are left, draws them into its own maps, then hands them on or
+/// parks them (`hand`).
+fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
     let mut f = Frame::default();
-    let mut spare: Option<Acc> = None;
+    let (mut spare, mut seen): (Option<Acc>, Option<u64>) = (None, None);
     while let Ok(b) = rx.recv() {
         let (v, stamp) = {
             let s = view.lock().unwrap();
@@ -762,49 +889,68 @@ fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
         };
         let Some(v) = v.filter(|_| b.stamp >= stamp) else {
             // older settings or no fast path: the frames are dropped (counted when the batch goes)
-            while let Some(r) = b.claim(b.frames.max(1)) {
+            while let Some((r, _)) = b.claim(b.frames.max(1)) {
                 Counters::add(&b.counters.dropped, r.len() as u64);
             }
             continue;
         };
-        let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.take()), &v);
-        while let Some(r) = b.claim(CLAIM) {
-            draw_range(&b, r, &v, &mut a, &mut f, b.counters);
+        // the maps only when there is something to draw: the others took every frame already
+        let mut a = None;
+        while let Some((r, lease)) = b.claim(CLAIM) {
+            let a = a.get_or_insert_with(|| take_set(mail, id, &mut spare, &v, b.counters));
+            draw_range(&b, &lease, r, &v, a, &mut f, b.counters);
         }
-        // handed on before the batch goes: once it is gone, its frames are in a mailbox
-        if a.frames == 0 {
-            spare = Some(a);
-        } else {
-            spare = publish(mail, a, b.counters);
+        // handed on or parked before the batch goes: once it is gone, its frames are in the mailbox
+        if let Some(s) = hand(mail, id, &mut seen, a, b.counters) {
+            spare = Some(s);
         }
     }
 }
 
-/// `dst` += `src`, saturating, per channel map.
-fn add(dst: &mut Phosphor, src: &Phosphor) {
-    for (d, s) in dst.map.iter_mut().zip(src.map.iter()) {
-        for (x, y) in d.iter_mut().zip(s.iter()) {
-            *x = x.saturating_add(*y);
+/// `dst` += `src`, saturating: one channel's map. A trace covers a small part of it: the blocks of `src` without
+/// counts are only read, `dst` there not at all (a fold or a clear on a small core is memory-bound: the reads and
+/// writes it leaves out are its time).
+/// Returns the pixels of the blocks it added.
+fn add_map(dst: &mut [u16], src: &[u16]) -> u64 {
+    let mut px = 0;
+    for (d, s) in dst.chunks_mut(BLOCK).zip(src.chunks(BLOCK)) {
+        if any_count(s) {
+            for (x, y) in d.iter_mut().zip(s) {
+                *x = x.saturating_add(*y);
+            }
+            px += d.len() as u64;
         }
     }
+    px
+}
+
+/// `m` cleared: only its blocks with counts are written.
+fn clear_map(m: &mut [u16]) {
+    for b in m.chunks_mut(BLOCK) {
+        if any_count(b) {
+            b.fill(0);
+        }
+    }
+}
+
+/// Pixels of a block of `add_map` and `clear_map`: two cache lines.
+const BLOCK: usize = 64;
+
+fn any_count(b: &[u16]) -> bool {
+    b.iter().fold(0, |a, &x| a | x) != 0
 }
 
 /// Workers where the cores are all alike (the host): two.
 const WORKERS: usize = 2;
 
-/// Batch mode switched on (Acquire > Draw path = Batch, `:SYSTem:PIPeline`, the start unless `acq.pipeline = frames`).
+/// The workers on: the source is the hardware (`Ui::step`). The other sources (demo, replay, live, SIM) put their
+/// records on the screen without the queue of hardware frames, and start no workers.
 static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The workers, started the first time batch mode is on and kept afterwards.
+/// The workers, started the first time the hardware is the source and kept afterwards.
 static PIPE: OnceLock<Pipe> = OnceLock::new();
 
-/// Whether the scope starts with batch mode: yes unless `acq.pipeline = frames` (or OOS_PIPELINE=frames).
-pub fn configured() -> bool {
-    let env = std::env::var("OOS_PIPELINE").ok();
-    mode_from(env.as_deref(), &crate::sysconf::fork_text()) == Mode::Batch
-}
-
-/// Batch mode on or off while the scope runs. Off: the workers stay, idle, and forget their view, so no frame of
-/// the old settings is merged when it comes on again.
+/// The workers on or off while the scope runs (`ENABLED`). Off: they stay, idle, and forget their view, so no frame
+/// of the old settings is merged when they come on again.
 pub fn set_enabled(on: bool) {
     let was = ENABLED.swap(on, std::sync::atomic::Ordering::Relaxed);
     if was && !on {
@@ -814,7 +960,7 @@ pub fn set_enabled(on: bool) {
     }
 }
 
-/// The pipe in `batch` mode (started on first use), else None.
+/// The pipe while the source is the hardware (started on first use), else None.
 pub fn pipe() -> Option<&'static Pipe> {
     if !ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
@@ -822,12 +968,19 @@ pub fn pipe() -> Option<&'static Pipe> {
     Some(PIPE.get_or_init(|| Pipe::start(crate::placement::little_count().unwrap_or(WORKERS), true, counters())))
 }
 
-/// The mode in force, for the status line.
-pub fn mode() -> Mode {
-    if pipe().is_some() {
-        Mode::Batch
+/// The pipe with `n` workers for the tests of the frame loop in batch mode (the first call decides).
+#[cfg(test)]
+pub fn start_for_tests(n: usize) -> &'static Pipe {
+    PIPE.get_or_init(|| Pipe::start(n, false, counters()))
+}
+
+/// The status line's word for the workers (`pipeline ...` of `:SYSTem:STATe?`): `Batch` while they draw the
+/// hardware's batches, `Off` with another source.
+pub fn status() -> &'static str {
+    if ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        "Batch"
     } else {
-        Mode::Frames
+        "Off"
     }
 }
 
@@ -944,9 +1097,9 @@ mod tests {
     }
 
     // Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
-    // other trigger statistics than the frames mode, or frames lost on it
+    // other trigger statistics than `draw_frame` on every frame, or frames lost on it
     #[test]
-    fn batch_picture_from_the_codes_equals_the_frames_mode() {
+    fn batch_picture_from_the_codes_equals_each_frame_drawn() {
         let (w, h) = (970, 448);
         let sig = |k: usize, c: usize, i: usize| {
             0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0)
@@ -1128,7 +1281,33 @@ mod tests {
         }
     }
 
-    /// The frames mode for the same frames: `draw_frame` and the per-frame statistics on every frame, one by one.
+    /// Sets wait in the mailbox: the full one or parked ones.
+    fn pending(p: &Pipe) -> bool {
+        let mb = p.mail.lock().unwrap();
+        mb.full.is_some() || mb.parked.iter().any(Option::is_some)
+    }
+
+    /// Merges until the mailbox is empty, as the screens after a run do: the full set, then the parked ones, one a
+    /// merge. Returns the sums and the pixels each merge added.
+    fn merge_all(
+        p: &Pipe,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        edges: &mut [u64; 4],
+        off: &mut (f64, f64),
+    ) -> (Merged, Vec<u64>) {
+        let (mut sum, mut px) = (Merged::default(), Vec::new());
+        while pending(p) {
+            let d = p.merge(ph, clear, edges, off);
+            (sum.frames, sum.triggered) = (sum.frames + d.frames, sum.triggered + d.triggered);
+            crate::framestats::add_folds(&mut sum.folds, &d.folds);
+            px.push(d.px);
+        }
+        sum.px = px.iter().sum();
+        (sum, px)
+    }
+
+    /// The same frames one by one: `draw_frame` and the per-frame statistics on every frame.
     fn reference(
         bytes: &[u8],
         fb: usize,
@@ -1149,12 +1328,12 @@ mod tests {
         (want, trig, edges, off, folds)
     }
 
-    // Break it catches: a batch picture that differs from the frames mode for the same frames (decode into kept
+    // Break it catches: a batch picture that differs from `draw_frame` on every frame (decode into kept
     // vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
     // trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not
     // clear for minimum persistence, a buffer that does not come back.
     #[test]
-    fn batch_picture_equals_the_frames_mode() {
+    fn batch_picture_equals_each_frame_drawn() {
         let (w, h) = (970, 448);
         for (tdiv, memsel, two, dots, workers, helper) in [
             (1e-6, 12_512u32, false, false, 2, false),
@@ -1185,11 +1364,15 @@ mod tests {
             let mut got = Phosphor::new(w, h);
             got.map[0][0] = 7;
             let (mut clear, mut edges, mut off) = (true, [0u64; 4], (0.0, 0.0));
-            let n = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
+            let (n, px) = merge_all(&pipe, &mut got, &mut clear, &mut edges, &mut off);
             let (want, trig, wedges, woff, folds) = reference(&bytes, fb, &s, &p, &m, w, h);
             let what = format!("{} s/div, {} workers, helper {}", tdiv, workers, helper);
             assert_eq!((n.frames, n.triggered), (41, trig), "{}", what);
             assert!(!clear && trig > 30 && trig < 41, "{}: {} triggered", what, trig);
+            // minimum persistence: the first set swapped in, nothing added on the UI's thread; a parked set after it
+            // is added (the blocks with counts of one map a channel on)
+            assert_eq!(px[0], 0, "{}", what);
+            assert!(px[1..].iter().all(|&x| x > 0 && x <= (w * h * (1 + two as usize)) as u64), "{}: {:?}", what, px);
             assert_eq!(edges, wedges, "{}", what);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
             for c in 0..NCH {
@@ -1213,6 +1396,54 @@ mod tests {
             assert_eq!(back.len(), 2);
             assert!(back.into_iter().all(|b| b.downcast::<Bytes>().is_ok()));
         }
+    }
+
+    // Break it catches (issue #186): frames lost or merged twice while the workers and the helper fold their maps into
+    // one set and the UI takes it meanwhile, a merge that adds more than one set of maps on the UI's thread, or maps of
+    // channels that are off.
+    #[test]
+    fn every_frame_is_merged_once_while_the_workers_fold() {
+        let (w, h) = (970, 448);
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(40, 12_512, false);
+        let (want, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+        let c = fresh();
+        let pipe = Pipe::start(4, false, c);
+        pipe.set_view(Some(&m), w, h);
+        let rounds = 12u64;
+        let mut ph = Phosphor::new(w, h);
+        // a channel that is off keeps what it has (persistence)
+        ph.map[1][5] = 3;
+        let (mut frames, mut merges) = (0, 0);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let mut take = |ph: &mut Phosphor| {
+            let got = pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+            assert!(got.px <= (w * h) as u64, "{} pixels added", got.px);
+            frames += got.frames;
+            merges += (got.frames > 0) as u64;
+        };
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let mut hp = Helper::default();
+                for _ in 0..rounds {
+                    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 40, 0, dec(&s, &p));
+                    while pipe.help(&mut hp) {}
+                    pipe.help_done(&mut hp);
+                }
+                done.store(true, Ordering::Release);
+            });
+            while !done.load(Ordering::Acquire) {
+                take(&mut ph);
+            }
+        });
+        settle(&pipe);
+        while pending(&pipe) {
+            take(&mut ph);
+        }
+        assert_eq!((frames, c.read()), (40 * rounds, (0, 0, 0)), "{} merges", merges);
+        assert!(ph.map[0].iter().zip(&want.map[0]).all(|(&x, &y)| x as u64 == y as u64 * rounds));
+        assert!(ph.map[1].iter().enumerate().all(|(i, &x)| x == if i == 5 { 3 } else { 0 }));
+        assert!(ph.map[2..].iter().all(|m| m.iter().all(|&x| x == 0)));
     }
 
     // Break it catches: the acquisition thread's share drawn differently from the workers', or not handed to the UI.
@@ -1304,7 +1535,7 @@ mod tests {
             pipe.feed(Box::new(Bytes(big.clone())), fb2, 200, 3, dec(&s2, &p2));
         }
         settle(&pipe);
-        assert_eq!(merge(&mut ph).frames, 1200);
+        assert_eq!(merge_all(&pipe, &mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).0.frames, 1200);
         assert_eq!(c.read().2, 20);
         // a batch dropped before anybody claimed a frame counts all of them
         let pipe0 = Pipe::start(0, false, c);
@@ -1314,17 +1545,6 @@ mod tests {
         // no view: the acquisition thread queues the frames itself
         pipe.set_view(None, 0, 0);
         assert!(!pipe.accepting());
-    }
-
-    #[test]
-    fn pipeline_mode_from_env_and_system_conf() {
-        assert_eq!(mode_from(None, ""), Mode::Batch, "Batch is the default (ADR 0029)");
-        assert_eq!(mode_from(None, "ntp = off\nacq.pipeline = frames   # old path\n"), Mode::Frames);
-        assert_eq!(mode_from(None, "acq.pipeline = standard\n"), Mode::Frames);
-        assert_eq!(mode_from(None, "acq.pipeline = batch\n"), Mode::Batch);
-        assert_eq!(mode_from(Some("frames"), "acq.pipeline = batch\n"), Mode::Frames);
-        assert_eq!(mode_from(Some("batch"), "acq.pipeline = frames\n"), Mode::Batch);
-        assert_eq!(mode_from(None, "acq.pipeline = bogus\n"), Mode::Batch);
     }
 
     /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames
@@ -1350,8 +1570,9 @@ mod tests {
             };
             let frames = (2_000_000 / (memsel as usize * 2)).clamp(8, 500);
             let (bytes, fb, s, p) = batch(frames, memsel, false);
-            // the frames mode: decode + draw_frame on one thread (its measurements: a few records a second), against
-            // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
+            // decode + draw_frame on one thread (the frame's work without the pipeline; its measurements: a few
+            // records a second), against one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are
+            // reported only
             let mut ph = Phosphor::new(w, h);
             let one = Pipe::start(1, false, fresh());
             one.set_view(Some(&m), w, h);
@@ -1387,8 +1608,299 @@ mod tests {
                 per.push(t0.elapsed() / (3 * frames) as u32);
             }
             let r = per[0].as_secs_f64() / old.as_secs_f64();
-            println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
-            assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than in the frames mode: {:.2}", r);
+            println!("{} s/div {} pt, frame statistics {}: one by one {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
+            assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than one by one: {:.2}", r);
+        }
+    }
+
+    /// One batch of 16 frames of `bytes` as the acquisition thread hands it on in batch mode: frame 0 left out, the
+    /// others to the workers and its own share (`help`), until all are drawn and in the mailbox.
+    fn feed_batch(pipe: &Pipe, bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params, stamp: u64, hp: &mut Helper) {
+        let (cs, cp) = (s.clone(), *p);
+        let codes: CodesInto =
+            Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
+        let frames = bytes.len() / fb;
+        let b = pipe.feed_codes(Box::new(Bytes(bytes.to_vec())), fb, 1, frames - 1, stamp, dec(s, p), Some(codes));
+        while pipe.help(hp) {}
+        drop(b);
+        settle(pipe);
+        pipe.help_done(hp);
+        while pipe.take_buffer().is_some() {}
+    }
+
+    /// The frame loop's time per step at 10 us/div, 1, 2 and 4 channels (250 kB frames, 16 a batch, as the unit reads
+    /// them), the workers against the queue for the same frames, one batch a step (issue #186). With the workers (4,
+    /// as on the unit) they and the acquisition thread's share have drawn the batch before the step, so what is timed
+    /// is the frame loop's own work; through the queue the frame loop draws the frames itself (with its helpers), as
+    /// it does with the frames of a batch the workers do not take. Also the merge alone, with minimum persistence (the
+    /// maps swapped in) and with persistence (added): its time and the pixels it adds. Guarded: the workers must not
+    /// cost the frame loop more than the queue. Run by tools/perf-guard.sh.
+    #[test]
+    #[ignore]
+    fn perf_guard_batch_step_at_10_us_per_div() {
+        use crate::wave::Source;
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
+        };
+        let pipe = start_for_tests(4);
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let mut worst: f64 = 0.0;
+        for (mask, n) in [(1u32, 125_000u32), (3, 62_500), (15, 31_250)] {
+            let frames = 16;
+            let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
+            let mut per = [0.0f64; 2];
+            let mut hp = Helper::default();
+            for (k, batch) in [false, true].into_iter().enumerate() {
+                let shared: crate::board::HwShared = Default::default();
+                let mut ui = crate::ui::Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+                ui.measure_in_background();
+                ui.m.run = RunState::Run;
+                ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-5).abs() < 1e-8).unwrap();
+                ui.m.trig_level = 0.0;
+                for c in 0..NCH {
+                    (ui.m.ch[c].on, ui.m.ch[c].offset) = (mask & (1 << c) != 0, 0.0);
+                }
+                // the first step publishes the mapping to the workers
+                ui.step(1.0 / 30.0);
+                let mut times = Vec::new();
+                for step in 0..40 {
+                    let stamp = ui.m.hw_stamp;
+                    let mut newest =
+                        Frame { stamp, ..crate::board::dho::hw::decode(&bytes[(frames - 1) * fb..], &s, &p, 0) };
+                    // the record's readings, made by the acquisition thread
+                    newest.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&newest.ch[c]));
+                    if batch {
+                        feed_batch(pipe, &bytes, fb, &s, &p, stamp, &mut hp);
+                    } else {
+                        let mut q = shared.lock().unwrap();
+                        for chunk in bytes.chunks_exact(fb).skip(1).take(frames - 2) {
+                            q.queue.push_back(Frame { stamp, ..crate::board::dho::hw::decode(chunk, &s, &p, 0) });
+                        }
+                    }
+                    shared.lock().unwrap().queue.push_back(newest);
+                    let t0 = std::time::Instant::now();
+                    ui.step(1.0 / 30.0);
+                    if step >= 8 {
+                        times.push(t0.elapsed().as_secs_f64() * 1e3);
+                    }
+                }
+                // every frame drawn (fast path or pipeline), 15 a step
+                assert_eq!(ui.wfm_total, 15 * 40, "{} frames drawn", ui.wfm_total);
+                per[k] = median(times);
+                let mode = if batch { "workers" } else { "queue" };
+                println!("10 us/div mask {:#x} {} pt, {}: frame loop {:.2} ms a step (median)", mask, n, mode, per[k]);
+            }
+            // the merge alone, with the mapping of the last step's view
+            let mut m = model(1e-5, false, false);
+            for c in 0..NCH {
+                m.ch[c].on = mask & (1 << c) != 0;
+            }
+            let (w, h) = (970, 448);
+            pipe.set_view(Some(&m), w, h);
+            let mut ph = Phosphor::new(w, h);
+            for clear in [true, false] {
+                let (mut times, mut px) = (Vec::new(), 0);
+                for _ in 0..20 {
+                    feed_batch(pipe, &bytes, fb, &s, &p, m.hw_stamp, &mut hp);
+                    let t0 = std::time::Instant::now();
+                    let got = pipe.merge(&mut ph, &mut clear.clone(), &mut [0; 4], &mut (0.0, 0.0));
+                    times.push(t0.elapsed().as_secs_f64() * 1e3);
+                    assert_eq!(got.frames, frames as u64 - 2);
+                    px = got.px;
+                }
+                println!("  merge, clear {}: {:.3} ms (median), {} pixels added", clear, median(times), px);
+            }
+            worst = worst.max(per[1] / per[0]);
+        }
+        assert!(worst <= 1.0, "the workers must not cost the frame loop more than the queue: ratio {:.2}", worst);
+    }
+
+    // Break it catches (unit 2026-11-18, more batches dropped for want of a buffer): a batch's buffer kept until every
+    // holder of the batch lets it go (a worker folding its maps into the mailbox, a worker with the batch in its
+    // queue) instead of coming back with its last frame drawn.
+    #[test]
+    fn the_buffer_comes_back_with_the_last_frame_drawn() {
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(10, 12_512, false);
+        let pipe = Pipe::start(0, false, fresh());
+        pipe.set_view(Some(&m), 970, 448);
+        // held as by a worker that still hands its maps on
+        let b = pipe.feed_codes(Box::new(Bytes(bytes)), fb, 0, 10, 0, dec(&s, &p), None);
+        let mut hp = Helper::default();
+        while pipe.help(&mut hp) {}
+        assert!(pipe.take_buffer().is_some(), "every frame drawn: the buffer is back while the batch is held");
+        drop(b);
+    }
+
+    // Break it catches (unit 2026-11-18, more frames dropped at 4 channels): the drawers folding their maps into the
+    // mailbox after every batch (folds a screen that grow with the batches: worker time and memory traffic on the
+    // small cores taken from drawing), or frames lost while they park their maps between screens.
+    #[test]
+    fn the_drawers_fold_once_a_screen() {
+        let (w, h) = (970, 448);
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(40, 12_512, false);
+        let c = fresh();
+        let pipe = Pipe::start(4, false, c);
+        pipe.set_view(Some(&m), w, h);
+        let (screens, per) = (5u64, 8u64);
+        let mut hp = Helper::default();
+        let mut ph = Phosphor::new(w, h);
+        let mut frames = 0;
+        for _ in 0..screens {
+            for _ in 0..per {
+                let b = pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 40, 0, dec(&s, &p), None);
+                while pipe.help(&mut hp) {}
+                drop(b);
+                settle(&pipe);
+                pipe.help_done(&mut hp);
+            }
+            frames += pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
+        }
+        let folds = pipe.mail.lock().unwrap().folds;
+        frames += merge_all(&pipe, &mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
+        assert_eq!((frames, c.read()), (40 * per * screens, (0, 0, 0)));
+        // each of the 5 drawers hands its maps on once a screen at most, the first into the empty mailbox
+        assert!(folds <= 4 * screens, "{} folds in {} screens of {} batches", folds, screens, per);
+    }
+
+    // Break it catches (unit 2026-11-18, 9-14 % fewer frames at 4 channels): a fold or a clear that goes over the whole
+    // map where the traces hold counts in a small part of it (where the batches are fewer than the screens every
+    // drawer of a batch folds its maps, at 4 channels four 970 x 448 maps each on a small core), counts left out, or
+    // pixels outside the blocks with counts touched wrongly (saturation, the last partial block).
+    #[test]
+    fn folding_and_clearing_touch_the_blocks_with_counts() {
+        let (w, h) = (970, 448);
+        let n = w * h;
+        // a batch's maps, as a drawer folds them: the traces of 40 frames, a sine with jitter and shifted frames
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(40, 12_512, false);
+        let (drawn, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+        let mut set = Phosphor::new(w, h);
+        let px = add_map(&mut set.map[0], &drawn.map[0]);
+        assert!(set.map[0] == drawn.map[0]);
+        assert!(px > 0 && px * 2 <= n as u64, "{} of {} pixels touched", px, n);
+        // the sums, saturated, and a last block of 59 pixels
+        let n = n - 5;
+        let mut src = vec![0u16; n];
+        for &(i, v) in &[(0usize, 3u16), (63, 1), (64, 7), (5000, u16::MAX), (n - 1, 2)] {
+            src[i] = v;
+        }
+        let mut dst = vec![1u16; n];
+        dst[5000] = 9;
+        assert_eq!(add_map(&mut dst, &src), 3 * BLOCK as u64 + 59);
+        let want: Vec<u16> = (0..n).map(|i| if i == 5000 { u16::MAX } else { 1 + src[i] }).collect();
+        assert!(dst == want);
+        clear_map(&mut src);
+        assert!(src.iter().all(|&x| x == 0));
+    }
+
+    /// The unit's loop at 10 us/div at a fixed rate (issue #186, unit 2026-11-18): a batch of 16 frames of 250 kB
+    /// every 600, 400 and 250 us, read into one of 3 buffers (`hw::POOL`) and dropped when none is back, 4 workers,
+    /// the acquisition thread's share while the next one "fills", the frame loop merging 29 times a second with
+    /// minimum persistence. Prints the frames dropped for want of a buffer and the frames each screen got. Guarded:
+    /// every frame merged or counted, and the median screen gets at least half of its share (a set out of the mailbox
+    /// while the drawers fold it leaves screens empty). The drops depend on the computer; host (M3), 4 channels, a
+    /// batch every 400 us: 31-37 % with a mailbox per drawer, 40 % with the shared one folded after every batch,
+    /// 1-13 % with the maps parked between screens. Run by tools/perf-guard.sh.
+    #[test]
+    #[ignore]
+    fn perf_guard_batch_at_a_fixed_rate() {
+        use std::time::{Duration, Instant};
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
+        };
+        let frames = 16;
+        for mask in [1u32, 15] {
+            let (bytes, fb, s, p) = frames_of(mask, 125_000 / hz::ratio(mask), frames, &sig);
+            let (cs, cp) = (s.clone(), p);
+            let codes: CodesInto =
+                Arc::new(move |x: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(x, &cs, &cp, 0, f));
+            let mut m = model(1e-5, false, false);
+            for k in 0..NCH {
+                m.ch[k].on = mask & (1 << k) != 0;
+            }
+            for us in [600u64, 400, 250] {
+                let c = fresh();
+                let pipe = Pipe::start(4, false, c);
+                let (w, h) = (970, 448);
+                pipe.set_view(Some(&m), w, h);
+                let done = std::sync::atomic::AtomicBool::new(false);
+                let (mut fed, mut nobuf, mut merged, mut per) = (0u64, 0u64, 0u64, Vec::new());
+                std::thread::scope(|sc| {
+                    // the acquisition thread
+                    sc.spawn(|| {
+                        let mut hp = Helper::default();
+                        let (mut made, mut cur) = (1, Box::new(Bytes(bytes.clone())));
+                        let t0 = Instant::now();
+                        let mut due = t0;
+                        while t0.elapsed() < Duration::from_secs(2) {
+                            due += Duration::from_micros(us);
+                            while Instant::now() < due {
+                                if !pipe.help(&mut hp) {
+                                    std::thread::yield_now();
+                                }
+                            }
+                            let back = pipe.take_buffer().map(|x| x.downcast::<Bytes>().expect("test buffer"));
+                            let next = back.or_else(|| {
+                                (made < 3).then(|| {
+                                    made += 1;
+                                    Box::new(Bytes(bytes.clone()))
+                                })
+                            });
+                            match next {
+                                Some(nx) => {
+                                    let full = std::mem::replace(&mut cur, nx);
+                                    pipe.feed_codes(full, fb, 0, frames - 1, 0, dec(&s, &p), Some(codes.clone()));
+                                    fed += frames as u64 - 1;
+                                }
+                                None => nobuf += frames as u64 - 1,
+                            }
+                        }
+                        while pipe.help(&mut hp) {}
+                        pipe.help_done(&mut hp);
+                        done.store(true, Ordering::Release);
+                    });
+                    let mut ph = Phosphor::new(w, h);
+                    while !done.load(Ordering::Acquire) {
+                        std::thread::sleep(Duration::from_micros(34_000));
+                        let got = pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
+                        merged += got;
+                        per.push(got);
+                    }
+                });
+                settle(&pipe);
+                let screens = per.len() as u64;
+                merged += merge_all(&pipe, &mut Phosphor::new(w, h), &mut true, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
+                per.sort();
+                let p50 = per[per.len() / 2];
+                println!(
+                    "mask {:#x}, a batch every {} us: {} frames, {:.0} % dropped for want of a buffer; {} screens, \
+                     frames a screen p10 {} p50 {} p90 {}",
+                    mask,
+                    us,
+                    fed + nobuf,
+                    100.0 * nobuf as f64 / (fed + nobuf) as f64,
+                    screens,
+                    per[per.len() / 10],
+                    p50,
+                    per[per.len() * 9 / 10],
+                );
+                // every frame fed merged or counted: dropped only when every worker is 16 batches behind (a busy computer)
+                let (_, _, dropped) = c.read();
+                assert_eq!(merged + dropped, fed, "mask {:#x} {} us: frames lost", mask, us);
+                assert!(
+                    p50 * 2 >= fed / screens,
+                    "mask {:#x} {} us: median screen {} of {}",
+                    mask,
+                    us,
+                    p50,
+                    fed / screens
+                );
+            }
         }
     }
 }

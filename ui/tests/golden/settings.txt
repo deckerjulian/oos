@@ -1497,9 +1497,9 @@ scpi :SYSTem:PIPeline "-1" -> query: BATC; errors: -224,"Illegal parameter value
 scpi :SYSTem:PIPeline "1e9" -> query: BATC; errors: -224,"Illegal parameter value" 1e9
 scpi :SYSTem:PIPeline "BATC" -> query: BATC; errors: none
 scpi :SYSTem:PIPeline "BATCh" -> query: BATC; errors: none
-scpi :SYSTem:PIPeline "FRAM" -> query: FRAM; errors: none
-scpi :SYSTem:PIPeline "FRAMes" -> query: FRAM; errors: none
-scpi :SYSTem:PIPeline "STANdard" -> query: FRAM; errors: none
+scpi :SYSTem:PIPeline "FRAM" -> query: BATC; errors: -224,"Illegal parameter value" FRAM
+scpi :SYSTem:PIPeline "FRAMes" -> query: BATC; errors: -224,"Illegal parameter value" FRAMes
+scpi :SYSTem:PIPeline "STANdard" -> query: BATC; errors: -224,"Illegal parameter value" STANdard
 scpi :SYSTem:PIPeline "x" -> query: BATC; errors: -224,"Illegal parameter value" x
 scpi :SYSTem:PIPeline default -> query: BATC; errors: none
 scpi :TIMebase:DELay:ENABle "" -> query: 0; errors: -224,"Illegal parameter value"
@@ -1959,15 +1959,15 @@ setup bode_mode "loop" -> Loop; error: line 2: bode_mode: unknown value: loop
 setup bode_mode "x" -> Loop; error: line 2: bode_mode: unknown value: x
 setup bode_mode default -> Loop
 setup bode_sweep "" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: want 7 values
-setup bode_sweep "-1 true 4 Rise 1 1 0" -> -1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
+setup bode_sweep "-1 true 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
 setup bode_sweep "-1" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: want 7 values
-setup bode_sweep "0 true 4 Rise 1 1 0" -> 0 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
+setup bode_sweep "0 true 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
 setup bode_sweep "1 -1 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: not a boolean: -1
 setup bode_sweep "1 1e9 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: not a boolean: 1e9
 setup bode_sweep "1 false 0 Fall 1 4 0" -> 1 false 1 Fall 1 4 0
 setup bode_sweep "1 true -1 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: not an index: -1
-setup bode_sweep "1 true 1 Either 1 1 0" -> 1 true 1 Rise 1 1 0; error: line 2: bode_sweep: unknown value: Either
-setup bode_sweep "1 true 1 Rise 1 5 0" -> 1 true 1 Rise 1 1 0; error: line 2: bode_sweep: 5 out of range (< 5)
+setup bode_sweep "1 true 1 Either 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: unknown value: Either
+setup bode_sweep "1 true 1 Rise 1 5 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: 5 out of range (< 5)
 setup bode_sweep "1 true 1e9 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: not an index: 1e9
 setup bode_sweep "1 true 4 -1 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: unknown value: -1
 setup bode_sweep "1 true 4 1e9 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: unknown value: 1e9
@@ -1989,7 +1989,7 @@ setup bode_sweep "1 x 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_
 setup bode_sweep "1e-9 on 1 Fall -2 0 -10" -> 0.000000001 true 1 Fall -2 0 -10
 setup bode_sweep "1e9 true 4 Rise 1 1 0" -> 1000000000 true 4 Rise 1 1 0
 setup bode_sweep "1e9" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: want 7 values
-setup bode_sweep "inf true 1 Rise 1 1 0" -> inf true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
+setup bode_sweep "inf true 1 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: the sweep time must be above 0
 setup bode_sweep "x true 4 Rise 1 1 0" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: invalid float literal
 setup bode_sweep "x" -> 1 true 4 Rise 1 1 0; error: line 2: bode_sweep: bode_sweep: want 7 values
 setup bode_sweep default -> 1 true 4 Rise 1 1 0
@@ -3506,14 +3506,6 @@ setup dpt "R1 R2 R3 Off R4 1 Both" -> R1 R2 R3 Off R4 1 Both
 setup dpt "x 2 3 Off 4 10 Both" -> 1 2 3 Off 4 10 Both; error: line 2: dpt: not a source: x
 setup dpt "x" -> 1 2 3 Off 4 10 Both; error: line 2: dpt: dpt: want 7 values
 setup dpt default -> 1 2 3 Off 4 10 Both
-setup draw_path "" -> batch; error: line 2: draw_path: "": standard or batch
-setup draw_path "-1" -> batch; error: line 2: draw_path: "-1": standard or batch
-setup draw_path "1e9" -> batch; error: line 2: draw_path: "1e9": standard or batch
-setup draw_path "Batch" -> batch; error: line 2: draw_path: "Batch": standard or batch
-setup draw_path "batch" -> batch
-setup draw_path "standard" -> standard
-setup draw_path "x" -> batch; error: line 2: draw_path: "x": standard or batch
-setup draw_path default -> batch
 setup dvm "" -> false 0 0; error: line 2: dvm: dvm: on source mode
 setup dvm "-1 0 0" -> false 0 0; error: line 2: dvm: not a boolean: -1
 setup dvm "-1" -> false 0 0; error: line 2: dvm: dvm: on source mode

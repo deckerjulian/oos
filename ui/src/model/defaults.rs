@@ -154,7 +154,6 @@ impl Default for Model {
             dots: true,
             hdmi: HdmiMode::Waveform,
             bar_compact: false,
-            draw_batch: true,
             hdmi_view: 0,
             views: 1,
             view_cur: 0,

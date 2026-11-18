@@ -9,6 +9,7 @@
 
 use super::{at, rising, Kind, Packet};
 use crate::edges::{edges, states};
+use crate::protocols::ModuleInfo;
 
 /// Quad-SPI frame layout: lines per phase (1, 2 or 4), address length (0 = no address, 3 or 4 bytes), dummy cycles
 /// after the address, `mode` = a mode byte ("continuous read" bits M7..M0) on the address lines after the address.
@@ -139,6 +140,19 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
     })
 }
 
+/// Quad-SPI flash: IO0, SCK, CS# and IO1.
+pub static QSPI: ModuleInfo = ModuleInfo::new("Qspi", "Quad-SPI", "qspi")
+    .roles([Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")])
+    .bit(|_, _| 0.5e-6)
+    .decoder(|l| {
+        let cs = l.need(2, "CS# source missing")?;
+        let mut io = vec![l.main()];
+        if let Some(c) = l.lines[3] {
+            io.push(c);
+        }
+        Ok(qspi(cs, l.need(1, "SCK source missing")?, &io, &QspiCfg::new(1, 1, 1, 3, 0, false), true, l.thr, l.hy))
+    });
+
 /// Quad-SPI flash / PSRAM: CS# active low frames, all lines sampled on the rising SCK edge (SPI mode 0 or 3), MSB
 /// first; on 2/4 lines IO1/IO3 carries the most significant bit of each cycle. `io` = IO0..IO3 (missing lines read
 /// low). Per frame: `Field("CMD")` (value = opcode), `Field("ADDR")`, `Field("MODE")`, `Field("DUMMY")` (value =
@@ -172,6 +186,11 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
     let mut out = Vec::new();
     let (mut qpi, mut ab4) = (cfg.cmd_lines == 4, cfg.addr_bytes == 4);
     for (fs, fe) in frames {
+        // the clock edges inside the frame, after its start and before its end; a frame that ends where it starts
+        // (both crossings between the same two samples) has none, also when an edge of the clock lies there
+        if fe <= fs {
+            continue;
+        }
         let a = clk.partition_point(|&t| t <= fs);
         let b = clk.partition_point(|&t| t < fe);
         let cyc: Vec<(f64, u32)> = clk[a..b]

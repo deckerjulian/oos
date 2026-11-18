@@ -50,13 +50,13 @@ impl Proto {
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         let Proto::Module(i) = self;
-        crate::protocols::get(i).roles()
+        crate::protocols::get(i).info().roles
     }
 
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
         let Proto::Module(i) = self;
-        crate::protocols::get(i).diff_ok()
+        crate::protocols::get(i).info().diff_ok
     }
 }
 
@@ -111,7 +111,7 @@ impl Model {
     /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
     pub fn bus_bit(&self) -> f64 {
         let Proto::Module(i) = self.dec_proto;
-        crate::protocols::get(i).bit_time_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))
+        crate::protocols::get(i).info().bit_time(&self.dec_opts(), &crate::protocols::shared(self))
     }
 
     /// The settings of the decoder the menu edits.

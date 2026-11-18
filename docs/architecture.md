@@ -3,8 +3,8 @@
 How the pieces of OOS fit together: from the SD card over the kernel to the Rust crates and the GUI. The register-level
 details are in `protocols/`.
 
-The three diagrams follow the C4 levels: the scope and who uses it, the programs of the image, and the parts inside
-the programs. They are drawn from the code; the files are named under each.
+The diagrams follow the C4 levels: the scope and who uses it, the programs of the image, the parts inside the
+programs, and the layers inside `oos-ui`. They are drawn from the code; the files are named under each.
 
 ## The scope and who uses it
 
@@ -28,6 +28,12 @@ flowchart LR
 
 Drawn from: [boot.md](boot.md), [network.md](network.md), ADR 0009 and ADR 0011, `ui/src/main.rs`.
 
+What a computer may build on is the remote interface: the SCPI commands, the HTTP routes and the MCP tools, each
+marked stable or experimental in its reference and versioned as a whole
+([ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md)). Add-ons use the same interface from a
+process of their own on the scope, not code inside `oos-ui`
+([ADR 0056](adr/code/0056-add-ons-run-outside-the-core-and-use-a-stable-extension-interface.md)); both are proposed.
+
 ## The programs of the image
 
 ```mermaid
@@ -38,6 +44,7 @@ flowchart TB
         gpu["oos-gpu<br/>puts the picture together on the GPU, optional"]
         fpgad["oos-fpgad<br/>cold boot of the FPGA, service commands"]
         net["Network programs<br/>udhcpc, wpa_supplicant, nftables, Dropbear"]
+        bt["Bluetooth<br/>oos-bt, dbus-daemon, bluetoothd"]
         kernel["Linux kernel<br/>PCIe and XDMA, DRM, GPIO, UART, input"]
     end
     data[("/oos<br/>settings, calibration by OOS, update state")]
@@ -46,6 +53,8 @@ flowchart TB
     rcs -- "starts" --> ui
     rcs -- "cold-boot --execute" --> fpgad
     rcs -- "starts" --> net
+    rcs -- "starts" --> bt
+    bt -- "pairings" --> data
     ui -- "layers and trace maps: shared memory, a Unix socket" --> gpu
     ui -- "device files" --> kernel
     fpgad -- "device files" --> kernel
@@ -121,9 +130,9 @@ Pure functions build lists of `(offset, value)` writes and update software shado
 host tests check them against fixtures from the Python models (`tools/*model.py`) and the device logs. Applying a list
 is a separate step through `dho::bus::Bus` (`Bar1` on the unit, `Recorder` in tests).
 
-The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `bootstatus`, `vendorkeys`. Everything
-of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board family adds a module next to
-it ([porting.md](porting.md)).
+The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `dbus`, `bluez`, `bootstatus`,
+`vendorkeys`. Everything of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board
+family adds a module next to it ([porting.md](porting.md)).
 
 | Module (in `dho` unless noted) | Role |
 |---|---|
@@ -139,18 +148,22 @@ it ([porting.md](porting.md)).
 | `model` (root) | model identity, capabilities and limits (`models.md`) |
 | `update` (root) | signed updates with rollback (`update.md`) |
 | `wlan` (root) | control socket of wpa_supplicant, its answers, key derivation (`wlan.md`) |
+| `dbus` (root) | a D-Bus client of its own: the wire format, SASL EXTERNAL, calls and the calls that come in |
+| `bluez` (root) | bluetoothd's objects and calls for mice and keyboards, the pairing agent |
 
 ### oos-dsp: signal processing
 
-Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, UART/I2C/SPI
-decoders, mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
+Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, the protocol
+decoders as modules (`protocols`: key, name, lines, the call of the decoder, bit time and protocol trigger rule of
+each), mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
 
 ### oos-ui: the scope screen
 
 One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
 
 Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](protocol-modules.md)) bring their
-menu rows, trigger rules, labels, demo traffic and an optional view of their own through one trait, `Protocol`.
+menu rows, labels, demo traffic and an optional view of their own through one trait, `Protocol`; what each one is,
+the call of its decoder, its timing and its protocol trigger rule come from its `ModuleInfo` in `oos-dsp`.
 Measurements come the same way (`ui/src/measures`, [measurement-modules.md](measurement-modules.md)): a
 `MeasModule` gives its tiles on the measurement page and computes its values on the catalog worker thread.
 Analyser pages implement `Analyser` (`ui/src/ui/analysers.rs`, [analyser-modules.md](analyser-modules.md)): the start
@@ -167,12 +180,13 @@ Threads:
 | Thread | Job |
 |---|---|
 | main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip; reads the web, SCPI and VXI-11 connections without waiting (`net::read_now`): nothing in the loop may block on the network |
-| input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
+| input | front-panel UART (keys, knobs, LED frames), touch, and USB or Bluetooth mice and keyboards (evdev, taken for oos-ui alone; `hid.rs` says what an event means, `ui/src/ui/pointer.rs` acts on it) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
 | web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
+| bt | System > Network > Bluetooth's client of bluetoothd (`ui/src/ui/bt.rs` over `hal::bluez`): the state every 2 s, scan, pair, connect, forget, and the pairing agent's answers; started with the first look at the page, so the frame loop never waits on the radio |
 | ntp | SNTP exchange and clock step when Time from NTP is on (`ui/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
@@ -181,11 +195,79 @@ selected type, the software trigger finds the point again in the data). Only `De
 values when it is chosen, values that trigger on its signals; with every other source a new type keeps what the user
 set (width, pattern, levels), and the lower level of Slope, Runt and Window stays at or below the upper one.
 
+### Layers inside oos-ui
+
+Every module of `oos-ui` is in one layer, and a layer names only the layers below it that its row allows
+([ADR 0049](adr/code/0049-the-layers-inside-oos-ui.md), which has the table with every module). An arrow reads "may
+name" and carries on down the arrows, with two limits: a transport names only the interpreters and base, and the
+store does not name the board.
+
+```mermaid
+flowchart TB
+    subgraph uiL["oos-ui (ui/src/)"]
+        main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
+        transport["transport<br/>http, vxi11, hislip, announce<br/>frame the messages of a computer"]
+        command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
+        screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
+        store["store<br/>store<br/>setup and waveform files"]
+        signal["signal<br/>wave, trig, protocols, measures, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
+        settings["settings<br/>settings<br/>one row per setting"]
+        board["board<br/>board<br/>the one door to the hardware"]
+        model["model<br/>model, math, zone, decode<br/>what the user has set"]
+        base["base<br/>gfx, font, layout, clock, sysconf, system, net, netacl, mdns, ssh and ten more<br/>no state of the scope"]
+    end
+    hal["oos_hal::dho (hal/src/dho/)<br/>the registers of the DHO800/DHO900 board"]
+    main -- "wires up" --> transport
+    transport -- "programs, ADR 0022" --> command
+    transport --> base
+    command -- "Ui, handed over by the frame loop" --> screen
+    screen --> store
+    store --> signal
+    store --> settings
+    signal -- "Board, Frame" --> board
+    settings --> model
+    board --> model
+    model --> base
+    board -- "board/dho/ only" --> hal
+```
+
+Drawn from: `tools/layers.py` (`UI_LAYERS`, which places every module and is what `tools/layers.py --list` checks
+the paths against), `ui/src/main.rs` (the modules and the frame loop), `ui/src/board/mod.rs`. The code does not hold
+the arrows everywhere yet: the paths against them are counted in `tools/layers.txt` and may only become fewer
+(ADR 0037, ADR 0049). A new module gets its row in `UI_LAYERS` before the checks pass.
+
 ### oos-fpgad: bring-up and service tool
 
 A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everywhere), runs it only with `--execute`,
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
+
+## Where a change goes
+
+Each kind of change has its place. The first seven are the kinds of extension: each has one place where it is
+declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and a test that names what is missing
+([ADR 0046](adr/process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md)).
+
+| A change of | Goes into | Kept complete by |
+|---|---|---|
+| a setting | a row of its group's table in `ui/src/settings/`; the setup file, SCPI, the menu row and the docs table follow | `ui/src/settings/tests.rs::every_row_is_complete` |
+| a measurement | a measurement module in `ui/src/measures/`, its numbers in `dsp/src/` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
+| a protocol decoder | the decoder and its `ModuleInfo` in its family file of `dsp/src/decode/` (C-PHY in `dsp/src/cphy.rs`, the line codes in `dsp/src/linecode.rs`), a protocol module in `ui/src/protocols/` | `ui/src/protocols/mod.rs::every_decoder_is_complete` |
+| a trigger type | `ui/src/model/trigger.rs`, the software trigger in `dsp/src/trigger.rs`, the hardware trigger in `hal/src/dho/tpu.rs` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
+| an analyser page | its file in `ui/src/ui/`, registered in `ui/src/ui/analysers.rs` | `ui/src/ui/analysers.rs::every_page_is_complete` |
+| a remote command | the interpreter, `ui/src/scpi.rs` and its subsystem's file in `ui/src/scpi/`; never a transport | `tools/scpi-coverage.py` |
+| a register sequence, a hardware fact | first `docs/protocols/`, then the block's module in `hal/src/dho/` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test`, `tools/compare-base.sh` |
+| a menu, a row, a dialog | `ui/src/ui/`: `item.rs` (the items and their parts), `menu_items.rs`, `menu_text.rs`, `menu_actions.rs`, `menu_dialog.rs` | `ui/src/ui/lint/menu_layout.rs::every_menu_fits`, `ui/src/ui/item.rs::no_menu_item_has_two_parts` |
+| the state of the scope, a default | `ui/src/model.rs` and `ui/src/model/` | the tests of `ui/src/model.rs` |
+| what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
+| signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
+| what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
+| a remote transport, a network service | its file in `ui/src/` (`http.rs`, `vxi11.rs`, `hislip.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
+| a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |
+| a decision others build on | a record in `docs/adr/` and its row in `docs/adr/README.md` | the pull request (ADR 0031) |
+
+The texts a change brings along are listed in [AGENTS.md](../AGENTS.md#keeping-the-texts-true).
 
 ## Data path of one acquisition (`hal::dho::seq`)
 
@@ -204,6 +286,11 @@ c2h bytes ── deinterleave ──> per-channel u16 codes ── volts (scale,
 | dsp | `cargo test` in dsp/ | every trigger, measurement, decoder and math function against signals with known answers |
 | ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage |
 | fpgad | `cargo test` in fpgad/ | option parsing, status interpretation |
+
+Every parser of outside input (files, the network, remote commands, the samples of a record) also has a hostile-input
+test: `cargo test hostile` in hal/, dsp/ and ui/ feeds it mutated valid inputs from a fixed seed, and it must return,
+not panic, and accept only what its contract allows; `OOS_HOSTILE_ITERS` raises the number of inputs
+([ADR 0047](adr/process/0047-parsers-of-outside-input-have-hostile-input-tests.md)).
 
 Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 

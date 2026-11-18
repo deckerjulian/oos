@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Signed updates in the GUI (docs/update.md): System > Update shows the update state, System > Roll back update
-//! writes the kept image back (two taps within 5 s), the web page /update takes a package (http.rs). The work is
-//! done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a dialog.
+//! writes the kept image back (two taps within 5 s), System > Start OOS again selects OOS for the next power-on once
+//! more (two taps, `oos-update arm`, what `oos-boot-oos-again` runs), the web page /update takes a package (http.rs).
+//! The work is done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a
+//! dialog.
 //! A notice from the start-up watcher (/tmp/oos-update.notice: rolled back after a failed start) is shown once.
 
 use super::*;
@@ -20,6 +22,8 @@ pub(super) struct UpdateUi {
     job: Option<(std::process::Child, String)>,
     /// first tap on Roll back: the second must come before this time
     arm_until: f64,
+    /// the same for Start OOS again
+    again_until: f64,
     next_check: f64,
     notice_shown: String,
     /// output of the last job (web page)
@@ -29,6 +33,32 @@ pub(super) struct UpdateUi {
 fn state() -> Option<State> {
     Path::new(update::STATE_PATH).parent().filter(|d| d.exists())?;
     State::load(Path::new(update::STATE_PATH)).ok()
+}
+
+/// What a tap of System > Start OOS again does.
+#[derive(Debug, PartialEq)]
+enum Again {
+    /// an update job runs: refused
+    Busy,
+    /// OOS starts at every power-on already: refused
+    Persist,
+    /// the first tap, or one after the 5 s ran out: asks
+    Ask,
+    /// the second tap within 5 s: `oos-update` with these arguments (what `oos-boot-oos-again` runs)
+    Run(&'static [&'static str]),
+}
+
+/// The step of a tap at `now`, with the second tap open until `until` (0: no first tap yet).
+fn again_step(busy: bool, persist: bool, now: f64, until: f64) -> Again {
+    if busy {
+        Again::Busy
+    } else if persist {
+        Again::Persist
+    } else if until == 0.0 || now > until {
+        Again::Ask
+    } else {
+        Again::Run(&["arm"])
+    }
 }
 
 impl Ui {
@@ -93,6 +123,26 @@ impl Ui {
             self.toast("Boot mode is Persist: set it to One-shot, then power-cycle");
         } else {
             self.toast("Power-cycle the scope: stock boots next");
+        }
+    }
+
+    /// System > Start OOS again: with Boot mode One-shot, the next power-on starts OOS once more instead of stock.
+    /// First tap asks, the second (within 5 s) runs `oos-update arm`, the command `oos-boot-oos-again` runs: it checks
+    /// that `recovery` holds an image the loader takes and only then writes the magic of `boot` (docs/boot.md). The
+    /// dialog of the job says what it did.
+    pub(super) fn boot_again_tap(&mut self) {
+        let persist = state().is_some_and(|s| s.persist);
+        match again_step(self.update_busy(), persist, self.now, self.upd.again_until) {
+            Again::Busy => self.toast("An update job is running"),
+            Again::Persist => self.toast("Boot mode is Persist: OOS starts at every power-on"),
+            Again::Ask => {
+                self.upd.again_until = self.now + 5.0;
+                self.toast("Tap again: OOS starts at the next power-on, once more");
+            }
+            Again::Run(args) => {
+                self.upd.again_until = 0.0;
+                self.update_spawn(args, "Start OOS again");
+            }
         }
     }
 
@@ -265,6 +315,37 @@ mod tests {
             l.join(" "),
             "Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored."
         );
+    }
+
+    // Break it catches: Start OOS again writing the card on a single tap, or standing away from Boot mode
+    #[test]
+    fn start_oos_again_asks_first_and_stands_under_boot_mode() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let items = u.items(MenuId::Utility);
+        let i = items.iter().position(|&it| it == Item::BootMode).unwrap();
+        assert_eq!(items.get(i + 1), Some(&Item::BootAgain));
+        assert!(matches!(Ui::kind(Item::BootAgain), Kind::Action));
+        u.boot_again_tap();
+        assert!(u.upd.job.is_none(), "one tap writes nothing");
+        assert!(u.toast.as_ref().unwrap().0.starts_with("Tap again"), "{:?}", u.toast);
+        // the second tap only after the first has run out: asks again
+        u.now += 6.0;
+        u.boot_again_tap();
+        assert!(u.upd.job.is_none() && u.toast.as_ref().unwrap().0.starts_with("Tap again"));
+    }
+
+    #[test]
+    fn start_oos_again_runs_arm_on_the_second_tap_and_refuses_when_it_must() {
+        assert_eq!(again_step(false, false, 3.0, 0.0), Again::Ask, "no first tap yet");
+        assert_eq!(again_step(false, false, 3.0, 5.0), Again::Run(&["arm"]), "the second tap within 5 s");
+        assert_eq!(again_step(false, false, 5.0, 5.0), Again::Run(&["arm"]), "at the last moment");
+        assert_eq!(again_step(false, false, 5.1, 5.0), Again::Ask, "after the 5 s");
+        assert_eq!(again_step(true, false, 3.0, 5.0), Again::Busy, "an update job runs");
+        assert_eq!(again_step(false, true, 3.0, 5.0), Again::Persist, "Boot mode Persist");
+        assert_eq!(again_step(true, true, 3.0, 5.0), Again::Busy, "a running job first");
+        // what the shell's `oos-boot-oos-again` runs, so the two do the same
+        let script = include_str!("../../../rootfs/initramfs/bin/oos-boot-oos-again");
+        assert!(script.lines().any(|l| l.trim() == "exec oos-update arm"), "{script}");
     }
 
     #[test]

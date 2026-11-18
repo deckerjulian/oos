@@ -9,6 +9,19 @@
 
 use super::{can_crc15, can_fd_crc, Kind, Packet};
 use crate::edges::{edges, states, Edge};
+use crate::protocols::{BusWhat, ModuleInfo};
+
+/// The CAN bit rates of the Decode menu.
+pub const CAN_RATES: [f64; 5] = [125e3, 250e3, 500e3, 800e3, 1e6];
+/// The CAN FD data phase bit rates of the Decode menu.
+pub const FD_RATES: [f64; 5] = [1e6, 2e6, 4e6, 5e6, 8e6];
+
+/// CAN on the RX level or CAN_H, or a pair.
+pub static CAN: ModuleInfo = ModuleInfo::new("Can", "CAN", "can")
+    .differential()
+    .starts_on(BusWhat::Id, 0x123)
+    .bit(|_, sh| 1.0 / sh.can_rate)
+    .decoder(|l| Ok(can(l.main(), l.dt, l.sh.can_rate, l.thr, l.hy, l.sh.canh)));
 
 /// CAN 2.0A/B data and remote frames at `bitrate`. `invert` = false: logic level as on the RX/TX pin (dominant low,
 /// idle high); true for CAN_H probed against ground (dominant high). Hard sync on the start of frame after at least 7
@@ -182,6 +195,12 @@ impl BitClock<'_> {
         Some((b, s, self.t))
     }
 }
+
+/// CAN FD with the bit rate switch.
+pub static CAN_FD: ModuleInfo = ModuleInfo::new("CanFd", "CAN-FD", "can")
+    .differential()
+    .bit(|opt, _| 1.0 / CAN_RATES[opt[0]])
+    .decoder(|l| Ok(can_fd(l.main(), l.dt, CAN_RATES[l.opt[0]], FD_RATES[l.opt[1]], l.thr, l.hy, l.opt[2] == 1)));
 
 /// CAN FD (ISO 11898-1:2015) and classic CAN frames (base and extended format) on one line, `invert` as in
 /// `decode::can`. Nominal bit rate `nominal`, data phase `data_rate` (from the sample point of a recessive BRS bit to

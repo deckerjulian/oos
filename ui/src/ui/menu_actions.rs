@@ -182,7 +182,7 @@ impl Ui {
             m.trig_type = t;
             // a value the protocol's demo traffic contains
             let Proto::Module(i) = p;
-            let (what, val) = crate::protocols::get(i).trigger_default();
+            let (what, val) = crate::protocols::get(i).info().trigger_default;
             (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
             self.dirty_map = true;
             return;
@@ -895,6 +895,11 @@ impl Ui {
                     self.close_picker();
                     self.ssh_remove_pick(k);
                 }
+                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::bt_is_pick(p.it)) => {
+                    let it = self.pick.map(|p| p.it).unwrap_or(Item::BtFound);
+                    self.close_picker();
+                    self.bt_pick(it, k);
+                }
                 Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
                     let p = self.ref_files.get(k).cloned();
                     self.close_picker();
@@ -1125,6 +1130,7 @@ impl Ui {
                 Item::StoreFfSave => self.ff_save(),
                 Item::StoreFfLoad => self.ff_load(),
                 Item::Stock => self.stock_tap(),
+                Item::BootAgain => self.boot_again_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
                 Item::SrcOn => {

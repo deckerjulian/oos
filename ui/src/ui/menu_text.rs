@@ -75,6 +75,7 @@ impl Ui {
             MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
             MenuId::Remote => "Remote services".into(),
             MenuId::Ssh => "SSH".into(),
+            MenuId::Bluetooth => "Bluetooth".into(),
             MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Sim => "SIM".into(),
@@ -211,6 +212,7 @@ impl Ui {
             | Item::SysInfo
             | Item::Shot
             | Item::Stock
+            | Item::BootAgain
             | Item::Update
             | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
@@ -447,6 +449,7 @@ impl Ui {
             Item::Stock => "Back to stock",
             Item::Update => "Update",
             Item::BootMode => "Boot mode",
+            Item::BootAgain => "Start OOS again",
             Item::Overclock => "Overclock",
             Item::ViewExit => "Exit",
             Item::ViewSettings => "Settings",
@@ -637,7 +640,7 @@ impl Ui {
             Item::DecBaud => format!("{}", crate::decode::BAUDS[m.dec_baud]),
             Item::DecCphyRate => crate::decode::cphy_rate_label(m.dec_cphy_rate),
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
-            Item::TrigBusWhat => m.trig_bus.name().into(),
+            Item::TrigBusWhat => bus_what_name(m.trig_bus).into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
             Item::SerRel
             | Item::SerMax

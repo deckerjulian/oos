@@ -37,8 +37,12 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
    (`oos-update boot`, before anything writes `recovery`).
 2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
    build.
-3. Its kernel and initramfs are loaded with `kexec_file_load`, or, when the image brings another device tree, with
-   `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another device tree" below). A second, uncompressed
+3. Its kernel and initramfs are loaded with `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another
+   device tree" below), with the new image's tree or, when it is the same, the running one; only a build without
+   kexec-tools uses `kexec_file_load`. That one puts the initramfs right behind the new kernel, low in memory, over
+   the loader's reserved ramdisk area and the GIC's tables: on the unit (2026-11-18) a 68 MB initramfs (a 48 MB
+   package) was dropped there and the started kernel found no root ("unknown-block(0,0)"); through kexec-tools the
+   same package installed. A second, uncompressed
    archive in the initramfs carries the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`:
    the new build may trust other keys) and the device tree section the start runs with (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
    (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
@@ -225,7 +229,8 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
 - A full `/oos` stops the trial bookkeeping: an update then neither confirms nor rolls back. The next power-on in one-shot
   mode starts stock.
 
-Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`) checks that `recovery` holds an image the loader takes and
+Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`, on the screen System > Start OOS again: two taps
+within 5 s, the job's output in a dialog) checks that `recovery` holds an image the loader takes and
 that no install or rollback runs; after a cut job the next start stays stock. `oos-update confirm` ends a trial only when
 the image on trial is the one running. Images whose load addresses or sizes are outside what the loader handles
 (docs/boot.md) are refused at install.

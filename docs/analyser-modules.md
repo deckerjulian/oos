@@ -34,6 +34,11 @@ scope asks the registry for everything around a page:
    names it; its overflow menu leads to its settings and back to the waveform; leaving it out in System > Features
    takes it out of the start menu; `:VIEW` reaches it and setups keep it when it says so. Add the page's own tests
    next to it.
+6. **What is around it**: `ui/src/ui/analysers.rs::every_page_is_complete` names what a page still lacks. Its row in
+   `PAGES` of that test (feature id, the word of its view in setups, its `:VIEW` keyword: none of them changes once
+   released), the keyword in the `:VIEW` rows of `docs/scpi.md` and `wiki/SCPI-and-VXI-11.md`, its name under
+   Analysers in `wiki/Features.md`, and its menu in the list of `menus_fit_at` (`ui/src/ui/lint/menu_layout.rs`), so
+   the layout check opens it.
 
 ## What is not a module yet
 

@@ -69,6 +69,10 @@ fn uart9_multidrop_on_rs485_pair() {
             (false, 0x00, Some(0), true)
         ]
     );
+    // the protocol trigger: every data word starts a frame; an address word is an ID
+    let frames: Vec<u32> = p.iter().filter(|x| UART9.trigger_match(BusWhat::Frame, 0, x)).map(|x| x.value).collect();
+    assert_eq!(frames, [0x22, 0x33, 0x44, 0x00]);
+    assert_eq!(p.iter().filter(|x| UART9.trigger_match(BusWhat::Id, 0xfe, x)).count(), 1);
     // the single wire A against ground does not decode through the hum, the pair does
     assert_ne!(
         uart9(&a, dt, baud, 2.5, 0.4, false).iter().map(|x| x.value).collect::<Vec<_>>(),

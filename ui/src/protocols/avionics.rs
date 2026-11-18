@@ -15,49 +15,18 @@ const ARATE_NAMES: [&str; 3] = ["Auto", "12.5 k", "100 k"];
 
 const ARINC_OPTIONS: [Opt; 1] = [Opt { name: "Bit rate", choices: &ARATE_NAMES, default: 0 }];
 
-/// The bit rate of the options; `None` = from the pulse spacing.
-fn arinc_rate(opt: &[usize; OPTS]) -> Option<f64> {
-    let r = crate::decode::ARINC_RATES[opt[0]];
-    (r > 0.0).then_some(r)
-}
-
 pub struct Arinc429;
 
 impl Protocol for Arinc429 {
-    fn key(&self) -> &'static str {
-        "Arinc429"
-    }
-    fn name(&self) -> &'static str {
-        "ARINC 429"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::ARINC429
     }
     fn options(&self) -> &'static [Opt] {
         &ARINC_OPTIONS
     }
-    /// Auto: high speed (the finer sampling).
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / arinc_rate(opt).unwrap_or(crate::decode::ARINC_RATES[2])
-    }
-    /// Auto: room for a low-speed word.
-    fn frame_span(&self, opt: &[usize; OPTS]) -> Option<f64> {
-        arinc_rate(opt).is_none().then(|| 200.0 / crate::decode::ARINC_RATES[1])
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::arinc429(l.main(), l.dt, arinc_rate(&l.opt), l.thr, l.hy))
-    }
     /// The label in octal.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         matches!(p.kind, Kind::Id { .. }).then(|| format!("L {:03o}", p.value))
-    }
-    /// A word starts with its label.
-    fn trigger_match(&self, what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Frame && matches!(p.kind, Kind::Id { .. })).then_some(true)
-    }
-    /// Label 310 (octal) of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0o310)
     }
     /// A word starts with a pulse of either sign.
     fn start_edge(&self) -> Slope {
@@ -87,21 +56,8 @@ impl Protocol for Arinc429 {
 pub struct Mil1553;
 
 impl Protocol for Mil1553 {
-    fn key(&self) -> &'static str {
-        "Mil1553"
-    }
-    fn name(&self) -> &'static str {
-        "1553"
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        1e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(oos_dsp::decode::mil1553(l.main(), l.dt, l.thr, l.hy))
-    }
-    /// The command word of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x0c23)
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MIL1553
     }
     /// The sync of a word goes either way.
     fn start_edge(&self) -> Slope {

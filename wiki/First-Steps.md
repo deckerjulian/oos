@@ -8,8 +8,8 @@ less accurate. The version and the build stand at the bottom of the start-up scr
 
 The IP address comes from DHCP and is shown at the top right. Without DHCP the scope takes a link-local address, 169.254.x.y, as computers do (from 0.1.9; before, `192.168.177.64/24`): a computer connected straight to the scope reaches it without any set-up.
 
-**OOS starts in one-shot mode:** the next power-on starts the stock system. When OOS works for you, set **System >
-Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS. More:
+**OOS starts in one-shot mode:** the next power-on starts the stock system. **System > Start OOS again** (two taps)
+starts OOS once more at the next power-on. When OOS works for you, set **System > Boot mode** to **Persist**. Switch the scope off at the mains and wait 30 seconds between two starts of OOS. More:
 [[Installation]], How OOS starts.
 
 ## The screen
@@ -111,6 +111,12 @@ with the other preferences and across restarts; Default set-up and Recall keep i
 
 Names of channels and references, math formulas and WLAN passwords are typed on the on-screen keyboard. The arrows either side of Space move the insertion point one character, and a tap into the entry puts it where you tap. Typing and Delete work at the insertion point, so a wrong character in a long password is fixed without typing the rest again. Show / Hide shows the password.
 
+## Mouse and keyboard
+
+A USB mouse and keyboard work in the front port; Bluetooth ones through a stick: **System > Network > Bluetooth > Find devices** with the mouse or keyboard in pairing mode, tap it, and type the passkey a keyboard shows on it, then Enter. It reconnects by itself later; the `BT` box in the top bar turns green while one is connected ([docs/bluetooth.md](https://github.com/dekajoule/oos/blob/main/docs/bluetooth.md)). The mouse is the finger: a left click is a tap, a drag with the left button a touch drag, a right click the context menu, the wheel pans; with Shift it changes V/div, with Ctrl it zooms, with Alt it moves the trigger level. A white pointer shows while the mouse is in use and goes after 5 s at rest.
+
+The keys stand in for the front panel: Space Run/Stop, S Single, A Auto, C Clear, M the measurement page, U Cursor, 1 to 4 the channels, F Math, R Reference, L the logic analyser, G the generator, T the trigger menu, H the horizontal menu, Q Quick, Z the horizontal knob's push, Enter the multi knob's push, the arrows the vertical and horizontal positions, Page Up and Down the trigger level, Escape closes a menu, F12 saves a screenshot. While the on-screen keyboard is open the keys type into it (US layout).
+
 ## Saving
 
 Setups are kept on OOS's own persistent area `/oos` and survive a power cycle; `/oos` holds 16 MiB for calibration and
@@ -121,7 +127,9 @@ too.
 
 **Waveform files.** Storage saves CSV and a compact binary file `wave-NNN.bin` (`wave-<date>-<time>.bin` once the
 clock is set), little endian: `OOSW`, u32 version (1), u32 channels, u64 samples per channel, f64 dt, f64 t0, then per
-channel its number (u32) and the samples (f32, volts). Both hold the record on the screen.
+channel its number (u32) and the samples (f32, volts). Both hold the record on the screen. A binary file with fewer
+than two samples per channel, a t0 that is not a finite number, or a dt that is not a finite number above zero is
+refused when it is loaded.
 
 ## Date and time
 

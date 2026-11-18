@@ -123,8 +123,6 @@ pub(super) enum Item {
     AcqSeg,
     /// software matching of the ADC cores' offsets (`board::dho::cores`)
     AcqCores,
-    /// Acquire > Draw path: Batch (PR #7, `Model::draw_batch`, the default) or Standard (fast path)
-    AcqDrawPath,
     /// a note while the sample rate is below the ADC's: what lies above half of it folds down, nothing filters it
     AcqAlias,
     /// segments recorded by the FPGA (`Model::seg_hw`)
@@ -341,6 +339,8 @@ pub(super) enum Item {
     Update,
     UpdateRollback,
     BootMode,
+    /// System > Start OOS again: OOS at the next power-on once more (`oos-update arm`, as `oos-boot-oos-again`)
+    BootAgain,
     Overclock,
     ViewExit,
     ViewSettings,
@@ -354,11 +354,19 @@ pub(super) enum Item {
     RemWeb,
     RemScpi,
     RemVxi,
-    RemTelnet,
     RemSsh,
     RemScpiInfo,
     RemVxiInfo,
-    RemTelnetInfo,
+    /// System > Network > Bluetooth (ui/bt.rs): the state, the actions, and the pickers of found, paired and to be
+    /// forgotten devices
+    BtState,
+    BtScan,
+    BtPaired,
+    BtForget,
+    BtInfo,
+    BtFound,
+    BtPairedPick,
+    BtForgetPick,
     /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
     SshState,
     SshPassword,
@@ -527,7 +535,7 @@ const NO_PART: Part =
 
 /// The parts of the menus, asked by `kind`, `label`, `value`, `adjust`, `activate`, `options` and `ctl` before the
 /// items `ui.rs` keeps itself. `remote` answers for `ssh` too, except the actions.
-pub(super) const PARTS: [Part; 23] = [
+pub(super) const PARTS: [Part; 24] = [
     Part {
         kind: Some(Ui::meas_kind),
         label: Some(Ui::meas_cfg_label),
@@ -703,6 +711,15 @@ pub(super) const PARTS: [Part; 23] = [
     },
     Part { activate: Some(Ui::ssh_activate), ..NO_PART },
     Part {
+        kind: Some(Ui::bt_kind),
+        label: Some(Ui::bt_label),
+        value: Some(Ui::bt_value),
+        activate: Some(Ui::bt_activate),
+        options: Some(Ui::bt_options),
+        text: Some(Ui::bt_text),
+        ..NO_PART
+    },
+    Part {
         kind: Some(Ui::setting_kind),
         label: Some(Ui::setting_label),
         value: Some(Ui::setting_value),
@@ -759,6 +776,7 @@ mod part_tests {
             Decoders(0),
             Remote,
             Ssh,
+            Bluetooth,
             Time,
             Bode,
             Sim,

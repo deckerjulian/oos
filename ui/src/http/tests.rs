@@ -7,6 +7,8 @@
 use super::*;
 use std::io::Read;
 
+mod hostile;
+
 /// The tests that fetch large answers one after the other: `SENDERS` is shared by the whole process and lets
 /// `MAX_SENDERS` through, and under load (tests in parallel, CI) a sender at `SCHED_IDLE` holds its place long
 /// enough that another test is answered 503 busy
@@ -1018,4 +1020,30 @@ fn base64_rfc4648() {
     assert_eq!(base64(b"f"), "Zg==");
     assert_eq!(base64(b"fo"), "Zm8=");
     assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+}
+
+/// A port still taken when the web page and SCPI open theirs (the oos-ui before this one, ending; seen on the unit,
+/// #212): neither listens, and once the port is free `listen_again` takes it. Before, they stayed off until the next
+/// start.
+#[test]
+fn a_port_taken_at_the_start_is_taken_once_it_is_free() {
+    for web in [true, false] {
+        let holder = crate::net6::tcp(0).expect("a free port");
+        let port = holder.local_addr().unwrap().port();
+        let (mut h, mut scpi) = (Http::open(0), crate::scpi::Scpi::open(0));
+        let listens = |h: &Http, s: &crate::scpi::Scpi| if web { h.port() } else { s.port() };
+        if web {
+            h = Http::open(port);
+        } else {
+            scpi = crate::scpi::Scpi::open(port);
+        }
+        assert_eq!(listens(&h, &scpi), None, "web {web}: the port is taken");
+        let again =
+            |h: &mut Http, s: &mut crate::scpi::Scpi| if web { h.listen_again(port) } else { s.listen_again(port) };
+        assert!(!again(&mut h, &mut scpi), "web {web}: still taken");
+        drop(holder);
+        assert!(again(&mut h, &mut scpi), "web {web}: free now");
+        assert_eq!(listens(&h, &scpi), Some(port));
+        assert!(!again(&mut h, &mut scpi), "web {web}: listening already, nothing to do");
+    }
 }

@@ -9,20 +9,8 @@ use oos_dsp::decode;
 pub struct UsbPd;
 
 impl Protocol for UsbPd {
-    fn key(&self) -> &'static str {
-        "UsbPd"
-    }
-    fn name(&self) -> &'static str {
-        "USB PD"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("CC"), None, None, None]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        3.33e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::usbpd(l.main(), l.dt, l.thr, l.hy))
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::USB_PD
     }
     /// The CC line idles near 1.1 V: threshold half of it.
     fn setup(&self) -> Setup {

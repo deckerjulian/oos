@@ -52,7 +52,7 @@ class Parts(unittest.TestCase):
             self.assertEqual(parts(f), (set(), False), f)
 
     def test_the_programs_for_the_scope(self):
-        for f in ("hal/src/dho/seq.rs", "hal/src/update/pkg.rs", "ui/src/board/dho/hw.rs", "fpgad/Cargo.toml"):
+        for f in ("hal/src/dho/seq.rs", "hal/src/update/pkg.rs", "ui/src/board/dho/hw.rs", "fpgad/Cargo.toml", "rust-toolchain.toml"):
             self.assertTrue(scope(f), f)
         self.assertFalse(scope("ui/src/scpi.rs", "hal/src/model.rs"), "no path a unit proves: unit passes anyway")
         self.assertFalse(scope("hal/src/dho/seq.rs", "rootfs/init"), "the image: equal programs prove too little")

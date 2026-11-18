@@ -1290,6 +1290,9 @@ impl Ui {
         if self.wlan_stick && self.top_hit(self.wlan_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
+        if self.bt_stick && self.top_hit(self.bt_box()).contains(x, y) {
+            return self.toggle_menu(MenuId::Bluetooth);
+        }
         if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Storage);
         }

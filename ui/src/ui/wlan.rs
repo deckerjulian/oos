@@ -659,6 +659,31 @@ impl Osk {
 }
 
 impl Ui {
+    /// A key of a real keyboard while the on-screen keyboard is open (ui/pointer.rs): the characters, Backspace, the
+    /// arrows, Enter and Escape. False for a key it does not take.
+    pub(super) fn osk_hid_key(&mut self, code: u16, shift: bool) -> bool {
+        use crate::hid;
+        let k = match code {
+            hid::KEY_BACKSPACE => Key::Del,
+            hid::KEY_LEFT => Key::Left,
+            hid::KEY_RIGHT => Key::Right,
+            hid::KEY_ENTER | hid::KEY_KPENTER => Key::Ok,
+            hid::KEY_ESC => Key::Cancel,
+            c => match hid::char_of(c, shift) {
+                Some(ch) => Key::Ch(ch),
+                None => return false,
+            },
+        };
+        self.osk_press(k);
+        true
+    }
+
+    /// The on-screen keyboard open for a name (tests of other modules).
+    #[cfg(test)]
+    pub(super) fn wlan_open_osk_for_test(&mut self) {
+        self.wlan.osk = Some(Osk::new(OskFor::Name));
+    }
+
     /// A key of the keyboard: a tap, or a knob push on the chosen key.
     fn osk_press(&mut self, k: Key) {
         let Some(o) = self.wlan.osk.as_mut() else { return };

@@ -18,25 +18,8 @@ use oos_dsp::decode::Kind;
 pub struct Dcc;
 
 impl Protocol for Dcc {
-    fn key(&self) -> &'static str {
-        "Dcc"
-    }
-    fn name(&self) -> &'static str {
-        "DCC"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("Rail"), None, None, None]
-    }
-    /// The two rails as a pair.
-    fn diff_ok(&self) -> bool {
-        true
-    }
-    /// A `1` bit: two halves of 58 us.
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        2.0 * decode::DCC_ONE_HALF
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::dcc(l.main(), l.dt, l.thr, l.hy))
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::DCC
     }
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         Some(match p.kind {
@@ -81,10 +64,6 @@ impl Protocol for Dcc {
             }
         }
         Some(v)
-    }
-    /// Locomotive 3 of the demo traffic.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 3)
     }
     /// The signal never idles: every edge may start a packet.
     fn start_edge(&self) -> Slope {
@@ -271,13 +250,14 @@ mod tests {
         let v: Vec<f32> =
             (0..(1.2 * d.period / dt) as usize).map(|k| d.lines[0].as_ref().unwrap()(k as f64 * dt) as f32).collect();
         let p = Dcc
+            .info()
             .decode(&Lines {
                 lines: [Some(&v), None, None, None],
                 dt,
                 thr: 0.0,
                 hy: 0.3,
                 opt: [0; OPTS],
-                sh: Shared::default(),
+                sh: shared(&Default::default()),
                 chans: [None; 4],
                 src: [None; 4],
             })

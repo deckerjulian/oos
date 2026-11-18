@@ -32,6 +32,7 @@ mod font;
 mod framestats;
 mod gfx;
 mod gpu;
+mod hid;
 mod hislip;
 mod hostname;
 mod http;
@@ -666,7 +667,7 @@ fn power_on_picture(ui: &mut Ui, disp: &mut drm::Display, start_up: Option<&str>
     }
 }
 
-/// The settings of the last run in this boot, those of the scope itself, the draw path and the SSH folder.
+/// The settings of the last run in this boot, those of the scope itself and the SSH folder.
 #[cfg(target_os = "linux")]
 fn restore_settings(ui: &mut Ui) {
     // settings survive a restart of oos-ui within one boot (rcS restarts it on the hardware after the cold boot)
@@ -683,9 +684,6 @@ fn restore_settings(ui: &mut Ui) {
     }
     // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
     ui.load_system(sysconf::default_path());
-    // the draw path starts as system.conf says, Batch unless `acq.pipeline = frames` (ADR 0029): the setups saved
-    // before Batch was the default hold `draw_path = standard` and would keep every unit on Standard
-    ui.m.draw_batch = drawpipe::configured();
     ui.set_ssh_dir(ssh::dir());
 }
 
@@ -715,9 +713,11 @@ struct Device {
     hdmi: Option<drm::Display>,
     hdmi_on: bool,
     mdns_t: Option<std::time::Instant>,
+    /// when the ports of web and SCPI were last tried again (`remote_services`)
+    listen_t: Option<std::time::Instant>,
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
-    remote_now: Option<[bool; 6]>,
+    remote_now: Option<[bool; 5]>,
     hislip: hislip::Server,
     vxi: vxi11::Server,
     scpi: scpi::Scpi,
@@ -777,13 +777,14 @@ impl Device {
             ui.set_allow_runner(remote::script_runner());
         }
         let (web, scpi, vxi, hislip) = lan_servers(scope, args, &acl);
-        // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login, telnet (None:
-        // not yet, at the start)
-        let remote_now: Option<[bool; 6]> = None;
+        // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
+        // at the start)
+        let remote_now: Option<[bool; 5]> = None;
         // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
         let mdns = mdns::Mdns::new(None);
         let mdns_now: Option<mdns::Config> = None;
         let mdns_t: Option<Instant> = None;
+        let listen_t: Option<Instant> = None;
         // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
         let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
         let hdmi: Option<drm::Display> = None;
@@ -828,6 +829,7 @@ impl Device {
             hdmi,
             hdmi_on,
             mdns_t,
+            listen_t,
             mdns_now,
             mdns,
             remote_now,
@@ -894,6 +896,12 @@ impl Device {
         for line_or_ev in self.inp.poll(wait_ms) {
             match line_or_ev {
                 input::In::Ev(ev) => self.ui.handle(ev),
+                input::In::Hid(e) => {
+                    // a key that stands for a front-panel key: its command, as from the control FIFO
+                    if let Some(c) = self.ui.hid(e) {
+                        cmd::run(&mut self.ui, c);
+                    }
+                }
                 input::In::Cmd(line) => {
                     if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &line) {
                         self.ui.shot_request = Some(p);
@@ -903,20 +911,21 @@ impl Device {
         }
     }
 
-    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) and telnet are started
-    /// by rcS.
+    /// The ports the web page offers to the browser (SCPI, VXI-11, HiSLIP), as they are open now.
+    fn offer_ports(&mut self) {
+        self.web.offer(http::Offer {
+            scpi_port: self.scpi.port(),
+            vxi11: self.vxi.service_port().is_some(),
+            hislip_port: self.hislip.port(),
+        });
+    }
+
+    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) is started by rcS.
     fn remote_services(&mut self) {
         let ui = &self.ui;
-        let want = [
-            ui.sys.remote_web,
-            ui.sys.remote_scpi,
-            ui.sys.remote_vxi11,
-            ui.sys.remote_ssh,
-            ui.sys.ssh_password,
-            ui.sys.remote_telnet,
-        ];
+        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
         if self.remote_now != Some(want) {
-            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4], !want[5]]);
+            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4]]);
             if want[0] != was[0] {
                 self.web.set_open(want[0].then_some(self.web_port));
             }
@@ -930,15 +939,18 @@ impl Device {
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
             }
-            if want[5] != was[5] {
-                remote::telnet(want[5]);
-            }
-            self.web.offer(http::Offer {
-                scpi_port: self.scpi.port(),
-                vxi11: self.vxi.service_port().is_some(),
-                hislip_port: self.hislip.port(),
-            });
+            self.offer_ports();
             self.remote_now = Some(want);
+        }
+        // a port the oos-ui before this one still held at the start is tried again once a second, while its switch
+        // is on: before, SCPI and the web page stayed off until the next start (#212)
+        if self.listen_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+            self.listen_t = Some(std::time::Instant::now());
+            let web = want[0] && self.web.listen_again(self.web_port);
+            let scpi = want[1] && self.scpi.listen_again(self.scpi_port);
+            if web || scpi {
+                self.offer_ports();
+            }
         }
     }
 
@@ -1429,3 +1441,7 @@ mod tests {
         }
     }
 }
+
+// at the end, so the lines of the program keep their numbers (tools/scope-binaries.sh)
+#[cfg(test)]
+mod hostile;

@@ -292,7 +292,6 @@ const KEYS: &[(&str, P)] = &[
     ("color_grade", Bool),
     ("dots", Bool),
     ("bar", Is(&["cards", "compact", "Cards"])),
-    ("draw_path", Is(&["batch", "standard", "Batch"])),
     ("hdmi", Is(&["Mirror", "Waveform", "Layout", "mirror"])),
     ("hdmi_view", Is(&["0", "1", "4", "5", "+1"])),
     ("view", Is(&["Scope", "Spectrum", "Eye", "Power", "Bode", "Magnetic", "Inverter", "Dpt", "scope"])),

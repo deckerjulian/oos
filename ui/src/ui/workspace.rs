@@ -1326,8 +1326,7 @@ impl Ui {
             }
         }
     }
-    /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg(test)]
+    /// Escape (of a keyboard, ui/pointer.rs) closes transient surfaces and leaves box/zoom modes immediately.
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask {
             self.cancel_load_slot();

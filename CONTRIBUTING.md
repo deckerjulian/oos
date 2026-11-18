@@ -34,27 +34,155 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   ([ADR 0032](docs/adr/process/0032-ci-compares-a-pull-request-with-its-base.md)).
 - **No personal data in issues or commits:** no serial numbers, MAC addresses or licence keys.
 
-## A new protocol decoder
+## Adding something
 
-A decoder comes as a protocol module: one file in `ui/src/protocols`, one line to register it, the decoder itself
-usually in `oos-dsp`. [docs/protocol-modules.md](docs/protocol-modules.md) walks through it.
+Each kind of extension has one place where it is declared, a few files that follow by hand, a command for what is
+generated, and a test that fails, with the name of the item and of the missing part, when one of them is forgotten
+([ADR 0046](docs/adr/process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md)). A part that cannot be there
+stands in a list in that test with its reason; the list only gets shorter. [AGENTS.md](AGENTS.md#adding-something)
+has the short form, [docs/architecture.md](docs/architecture.md#where-a-change-goes) says where every other kind of
+change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the texts true"), and a `CHANGELOG.md` entry
+when a user notices it.
 
-## New measurements
+### A new setting
 
-Measurements come as a measurement module: a file in `ui/src/measures` with their tiles and their computation, one
-line to register it, the signal processing usually in `oos-dsp`. [docs/measurement-modules.md](docs/measurement-modules.md)
-walks through it. An analyser page registers the same way ([docs/analyser-modules.md](docs/analyser-modules.md)).
+- **Declare it** as one row in its group's file of `ui/src/settings/`: the key in setup files, the type with its
+  range or choices, the menu label, the SCPI command or why it has none, and its docs text. The setup file, the
+  remote command, the menu row and the table in `docs/scpi.md` follow from the row
+  ([ADR 0043](docs/adr/code/0043-one-declaration-per-setting.md),
+  [ADR 0044](docs/adr/code/0044-settings-table-real-numbers-and-row-steps.md)). The groups with a table so far: Display,
+  the trigger values, acquisition, math, the meters, the channels, mask, histogram, Bode, the logic
+  analyser's switch, spectrum, eye and power. A setting of the other groups is still written out in each of those
+  places.
+- **Also touch** its field of the model (`ui/src/model/`), its `Item` and its place in a menu (`ui/src/ui/item.rs`,
+  `ui/src/ui/menu_items.rs`, `ui/src/ui/setting_items.rs`), its query in `ui/tests/scpi.txt`, and its probes in
+  `ui/src/store/settings_snapshot/setup_probes.rs` (with a command also in
+  `ui/src/store/settings_snapshot/scpi_probes.rs`).
+- **Generate** its line of the docs table with `(cd ui && OOS_BLESS=1 cargo test --locked -q settings::tests)` and
+  its lines of `ui/tests/golden/settings.txt` with `(cd ui && OOS_BLESS=1 cargo test --locked -q settings_snapshot)`.
+- **The check:** `ui/src/settings/tests.rs::every_row_is_complete` fails on a row without its command or the reason,
+  its docs text or its query; `ui/src/ui/setting_items.rs::every_row_has_its_item_and_a_step_changes_it` on a row
+  that is in no menu; `ui/src/store/settings_snapshot/setup_probes.rs::every_key_the_setup_writes_or_reads_is_probed`
+  on a key without probes.
 
-## A new setting
+### A new measurement
 
-A setting of a group that has a table (so far the Display group, the trigger values, the acquisition settings, the
-math settings and the meters) is one row in its file of `ui/src/settings/`: the key in setup files, the type with its
-range or choices, the menu label, the SCPI command or why it has none, and its docs text. The setup file, the remote
-command, the menu row and the table in `docs/scpi.md` follow from it. Besides
-the row it needs its `Item` and its place in a menu (`ui/src/ui/item.rs`, `menu_items.rs`, `setting_items.rs`), its
-query in `ui/tests/scpi.txt`, and `(cd ui && OOS_BLESS=1 cargo test --locked -q settings::tests)` for the docs
-table ([ADR 0043](docs/adr/code/0043-one-declaration-per-setting.md)). A setting of the other groups is still
-written out in each of those places.
+- **Declare it** as a `Def` among the `defs` of a measurement module in `ui/src/measures/`: its number, name, unit,
+  drawn mark, source roles, its place on the measurement page and one sentence on what it measures. A new module is
+  one more file there and its line in `MODULES` (`ui/src/measures/mod.rs`). The tile, the Selected list, statistics,
+  logger columns, setups and SCPI (`CAT<id>`) follow. [docs/measurement-modules.md](docs/measurement-modules.md) walks
+  through it.
+- **Also touch** the signal processing in `dsp/src/` with its test in `dsp/tests/` when it is more than a few lines,
+  a test of the module with known numbers next to it, and the row of its category in the table of
+  `docs/reference-analysis.md` when it opens a new group.
+- **Generate** its line of `ui/tests/golden/measurement-ids.txt` with
+  `(cd ui && OOS_BLESS=1 cargo test --locked -q measures::tests)`. The list only gains lines: a number never changes
+  and is never given to another measurement.
+- **The check:** `ui/src/measures/mod.rs::every_measurement_is_complete` fails on a measurement without a name, a
+  description, its group in the docs table or its line in the list of numbers, and on a line of that list that is no
+  longer registered as it stands; `ui/src/measures/mod.rs::modules_are_well_formed` on a number or a name used twice;
+  `ui/src/measures/mod.rs::modules_compute_without_panicking` runs every module on a square wave. That a module has a
+  test with known numbers is not checked yet.
+
+### A new protocol decoder
+
+- **Declare it** twice. In `oos-dsp`, what the decoder is: its `ModuleInfo` next to the decoder in the file of its
+  family under `dsp/src/decode/` (key, name, family, lines, the call of the decoder with its options and shared rows,
+  its bit time, a trigger rule of its own and the trigger's start value), with its line at the end of `MODULES`
+  (`dsp/src/protocols.rs`). In `oos-ui`, what the scope shows of it: a type that implements `Protocol` in a file of
+  `ui/src/protocols/` that names the `ModuleInfo` and brings the option rows, labels, the first settings, the demo
+  traffic and a view, with its line in `MODULES` (`ui/src/protocols/mod.rs`). The Decode menu, setups, the protocol
+  trigger, the labels, the demo traffic and its view follow. [docs/protocol-modules.md](docs/protocol-modules.md)
+  walks through it.
+- **Also touch** the decoder in the file of its family under `dsp/src/decode/`, its generator in
+  `dsp/src/decode/gen.rs` or `dsp/src/decode/gen/` and its tests in the family's module of `dsp/tests/decode/`; for a
+  new file of `ui/src/protocols/` its `mod` line and its feature `dec-<file>` in `ui/Cargo.toml` (the feature and the
+  `decoders` list); with demo traffic its case in `ui/src/ui/tests.rs::extended_decoders_decode_their_demo`; its name
+  under Protocol decoders in `wiki/Features.md`, and the number of decoders there and in `README.md`.
+- **Generate** its line of `ui/tests/golden/decoder-keys.txt` with
+  `(cd ui && OOS_BLESS=1 cargo test --locked -q protocols::tests)`. The list only gains lines: a key never changes.
+- **The check:** `ui/src/protocols/mod.rs::every_decoder_is_complete` fails on a decoder without its key in the list,
+  its `ModuleInfo` in the registry of `oos-dsp` (or out of its order), its name in the wiki, demo traffic (or the
+  reason in `NO_DEMO`), its case on the demo screen or the feature of its file, on a decoder of `oos-dsp` without a
+  module, and on a number of decoders in the texts that is not the number registered;
+  `dsp/src/protocols.rs::every_declared_module_is_registered` on a `ModuleInfo` that is not in the registry of
+  `oos-dsp`, `dsp/src/protocols.rs::modules_are_well_formed` on a key or a name used twice or an info that is not in
+  the file of its family, `dsp/src/protocols.rs::every_module_has_its_decoder_and_bit_time` on an info without the
+  call of its decoder or without its bit time;
+  `ui/src/protocols/mod.rs::modules_are_well_formed` on a key or a name used twice;
+  `ui/src/protocols/mod.rs::modules_decode_their_demo` on demo traffic the module does not decode;
+  `dsp/tests/decode/main.rs::every_decoder_family_has_its_tests` on a family of `dsp/src/decode/` without tests.
+
+### A new trigger type
+
+- **Declare it** as a variant of `TrigType` with its place in `TRIG_TYPES` and its name (`ui/src/model/trigger.rs`).
+  The type picker of the Trigger menu and the word in setup files follow. Trigger types have no registry yet: the
+  rest is written by hand, and the compiler names most of it (a `match` without the new variant does not build).
+- **Also touch** the software trigger in `dsp/src/trigger.rs` with its test in `dsp/tests/triggers.rs`; the hardware
+  trigger as a register sequence (below: `hal/src/dho/tpu.rs`, `Trig` in `hal/src/dho/seq/settings.rs`,
+  `docs/protocols/trigger.md`) and its mapping in `ui/src/board/dho/hw/settings.rs`; the rows of its menu
+  (`ui/src/ui/menu_items.rs`); the two lists of words of `:TRIGger:MODE` in `ui/src/scpi/dispatch.rs`; the words in
+  `docs/scpi.md` and `wiki/SCPI-and-VXI-11.md`, its name under Trigger in `wiki/Features.md`; its pictures in
+  `ui/tests/triggers.txt`; its row in `TYPES` of the check.
+- **Generate** nothing.
+- **The check:** `ui/src/model/trigger.rs::every_trigger_type_is_complete` fails on a type that is not in
+  `TRIG_TYPES`, has no name, whose stored word or SCPI words differ from its row in `TYPES` or do not set it, whose
+  words the docs or the wiki do not name, or that has no picture (or the reason in `NOT_SHOT`);
+  `ui/src/ui/tests.rs::every_trigger_type_triggers_on_the_demo` on a type that does not trigger on the demo signals.
+
+### A new analyser page
+
+- **Declare it** as a type that implements `Analyser` at the end of its file in `ui/src/ui/`, with its line in
+  `ANALYSERS` (`ui/src/ui/analysers.rs`). The start menu, System > Features, the view bar, `:VIEW`, setups and the
+  drawing follow. [docs/analyser-modules.md](docs/analyser-modules.md) walks through it.
+- **Also touch** its variant of `AView` and of `AView::ALL` (`ui/src/model/analysers.rs`), its `MenuId` and its `mod`
+  line (`ui/src/ui.rs`), its menu rows (`ui/src/ui/item.rs`, `ui/src/ui/menu_items.rs`) and its settings as rows of a
+  table (above), the signal processing in `dsp/src/` with its tests, its menu in the list of `menus_fit_at`
+  (`ui/src/ui/lint/menu_layout.rs`), its keyword in the `:VIEW` rows of `docs/scpi.md` and
+  `wiki/SCPI-and-VXI-11.md`, its name under Analysers in `wiki/Features.md`, and its row in `PAGES` of the check.
+- **Generate** nothing.
+- **The check:** `ui/src/ui/analysers.rs::every_page_is_complete` fails on a page whose feature id, view word or
+  keyword differ from its row in `PAGES`, whose keyword the docs or the wiki do not name, whose name the wiki's
+  features lack, or whose menu the layout check does not open; `ui/src/ui/analysers.rs::analysers_are_well_formed` on
+  an id, a name, a menu or a keyword used twice;
+  `ui/src/ui/analysers.rs::every_page_runs_and_is_reached_the_same_way` runs and draws every page on the demo. No
+  page is in the pictures of the comparison yet.
+
+### A new remote command
+
+- **Declare it** in the one interpreter, in the file of its subsystem under `ui/src/scpi/` (`ui/src/scpi/dispatch.rs`
+  for the trees without a file of their own), never in a transport
+  ([ADR 0022](docs/adr/code/0022-one-scpi-interpreter-transports-only-frame.md)). It takes the stock name where the
+  stock firmware has one ([ADR 0023](docs/adr/code/0023-scpi-stock-names-first-oos-identifies-as-oos.md)). A command
+  that only sets a setting is no code of its own: it is the command of the setting's row (above).
+- **Also touch** its row in `docs/scpi.md`, its query in `ui/tests/scpi.txt` (the comparison then sees a change of
+  its answer), for a setter with a query its probes in `ui/src/store/settings_snapshot/scpi_probes.rs`, and its row
+  in `wiki/SCPI-and-VXI-11.md`.
+- **Generate** its lines of `ui/tests/golden/settings.txt` with
+  `(cd ui && OOS_BLESS=1 cargo test --locked -q settings_snapshot)`.
+- **The check:** `tools/scpi-coverage.py` with `--enforce` (the layer `ratchet` of `tools/check.sh`) fails on a
+  command word `docs/scpi.md` does not name and on a documented query `ui/tests/scpi.txt` does not ask; a query that
+  cannot be asked stands in its `NOT_ASKED` with the reason.
+  `ui/src/store/settings_snapshot/scpi_probes.rs::every_documented_setter_is_probed` fails on a setter without
+  probes. The wiki's row is not checked yet.
+
+### A new register sequence
+
+- **Declare it** as a function without side effects in the module of its FPGA block under `hal/src/dho/` that
+  returns the steps as `(offset, value)` writes
+  ([ADR 0001](docs/adr/code/0001-three-crates-with-pure-hal-and-dsp.md)); a new block is a new module with its line in
+  `hal/src/dho/mod.rs`.
+- **Also touch**, first, the page of `docs/protocols/` that describes the registers as behaviour and says how each
+  fact is known ([ADR 0030](docs/adr/process/0030-independent-reimplementation-from-black-box-descriptions.md)); the
+  module's header names that page. Then a test of the steps in the module, the place that uses them (the acquisition
+  sequence in `hal/src/dho/seq.rs`, a command of `oos-fpgad` in `fpgad/src/`, the board in `ui/src/board/dho/`), and
+  a line in `tools/plan-matrix.sh` that prints the sequence, so the comparison sees it.
+- **Generate** nothing.
+- **The check:** `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` fails on a module whose
+  header names no page of `docs/` (or a page that is not there) and on one without a test, unless it stands in
+  `NO_PAGE` or `NO_TEST` with the reason. `tools/compare-base.sh` compares the sequences `tools/plan-matrix.sh`
+  prints with those of the base; a sequence it does not print is not compared, and nothing checks that yet. A change
+  of a sequence is tried on a unit before it is merged (AGENTS.md).
 
 ## Where to develop
 

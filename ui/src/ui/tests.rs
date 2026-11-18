@@ -339,7 +339,8 @@ fn extended_decoders_decode_their_demo() {
     // (protocol, time/div that shows a whole frame, a label or kind that must appear)
     // (the modules DMX512, S/PDIF and USB PD run through the same path as every protocol)
     let m = |k: &str| Proto::from_key(k).unwrap();
-    let cases: [(Proto, f32, &str); 14] = [
+    // every optional module with demo traffic has its case here (`protocols::tests::every_decoder_is_complete`)
+    let cases: [(Proto, f32, &str); 16] = [
         (m("Dcc"), 10e-3, "PRE"),
         (m("CanFd"), 50e-6, "BRS"),
         (m("Dmx512"), 100e-6, "SC"),
@@ -354,6 +355,8 @@ fn extended_decoders_decode_their_demo() {
         (m("Arinc429"), 100e-6, "SSM"),
         (m("Sent"), 200e-6, "STAT"),
         (m("Usb"), 5e-6, "ENDP"),
+        (m("Mil1553"), 20e-6, "cmd: true"),
+        (m("I2s"), 20e-6, "right: true"),
     ];
     for (p, tdiv, want) in cases {
         let mut ui = crate::ui::testkit::demo_ui();
@@ -425,6 +428,37 @@ fn analysers_on_the_demo_signal() {
     ui.m.trig_src = 3;
     ui.activate(Item::IdFind(k));
     assert_eq!(ui.m.trig_src, 0);
+}
+
+/// Identify finding with a baud rate of NaN: the nearest rate of the decoder was chosen with
+/// `partial_cmp(..).unwrap()`, which panicked; every distance is NaN now and the first rate is taken.
+#[test]
+fn identify_finding_of_nan_baud_applies() {
+    use super::*;
+    use oos_dsp::identify::{DecoderHint, Finding, SignalKind, TriggerHint};
+
+    let mut ui = crate::ui::testkit::demo_ui();
+    let uart = |baud| DecoderHint::Uart {
+        ch: 0,
+        baud,
+        bits: 8,
+        parity: oos_dsp::decode::Parity::None,
+        thr: 1.0,
+        invert: false,
+    };
+    let finding = |baud| Finding {
+        channels: vec![0],
+        kind: SignalKind::Noise { rms: 0.0 },
+        confidence: 1.0,
+        summary: "UART".into(),
+        trigger: TriggerHint::None,
+        decoder: Some(uart(baud)),
+    };
+    ui.azr.findings = vec![finding(f64::NAN), finding(9700.0)];
+    ui.activate(Item::IdFind(0));
+    assert_eq!((ui.m.dec_proto, ui.m.dec_baud), (Proto::UART, 0));
+    ui.activate(Item::IdFind(1));
+    assert_eq!(crate::decode::BAUDS[ui.m.dec_baud], 9600.0);
 }
 
 /// Screenshots of the new views for a visual check: `OOS_SHOTS=<dir> cargo test shots -- --ignored`.

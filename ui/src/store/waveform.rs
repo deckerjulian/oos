@@ -133,6 +133,12 @@ pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
+/// The time base and length every reader of an OOSW record asks for: two samples or more, a finite start and a finite
+/// step above zero. Indexing, cursors and measurements divide by the step and add to the start.
+pub(super) fn oosw_timing_ok(n: usize, dt: f64, t0: f64) -> bool {
+    n >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite()
+}
+
 /// One OOSW blob: the record and the number of bytes consumed.
 pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     if b.len() < 36 || &b[..4] != b"OOSW" {
@@ -149,7 +155,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
     let n = usize::try_from(f.u64(12).unwrap_or(0)).unwrap_or(usize::MAX);
     let dt = f.f64(20).unwrap_or(0.0);
     let t0 = f.f64(28).unwrap_or(0.0);
-    if nch == 0 || nch > NCH || dt <= 0.0 {
+    if nch == 0 || nch > NCH || !oosw_timing_ok(n, dt, t0) {
         return Err("waveform header".into());
     }
     if n > MAX_WAVEFORM_SAMPLES {
@@ -240,6 +246,12 @@ pub fn mask_text(src: usize, x: f32, y: f32, inv: bool, v: &[f32]) -> String {
 }
 
 pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
+    // a tolerance is a number: inf or NaN would become the margin of the mask in the model
+    let tolerance = |v: &str| match v.trim().parse::<f32>() {
+        Ok(t) if t.is_finite() => Ok(t),
+        Ok(t) => Err(format!("mask tolerance {}", t)),
+        Err(e) => Err(e.to_string()),
+    };
     let mut lines = text.lines().peekable();
     let mut src = None;
     let mut x = None;
@@ -266,8 +278,8 @@ pub fn parse_mask(text: &str) -> Result<MaskFile, String> {
                     }
                     src = Some(n - 1);
                 }
-                "x" => x = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
-                "y" => y = Some(v.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?),
+                "x" => x = Some(tolerance(v)?),
+                "y" => y = Some(tolerance(v)?),
                 "inv" => inv = Some(matches!(v.trim(), "1" | "true" | "on")),
                 _ => {}
             }

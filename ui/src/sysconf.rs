@@ -10,8 +10,8 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
-//!                           # remote.mdns)
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
+//!                           # remote.mdns; remote.telnet of an older version is read and dropped: no telnet, ADR 0054)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-123456 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
@@ -60,8 +60,6 @@ pub struct SysConf {
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
-    /// the telnet shell (23, read by rcS too): on by default as before, a shell without password
-    pub remote_telnet: bool,
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
@@ -97,7 +95,6 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
-            remote_telnet: true,
             remote_ssh: false,
             ssh_password: true,
             remote_mdns: true,
@@ -214,7 +211,12 @@ impl SysConf {
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
-                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
+                // the telnet shell of earlier versions (ADR 0054): taken with any value and dropped, so an older file
+                // loads without a refused line and the key is not written again
+                "remote.telnet" => true,
+                // the switch between the draw paths of earlier versions (Batch is the only one, ADR 0059): taken with
+                // any value and dropped like `remote.telnet`
+                "acq.pipeline" => true,
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
@@ -233,11 +235,11 @@ impl SysConf {
                     v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some()
                 }
                 "features.off" => {
-                    c.features_off = v.split_whitespace().map(str::to_string).collect();
+                    c.features_off = id_list(k, v, &mut bad);
                     true
                 }
                 "decoders.off" => {
-                    c.decoders_off = v.split_whitespace().map(str::to_string).collect();
+                    c.decoders_off = id_list(k, v, &mut bad);
                     true
                 }
                 _ => {
@@ -264,7 +266,6 @@ impl SysConf {
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
-        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
@@ -380,6 +381,17 @@ pub fn fork_text_of(settings: &str, image: &str) -> String {
     format!("{}\n{}", image, settings)
 }
 
+/// The ids of a list (`features.off`, `decoders.off`). A word that starts with `#` is no id, and written out after
+/// its space it would start a comment: it is left out and named in `bad`, the other words stand, so a file with one
+/// still loads.
+fn id_list(k: &str, v: &str, bad: &mut Vec<String>) -> Vec<String> {
+    let (ids, hash): (Vec<&str>, Vec<&str>) = v.split_whitespace().partition(|w| !w.starts_with('#'));
+    if !hash.is_empty() {
+        bad.push(format!("{}: {:?} left out, no id starts with '#'", k, hash.join(" ")));
+    }
+    ids.into_iter().map(str::to_string).collect()
+}
+
 /// The end of a value: a comment starts with `#` after a space or a tab.
 fn uncomment(v: &str) -> &str {
     v.split(" #").next().unwrap_or("").split("\t#").next().unwrap_or("").trim()
@@ -470,19 +482,15 @@ pub fn default_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
 
-    // Break it catches: a fork key (acq.pipeline, perf.place, acq.prearm) that only /oos/system.conf can set, so the
+    // Break it catches: a fork key (acq.interp, perf.place, acq.prearm) that only /oos/system.conf can set, so the
     // unit image's defaults (/etc/oos/system.conf) do nothing; or an image default that beats the user's setting
     #[test]
     fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
-        let image = "acq.pipeline = batch\nperf.place = on\n";
+        let image = "acq.interp = fast\nperf.place = on\n";
         let v = |settings: &str, k: &str| super::value(&super::fork_text_of(settings, image), k).map(str::to_string);
-        assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
+        assert_eq!(v("", "acq.interp").as_deref(), Some("fast"));
         assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
-        assert_eq!(
-            v("acq.pipeline =\n", "acq.pipeline").as_deref(),
-            Some(""),
-            "an empty value in the settings wins too"
-        );
+        assert_eq!(v("acq.interp =\n", "acq.interp").as_deref(), Some(""), "an empty value in the settings wins too");
         assert_eq!(v("", "acq.prearm"), None);
     }
     use super::*;
@@ -508,8 +516,7 @@ mod tests {
             eth_retry_10m: false,
             ..Default::default()
         };
-        (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
-            (false, false, true, false, false);
+        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -662,10 +669,36 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
-        // telnet and SSH are separate switches: telnet stays on by default, SSH off
-        let (c, bad) = SysConf::parse("remote.telnet = off\n");
-        assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
-        assert!(SysConf::default().remote_telnet);
+    }
+
+    // Break it catches: a settings file of a version with telnet (ADR 0054) that no longer loads cleanly, or whose
+    // `remote.telnet` line is kept and written again, or that switches SSH on
+    #[test]
+    fn an_old_telnet_line_is_taken_and_dropped() {
+        for v in ["on", "off", "maybe"] {
+            let old = format!("ntp = on\nremote.telnet = {} # bring-up\nremote.ssh = off\n", v);
+            let (c, bad) = SysConf::parse(&old);
+            assert!(bad.is_empty(), "{}: {:?}", v, bad);
+            assert!(c.ntp && !c.remote_ssh);
+            assert_eq!(c, SysConf { ntp: true, ..Default::default() });
+            assert!(!c.text().contains("telnet"), "{}", c.text());
+        }
+        let (base, bad) = SysConf::image_defaults("net.allow = 192.0.2.0/24\nremote.telnet = off\n");
+        assert!(bad.is_empty() && !base.text().contains("telnet"), "{:?}", bad);
+        assert!(!SysConf::default().text().contains("telnet"));
+    }
+
+    // Break it catches: a settings file that chose a draw path (`acq.pipeline`, before Batch was the only one) that
+    // no longer loads cleanly, or whose line is kept and written again
+    #[test]
+    fn an_old_draw_path_line_is_taken_and_dropped() {
+        for v in ["frames", "standard", "batch", ""] {
+            let old = format!("ntp = on\nacq.pipeline = {} # the way back\n", v);
+            let (c, bad) = SysConf::parse(&old);
+            assert!(bad.is_empty(), "{}: {:?}", v, bad);
+            assert_eq!(c, SysConf { ntp: true, ..Default::default() });
+            assert!(!c.text().contains("pipeline"), "{}", c.text());
+        }
     }
 
     // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's

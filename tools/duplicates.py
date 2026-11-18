@@ -10,7 +10,9 @@
 ROOT is the top of a tree (default: this tree). Read from it as it is: the Rust files below hal/src, dsp/src, ui/src
 and fpgad/src, without tests, as tools/code-size.py decides: not a test module inside a file (`#[cfg(test)]` and
 `mod name {` to its closing brace at the same indentation), not a file or folder that is only built for tests
-(`#[cfg(test)] mod name;` in its parent), not a file `tests.rs` or `*_tests.rs`, not a folder `tests/`.
+(`#[cfg(test)] mod name;` in its parent), not a file `tests.rs` or `*_tests.rs`, not a folder `tests/`. More than
+tools/code-size.py reads: other attributes of the module, each on a line of its own, may stand between `#[cfg(test)]`
+and `mod`, and a `#[path = "file.rs"]` among them names the file that is built for tests only.
 
 Each line is normalised: comments and white space go, the tokens are joined by one space; a line left empty or only
 of brackets, `;`, `,` and `?` (`});`, `}`, `)?;`) is dropped, and a run of equal lines counts as one. In the loose
@@ -34,6 +36,7 @@ MIN = 8
 
 TEST_MOD = re.compile(r"^(\s*)(?:pub(?:\([a-z]+\))? )?mod ([A-Za-z0-9_]+) \{$")
 TEST_FILE = re.compile(r"^\s*(?:pub(?:\([a-z]+\))? )?mod ([A-Za-z0-9_]+);")
+PATH_ATTR = re.compile(r"^\s*#\[path\s*=\s*\"([^\"]+)\"\]\s*$")
 TOKEN = re.compile(r"""
     (?P<space>\s+)
   | (?P<line>//[^\n]*)
@@ -72,15 +75,22 @@ def rust_files(root):
 
 def strip_tests(rel, lines, test_paths):
     """The lines of a file with its test modules blanked; adds the files and folders it declares as built for tests
-    only to `test_paths` (relative to the root, without `.rs`)."""
+    only to `test_paths` (relative to the root, without `.rs`). Between `#[cfg(test)]` and its `mod` other attributes
+    may stand, each on a line of its own: they are blanked too, and a `#[path = "file.rs"]` among them names the file
+    (from the folder of this one) instead of the module's name."""
     here, stem = os.path.dirname(rel), os.path.splitext(os.path.basename(rel))[0]
     below = here if stem in ("mod", "lib", "main") else here + "/" + stem
-    out, end, held = [], None, False
+    out, end, held, path = [], None, False, None
     for line in lines:
         if end is not None:
             out.append("")
             if line == end:
                 end = None
+            continue
+        if held and line.lstrip().startswith("#["):
+            m = PATH_ATTR.match(line)
+            path = m.group(1) if m else path
+            out.append("")
             continue
         if held:
             held = False
@@ -90,9 +100,11 @@ def strip_tests(rel, lines, test_paths):
                 out.append("")
                 continue
             m = TEST_FILE.match(line)
-            if m:
+            if m and path:
+                test_paths.add(os.path.splitext(os.path.normpath(here + "/" + path).replace(os.sep, "/"))[0])
+            elif m:
                 test_paths.add(below + "/" + m.group(1))
-        held = line.strip() == "#[cfg(test)]"
+        held, path = line.strip() == "#[cfg(test)]", None
         # the attribute is test syntax too: blank, so it never lengthens a block of production code
         out.append("" if held else line)
     return out

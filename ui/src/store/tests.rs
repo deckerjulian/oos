@@ -114,7 +114,7 @@ fn vdiv_by_value_and_legacy_index() {
 }
 
 /// A non-default set-up in every group of fields.
-fn custom() -> Model {
+pub(super) fn custom() -> Model {
     let mut m = Model::default();
     (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) =
         (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
@@ -364,6 +364,18 @@ fn setup_errors_and_unknown_keys() {
     assert!(parse_setup("delay").is_err());
 }
 
+// Break it catches: a setup of a version with a choice of draw paths (`draw_path`, before Batch was the only one,
+// ADR 0059) that no longer loads, or whose key is written again
+#[test]
+fn an_old_draw_path_key_is_passed_over() {
+    for v in ["standard", "batch", "bogus"] {
+        let m = parse_setup(&format!("ch2.on = true\ndraw_path = {v}\n")).unwrap();
+        assert!(m.ch[1].on);
+        assert_eq!(parse_setup_lenient(&format!("draw_path = {v}\n")).1, Vec::<String>::new());
+        assert!(!setup_text(&m).contains("draw_path"));
+    }
+}
+
 /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
 #[test]
 fn setup_aux_out() {
@@ -504,7 +516,7 @@ fn oos_bin_and_wfm_round_trip() {
 }
 
 /// A short Tek WFM curve of f32 samples, little endian.
-fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+pub(super) fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
     let (explicit, implicit, specification, curve) =
         if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
     let mut b = vec![0u8; curve + v.len() * 4 + 8];
@@ -646,6 +658,54 @@ fn frame_file_counts_beyond_the_bytes_are_refused() {
     assert!(parse_ff(&ff).err().unwrap().contains("truncated"));
     ff[8..12].copy_from_slice(&1u32.to_le_bytes());
     assert_eq!(parse_ff(&ff).unwrap().len(), 1);
+}
+
+/// A record read from a file has the time base the import of other files asks for: before, a step of NaN or infinity
+/// and any start became a `Record` whose times indexing and measurements then used.
+#[test]
+fn waveform_file_time_base_is_finite() {
+    let mut m = Model::default();
+    m.ch[1].on = true;
+    let mut rec = Record {
+        t0: -2e-3,
+        dt: 4e-9,
+        ch: Default::default(),
+        triggered: true,
+        partial: false,
+        raw: None,
+        la: None,
+        pairs: false,
+    };
+    rec.ch[1] = vec![0.25, -0.5, 1.0];
+    let good = wave_bin(&rec, &m);
+    let (back, used) = parse_wave_bin(&good).unwrap();
+    assert_eq!((back.t0, back.dt, &back.ch[1], used), (rec.t0, rec.dt, &rec.ch[1], good.len()));
+    assert_eq!(parse_wave(&good, "wave.bin").unwrap()[0].t0, rec.t0);
+    let bad = |at: usize, x: f64| {
+        let mut b = good.clone();
+        b[at..at + 8].copy_from_slice(&x.to_le_bytes());
+        b
+    };
+    for (at, x) in
+        [(20, f64::NAN), (20, f64::INFINITY), (20, 0.0), (20, -1e-9), (28, f64::NAN), (28, f64::NEG_INFINITY)]
+    {
+        let b = bad(at, x);
+        assert_eq!(parse_wave_bin(&b).err().as_deref(), Some("waveform header"), "{at} {x}");
+        assert!(parse_ff(&ff_from(&b)).is_err(), "{at} {x}");
+        assert_eq!(parse_wave(&b, "wave.bin").unwrap_err(), "that file holds no waveform", "{at} {x}");
+    }
+    let mut one = good.clone();
+    one[12..20].copy_from_slice(&1u64.to_le_bytes());
+    assert_eq!(parse_wave_bin(&one).err().as_deref(), Some("waveform header"));
+}
+
+/// A fast-frame file of one OOSW blob.
+fn ff_from(blob: &[u8]) -> Vec<u8> {
+    let mut b = b"OOSF".to_vec();
+    b.extend_from_slice(&1u32.to_le_bytes());
+    b.extend_from_slice(&1u32.to_le_bytes());
+    b.extend_from_slice(blob);
+    b
 }
 
 #[test]

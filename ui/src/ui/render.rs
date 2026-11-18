@@ -161,6 +161,7 @@ impl Ui {
         self.draw_toast(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);
+        self.draw_pointer(cv);
         self.frames += 1;
     }
 

@@ -116,6 +116,7 @@ impl Ui {
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
+            MenuId::Bluetooth => self.bt_items(),
             MenuId::Time => self.time_items(),
             MenuId::Bode => self.bode_items(),
             MenuId::Sim => self.sim_items(),
@@ -181,7 +182,7 @@ impl Ui {
         v
     }
 
-    /// The acquire menu: mode, average, depth, segments, cores, draw path, alias.
+    /// The acquire menu: mode, average, depth, segments, cores, alias.
     fn acquire_items(&self) -> Vec<Item> {
         let mut v = vec![Item::AcqMode];
         if self.m.acq == AcqMode::Average {
@@ -199,7 +200,6 @@ impl Ui {
             v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
         }
         v.push(Item::AcqCores);
-        v.push(Item::AcqDrawPath);
         if self.alias_above().is_some() {
             v.push(Item::AcqAlias);
         }
@@ -387,6 +387,7 @@ impl Ui {
             Item::WlanScan,
             Item::WlanForget,
             Item::WlanInfo,
+            Item::Open(MenuId::Bluetooth),
         ]
     }
 
@@ -428,6 +429,7 @@ impl Ui {
             Item::QuickAct,
             Item::AuxOut,
             Item::BootMode,
+            Item::BootAgain,
             Item::Overclock,
             Item::Graphics,
             Item::Shot,

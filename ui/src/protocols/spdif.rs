@@ -9,17 +9,8 @@ use oos_dsp::decode;
 pub struct Spdif;
 
 impl Protocol for Spdif {
-    fn key(&self) -> &'static str {
-        "Spdif"
-    }
-    fn name(&self) -> &'static str {
-        "S/PDIF"
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.15e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::spdif(l.main(), l.thr, l.hy))
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SPDIF
     }
     /// Six stereo frames at 48 kHz, 3.3 V logic.
     fn demo(&self) -> Option<Demo> {

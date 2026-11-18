@@ -165,7 +165,8 @@ pub fn parse_line(line: &str) -> Result<Key, String> {
         let _e = wire_string(&blob, &mut at).ok_or("RSA key cut short")?;
         let n = wire_string(&blob, &mut at).ok_or("RSA key cut short")?;
         let n = &n[n.iter().position(|&b| b != 0).unwrap_or(n.len())..];
-        let bits = n.len() * 8 - n.first().map_or(8, |b| b.leading_zeros() as usize);
+        // a modulus without a bit set is no key: 0 bits (counting from an empty one subtracted past zero)
+        let bits = n.first().map_or(0, |b| n.len() * 8 - b.leading_zeros() as usize);
         if bits < RSA_BITS_MIN {
             return Err(format!("RSA key of {} bits, at least {} needed", bits, RSA_BITS_MIN));
         }

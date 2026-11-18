@@ -30,32 +30,11 @@ const CANFD_OPTIONS: [Opt; 3] = [
 pub struct CanFd;
 
 impl Protocol for CanFd {
-    fn key(&self) -> &'static str {
-        "CanFd"
-    }
-    fn name(&self) -> &'static str {
-        "CAN-FD"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::CAN_FD
     }
     fn options(&self) -> &'static [Opt] {
         &CANFD_OPTIONS
-    }
-    /// A bit of the arbitration phase.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / crate::decode::CAN_RATES[opt[0]]
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::can_fd(
-            l.main(),
-            l.dt,
-            crate::decode::CAN_RATES[l.opt[0]],
-            crate::decode::FD_RATES[l.opt[1]],
-            l.thr,
-            l.hy,
-            l.opt[2] == 1,
-        ))
     }
     /// A CAN FD frame with ID 123, bit rate switch and 12 bytes, 500 kbit/s and 2 Mbit/s.
     fn demo(&self) -> Option<Demo> {
@@ -71,24 +50,8 @@ impl Protocol for CanFd {
 pub struct FlexRay;
 
 impl Protocol for FlexRay {
-    fn key(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn name(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn diff_ok(&self) -> bool {
-        true
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.1e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::flexray(l.main(), l.dt, 10e6, l.thr, l.hy, false))
-    }
-    /// The frame ID of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x2a)
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::FLEXRAY
     }
     /// A static frame (ID 2A, cycle 5) with 8 payload bytes on RxD.
     fn demo(&self) -> Option<Demo> {
@@ -115,30 +78,14 @@ const SENT_OPTIONS: [Opt; 2] = [
     Opt { name: "Data nibbles", choices: &["1", "2", "3", "4", "5", "6"], default: 5 },
 ];
 
-/// The clock tick of the options; `None` = from the sync pulses.
-fn tick(opt: &[usize; OPTS]) -> Option<f64> {
-    let t = crate::decode::SENT_TICKS[opt[0]];
-    (t > 0.0).then_some(t)
-}
-
 pub struct Sent;
 
 impl Protocol for Sent {
-    fn key(&self) -> &'static str {
-        "Sent"
-    }
-    fn name(&self) -> &'static str {
-        "SENT"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SENT
     }
     fn options(&self) -> &'static [Opt] {
         &SENT_OPTIONS
-    }
-    /// About 4 ticks per data bit; auto: the shortest tick.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        4.0 * tick(opt).unwrap_or(crate::decode::SENT_TICKS[0])
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::sent(l.main(), l.dt, tick(&l.opt), l.opt[1] + 1, l.thr, l.hy))
     }
     /// The tick the sync pulse gave; the data as its nibbles.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
@@ -149,10 +96,6 @@ impl Protocol for Sent {
             Kind::Data => Some(format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize)),
             _ => None,
         }
-    }
-    /// The data of the first demo frame.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Data, 0x7f480b)
     }
     /// 5 V logic.
     fn setup(&self) -> Setup {

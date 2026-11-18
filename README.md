@@ -79,10 +79,10 @@ Installing OOS means that you accept in particular the following risks:
   safety instructions and ratings. The open instrument contains a mains power supply with dangerous voltages. Disconnect
   the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
   how to do this safely.
-- **Network security.** Apart from SSH (password or key, [docs/network.md](docs/network.md) 7) OOS has no
-  authentication: telnet (on by default, a shell without password), SCPI, VXI-11, HiSLIP (on a computer), the web remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
-  network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
-  never directly to the internet.**
+- **Network security.** Apart from SSH (password or key, [docs/network.md](docs/network.md) 7), the only shell on the
+  network, OOS has no authentication: SCPI, VXI-11, HiSLIP (on a computer), the web remote and MCP are open to everyone
+  who can reach the scope. The community signing key is public, so anyone on the network can also install an update.
+  This holds for WLAN as well. **Connect the scope to a trusted bench network only, never directly to the internet.**
 - **Experimental settings.** System > Overclock (with `adc.overclock = on`) and `/oos/limits.conf` can change the sample
   clock, `limits.conf` can also lift limits. Values outside the defaults are outside any rating and can make the scope
   unusable or damage it.
@@ -154,7 +154,7 @@ For how the hardware works, see the [hardware overview](https://dekajoule.github
 - **Measurement and maths**: 35 automatic measurements with statistics, cursors, DVM, a frequency counter in the FPGA,
   a second pane (spectrum, results, events, trends), data logger, 8 math channels with free formulas, references,
   mask test
-- **26 protocol decoders**, from UART, I2C and SPI to CAN-FD, MIL-STD-1553 and NMRA DCC
+- **29 protocol decoders**, from UART, I2C and SPI to CAN-FD, MIL-STD-1553 and NMRA DCC
 - **Analysers**: spectrum, eye diagram and jitter, power, Bode with the built-in or an external generator, bandwidth
   test, Identify
 - **Logic analyser** with the PLA2216 probe, and the **generator** of S models

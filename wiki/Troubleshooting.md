@@ -11,7 +11,7 @@ macOS, the card as `/dev/rdiskM` after `diskutil unmountDisk /dev/diskM`; on Lin
 | The stock system starts instead of OOS | One-shot mode ([How OOS starts](https://github.com/dekajoule/oos/wiki/Installation#how-oos-starts)), or the loader refused the OOS image and used the fallback. Check with `sudo python3 boot/switch.py show /dev/rdiskM`, then select OOS again: `sudo python3 boot/switch.py oos /dev/rdiskM --execute`. If that repeats, rebuild or download the image again |
 | Rigol logo stays, nothing else, on every start | The kernel hangs before OOS runs: `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
 | Black screen; a Rockchip USB device (2207:330c) appears | The loader refused `recovery` and has no fallback: `sudo python3 boot/switch.py stock /dev/rdiskM --execute`. If needed, put a saved `recovery` back: `sudo python3 boot/card-install.py restore /dev/rdiskM --backup FILE --execute`, with `FILE` the `backups/recovery-<date>.bin` of a card install, or `OOS-rescue/recovery.bin` of a USB install |
-| Start-up screen stops at a step | A hardware step failed. Read the step on the screen. Logs are in `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over telnet or SSH |
+| Start-up screen stops at a step | A hardware step failed. Read the step on the screen. Logs are in `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over SSH ([[Remote Control]]) |
 | "Start-up stopped" after a quick restart | OOS needs a real power cycle: off at the mains, wait 30 seconds |
 | A new build misbehaves | **System > Roll back update**, or `oos-update rollback --execute` |
 | Analyser view will not go away | The three dots at the top right, then Exit |

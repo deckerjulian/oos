@@ -62,7 +62,7 @@ pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if n > MAX_WAVEFORM_SAMPLES {
         return Err("waveform exceeds the 32-million-sample import limit".into());
     }
-    if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
+    if nch == 0 || nch > 8 || !oosw_timing_ok(n, dt, t0) {
         return Err("that file holds no waveform".into());
     }
     let need = n
@@ -125,10 +125,11 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
         }
         rows += 1;
     }
-    let dt = match times {
-        [a, b] if rows >= 2 && b > a => b - a,
-        _ => return Err("that file holds no waveform".into()),
-    };
+    // the time base the binary readers ask for: a time of inf gives an infinite step or start
+    let dt = times[1] - times[0];
+    if !oosw_timing_ok(rows, dt, times[0]) {
+        return Err("that file holds no waveform".into());
+    }
     let ntrace = columns.len();
     Ok(columns
         .into_iter()

@@ -154,7 +154,7 @@ fn every_analyser_page_and_back_leaves_the_rest() {
 }
 
 #[test]
-fn draw_path_bottom_bar_and_features_leave_the_acquisition() {
+fn bottom_bar_and_features_leave_the_acquisition() {
     let mut u = ui();
     let keep = |m: &Model| {
         (
@@ -167,12 +167,10 @@ fn draw_path_bottom_bar_and_features_leave_the_acquisition() {
         )
     };
     let before = keep(&u.m);
-    for it in [Item::AcqDrawPath, Item::BottomBar] {
-        u.adjust(it, 1);
-        u.step(0.05);
-        u.adjust(it, 1);
-        u.step(0.05);
-    }
+    u.adjust(Item::BottomBar, 1);
+    u.step(0.05);
+    u.adjust(Item::BottomBar, 1);
+    u.step(0.05);
     for i in 0..features::features().len() {
         u.adjust(Item::FeatOn(i), 1);
         u.step(0.05);

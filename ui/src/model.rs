@@ -469,9 +469,6 @@ pub struct Model {
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
-    /// Acquire > Draw path: the batch pipeline of PR #7 (`drawpipe`: the deposit workers draw every frame of a batch
-    /// from the read-out words, the default, ADR 0029) instead of the Standard fast path
-    pub draw_batch: bool,
     /// Display > Bottom bar: the compact bar of PR #8 (Menu, Sources, the active source, Overlay/Stacked, time,
     /// trigger) instead of the cards (the default)
     pub bar_compact: bool,

@@ -106,9 +106,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup target add aarch64-unknown-linux-musl
+      # the Rust that rust-toolchain.toml names, with its components and its target (ADR 0045)
+      - run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.cache }}
@@ -161,7 +160,9 @@ jobs:
           # the pull request merged into its base: the first parent of that commit is the base
           fetch-depth: 2
           persist-credentials: false
-      - run: rustup toolchain install stable --profile minimal
+      # the Rust that rust-toolchain.toml names (ADR 0045). The base is built in a tree of its own with the file of its
+      # commit: the two sides build with different compilers only when the pull request changes the pin
+      - run: rustup toolchain install --no-self-update
       # Both sides are built the same way, so the comparison does not need the release's slow link step: without it a
       # build of oos-ui takes a third of the time (measured on 2026-11-17: 20 s instead of 68 s on a laptop).
       - name: Pictures and register sequences against the base (tools/compare-base.sh)
@@ -234,9 +235,9 @@ jobs:
           # the pull request merged into its base: the first parent of that commit is the base
           fetch-depth: 2
           persist-credentials: false
-      - run: |
-          rustup toolchain install stable --profile minimal
-          rustup target add aarch64-unknown-linux-musl
+      # the Rust that rust-toolchain.toml names, with the scope's target (ADR 0045); the base is checked out in this
+      # folder with its own file
+      - run: rustup toolchain install --no-self-update
       - name: The programs for the scope against the base (tools/scope-binaries.sh)
         id: scope
         run: |

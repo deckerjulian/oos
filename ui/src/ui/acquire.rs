@@ -60,8 +60,8 @@ impl Ui {
 
     /// The per-frame polls and ticks, and the wall time.
     fn step_polls(&mut self, dt_wall: f64) {
-        // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
-        crate::drawpipe::set_enabled(self.m.draw_batch && self.src.is_hw());
+        // the deposit workers (drawpipe.rs) draw the hardware's batches; the other sources have no batches
+        crate::drawpipe::set_enabled(self.src.is_hw());
         // System > Features: what is left out runs nothing
         self.features_enforce();
         self.poll_reference_measurements();
@@ -79,6 +79,7 @@ impl Ui {
         self.ssh_poll();
         self.allow_poll();
         self.usb_poll();
+        self.bt_poll();
         self.ch_hold_poll();
         self.counter_poll();
         self.dvm_poll();
@@ -257,7 +258,7 @@ impl Ui {
         if let Some(f) = frames.iter().rev().find(|f| take.deep_raw && crate::deepmeas::deep_raw_frame(f)) {
             take.raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
         }
-        if n > 0 && self.fast_draw_all(frames) > 0 {
+        if n > 0 && self.fast_draw_all(frames, fast_helpers()) > 0 {
             self.m.status = TrigStatus::Triggered;
         }
         take.got += n;
@@ -714,8 +715,8 @@ impl Ui {
 
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
     /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
-    /// Returns the frames that counted as triggered.
-    pub(super) fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>) -> usize {
+    /// `helpers`: threads beside the frame loop's (`fast_helpers`). Returns the frames that counted as triggered.
+    pub(super) fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>, helpers: usize) -> usize {
         let frames: Vec<std::sync::Arc<crate::board::Frame>> = frames.into_iter().map(std::sync::Arc::new).collect();
         let (w, h) = (self.ph.w, self.ph.h);
         let m = &self.m;
@@ -728,7 +729,7 @@ impl Ui {
                 && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k))
         });
         let t0 = std::time::Instant::now();
-        let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
+        let placed = crate::fastdraw::par_map(helpers, &frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
         let mut trig = 0;
         for (p, f) in placed.iter().zip(&frames) {
@@ -762,8 +763,7 @@ impl Ui {
                 self.acc_t[c] = vec![0; w * (h + 1)];
             }
         }
-        let bands =
-            if frames.len() < 2 || on.is_empty() { 1 } else { (crate::fastdraw::helpers() + 1).div_ceil(on.len()) };
+        let bands = if frames.len() < 2 || on.is_empty() { 1 } else { (helpers + 1).div_ceil(on.len()) };
         let band_cols = w.div_ceil(bands).max(1);
         let mut jobs: Vec<(usize, usize, &mut [u16])> = Vec::new();
         for (c, acc) in self.acc_t.iter_mut().enumerate() {
@@ -771,7 +771,7 @@ impl Ui {
                 jobs.extend(acc.chunks_mut(band_cols * (h + 1)).enumerate().map(|(b, band)| (c, b * band_cols, band)));
             }
         }
-        crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
+        crate::fastdraw::par_each(helpers, jobs, |(c, c_lo, band)| {
             for (f, p) in frames.iter().zip(&placed) {
                 fast_deposit_t(m, (w, h), c, band, c_lo, f, &p.plan);
             }
@@ -797,7 +797,7 @@ impl Ui {
             .filter(|(c, _)| on.contains(c))
             .map(|(c, (a, b))| (c, a, b))
             .collect();
-        crate::fastdraw::par_each(pairs, |(c, map, acc)| {
+        crate::fastdraw::par_each(helpers, pairs, |(c, map, acc)| {
             crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1)
         });
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);
@@ -839,6 +839,19 @@ pub struct FastFrame {
     pub fold: [Option<crate::fastdraw::Fold>; NCH],
 }
 
+/// Helper threads of the fast path (`Ui::fast_draw_all`): none while the deposit workers have batches to draw, where
+/// they keep the small cores busy: a helper there waited for a core, and the frame loop for the helper (issue #186);
+/// the queue then holds only the newest frame of each batch, one or two a screen. Without batches to draw (batches of
+/// one frame, at slow time bases) every frame comes through the queue, and the helpers draw them: the frame loop
+/// alone took fewer of them a screen and left the others out (unit 2026-11-18).
+pub(super) fn fast_helpers() -> usize {
+    if crate::drawpipe::pipe().is_some_and(|p| p.busy()) {
+        0
+    } else {
+        crate::fastdraw::helpers()
+    }
+}
+
 /// Where channel `c` of a dense frame lands on the `w` x `h` map with the trigger at sample `ti`.
 fn raw_map(m: &Model, w: usize, h: usize, c: usize, f: &crate::board::Frame, ti: f64) -> crate::fastdraw::Map {
     let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
@@ -870,7 +883,7 @@ pub fn fast_plan(
     }
     let src = &f.ch[m.trig_src];
     let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-    // the full search of `fastdraw::edge_smooth` (the Batch path takes `trignear::edge_smooth_near`)
+    // the full search of `fastdraw::edge_smooth` (the workers take `trignear::edge_smooth_near`)
     let t = crate::drawpipe::refine_edge(m, f, col, |s| crate::fastdraw::edge_smooth(src, f.pre, s, |_| true));
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
     let ti = t.ti;

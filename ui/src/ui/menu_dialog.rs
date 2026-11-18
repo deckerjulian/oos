@@ -375,7 +375,9 @@ impl Ui {
             MenuId::Horizontal => (tr.x + tr.w / 2, false),
             MenuId::Trigger => (trg.x + trg.w / 2, false),
             MenuId::Main => (self.menu_btn().x, false),
-            MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
+            MenuId::Network | MenuId::Remote | MenuId::Ssh | MenuId::Bluetooth => {
+                (self.net_box().x + self.net_box().w / 2, true)
+            }
             MenuId::ViewMore => (self.scr.w, true),
             MenuId::La | MenuId::LaLines | MenuId::LaPat => {
                 self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
@@ -409,7 +411,9 @@ impl Ui {
         let items = self.items(self.menu);
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
-        let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey));
+        let wide = self.pick.is_some_and(|p| {
+            matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey) || Self::bt_is_pick(p.it)
+        });
         let l = self.lay();
         let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold {
             (1, 220 + l.grid_col - 150, DLG_ROW, 16)

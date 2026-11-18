@@ -644,4 +644,72 @@ mod tests {
             }
         }
     }
+
+    /// `take_message` and `on_message` (HiSLIP on TCP 4880), ADR 0047: return for any bytes, on a new connection, a
+    /// synchronous and an asynchronous one; a header is refused only for its prologue or its length; a message taken
+    /// is its header and its data and no more; every answer is a whole message; what a peer has pending and the
+    /// sessions stay bounded.
+    #[test]
+    fn hostile_messages() {
+        let sync = [
+            encode(INITIALIZE, 0, 0x0100_0000, b"hislip0"),
+            encode(DATA, 0, 1, b":CHAN1:SCAL 0.5;"),
+            encode(DATA_END, 0, 2, b"*IDN?\n"),
+            encode(12, 0, 3, b""),
+            encode(DEVICE_CLEAR_COMPLETE, 0, 0, b""),
+        ]
+        .concat();
+        let asynchronous = [
+            encode(ASYNC_INITIALIZE, 0, 1, b""),
+            encode(ASYNC_MAXIMUM_MESSAGE_SIZE, 0, 0, &(1u64 << 20).to_be_bytes()),
+            encode(ASYNC_LOCK, 1, 0, b""),
+            encode(ASYNC_LOCK_INFO, 0, 0, b""),
+            encode(ASYNC_STATUS_QUERY, 0, 0, b""),
+            encode(ASYNC_REMOTE_LOCAL_CONTROL, 0, 0, b""),
+            encode(ASYNC_DEVICE_CLEAR, 0, 0, b""),
+        ]
+        .concat();
+        let seeds: [&[u8]; 3] = [&sync, &asynchronous, &sync[23..]];
+        crate::hostile::run("hislip::take_message", &seeds, 1, |b| {
+            for role in [Role::New, Role::Sync, Role::Async] {
+                let mut buf = b.to_vec();
+                // a session is open: a second connection can join it
+                let mut live = vec![Live { id: 1, max_payload: MAX_PAYLOAD }];
+                let mut next = 2u16;
+                let mut peer = Peer { role, session: 1, pending: Vec::new(), msgid: 0, program: None };
+                let mut exec = |c: &str| if c.ends_with('?') { b"OOS,unit".to_vec() } else { Vec::new() };
+                loop {
+                    let before = buf.clone();
+                    let m = match take_message(&mut buf) {
+                        Ok(Some(m)) => m,
+                        Ok(None) => break,
+                        Err(()) => {
+                            let long = u64::from_be_bytes(before[8..16].try_into().unwrap()) > MAX_PAYLOAD as u64;
+                            if &before[..2] == b"HS" && !long {
+                                return Err("refused a header with the prologue and a length within the limit".into());
+                            }
+                            break;
+                        }
+                    };
+                    if before.len() - buf.len() != HEADER + m.data.len() || m.data.len() > MAX_PAYLOAD {
+                        return Err(format!("a message of {} bytes took {}", m.data.len(), before.len() - buf.len()));
+                    }
+                    let out = on_message(&mut peer, &mut live, &mut next, &m, &mut exec);
+                    for mut frame in sent(&out) {
+                        match take_message(&mut frame) {
+                            Ok(Some(a)) if frame.is_empty() && a.data.len() <= MAX_PAYLOAD => {}
+                            _ => return Err(format!("an answer to type {} that is no message", m.typ)),
+                        }
+                    }
+                    if peer.pending.len() > MAX_PAYLOAD || live.len() > 2 {
+                        return Err(format!("{} bytes pending, {} sessions", peer.pending.len(), live.len()));
+                    }
+                    if out.close {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        });
+    }
 }

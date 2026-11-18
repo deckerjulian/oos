@@ -158,6 +158,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         LaLines,
         LaPat,
         Network,
+        Bluetooth,
         Remote,
         Time,
         Magnetic,
@@ -166,6 +167,13 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     ] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
+    }
+    walk(&|| open(Bluetooth, &|u| u.bt_crowded_for_tests()), "Bluetooth crowded", &mut out);
+    // its pickers open from actions, which walk leaves out
+    for it in [Item::BtFound, Item::BtPairedPick, Item::BtForgetPick] {
+        let mut u = open(Bluetooth, &|u| u.bt_crowded_for_tests());
+        u.open_picker(it);
+        check(&u, &format!("Bluetooth crowded > picker {:?}", it), &mut out);
     }
     walk(&|| open(Inverter, &|u| u.m.inv_page = InvPage::Mech), "Inverter mechanical", &mut out);
     walk(

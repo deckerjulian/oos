@@ -10,16 +10,9 @@ use super::*;
 use oos_dsp::decode;
 use oos_dsp::decode::Parity;
 
-/// The baud rate of option row `k`.
-fn baud(opt: &[usize; OPTS], k: usize) -> f64 {
-    crate::decode::BAUDS[opt[k].min(crate::decode::BAUDS.len() - 1)]
-}
-
-const PARITIES: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
-
-/// Index of `p` in [`PARITIES`].
+/// Index of `p` in `decode::PARITIES`.
 fn parity_index(p: Parity) -> usize {
-    PARITIES.iter().position(|&x| x == p).unwrap_or(0)
+    decode::PARITIES.iter().position(|&x| x == p).unwrap_or(0)
 }
 
 /// Demo traffic: the words as 3.3 V UART frames with one stop bit, five idle bits around them, then `idle` seconds.
@@ -40,27 +33,11 @@ pub struct Uart9;
 const UART9_OPTIONS: [Opt; 1] = [Opt { name: "Baud", choices: &BAUD_NAMES, default: 3 }];
 
 impl Protocol for Uart9 {
-    fn key(&self) -> &'static str {
-        "Uart9"
-    }
-    fn name(&self) -> &'static str {
-        "UART 9-bit"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::UART9
     }
     fn options(&self) -> &'static [Opt] {
         &UART9_OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / baud(opt, 0)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::uart9(l.main(), l.dt, baud(&l.opt, 0), l.thr, l.hy, false))
-    }
-    /// Every word starts a frame, as for the plain UART.
-    fn trigger_match(&self, what: BusWhat, _value: u32, p: &Packet) -> Option<bool> {
-        (what == BusWhat::Frame && p.kind == oos_dsp::decode::Kind::Data).then_some(true)
     }
     /// An address word and two data words at 9600 baud.
     fn demo(&self) -> Option<Demo> {
@@ -81,23 +58,11 @@ const RTU_OPTIONS: [Opt; 2] = [
 ];
 
 impl Protocol for ModbusRtu {
-    fn key(&self) -> &'static str {
-        "ModbusRtu"
-    }
-    fn name(&self) -> &'static str {
-        "Modbus RTU"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MODBUS_RTU
     }
     fn options(&self) -> &'static [Opt] {
         &RTU_OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / baud(opt, 0)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(decode::modbus_rtu(l.main(), l.dt, baud(&l.opt, 0), PARITIES[l.opt[1]], l.thr, l.hy, false))
     }
     /// Read holding registers (function 3) of device 0x11, 19200 baud, even parity.
     fn demo(&self) -> Option<Demo> {
@@ -123,24 +88,11 @@ const ASCII_OPTIONS: [Opt; 3] = [
 ];
 
 impl Protocol for ModbusAscii {
-    fn key(&self) -> &'static str {
-        "ModbusAscii"
-    }
-    fn name(&self) -> &'static str {
-        "Modbus ASCII"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::MODBUS_ASCII
     }
     fn options(&self) -> &'static [Opt] {
         &ASCII_OPTIONS
-    }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / baud(opt, 0)
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let parity = if l.opt[2] == 1 { Parity::Odd } else { Parity::Even };
-        Ok(decode::modbus_ascii(l.main(), l.dt, baud(&l.opt, 0), 7 + l.opt[1] as u32, parity, l.thr, l.hy, false))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.baud, old.bits.clamp(7, 8) as usize - 7, usize::from(old.parity == Parity::Odd), 0])

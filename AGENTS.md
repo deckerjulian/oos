@@ -10,7 +10,8 @@ there. These instructions are the same for every agent and every person; the rea
 1. [docs/adr/README.md](docs/adr/README.md): the decisions that shape the tree, one line each. Open the records that
    touch your change.
 2. [docs/architecture.md](docs/architecture.md): how the pieces fit, from the card to the screen.
-3. [CONTRIBUTING.md](CONTRIBUTING.md): the ground rules, and how to add a decoder, a measurement or an analyser page.
+3. [CONTRIBUTING.md](CONTRIBUTING.md): the ground rules, and the recipe for each kind of extension (the table
+   "Adding something" below is its short form).
 4. The `docs/` page of the part you change (`docs/protocols/` for register sequences).
 
 ## Never
@@ -53,6 +54,9 @@ there. These instructions are the same for every agent and every person; the rea
   (ADR 0025).
 - New decoders, measurements and analyser pages come as modules behind their registry (ADR 0002). Identifiers that
   are stored (protocol keys, measurement numbers, feature ids) never change once released.
+- Every kind of extension has one place to declare it, a recipe and a test that names what is missing (ADR 0046;
+  "Adding something" below). An item that cannot have a part is listed in that test with its reason; such a list is
+  never made longer to get a test to pass. A new kind of extension comes with all three.
 - Hardware code builds step lists of `(offset, value)` in `oos-hal`; signal processing in `oos-dsp` stays free of
   hardware (ADR 0001).
 - Reuse before you add: look for code that already does the job (`git grep` for the idea, not only for a name) and
@@ -109,6 +113,27 @@ work on its own (ADR 0039). Everything above holds for it, and:
 What `.gitignore` leaves out (`local/` with calibration files and surveys, `log/`, `device-test/`, backups, notes) is
 private to the person who made it; never move its content into the tree.
 
+## Adding something
+
+One place to declare each kind, the files that follow by hand, and the check that fails, naming the item and the
+missing part, when one is forgotten (ADR 0046). The steps, with the commands for what is generated, are in
+[CONTRIBUTING.md](CONTRIBUTING.md#adding-something); where every other change goes is in
+[docs/architecture.md](docs/architecture.md#where-a-change-goes).
+
+| Kind | Declare it in | Also touch | The check that fails when a part is missing |
+|---|---|---|---|
+| setting | a row in `ui/src/settings/` | model field, `Item` and menu, `ui/tests/scpi.txt`, probes of the snapshot | `ui/src/settings/tests.rs::every_row_is_complete` |
+| measurement | a `Def` in `ui/src/measures/` | `dsp/src/` with its test, a new group in `docs/reference-analysis.md` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
+| protocol decoder | a `ModuleInfo` in its family file of `dsp/src/decode/` (C-PHY: `dsp/src/cphy.rs`, line codes: `dsp/src/linecode.rs`), a `Protocol` in `ui/src/protocols/` | `dsp/src/protocols.rs`, `dsp/tests/decode/`, `ui/Cargo.toml`, `wiki/Features.md`, `README.md` | `ui/src/protocols/mod.rs::every_decoder_is_complete`, `dsp/src/protocols.rs::every_declared_module_is_registered` |
+| trigger type | `TrigType` in `ui/src/model/trigger.rs` | `dsp/src/trigger.rs`, `hal/src/dho/tpu.rs`, `ui/src/scpi/dispatch.rs`, `docs/scpi.md`, the wiki, `ui/tests/triggers.txt` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
+| analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
+| SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
+| HTTP route or MCP tool | an arm of `Http::answer` in `ui/src/http.rs` | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
+| register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, `tools/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
+
+`tools/link-check.py` (layer `text`) keeps this table and the recipes true: every file and every test they name
+exists.
+
 ## Keeping the texts true
 
 Every text has one home (ADR 0035): `README.md` is the entry page, `wiki/` the guide for people who use a scope
@@ -119,6 +144,7 @@ request that changes one of these brings the text along:
 | You change | Bring along |
 |---|---|
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
+| an HTTP route or MCP tool (`ui/src/http.rs`, `ui/src/http/`) | `docs/http.md`, `wiki/Remote-Control.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
 | an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |

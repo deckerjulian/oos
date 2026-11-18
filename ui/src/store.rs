@@ -57,7 +57,7 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_cphy_rate", m.dec_cphy_rate.to_string());
     kv("dec_src4", m.dec_src4.map_or("none".into(), |c| (c + 1).to_string()));
     kv("dec_diff", m.dec_diff.map_or("none".into(), |c| (c + 1).to_string()));
-    kv("trig_bus", m.trig_bus.name().to_string());
+    kv("trig_bus", bus_what_name(m.trig_bus).to_string());
     kv("trig_bus_val", m.trig_bus_val.to_string());
     let s = &m.ser;
     kv("ser.rel", name(s.rel));
@@ -281,7 +281,6 @@ fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     crate::settings::write(&crate::settings::display::DRAW, m, 0, kv);
-    crate::settings::write(&crate::settings::system::DRAW_PATH, m, 0, kv);
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
@@ -596,3 +595,7 @@ pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
     }
     out
 }
+
+// at the end, so the lines of the program keep their numbers (tools/scope-binaries.sh)
+#[cfg(test)]
+pub(crate) mod hostile_tests;

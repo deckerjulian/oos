@@ -7,8 +7,6 @@
 //! name, so they stay where they were. They stand first in `MODULES` at fixed places, which `Proto::UART` ... name.
 
 use super::*;
-use oos_dsp::decode;
-use oos_dsp::decode::{can, i2c, lin, spi, uart};
 
 /// Demo traffic on one line: `a` repeated every `period` seconds.
 fn one_line(a: oos_dsp::sim::Logic, period: f64) -> Demo {
@@ -23,26 +21,11 @@ const fn idle_fall(idle: f32) -> Option<DemoTrig> {
 pub struct Uart;
 
 impl Protocol for Uart {
-    fn key(&self) -> &'static str {
-        "Uart"
-    }
-    fn name(&self) -> &'static str {
-        "UART"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::UART
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Baud, Row::Bits, Row::Parity, Row::Fmt]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        1.0 / 115200.0
-    }
-    fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        1.0 / sh.baud
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(uart(l.main(), l.dt, l.sh.baud, l.sh.bits, l.sh.parity, l.thr, l.hy, l.sh.uart_inv))
     }
     /// The UART line of the demo is CH3 whatever the decoder (the host's default traffic); 8 data bits.
     fn setup(&self) -> Setup {
@@ -53,24 +36,8 @@ impl Protocol for Uart {
 pub struct I2c;
 
 impl Protocol for I2c {
-    fn key(&self) -> &'static str {
-        "I2c"
-    }
-    fn name(&self) -> &'static str {
-        "I2C"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("SDA"), Some("SCL"), None, None]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        2.5e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(i2c(l.main(), l.need(1, "source channel off")?, l.thr, l.hy))
-    }
-    /// The demo device's address.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x50)
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::I2C
     }
     /// SDA on CH3, SCL on CH4 (LA: D13, D12); the trigger on the start (first SDA fall after a quiet bus).
     fn setup(&self) -> Setup {
@@ -102,33 +69,11 @@ impl Protocol for I2c {
 pub struct Spi;
 
 impl Protocol for Spi {
-    fn key(&self) -> &'static str {
-        "Spi"
-    }
-    fn name(&self) -> &'static str {
-        "SPI"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("MOSI"), Some("Clock"), Some("CS"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SPI
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::SpiMode, Row::Bits]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let clk = l.need(1, "source channel off")?;
-        let bit = 1e-9f64.max(l.dt);
-        // a clock pause of the trigger's timeout starts a frame, else 20 samples
-        let gap = if l.sh.spi_timeout > 0.0 { l.sh.spi_timeout / l.dt } else { 20.0 * bit / l.dt };
-        // the decoder takes CS active low: an active-high CS is mirrored at the threshold
-        let cs_hi: Option<Vec<f32>> = match (l.sh.spi_cs_high, l.lines[2]) {
-            (true, Some(c)) => Some(c.iter().map(|&x| 2.0 * l.thr - x).collect()),
-            _ => None,
-        };
-        let cs = cs_hi.as_deref().or(l.lines[2]);
-        Ok(spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap))
     }
     /// A frame starts with the chip select.
     fn start_role(&self) -> usize {
@@ -164,30 +109,11 @@ impl Protocol for Spi {
 pub struct Can;
 
 impl Protocol for Can {
-    fn key(&self) -> &'static str {
-        "Can"
-    }
-    fn name(&self) -> &'static str {
-        "CAN"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::CAN
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::CanRate, Row::CanH]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        2e-6
-    }
-    fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        1.0 / sh.can_rate
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(can(l.main(), l.dt, l.sh.can_rate, l.thr, l.hy, l.sh.canh))
-    }
-    /// The standard frame of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x123)
     }
     /// 500 kbit/s on CH3 (RX level); the trigger on the start of frame after the bus idle.
     fn setup(&self) -> Setup {
@@ -212,30 +138,11 @@ impl Protocol for Can {
 pub struct Lin;
 
 impl Protocol for Lin {
-    fn key(&self) -> &'static str {
-        "Lin"
-    }
-    fn name(&self) -> &'static str {
-        "LIN"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::LIN
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Baud]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        1.0 / 19200.0
-    }
-    fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        1.0 / sh.baud
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(lin(l.main(), l.dt, l.sh.baud, l.thr, l.hy))
-    }
-    /// The frame of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x21)
     }
     /// 19200 baud on CH3; the trigger on the break after the bus idle.
     fn setup(&self) -> Setup {
@@ -250,32 +157,11 @@ impl Protocol for Lin {
 pub struct Parallel;
 
 impl Protocol for Parallel {
-    fn key(&self) -> &'static str {
-        "Parallel"
-    }
-    fn name(&self) -> &'static str {
-        "Parallel"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("D0"), None, Some("Clock"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::PARALLEL
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.5e-6
-    }
-    /// Data bits lines from the main source upwards, skipping the clock.
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let d0 = l.src[0].unwrap_or(0);
-        let n = l.chans.len();
-        let lines: Vec<&[f32]> = (0..n)
-            .map(|k| (d0 + k) % n)
-            .filter(|&c| Some(c) != l.src[2])
-            .take(l.sh.bits.clamp(1, 4) as usize)
-            .map(|c| l.chans[c].ok_or("source channel off"))
-            .collect::<Result<_, _>>()?;
-        Ok(decode::parallel(&lines, l.lines[2], oos_dsp::trigger::Slope::Rising, l.thr, l.hy))
     }
     /// D0..D2 on CH1..CH3, the clock on CH4, every channel on (LA: D0).
     fn setup(&self) -> Setup {
@@ -292,39 +178,11 @@ impl Protocol for Parallel {
 pub struct Cphy;
 
 impl Protocol for Cphy {
-    fn key(&self) -> &'static str {
-        "Cphy"
-    }
-    fn name(&self) -> &'static str {
-        "C-PHY"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("A"), Some("B"), Some("C"), None]
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::cphy::CPHY
     }
     fn shared(&self) -> &'static [Row] {
         &[Row::CphyRate]
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        1e-9
-    }
-    /// Auto: a symbol a nanosecond.
-    fn bit_time_sh(&self, _: &[usize; OPTS], sh: &Shared) -> f64 {
-        if sh.cphy_rate > 0.0 {
-            1.0 / sh.cphy_rate
-        } else {
-            1e-9
-        }
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        let c = l.lines[2].ok_or("C-PHY C source missing")?;
-        Ok(oos_dsp::cphy::decode(
-            l.main(),
-            l.need(1, "source channel off")?,
-            c,
-            l.dt,
-            (l.sh.cphy_rate > 0.0).then_some(l.sh.cphy_rate),
-            l.thr.abs().max(1e-6),
-        ))
     }
     /// A, B, C on CH1..CH3, the receiver's 20 mV threshold, 16-bit words; the analog channels, not the LA.
     fn setup(&self) -> Setup {
