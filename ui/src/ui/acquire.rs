@@ -33,13 +33,14 @@ const POLLS: [(&str, Poll); 13] = [
 
 /// The polls that are called from elsewhere on purpose, and why. The list only gets shorter (ADR 0061).
 #[cfg(test)]
-const POLLED_ELSEWHERE: [(&str, &str); 6] = [
+const POLLED_ELSEWHERE: [(&str, &str); 7] = [
     ("sim_poll", "step_polls, before relayout, and sim.rs while a SIM run is started"),
     ("eye_auto_poll", "step_polls, before relayout, and the eye page's own step"),
     ("sysinfo_poll", "step_guards, after auto_step"),
     ("cal_poll", "step_guards, after auto_step"),
     ("meas_poll", "step_meas_rows: the measurements of the newest record, before their rows are taken"),
     ("unit_blocked_poll", "mask_hw_poll asks it first"),
+    ("seg_poll", "step_run_state, with whether the acquisition runs"),
 ];
 
 /// What the acquisition of one step took: records, times, the pending clear and the newest raw deep record.
@@ -1004,8 +1005,8 @@ pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, map: &mut [u16], f:
 mod polls_tests {
     use super::{POLLED_ELSEWHERE, POLLS};
 
-    /// Every `fn *_poll(&mut self)` of the screen is in `POLLS` or in `POLLED_ELSEWHERE`, and both name only polls
-    /// that exist, each once (ADR 0061).
+    /// Every `fn *_poll(&mut self, ...)` of the screen is in `POLLS` or in `POLLED_ELSEWHERE`, and both name only
+    /// polls that exist, each once (ADR 0061).
     #[test]
     fn every_poll_is_in_polls() {
         fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
@@ -1016,7 +1017,7 @@ mod polls_tests {
                 } else if p.extension().is_some_and(|x| x == "rs") {
                     let text = std::fs::read_to_string(&p).unwrap_or_default();
                     for part in text.split("fn ").skip(1) {
-                        if let Some(name) = part.find("(&mut self)").map(|k| &part[..k]) {
+                        if let Some(name) = part.find("(&mut self").map(|k| &part[..k]) {
                             if name.ends_with("_poll") && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_') {
                                 out.push(name.to_string());
                             }
