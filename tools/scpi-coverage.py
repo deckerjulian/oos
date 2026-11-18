@@ -15,8 +15,9 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
                  ui/src/settings/), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
                  in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
-  queries-tests  the queries of docs/scpi.md (the first command of a table row, without its arguments, when it ends
-                 in `?` or `[?]`) that no `scpi` line of ui/tests/scpi.txt asks, in the long or the short form;
+  queries-tests  the queries of docs/scpi.md (each command of the first cell of a table row, without its arguments,
+                 a relative one completed from the first, when it ends in `?` or `[?]`) that no `scpi` line of
+                 ui/tests/scpi.txt asks, in the long or the short form;
   fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
                  and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
                  interpreter never names as `.field` and no row with a command reaches. An upper bound:
@@ -113,16 +114,56 @@ def query_pattern(doc):
     return "".join(out)
 
 
+def nodes(header):
+    """The nodes of a header without its leading `:`, split at the `:` that are not inside `[...]` or `{...}`:
+    `:TIMebase[:MAIN]:SCALe[?]` is `TIMebase[:MAIN]`, `SCALe[?]`."""
+    out, cur, depth = [], "", 0
+    for ch in header.lstrip(":"):
+        depth += ch in "[{"
+        depth -= ch in "]}"
+        if ch == ":" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur]
+
+
+def row_commands(line):
+    """Every command of the first cell of a table row of scpi.md, without its arguments, written out in full. A
+    command with fewer nodes than the first one of the cell is relative to it and replaces as many of its last nodes
+    (`:WAVeform:STARt[?]` / `:STOP[?]` is `:WAVeform:STOP[?]`, `:BUS<n>:IIC:SCLK:SOURce[?]`, `:SDA:SOURce[?]` is
+    `:BUS<n>:IIC:SDA:SOURce[?]`); one with as many or more is absolute (`:TFORce` or `:TRIGger:FORCe`)."""
+    if not ROW.match(line):
+        return []
+    # the first cell ends at the first ` | ` outside backticks (a `|` inside them separates choices)
+    cell, inside = "", False
+    for i, ch in enumerate(line[1:], 1):
+        inside ^= ch == "`"
+        if not inside and line.startswith(" | ", i):
+            break
+        cell += ch
+    out, base = [], None
+    for span in re.findall(r"`([^`]+)`", cell):
+        if not span.startswith((":", "*")):
+            continue
+        cmd = span.split(" ")[0]
+        ns = nodes(cmd)
+        if base is not None and cmd.startswith(":") and len(ns) < len(base):
+            cmd = ":" + ":".join(base[:len(base) - len(ns)] + ns)
+        else:
+            base = ns
+        out.append(cmd)
+    return out
+
+
 def documented_queries(scpi_md):
-    """The first command of each table row of scpi.md, without arguments, when it is a query."""
+    """Every command of the first cell of each table row of scpi.md (row_commands) that is a query, once each."""
     out = []
     for line in scpi_md.split("\n"):
-        m = ROW.match(line)
-        if not m:
-            continue
-        cmd = m.group(1).split(" ")[0]
-        if cmd.endswith(("?", "[?]")) and cmd not in out:
-            out.append(cmd)
+        for cmd in row_commands(line):
+            if cmd.endswith(("?", "[?]")) and cmd not in out:
+                out.append(cmd)
     return out
 
 
