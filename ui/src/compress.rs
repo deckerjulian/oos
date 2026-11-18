@@ -183,6 +183,9 @@ mod tests {
     use super::*;
     use oos_hal::dho::pairs;
 
+    /// Read-out bytes and the settings they were read under.
+    type ReadOut = (Vec<u8>, oos_hal::dho::seq::Settings);
+
     /// The FPGA's compressed read of `raw` volts (codes 7500 per volt around 32768) with factor `k`, in volts, in the
     /// assumed layout (`pairs::LAYOUT`).
     fn fpga(raw: &[f32], k: usize) -> Vec<f32> {
@@ -403,11 +406,7 @@ mod tests {
     /// 10 us/div, CH1: 100 k points at 625 MSa/s (k = 15), a 40 kHz square of 3 div peak to peak with its rising
     /// edge `jitter` samples after the trigger point and a little noise: the model, the raw read-out bytes and settings,
     /// the compressed ones.
-    #[allow(clippy::type_complexity)]
-    fn square_10us(
-        jitter: f64,
-    ) -> (Model, oos_hal::dho::hz::Params, (Vec<u8>, oos_hal::dho::seq::Settings), (Vec<u8>, oos_hal::dho::seq::Settings))
-    {
+    fn square_10us(jitter: f64) -> (Model, oos_hal::dho::hz::Params, ReadOut, ReadOut) {
         use oos_hal::dho::{hz, seq::Settings};
         let p = hz::Params {
             ratio: 1,
