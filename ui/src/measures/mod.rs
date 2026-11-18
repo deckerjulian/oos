@@ -481,4 +481,41 @@ mod tests {
             );
         }
     }
+
+    /// The groups the table of docs/reference-analysis.md lists for category `cat`, in lower case.
+    fn documented_groups(doc: &str, cat: &str) -> Vec<String> {
+        let row = doc.lines().find(|l| l.starts_with(&format!("| {} |", cat))).unwrap_or("");
+        let cell = row.split('|').nth(2).unwrap_or("");
+        cell.split(',').map(|g| g.split('(').next().unwrap_or("").trim().to_lowercase()).collect()
+    }
+
+    /// What a measurement needs besides its `Def`, each failure with its name and the part that is missing: a name
+    /// and a description, its group in the table of docs/reference-analysis.md, and, when setups store its number,
+    /// its line in ui/tests/golden/measurement-ids.txt (number, module key, name). The numbers of that list never
+    /// change: `OOS_BLESS=1 cargo test --locked -q measures::tests` adds the line of a new measurement and no other.
+    #[test]
+    fn every_measurement_is_complete() {
+        let doc = crate::ui::testkit::document("docs/reference-analysis.md");
+        let mut stored = Vec::new();
+        // the example module is compiled in the tests only
+        for m in MODULES.iter().filter(|m| m.key() != "example") {
+            for d in m.defs() {
+                assert!(!d.name.is_empty() && d.blurb.len() > 1, "{} {}: a name and a description", m.key(), d.id);
+                for &(c, group) in d.places {
+                    let cat = CATEGORIES[c as usize].name;
+                    assert!(
+                        documented_groups(&doc, cat).contains(&group.to_lowercase()),
+                        "{}: its group {} is not in the row of {} in docs/reference-analysis.md",
+                        d.name,
+                        group,
+                        cat
+                    );
+                }
+                if d.kind == Kind::Module {
+                    stored.push(format!("{} {} {}", d.id, m.key(), d.name));
+                }
+            }
+        }
+        crate::ui::testkit::stored_names("measurement-ids.txt", &stored, true);
+    }
 }

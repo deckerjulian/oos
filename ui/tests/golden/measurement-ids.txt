@@ -1,0 +1,87 @@
+# The measurements a setup stores by number (`cat` rows) and SCPI names as `CAT<id>`: number, module key, name.
+# A number never changes and is never given to another measurement (docs/adr/code/0002): this list only gains lines.
+# `OOS_BLESS=1 cargo test --locked -q measures::tests` in ui/ adds the line of a new measurement
+# (ui/src/measures/mod.rs, every_measurement_is_complete).
+15 nrz_rate Unit Interval
+16 nrz_rate NRZ Data Rate
+40 jitter_eye Jitter Summary
+41 jitter_eye TIE
+42 jitter_eye Phase Noise
+43 jitter_eye TJ@BER
+44 jitter_eye RJ-dd
+45 jitter_eye DJ-dd
+46 jitter_eye SJ@Freq
+47 jitter_eye PJ
+48 jitter_eye DDJ
+49 jitter_eye DCD
+50 jitter_eye SRJ
+51 jitter_eye J2
+60 jitter_eye Eye Height
+61 jitter_eye Eye Width
+62 jitter_eye Eye High
+63 jitter_eye Eye Height@BER
+64 jitter_eye Eye Width@BER
+65 jitter_eye Eye Low
+66 jitter_eye Q-Factor
+70 jitter_eye Bit High
+71 jitter_eye Bit Low
+72 jitter_eye Bit Amplitude
+73 jitter_eye DC Common Mode
+74 jitter_eye AC Common Mode (Pk-Pk)
+75 jitter_eye Differential Crossover
+76 jitter_eye T/nT Ratio
+80 jitter_eye NRZ Clock Rate
+81 jitter_eye SSC Freq Dev
+82 jitter_eye SSC Modulation Rate
+90 power_quality Power Quality
+118 power_quality Power Factor
+91 harmonics Harmonics
+92 inrush Inrush Current
+93 input_capacitance Input Capacitance
+150 rails Overshoot
+151 rails Undershoot
+152 rails Turn-on Overshoot
+153 rails DC Rail
+100 turn_on_off Turn On Time
+101 turn_on_off Turn Off Time
+102 switching E on
+103 switching E off
+104 switching E cond
+105 switching dv/dt rise
+106 switching dv/dt fall
+107 switching di/dt rise
+108 switching di/dt fall
+109 switching RDS(on)
+110 magnetics Inductance
+111 magnetics Magnetic Property
+112 magnetics Magnetic Loss
+113 ripple Ripple
+114 line_ripple Line Ripple
+115 switching_ripple Switching Ripple
+116 psrr_impedance PSRR
+117 psrr_impedance Impedance
+130 motor DQ0
+131 motor Speed
+132 motor Acceleration
+133 motor Direction
+134 motor Angle
+135 motor_mechanical Torque
+136 motor_mechanical Mechanical Power
+137 motor_mechanical System Efficiency
+170 double_pulse Vpeak
+171 double_pulse Ipeak
+172 double_pulse Td(on)
+175 double_pulse Td(off)
+173 double_pulse Tr
+176 double_pulse Tf
+174 double_pulse Ton
+177 double_pulse Toff
+178 double_pulse dv/dt
+179 double_pulse di/dt
+180 double_pulse Tdt
+181 double_pulse Trr
+182 double_pulse Qrr
+183 double_pulse Err
+184 double_pulse Irrm
+185 double_pulse Diode d/dt
+186 double_pulse Qoss
