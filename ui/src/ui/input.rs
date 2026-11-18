@@ -1284,17 +1284,8 @@ impl Ui {
         if self.top_hit(pill).contains(x, y) {
             return self.key(key::RUNSTOP);
         }
-        if self.top_hit(self.net_box()).contains(x, y) {
-            return self.toggle_menu(MenuId::Network);
-        }
-        if self.wlan_stick && self.top_hit(self.wlan_box()).contains(x, y) {
-            return self.toggle_menu(MenuId::Network);
-        }
-        if self.bt_stick && self.top_hit(self.bt_box()).contains(x, y) {
-            return self.toggle_menu(MenuId::Bluetooth);
-        }
-        if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
-            return self.toggle_menu(MenuId::Storage);
+        if let Some((b, _)) = self.status_boxes().into_iter().find(|(_, r)| self.top_hit(*r).contains(x, y)) {
+            return self.toggle_menu(b.page);
         }
         if self.view_box_tap(x, y) {
             return;
