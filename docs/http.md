@@ -12,7 +12,9 @@ the marks below are its first proposal, and the interface has no version query y
 - **experimental**: may change or go in any release;
 - **internal**: listed so that this page and its check know every route; no part of the interface.
 
-The text of an error message is not part of the interface; its status code is.
+The text of an error message is not part of the interface; its status code is. `tools/http-coverage.py` (layer
+`ratchet` of `tools/check.sh`) fails when a route of `Http::answer` or an MCP tool has no entry here, when an entry
+has no mark, or when an entry names a route the code does not answer.
 
 ## Requests
 

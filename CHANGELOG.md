@@ -46,6 +46,8 @@ Added:
 - [docs/http.md](docs/http.md), the reference of the web remote's HTTP routes and the MCP tools `scpi` and
   `screenshot` (issue #205): method, query, body, status codes, content type, limits and `net.allow` of each, and
   the mark of ADR 0055 (proposed): stable, experimental or internal. The behaviour is unchanged.
+  `tools/http-coverage.py`, in the layer `ratchet` of `tools/check.sh`, fails when a route or tool has no entry or
+  mark there, or an entry names a route the code does not answer.
 
 Removed:
 
