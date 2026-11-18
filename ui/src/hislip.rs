@@ -281,6 +281,17 @@ struct Conn {
     s: TcpStream,
     buf: Vec<u8>,
     peer: Peer,
+    /// the messages not yet written (#192): the next message is taken once they are out
+    out: crate::net::Outbox,
+    /// the connection ends once its messages are out (the client closed its side, or a fatal error was sent)
+    closing: bool,
+}
+
+impl Conn {
+    /// Writes what the socket takes now of the replies not yet written.
+    fn flush(&mut self) -> crate::net::Sent {
+        self.out.flush(&self.s)
+    }
 }
 
 /// The listener. `closed` is the scope, which does not accept HiSLIP.
@@ -335,6 +346,8 @@ impl Server {
                         s,
                         buf: Vec::new(),
                         peer: Peer { role: Role::New, session: 0, pending: Vec::new(), msgid: 0, program: None },
+                        out: Default::default(),
+                        closing: false,
                     });
                 }
             }
@@ -345,11 +358,14 @@ impl Server {
         while i < self.conns.len() {
             let mut tmp = [0u8; 8192];
             let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
+            // what is still to be written goes first, as much as the socket takes now (#192)
+            closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+            let mut eof = self.conns[i].closing;
             let mut read_bytes = 0;
-            while !closed {
+            while !closed && !eof {
                 match self.conns[i].s.read(&mut tmp) {
                     Ok(0) => {
-                        closed = true;
+                        eof = true;
                         break;
                     }
                     Ok(n) => {
@@ -372,7 +388,9 @@ impl Server {
             }
             let clearing =
                 self.conns[i].buf.get(2).is_some_and(|typ| matches!(*typ, DEVICE_CLEAR_COMPLETE | ASYNC_DEVICE_CLEAR));
-            if !closed && !clearing {
+            // the messages of a connection are taken once the replies before them are out
+            let ready = !closed && !eof && self.conns[i].out.is_empty();
+            if ready && !clearing {
                 if let Some(mut program) = self.conns[i].peer.program.take() {
                     if let Some(mut response) = exec(&mut program) {
                         if program.has_reply {
@@ -386,18 +404,16 @@ impl Server {
                                 .unwrap_or(MAX_PAYLOAD);
                             let reply = Reply { msgid: peer.msgid, payload: response, max_payload: max };
                             for message in reply.messages() {
-                                if !crate::scpi::send(&mut self.conns[i].s, &message) {
-                                    closed = true;
-                                    break;
-                                }
+                                self.conns[i].out.push(&message);
                             }
+                            closed = self.conns[i].flush() == crate::net::Sent::Gone;
                         }
                     } else {
                         self.conns[i].peer.program = Some(program);
                     }
                 }
             }
-            while !closed {
+            while ready && !closed && !eof && self.conns[i].out.is_empty() {
                 if self.conns[i].peer.program.is_some()
                     && !self.conns[i]
                         .buf
@@ -410,8 +426,8 @@ impl Server {
                     Ok(Some(m)) => m,
                     Ok(None) => break,
                     Err(()) => {
-                        let _ = crate::scpi::send(&mut self.conns[i].s, &encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
-                        closed = true;
+                        self.conns[i].out.push(&encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
+                        eof = true;
                         break;
                     }
                 };
@@ -429,12 +445,16 @@ impl Server {
                 }
                 let replies = out.reply.iter().flat_map(Reply::messages);
                 for m in out.msgs.into_iter().chain(replies) {
-                    if !crate::scpi::send(&mut self.conns[i].s, &m) {
-                        closed = true;
-                        break;
-                    }
+                    self.conns[i].out.push(&m);
                 }
-                closed |= out.close;
+                closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+                eof |= out.close;
+            }
+            // a client that closed its side, or one that was told a fatal error, goes once its messages are out
+            if eof && !closed {
+                self.conns[i].flush();
+                closed = self.conns[i].out.is_empty();
+                self.conns[i].closing = true;
             }
             if closed {
                 if self.conns[i].peer.role == Role::Sync {

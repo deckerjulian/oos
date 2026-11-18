@@ -223,7 +223,7 @@ pub fn core_async(
 
 fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
     while let Some(mut program) = link.programs.pop_front() {
-        if link.out.len() >= crate::scpi::RESP_MAX {
+        if link.out.len() >= crate::net::RESP_MAX {
             link.programs.clear();
             break;
         }
@@ -251,6 +251,17 @@ struct Conn {
     buf: Vec<u8>,
     core: bool,
     links: Vec<usize>,
+    /// the replies not yet written (#192): the next call is taken once they are out
+    out: crate::net::Outbox,
+    /// the client closed its side: the connection goes once its replies are out
+    closing: bool,
+}
+
+impl Conn {
+    /// Writes what the socket takes now of the replies not yet written.
+    fn flush(&mut self) -> crate::net::Sent {
+        self.out.flush(&self.s)
+    }
 }
 
 /// The listeners: portmapper TCP/UDP 111, core TCP `CORE_PORT`.
@@ -327,7 +338,14 @@ impl Server {
                     let _ = s.set_nonblocking(false);
                     let _ = s.set_nodelay(true);
                     if self.conns.len() < MAX_CONNS {
-                        self.conns.push(Conn { s, buf: Vec::new(), core, links: Vec::new() });
+                        self.conns.push(Conn {
+                            s,
+                            buf: Vec::new(),
+                            core,
+                            links: Vec::new(),
+                            out: Default::default(),
+                            closing: false,
+                        });
                     }
                 }
             }
@@ -337,12 +355,15 @@ impl Server {
         let mut i = 0;
         while i < self.conns.len() {
             let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
+            // what is still to be written goes first, as much as the socket takes now (#192)
+            closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+            let mut eof = self.conns[i].closing;
             let mut tmp = [0u8; 8192];
             let mut read_bytes = 0;
-            while !closed {
+            while !closed && !eof {
                 match crate::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
-                        closed = true;
+                        eof = true;
                         break;
                     }
                     Ok(n) => {
@@ -363,8 +384,9 @@ impl Server {
                     }
                 }
             }
-            // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined
-            while !closed {
+            // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined; the next call once the
+            // replies before it are out
+            while !closed && !eof && self.conns[i].out.is_empty() {
                 let Some(msg) = take_record(&mut self.conns[i].buf) else {
                     break;
                 };
@@ -387,7 +409,8 @@ impl Server {
                 };
                 let mut out = ((r.len() as u32) | 1 << 31).to_be_bytes().to_vec();
                 out.extend_from_slice(&r);
-                if !crate::scpi::send(&mut self.conns[i].s, &out) {
+                self.conns[i].out.push(&out);
+                if self.conns[i].flush() == crate::net::Sent::Gone {
                     closed = true;
                     break;
                 }
@@ -401,6 +424,11 @@ impl Server {
             }
             // what is left is one unfinished record: nothing beyond the announced maxRecvSize
             closed |= self.conns[i].buf.len() > MAX_RECORD;
+            // a client that closed its side goes now, or once its replies are out
+            if eof && !closed {
+                closed = self.conns[i].out.is_empty();
+                self.conns[i].closing = true;
+            }
             if closed {
                 let connection = self.conns.remove(i);
                 for id in connection.links {

@@ -120,6 +120,9 @@ Changed:
 
 Fixed:
 
+- A remote client (SCPI on port 5555, VXI-11, HiSLIP) that reads its answers slowly or not at all no longer slows
+  the screen: answers go out as the network takes them, and the client's next command waits until its answers are
+  out. Before, such a client could hold the screen and the keys for up to 30 s per answer (#192; host tests).
 - A `cal_vertical.hex` with 64-byte records (one block group, seen on a DHO804) is read at 64 bytes a record instead
   of stopping oos-ui at every start; a calibration file whose scale keys are out of order is not used, and the scope
   starts uncalibrated instead of stopping (issue #37; host tests, and the usual 56-byte file still loads on a DHO924S).
