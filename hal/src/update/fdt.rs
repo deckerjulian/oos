@@ -57,8 +57,9 @@ const PROP: u32 = 3;
 const NOP: u32 = 4;
 const FINISH: u32 = 9;
 
-/// How deep the nodes of a tree may nest, the root counting as one. A tree of the unit nests less than 20 deep, and
-/// Linux itself leaves out nodes below 64 levels (`FDT_MAX_DEPTH`). The bound keeps writing, comparing and dropping a
+/// How deep the nodes of a tree may nest, the root counting as one. The running tree of a DHO924S nests 6 levels deep
+/// with its root (verified on the unit, `/proc/device-tree`, 2026-11-18); that Linux leaves out nodes below 64 levels
+/// (`FDT_MAX_DEPTH`) is assumed from its source, not checked here. The bound keeps writing, comparing and dropping a
 /// tree (one stack frame per level) from overflowing the stack on a damaged one.
 pub(crate) const DEPTH_MAX: usize = 64;
 
