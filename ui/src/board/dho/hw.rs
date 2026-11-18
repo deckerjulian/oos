@@ -21,8 +21,8 @@ pub use self::decode::{codes_into, decode, decode_into};
 use self::decode::{decode_with, la_record, POOL};
 #[cfg(target_os = "linux")]
 use self::plan::{
-    batch_plan, deep_raw_settings, disarm, final_replay, frame0_drop, frame1_left_out, frame1_off_trigger,
-    prearm_keeps_replay, prearm_on, stop_plan, FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
+    batch_plan, deep_raw_settings, disarm, edge_check, final_replay, frame0_check_wanted, frame0_drop, frame0_left_out,
+    frame1_left_out, frame1_off_trigger, prearm_keeps_replay, prearm_on, stop_plan, FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
 };
 #[cfg(target_os = "linux")]
 use self::seg::{seg_abort, seg_step, SegRun};
@@ -1079,13 +1079,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut skip = 0usize;
+                    // frame 0 of a small batch: kept when its edge is at the trigger point (issue #220), so a batch
+                    // of two at 1 ms/div does not lose every other record
+                    let f0_drop = after.is_none() && frame0_drop();
+                    let f0_edge = frame0_check_wanted(avail, f0_drop, p.memsel)
+                        .then(|| edge_check(&decode(&dma.data()[..fb], &b, &p, 0), &b));
+                    let f0_left = frame0_left_out(avail, f0_drop, f0_edge);
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
-                        // frame 1, when the workers get it: left out when its edge is not at the trigger point
-                        let f1_off = frame0_drop()
-                            && avail > 2
-                            && p.memsel <= FRAME1_CHECK_MAX
-                            && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b);
                         // the record of measurements: with the ADC-core correction, as on the path without batches
                         let mc = out.lock().unwrap().cores;
                         let newest = match raw_frame {
@@ -1095,6 +1096,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 Frame { stamp, ..decode_with(last, &b, &p, n, mc.then_some(&mut cores)) }
                             }
                         };
+                        // frame 1: left out when its edge is not at the trigger point. In a batch of two it is the
+                        // newest, checked before the workers are fed, so a frame 0 its edge check kept goes with it
+                        // (the workers take a run of frames; issue #220)
+                        let f1_off = frame0_drop()
+                            && match avail {
+                                2 => frame1_off_trigger(&newest, &b),
+                                a => {
+                                    a > 2
+                                        && p.memsel <= FRAME1_CHECK_MAX
+                                        && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b)
+                                }
+                            };
                         let next =
                             pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| {
@@ -1111,9 +1124,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 let codes: crate::drawpipe::CodesInto =
                                     Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
                                 // frame 0 left out as on the path without batches (issue #5; unit 2026-11-16: the
-                                // one stray frame of 7,075 in batch mode was frame 0 of its batch)
-                                skip = frame0_drop() as usize + f1_off as usize;
-                                if f1_off {
+                                // one stray frame of 7,075 in batch mode was frame 0 of its batch), unless its edge
+                                // check kept it; a frame 1 off the trigger takes frame 0 with it (the workers take a
+                                // run of frames); frame 1 itself is counted here only when the workers hold it
+                                let f1_fed = f1_off && avail > 2;
+                                skip = (f0_left || f1_off) as usize + f1_fed as usize;
+                                if f1_fed {
                                     frame1_left_out();
                                 }
                                 pipe.feed_codes(
@@ -1131,7 +1147,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             }
                         }
                         // two frames: the newest is frame 1
-                        if avail == 2 && frame0_drop() && frame1_off_trigger(&newest, &b) {
+                        if avail == 2 && f1_off {
                             frame1_left_out();
                             skip += 1;
                             Vec::new()
@@ -1148,8 +1164,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         let take = if after.is_some() { take.min(1) } else { take };
                         // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
                         // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With
-                        // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div)
-                        let stale = (avail > 1 && after.is_none() && frame0_drop()) as usize;
+                        // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div); in a small batch only
+                        // when its edge is not at the trigger point (`f0_left` above, issue #220)
+                        let stale = f0_left as usize;
                         skip = (avail - take).max(stale);
                         n += skip as u64;
                         let mut all: Vec<Frame> = dma
@@ -1166,9 +1183,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 }
                             })
                             .collect();
-                        // frame 1 (frame 0 left out above) without its edge at the trigger point: left out too
-                        if stale == 1 && skip == 1 && all.first().is_some_and(|f| frame1_off_trigger(f, &b)) {
-                            all.remove(0);
+                        // frame 1 without its edge at the trigger point: left out too, whether frame 0 before it was
+                        // left out or kept by its edge check (`all` starts at frame `skip`)
+                        let at1 = (f0_drop && avail > 1 && skip <= 1).then(|| 1 - skip);
+                        if let Some(i) = at1.filter(|&i| all.get(i).is_some_and(|f| frame1_off_trigger(f, &b))) {
+                            all.remove(i);
                             frame1_left_out();
                             skip += 1;
                         }
