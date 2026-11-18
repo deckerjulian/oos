@@ -150,7 +150,6 @@ impl Ui {
             | Item::RefOffset
             | Item::MathLinA
             | Item::MathLinB
-            | Item::TrigHoldoff
             | Item::CntDigits
             | Item::MathScale
             | Item::MathOffset
@@ -161,15 +160,7 @@ impl Ui {
             | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2
-            | Item::TrigT1
-            | Item::TrigT2
-            | Item::VidLine
-            | Item::PatLevel
-            | Item::NthIdle
-            | Item::NthN
-            | Item::Setup
-            | Item::Hold => Kind::Value,
+            Item::TrigLevel2 | Item::VidLine | Item::PatLevel | Item::NthN => Kind::Value,
             Item::ChScale(_)
             | Item::ChOffset(_)
             | Item::HScale
@@ -361,32 +352,20 @@ impl Ui {
             Item::AutoDeskew => "Auto deskew",
             Item::ClearDeskew => "Clear deskew",
             Item::TrigSrc => "Source",
-            Item::TrigSlope => "Slope",
-            Item::TrigMode => "Sweep",
             Item::TrigLevel => "Level",
             Item::Trig50 => "Level 50 %",
             Item::TrigType => "Type",
             Item::SearchOn => "Mark events",
             Item::TrigLevel2 => "Level 2",
             Item::TrigSrc2 => "Source B",
-            Item::TrigSlope2 => "Slope B",
-            Item::TrigPol => "Polarity",
             Item::TrigWhen => "When",
-            Item::TrigT1 => "Time",
-            Item::TrigT2 => "Upper limit",
-            Item::VidStd => "Standard",
-            Item::VidSync => "Sync",
             Item::VidLine => "Line",
             Item::Pat(0) => "CH1",
             Item::Pat(1) => "CH2",
             Item::Pat(2) => "CH3",
             Item::Pat(_) => "CH4",
             Item::PatLevel => "Level",
-            Item::WinModeI => "Trigger on",
-            Item::NthIdle => "Idle time",
             Item::NthN => "Edge no.",
-            Item::Setup => "Setup",
-            Item::Hold => "Hold",
             Item::AcqMode => "Mode",
             Item::AcqAvg => "Averages",
             Item::AcqSeg => "Segments",
@@ -410,7 +389,6 @@ impl Ui {
             Item::CntMode => "Count mode",
             Item::CntDigits => "Digits",
             Item::CntClear => "Clear counter",
-            Item::TrigHoldoff => "Holdoff",
             Item::ChLabel(_) => "Name",
             Item::MathExprI => "Formula",
             Item::MathExprEdit => "Edit formula",
@@ -449,8 +427,6 @@ impl Ui {
             Item::CurB => "Cursor B",
             Item::CurC => "Y1",
             Item::CurD => "Y2",
-            Item::TrigNoise => "Noise reject",
-            Item::TrigAutoNoise => "Auto noise rej.",
             Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Hdmi => "HDMI",
@@ -538,12 +514,6 @@ impl Ui {
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
             Item::TrigSrc => self.trigger_source_label(),
-            Item::TrigSlope => match m.slope {
-                Slope::Rise => "Rising".into(),
-                Slope::Fall => "Falling".into(),
-                Slope::Either => "Either".into(),
-            },
-            Item::TrigMode => format!("{:?}", m.trig_mode),
             Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
             Item::TrigType => m.trig_type.name().into(),
             Item::SearchOn => {
@@ -555,40 +525,12 @@ impl Ui {
             }
             Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
             Item::TrigSrc2 => Self::trigger_wave_label(m.trigger_wave2()),
-            Item::TrigSlope2 => match m.trig_slope2 {
-                Slope::Rise => "Rising".into(),
-                Slope::Fall => "Falling".into(),
-                Slope::Either => "Either".into(),
-            },
-            Item::TrigPol => {
-                if m.trig_pol == Pol::Pos {
-                    "Positive".into()
-                } else {
-                    "Negative".into()
-                }
-            }
             Item::TrigWhen => match m.trig_when {
                 WhenKind::Off => "Off".into(),
                 WhenKind::Gt => ">".into(),
                 WhenKind::Lt => "<".into(),
                 WhenKind::In => "Inside".into(),
                 WhenKind::Out => "Outside".into(),
-            },
-            Item::TrigT1 => si_short(m.trig_t1 as f64, "s"),
-            Item::TrigT2 => si_short(m.trig_t2 as f64, "s"),
-            Item::VidStd => {
-                if m.video_std == VideoStd::Pal {
-                    "PAL".into()
-                } else {
-                    "NTSC".into()
-                }
-            }
-            Item::VidSync => match m.video_sync {
-                VSync::AllLines => "Lines".into(),
-                VSync::Line => "Line n".into(),
-                VSync::Odd => "Odd".into(),
-                VSync::Even => "Even".into(),
-                VSync::AllFields => "Fields".into(),
             },
             Item::VidLine => format!("{}", m.video_line),
             Item::Pat(c) => match m.pat[c] {
@@ -599,15 +541,7 @@ impl Ui {
                 Bit::F => "Fall".into(),
             },
             Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
-            Item::WinModeI => match m.win_mode {
-                WinMode::Enter => "Enter".into(),
-                WinMode::Exit => "Exit".into(),
-                WinMode::Inside => "Inside".into(),
-            },
-            Item::NthIdle => si_short(m.nth_idle as f64, "s"),
             Item::NthN => format!("{}", m.nth_n),
-            Item::Setup => si_short(m.setup as f64, "s"),
-            Item::Hold => si_short(m.hold as f64, "s"),
             Item::AcqMode => match m.acq {
                 AcqMode::Normal => "Normal".into(),
                 AcqMode::Peak => "Peak".into(),
@@ -660,13 +594,6 @@ impl Ui {
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
             Item::CntMode => tools::CNT_MODES[m.cnt_mode.min(2)].into(),
             Item::CntDigits => m.cnt_digits.to_string(),
-            Item::TrigHoldoff => {
-                if m.holdoff <= 0.0 {
-                    "Off".into()
-                } else {
-                    si_short(m.holdoff as f64, "s")
-                }
-            }
             Item::MathLinA => format!("{:.3}", m.math_lin.0),
             Item::MathLinB => format!("{:.3}", m.math_lin.1),
             Item::CurMode => format!("{:?}", m.cursor),
@@ -676,8 +603,6 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::TrigNoise => onoff(m.trig_nrej),
-            Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),

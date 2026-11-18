@@ -146,11 +146,7 @@ impl Ui {
                 return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect()
             }
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
-            Item::TrigSlope => &["Rising", "Falling", "Either"],
-            Item::TrigMode => &["Auto", "Normal", "Single"],
             Item::TrigCoup => return TRIG_COUPS.iter().map(|c| c.name().to_string()).collect(),
-            Item::TrigSlope2 => &["Rising", "Falling", "Either"],
-            Item::TrigPol => &["Positive", "Negative"],
             Item::TrigWhen => {
                 if self.m.trig_type == TrigType::Runt {
                     &["Off", ">", "<", "Inside", "Outside"]
@@ -158,8 +154,6 @@ impl Ui {
                     &[">", "<", "Inside", "Outside"]
                 }
             }
-            Item::VidStd => &["PAL", "NTSC"],
-            Item::VidSync => &["Lines", "Line n", "Odd", "Even", "Fields"],
             Item::Pat(_) => {
                 if self.m.trig_type == TrigType::Duration {
                     &["H", "L", "X"]
@@ -167,7 +161,6 @@ impl Ui {
                     &["H", "L", "X", "Rise", "Fall"]
                 }
             }
-            Item::WinModeI => &["Enter", "Exit", "Inside"],
             Item::DecProto => return self.protos_on().iter().map(|p| p.name().to_string()).collect(),
             Item::DecUsbSpeed => &USPEED_NAMES,
             Item::DecOpt(k) => {
@@ -196,7 +189,7 @@ impl Ui {
             Item::DecParity => &["None", "Even", "Odd"],
             Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
-            Item::TrigNoise | Item::TrigAutoNoise | Item::ZoneOn => &["Off", "On"],
+            Item::ZoneOn => &["Off", "On"],
             Item::AcqCores => &["Raw", "Matched"],
             Item::AcqDrawPath => &["Standard", "Batch"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],

@@ -114,18 +114,12 @@ pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 // ---------------------------------------------------------------------------------------------- setup files
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
-const SLOPES: [Slope; 3] = [Slope::Rise, Slope::Fall, Slope::Either];
-const TRIG_MODES: [TrigMode; 3] = [TrigMode::Auto, TrigMode::Normal, TrigMode::Single];
 const ACQ_MODES: [AcqMode; 4] = [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
-const WIN_MODES: [WinMode; 3] = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
-const VSYNCS: [VSync; 5] = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
 const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
 const CURSORS: [CursorMode; 5] =
     [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
-const VIDEO_STDS: [VideoStd; 2] = [VideoStd::Pal, VideoStd::Ntsc];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
-const POLS: [Pol; 2] = [Pol::Pos, Pol::Neg];
 const PARITIES: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
 
 fn name<T: Debug>(x: T) -> String {
@@ -255,31 +249,22 @@ pub fn setup_text(m: &Model) -> String {
             .collect(),
     );
     kv("trig_level", m.trig_level.to_string());
-    kv("slope", name(m.slope));
-    kv("trig_mode", name(m.trig_mode));
-    kv("holdoff", m.holdoff.to_string());
+    crate::settings::write(&crate::settings::trigger::EDGE, m, &mut kv);
     kv("trig_type", name(m.trig_type));
     kv("trig_level2", m.trig_level2.to_string());
-    kv("trig_nrej", m.trig_nrej.to_string());
-    kv("auto_nrej", m.auto_nrej.to_string());
+    crate::settings::write(&crate::settings::trigger::REJECT, m, &mut kv);
     kv("trig_coup", name(m.trig_coup));
     kv("trig_src2", m.trig_src2.to_string());
     kv("trig_ref2", m.trig_ref2.map_or("none".into(), |i| i.to_string()));
-    kv("trig_slope2", name(m.trig_slope2));
-    kv("trig_pol", name(m.trig_pol));
+    crate::settings::write(&crate::settings::trigger::SECOND, m, &mut kv);
     kv("trig_when", name(m.trig_when));
-    kv("trig_t1", m.trig_t1.to_string());
-    kv("trig_t2", m.trig_t2.to_string());
-    kv("video_std", name(m.video_std));
-    kv("video_sync", name(m.video_sync));
+    crate::settings::write(&crate::settings::trigger::TIMES, m, &mut kv);
     kv("video_line", m.video_line.to_string());
     kv("pat", m.pat.iter().map(|&b| name(b)).collect::<Vec<_>>().join(" "));
     kv("pat_levels", list(&m.pat_levels));
-    kv("win_mode", name(m.win_mode));
-    kv("nth_idle", m.nth_idle.to_string());
+    crate::settings::write(&crate::settings::trigger::WINDOW, m, &mut kv);
     kv("nth_n", m.nth_n.to_string());
-    kv("setup", m.setup.to_string());
-    kv("hold", m.hold.to_string());
+    crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, &mut kv);
     kv("acq", name(m.acq));
     kv("cores", m.cores.to_string());
     kv("avg_count", m.avg_count.to_string());
@@ -596,7 +581,7 @@ pub(crate) fn p_bool(v: &str) -> Result<bool, String> {
     }
 }
 
-fn p_f32(v: &str) -> Result<f32, String> {
+pub(crate) fn p_f32(v: &str) -> Result<f32, String> {
     v.parse::<f32>().ok().filter(|x| x.is_finite()).ok_or_else(|| format!("not a number: {}", v))
 }
 
@@ -775,23 +760,12 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "trig_la" => m.trig_la = if v.trim() == "none" { None } else { Some(p_idx(v, 16)? as u8) },
         "trig_level" => m.trig_level = p_f32(v)?,
-        "slope" => m.slope = p_enum(v, &SLOPES)?,
-        "trig_mode" => m.trig_mode = p_enum(v, &TRIG_MODES)?,
-        "holdoff" => m.holdoff = p_f32(v)?,
         "trig_type" => m.trig_type = p_enum(v, &TRIG_TYPES)?,
-        "trig_nrej" => m.trig_nrej = p_bool(v)?,
-        "auto_nrej" => m.auto_nrej = p_bool(v)?,
         "trig_coup" => m.trig_coup = p_enum(v, &TRIG_COUPS)?,
         "trig_level2" => m.trig_level2 = p_f32(v)?,
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
         "trig_ref2" => m.trig_ref2 = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
-        "trig_slope2" => m.trig_slope2 = p_enum(v, &SLOPES)?,
-        "trig_pol" => m.trig_pol = p_enum(v, &POLS)?,
         "trig_when" => m.trig_when = p_enum(v, &WHENS)?,
-        "trig_t1" => m.trig_t1 = p_f32(v)?,
-        "trig_t2" => m.trig_t2 = p_f32(v)?,
-        "video_std" => m.video_std = p_enum(v, &VIDEO_STDS)?,
-        "video_sync" => m.video_sync = p_enum(v, &VSYNCS)?,
         "video_line" => m.video_line = p_u32(v)?,
         "pat" => {
             let b = p_list(v, NCH, |x| p_enum(x, &BITS))?;
@@ -801,11 +775,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             let l = p_list(v, NCH, p_f32)?;
             m.pat_levels.copy_from_slice(&l);
         }
-        "win_mode" => m.win_mode = p_enum(v, &WIN_MODES)?,
-        "nth_idle" => m.nth_idle = p_f32(v)?,
         "nth_n" => m.nth_n = p_u32(v)?,
-        "setup" => m.setup = p_f32(v)?,
-        "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
         "cores" => m.cores = p_bool(v)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
@@ -1050,7 +1020,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             m.bode_sw_log = p_bool(w[1])?;
             m.bode_sync = p_idx(w[2], NCH + 1)?.max(1) - 1;
-            m.bode_sync_slope = p_enum(w[3], &SLOPES[..2])?;
+            m.bode_sync_slope = p_enum(w[3], &crate::settings::trigger::SLOPES[..2])?;
             m.bode_sync_level = p_f32(w[4])?;
             m.bode_sw_in = p_idx(w[5], NCH + 1)?;
             m.bode_ref = f(w[6])?;

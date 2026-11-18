@@ -10,12 +10,21 @@ use crate::ui::testkit::{q, scpi_session};
 const DOCS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/scpi.md");
 const SCPI_TXT: &str = include_str!("../../tests/scpi.txt");
 
+/// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
+const GROUPS: [(&[&[Setting]], &str, &str, &str); 2] =
+    [(&display::SLICES, ":DISPlay", "display", "Display"), (&trigger::SLICES, ":TRIGger", "trigger", "Trigger")];
+
 /// Rows with a command whose query ui/tests/scpi.txt does not ask yet, and why. Adding the query changes the answers
 /// the comparison with the base records, so it comes in a pull request of its own.
 const NOT_ASKED: &[(&str, &str)] = &[
-    ("GBRightness", "not asked before the table; settings_snapshot probes it"),
-    ("COLor", "not asked before the table; settings_snapshot probes it"),
+    (":DISPlay:GBRightness", "not asked before the table; settings_snapshot probes it"),
+    (":DISPlay:COLor", "not asked before the table; settings_snapshot probes it"),
 ];
+
+/// Every row with the SCPI root of its group.
+fn rows() -> impl Iterator<Item = (&'static Setting, &'static str)> {
+    GROUPS.into_iter().flat_map(|(slices, root, _, _)| slices.iter().flat_map(|g| g.iter()).map(move |s| (s, root)))
+}
 
 /// A value other than the default: one step of the menu, the other way at the end of a range.
 fn changed(s: &Setting) -> Model {
@@ -30,25 +39,28 @@ fn changed(s: &Setting) -> Model {
 
 #[test]
 fn every_row_is_complete() {
+    assert_eq!(rows().count(), all().count(), "a table that GROUPS does not name");
     let mut keys = std::collections::HashSet::new();
     let mut cmds = std::collections::HashSet::new();
-    for s in all() {
+    for (s, root) in rows() {
         assert!(!s.key.is_empty() && keys.insert(s.key), "a key empty or twice: {:?}", s.key);
         assert!(!s.label.is_empty() && !s.doc.is_empty(), "{}: a menu label and a docs line", s.key);
         match s.scpi {
             Scpi::Cmd(c) => {
-                assert!(cmds.insert(c), "{}: the command {} twice", s.key, c);
-                let asked = SCPI_TXT.lines().filter(|l| l.starts_with("scpi ")).any(|l| {
-                    l.split_whitespace().nth(2).is_some_and(|h| h.eq_ignore_ascii_case(&format!(":DISPlay:{}?", c)))
-                });
-                let excused = NOT_ASKED.iter().any(|&(n, _)| n == c);
+                let cmd = format!("{}:{}", root, c);
+                let asked = SCPI_TXT
+                    .lines()
+                    .filter(|l| l.starts_with("scpi "))
+                    .any(|l| l.split_whitespace().nth(2).is_some_and(|h| h.eq_ignore_ascii_case(&format!("{}?", cmd))));
+                let excused = NOT_ASKED.iter().any(|&(n, _)| n == cmd);
                 assert!(
                     asked != excused,
-                    "{}: :DISPlay:{}? is {} ui/tests/scpi.txt",
+                    "{}: {}? is {} ui/tests/scpi.txt",
                     s.key,
-                    c,
+                    cmd,
                     ["not in", "in"][asked as usize]
                 );
+                assert!(cmds.insert(cmd), "{}: the command {} twice", s.key, c);
             }
             Scpi::None { why } => assert!(!why.is_empty(), "{}: no command, and no reason", s.key),
         }
@@ -74,34 +86,43 @@ fn a_changed_value_survives_the_setup_file() {
 
 #[test]
 fn a_changed_value_set_over_scpi_reads_back() {
-    for s in all() {
+    for (s, root) in rows() {
         let Scpi::Cmd(c) = s.scpi else { continue };
         let m = changed(s);
         let want = s.query(&m);
         let (mut sc, mut ui, cv) = scpi_session();
-        assert_eq!(q(&mut sc, &mut ui, &cv, &format!(":DISPlay:{} {}", c, want)), "");
-        assert_eq!(q(&mut sc, &mut ui, &cv, &format!(":DISP:{}?", c)), want, "{}", s.key);
+        assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{} {}", root, c, want)), "");
+        // the query in the short form of the root (`:DISP`)
+        let short: String = root.chars().filter(|c| !c.is_ascii_lowercase()).collect();
+        assert_eq!(q(&mut sc, &mut ui, &cv, &format!("{}:{}?", short, c)), want, "{}", s.key);
         assert_eq!((s.get)(&ui.m), (s.get)(&m), "{}", s.key);
         assert!(q(&mut sc, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("0,"), "{}", s.key);
     }
 }
 
-/// The table of docs/scpi.md between the markers of the Display group is the one the rows make.
-/// `OOS_BLESS=1 cargo test --locked -q settings::tests` writes it.
+/// The table of docs/scpi.md between the markers of each group is the one its rows make.
+/// `OOS_BLESS=1 cargo test --locked -q settings::tests` writes them.
 #[test]
-fn the_docs_table_is_the_rows() {
-    let (begin, end) = ("<!-- settings:display:begin -->\n", "<!-- settings:display:end -->");
-    let doc = std::fs::read_to_string(DOCS).expect("docs/scpi.md");
-    let a = doc.find(begin).expect("docs/scpi.md has no settings:display:begin marker") + begin.len();
-    let b = a + doc[a..].find(end).expect("docs/scpi.md has no settings:display:end marker");
-    let want = docs_table(&display::GROUPS, ":DISPlay", "Display");
-    if std::env::var("OOS_BLESS").is_ok_and(|v| v == "1") {
-        std::fs::write(DOCS, format!("{}{}{}", &doc[..a], want, &doc[b..])).unwrap();
-        return;
+fn the_docs_tables_are_the_rows() {
+    let mut doc = std::fs::read_to_string(DOCS).expect("docs/scpi.md");
+    let bless = std::env::var("OOS_BLESS").is_ok_and(|v| v == "1");
+    for (slices, root, name, menu) in GROUPS {
+        let (begin, end) = (format!("<!-- settings:{}:begin -->\n", name), format!("<!-- settings:{}:end -->", name));
+        let a = doc.find(&begin).unwrap_or_else(|| panic!("docs/scpi.md has no {}", begin.trim())) + begin.len();
+        let b = a + doc[a..].find(&end).unwrap_or_else(|| panic!("docs/scpi.md has no {}", end));
+        let want = docs_table(slices, root, menu);
+        if bless {
+            doc = format!("{}{}{}", &doc[..a], want, &doc[b..]);
+            continue;
+        }
+        assert_eq!(
+            &doc[a..b],
+            want,
+            "docs/scpi.md differs from the {} table: OOS_BLESS=1 cargo test --locked -q settings::tests",
+            name
+        );
     }
-    assert_eq!(
-        &doc[a..b],
-        want,
-        "docs/scpi.md differs from the table: OOS_BLESS=1 cargo test --locked -q settings::tests"
-    );
+    if bless {
+        std::fs::write(DOCS, doc).unwrap();
+    }
 }
