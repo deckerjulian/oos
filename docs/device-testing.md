@@ -18,6 +18,14 @@ tools/device-deploy.sh IP --restore                          # the installed oos
 `plan.txt` is `OOS_CAL_DIR=local/cal tools/plan-matrix.sh fpgad/target/release/oos-fpgad > plan.txt` on this
 computer, with the calibration files of the same unit.
 
+## What a run from RAM does not cover
+
+`tools/device-deploy.sh` restarts `oos-ui` with the new programs; it does not start the scope. What runs once at boot
+is not reached: `oos-fpgad cold-boot` and `fpga-boot` from the installed image, the scripts of the initramfs, the
+kernel, an update. A change there needs the image installed and the scope started from power off, with a person at
+the unit, before the label `unit-tested` is set (ADR 0052, proposed). `tools/pr-gate.sh` names the classes: `$proven`
+(the comparison proves a refactoring), `$live` (a run from RAM or more).
+
 ## Only what the change can affect
 
 `--changed BASE` takes the files the tree changes against `BASE`:

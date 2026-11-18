@@ -5,6 +5,7 @@ the labels for pull requests made up here. No network; needs sh and jq, and skip
 import datetime
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -41,6 +42,44 @@ def ago(hours):
 
 
 @unittest.skipUnless(shutil.which("jq"), "needs jq")
+def alternatives(pattern):
+    """The single patterns an extended regular expression of literals, groups and `|` stands for:
+    `^(a/|b/(c|d)\\.rs$)` gives `^a/`, `^b/c\\.rs$`, `^b/d\\.rs$`."""
+    def split(text):  # at the `|` outside groups
+        parts, depth, cur, i = [], 0, "", 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                cur, i = cur + text[i:i + 2], i + 2
+                continue
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if ch == "|" and depth == 0:
+                parts, cur = parts + [cur], ""
+            else:
+                cur += ch
+            i += 1
+        return parts + [cur]
+
+    def expand(text):
+        out = []
+        for part in split(text):
+            start = next((i for i, ch in enumerate(part) if ch == "(" and (i == 0 or part[i - 1] != "\\")), None)
+            if start is None:
+                out.append(part)
+                continue
+            depth, end = 0, start
+            for end in range(start, len(part)):
+                if part[end] in "()" and part[end - 1] != "\\":
+                    depth += 1 if part[end] == "(" else -1
+                    if depth == 0:
+                        break
+            inners, rests = expand(part[start + 1:end]), expand(part[end + 1:])
+            out += [part[:start] + inner + rest for inner in inners for rest in rests]
+        return out
+
+    return expand(pattern)
+
+
 class PullRequests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="oos-pr-"))
@@ -244,6 +283,25 @@ class PullRequests(unittest.TestCase):
         self.ci(scope="success")
         self.assertEqual(self.gate()["unit"], "pending", "the image is not in the programs")
 
+    def test_every_file_of_the_hardware_paths_is_classed(self):
+        # Break it catches: fpgad's board commands moved out of main.rs into new files that $live did not name, so a
+        # refactoring of them would have passed without a unit
+        text = (ROOT / "tools" / "pr-gate.sh").read_text()
+        assign = "".join(line + "\n" for line in text.split("\n") if re.match(r"(hardware|live|proven)=", line))
+        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven"'],
+                             capture_output=True, text=True, check=True).stdout.split("\n")
+        hardware, live, proven = (re.compile(p) for p in out[:3])
+        files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
+        files = [f for f in files if hardware.search(f)]
+        self.assertGreater(len(files), 100, "the tree's hardware paths")
+        self.assertEqual([f for f in files if not live.search(f) and not proven.search(f)], [],
+                         "in neither $live nor $proven of tools/pr-gate.sh: class it")
+        self.assertEqual([f for f in files if live.search(f) and proven.search(f)], [], "in both")
+        # every alternative of both lists names something in the tree: a renamed or removed file leaves no stale name
+        for name, pattern in (("$live", live.pattern), ("$proven", proven.pattern)):
+            stale = [a for a in alternatives(pattern) if not any(re.search(a, f) for f in files)]
+            self.assertEqual(stale, [], f"named in {name}, not in the tree")
+
     def test_a_refactoring_the_comparison_found_equal(self):
         unchanged = "**Behaviour:** unchanged.\n"
         regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/compcheck.rs"]
@@ -258,9 +316,11 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "pending", "it does not say unchanged")
         for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/roll.rs", "hal/src/dho/selfcal.rs",
                      "hal/src/dho/boot/mod.rs", "hal/src/update/pkg.rs", "fpgad/src/bin/oos-update.rs",
-                     "fpgad/src/main.rs", "fpgad/src/board.rs", "rootfs/init"):
+                     "fpgad/src/main.rs", "fpgad/src/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
             self.pull(regs + [live], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "pending", f"{live}: timing, start or update need a unit")
+        self.pull(regs + ["hal/src/dho/a_new_file.rs"], title="Refactor: x", body=unchanged)
+        self.assertEqual(self.gate()["unit"], "pending", "a file of the hardware paths that is not classed yet")
         self.ci()
         self.pull(regs, title="Lints: x", body=unchanged)
         self.assertEqual(self.gate()["unit"], "pending", "compared without calibration values")
