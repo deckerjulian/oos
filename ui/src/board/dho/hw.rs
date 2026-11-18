@@ -1087,11 +1087,6 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let f0_left = frame0_left_out(avail, f0_drop, f0_edge);
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
-                        // frame 1, when the workers get it: left out when its edge is not at the trigger point
-                        let f1_off = frame0_drop()
-                            && avail > 2
-                            && p.memsel <= FRAME1_CHECK_MAX
-                            && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b);
                         // the record of measurements: with the ADC-core correction, as on the path without batches
                         let mc = out.lock().unwrap().cores;
                         let newest = match raw_frame {
@@ -1101,6 +1096,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 Frame { stamp, ..decode_with(last, &b, &p, n, mc.then_some(&mut cores)) }
                             }
                         };
+                        // frame 1: left out when its edge is not at the trigger point. In a batch of two it is the
+                        // newest, checked before the workers are fed, so a frame 0 its edge check kept goes with it
+                        // (the workers take a run of frames; issue #220)
+                        let f1_off = frame0_drop()
+                            && match avail {
+                                2 => frame1_off_trigger(&newest, &b),
+                                a => {
+                                    a > 2
+                                        && p.memsel <= FRAME1_CHECK_MAX
+                                        && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b)
+                                }
+                            };
                         let next =
                             pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| {
@@ -1119,9 +1126,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 // frame 0 left out as on the path without batches (issue #5; unit 2026-11-16: the
                                 // one stray frame of 7,075 in batch mode was frame 0 of its batch), unless its edge
                                 // check kept it; a frame 1 off the trigger takes frame 0 with it (the workers take a
-                                // run of frames)
-                                skip = (f0_left || f1_off) as usize + f1_off as usize;
-                                if f1_off {
+                                // run of frames); frame 1 itself is counted here only when the workers hold it
+                                let f1_fed = f1_off && avail > 2;
+                                skip = (f0_left || f1_off) as usize + f1_fed as usize;
+                                if f1_fed {
                                     frame1_left_out();
                                 }
                                 pipe.feed_codes(
@@ -1139,7 +1147,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             }
                         }
                         // two frames: the newest is frame 1
-                        if avail == 2 && frame0_drop() && frame1_off_trigger(&newest, &b) {
+                        if avail == 2 && f1_off {
                             frame1_left_out();
                             skip += 1;
                             Vec::new()

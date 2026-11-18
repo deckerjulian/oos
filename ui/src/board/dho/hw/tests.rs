@@ -607,9 +607,10 @@ fn frame1_without_its_edge_is_found() {
 }
 
 // Issue #220 on the unit (2026-11-18): at 1 ms/div a batch holds the held frame 0 and one more, so leaving frame 0
-// out unseen put 18 of 37 records a second in the picture. Break it catches: frame 0 of a small batch left out though
-// its edge is at the trigger point; frame 0 kept unchecked, kept when the check cannot judge it or finds it off, or
-// kept in a long batch (the rule of #5 as verified at 10 us/div); the extra decode for a batch of one or a long one.
+// out unseen put 18 of 37 records a second in the picture. The rule: frame 0 of a small batch is kept only when its
+// edge check finds the edge at the trigger point; it is left out when the check cannot judge it, finds it off, or was
+// not run, and always in a long batch (the rule of #5 as verified at 10 us/div). Breaks it catches: either side of
+// that rule turned around, and the extra decode for a batch of one or a long one.
 #[test]
 fn frame0_of_a_small_batch_is_kept_at_the_trigger_point() {
     let s = Settings { level: 0.0, ..Settings::default() };

@@ -322,12 +322,16 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
 
 - **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
   every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
-  - Exception for small batches (issue #220, host only so far): in a batch of up to four frames (`hw::plan`,
-    `FRAME0_CHECK_MAX_FRAMES`), frame 0 is kept when the edge check of frame 1 (below) finds its edge at the trigger
-    point. At 1 ms/div with 100 kpts a batch holds frame 0 and one more, so leaving it out halved the records in the
+  - Exception for small batches (issue #220): in a batch of up to four frames (`hw::plan`,
+    `FRAME0_CHECK_MAX_FRAMES`), frame 0 is decoded and given the same edge check as frame 1 (below), and kept when
+    that check finds frame 0's own edge at the trigger point. A frame 1 off the trigger point still takes frame 0 with
+    it. At 1 ms/div with 100 kpts a batch holds frame 0 and one more, so leaving it out halved the records in the
     picture (unit 2026-11-18: 18 of 37 a second with 1 channel, 14 of 27 with 4). The damaged frames 0 of issue #5
     were found by this criterion (no edge near the trigger point); one joined with older memory that still has its
     edge in place would pass, as for frame 1. Other trigger types, and longer batches, leave frame 0 out as before.
+    Verified on the unit (DHO924S, 2026-11-18, 1 kHz sine of 2 Vpp, edge on CH1 at 0 V): at 1 ms/div 206 to 215 of 222
+    records reached the picture with 1 channel and all with 4 (two runs), and 15 s of infinite persistence (about 450
+    records each) showed no trace off the trigger point; 10 us/div kept its 29 screens a second.
   - The batch path (then chosen with `acq.pipeline = batch`) used to hand it to the deposit workers.
   - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
 - **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
