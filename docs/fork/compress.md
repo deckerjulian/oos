@@ -162,7 +162,7 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
 5. Glitch: a pulse source with a narrow pulse (generator option if fitted, or a 20 ns pulse into CH1) at 1 ms/div, k =
    64: the compressed read holds the pulse top in the pair of its block (`compress-check` covers it when the pulse is
    in the compared middle of the record). Without a pulse source: skip and leave the glitch claim at host level.
-6. Waveform rate before / after. Restart oos-ui with `acq.pipeline = batch`. Per time base 1 us, 10 us, 100 us/div,
+6. Waveform rate before / after (the batch draw path, the only one: ADR 0059). Per time base 1 us, 10 us, 100 us/div,
    1 and 2 channels, Auto depth, probe comp on CH1 (CH2), Normal trigger: read `:SYSTem:STATe?` twice 10 s apart
    (frames acquired / used per second) with `acq.compress` absent, then with `acq.compress = on` and a restart.
    Record: frames per batch (`acquire_batch` log line), acquired/s, used/s, dropped/s, CPU of oos-ui (`top -H -d 1`).

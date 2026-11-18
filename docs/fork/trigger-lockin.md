@@ -161,7 +161,7 @@ Fixes:
 | F1 | Persistence Min: grade against the frame count of the picture (counts / frames merged), or let `vmax` follow downwards at once when the picture was replaced | small |
 | F2 | Persistence Min: replace on a fixed window (for example 50 ms, at least one batch) rather than per refresh, so every picture holds a similar number of frames | small |
 
-Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = frames` needs an oos-ui restart.
+Stock behaviour for comparison was not measured. The frames path (`acq.pipeline = frames` then) is removed (ADR 0059).
 
 ## Trigger status from the hardware (FPGA use)
 

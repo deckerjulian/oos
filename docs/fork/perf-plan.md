@@ -237,19 +237,22 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
   screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
   kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
-- 1, batch pipeline (`drawpipe.rs`), selectable: `acq.pipeline = batch` in system.conf or `OOS_PIPELINE=batch`;
-  `frames` (default) is the old path. Batch is the default since 2026-11-16 (ADR 0029); `acq.pipeline = frames` is
-  the way back. Every frame is used: the hw thread decodes only the newest frame of a batch for
-  the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy; `DmaBuf` is a plain heap buffer, the
-  xdma read can target any of them) with the other frames to 2 deposit workers on the A53s. Each decodes its share
-  into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and draws with `draw_frame` (the body
-  of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per refresh the UI adds the maps and
-  the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older settings and an older mapping drop
-  work, counted. Where the fast path does not apply the hw thread queues every frame as before.
-  Counters acquired / used / dropped (both modes): `:SYSTem:STATe?` and `stat` (`pipeline ... acquired .. used ..
-  dropped ..` at the end of the line), System info "Frames used".
-  Guards: batch picture == frames mode over the same frames (dense, sparse, dots, 1-2 channels, split over 2 workers),
-  trigger statistics equal, buffers come back, stale/busy work dropped and counted with dropped = fed - taken.
+- 1, batch pipeline (`drawpipe.rs`), the only draw path of the hardware since 2026-11-18 (ADR 0059; the default since
+  2026-11-16, ADR 0029). Until then `acq.pipeline` in system.conf, `OOS_PIPELINE`, Acquire > Draw path and
+  `:SYSTem:PIPeline` chose between it and the frames path (every frame through the UI queue, the workers off), which the
+  numbers below call "frames mode"; that path, its switch and the setup key `draw_path` are removed (an old
+  `acq.pipeline` line is dropped, `:SYSTem:PIPeline?` answers `BATC`). Every frame is used: the hw thread decodes only
+  the newest frame of a batch for the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy;
+  `DmaBuf` is a plain heap buffer, the xdma read can target any of them) with the other frames to 2 deposit workers on
+  the A53s. Each decodes its share into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and
+  draws with `draw_frame` (the body of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per
+  refresh the UI adds the maps and the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older
+  settings and an older mapping drop work, counted. Where the fast path does not apply the hw thread queues every frame
+  as before. Counters acquired / used / dropped: `:SYSTem:STATe?` and `stat` (`pipeline Batch|Off ... acquired .. used
+  .. dropped ..` at the end of the line; `Off` with a source other than the hardware), System info "Frames used".
+  Guards: batch picture == `draw_frame` on every frame one by one over the same frames (dense, sparse, dots, 1-2
+  channels, split over 2 workers), trigger statistics equal, buffers come back, stale/busy work dropped and counted with
+  dropped = fed - taken.
   The frame loop's share (issue #186, unit at 10 us/div: batch 14-19 frames a second on screen, frames 20-25): each
   worker and the helper had a mailbox, and the UI added every map of each, 4 x 970 x 448 pixels per mailbox, also the
   maps of channels that are off; in the host test about 4.9 sets a screen, 8.5 M pixel adds (about 50 MB read and
@@ -262,9 +265,10 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   buffer goes back with its last frame drawn, not when every worker holding the batch lets it go. While the workers
   have batches the fast path draws the few queued frames (the newest of older batches) on the frame loop alone: its
   helpers would wait for the small cores the workers keep busy; without batches (one frame each, slow time bases)
-  it draws with its helpers as in the frames mode. Pictures equal to before (guards above, and the merge of 12
+  it draws with its helpers as the frames mode did. Pictures equal to before (guards above, and the merge of 12
   batches while the drawers fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div`
-  (host M3, 16 frames of 250 kB a step, 4 workers): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum
+  (host M3, 16 frames of 250 kB a step, 4 workers; the frames mode is now its arm "queue", the frames pushed to
+  the queue with the workers on and idle): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum
   persistence and 0.03-0.13 ms (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame
   loop per step 1 / 2 / 4 channels 5.4 / 3.3 / 3.3 ms before, 4.8 / 2.8 / 2.7 ms after, frames mode 7.5-8.7 /
   5.0-5.4 / 4.3-4.7 ms. Unit (DHO924S, verified on the unit, 2026-11-18) with the shared mailbox folded after every
@@ -332,4 +336,4 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   definition); `measured` in the status line and "Frames in statistics" in System info show the coverage.
   Software averaging: deferred until the unit shows whether the FPGA average (B1) works and covers deep records
   (`fpga.md` "Average mode": coupled to the frame read-out, unverified). In batch mode Average stays outside the fast
-  path, so every frame goes through the queue as in frames mode.
+  path, so every frame goes through the queue to the frame loop.

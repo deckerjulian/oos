@@ -476,7 +476,7 @@ The switch of the logic analyser, its command and its place in a setup file. It 
 
 | Command | Meaning |
 | --- | --- |
-| `:SYSTem:PIPeline[?]` | The draw path of earlier versions, kept for scripts that set or ask it: Batch is the only one (ADR 0059). The query answers `BATC`; `BATCh` (any word that starts with `BATC`, in any case) is taken and changes nothing; `FRAMes` and `STANdard`, the removed frames path, are refused with `-224`. Not in a setup file. |
+| `:SYSTem:PIPeline[?]` | The draw path of earlier versions, kept for scripts that set or ask it: Batch is the only one ([ADR 0059](adr/code/0059-batch-is-the-only-draw-path.md)). The query answers `BATC`; `BATCh` (any word that starts with `BATC`, in any case) is taken and changes nothing; `FRAMes` and `STANdard`, the removed frames path, are refused with `-224`. Not in a setup file. |
 | `:SYSTem:GRAPhics[?] CPU|GPU` | System > Graphics, the choice; `:SYSTem:STATe?` shows the GPU's times (`gpu layers ...`) only while it really draws. |
 | `:SYSTem:AOUTput[?] TOUT|PFAil|OFF` | The rear AUX OUT: trigger out (the default), pass/fail where the board has the mask or the zone unit, or constant low (`OFF`, an OOS choice); all three verified on the unit (DHO924S, 2026-11-16, [auxout.md](fork/auxout.md)). The query answers `TOUT`, `PFA` or `OFF`; the interpreter refuses a choice the board does not offer with `-224`. |
 
