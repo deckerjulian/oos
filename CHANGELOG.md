@@ -190,6 +190,12 @@ Fixed:
   tolerance became the mask's margin.
 - Setup recall: a `bode_sweep` line that is refused (a sweep time of 0 or `inf`, or a later value that is wrong) no
   longer leaves its first values in the Bode settings; the line changes nothing.
+- Decoders: Quad-SPI no longer ends oos-ui on a CS# frame that ends where it starts (both edges between the same two
+  samples) with a clock edge at that instant; such a frame holds no data.
+- Update: an image whose device tree nests deeper than 64 levels is refused with a message; oos-update ended on
+  one (from about 30 000 levels the stack overflowed).
+- Update: an image whose device tree section (RSCE) names a table longer than the section is refused; one with
+  entries of no length was read up to 2^32 times before the install went on.
 
 ## 0.1.13
 

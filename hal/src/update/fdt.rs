@@ -57,6 +57,12 @@ const PROP: u32 = 3;
 const NOP: u32 = 4;
 const FINISH: u32 = 9;
 
+/// How deep the nodes of a tree may nest, the root counting as one. The running tree of a DHO924S nests 6 levels deep
+/// with its root (verified on the unit, `/proc/device-tree`, 2026-11-18); that Linux leaves out nodes below 64 levels
+/// (`FDT_MAX_DEPTH`) is assumed from its source, not checked here. The bound keeps writing, comparing and dropping a
+/// tree (one stack frame per level) from overflowing the stack on a damaged one.
+pub(crate) const DEPTH_MAX: usize = 64;
+
 fn be32(b: &[u8], at: usize) -> Result<u32, String> {
     b.get(at..at + 4)
         .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
@@ -100,6 +106,9 @@ impl Fdt {
             p += 4;
             match tok {
                 BEGIN => {
+                    if stack.len() == DEPTH_MAX {
+                        return Err(format!("device tree: nested deeper than {} levels", DEPTH_MAX));
+                    }
                     let name = cstr(b, p)?.to_string();
                     p += (name.len() + 1).div_ceil(4) * 4;
                     stack.push(Node { name, ..Default::default() });
@@ -204,6 +213,15 @@ pub fn rsce_file<'a>(blob: &'a [u8], name: &str) -> Result<&'a [u8], String> {
     }
     let (toff, eblk) = (blob[9] as usize, blob[10] as usize);
     let n = be32_le(blob, 12)? as usize;
+    // the table lies inside the container: n entries of eblk blocks from block toff; entries of no blocks would all
+    // be the first one, so there is one at most
+    let fits = match eblk {
+        0 => n <= 1,
+        _ => (toff as u64 + n as u64 * eblk as u64) * 512 <= blob.len() as u64,
+    };
+    if !fits {
+        return Err(format!("RSCE: a table of {} entries does not fit its container", n));
+    }
     for i in 0..n {
         let at = (toff + i * eblk) * 512;
         let row = blob.get(at..at + 268).ok_or("RSCE: entry out of bounds")?;

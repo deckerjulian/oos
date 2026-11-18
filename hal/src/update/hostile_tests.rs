@@ -10,7 +10,7 @@ use super::fdt::{rsce_file, Fdt, Node};
 use super::inflate::{cpio_file, gunzip, image_build, inflate};
 use super::tests::{bootimg, bootimg_build, bootimg_second, package, pk, SEED};
 use super::*;
-use crate::hostile::{known, run, KNOWN};
+use crate::hostile::run;
 
 /// `pkg::verify` and `pkg::verify_header` (an update package from the web page or a stick): return for any bytes;
 /// a package they take carries one of the signed headers and the image that header names, whatever was changed
@@ -48,12 +48,7 @@ fn hostile_trusted_keys() {
     run("update::pkg::parse_keys", &seeds, 1, |b| {
         let text = String::from_utf8_lossy(b);
         let keys = pkg::parse_keys(&text);
-        // the finding `unhex-takes-a-plus-sign`: a line of 64 characters with a plus sign among its digits
         let key_of = |l: &'_ str| l.split('#').next().and_then(|l| l.split_whitespace().next()).map(str::to_string);
-        let plus = text.lines().filter_map(key_of).any(|w| w.len() == 64 && w.contains('+'));
-        if plus && known(KNOWN, "unhex-takes-a-plus-sign") {
-            return Ok(());
-        }
         let words: Vec<String> = text.lines().filter_map(key_of).map(|w| w.to_ascii_lowercase()).collect();
         match keys.iter().find(|k| !words.contains(&hash::hex(&k[..]))) {
             Some(k) => Err(format!("a key that is no first word of a line outside its comment: {}", hash::hex(k))),
@@ -63,20 +58,27 @@ fn hostile_trusted_keys() {
     });
 }
 
+// Break it catches: a plus sign taken for a hex digit (#181)
 #[test]
-#[ignore = "hash::unhex takes a plus sign for a hex digit ('+f' is 0x0f), #181"]
-pub(crate) fn hostile_known_unhex_takes_a_plus_sign() {
+fn hostile_unhex_takes_a_plus_sign() {
     assert_eq!(hash::unhex("+f"), None);
     assert!(pkg::parse_keys(&format!("{}+f\n", "00".repeat(31))).is_empty());
 }
 
+// Break it catches: a table longer than its container, read entry by entry up to 2^32 times (#181)
 #[test]
-#[ignore = "fdt::rsce_file walks a table of any length: entries of no blocks are read up to 2^32 times, #181"]
-pub(crate) fn hostile_known_rsce_table_not_bounded() {
+fn hostile_rsce_table_not_bounded() {
     let mut b = rsce(fdt::TREE, b"tree");
+    assert_eq!(rsce_file(&b, fdt::TREE), Ok(&b"tree"[..]));
     b[10] = 0; // entries of no blocks: every entry is the first
+    assert_eq!(rsce_file(&b, fdt::TREE), Ok(&b"tree"[..]), "one entry of no blocks is still the first");
     b[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(rsce_file(&b, fdt::TREE).is_err(), "a table of 2^32 - 1 entries in a container of {} bytes", b.len());
+    b[12..16].copy_from_slice(&2u32.to_le_bytes());
+    assert!(rsce_file(&b, fdt::TREE).is_err(), "two entries of no blocks");
+    // entries of one block: a table of three from block 1 ends at byte 2048, past the end of the container
+    (b[10], b[12]) = (1, 3);
+    assert!(rsce_file(&b, fdt::TREE).is_err(), "a table of three blocks from block 1 in {} bytes", b.len());
 }
 
 /// `card::image_header`, `card::check_image`, `kexec::parts`, `kexec::tree_at` and `inflate::image_build` (the boot
@@ -180,34 +182,6 @@ fn rsce(name: &str, file: &[u8]) -> Vec<u8> {
     b
 }
 
-/// An RSCE container whose table makes `rsce_file` read the same entry again and again: entries of no blocks, and
-/// more of them than the test waits for (the finding `rsce-table-not-bounded`).
-fn rsce_reads_one_entry_for_ever(b: &[u8]) -> bool {
-    b.len() >= 16 && b[10] == 0 && u32::from_le_bytes([b[12], b[13], b[14], b[15]]) > 4096
-}
-
-/// How deep the nodes of a blob nest, read token by token as `Fdt::parse` reads them, without building the tree.
-fn nesting(b: &[u8]) -> usize {
-    let word = |at: usize| b.get(at..at + 4).map(|w| u32::from_be_bytes([w[0], w[1], w[2], w[3]]) as usize);
-    let (Some(mut p), mut depth, mut most) = (word(8), 0usize, 0usize) else { return 0 };
-    while let Some(token) = word(p) {
-        p += 4;
-        match token {
-            1 => {
-                let Some(name) = b.get(p..).and_then(|rest| rest.iter().position(|&c| c == 0)) else { break };
-                p += (name + 1).div_ceil(4) * 4;
-                depth += 1;
-                most = most.max(depth);
-            }
-            2 => depth = depth.saturating_sub(1),
-            3 => p += 8 + word(p).unwrap_or(0).div_ceil(4) * 4,
-            4 => {}
-            _ => break,
-        }
-    }
-    most
-}
-
 /// A tree of `depth` nodes, each inside the one before.
 fn nested(depth: usize) -> Vec<u8> {
     let mut b = Vec::new();
@@ -224,12 +198,14 @@ fn nested(depth: usize) -> Vec<u8> {
     b
 }
 
+// Break it catches: a tree nested so deep that writing or dropping it overflows the stack (#181)
 #[test]
-#[ignore = "fdt takes a tree nested any deep; 30 000 levels overflow the stack and end the process, #181"]
-pub(crate) fn hostile_known_fdt_nesting_not_bounded() {
-    // 2000 levels are still read, written and dropped; a tree of the unit nests less than 20 deep
-    assert_eq!(nesting(&nested(2000)), 2000);
-    assert!(Fdt::parse(&nested(2000)).is_err(), "a tree of 2000 nested nodes is taken");
+fn hostile_fdt_nesting_not_bounded() {
+    let deepest = Fdt::parse(&nested(fdt::DEPTH_MAX)).expect("a tree of DEPTH_MAX levels is taken");
+    assert_eq!(Fdt::parse(&deepest.to_bytes()), Ok(deepest));
+    assert!(Fdt::parse(&nested(fdt::DEPTH_MAX + 1)).is_err(), "a tree one level deeper is taken");
+    // 30 000 levels ended the process
+    assert!(Fdt::parse(&nested(30_000)).is_err(), "a tree of 30 000 nested nodes is taken");
 }
 
 /// `Fdt::parse`, `Fdt::to_bytes`, `fdt::rsce_file` and `fdt::with_loader_changes` (the device tree section of an
@@ -241,20 +217,15 @@ fn hostile_device_trees() {
     let container = rsce(fdt::TREE, &old);
     let seeds: [&[u8]; 3] = [&old, &running, &container];
     run("update::fdt::parse", &seeds, 4, |b| {
-        if nesting(b) > 1000 && known(KNOWN, "fdt-nesting-not-bounded") {
-            return Ok(());
-        }
         if let Ok(t) = Fdt::parse(b) {
             match Fdt::parse(&t.to_bytes()) {
                 Ok(again) if again == t => {}
                 other => return Err(format!("written out it reads as {:?}", other.map(|t| t.root.name))),
             }
         }
-        if !(rsce_reads_one_entry_for_ever(b) && known(KNOWN, "rsce-table-not-bounded")) {
-            if let Ok(f) = rsce_file(b, fdt::TREE) {
-                if f.as_ptr_range().start < b.as_ptr_range().start || f.as_ptr_range().end > b.as_ptr_range().end {
-                    return Err(format!("a file of {} bytes outside the container", f.len()));
-                }
+        if let Ok(f) = rsce_file(b, fdt::TREE) {
+            if f.as_ptr_range().start < b.as_ptr_range().start || f.as_ptr_range().end > b.as_ptr_range().end {
+                return Err(format!("a file of {} bytes outside the container", f.len()));
             }
         }
         for (new, was, now) in [(b, &old[..], &running[..]), (&old[..], b, &running[..]), (&old[..], &old[..], b)] {

@@ -4,7 +4,7 @@
 //! Hostile input for the protocol decoders: what the probes carry is outside input too, and a record can be empty,
 //! one sample, or hold samples that are no numbers (a channel without data).
 
-use super::{is_known, run};
+use super::run;
 use crate::protocols::{demo, opt_default, opt_fit, shared, Lines, MODULES};
 
 /// Every decoder of the registry (`ModuleInfo::decode`) on records made from its own demo traffic: returns for any
@@ -56,9 +56,6 @@ fn hostile_decoder_records() {
                 chans: std::array::from_fn(|k| used(k).then(|| waves[k].as_slice())),
                 src: std::array::from_fn(|k| used(k).then_some(k)),
             };
-            if m.key() == "Qspi" && qspi_trap(&waves[2], &waves[1], s.thr, 0.1) && is_known("qspi-zero-frame") {
-                return Ok(());
-            }
             match m.info().decode(&l) {
                 Ok(p) => {
                     if let Some(x) = p.iter().find(|x| !(x.t0.is_finite() && x.t1.is_finite())) {
@@ -76,29 +73,10 @@ fn hostile_decoder_records() {
     }
 }
 
-/// The finding `qspi-zero-frame` (in oos-dsp, where `hostile_known_qspi_frame_ends_before_it_starts` has its
-/// smallest record), if this record runs into it: a CS# frame that ends at or before its start with a clock edge at
-/// that instant.
-fn qspi_trap(cs: &[f32], sck: &[f32], thr: f32, hy: f32) -> bool {
-    use oos_dsp::edges::{edges, states};
-    let clk: Vec<f64> = edges(sck, thr, hy).iter().filter(|e| e.rising).map(|e| e.t).collect();
-    let mut open = (states(cs, thr, hy).iter().flatten().next() == Some(&false)).then_some(0.0);
-    for e in edges(cs, thr, hy) {
-        if !e.rising {
-            open = Some(e.t);
-        } else if let Some(start) = open.take() {
-            if clk.iter().any(|&t| t <= start && t >= e.t) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
+// Break it catches: a CS# frame that ends where it starts, with a clock edge at that instant, panics (#181)
 #[cfg(feature = "dec-qspi")]
 #[test]
-#[ignore = "the QSPI decoder panics on a CS# frame that ends where it starts with a clock edge there, #181"]
-pub(super) fn hostile_known_qspi_zero_frame() {
+fn hostile_qspi_zero_frame() {
     let Some(m) = MODULES.iter().find(|m| m.key() == "Qspi") else { panic!("no QSPI decoder in this build") };
     // CS# falls and rises between samples so far apart that both crossings are at sample 1; so is the clock's edge
     let (cs, sck) = ([1e30f32, 0.0, 1e17], [0.0f32, 0.0, 1e30]);
@@ -113,5 +91,6 @@ pub(super) fn hostile_known_qspi_zero_frame() {
         chans: lines,
         src: [None; 4],
     };
-    let _ = m.info().decode(&l);
+    let p = m.info().decode(&l);
+    assert!(p.as_ref().is_ok_and(|p| p.is_empty()), "a frame of no time holds no clock edge: {p:?}");
 }

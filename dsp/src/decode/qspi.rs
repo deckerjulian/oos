@@ -186,6 +186,11 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
     let mut out = Vec::new();
     let (mut qpi, mut ab4) = (cfg.cmd_lines == 4, cfg.addr_bytes == 4);
     for (fs, fe) in frames {
+        // the clock edges inside the frame, after its start and before its end; a frame that ends where it starts
+        // (both crossings between the same two samples) has none, also when an edge of the clock lies there
+        if fe <= fs {
+            continue;
+        }
         let a = clk.partition_point(|&t| t <= fs);
         let b = clk.partition_point(|&t| t < fe);
         let cyc: Vec<(f64, u32)> = clk[a..b]

@@ -16,24 +16,7 @@ pub(crate) use gen::*;
 
 /// The findings that still stand, each with its smallest input as an ignored test. The list only shrinks: a fix
 /// removes its line and the `#[ignore]` of its test (`hostile_known_findings_still_stand` fails until it does).
-pub(crate) const KNOWN: &[Known] = &[
-    Known {
-        name: "fdt-nesting-not-bounded",
-        what: "update::fdt takes a device tree nested any deep: 30 000 levels overflow the stack and end the process",
-        repro: crate::update::hostile_tests::hostile_known_fdt_nesting_not_bounded,
-    },
-    Known {
-        name: "rsce-table-not-bounded",
-        what: "update::fdt::rsce_file takes a table longer than its container: entries of no blocks are read up to \
-               2^32 times",
-        repro: crate::update::hostile_tests::hostile_known_rsce_table_not_bounded,
-    },
-    Known {
-        name: "unhex-takes-a-plus-sign",
-        what: "update::hash::unhex takes a plus sign for a hex digit: '+f' is the byte 0x0f",
-        repro: crate::update::hostile_tests::hostile_known_unhex_takes_a_plus_sign,
-    },
-];
+pub(crate) const KNOWN: &[Known] = &[];
 
 // Break it catches: a finding that was fixed and is still stepped over
 #[test]
