@@ -35,9 +35,13 @@ MARKS = ("stable", "experimental", "internal")
 
 # The guards of an arm that is no route of its own but an answer of routes listed elsewhere, each with its reason
 # (whitespace collapsed). A guard not listed here and not `post` or `!post` is a finding.
+# a guard this check passes over, with the paths of its arm: an arm with that guard and other paths is a finding, so a
+# route added to such an arm is not passed over with it
 GUARDS = {
-    '(post || route == "/mcp") && !peer_ok': "the 403 of POST /update and /mcp outside net.allow (docs/http.md, "
-                                             "Common answers)",
+    '(post || route == "/mcp") && !peer_ok': (
+        {"/update", "/mcp"},
+        "the 403 of POST /update and /mcp outside net.allow (docs/http.md, Common answers)",
+    ),
 }
 
 ENTRY = re.compile(r"^### `(GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS) (/[^`\s]*)`\s*$")
@@ -150,6 +154,9 @@ def routes(src):
         if patterns is None:
             continue
         if guard in GUARDS:
+            if set(patterns) != GUARDS[guard][0]:
+                findings.append("%s: arm %s has the guard `if %s`, which is known for %s only (GUARDS)" %
+                                (HTTP_RS, " | ".join(patterns), guard, " | ".join(sorted(GUARDS[guard][0]))))
             continue
         if guard == "post":
             methods = {"POST"}

@@ -210,6 +210,13 @@ class Coverage(unittest.TestCase):
         self.assertEqual(self.findings(), ["ui/src/http.rs: arm /secret has a guard this check does not know: "
                                            "`if peer_ok` (GUARDS)"])
 
+    def test_a_path_added_to_the_arm_of_a_known_guard_is_not_passed_over(self):
+        rs = HTTP_RS.replace('"/update" | "/mcp" if (post', '"/update" | "/mcp" | "/admin" if (post')
+        self.write(rs, HTTP_MD)
+        self.assertEqual(self.findings(), [
+            "ui/src/http.rs: arm /update | /mcp | /admin has the guard `if (post || route == \"/mcp\") && !peer_ok`, "
+            "which is known for /mcp | /update only (GUARDS)"])
+
     def test_tools_need_an_entry_and_the_same_name_in_list_and_call(self):
         self.write(HTTP_RS, HTTP_MD.replace("### MCP tool `screenshot`\n\n- Mark: **stable**\n", ""))
         self.assertEqual(self.findings(), [

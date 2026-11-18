@@ -22,8 +22,9 @@ has no mark, or when an entry names a route the code does not answer.
   `Content-Length` (none: no body); chunked bodies are not read.
 - Only `POST` is told apart. Every other method (`GET`, `HEAD`, `PUT`, ...) is taken as `GET`, and a `HEAD` gets the
   body too. A route without a method of its own below answers every method alike, `POST` included.
-- The route is the path before `?`, as sent (no percent-decoding). The query parameters a route reads are
-  percent-decoded, `+` is a space.
+- The route is the path before `?`, as sent (no percent-decoding). Of the query parameters, `name` of
+  `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
+  refused.
 - Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503
   of `busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once.
 
