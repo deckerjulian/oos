@@ -131,6 +131,19 @@ impl Program {
     }
 }
 
+// what a transport of oos-remote hands to this interpreter (ADR 0022, ADR 0064)
+impl oos_remote::Program for Program {
+    fn new(text: &str) -> Self {
+        Program::new(text)
+    }
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+    fn has_reply(&self) -> bool {
+        self.has_reply
+    }
+}
+
 struct Client {
     s: TcpStream,
     buf: Vec<u8>,

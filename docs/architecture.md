@@ -91,12 +91,15 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
 ```mermaid
 flowchart TB
     subgraph uiP["oos-ui (ui/)"]
-        remote["Remote control<br/>SCPI, web, VXI-11, HiSLIP"]
+        remote["Remote control<br/>SCPI interpreter, its socket, web remote"]
         mainloop["Main loop<br/>events, model, analysis, render"]
         mods["Modules<br/>protocols, measurements, analysers"]
         draw["Renderer<br/>gfx, font, drm, GPU helper"]
         board["board::Board<br/>the one door to the hardware"]
         acq["Acquisition thread<br/>board/dho/hw.rs"]
+    end
+    subgraph remP["oos-remote (ui/remote/), a crate of the workspace ui/"]
+        transports["Transports<br/>VXI-11, HiSLIP, LXI and DNS-SD announcement"]
     end
     subgraph sysP["oos-system (ui/system/), a crate of the workspace ui/"]
         sys["System services<br/>mDNS, SNTP, SSH, USBTMC, net.allow, clock, system.conf, thread placement"]
@@ -109,6 +112,8 @@ flowchart TB
     dev["Device files<br/>xdma0_bypass, xdma0_c2h_0, gpiochipN, ttyS0, sysfs"]
     remote -- "commands, read without waiting" --> mainloop
     remote -- "sockets, net.allow" --> sys
+    transports -- "program messages, ADR 0022" --> remote
+    transports -- "sockets, mDNS, net.allow" --> sys
     mainloop -- "switches, settings" --> sys
     mods -- "menu rows, tiles, pages, through traits" --> mainloop
     mainloop -- "picture" --> draw
@@ -122,7 +127,7 @@ flowchart TB
     hal -- "Bus trait, GPIO lines, sysfs" --> dev
 ```
 
-Drawn from: `ui/src/main.rs`, `ui/system/src/lib.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
+Drawn from: `ui/src/main.rs`, `ui/system/src/lib.rs`, `ui/remote/src/lib.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
 `ui/src/measures/mod.rs`, `fpgad/src/main.rs`, `hal/src/dho/`. `oos-ui` also offers the control FIFO
 `/tmp/oos-ui.ctl`, and takes its signal from one of four sources: Demo, Replay, Live or Hw (below).
 
@@ -130,7 +135,9 @@ Rule for all crates: no vendor code is in the tree. Only dependency of the four 
 [fork/deps.md](fork/deps.md)). `ui/` is a Cargo workspace: a layer of `oos-ui` that names nothing above it leaves it
 as a crate of its own below `ui/`, with one lock file and one target folder for all of them
 ([ADR 0064](adr/code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md)). The first is
-`oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`. `oos-ui` brings its modules into its crate
+`oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`; the second `oos-remote`
+(`ui/remote/`): VXI-11, HiSLIP and their announcement, generic over the program they hand to the interpreter
+(`oos_remote::Program`, which `scpi::Program` implements). `oos-ui` brings its modules into its crate
 root (`main.rs`), so they are named `crate::sysconf` there as before, and the compiler refuses a path from
 `oos-system` back into `oos-ui`.
 
@@ -216,7 +223,7 @@ store does not name the board.
 flowchart TB
     subgraph uiL["oos-ui (ui/src/)"]
         main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
-        transport["transport<br/>http, vxi11, hislip, announce<br/>frame the messages of a computer"]
+        transport["transport<br/>http; in the crate oos-remote (ui/remote/): vxi11, hislip, announce<br/>frame the messages of a computer"]
         command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
@@ -273,7 +280,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
-| a remote transport | its file in `ui/src/` (`http.rs`, `vxi11.rs`, `hislip.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `announce.rs`; ADR 0064), or `ui/src/http.rs` for the web remote; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
 | a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
 | the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
 | a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |

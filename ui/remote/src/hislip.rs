@@ -70,17 +70,21 @@ pub fn encode(typ: u8, control: u8, param: u32, data: &[u8]) -> Vec<u8> {
     o
 }
 
+/// A header that cannot be a HiSLIP message: the connection is to be closed with a fatal error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BadHeader;
+
 /// Takes one message from `buf`. `Err` is a header that cannot be a message (the connection should close).
-pub fn take_message(buf: &mut Vec<u8>) -> Result<Option<Message>, ()> {
+pub fn take_message(buf: &mut Vec<u8>) -> Result<Option<Message>, BadHeader> {
     if buf.len() < HEADER {
         return Ok(None);
     }
     if &buf[..2] != b"HS" {
-        return Err(());
+        return Err(BadHeader);
     }
     let n = u64::from_be_bytes(buf[8..16].try_into().unwrap()) as usize;
     if n > MAX_PAYLOAD {
-        return Err(());
+        return Err(BadHeader);
     }
     if buf.len() < HEADER + n {
         return Ok(None);
@@ -102,12 +106,12 @@ enum Role {
     Async,
 }
 
-struct Peer {
+struct Peer<P> {
     role: Role,
     session: u16,
     pending: Vec<u8>,
     msgid: u32,
-    program: Option<crate::scpi::Program>,
+    program: Option<P>,
 }
 
 struct Live {
@@ -174,12 +178,12 @@ fn alloc_id(live: &[Live], next: &mut u16) -> u16 {
     }
 }
 
-fn on_program_message(
-    peer: &mut Peer,
+fn on_program_message<P: crate::Program>(
+    peer: &mut Peer<P>,
     live: &mut Vec<Live>,
     next: &mut u16,
     msg: &Message,
-    exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>,
+    exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>,
 ) -> Out {
     match msg.typ {
         INITIALIZE if peer.role == Role::New => {
@@ -214,12 +218,12 @@ fn on_program_message(
                 return quiet();
             }
             let payload = std::mem::take(&mut peer.pending);
-            let mut program = crate::scpi::Program::new(&String::from_utf8_lossy(&payload));
+            let mut program = P::new(&String::from_utf8_lossy(&payload));
             let Some(mut resp) = exec(&mut program) else {
                 peer.program = Some(program);
                 return quiet();
             };
-            if !program.has_reply {
+            if !program.has_reply() {
                 return quiet();
             }
             resp.push(b'\n');
@@ -266,7 +270,7 @@ fn on_program_message(
 
 #[cfg(test)]
 fn on_message(
-    peer: &mut Peer,
+    peer: &mut Peer<crate::Line>,
     live: &mut Vec<Live>,
     next: &mut u16,
     msg: &Message,
@@ -275,37 +279,79 @@ fn on_message(
     on_program_message(peer, live, next, msg, &mut |program| Some(program.immediate(exec)))
 }
 
-struct Conn {
+#[cfg(test)]
+impl Server<crate::Line> {
+    pub(crate) fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
+        self.poll_async(&mut |program| Some(program.immediate(exec)));
+    }
+}
+
+/// Tests of oos-ui: a sync session that takes DATA_END messages, with the real interpreter.
+#[cfg(any(test, feature = "testkit"))]
+pub struct SyncSession<P> {
+    peer: Peer<P>,
+    live: Vec<Live>,
+    next: u16,
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl<P: crate::Program> Default for SyncSession<P> {
+    fn default() -> Self {
+        let peer = Peer { role: Role::Sync, session: 1, pending: Vec::new(), msgid: 0, program: None };
+        SyncSession { peer, live: vec![Live { id: 1, max_payload: MAX_PAYLOAD }], next: 2 }
+    }
+}
+
+#[cfg(any(test, feature = "testkit"))]
+impl<P: crate::Program> SyncSession<P> {
+    /// The messages the server sends for a DATA_END with message id `id` and `text`, in order.
+    pub fn data_end(&mut self, id: u32, text: &str, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) -> Vec<Message> {
+        let msg = Message { typ: DATA_END, control: 0, param: id, data: text.as_bytes().to_vec() };
+        let out = on_program_message(&mut self.peer, &mut self.live, &mut self.next, &msg, exec);
+        let sent = out.msgs.into_iter().chain(out.reply.iter().flat_map(Reply::messages));
+        sent.map(|mut m| take_message(&mut m).expect("a message").expect("a whole one")).collect()
+    }
+    /// The program that waits for an operation (`*OPC?`), taken out of the session.
+    pub fn take_waiting(&mut self) -> Option<P> {
+        self.peer.program.take()
+    }
+}
+
+/// The type of a DATA_END message, for the tests of oos-ui.
+#[cfg(any(test, feature = "testkit"))]
+pub const DATA_END_TYPE: u8 = DATA_END;
+
+struct Conn<P> {
     s: TcpStream,
     buf: Vec<u8>,
-    peer: Peer,
+    peer: Peer<P>,
     /// the messages not yet written (#192): the next message is taken once they are out
-    out: crate::net::Outbox,
+    out: oos_system::net::Outbox,
     /// the connection ends once its messages are out (the client closed its side, or a fatal error was sent)
     closing: bool,
 }
 
-impl Conn {
+impl<P> Conn<P> {
     /// Writes what the socket takes now of the replies not yet written.
-    fn flush(&mut self) -> crate::net::Sent {
+    fn flush(&mut self) -> oos_system::net::Sent {
         self.out.flush(&self.s)
     }
 }
 
 /// The listener. `closed` is the scope, which does not accept HiSLIP.
-pub struct Server {
+pub struct Server<P> {
     l: Option<TcpListener>,
-    conns: Vec<Conn>,
+    conns: Vec<Conn<P>>,
     live: Vec<Live>,
     next: u16,
     /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
-    pub acl: crate::netacl::Shared,
+    pub acl: oos_system::netacl::Shared,
     /// the changes of `acl` looked at (`netacl::Shared::changed`)
     acl_seen: u64,
 }
 
-impl Server {
-    pub fn open(port: u16) -> Server {
+impl<P: crate::Program> Server<P> {
+    pub fn open(port: u16) -> Self {
         let l = TcpListener::bind(("0.0.0.0", port)).ok();
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
@@ -313,11 +359,18 @@ impl Server {
         } else {
             eprintln!("oos-ui: HiSLIP port {} not available", port);
         }
-        Server { l, conns: Vec::new(), live: Vec::new(), next: 1, acl: crate::netacl::Shared::default(), acl_seen: 0 }
+        Server {
+            l,
+            conns: Vec::new(),
+            live: Vec::new(),
+            next: 1,
+            acl: oos_system::netacl::Shared::default(),
+            acl_seen: 0,
+        }
     }
 
-    pub fn closed() -> Server {
-        let acl = crate::netacl::Shared::default();
+    pub fn closed() -> Self {
+        let acl = oos_system::netacl::Shared::default();
         Server { l: None, conns: Vec::new(), live: Vec::new(), next: 1, acl, acl_seen: 0 }
     }
 
@@ -325,12 +378,7 @@ impl Server {
         self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
     }
 
-    #[cfg(test)]
-    pub fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
-        self.poll_async(&mut |program| Some(program.immediate(exec)));
-    }
-
-    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
+    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
         if let Some(l) = &self.l {
             while let Ok((s, peer)) = l.accept() {
                 if !self.acl.permits_peer(Ok(peer)) {
@@ -356,11 +404,11 @@ impl Server {
             let mut tmp = [0u8; 8192];
             let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             // what is still to be written goes first, as much as the socket takes now (#192)
-            closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+            closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
             let mut eof = self.conns[i].closing;
             let mut read_bytes = 0;
             while !closed && !eof {
-                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
+                match oos_system::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         eof = true;
                         break;
@@ -376,7 +424,7 @@ impl Server {
                             break;
                         }
                     }
-                    Err(e) if crate::net::later(&e) => break,
+                    Err(e) if oos_system::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;
@@ -395,7 +443,7 @@ impl Server {
             if ready && !clearing {
                 if let Some(mut program) = self.conns[i].peer.program.take() {
                     if let Some(mut response) = exec(&mut program) {
-                        if program.has_reply {
+                        if program.has_reply() {
                             response.push(b'\n');
                             let peer = &self.conns[i].peer;
                             let max = self
@@ -408,7 +456,7 @@ impl Server {
                             for message in reply.messages() {
                                 self.conns[i].out.push(&message);
                             }
-                            closed = self.conns[i].flush() == crate::net::Sent::Gone;
+                            closed = self.conns[i].flush() == oos_system::net::Sent::Gone;
                         }
                     } else {
                         self.conns[i].peer.program = Some(program);
@@ -427,7 +475,7 @@ impl Server {
                 let msg = match take_message(&mut self.conns[i].buf) {
                     Ok(Some(m)) => m,
                     Ok(None) => break,
-                    Err(()) => {
+                    Err(BadHeader) => {
                         self.conns[i].out.push(&encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
                         stop = true;
                         break;
@@ -449,7 +497,7 @@ impl Server {
                 for m in out.msgs.into_iter().chain(replies) {
                     self.conns[i].out.push(&m);
                 }
-                closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+                closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
                 stop |= out.close;
             }
             // a client that closed its side, or one that was told a fatal error, goes once its messages are out
@@ -526,51 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_query_emits_data_end_but_writes_and_cancelled_fences_do_not() {
-        let mut ui = crate::ui::testkit::demo_ui();
-        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
-        let mut peer = Peer { role: Role::Sync, session: 1, pending: Vec::new(), msgid: 0, program: None };
-        let mut live = vec![Live { id: 1, max_payload: MAX_PAYLOAD }];
-        let mut next = 2;
-        let message =
-            |id, command: &str| Message { typ: DATA_END, control: 0, param: id, data: command.as_bytes().to_vec() };
-        let empty =
-            on_program_message(&mut peer, &mut live, &mut next, &message(7, ":MEAS:CLEAR;:MEAS:STRIP?"), &mut |p| {
-                scpi.poll_program(&mut ui, &cv, p)
-            });
-        assert_eq!(sent(&empty).len(), 1);
-        let reply = take_message(&mut sent(&empty)[0]).unwrap().unwrap();
-        assert_eq!((reply.typ, reply.param, reply.data), (DATA_END, 7, vec![b'\n']));
-        let write = on_program_message(&mut peer, &mut live, &mut next, &message(8, ":MEAS:CLEAR"), &mut |p| {
-            scpi.poll_program(&mut ui, &cv, p)
-        });
-        assert!(sent(&write).is_empty());
-        let compound =
-            on_program_message(&mut peer, &mut live, &mut next, &message(9, ":MEAS:STRIP?;*OPC?"), &mut |p| {
-                scpi.poll_program(&mut ui, &cv, p)
-            });
-        assert_eq!(take_message(&mut sent(&compound)[0]).unwrap().unwrap().data, b";1\n");
-        let pending = on_program_message(
-            &mut peer,
-            &mut live,
-            &mut next,
-            &message(10, ":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"),
-            &mut |p| scpi.poll_program(&mut ui, &cv, p),
-        );
-        assert!(
-            sent(&pending).is_empty(),
-            "an earlier empty query must not emit a premature response at a pending fence"
-        );
-        let mut program = peer.program.take().unwrap();
-        assert!(program.has_reply);
-        scpi.exec_line(&mut ui, &cv, ":STOP");
-        assert_eq!(scpi.poll_program(&mut ui, &cv, &mut program), Some(Vec::new()));
-        assert!(!program.has_reply, "cancelled queries must not emit an empty DATA_END response");
-        assert_eq!(ui.m.run, crate::model::RunState::Stop);
-    }
-
-    #[test]
     fn the_payload_is_the_scpi_and_the_lock_is_not_kept() {
         let mut peer = Peer { role: Role::New, session: 0, pending: Vec::new(), msgid: 0, program: None };
         let mut live = Vec::new();
@@ -630,7 +633,7 @@ mod tests {
 
     #[test]
     fn a_socket_round_trip_answers_idn() {
-        let mut h = Server::open(0);
+        let mut h = Server::<crate::Line>::open(0);
         let port = h.port().expect("port");
         // no deadline: a missing answer hangs the test, a slow or busy computer does not fail it (ADR 0020)
         let t = std::thread::spawn(move || {
@@ -662,7 +665,7 @@ mod tests {
     /// answer before the connection goes.
     #[test]
     fn a_query_before_the_end_of_the_input_is_still_answered() {
-        let mut h = Server::open(0);
+        let mut h = Server::<crate::Line>::open(0);
         let port = h.port().expect("port");
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -735,7 +738,7 @@ mod tests {
                     let m = match take_message(&mut buf) {
                         Ok(Some(m)) => m,
                         Ok(None) => break,
-                        Err(()) => {
+                        Err(BadHeader) => {
                             let long = u64::from_be_bytes(before[8..16].try_into().unwrap()) > MAX_PAYLOAD as u64;
                             if &before[..2] == b"HS" && !long {
                                 return Err("refused a header with the prologue and a length within the limit".into());

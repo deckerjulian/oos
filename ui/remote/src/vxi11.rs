@@ -101,18 +101,23 @@ pub fn portmap(c: &Call) -> Vec<u8> {
 }
 
 /// One VXI-11 link's output (responses waiting for device_read).
-#[derive(Default)]
-pub struct Link {
+pub struct Link<P> {
     pub out: Vec<u8>,
-    programs: std::collections::VecDeque<crate::scpi::Program>,
+    programs: std::collections::VecDeque<P>,
+}
+
+impl<P> Default for Link<P> {
+    fn default() -> Self {
+        Link { out: Vec::new(), programs: Default::default() }
+    }
 }
 
 /// Core channel procedures; `exec` runs one program message (may contain several ';'-separated commands) and
 /// returns the response bytes (without the newline).
-pub fn core_async(
+pub fn core_async<P: crate::Program>(
     c: &Call,
-    links: &mut Vec<Option<Link>>,
-    exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>,
+    links: &mut Vec<Option<Link<P>>>,
+    exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>,
 ) -> Vec<u8> {
     if c.prog != CORE_PROG || c.vers != 1 {
         return reply(c.xid, 1);
@@ -151,13 +156,13 @@ pub fn core_async(
             let data = x.opaque().unwrap_or(&[]);
             match links.get_mut(lid).and_then(|l| l.as_mut()) {
                 Some(l) => {
-                    let queued: usize = l.programs.iter().map(|program| program.bytes).sum();
+                    let queued: usize = l.programs.iter().map(|program| program.bytes()).sum();
                     if queued + data.len() > MAX_RECORD || l.programs.len() >= 16 {
                         put(&mut o, 9);
                         put(&mut o, 0);
                         return o;
                     }
-                    l.programs.push_back(crate::scpi::Program::new(&String::from_utf8_lossy(data)));
+                    l.programs.push_back(P::new(&String::from_utf8_lossy(data)));
                     pump_link(l, exec);
                     put(&mut o, 0);
                     put(&mut o, data.len() as u32);
@@ -221,9 +226,9 @@ pub fn core_async(
     o
 }
 
-fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
+fn pump_link<P: crate::Program>(link: &mut Link<P>, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
     while let Some(mut program) = link.programs.pop_front() {
-        if link.out.len() >= crate::net::RESP_MAX {
+        if link.out.len() >= oos_system::net::RESP_MAX {
             link.programs.clear();
             break;
         }
@@ -231,7 +236,7 @@ fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) ->
             link.programs.push_front(program);
             break;
         };
-        if program.has_reply {
+        if program.has_reply() {
             link.out.extend_from_slice(&response);
             link.out.push(b'\n');
         }
@@ -239,8 +244,45 @@ fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) ->
 }
 
 #[cfg(test)]
-pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
+pub(crate) fn core(
+    c: &Call,
+    links: &mut Vec<Option<Link<crate::Line>>>,
+    exec: &mut dyn FnMut(&str) -> Vec<u8>,
+) -> Vec<u8> {
     core_async(c, links, &mut |program| Some(program.immediate(exec)))
+}
+
+/// Tests of oos-ui: a link driven as a device_write and a device_read would drive it, with the real interpreter.
+#[cfg(any(test, feature = "testkit"))]
+impl<P: crate::Program> Link<P> {
+    /// `text` queued as a device_write queues it, and run as far as `exec` gets.
+    pub fn write(&mut self, text: &str, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
+        self.programs.push_back(P::new(text));
+        pump_link(self, exec);
+    }
+    /// The programs that wait (for an operation, `*OPC?`) are run as far as `exec` gets now.
+    pub fn pump(&mut self, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
+        pump_link(self, exec);
+    }
+    /// How many programs wait.
+    pub fn waiting(&self) -> usize {
+        self.programs.len()
+    }
+}
+
+/// Tests of oos-ui: a device_read of link 0 through the core channel, as (error, reason, data).
+#[cfg(any(test, feature = "testkit"))]
+pub fn device_read<P: crate::Program>(
+    links: &mut Vec<Option<Link<P>>>,
+    exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>,
+) -> (u32, u32, Vec<u8>) {
+    let mut m = Vec::new();
+    for v in [77, 0, 2, CORE_PROG, 1, 12, 0, 0, 0, 0, 0, 1024, 1000, 0, 0, 0] {
+        put(&mut m, v);
+    }
+    let reply = core_async(&parse_call(&m).expect("a call"), links, exec);
+    let mut body = Xdr::new(&reply[24..]);
+    (body.u32().unwrap_or(u32::MAX), body.u32().unwrap_or(u32::MAX), body.opaque().unwrap_or(&[]).to_vec())
 }
 
 const MAX_CONNS: usize = 8;
@@ -252,35 +294,35 @@ struct Conn {
     core: bool,
     links: Vec<usize>,
     /// the replies not yet written (#192): the next call is taken once they are out
-    out: crate::net::Outbox,
+    out: oos_system::net::Outbox,
     /// the client closed its side: the connection goes once its replies are out
     closing: bool,
 }
 
 impl Conn {
     /// Writes what the socket takes now of the replies not yet written.
-    fn flush(&mut self) -> crate::net::Sent {
+    fn flush(&mut self) -> oos_system::net::Sent {
         self.out.flush(&self.s)
     }
 }
 
 /// The listeners: portmapper TCP/UDP 111, core TCP `CORE_PORT`.
-pub struct Server {
+pub struct Server<P> {
     pm_tcp: Option<TcpListener>,
     pm_udp: Option<UdpSocket>,
     core_tcp: Option<TcpListener>,
     conns: Vec<Conn>,
-    pub links: Vec<Option<Link>>,
+    pub links: Vec<Option<Link<P>>>,
     /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
-    pub acl: crate::netacl::Shared,
+    pub acl: oos_system::netacl::Shared,
     /// the changes of `acl` looked at (`netacl::Shared::changed`)
     acl_seen: u64,
 }
 
-impl Server {
+impl<P: crate::Program> Server<P> {
     /// Nothing listening. A computer leaves VXI-11 to the scope, where port 111 is free.
-    pub fn closed() -> Server {
-        let acl = crate::netacl::Shared::default();
+    pub fn closed() -> Self {
+        let acl = oos_system::netacl::Shared::default();
         Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl, acl_seen: 0 }
     }
 
@@ -289,7 +331,7 @@ impl Server {
         (self.pm_tcp.is_some() && self.pm_udp.is_some() && self.core_tcp.is_some()).then_some(CORE_PORT)
     }
 
-    pub fn open() -> Server {
+    pub fn open() -> Self {
         let mut s = Server::closed();
         s.set_open(true);
         s
@@ -307,8 +349,8 @@ impl Server {
         if self.pm_tcp.is_some() || self.core_tcp.is_some() {
             return;
         }
-        let tcp = |p: u16| crate::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
-        self.pm_udp = crate::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
+        let tcp = |p: u16| oos_system::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = oos_system::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
         (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
         eprintln!(
             "oos-ui: VXI-11 portmapper {} / core {}",
@@ -317,7 +359,7 @@ impl Server {
         );
     }
 
-    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
+    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
             while let Ok((n, from)) = u.recv_from(&mut b) {
@@ -356,12 +398,12 @@ impl Server {
         while i < self.conns.len() {
             let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             // what is still to be written goes first, as much as the socket takes now (#192)
-            closed |= self.conns[i].flush() == crate::net::Sent::Gone;
+            closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
             let mut eof = self.conns[i].closing;
             let mut tmp = [0u8; 8192];
             let mut read_bytes = 0;
             while !closed && !eof {
-                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
+                match oos_system::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         eof = true;
                         break;
@@ -377,7 +419,7 @@ impl Server {
                             break;
                         }
                     }
-                    Err(e) if crate::net::later(&e) => break,
+                    Err(e) if oos_system::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;
@@ -410,7 +452,7 @@ impl Server {
                 let mut out = ((r.len() as u32) | 1 << 31).to_be_bytes().to_vec();
                 out.extend_from_slice(&r);
                 self.conns[i].out.push(&out);
-                if self.conns[i].flush() == crate::net::Sent::Gone {
+                if self.conns[i].flush() == oos_system::net::Sent::Gone {
                     closed = true;
                     break;
                 }
@@ -476,43 +518,6 @@ mod tests {
         }
         m.extend_from_slice(args);
         m
-    }
-
-    #[test]
-    fn empty_query_has_a_readable_end_marker_and_cancelled_fence_has_no_reply() {
-        let mut ui = crate::ui::testkit::demo_ui();
-        let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
-        let mut scpi = crate::scpi::Scpi::open(0);
-        let mut links = vec![Some(Link::default())];
-        let link = links[0].as_mut().unwrap();
-        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR;:MEAS:STRIP?"));
-        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert_eq!(link.out, b"\n");
-        let mut args = Vec::new();
-        for value in [0, 1024, 1000, 0, 0, 0] {
-            put(&mut args, value);
-        }
-        let request = call(77, CORE_PROG, 12, &args);
-        let reply = core_async(&parse_call(&request).unwrap(), &mut links, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        let mut body = Xdr::new(&reply[24..]);
-        assert_eq!((body.u32(), body.u32()), (Some(0), Some(4)));
-        assert_eq!(body.opaque(), Some(&b"\n"[..]), "empty query succeeds instead of an immediate read timeout");
-        let link = links[0].as_mut().unwrap();
-        link.programs.push_back(crate::scpi::Program::new(":MEAS:CLEAR"));
-        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert!(link.out.is_empty());
-        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;*OPC?"));
-        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert_eq!(std::mem::take(&mut link.out), b";1\n");
-        link.programs.push_back(crate::scpi::Program::new(":MEAS:STRIP?;:TRIG:EDGE:LEV 10;:SINGLE;*OPC?;:RUN"));
-        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert!(link.out.is_empty());
-        assert_eq!(link.programs.len(), 1);
-        scpi.exec_line(&mut ui, &cv, ":STOP");
-        pump_link(link, &mut |p| scpi.poll_program(&mut ui, &cv, p));
-        assert!(link.out.is_empty());
-        assert!(link.programs.is_empty());
-        assert_eq!(ui.m.run, crate::model::RunState::Stop);
     }
 
     #[test]
@@ -583,5 +588,77 @@ mod tests {
         assert_eq!(take_record(&mut b), Some(b"abcde".to_vec()));
         assert_eq!(b, vec![0, 0]);
         assert_eq!(take_record(&mut b), None);
+    }
+
+    /// One RPC call as a record: the last-fragment mark and the length, the call header, the arguments.
+    fn rpc(xid: u32, prog: u32, proc_: u32, args: &[u32], data: &[u8]) -> Vec<u8> {
+        let mut m = Vec::new();
+        for v in [xid, 0, 2, prog, 1, proc_, 0, 0, 0, 0].iter().chain(args) {
+            m.extend_from_slice(&v.to_be_bytes());
+        }
+        if !data.is_empty() {
+            m.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            m.extend_from_slice(data);
+            m.resize(m.len().next_multiple_of(4), 0);
+        }
+        let mut rec = (0x8000_0000 | m.len() as u32).to_be_bytes().to_vec();
+        rec.extend(m);
+        rec
+    }
+
+    /// `take_record`, `parse_call`, `portmap` and `core` (VXI-11 on TCP 111 and its core port): return for any bytes;
+    /// a record taken is no longer than the bytes it came from and leaves the buffer shorter; an answer is whole XDR
+    /// words and starts with the call's number; there are never more than 16 links.
+    #[test]
+    fn hostile_vxi11_records() {
+        let two_fragments = {
+            let whole = rpc(9, CORE_PROG, 11, &[0, 1000, 1000, 8], b"*IDN?\n");
+            let body = &whole[4..];
+            let mut b = (12u32).to_be_bytes().to_vec();
+            b.extend_from_slice(&body[..12]);
+            b.extend_from_slice(&(0x8000_0000 | (body.len() - 12) as u32).to_be_bytes());
+            b.extend_from_slice(&body[12..]);
+            b
+        };
+        let session: Vec<u8> = [
+            rpc(1, PMAP_PROG, 3, &[CORE_PROG, 1, 6, 0], b""),
+            rpc(2, CORE_PROG, 10, &[77, 0, 1000], b"inst0"),
+            rpc(3, CORE_PROG, 11, &[0, 1000, 1000, 8], b":CHAN1:SCAL 0.5;:CHAN1:SCAL?\n"),
+            rpc(4, CORE_PROG, 12, &[0, 1024, 1000, 1000, 0, 10], b""),
+            rpc(5, CORE_PROG, 15, &[0, 0, 1000, 1000], b""),
+            rpc(6, CORE_PROG, 23, &[0], b""),
+        ]
+        .concat();
+        let read = rpc(7, CORE_PROG, 12, &[0, 1, 1000, 1000, 0, 10], b"");
+        let seeds: [&[u8]; 3] = [&session, &two_fragments, &read];
+        crate::hostile::run("vxi11::core", &seeds, 1, |b| {
+            let mut buf = b.to_vec();
+            // one link is open, with an answer waiting
+            let mut links = vec![Some(Link::default())];
+            if let Some(l) = links[0].as_mut() {
+                l.out.extend_from_slice(b"OOS,unit\n");
+            }
+            let mut exec = |c: &str| if c.ends_with('?') { b"1".to_vec() } else { Vec::new() };
+            loop {
+                let before = buf.len();
+                let Some(rec) = take_record(&mut buf) else { break };
+                if buf.len() + 4 > before || rec.len() + buf.len() > before {
+                    return Err(format!("a record of {} bytes left {} of {} bytes", rec.len(), buf.len(), before));
+                }
+                let Some(c) = parse_call(&rec) else { continue };
+                for reply in [portmap(&c), core(&c, &mut links, &mut exec)] {
+                    if reply.len() % 4 != 0 || reply.len() < 24 || reply[..4] != c.xid.to_be_bytes() {
+                        return Err(format!("the answer {reply:02x?} to call {}", c.xid));
+                    }
+                }
+                if links.len() > 16 {
+                    return Err(format!("{} links", links.len()));
+                }
+            }
+            if buf.len() > b.len() {
+                return Err("the buffer grew".into());
+            }
+            Ok(())
+        });
     }
 }

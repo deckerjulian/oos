@@ -72,7 +72,7 @@ DEPENDS = {  # Cargo.toml: (its count, the dependencies it may have)
 UI = "ui/src/"  # the sources of oos-ui
 # the crates of the workspace ui/ that a layer became (ADR 0064): main.rs brings their modules into the crate root of
 # oos-ui, so oos-ui names them from there (`crate::sysconf`) and they keep their rows in UI_LAYERS
-UI_CRATES = ("ui/system/src/",)
+UI_CRATES = ("ui/system/src/", "ui/remote/src/")
 OWN_FOLDER = ("main", "lib", "mod")  # files that are the module of their folder: main.rs, lib.rs, mod.rs
 # The layers inside oos-ui, lowest first (ADR 0049): (layer, the key of its count, the other layers it may name, its
 # modules). A module is named from the crate root (`board`, or `ui::la` for one file of a folder); the longest row

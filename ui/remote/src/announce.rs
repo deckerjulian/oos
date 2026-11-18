@@ -129,7 +129,7 @@ fn put_u32(o: &mut Vec<u8>, v: u32) {
 /// A dotted name, uncompressed (`mdns::write_name`).
 fn put_name(o: &mut Vec<u8>, name: &str) {
     let labels: Vec<String> = name.trim_end_matches('.').split('.').map(str::to_string).collect();
-    crate::mdns::write_name(&labels, o);
+    oos_system::mdns::write_name(&labels, o);
 }
 
 fn instance_fqdn(id: &Identity, typ: &str) -> String {
@@ -187,7 +187,7 @@ fn service_rrs(id: &Identity, svc: &Svc, ttl: u32) -> Vec<Rr> {
     vec![
         Rr { name: st, typ: PTR, class: IN, ttl, rdata: ptr },
         Rr { name: inst.clone(), typ: SRV, class: FLUSH, ttl, rdata: srv },
-        Rr { name: inst, typ: TXT, class: FLUSH, ttl, rdata: crate::mdns::txt_bytes(&txt_of(id, svc)) },
+        Rr { name: inst, typ: TXT, class: FLUSH, ttl, rdata: oos_system::mdns::txt_bytes(&txt_of(id, svc)) },
     ]
 }
 
@@ -243,7 +243,7 @@ type Query = (Vec<Question>, Vec<(String, u16)>, usize, usize);
 /// The questions of a standard query, the names of its known answers (RFC 6762 §7.1), its id and where its questions
 /// end; None for a response, another opcode or anything malformed (`mdns::parse`, the reader of the scope's responder).
 fn read_questions(msg: &[u8]) -> Option<Query> {
-    let (m, question_end, _) = crate::mdns::parse_ends(msg)?;
+    let (m, question_end, _) = oos_system::mdns::parse_ends(msg)?;
     if m.is_response() || !m.standard() {
         return None;
     }
@@ -561,7 +561,7 @@ mod tests {
 
     /// The answer and additional records: name, type, data (names in it expanded, as `mdns::parse` gives them).
     fn names(msg: &[u8]) -> Vec<(String, u16, Vec<u8>)> {
-        let m = crate::mdns::parse(msg).unwrap();
+        let m = oos_system::mdns::parse(msg).unwrap();
         m.an.iter().chain(&m.ar).map(|r| (r.name.join(".").to_ascii_lowercase(), r.rtype, r.canon.clone())).collect()
     }
 
@@ -660,7 +660,7 @@ mod tests {
     }
 
     fn record_headers(msg: &[u8]) -> Vec<(u16, u32)> {
-        let (m, _, end) = crate::mdns::parse_ends(msg).unwrap();
+        let (m, _, end) = oos_system::mdns::parse_ends(msg).unwrap();
         assert_eq!(end, msg.len(), "the echoed question must not corrupt resource record offsets");
         m.an.iter().chain(&m.ar).map(|r| (r.class | if r.flush { 0x8000 } else { 0 }, r.ttl)).collect()
     }
@@ -682,7 +682,7 @@ mod tests {
         put_u16(&mut query, IN);
         let (reply, unicast) = answer(&query, &id, &services, true).unwrap();
         assert!(unicast);
-        let m = crate::mdns::parse(&reply).unwrap();
+        let m = oos_system::mdns::parse(&reply).unwrap();
         assert_eq!((m.id, m.qs.len()), (0x9876, 2));
         assert_eq!(&reply[12..query.len()], &query[12..], "preserve resolver question case and compression exactly");
         assert_eq!(m.an.len(), 2);
@@ -691,7 +691,7 @@ mod tests {
         // The same ordinary mDNS query keeps its multicast/cache coherency rules.
         let (mdns, unicast) = answer(&query, &id, &services, false).unwrap();
         assert!(!unicast);
-        assert!(crate::mdns::parse(&mdns).unwrap().qs.is_empty());
+        assert!(oos_system::mdns::parse(&mdns).unwrap().qs.is_empty());
         assert!(record_headers(&mdns).iter().any(|&(class, ttl)| class == FLUSH && ttl == TTL));
     }
 
@@ -757,7 +757,7 @@ mod tests {
                 Err(error) => panic!("no discovery response: {error}"),
             }
         };
-        assert_eq!(crate::mdns::parse(&buf[..n]).unwrap().qs.len(), 1);
+        assert_eq!(oos_system::mdns::parse(&buf[..n]).unwrap().qs.len(), 1);
         assert_eq!(&buf[12..q.len()], &q[12..]);
         assert!(record_headers(&buf[..n]).iter().all(|&(class, ttl)| class == IN && ttl <= 10));
         let recs = names(&buf[..n]);
@@ -791,10 +791,10 @@ mod tests {
         crate::hostile::run("announce::answer", &seeds, 1, |b| {
             for legacy in [false, true] {
                 let Some((pkt, _)) = answer(b, &id, &services, legacy) else { continue };
-                let Some(m) = crate::mdns::parse(&pkt) else {
+                let Some(m) = oos_system::mdns::parse(&pkt) else {
                     return Err(format!("an answer of {} bytes that is no message", pkt.len()));
                 };
-                let asked = crate::mdns::parse(b).map_or(0, |q| q.qs.len());
+                let asked = oos_system::mdns::parse(b).map_or(0, |q| q.qs.len());
                 if !m.is_response() || m.an.len() + m.ar.len() == 0 || (legacy && m.qs.len() != asked) {
                     return Err(format!("an answer with {} questions and {} records", m.qs.len(), m.an.len()));
                 }
