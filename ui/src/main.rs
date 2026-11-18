@@ -17,9 +17,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod announce;
-mod base64;
 mod board;
-mod clock;
 mod cmd;
 mod compress;
 mod decode;
@@ -27,7 +25,6 @@ mod deepmeas;
 mod drawpipe;
 #[cfg(target_os = "linux")]
 mod drm;
-mod ethlink;
 mod fastdraw;
 mod font;
 mod framestats;
@@ -35,42 +32,36 @@ mod gfx;
 mod gpu;
 mod hid;
 mod hislip;
-mod hostname;
 mod http;
 #[cfg(target_os = "linux")]
 mod input;
-mod json;
 mod layout;
 mod math;
-mod mdns;
 mod measures;
 mod model;
-mod net;
-mod net6;
-mod netacl;
 #[cfg(test)]
 mod perfguard;
-mod placement;
 mod protocols;
-mod remote;
 mod scpi;
 mod settings;
-mod sntp;
 #[cfg(test)]
 mod soak;
 mod sparse;
-mod ssh;
 mod store;
-mod sysconf;
-mod system;
 mod trig;
 mod trignear;
 mod ui;
-mod usbtmc;
 mod vpu;
 mod vxi11;
 mod wave;
 mod zone;
+
+// the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
+#[cfg(target_os = "linux")]
+use oos_system::hostname;
+use oos_system::{
+    base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
+};
 
 use gfx::Canvas;
 use ui::Ui;

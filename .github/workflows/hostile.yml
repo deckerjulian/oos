@@ -47,7 +47,7 @@ jobs:
         env:
           CRATE: ${{ matrix.crate }}
           OOS_HOSTILE_ITERS: ${{ matrix.iters }}
-        run: cd "$CRATE" && cargo test --locked hostile
+        run: cd "$CRATE" && cargo test --locked --workspace hostile
   report:
     needs: [hostile]
     if: failure() && github.event_name != 'pull_request'

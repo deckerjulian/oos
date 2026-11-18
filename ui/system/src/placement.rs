@@ -99,7 +99,6 @@ pub fn place(r: Role) {
     let _ = r;
 }
 
-
 /// The cores with less than the largest `cpu_capacity` (empty on a SoC whose cores are all alike, or without the
 /// file): where the background threads go.
 #[cfg(target_os = "linux")]
