@@ -364,7 +364,7 @@ fn analysis_more_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     );
     kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
-    kv("bode_mode", name(m.bode_mode));
+    crate::settings::write(&crate::settings::bode::MODE, m, 0, kv);
     kv(
         "eye_more",
         format!(

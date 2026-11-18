@@ -296,6 +296,17 @@ Additional OOS families accept item names defined by their analysis page/source 
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
+The mode of the Bode page, its command and its key in a setup file. It is declared once, in `ui/src/settings/bode.rs`;
+this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails
+when the two differ. A value the command does not take is refused with `-224`. The sweep and the generator are written
+by hand.
+
+<!-- settings:bode:begin -->
+| Command | Takes | Setup key | Bode menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
+<!-- settings:bode:end -->
+
 ## Cursors, DVM and counter
 
 | Command | Meaning |

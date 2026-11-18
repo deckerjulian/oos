@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 44] = [
+const ITEMS: [(Item, &str); 45] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -53,6 +53,7 @@ const ITEMS: [(Item, &str); 44] = [
     (Item::MaskAction, "mask_stop"),
     (Item::MaskInvert, "mask_inv"),
     (Item::Histogram, "hist"),
+    (Item::BodeMode, "bode_mode"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -92,6 +93,7 @@ impl Ui {
 
     pub(super) fn setting_adjust(&mut self, it: Item, d: i32) -> bool {
         let Some((s, n)) = row(it) else { return false };
+        let before = (s.get)(&self.m, n);
         s.step(&mut self.m, n, d);
         match it {
             // only the inputs the model has switch on
@@ -117,6 +119,15 @@ impl Ui {
                 }
                 return true;
             }
+            // the points of the last sweep are of the other mode; the Bode page leaves the rest as it is (no
+            // `settings_changed`), as before the table
+            Item::BodeMode => {
+                if (s.get)(&self.m, n) != before {
+                    self.bode.points.clear();
+                    self.bode.cursor = 0;
+                }
+                return true;
+            }
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -133,7 +144,7 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Acquire menu (in Average mode with segments, so their
+    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the Bode menu, in the Acquire menu (in Average mode with segments, so their
     /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
     /// page, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
     /// limits show).
@@ -142,7 +153,7 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask]
+            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::Bode]
                 .into_iter()
                 .chain(channels)
                 .any(|m| u.items(m).contains(&it))

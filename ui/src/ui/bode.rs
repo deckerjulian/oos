@@ -244,16 +244,6 @@ fn gen_thread(
 
 /// The generator amplitudes of the knob, 1-2-5 over the allowed 10 mVpp .. 20 Vpp.
 const BODE_AMPS: [f64; 11] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
-const BODE_MODES: [oos_dsp::bode::Mode; 3] =
-    [oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z];
-
-fn bode_mode_name(m: oos_dsp::bode::Mode) -> &'static str {
-    match m {
-        oos_dsp::bode::Mode::Loop => "Loop",
-        oos_dsp::bode::Mode::Psrr => "PSRR",
-        oos_dsp::bode::Mode::Z => "Z",
-    }
-}
 
 impl Ui {
     pub(super) fn bode_items(&self) -> Vec<Item> {
@@ -312,7 +302,6 @@ impl Ui {
             | Item::BodeIn
             | Item::BodeOut
             | Item::BodeGen
-            | Item::BodeMode
             | Item::BodeLink
             | Item::BodeSwLog
             | Item::BodeSync
@@ -325,7 +314,6 @@ impl Ui {
         Some(match it {
             Item::Open(MenuId::Bode) => "Bode",
             Item::BodeOn => "View",
-            Item::BodeMode => "Mode",
             Item::BodeRun => "Start / stop sweep",
             Item::BodeStart => "Start freq",
             Item::BodeStop => "Stop freq",
@@ -357,7 +345,6 @@ impl Ui {
                     "Off".into()
                 }
             }
-            Item::BodeMode => bode_mode_name(m.bode_mode).into(),
             Item::BodeRun => String::new(),
             Item::BodeStart => si_short(m.bode_start, "Hz"),
             Item::BodeStop => si_short(m.bode_stop, "Hz"),
@@ -405,7 +392,6 @@ impl Ui {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
             Item::BodeOn => v(&["Off", "On"]),
-            Item::BodeMode => BODE_MODES.iter().map(|m| bode_mode_name(*m).to_string()).collect(),
             Item::BodeIn if self.bode_gen() == FREE => opt_ch_names("Off"),
             Item::BodeIn | Item::BodeOut => self.wave_names(),
             Item::BodeSync => ch_names(),
@@ -436,15 +422,6 @@ impl Ui {
         let ladder = |x: f64, d: i32| step(&freqs, x, d);
         match it {
             Item::BodeOn => m.view = if m.view == AView::Bode { AView::Scope } else { AView::Bode },
-            Item::BodeMode => {
-                let i = BODE_MODES.iter().position(|&x| x == m.bode_mode).unwrap_or(0);
-                let next = BODE_MODES[(i as i32 + d).rem_euclid(BODE_MODES.len() as i32) as usize];
-                if next != m.bode_mode {
-                    m.bode_mode = next;
-                    self.bode.points.clear();
-                    self.bode.cursor = 0;
-                }
-            }
             Item::BodeStart => m.bode_start = ladder(m.bode_start, d).min(m.bode_stop / 2.0),
             Item::BodeStop => m.bode_stop = ladder(m.bode_stop, d).max(m.bode_start * 2.0),
             Item::BodePoints => m.bode_points = (m.bode_points as i32 + 5 * d).clamp(5, 200) as usize,

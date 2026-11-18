@@ -699,9 +699,6 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             m.spec_acpr_w = width.parse::<f64>().map_err(|e| e.to_string())?;
             m.spec_acpr_s = space.parse::<f64>().map_err(|e| e.to_string())?;
         }
-        "bode_mode" => {
-            m.bode_mode = p_enum(v, &[oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z])?
-        }
         "sim" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             if w.len() < 2 {
