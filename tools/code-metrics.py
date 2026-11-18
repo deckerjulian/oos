@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""code-metrics.py: long functions, `.unwrap()` and modules without a header in the four crates (issue 120).
+"""code-metrics.py: long functions, `.unwrap()`, modules without a header and the menu pages not yet in `PAGES`, in the
+four crates (issue 120, ADR 0060).
 
     tools/code-metrics.py [ROOT]            one line: the three counts
     tools/code-metrics.py --list [ROOT]     each count with what is behind it
@@ -19,6 +20,8 @@ inside a file, not a file or folder that is only built for tests, not a file `te
   unwraps   calls `.unwrap()` in code, not in a comment or a string (goal M4). --list: the count of each file.
   headers   files without a module header (goal U1): no `//!` line before the first line of code; comments and
             inner attributes (`#![...]`) before it are no code. --list names them.
+  menu-arms lines of code that name a `MenuId::` in the shared menu files (MENU_FILES), the part of the pages that
+            has not moved into `PAGES` of ui/src/ui/pages.rs yet (ADR 0060). --list: the count of each file.
 
 Without an option a report: it exits 0 whatever it counts. With --enforce the counts are numbers that only go down
 (ADR 0037), kept in tools/code-metrics.txt, one `<count> <key>` per line as in tools/ratchet.txt: a count above its
@@ -36,6 +39,9 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TOOLS)
 NUMBERS = "tools/code-metrics.txt"  # the counts that may only go down, `<count> <key>` per line
 LONG = 150  # a function of more lines is long (goal S2)
+# the files that answer for every menu page; what names one page there belongs into `PAGES` (ADR 0060)
+MENU_FILES = ("ui/src/ui/menu_actions.rs", "ui/src/ui/menu_dialog.rs", "ui/src/ui/menu_items.rs",
+              "ui/src/ui/menu_text.rs")
 
 
 def load(name):
@@ -145,9 +151,14 @@ def has_header(text):
     return False
 
 
+def menu_arms(text):
+    """Lines that name a `MenuId::` before a `//` comment."""
+    return sum(1 for line in text.splitlines() if "MenuId::" in line.split("//")[0])
+
+
 def counts(root):
-    """The three counts as (key, what, items, total); items are the lines --list prints. The keys name the counts in
-    the summary and in tools/code-metrics.txt."""
+    """The counts as (key, what, items, total); items are the lines --list prints. The keys name the counts in the
+    summary and in tools/code-metrics.txt."""
     texts = dup.read_tree(root)
     long_fns, per_file, headless = [], [], []
     for rel in sorted(texts):
@@ -158,6 +169,7 @@ def counts(root):
             per_file.append((n, rel))
         if not has_header(text):
             headless.append(rel)
+    arms = [(menu_arms(texts[rel]), rel) for rel in MENU_FILES if rel in texts]
     long_fns.sort(key=lambda f: (-f[0], f[1], f[2]))
     per_file.sort(key=lambda f: (-f[0], f[1]))
     return [
@@ -166,6 +178,8 @@ def counts(root):
         ("unwraps", "calls .unwrap() outside tests", sum(n for n, _ in per_file),
          ["%d %s" % f for f in per_file]),
         ("headers", "files without a //! header, of %d" % len(texts), len(headless), headless),
+        ("menu-arms", "lines naming a MenuId in the shared menu files", sum(n for n, _ in arms),
+         ["%d %s" % a for a in arms]),
     ]
 
 

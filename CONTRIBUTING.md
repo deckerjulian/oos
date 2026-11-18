@@ -130,6 +130,34 @@ when a user notices it.
   words the docs or the wiki do not name, or that has no picture (or the reason in `NOT_SHOT`);
   `ui/src/ui/tests.rs::every_trigger_type_triggers_on_the_demo` on a type that does not trigger on the demo signals.
 
+### A new menu page
+
+- **Declare it** as a module in `ui/src/ui/` with the functions of its page (its rows, its title, what its pickers
+  do), and its line in `PAGES` (`ui/src/ui/pages.rs`,
+  [ADR 0060](docs/adr/code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md)). The shared menu code asks
+  `PAGES` for its title, rows, anchor and pickers; the layout check opens it.
+- **Also touch** its `MenuId` and its `mod` line (`ui/src/ui.rs`), its rows as `Item`s with their `Part`
+  (`ui/src/ui/item.rs`), the row that opens it on its parent page, its longest states in `LAYOUTS` (`pages.rs`), and
+  its page in the wiki.
+- **Generate** nothing.
+- **The check:** `ui/src/ui/pages.rs::every_page_is_complete` fails on a kind of `MenuId` that is neither in `PAGES`
+  nor in `NOT_YET_IN_PAGES`, on one in both, and on a page without a title or rows;
+  `ui/src/ui/pages.rs::a_picker_has_one_page` on a picker two pages answer for;
+  `ui/src/ui/lint/menu_layout.rs::every_menu_fits` on a page or a state of `LAYOUTS` that does not fit a screen.
+  `tools/code-metrics.py` counts the lines of the shared menu files that still name a page (`menu-arms`, layer
+  `ratchet`); it only goes down.
+
+### A new service
+
+- **Declare it** as a `Service<Job, Report>` in its part's state (`ui/src/ui/service.rs`,
+  [ADR 0061](docs/adr/code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md)), with
+  the worker function of its thread, and its poll in `POLLS` (`ui/src/ui/acquire.rs`). A job of one input and one
+  result is a `Worker<J, R>` (`ui/src/ui/worker.rs`) instead.
+- **Also touch** the threads of `docs/architecture.md`.
+- **Generate** nothing.
+- **The check:** `ui/src/ui/acquire.rs::every_poll_is_in_polls` fails on a `fn *_poll(&mut self ...)` that is in
+  neither `POLLS` nor `POLLED_ELSEWHERE`, on a listed one that is gone, and on one listed twice.
+
 ### A new analyser page
 
 - **Declare it** as a type that implements `Analyser` at the end of its file in `ui/src/ui/`, with its line in

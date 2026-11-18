@@ -54,6 +54,9 @@ impl Ui {
     }
 
     pub(super) fn menu_title(&self, menu: MenuId) -> String {
+        if let Some(p) = pages::page(menu) {
+            return (p.title)(self, menu);
+        }
         match menu {
             // where the files go now; /tmp is in RAM: say so
             MenuId::Storage if self.save_dir() == std::path::Path::new(crate::store::USB_DIR) => {
@@ -70,13 +73,8 @@ impl Ui {
             MenuId::Power => "Power analysis".into(),
             MenuId::Identify => "Identify: tap to apply".into(),
             MenuId::SelfCal => "Self-calibration".into(),
-            MenuId::Network => "Network".into(),
             MenuId::Features => "Features".into(),
             MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
-            MenuId::Remote => "Remote services".into(),
-            MenuId::Ssh => "SSH".into(),
-            MenuId::Bluetooth => "Bluetooth".into(),
-            MenuId::Time => "Date and time".into(),
             MenuId::Bode => "Bode plot".into(),
             MenuId::Sim => "SIM".into(),
             MenuId::SimAdvanced => "SIM advanced".into(),
@@ -129,6 +127,8 @@ impl Ui {
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
+            // the pages of `PAGES`, answered above
+            _ => String::new(),
         }
     }
 
