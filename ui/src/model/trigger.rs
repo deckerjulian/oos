@@ -54,17 +54,6 @@ impl AuxOut {
     }
 }
 
-impl TrigCoup {
-    pub fn name(self) -> &'static str {
-        match self {
-            TrigCoup::Dc => "DC",
-            TrigCoup::Ac => "AC",
-            TrigCoup::LfReject => "LF reject",
-            TrigCoup::HfReject => "HF reject",
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slope {
     Rise,

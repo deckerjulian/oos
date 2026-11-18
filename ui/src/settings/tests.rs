@@ -19,6 +19,7 @@ const GROUPS: [(&[&[Setting]], &str, &str, &str); 2] =
 const NOT_ASKED: &[(&str, &str)] = &[
     (":DISPlay:GBRightness", "not asked before the table; settings_snapshot probes it"),
     (":DISPlay:COLor", "not asked before the table; settings_snapshot probes it"),
+    (":TRIGger:COUPling", "not asked before the table"),
 ];
 
 /// Every row with the SCPI root of its group.

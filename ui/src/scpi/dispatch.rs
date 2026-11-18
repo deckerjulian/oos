@@ -517,25 +517,6 @@ impl Scpi {
                     };
                     return Some(t(s));
                 }
-                if nodes.len() == 2 && kw(last, "COUPling") {
-                    if query {
-                        return Some(t(match m.trig_coup {
-                            TrigCoup::Dc => "DC",
-                            TrigCoup::Ac => "AC",
-                            TrigCoup::LfReject => "LFR",
-                            TrigCoup::HfReject => "HFR",
-                        }));
-                    }
-                    let a = arg.trim().to_ascii_uppercase();
-                    m.trig_coup = match a.as_str() {
-                        "DC" => TrigCoup::Dc,
-                        "AC" => TrigCoup::Ac,
-                        "LFR" | "LFREJECT" => TrigCoup::LfReject,
-                        "HFR" | "HFREJECT" => TrigCoup::HfReject,
-                        _ => return None,
-                    };
-                    return Some(None);
-                }
                 // the trigger values of the settings table (settings/trigger.rs); a value a row does not take falls
                 // through to the later branches, which answer -113, as before the table
                 if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {

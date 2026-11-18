@@ -114,6 +114,7 @@ command does not take is refused with `-113`.
 | `:TRIGger:HOLDoff[?]` | seconds from 0 to 10 | `holdoff` | Holdoff | The time after a trigger in which no other one is taken; 0 is off. The menu steps 1-2-5 from 100 ns. |
 | `:TRIGger:NREJect[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `trig_nrej` | Noise reject | A wider hysteresis of the trigger comparator (the values by scale: docs/protocols/trigger.md 2.3). |
 | none | a choice of the auto set-up, not of the trigger | `auto_nrej` | Auto noise rej. | The auto set-up sets noise reject from the noise on the flat levels of the trigger signal. |
+| `:TRIGger:COUPling[?]` | `DC`, `AC`, `LFReject`, `HFReject` | `trig_coup` | Coupling | A filter in the trigger path of the edge trigger; the trace keeps the channel's coupling (docs/protocols/trigger.md 2.5). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_slope2` | Slope B | The edge of B (delay trigger) or of the clock (setup/hold trigger). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_pol` | Polarity | The polarity of the pulse (pulse and runt triggers). |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t1` | Time | The time the condition compares with, the lower limit of Inside and Outside; the timeout of the timeout trigger. |

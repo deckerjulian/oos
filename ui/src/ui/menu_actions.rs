@@ -613,10 +613,6 @@ impl Ui {
                 let i = all.iter().position(|&h| h == m.hist).unwrap_or(0);
                 m.hist = all[cycle(i, 3, d)];
             }
-            Item::TrigCoup => {
-                let i = TRIG_COUPS.iter().position(|&x| x == m.trig_coup).unwrap_or(0);
-                m.trig_coup = TRIG_COUPS[cycle(i, TRIG_COUPS.len(), d)];
-            }
             Item::AuxOut => {
                 let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
                 let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);

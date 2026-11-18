@@ -427,7 +427,6 @@ impl Ui {
             Item::CurB => "Cursor B",
             Item::CurC => "Y1",
             Item::CurD => "Y2",
-            Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Hdmi => "HDMI",
             Item::TextSize => "Text size",
@@ -603,7 +602,6 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::TrigCoup => m.trig_coup.name().into(),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),

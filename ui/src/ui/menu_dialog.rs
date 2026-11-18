@@ -146,7 +146,6 @@ impl Ui {
                 return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect()
             }
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
-            Item::TrigCoup => return TRIG_COUPS.iter().map(|c| c.name().to_string()).collect(),
             Item::TrigWhen => {
                 if self.m.trig_type == TrigType::Runt {
                     &["Off", ">", "<", "Inside", "Outside"]
