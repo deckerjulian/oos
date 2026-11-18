@@ -13,7 +13,10 @@ Checked:
     exists, from the top of the tree or from the folder of the document (a crate's README names its own files
     shortly). A path that .gitignore leaves out is fine: what a build makes is not in the tree. Not checked in the
     decision records and the changelog, which also tell what was there once, and not a path with a placeholder in
-    it (`<name>`, `*`, `$VAR`, `...`).
+    it (`<name>`, `*`, `$VAR`, `...`);
+  - an item named behind such a path (`ui/src/settings/tests.rs::every_row_is_complete`): the file declares it, as a
+    function, a test, a type, a constant or a module. A recipe that names the test that keeps it true is checked
+    this way.
 
 Not checked: links to other sites. A path that is meant although nothing is there (a file a build makes, a path on
 the scope that looks like one of the tree, a name that is no path) goes into tools/link-check-allow.txt, one a
@@ -32,6 +35,7 @@ LINK = re.compile(r"(?<!\!)\[[^\]\n]*\]\(([^)\s]+)\)")
 IMAGE = re.compile(r"!\[[^\]\n]*\]\(([^)\s]+)\)")
 WIKI = re.compile(r"\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]")
 TICK = re.compile(r"`([^`\n]+)`")
+ITEM = r"\b(?:fn|def|struct|enum|trait|const|static|type|mod|class)\s+%s\b"
 PLACEHOLDER = re.compile(r"[<>*$|{}]|\.\.\.|NNNN|\s")
 
 
@@ -71,6 +75,12 @@ def ignored(name):
     # with a slash too: a folder that is not there cannot be told from a file
     return any(subprocess.run(("git", "-C", ROOT, "check-ignore", "-q", n), capture_output=True).returncode == 0
                for n in (name, name.rstrip("/") + "/"))
+
+
+def declares(file, item):
+    """Whether a source file declares `item`: a function, a test, a type, a constant or a module of that name."""
+    with open(file, encoding="utf-8", errors="replace") as f:
+        return re.search(ITEM % re.escape(item), f.read()) is not None
 
 
 def allowed():
@@ -113,10 +123,14 @@ def check(path, allow):
             name = name.rstrip(".,:;")
             if not name.startswith(TOP) or PLACEHOLDER.search(name) or name in allow:
                 continue
+            item = name.rpartition("::")[2] if "::" in name else ""
             name = name.split(":")[0].split("#")[0]
             bases = ("", here, os.path.join(here, "src"))
-            if not (any(os.path.exists(os.path.join(ROOT, base, name)) for base in bases) or ignored(name)):
+            found = [os.path.join(ROOT, base, name) for base in bases if os.path.exists(os.path.join(ROOT, base, name))]
+            if not (found or ignored(name)):
                 problems.append((number, f"`{name}`: no such file or folder"))
+            elif item and found and os.path.isfile(found[0]) and not declares(found[0], item):
+                problems.append((number, f"`{name}::{item}`: {name} declares no {item}"))
     return problems
 
 
