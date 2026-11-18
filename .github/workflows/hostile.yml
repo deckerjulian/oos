@@ -1,0 +1,77 @@
+# The hostile-input tests with many more inputs than a pull request tries (docs/adr/process/0047): every parser of
+# outside input in hal, dsp and ui gets mutated valid inputs from a fixed seed; it must return, not panic, and what it
+# accepts must obey its contract. A pull request runs them inside `cargo test` with 2000 inputs a parser, in about a
+# second a crate; here OOS_HOSTILE_ITERS raises that so each crate runs for a few minutes, once a week. The inputs are
+# the same in every run: what fails here fails again with the same number on any computer, and the log prints the
+# input (hex and text).
+#
+# When a crate fails, the last job opens an issue or adds to the one that is open, so it is seen. It also runs for a
+# pull request that changes this file, as a test of the workflow itself.
+name: Hostile input
+on:
+  schedule:
+    - cron: '47 2 * * 0' # Sunday
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/hostile.yml
+permissions:
+  contents: read
+concurrency:
+  group: hostile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  hostile:
+    strategy:
+      fail-fast: false
+      matrix:
+        # the inputs a parser: what takes a few minutes of tests on a runner (measured on a laptop on 2026-11-18 with
+        # these numbers: hal 1 min, dsp and ui about 8 min each; a runner is slower)
+        include:
+          - crate: hal
+            iters: 1000000
+          - crate: dsp
+            iters: 2000000
+          - crate: ui
+            iters: 1000000
+    name: hostile:${{ matrix.crate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # the Rust that rust-toolchain.toml names (ADR 0045)
+      - run: rustup toolchain install --no-self-update
+      - name: The hostile-input tests of ${{ matrix.crate }} with ${{ matrix.iters }} inputs a parser
+        env:
+          CRATE: ${{ matrix.crate }}
+          OOS_HOSTILE_ITERS: ${{ matrix.iters }}
+        run: cd "$CRATE" && cargo test --locked hostile
+  report:
+    needs: [hostile]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: An issue for the failed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOSTILE: ${{ needs.hostile.result }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="The hostile-input run of $(date -u +%Y-%m-%d) failed ($HOSTILE). The log of the crate that failed names
+          the parser and prints the input; the same input fails in \`cargo test hostile\` with the OOS_HOSTILE_ITERS of
+          the workflow (docs/adr/process/0047).
+
+          $RUN"
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"Hostile-input run failed\"" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Hostile-input run failed" --label type/ci \
+              --body "$body"
+          fi
