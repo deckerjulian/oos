@@ -114,7 +114,7 @@ fn vdiv_by_value_and_legacy_index() {
 }
 
 /// A non-default set-up in every group of fields.
-fn custom() -> Model {
+pub(super) fn custom() -> Model {
     let mut m = Model::default();
     (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) =
         (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
@@ -504,7 +504,7 @@ fn oos_bin_and_wfm_round_trip() {
 }
 
 /// A short Tek WFM curve of f32 samples, little endian.
-fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+pub(super) fn wfm_f32(magic: &[u8; 8], t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
     let (explicit, implicit, specification, curve) =
         if magic == b":WFM#001" { (166, 478, 790, 820) } else { (168, 488, 808, 838) };
     let mut b = vec![0u8; curve + v.len() * 4 + 8];

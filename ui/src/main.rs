@@ -1429,3 +1429,7 @@ mod tests {
         }
     }
 }
+
+// at the end, so the lines of the program keep their numbers (tools/scope-binaries.sh)
+#[cfg(test)]
+mod hostile;

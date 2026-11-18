@@ -224,7 +224,7 @@ fn assert_close(t: &WaveTrace, t0: f64, dt: f64, v: &[f32]) {
     }
 }
 
-fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
+pub(super) fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
     let mut curve = Vec::new();
     for c in codes {
         curve.extend_from_slice(&c.to_le_bytes());
@@ -235,7 +235,7 @@ fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
     b
 }
 
-fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8> {
+pub(super) fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8> {
     let desc = 346usize;
     let mut b = vec![0u8; desc + codes.len() * 2];
     b[..8].copy_from_slice(b"WAVEDESC");
@@ -255,7 +255,7 @@ fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8>
     b
 }
 
-fn ag_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
+pub(super) fn ag_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(b"AG10");
     let size_at = b.len();
@@ -291,7 +291,7 @@ fn tr0_block(payload: &[u8]) -> Vec<u8> {
     b
 }
 
-fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+pub(super) fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
     let mut header = String::from("00020000000000009601*x ");
     for name in ["TIME", "v(1)"] {
         header.push_str(&format!("{name:<16}"));
@@ -309,7 +309,7 @@ fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
     b
 }
 
-fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+pub(super) fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
     let mut b = format!("Title: t\nDate: today\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: {}\nVariables:\n\t0\ttime\ttime\n\t1\tv(1)\tvoltage\nBinary:\n", v.len()).into_bytes();
     for (k, x) in v.iter().enumerate() {
         b.extend_from_slice(&(t0 + k as f64 * dt).to_le_bytes());
@@ -318,7 +318,7 @@ fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
     b
 }
 
-fn wfmx_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
+pub(super) fn wfmx_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
     let mut b = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<DcaFile><Header><FileType>WaveformInternal</FileType></Header><Points>{}</Points><XOrg>{t0}</XOrg><XInc>{dt}</XInc><Data Lengths=\"{}, 1\"></Data></DcaFile>\n", v.len(), v.len()).into_bytes();
     for x in v {
         b.extend_from_slice(&x.to_le_bytes());
