@@ -349,7 +349,7 @@ mod tests {
     }
 
     // Break it catches: a module without the call of its decoder, or without its bit time, which the protocol trigger
-    // samples by
+    // samples by (that a module hands its options and shared rows to its decoder: dsp/tests/decode/modules.rs)
     #[test]
     fn every_module_has_its_decoder_and_bit_time() {
         let sh = Shared {

@@ -41,7 +41,9 @@ CH3.
    of the decoder on its `Lines` with `.decoder(|l| ...)` (option rows as indices in `l.opt`, shared rows in `l.sh`,
    the tables an option chooses from next to the decoder), the bit time with `.bit`, a trigger rule of its own with
    `.trigger(rule)` and a test of it on decoded traffic, the start value with `.starts_on`; and at the end of `MODULES`
-   in `dsp/src/protocols.rs` its line.
+   in `dsp/src/protocols.rs` its line. A call that passes option rows or shared rows gets a case in
+   `dsp/tests/decode/modules.rs`: a signal made for settings that are not the first choice, decoded through the
+   module.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook;
    it is the one module that keeps its `ModuleInfo` in its own file, since it is compiled in the tests only.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
