@@ -3,10 +3,11 @@
 # file changes. The package is signed with the community key of the repository (keys/), as every build without a key
 # of its own.
 #
-# By hand with `both_hosts`: also on an x86-64 runner (cross compiler for the kernel and oos-hw, QEMU for the arm64
-# containers, which takes hours), and a last job compares what the two put into the image (tools/image-manifest.py:
-# kernel, DTB, every file of the initramfs) and fails when they differ, apart from the programs built from the OOS
-# source (see the job). That is a check of the build, not a part of a release: a release needs one image.
+# By hand with `both_hosts`: also on an x86-64 runner (cross compiler for the kernel, oos-hw and oos-usbmode, QEMU for
+# the arm64 containers, which takes hours), and a last job compares what the two put into the image
+# (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from the
+# programs built from the OOS source (see the job). That is a check of the build, not a part of a release: a release
+# needs one image.
 #
 # With `sims` (the weekly run asks for it): the simulations run on what was built (tools/check.sh sim).
 #
@@ -138,10 +139,10 @@ jobs:
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
       # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
       # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
-      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
+      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw, oos-usbmode).
       - name: arm64 and x86-64 builds the same
         run: |
-          own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'
+          own='  initramfs/bin/oos-(hw|ui|fpgad|update|usbmode)$'
           for a in ARM64 X64; do
             grep -Ev "$own" manifest-$a/manifest.txt > strict-$a.txt
             grep -E "$own" manifest-$a/manifest.txt > own-$a.txt || true

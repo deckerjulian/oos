@@ -9,8 +9,9 @@
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
-# modules for later FPGA bring-up (pcierockchiphost, xdma), the touch panel (edt-ft5x06), the beeper (pwm-gpio) and WLAN (rtl8xxxu, rtw89),
-# wpa_supplicant, oos-hw and the scope screen oos-ui (started by etc/rcS).
+# modules for later FPGA bring-up (pcierockchiphost, xdma), the touch panel (edt-ft5x06), the beeper (pwm-gpio), WLAN
+# (rtl8xxxu, rtw89) and Bluetooth (btusb, hidp), wpa_supplicant, BlueZ, oos-hw and the scope screen oos-ui (started by
+# etc/rcS).
 # The image only exists as a file; installing it is a separate, explicit step.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -58,6 +59,12 @@ if [ ! -x "$hw" ] || [ "$(od -An -tx1 -j18 -N1 "$hw" | tr -d ' ')" != b7 ]; then
 	kimage=$("$root/kernel/build-base.sh" image)
 	docker run --rm -e OUT_OWNER="$owner" -v "$root/tools/hw:/src" "$kimage" sh -euc 'cd /src && aarch64-linux-gnu-gcc -static -O2 -Wall -o oos-hw oos-hw.c && chown "$OUT_OWNER" oos-hw'
 fi
+# oos-usbmode the same way: a WLAN/Bluetooth stick out of its driver-CD mode (docs/bluetooth.md)
+usbmode="$root/tools/hw/oos-usbmode"
+if [ ! -x "$usbmode" ] || [ "$root/tools/hw/oos-usbmode.c" -nt "$usbmode" ] || [ "$(od -An -tx1 -j18 -N1 "$usbmode" | tr -d ' ')" != b7 ]; then
+	kimage=$("$root/kernel/build-base.sh" image)
+	docker run --rm -e OUT_OWNER="$owner" -v "$root/tools/hw:/src" "$kimage" sh -euc 'cd /src && aarch64-linux-gnu-gcc -static -O2 -Wall -o oos-usbmode oos-usbmode.c && aarch64-linux-gnu-strip oos-usbmode && chown "$OUT_OWNER" oos-usbmode'
+fi
 mkdir -p "$out"
 # arm64 whatever the host is: its busybox goes into the image (tools/lib/docker.sh)
 image=$(initramfs_image)
@@ -68,6 +75,11 @@ o="$root/rootfs/out"
 if [ ! -x "$o/wpa_cli" ] || dep_stale "$o/wpa_supplicant" "$root/rootfs/build-wlan-tools.sh" wpa_supplicant libnl \
 	libnl-musl-patch; then
 	"$root/rootfs/build-wlan-tools.sh"
+fi
+# Bluetooth: dbus-daemon, bluetoothd and btmon (docs/bluetooth.md)
+if [ ! -x "$o/btmon" ] || [ ! -x "$o/dbus-daemon" ] || dep_stale "$o/bluetoothd" dbus bluez expat glib pcre2 gettext \
+	"$root/rootfs/build-bluez.sh"; then
+	"$root/rootfs/build-bluez.sh"
 fi
 # /oos is checked before it is mounted
 if dep_stale "$o/e2fsck" "$root/rootfs/build-fsck.sh" e2fsprogs; then "$root/rootfs/build-fsck.sh"; fi
@@ -99,15 +111,18 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	mkdir -p $r/bin $r/sbin $r/etc $r/proc $r/sys $r/dev $r/tmp $r/run $r/mnt $r/root $r/lib/modules
 	cp /bin/busybox $r/bin/busybox
 	cp /hw/oos-hw $r/bin/oos-hw
+	cp /hw/oos-usbmode $r/bin/oos-usbmode
 	cp /ui/oos-ui $r/bin/oos-ui
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
+	cp /wlan/dbus-daemon /wlan/bluetoothd /wlan/btmon $r/bin/
 	if [ -s /wlan/ssh-seed/authorized_keys ]; then
 		mkdir -p $r/etc/oos-ssh; cp /wlan/ssh-seed/authorized_keys $r/etc/oos-ssh/authorized_keys
 		chmod 700 $r/etc/oos-ssh; chmod 600 $r/etc/oos-ssh/authorized_keys
 	fi
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
+	for l in bluez dbus expat pcre2; do cp /wlan/$l.COPYING $r/etc/licenses/$l; done
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /wlan/gpu/. $r/
 	. /wlan/unit-hook/image.sh

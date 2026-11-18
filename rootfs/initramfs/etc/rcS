@@ -95,6 +95,8 @@ case "$(/bin/oos-conf remote.telnet)" in off | false | 0) ;; *) telnetd -l /bin/
 [ -x /bin/oos-update ] && (setsid sh -c '/bin/oos-update watch --status /tmp/oos-boot.status >> /tmp/oos-update.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 5c) WLAN through a USB stick, after the start-up (docs/wlan.md); log in /tmp/oos-wlan.log
 [ -x /bin/oos-wlan ] && (setsid sh -c '/bin/oos-wlan >> /tmp/oos-wlan.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+# 5c2) Bluetooth through a USB stick, after the start-up (docs/bluetooth.md); log in /tmp/oos-bt.log
+[ -x /bin/oos-bt ] && (setsid sh -c '/bin/oos-bt >> /tmp/oos-bt.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 5d) USB stick in the front port at /mnt/usb; log in /tmp/oos-usb.log
 [ -x /bin/oos-usb ] && (setsid sh -c '/bin/oos-usb >> /tmp/oos-usb.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 6) acquisition hardware: calibration files read only, then the board brings it up (oos-board bring-up, log
