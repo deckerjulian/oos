@@ -24,10 +24,11 @@ hand; when the call is forgotten, the part silently never updates.
 
 ## Decision
 
-- **A service is a `Service<J, R>`** in `ui/src/ui/service.rs`, beside `Worker<J, R>`: a named thread started on the
-  first `send`, a job channel, a report channel, `poll` that never blocks, `busy` with the text of the job in hand,
-  and an end when it is dropped. What differs between services is their worker function, which is given to it. A
-  service that cannot start its thread says so once, as a toast, and is tried again on the next `send`.
+- **A service is a `Service<J, R>`** in `ui/src/ui/service.rs`, beside `Worker<J, R>`: `start` with a thread name and
+  a worker function (once; a thread that cannot be started is tried again on the next `start`), a job channel
+  (`send`), a report channel (`take`, which never blocks), and an end when it is dropped. No thread is started in
+  `cargo test`, so a test never reaches a daemon of the computer it runs on. What differs between services is their
+  worker function and when their part calls `start`; what a part shows while a job runs stays the part's.
 - **The parts are polled from one list.** `POLLS` in `ui/src/ui/pages.rs` (ADR 0060) holds every function the frame
   loop calls on each frame, in one order, each with a line that says why it stands where it stands where the order
   matters. `Ui::step` runs the list and names no part. A page's `poll` field is its line in the list.
@@ -36,8 +37,8 @@ hand; when the call is forgotten, the part silently never updates.
   into AGENTS.md ("Adding something") with this test.
 - **A job is a `Worker<J, R>`**, the firewall run included; the update stays a child process, which is what
   `oos-update` is, and its poll is a line of `POLLS` like every other.
-- **The move.** Bluetooth first, then WLAN and the clock, then the firewall run, one pull request each, every one of
-  them a refactoring that keeps every pixel (ADR 0014); the module's own channels go with it.
+- **The move.** The three services in one pull request, then the firewall run, then `POLLS`, each a refactoring that
+  keeps every pixel (ADR 0014); the modules' own channels go with them.
 
 ## Alternatives
 
@@ -53,7 +54,7 @@ hand; when the call is forgotten, the part silently never updates.
 
 - A new service is its worker function and its line in `POLLS`; it cannot be forgotten in `step`.
 - The four copies of the channel code go.
-- What a service does when the page closes is one decision for all of them, in `service.rs`.
+- How a service starts, ends and behaves in the tests is one decision for all of them, in `service.rs`.
 - The order of the polls is written down; a change of it is visible in a diff of one list.
 - Worth a second look if a service needs to wait on several sources at once in a way a thread per service handles
   badly.
