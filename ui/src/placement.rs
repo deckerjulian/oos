@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Thread placement on a big.LITTLE SoC (fork, docs/fork/perf-plan.md item 6). Without it the frame loop, the GPU
-//! helper and the acquisition thread share both A72 of the RK3399 (`http::pin_to_big_cores`). With `perf.place = on`:
+//! helper and the acquisition thread share both A72 of the RK3399 (`pin_to_big_cores`). With `perf.place = on`:
 //! the frame loop (and the GPU helper it starts) on the first big core, the acquisition thread on the second. Workers
-//! already go to the little cores (`http::to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
+//! already go to the little cores (`to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
 //! all alike. The xdma interrupt goes to a little core from the rootfs (`/proc/irq/<n>/smp_affinity`), not from here.
 
 use std::path::Path;
@@ -97,6 +97,66 @@ pub fn place(r: Role) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = r;
+}
+
+
+/// The cores with less than the largest `cpu_capacity` (empty on a SoC whose cores are all alike, or without the
+/// file): where the background threads go.
+#[cfg(target_os = "linux")]
+pub fn little_cores() -> Vec<usize> {
+    static L: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
+    L.get_or_init(|| {
+        let cap: Vec<(usize, u32)> = (0..64)
+            .filter_map(|c| {
+                std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c))
+                    .ok()
+                    .and_then(|v| v.trim().parse().ok())
+                    .map(|v| (c, v))
+            })
+            .collect();
+        let max = cap.iter().map(|x| x.1).max().unwrap_or(0);
+        cap.iter().filter(|x| x.1 < max).map(|x| x.0).collect()
+    })
+    .clone()
+}
+
+/// The slower cores of a big.LITTLE SoC (RK3399: 0-3), empty where the cores are all alike.
+pub fn little_core_list() -> Vec<usize> {
+    #[cfg(target_os = "linux")]
+    return little_cores();
+    #[cfg(not(target_os = "linux"))]
+    Vec::new()
+}
+
+/// The calling thread onto `cores` (nothing when it is empty).
+pub fn pin_to(cores: &[usize]) {
+    #[cfg(target_os = "linux")]
+    let _ = crate::system::pin_current_thread(cores);
+    #[cfg(not(target_os = "linux"))]
+    let _ = cores;
+}
+
+/// The calling thread onto the slower cores of a big.LITTLE SoC (RK3399: the four A53), at normal priority: the
+/// measurements in the background (`ui::MeasWorker`); the threads it starts after this stay there too.
+pub fn to_little_cores() {
+    #[cfg(target_os = "linux")]
+    let _ = crate::system::pin_current_thread(&little_cores());
+}
+
+/// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
+/// System > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
+/// frame's compare took three times as long).
+#[cfg(target_os = "linux")]
+pub fn pin_to_big_cores() {
+    let little = little_cores();
+    let all: Vec<usize> = (0..64)
+        .filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists())
+        .collect();
+    let big: Vec<usize> = all.into_iter().filter(|c| !little.contains(c)).collect();
+    if big.is_empty() || little.is_empty() {
+        return;
+    }
+    let _ = crate::system::pin_current_thread(&big);
 }
 
 #[cfg(test)]

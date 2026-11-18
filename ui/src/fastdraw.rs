@@ -158,7 +158,7 @@ pub fn helpers() -> usize {
 fn helper_cores() -> &'static [usize] {
     static C: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
     C.get_or_init(|| {
-        let little = crate::http::little_core_list();
+        let little = crate::placement::little_core_list();
         let busy = std::fs::read_dir("/proc").ok().and_then(|d| dma_poller_cpu(d.flatten().map(|e| e.path())));
         let rest: Vec<usize> = little.iter().copied().filter(|&c| Some(c) != busy).collect();
         if rest.is_empty() {
@@ -200,7 +200,7 @@ fn together<R: Send>(n: usize, work: impl Fn() -> R + Sync) -> Vec<R> {
         let hs: Vec<_> = (0..n)
             .map(|_| {
                 s.spawn(move || {
-                    crate::http::pin_to(helper_cores());
+                    crate::placement::pin_to(helper_cores());
                     work()
                 })
             })

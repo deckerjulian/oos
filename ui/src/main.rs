@@ -17,6 +17,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod announce;
+mod base64;
 mod board;
 mod clock;
 mod cmd;
@@ -152,7 +153,7 @@ fn main() {
     // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
-        http::pin_to_big_cores();
+        placement::pin_to_big_cores();
         placement::place(placement::Role::Ui);
     }
     let mut ui = Ui::new(source(&args));
@@ -448,7 +449,7 @@ const HDMI_BG: u32 = 0x0d1117;
 /// The GPU helper with the panel's scan-out buffers as targets 0 to 2 (the monitor's follow them, up to the helper's 8).
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
-    http::pin_to_big_cores();
+    placement::pin_to_big_cores();
     placement::place(placement::Role::Ui);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
