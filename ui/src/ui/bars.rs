@@ -485,33 +485,7 @@ impl Ui {
         let small = |s: &str, room: i32| fit_font(&[&f.s, &Fonts::get(0).s], room, s);
         cv.fill(self.frame().bottom, BG);
         let root = if self.menu_open { Some(self.menu_root()) } else { None };
-        // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
-        let r = self.menu_btn();
-        let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
-        cv.round(
-            r,
-            7,
-            if hl {
-                ACCENT
-            } else if lock {
-                AMBER
-            } else {
-                CARD_BORDER
-            },
-            255,
-        );
-        cv.round(r.inset(2), 5, BAR, 255);
-        let col = if hl {
-            ACCENT
-        } else if lock {
-            AMBER
-        } else {
-            TEXT
-        };
-        for k in 0..3 {
-            cv.fill(Rect::new(r.x + r.w / 2 - 11, r.y + 16 + k * 7, 22, 3), col);
-        }
-        cv.text_in(&f.sb, Rect::new(r.x, r.y + 42, r.w, 16), 1, if lock { "Locked" } else { "Menu" }, col);
+        self.draw_menu_button(cv, f, root);
         let (chs, tr, trg) = self.cards();
         let sub_font = self.card_sub_font();
         for (c, &r) in chs.iter().enumerate() {
@@ -576,8 +550,41 @@ impl Ui {
             let t = format!("delay {}", si_short(self.m.delay as f64, "s"));
             cv.text(small(&t, r.w - 18), r.x + 12, r.y + ys, &t, DIM);
         }
-        // trigger: type, slope / polarity / standard and level; source and sweep buttons
-        let r = trg;
+        self.draw_trigger_card(cv, f, trg, root, yn);
+    }
+
+    /// The start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks).
+    fn draw_menu_button(&self, cv: &mut Canvas, f: &'static Fonts, root: Option<MenuId>) {
+        let r = self.menu_btn();
+        let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
+        cv.round(
+            r,
+            7,
+            if hl {
+                ACCENT
+            } else if lock {
+                AMBER
+            } else {
+                CARD_BORDER
+            },
+            255,
+        );
+        cv.round(r.inset(2), 5, BAR, 255);
+        let col = if hl {
+            ACCENT
+        } else if lock {
+            AMBER
+        } else {
+            TEXT
+        };
+        for k in 0..3 {
+            cv.fill(Rect::new(r.x + r.w / 2 - 11, r.y + 16 + k * 7, 22, 3), col);
+        }
+        cv.text_in(&f.sb, Rect::new(r.x, r.y + 42, r.w, 16), 1, if lock { "Locked" } else { "Menu" }, col);
+    }
+
+    /// The trigger card: type, slope / polarity / standard and level; source and sweep buttons.
+    fn draw_trigger_card(&self, cv: &mut Canvas, f: &'static Fonts, r: Rect, root: Option<MenuId>, yn: i32) {
         let sel = root == Some(MenuId::Trigger);
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
         cv.round(r.inset(2), 5, BAR, 255);
