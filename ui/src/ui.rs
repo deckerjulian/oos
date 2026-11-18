@@ -344,10 +344,6 @@ pub fn pair_unit(k: usize) -> &'static str {
 
 pub(crate) use analysers::{scpi_views, stored_views};
 
-/// Clock recovery of the eye for the measurement modules: samples per UI and the recovered clock.
-pub fn eye_infer(v: &[f32], dt: f64, rate: Option<f64>) -> Result<(f64, oos_dsp::eye::Clock), String> {
-    eyepage::automatic::infer(v, dt, rate, false).map(|(s, clk)| (s.samples_per_ui, clk))
-}
 pub use eyepage::EYE_ITEMS;
 // the limits that the model, the settings and the setup files count with too (model/limits.rs)
 pub use crate::model::{CNT_MODES, DVM_MODES, PAIRS_N, PANE_HARMS, SEG_HW_MAX, SEG_IVL_MAX, VIEWS_MAX};

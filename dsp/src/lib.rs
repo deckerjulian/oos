@@ -38,6 +38,7 @@ mod hostile;
 pub mod hss;
 pub mod identify;
 pub mod interp;
+pub mod levels;
 pub mod linecode;
 pub mod magnetic;
 pub mod mask;
