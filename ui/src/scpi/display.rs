@@ -6,9 +6,8 @@
 //! the web page's `/screen.bmp`). A new `:DISPlay` setting is a row of that table, with its query in
 //! ui/tests/scpi.txt (AGENTS.md); docs/scpi.md gets its line from the table.
 
-use super::{kw, Scpi};
+use super::Scpi;
 use crate::gfx::Canvas;
-use crate::settings::Scpi::Cmd;
 use crate::ui::Ui;
 
 /// 24-bit BMP of the canvas (what :DISPlay:DATA? returns on the stock firmware).
@@ -41,11 +40,7 @@ impl Scpi {
     /// The settings of the Display group (settings/display.rs): the row whose command the nodes name answers the
     /// query or takes the argument; a value it does not take is refused with -224, as before the table.
     pub(super) fn display_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let row = crate::settings::display::GROUPS.into_iter().flatten().find(|s| match s.scpi {
-            Cmd(c) => c.split(':').count() == n.len() && c.split(':').zip(n).all(|(word, node)| kw(node, word)),
-            _ => false,
-        });
-        let Some(row) = row else {
+        let Some(row) = crate::settings::command(&crate::settings::display::SLICES, n) else {
             self.push_err(format!("-113,\"Undefined header\" :DISPlay:{}", n.join(":")));
             return None;
         };

@@ -3,18 +3,20 @@
 
 //! One declaration per setting (docs/adr/code/0043): a row of a const table names a setting's key in setup files, its
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
-//! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs), the
-//! menu rows (ui/setting_items.rs) and the table in docs/scpi.md follow from it. Rows only read and write the model;
-//! what a change sets off on the screen (redraw, statistics) stays with the caller.
+//! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
+//! `:TRIGger` branch of scpi/dispatch.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow
+//! from it. Rows only read and write the model; what a change sets off on the screen (redraw, statistics) stays with
+//! the caller.
 //!
-//! The Display group is the first table (settings/display.rs); the other settings are still written out by hand in
-//! each of those places. A new Display setting is a row here, its `Item` with its place in a menu (ui/item.rs,
-//! ui/menu_items.rs, ui/setting_items.rs), its query in ui/tests/scpi.txt, and
-//! `OOS_BLESS=1 cargo test --locked -q settings::tests` for the docs table.
+//! The Display group (settings/display.rs) and the trigger values (settings/trigger.rs) have tables; the other
+//! settings are still written out by hand in each of those places. A new setting of a group with a table is a row
+//! there, its `Item` with its place in a menu (ui/item.rs, ui/menu_items.rs, ui/setting_items.rs), its query in
+//! ui/tests/scpi.txt, and `OOS_BLESS=1 cargo test --locked -q settings::tests` for the docs table.
 
-use crate::model::{cycle, Model};
+use crate::model::{cycle, si_short, Model};
 
 pub mod display;
+pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -23,6 +25,8 @@ pub enum Val {
     U32(u32),
     /// a choice by its place in the list
     Index(usize),
+    /// seconds
+    F32(f32),
 }
 
 impl Val {
@@ -31,6 +35,14 @@ impl Val {
             Val::Bool(b) => b as usize,
             Val::U32(n) => n as usize,
             Val::Index(i) => i,
+            Val::F32(x) => x as usize,
+        }
+    }
+
+    fn secs(self) -> f32 {
+        match self {
+            Val::F32(x) => x,
+            v => v.index() as f32,
         }
     }
 }
@@ -42,8 +54,11 @@ pub enum Ty {
     Bool,
     /// a whole number, kept within `min..=max` wherever it comes from; the menu steps by `step` and shows `<n> <unit>`
     U32 { min: u32, max: u32, step: u32, unit: &'static str },
-    /// one of a list; how a setup refuses a word that is none of them
-    Choice(&'static [Choice], Unknown),
+    /// one of a list; how a setup refuses a word that is none of them, and how an SCPI argument names one
+    Choice(&'static [Choice], Unknown, Arg),
+    /// seconds, any finite number in a setup; over SCPI a number (within `accept` when the row has it), the query
+    /// answers it as `1.000000E-06`; the menu steps along `ladder` and shows `<n> s`, or `zero` for 0 and below
+    Seconds { ladder: fn(f32, i32) -> f32, zero: Option<&'static str> },
     /// a setting whose words follow none of the rules above
     Custom(&'static CustomIo),
 }
@@ -62,6 +77,14 @@ pub enum Unknown {
     Value,
     /// `"<word>": a or b`
     Names,
+}
+
+/// How an SCPI argument names a choice.
+pub enum Arg {
+    /// the long or the short form of its keyword (`kw`)
+    Keyword,
+    /// any word that starts with the short form of its keyword, in any case (`POSitive` takes `pos` and `POSXYZ`)
+    Prefix,
 }
 
 /// The codecs of a `Ty::Custom` row, on the row's `Val`.
@@ -97,7 +120,8 @@ pub struct Setting {
     /// what it does, for docs/scpi.md
     #[cfg(test)]
     pub doc: &'static str,
-    /// the SCPI input range of a `U32` when it differs from `min..=max`; a value in it is then kept within those
+    /// the SCPI input range of a `U32` when it differs from `min..=max` (a value in it is then kept within those),
+    /// of `Seconds` when it has one
     pub accept: Option<(f64, f64)>,
     pub get: fn(&Model) -> Val,
     pub put: fn(&mut Model, Val),
@@ -105,7 +129,18 @@ pub struct Setting {
 
 /// Every row of every table.
 pub fn all() -> impl Iterator<Item = &'static Setting> {
-    display::GROUPS.into_iter().flat_map(|g| g.iter())
+    display::SLICES.into_iter().chain(trigger::SLICES).flat_map(|g| g.iter())
+}
+
+/// The row of `slices` whose command the nodes below the subsystem name, each in its long or short form.
+pub fn command(slices: &[&'static [Setting]], nodes: &[&str]) -> Option<&'static Setting> {
+    slices.iter().flat_map(|g| g.iter()).find(|s| match s.scpi {
+        Scpi::Cmd(c) => {
+            c.split(':').count() == nodes.len()
+                && c.split(':').zip(nodes).all(|(word, node)| crate::scpi::kw(node, word))
+        }
+        _ => false,
+    })
 }
 
 /// The row of a setup key.
@@ -125,11 +160,12 @@ impl Setting {
     pub fn store(&self, m: &Model) -> String {
         let v = (self.get)(m);
         match &self.ty {
-            Ty::Bool | Ty::U32 { .. } => match v {
+            Ty::Bool | Ty::U32 { .. } | Ty::Seconds { .. } => match v {
                 Val::Bool(b) => b.to_string(),
+                Val::F32(x) => x.to_string(),
                 v => v.index().to_string(),
             },
-            Ty::Choice(list, _) => list[v.index()].store.to_string(),
+            Ty::Choice(list, ..) => list[v.index()].store.to_string(),
             Ty::Custom(io) => (io.store)(v),
         }
     }
@@ -139,7 +175,7 @@ impl Setting {
         let v = match &self.ty {
             Ty::Bool => Val::Bool(crate::store::p_bool(text)?),
             Ty::U32 { min, max, .. } => Val::U32(crate::store::p_u32(text)?.clamp(*min, *max)),
-            Ty::Choice(list, unknown) => {
+            Ty::Choice(list, unknown, _) => {
                 Val::Index(list.iter().position(|c| c.store == text).ok_or_else(|| match unknown {
                     Unknown::Value => format!("unknown value: {}", text),
                     Unknown::Names => {
@@ -147,6 +183,7 @@ impl Setting {
                     }
                 })?)
             }
+            Ty::Seconds { .. } => Val::F32(crate::store::p_f32(text)?),
             Ty::Custom(io) => (io.load)(text)?,
         };
         (self.put)(m, v);
@@ -159,9 +196,8 @@ impl Setting {
         match &self.ty {
             Ty::Bool => if v.index() != 0 { "1" } else { "0" }.to_string(),
             Ty::U32 { .. } => v.index().to_string(),
-            Ty::Choice(list, _) => {
-                list[v.index()].scpi.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect()
-            }
+            Ty::Choice(list, ..) => short(list[v.index()].scpi),
+            Ty::Seconds { .. } => crate::scpi::e(v.secs() as f64),
             Ty::Custom(io) => (io.query)(v),
         }
     }
@@ -178,7 +214,14 @@ impl Setting {
                     .filter(|&n| (lo..=hi).contains(&(n as f64)))
                     .map(|n| Val::U32(n.clamp(*min, *max)))
             }
-            Ty::Choice(list, _) => list.iter().position(|c| crate::scpi::kw(arg, c.scpi)).map(Val::Index),
+            Ty::Choice(list, _, Arg::Keyword) => list.iter().position(|c| crate::scpi::kw(arg, c.scpi)).map(Val::Index),
+            Ty::Choice(list, _, Arg::Prefix) => {
+                let a = arg.to_ascii_uppercase();
+                list.iter().position(|c| a.starts_with(&short(c.scpi))).map(Val::Index)
+            }
+            Ty::Seconds { .. } => crate::scpi::num(arg)
+                .filter(|&x| self.accept.is_none_or(|(lo, hi)| (lo..=hi).contains(&(x as f64))))
+                .map(Val::F32),
             Ty::Custom(io) => (io.take)(arg),
         };
         v.map(|v| (self.put)(m, v)).is_some()
@@ -186,15 +229,15 @@ impl Setting {
 
     /// The menu row is a number with - and + (a choice otherwise).
     pub fn is_number(&self) -> bool {
-        matches!(self.ty, Ty::U32 { .. })
+        matches!(self.ty, Ty::U32 { .. } | Ty::Seconds { .. })
     }
 
     /// The menu's options (none for a number).
     pub fn options(&self) -> Vec<String> {
         let labels: Vec<&str> = match &self.ty {
             Ty::Bool => vec!["Off", "On"],
-            Ty::U32 { .. } => Vec::new(),
-            Ty::Choice(list, _) => list.iter().map(|c| c.label).collect(),
+            Ty::U32 { .. } | Ty::Seconds { .. } => Vec::new(),
+            Ty::Choice(list, ..) => list.iter().map(|c| c.label).collect(),
             Ty::Custom(io) => io.labels.to_vec(),
         };
         labels.into_iter().map(str::to_string).collect()
@@ -205,6 +248,8 @@ impl Setting {
         let v = (self.get)(m);
         match &self.ty {
             Ty::U32 { unit, .. } => format!("{} {}", v.index(), unit),
+            Ty::Seconds { zero: Some(z), .. } if v.secs() <= 0.0 => z.to_string(),
+            Ty::Seconds { .. } => si_short(v.secs() as f64, "s"),
             _ => self.options()[v.index()].clone(),
         }
     }
@@ -218,6 +263,7 @@ impl Setting {
             (Ty::U32 { min, max, step, .. }, Val::U32(n)) => {
                 Val::U32((n as i32 + d * *step as i32).clamp(*min as i32, *max as i32) as u32)
             }
+            (Ty::Seconds { ladder, .. }, v) => Val::F32(ladder(v.secs(), d)),
             (_, v) => {
                 let n = self.options().len();
                 Val::Index(if n == 2 { 1 - v.index() } else { cycle(v.index(), n, d) })
@@ -235,10 +281,25 @@ impl Setting {
                 let (lo, hi) = self.accept.unwrap_or((*min as f64, *max as f64));
                 format!("a whole number from {} to {}, set within {} to {} {}", lo, hi, min, max, unit)
             }
-            Ty::Choice(list, _) => list.iter().map(|c| format!("`{}`", c.scpi)).collect::<Vec<_>>().join(", "),
+            Ty::Choice(list, _, arg) => {
+                let words = list.iter().map(|c| format!("`{}`", c.scpi)).collect::<Vec<_>>().join(", ");
+                match arg {
+                    Arg::Keyword => words,
+                    Arg::Prefix => format!("{}, or any word that starts with a short form", words),
+                }
+            }
+            Ty::Seconds { .. } => match self.accept {
+                Some((lo, hi)) => format!("seconds from {} to {}", lo, hi),
+                None => "seconds".into(),
+            },
             Ty::Custom(io) => io.values.into(),
         }
     }
+}
+
+/// The short form of a keyword, as a query answers it (`NEGative`: `NEG`).
+fn short(word: &str) -> String {
+    word.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect()
 }
 
 /// The rows of `rows` as the Markdown table docs/scpi.md holds between `<!-- settings:<group>:begin -->` and

@@ -5,11 +5,11 @@
 //! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The two slices are the two places of
 //! `store::setup_text` that write them, so the keys of a setup file keep their order.
 
-use super::{Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
+use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
 use crate::model::{Grid, PERSIST};
 
 /// Both slices, in the order of the docs table.
-pub const GROUPS: [&[Setting]; 2] = [&VIEW, &DRAW];
+pub const SLICES: [&[Setting]; 2] = [&VIEW, &DRAW];
 
 /// Written after `mdepth`.
 pub const VIEW: [Setting; 5] = [
@@ -45,6 +45,7 @@ pub const VIEW: [Setting; 5] = [
                 Choice { store: "None", scpi: "NONE", label: "None" },
             ],
             Unknown::Value,
+            Arg::Keyword,
         ),
         label: "Grid",
         #[cfg(test)]
@@ -113,6 +114,7 @@ pub const DRAW: [Setting; 3] = [
                 Choice { store: "compact", scpi: "", label: "Compact" },
             ],
             Unknown::Names,
+            Arg::Keyword,
         ),
         label: "Bottom bar",
         #[cfg(test)]

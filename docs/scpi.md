@@ -75,13 +75,9 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
 | `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. |
 | `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. |
-| `:TRIGger:SWEep[?]` | `AUTO|NORMal|SINGle`; independent of trigger type. |
 | `:TRIGger:STATus?` | `STOP|TD|AUTO|WAIT`. A completed Single reports STOP. |
 | `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. |
 | `:TRIGger:EDGE:LEVel[?]` | Volts. |
-| `:TRIGger:EDGE:SLOPe[?]` | `POS|NEG|RFAL`. |
-| `:TRIGger:HOLDoff[?]` | Seconds, 0 through 10. |
-| `:TRIGger:NREJect[?]` | Boolean. |
 | `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
 
@@ -102,6 +98,33 @@ Example: arm an edge on a loaded reference, without changing its samples:
 ```
 
 Choose a level inside the actual waveform range. Use `*OPC?` only when willing to wait for this arm. Return to live inputs with a primary `CHANn` trigger selection or the UI's Live action.
+
+### Trigger settings
+
+The values of the Trigger menu, their `:TRIGger` commands and their keys in a setup file. They are declared once, in
+`ui/src/settings/trigger.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
+command does not take is refused with `-113`.
+
+<!-- settings:trigger:begin -->
+| Command | Takes | Setup key | Trigger menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:TRIGger:EDGE:SLOPe[?]` | `POSitive`, `NEGative`, `RFALl`, or any word that starts with a short form | `slope` | Slope | The edge that triggers; also of the slope, timeout and Nth edge triggers, and A of the delay trigger. |
+| `:TRIGger:SWEep[?]` | `AUTO`, `NORMal`, `SINGle`, or any word that starts with a short form | `trig_mode` | Sweep | Auto draws without a trigger after a while, Normal only on a trigger, Single once; the menu's Single also starts the acquisition. |
+| `:TRIGger:HOLDoff[?]` | seconds from 0 to 10 | `holdoff` | Holdoff | The time after a trigger in which no other one is taken; 0 is off. The menu steps 1-2-5 from 100 ns. |
+| `:TRIGger:NREJect[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `trig_nrej` | Noise reject | A wider hysteresis of the trigger comparator (0.7 instead of 0.3 divisions). |
+| none | a choice of the auto set-up, not of the trigger | `auto_nrej` | Auto noise rej. | The auto set-up sets noise reject from the noise on the flat levels of the trigger signal. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_slope2` | Slope B | The edge of B (delay trigger) or of the clock (setup/hold trigger). |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_pol` | Polarity | The polarity of the pulse (pulse and runt triggers). |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t1` | Time | The time the condition compares with, the lower limit of Inside and Outside; the timeout of the timeout trigger. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t2` | Upper limit | The upper time limit of Inside and Outside. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_std` | Standard | The video standard of the video trigger. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_sync` | Sync | What the video trigger fires on: every line, line n, odd or even fields, every field. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `win_mode` | Trigger on | When the window trigger fires: the signal enters the window, leaves it, or stays inside. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_idle` | Idle time | The quiet time before the edges the Nth edge trigger counts. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `setup` | Setup | The setup time the setup/hold trigger checks the data against the clock edge. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `hold` | Hold | The hold time the setup/hold trigger checks the data against after the clock edge. |
+<!-- settings:trigger:end -->
 
 ## Waveform transfer
 
