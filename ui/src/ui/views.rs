@@ -14,8 +14,6 @@
 use super::*;
 use crate::store;
 
-/// The most views.
-pub const VIEWS_MAX: usize = 4;
 /// Keys of a setup (store.rs) that belong to a view, besides `xy` and `full` (fields of the Ui).
 const KEYS: [&str; 21] = [
     "windows",
