@@ -61,35 +61,20 @@ fn has(b: &[u64], n: usize) -> bool {
     b.get(n / 64).is_some_and(|w| w >> (n % 64) & 1 != 0)
 }
 
-/// The mice and keyboards in the text of /proc/bus/input/devices. A mouse moves along x and y; a keyboard has the
-/// letters and the space bar (a device with media keys only, or the power button, is none).
-pub fn devices(text: &str) -> Vec<Device> {
-    let mut out = Vec::new();
-    for block in text.split("\n\n") {
-        let (mut name, mut event, mut ev, mut rel, mut key) = (String::new(), None, Vec::new(), Vec::new(), Vec::new());
-        for line in block.lines() {
-            if let Some(n) = line.strip_prefix("N: Name=") {
-                name = n.trim_matches('"').to_string();
-            } else if let Some(h) = line.strip_prefix("H: Handlers=") {
-                // `eventN` only: the node opened is /dev/input/<this>, and a device's name is in the same text (a
-                // Bluetooth name with a line break could bring a line of its own)
-                event = h.split_whitespace().find(|w| is_event(w)).map(str::to_string);
-            } else if let Some(b) = line.strip_prefix("B: EV=") {
-                ev = bits(b);
-            } else if let Some(b) = line.strip_prefix("B: REL=") {
-                rel = bits(b);
-            } else if let Some(b) = line.strip_prefix("B: KEY=") {
-                key = bits(b);
-            }
-        }
-        let Some(event) = event else { continue };
-        let mouse = has(&ev, EV_REL as usize) && has(&rel, REL_X as usize) && has(&rel, REL_Y as usize);
-        let keyboard = has(&ev, EV_KEY as usize) && [16usize, 30, 44, 57].iter().all(|&k| has(&key, k));
-        if mouse || keyboard {
-            out.push(Device { event, name, mouse, keyboard });
-        }
+/// What the input node `event` is, from what the kernel writes for it in sysfs (`/sys/class/input/<event>/device/`:
+/// `name` and the capability bitmaps `capabilities/ev`, `rel`, `key`), not from /proc/bus/input/devices, where a
+/// device's name stands in the same text and a Bluetooth name with a line break could bring lines of its own. A mouse
+/// moves along x and y; a keyboard has the letters and the space bar (a device with media keys only, or the power
+/// button, is none). None for neither, and for a node that is not `eventN`.
+pub fn classify(event: &str, name: &str, ev: &str, rel: &str, key: &str) -> Option<Device> {
+    if !is_event(event) {
+        return None;
     }
-    out
+    let (ev, rel, key) = (bits(ev), bits(rel), bits(key));
+    let mouse = has(&ev, EV_REL as usize) && has(&rel, REL_X as usize) && has(&rel, REL_Y as usize);
+    let keyboard = has(&ev, EV_KEY as usize) && [16usize, 30, 44, 57].iter().all(|&k| has(&key, k));
+    let name = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
+    (mouse || keyboard).then(|| Device { event: event.to_string(), name, mouse, keyboard })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,10 +199,14 @@ impl Held {
         }
     }
 
-    /// The releases of what is held, for a device that went.
-    pub fn release(&self) -> Vec<Event> {
-        let buttons = self.buttons.iter().map(|&button| Event::Button { button, down: false });
-        buttons.chain(self.keys.iter().map(|&code| Event::Key { code, down: false, repeat: false })).collect()
+    /// The releases of what is held, for a device that went, except what `others` (the devices still there) hold:
+    /// a second keyboard's Ctrl or a second mouse's button stays down.
+    pub fn release(&self, others: &[&Held]) -> Vec<Event> {
+        let held = |f: &dyn Fn(&Held) -> bool| others.iter().any(|o| f(o));
+        let buttons = self.buttons.iter().filter(|b| !held(&|o| o.buttons.contains(b)));
+        let keys = self.keys.iter().filter(|k| !held(&|o| o.keys.contains(k)));
+        let buttons = buttons.map(|&button| Event::Button { button, down: false });
+        buttons.chain(keys.map(|&code| Event::Key { code, down: false, repeat: false })).collect()
     }
 }
 
@@ -230,56 +219,23 @@ pub fn is_modifier(code: u16) -> bool {
 mod tests {
     use super::*;
 
-    // as the kernel prints them on a 64-bit build (a BLE mouse through uhid, a USB keyboard, the touch screen)
-    const DEVICES: &str = "\
-I: Bus=0005 Vendor=046d Product=b023 Version=0011
-N: Name=\"MX Anywhere 3 Mouse\"
-P: Phys=00:11:22:33:44:00
-S: Sysfs=/devices/virtual/misc/uhid/0005:046D:B023.0001/input/input5
-U: Uniq=00:11:22:33:44:01
-H: Handlers=event2
-B: PROP=0
-B: EV=17
-B: KEY=1f0000 0 0 0 0
-B: REL=1943
-B: MSC=10
-
-I: Bus=0003 Vendor=413c Product=2113 Version=0110
-N: Name=\"Dell KB216 Wired Keyboard\"
-P: Phys=usb-xhci-hcd.0.auto-1/input0
-H: Handlers=sysrq kbd leds event3
-B: PROP=0
-B: EV=120013
-B: KEY=1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe
-B: MSC=10
-B: LED=7
-
-I: Bus=0003 Vendor=413c Product=2113 Version=0110
-N: Name=\"Dell KB216 Wired Keyboard Consumer Control\"
-H: Handlers=kbd event4
-B: EV=1f
-B: KEY=3f000303ff 0 0 483ffff17aff32d bfd4444600000000 1 130c730b17c000 267bfad9415fed 9e168000004400 10000002
-B: REL=1040
-
-I: Bus=0018 Vendor=0000 Product=0000 Version=0000
-N: Name=\"edt-ft5x06\"
-H: Handlers=event0
-B: PROP=2
-B: EV=b
-B: KEY=400 0 0 0 0 0
-B: ABS=2608000 3
-";
-
+    /// As the kernel writes them on a 64-bit build: a BLE mouse through uhid, a USB keyboard, its consumer keys, the
+    /// touch screen.
     #[test]
     fn mice_and_keyboards_are_found_others_left_out() {
-        let d = devices(DEVICES);
-        assert_eq!(d.len(), 2, "{:?}", d);
+        let mouse = classify("event2", "MX Anywhere 3 Mouse\n", "17", "1943", "1f0000 0 0 0 0").unwrap();
         assert_eq!(
-            d[0],
+            mouse,
             Device { event: "event2".into(), name: "MX Anywhere 3 Mouse".into(), mouse: true, keyboard: false }
         );
-        assert_eq!(d[1].event, "event3");
-        assert!(d[1].keyboard && !d[1].mouse);
+        let kb = "1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe";
+        let k = classify("event3", "Dell KB216 Wired Keyboard", "120013", "0", kb).unwrap();
+        assert!(k.keyboard && !k.mouse);
+        let consumer =
+            "3f000303ff 0 0 483ffff17aff32d bfd4444600000000 1 130c730b17c000 267bfad9415fed 9e168000004400 10000002";
+        assert_eq!(classify("event4", "Consumer Control", "1f", "1040", consumer), None);
+        assert_eq!(classify("event0", "edt-ft5x06", "b", "0", "400 0 0 0 0 0"), None, "the touch screen");
+        assert_eq!(classify("event/../mem", "x", "17", "1943", "0"), None);
     }
 
     #[test]
@@ -327,7 +283,11 @@ B: ABS=2608000 3
             h.track(&e);
         }
         let left_up = Event::Button { button: Button::Left, down: false };
-        assert_eq!(h.release(), vec![left_up, Event::Key { code: KEY_LEFTCTRL, down: false, repeat: false }]);
-        assert!(Held::default().release().is_empty());
+        assert_eq!(h.release(&[]), vec![left_up, Event::Key { code: KEY_LEFTCTRL, down: false, repeat: false }]);
+        assert!(Held::default().release(&[]).is_empty());
+        // a second keyboard still holds Ctrl: only the button is let go (review of #214)
+        let mut other = Held::default();
+        other.track(&Event::Key { code: KEY_LEFTCTRL, down: true, repeat: false });
+        assert_eq!(h.release(&[&other]), vec![left_up]);
     }
 }

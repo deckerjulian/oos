@@ -100,11 +100,17 @@ pub struct Inputs {
     ctl_buf: Vec<u8>,
     hid: Vec<HidDev>,
     hid_scan: Option<std::time::Instant>,
+    /// mice and keyboards that could not be grabbed, left out until they come again under another node
+    refused: Vec<String>,
 }
 
 /// A read of a non-blocking descriptor into `buf`: the bytes read, or -1 with errno (EAGAIN when nothing waits).
 fn read_fd(fd: i32, buf: &mut [u8]) -> isize {
     unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) }
+}
+
+fn close_fd(fd: i32) {
+    unsafe { libc::close(fd) };
 }
 
 fn open_nb(path: &str, flags: i32) -> i32 {
@@ -209,7 +215,16 @@ impl Inputs {
             libc::mkfifo(c.as_ptr(), 0o666);
         }
         let ctl = open_nb(CTL, libc::O_RDWR);
-        Inputs { touch, panel, panel_buf: Vec::new(), ctl, ctl_buf: Vec::new(), hid: Vec::new(), hid_scan: None }
+        Inputs {
+            touch,
+            panel,
+            panel_buf: Vec::new(),
+            ctl,
+            ctl_buf: Vec::new(),
+            hid: Vec::new(),
+            hid_scan: None,
+            refused: Vec::new(),
+        }
     }
 
     /// Sets the front-panel LEDs. `mask` is in panel LED order (see `Ui::leds`); it is translated to the MCU's
@@ -256,42 +271,58 @@ impl Inputs {
         out
     }
 
-    /// Opens the mice and keyboards that came, every `HID_SCAN_S`; one that went is closed by `read_hid`.
+    /// Opens the mice and keyboards that came, every `HID_SCAN_S`; one that went is closed by `read_hid`. What a node
+    /// is comes from sysfs, which the kernel writes (`hid::classify`). A device that cannot be grabbed is left out:
+    /// its keys would reach the console shell as well.
     fn hid_rescan(&mut self) {
         if self.hid_scan.is_some_and(|t| t.elapsed().as_secs() < HID_SCAN_S) {
             return;
         }
         self.hid_scan = Some(std::time::Instant::now());
-        let Ok(text) = std::fs::read_to_string("/proc/bus/input/devices") else { return };
-        for d in crate::hid::devices(&text) {
-            if self.hid.iter().any(|h| h.event == d.event) {
+        let Ok(dir) = std::fs::read_dir("/sys/class/input") else { return };
+        for e in dir.flatten() {
+            let event = e.file_name().to_string_lossy().into_owned();
+            if !crate::hid::is_event(&event)
+                || self.hid.iter().any(|h| h.event == event)
+                || self.refused.contains(&event)
+            {
                 continue;
             }
+            let read = |f: &str| std::fs::read_to_string(e.path().join("device").join(f)).unwrap_or_default();
+            let caps = |c: &str| read(&format!("capabilities/{c}"));
+            let Some(d) = crate::hid::classify(&event, &read("name"), &caps("ev"), &caps("rel"), &caps("key")) else {
+                continue;
+            };
             let fd = open_nb(&format!("/dev/input/{}", d.event), libc::O_RDONLY);
-            if fd >= 0 {
-                let what = match (d.mouse, d.keyboard) {
-                    (true, true) => "mouse and keyboard",
-                    (true, false) => "mouse",
-                    _ => "keyboard",
-                };
-                eprintln!("oos-ui: {} {} ({})", what, d.event, d.name);
-                if let Err(e) = grab(fd) {
-                    eprintln!("oos-ui: {} not grabbed ({}): its keys also reach the console", d.event, e);
-                }
-                self.hid.push(HidDev { fd, event: d.event, held: crate::hid::Held::default() });
+            if fd < 0 {
+                continue;
             }
+            let what = match (d.mouse, d.keyboard) {
+                (true, true) => "mouse and keyboard",
+                (true, false) => "mouse",
+                _ => "keyboard",
+            };
+            if let Err(err) = grab(fd) {
+                eprintln!("oos-ui: {} {} ({}) not taken: not grabbed ({})", what, d.event, d.name, err);
+                close_fd(fd);
+                self.refused.push(d.event);
+                continue;
+            }
+            eprintln!("oos-ui: {} {} ({})", what, d.event, d.name);
+            self.hid.push(HidDev { fd, event: d.event, held: crate::hid::Held::default() });
         }
     }
 
     fn read_hid(&mut self, out: &mut Vec<In>) {
         let mut buf = [0u8; 24 * 64];
+        let mut gone = Vec::new();
         self.hid.retain_mut(|d| loop {
             let n = read_fd(d.fd, &mut buf);
             if n < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENODEV) || n == 0 {
                 // unplugged, or the Bluetooth link went: its node is gone, and what it held is let go
                 eprintln!("oos-ui: input {} gone", d.event);
-                unsafe { libc::close(d.fd) };
-                out.extend(d.held.release().into_iter().map(In::Hid));
+                close_fd(d.fd);
+                gone.push(std::mem::take(&mut d.held));
                 break false;
             }
             if n < 0 {
@@ -307,6 +338,11 @@ impl Inputs {
                 }
             }
         });
+        // what a device that went held is let go, unless a device still there holds it too
+        let others: Vec<&crate::hid::Held> = self.hid.iter().map(|d| &d.held).collect();
+        for h in gone {
+            out.extend(h.release(&others).into_iter().map(In::Hid));
+        }
     }
 
     fn read_touch(&mut self, out: &mut Vec<In>) {

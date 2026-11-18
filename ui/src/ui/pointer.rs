@@ -318,7 +318,7 @@ mod tests {
             feed(&mut u, e);
         }
         assert!(u.mouse.left && u.mouse.ctrl);
-        for e in held.release() {
+        for e in held.release(&[]) {
             feed(&mut u, e);
         }
         assert!(!u.mouse.left && !u.mouse.ctrl);
