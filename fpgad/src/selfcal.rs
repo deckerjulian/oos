@@ -60,7 +60,6 @@ impl oos_hal::dho::selfcal::CalHw for UnitHw {
 }
 
 pub(super) fn selfcal(a: &[String]) -> Result<(), String> {
-    #[cfg_attr(not(target_os = "linux"), allow(unused_imports))]
     use oos_hal::dho::selfcal as sc;
     let what = a.first().map(|s| s.as_str()).ok_or("selfcal entry|zero|vertical --ch N ...")?;
     let get = |k: &str| opt(a, k).cloned();
