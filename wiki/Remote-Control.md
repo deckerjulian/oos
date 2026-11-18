@@ -48,7 +48,7 @@ The scope takes an address by DHCP. Without a DHCP answer it takes a link-local 
 
 ## WLAN
 
-Put an RTL8188EU stick into the front USB port, then **System > Network > Find WLAN networks**, tap a network and enter
+Put an RTL8188EU stick or a TP-Link Archer TX10UB Nano (RTL8851BU, 2.4 and 5 GHz) into the front USB port, then **System > Network > Find WLAN networks**, tap a network and enter
 the password on the on-screen keyboard ([[First Steps]] has how to correct inside it). It joins by itself from then on:
 open, WPA and WPA2 personal networks. Everything open on Ethernet is then open on that network too. Details:
 [docs/wlan.md](https://github.com/dekajoule/oos/blob/main/docs/wlan.md). On the DHO924S of the author the scope has

@@ -7,6 +7,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- WLAN on the TP-Link Archer TX10UB Nano (Realtek RTL8851BU, 2.4 and 5 GHz; [wlan.md](docs/wlan.md), ADR 0027):
+  `rtw89` of Linux 6.18.63 is built as modules beside the 6.12 kernel, and `oos-wlan` picks it by the stick's id
+  (unit: a saved WPA2 network joined on 5 GHz, DHCP, about 84 Mbit/s sent).
 - `tools/plan-matrix.sh` also covers averaging, the logic analyser, roll and scan, the generator, LA thresholds, the
   cold-boot dry run and the PLL table of another clock.
 - `oos-fpgad made-up-cal DIR` writes a made-up calibration set: every calibration file the register sequences read,

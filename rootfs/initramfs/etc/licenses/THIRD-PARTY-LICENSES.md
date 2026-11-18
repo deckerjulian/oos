@@ -22,6 +22,8 @@ also holds the parts listed here. Each keeps its own licence.
 | Device tree of the board | this tree | GPL-2.0-or-later OR MIT | in the boot image | `GPL-2.0.txt` | `kernel/dts/` |
 | XDMA driver (Xilinx `dma_ip_drivers`) | commit `f09dce7` | Dual BSD/GPL, as its files state | module `xdma.ko` | in its files | `kernel/modules/xdma/` |
 | wireless-regdb (`regulatory.db`) | as in `kernel/firmware/` | ISC | built into the kernel | `wireless-regdb.txt` | `kernel/firmware/` (data, with its signature) |
+| rtw89 driver (Linux, `rtw89_core`, `rtw89_usb`, `rtw89_8851b`, `rtw89_8851bu`) | Linux 6.18.63, with `kernel/modules/rtw89-linux-6.12.patch` | GPL-2.0 OR BSD-3-Clause, as its files state | modules in `/lib/modules/*/updates/` | in its files | `kernel/modules/rtw89/` |
+| RTL8851B firmware (`rtw8851b_fw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtw89/` | `/lib/firmware/rtw89/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 | RTL8188EU firmware (`rtl8188eufw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtlwifi/` | `/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 
 ## Programs and libraries

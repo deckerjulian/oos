@@ -1,0 +1,91 @@
+rtw89 of Linux 6.18.63 on Linux 6.12: the mac80211 interfaces that changed in between.
+
+- config, set_rts_threshold, set_antenna, get_antenna: without the radio index (added in 6.17)
+- link_sta_rc_update (6.13) is sta_rc_update in 6.12, for the station; its default link stands for it
+- ieee80211_gtk_rekey_add takes the key as a key_conf in 6.12 (only used for wake on WLAN, which OOS does not use)
+
+SPDX-License-Identifier: GPL-2.0-only
+
+--- a/mac80211.c
++++ b/mac80211.c
+@@ -72,7 +72,7 @@
+ 	rtw89_core_stop(rtwdev);
+ }
+ 
+-static int rtw89_ops_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
++static int rtw89_ops_config(struct ieee80211_hw *hw, u32 changed)
+ {
+ 	struct rtw89_dev *rtwdev = hw->priv;
+ 
+@@ -1041,8 +1041,7 @@
+ 	return 0;
+ }
+ 
+-static int rtw89_ops_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
+-				       u32 value)
++static int rtw89_ops_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
+ {
+ 	struct rtw89_dev *rtwdev = hw->priv;
+ 
+@@ -1154,7 +1153,7 @@
+ }
+ 
+ static
+-int rtw89_ops_set_antenna(struct ieee80211_hw *hw, int radio_idx, u32 tx_ant, u32 rx_ant)
++int rtw89_ops_set_antenna(struct ieee80211_hw *hw, u32 tx_ant, u32 rx_ant)
+ {
+ 	struct rtw89_dev *rtwdev = hw->priv;
+ 	struct rtw89_hal *hal = &rtwdev->hal;
+@@ -1177,8 +1176,7 @@
+ }
+ 
+ static
+-int rtw89_ops_get_antenna(struct ieee80211_hw *hw, int radio_idx, u32 *tx_ant,
+-			  u32 *rx_ant)
++int rtw89_ops_get_antenna(struct ieee80211_hw *hw, u32 *tx_ant, u32 *rx_ant)
+ {
+ 	struct rtw89_dev *rtwdev = hw->priv;
+ 	struct rtw89_hal *hal = &rtwdev->hal;
+@@ -1299,11 +1297,13 @@
+ 	rtw89_hw_scan_abort(rtwdev, rtwvif_link);
+ }
+ 
++/* OOS: Linux 6.12 has sta_rc_update, without links; the default link stands for the station */
+ static void rtw89_ops_sta_rc_update(struct ieee80211_hw *hw,
+ 				    struct ieee80211_vif *vif,
+-				    struct ieee80211_link_sta *link_sta,
++				    struct ieee80211_sta *sta,
+ 				    u32 changed)
+ {
++	struct ieee80211_link_sta *link_sta = &sta->deflink;
+ 	struct rtw89_sta *rtwsta = sta_to_rtwsta(link_sta->sta);
+ 	struct rtw89_dev *rtwdev = hw->priv;
+ 	struct rtw89_sta_link *rtwsta_link;
+@@ -1952,7 +1952,7 @@
+ 	.remain_on_channel		= rtw89_ops_remain_on_channel,
+ 	.cancel_remain_on_channel	= rtw89_ops_cancel_remain_on_channel,
+ 	.set_sar_specs		= rtw89_ops_set_sar_specs,
+-	.link_sta_rc_update	= rtw89_ops_sta_rc_update,
++	.sta_rc_update		= rtw89_ops_sta_rc_update,
+ 	.set_tid_config		= rtw89_ops_set_tid_config,
+ 	.can_activate_links	= rtw89_ops_can_activate_links,
+ 	.change_vif_links	= rtw89_ops_change_vif_links,
+--- a/wow.c
++++ b/wow.c
+@@ -670,13 +670,11 @@
+ 	memcpy(rekey_conf->key, gtk,
+ 	       flex_array_size(rekey_conf, key, cipher_info->len));
+ 
++	/* OOS: Linux 6.12 takes the key as a key_conf */
+ 	if (ieee80211_vif_is_mld(wow_vif))
+-		key = ieee80211_gtk_rekey_add(wow_vif, keyidx, gtk,
+-					      cipher_info->len,
+-					      rtwvif_link->link_id);
++		key = ieee80211_gtk_rekey_add(wow_vif, rekey_conf, rtwvif_link->link_id);
+ 	else
+-		key = ieee80211_gtk_rekey_add(wow_vif, keyidx, gtk,
+-					      cipher_info->len, -1);
++		key = ieee80211_gtk_rekey_add(wow_vif, rekey_conf, -1);
+ 
+ 	kfree(rekey_conf);
+ 	if (IS_ERR(key)) {
