@@ -52,7 +52,7 @@ pub(super) struct Link {
 
 #[derive(Default)]
 pub(super) struct BtUi {
-    /// a Bluetooth stick is plugged in (`hci0`), read once a second for the top bar, whether the page is open or not
+    /// a Bluetooth stick is plugged in (`hci0`), read every 2 s for the top bar (`usb_poll`), with the page open or not
     pub stick: bool,
     /// how many devices are connected through it as inputs (`inputs_connected`), for the dot of its box
     pub inputs: usize,
