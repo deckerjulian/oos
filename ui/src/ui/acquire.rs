@@ -271,9 +271,7 @@ impl Ui {
                             self.phz.clear();
                             clear_pending = false;
                         }
-                        let mainv = (self.m.time_per_div(), self.m.delay);
                         let zv = (tscales()[self.m.zscale], self.m.zdelay);
-                        let zoom_model = self.zoom_display_model();
                         let detail = self.captured_record_view(&rec, zv);
                         let t1 = std::time::Instant::now();
                         let zw = self.z_weights(&rec);
@@ -286,38 +284,7 @@ impl Ui {
                             let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
                             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
                         } else {
-                            for c in 0..NCH {
-                                if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                    let shifted_main = self.deskew_channel_view(&rec, c, mainv);
-                                    let main = shifted_main.as_deref().unwrap_or(&rec);
-                                    self.ph.draw_ex(
-                                        c,
-                                        &self.m,
-                                        mainv,
-                                        main.t0 - self.m.deskew_ch[c],
-                                        main.dt,
-                                        &main.ch[c],
-                                        24,
-                                        if shifted_main.is_some() { None } else { zw.as_deref() },
-                                        main.pairs,
-                                    );
-                                    if self.m.zoom {
-                                        let shifted = self.deskew_channel_view(&rec, c, zv);
-                                        let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                                        self.phz.draw_ex(
-                                            c,
-                                            &zoom_model,
-                                            zv,
-                                            z.t0 - self.m.deskew_ch[c],
-                                            z.dt,
-                                            &z.ch[c],
-                                            24,
-                                            if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                                            z.pairs,
-                                        );
-                                    }
-                                }
-                            }
+                            self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
                         }
                         td += t1.elapsed().as_secs_f32() * 1000.0;
                         if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
@@ -443,46 +410,13 @@ impl Ui {
             self.stop_replay();
             self.ph.clear();
             self.phz.clear();
-            let mainv = (self.m.time_per_div(), self.m.delay);
             let zv = (tscales()[self.m.zscale], self.m.zdelay);
-            let zoom_model = self.zoom_display_model();
             let detail = self.captured_view(zv);
             // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
             let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
             if let Some(rec) = shown {
                 let zw = self.z_weights(&rec);
-                for c in 0..NCH {
-                    if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        let shifted_main = self.deskew_channel_view(&rec, c, mainv);
-                        let main = shifted_main.as_deref().unwrap_or(&rec);
-                        self.ph.draw_ex(
-                            c,
-                            &self.m,
-                            mainv,
-                            main.t0 - self.m.deskew_ch[c],
-                            main.dt,
-                            &main.ch[c],
-                            24 * 6,
-                            if shifted_main.is_some() { None } else { zw.as_deref() },
-                            main.pairs,
-                        );
-                        if self.m.zoom {
-                            let shifted = self.deskew_channel_view(&rec, c, zv);
-                            let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                            self.phz.draw_ex(
-                                c,
-                                &zoom_model,
-                                zv,
-                                z.t0 - self.m.deskew_ch[c],
-                                z.dt,
-                                &z.ch[c],
-                                24 * 6,
-                                if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                                z.pairs,
-                            );
-                        }
-                    }
-                }
+                self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24 * 6);
             }
         }
         if self.analyzed_view != self.m.view {
@@ -593,6 +527,31 @@ impl Ui {
     /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
     /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
     /// screen. The trigger stays where the last record had it (software trigger included).
+    /// The channels of `rec` into the main picture and, with zoom, into the zoom picture; every point adds `w`.
+    /// `detail` is the zoom window read from the capture memory, `zw` the Z input's weights of `rec`: a deskewed
+    /// channel is drawn from its own view of the record, without them.
+    fn draw_channels(&mut self, rec: &Record, detail: Option<&Record>, zw: Option<&[f32]>, w: u16) {
+        let mainv = (self.m.time_per_div(), self.m.delay);
+        let zv = (tscales()[self.m.zscale], self.m.zdelay);
+        let zoom_model = self.zoom_display_model();
+        for c in 0..NCH {
+            if !self.m.ch[c].on || rec.ch[c].is_empty() || self.m.z_src == Some(c) {
+                continue;
+            }
+            let shifted = self.deskew_channel_view(rec, c, mainv);
+            let main = shifted.as_deref().unwrap_or(rec);
+            let main_zw = if shifted.is_some() { None } else { zw };
+            let t0 = main.t0 - self.m.deskew_ch[c];
+            self.ph.draw_ex(c, &self.m, mainv, t0, main.dt, &main.ch[c], w, main_zw, main.pairs);
+            if self.m.zoom {
+                let shifted = self.deskew_channel_view(rec, c, zv);
+                let z = shifted.as_deref().or(detail).unwrap_or(rec);
+                let z_zw = if shifted.is_some() || detail.is_some() { None } else { zw };
+                self.phz.draw_ex(c, &zoom_model, zv, z.t0 - self.m.deskew_ch[c], z.dt, &z.ch[c], w, z_zw, z.pairs);
+            }
+        }
+    }
+
     fn stop_replay(&mut self) {
         let ok = self.src.is_hw()
             && board().slow_mode(&self.m) == crate::board::Slow::Off
