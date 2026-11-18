@@ -92,7 +92,8 @@ def allowed():
 
 
 def check(path, allow):
-    here = os.path.dirname(path)
+    # a change in changelog.d/ is written for CHANGELOG.md (tools/changelog.py), so its links start at the top
+    here = "" if path.startswith("changelog.d/") and path != "changelog.d/README.md" else os.path.dirname(path)
     problems, fence = [], False
     with open(os.path.join(ROOT, path), encoding="utf-8", errors="replace") as f:
         lines = f.read().split("\n")

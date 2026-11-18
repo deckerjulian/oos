@@ -144,6 +144,10 @@ layer_text() {
         bad=1
     fi
     [ "$bad" = 0 ] || fail "text: see docs/adr/process/0019-one-style-for-text-files-and-commits.md"
+    # the index of the decision records is what the records say, and every change in changelog.d/ has its form
+    # (ADR 0065)
+    python3 -I tools/adr-index.py --check || fail "text: run tools/adr-index.py"
+    python3 -I tools/changelog.py --check || fail "text: a file in changelog.d/ (changelog.d/README.md)"
     # every relative link and every named file of the documents exists
     python3 -I tools/link-check.py || fail "text: a document names something that is not there (tools/link-check.py)"
     # blocks of code in two or more places (issue 120): counted, not yet enforced

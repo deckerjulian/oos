@@ -182,6 +182,11 @@ jobs:
         run: |
           version=${TAG#v}
           # the tag is the version of the crates
+          # the changes not yet released are in CHANGELOG.md now (tools/changelog.py --release, ADR 0065)
+          if ls changelog.d/*.md 2>/dev/null | grep -qv '/README.md$'; then
+            echo "::error::changelog.d/ still holds changes: run tools/changelog.py --release $version first"
+            exit 1
+          fi
           for c in hal dsp ui fpgad; do
             grep -qx "version = \"$version\"" "$c/Cargo.toml" || {
               echo "::error::$c/Cargo.toml is not at version $version"
