@@ -152,14 +152,7 @@ impl Ui {
             self.sim_cancel_generation();
         }
         if k == key::POWER {
-            // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
-            // likely cuts power by itself otherwise (board.md section 4)
-            self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
-            self.power_dlg = !self.power_dlg;
-            if self.power_dlg {
-                self.dialog = None;
-                self.close_menu();
-            }
+            self.power_key();
             return;
         }
         if self.power_dlg {
@@ -183,35 +176,7 @@ impl Ui {
                 let name = &oos_hal::model::platform().caps.name;
                 self.toast(&format!("CH{}: the {} has {} channels", k - 0x14, name, n_ch()));
             }
-            0x15..=0x18 => {
-                let c = (k - 0x15) as usize;
-                if !m.ch[c].on {
-                    m.ch[c].on = true;
-                    m.active = c;
-                    if m.run == RunState::Run {
-                        m.floor_live_tdiv();
-                    }
-                    self.open_menu(MenuId::Channel(c));
-                } else if m.n_on() > 1 && m.active != c {
-                    // several channels on: the first press only selects the channel, so the knobs act on it; the
-                    // next press opens its menu. Another channel's menu would show the wrong channel: it closes.
-                    m.active = c;
-                    if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
-                        self.close_menu();
-                    }
-                } else if self.menu_open && self.menu == MenuId::Channel(c) {
-                    m.ch[c].on = false;
-                    self.menu_open = false;
-                    if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
-                        self.m.active = o;
-                    }
-                } else {
-                    m.active = c;
-                    self.open_menu(MenuId::Channel(c));
-                }
-                self.select_workspace_source(WaveId::Ch(if self.m.ch[c].on { c } else { self.m.active }));
-                self.settings_changed();
-            }
+            0x15..=0x18 => self.channel_key(k),
             key::RUNSTOP => {
                 m.run = if m.run == RunState::Run { RunState::Stop } else { RunState::Run };
                 if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
@@ -236,27 +201,7 @@ impl Ui {
                 self.autoset_live_only();
             }
             key::CLEAR => self.clear_display(),
-            key::DEFAULT => {
-                let meas = Self::default_meas();
-                // the Quick key action is a preference, not part of the set-up that Default resets
-                let (quick, text_size) = (m.quick, m.text_size);
-                self.m = Model::default();
-                self.m.meas = meas;
-                (self.m.quick, self.m.text_size) = (quick, text_size);
-                self.bus_auto = None;
-                self.clear_measurement_statistics();
-                self.select_workspace_source(WaveId::Ch(self.m.active));
-                self.meas_own.clear();
-                self.meas_cfg = None;
-                self.ensure_meas_own();
-                self.stats_on = false;
-                self.xy = false;
-                self.mask = None;
-                self.mask_ref = None;
-                self.close_menu();
-                self.dirty_map = true;
-                self.toast("Default set-up");
-            }
+            key::DEFAULT => self.default_key(),
             key::SLOPE => self.adjust(Item::TrigSlope, 1),
             key::FORCE => {
                 self.force_trigger();
@@ -292,20 +237,91 @@ impl Ui {
                     self.history_step(0);
                 }
             }
-            key::LA | key::GI => {
-                let p = oos_hal::model::platform();
-                let (name, has) =
-                    if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
-                if !has {
-                    self.toast(&format!("The {} has no {}", p.caps.name, name));
-                } else if k == key::GI {
-                    self.open_menu(MenuId::Afg);
-                } else {
-                    self.la_key();
-                }
-            }
+            key::LA | key::GI => self.aux_key(k),
             0xf1..=0xf4 => self.toast(&format!("CH{} overload", k - 0xf0)),
             _ => self.knob(k),
+        }
+    }
+
+    /// The power key: the MCU is told not to power down; the power dialog opens or closes.
+    fn power_key(&mut self) {
+        // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
+        // likely cuts power by itself otherwise (board.md section 4)
+        self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
+        self.power_dlg = !self.power_dlg;
+        if self.power_dlg {
+            self.dialog = None;
+            self.close_menu();
+        }
+    }
+
+    /// A channel key: turns the channel on, selects it, opens or closes its menu.
+    fn channel_key(&mut self, k: u8) {
+        let m = &mut self.m;
+        let c = (k - 0x15) as usize;
+        if !m.ch[c].on {
+            m.ch[c].on = true;
+            m.active = c;
+            if m.run == RunState::Run {
+                m.floor_live_tdiv();
+            }
+            self.open_menu(MenuId::Channel(c));
+        } else if m.n_on() > 1 && m.active != c {
+            // several channels on: the first press only selects the channel, so the knobs act on it; the
+            // next press opens its menu. Another channel's menu would show the wrong channel: it closes.
+            m.active = c;
+            if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
+                self.close_menu();
+            }
+        } else if self.menu_open && self.menu == MenuId::Channel(c) {
+            m.ch[c].on = false;
+            self.menu_open = false;
+            if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
+                self.m.active = o;
+            }
+        } else {
+            m.active = c;
+            self.open_menu(MenuId::Channel(c));
+        }
+        self.select_workspace_source(WaveId::Ch(if self.m.ch[c].on { c } else { self.m.active }));
+        self.settings_changed();
+    }
+
+    /// The Default key: the default set-up, keeping the Quick key action and the text size.
+    fn default_key(&mut self) {
+        let m = &self.m;
+        let meas = Self::default_meas();
+        // the Quick key action is a preference, not part of the set-up that Default resets
+        let (quick, text_size) = (m.quick, m.text_size);
+        self.m = Model::default();
+        self.m.meas = meas;
+        (self.m.quick, self.m.text_size) = (quick, text_size);
+        self.bus_auto = None;
+        self.clear_measurement_statistics();
+        self.select_workspace_source(WaveId::Ch(self.m.active));
+        self.meas_own.clear();
+        self.meas_cfg = None;
+        self.ensure_meas_own();
+        self.stats_on = false;
+        self.xy = false;
+        self.mask = None;
+        self.mask_ref = None;
+        self.close_menu();
+        self.dirty_map = true;
+        self.toast("Default set-up");
+    }
+
+    /// The LA and generator keys: their page, or a note when the scope has no such port.
+    fn aux_key(&mut self, k: u8) {
+        let p = oos_hal::model::platform();
+        let (name, has) =
+            if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
+        if !has {
+            self.toast(&format!("The {} has no {}", p.caps.name, name));
+        } else if k == key::GI {
+            self.open_menu(MenuId::Afg);
+        } else {
+            self.la_key();
         }
     }
 
@@ -1165,18 +1181,7 @@ impl Ui {
             return;
         }
         if self.power_dlg {
-            self.power_dlg = false;
-            let (_, [off, restart, _]) = self.pwr_layout();
-            if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
-                // a cut now leaves recovery half-written (docs/update.md)
-                self.toast("Update running: wait until it is done");
-            } else if off.contains(x, y) {
-                self.power_action = Some(PowerAction::Off);
-                self.toast("Powering off ...");
-            } else if restart.contains(x, y) {
-                self.power_action = Some(PowerAction::Restart);
-                self.toast("Restarting ...");
-            }
+            self.power_tap(x, y);
             return;
         }
         if self.wlan.osk.is_some() {
@@ -1254,6 +1259,27 @@ impl Ui {
             }
             return;
         }
+        self.tap_top_bar(x, y);
+    }
+
+    /// A tap while the power dialog is open: it closes; Power off or Restart is taken unless an update runs.
+    fn power_tap(&mut self, x: i32, y: i32) {
+        self.power_dlg = false;
+        let (_, [off, restart, _]) = self.pwr_layout();
+        if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
+            // a cut now leaves recovery half-written (docs/update.md)
+            self.toast("Update running: wait until it is done");
+        } else if off.contains(x, y) {
+            self.power_action = Some(PowerAction::Off);
+            self.toast("Powering off ...");
+        } else if restart.contains(x, y) {
+            self.power_action = Some(PowerAction::Restart);
+            self.toast("Restarting ...");
+        }
+    }
+
+    /// A tap on the top bar, the menu button or the results header; the rest goes to the cards.
+    fn tap_top_bar(&mut self, x: i32, y: i32) {
         let pill = self.run_pill();
         if self.top_hit(pill).contains(x, y) {
             return self.key(key::RUNSTOP);
@@ -1295,6 +1321,11 @@ impl Ui {
                 return;
             }
         }
+        self.tap_cards(x, y);
+    }
+
+    /// A tap on the channel, LA, generator, time, record or trigger cards, or on the grid to close the menu.
+    fn tap_cards(&mut self, x: i32, y: i32) {
         let (chs, tr, trg) = self.cards();
         for (c, r) in chs.iter().enumerate() {
             if r.contains(x, y) {
