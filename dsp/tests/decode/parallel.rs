@@ -1,7 +1,7 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The the parallel bus decoders against generated signals with known content.
+//! The parallel bus decoders against generated signals with known content.
 //!
 //! The tests of a new decoder of the family go here, as the decoder goes into the family's file in `dsp/src/decode/`;
 //! its protocol module, registered in `ui/src/protocols/mod.rs` (ADR 0002), has its own tests in the ui.
