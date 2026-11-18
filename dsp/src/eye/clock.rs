@@ -179,7 +179,9 @@ pub fn center_strobe(c: &Clock) -> Clock {
 /// PLL clock: starts locked on the constant-rate fit, then a digital PLL corrects the tick nearest to every data edge
 /// by the phase error. `loop_bw` = closed-loop bandwidth in Hz (0 = rate / 1667, the common "golden PLL"); 1st order
 /// (phase only) or 2nd order (phase and frequency, damping 0.707). The gains account for the edge density (edges per
-/// UI). The ticks cover the whole record.
+/// UI). The ticks cover the whole record. A bandwidth near the edge rate would make the discrete loop unstable and
+/// drive the period to zero or below, so the loop is held where it is stable (natural frequency x time between edges
+/// at most 0.6) and the period within 10 % of the constant-rate clock: every tick step stays positive.
 pub fn recover_clock_pll(
     v: &[f32],
     dt: f64,
@@ -195,7 +197,8 @@ pub fn recover_clock_pll(
     let uis = ((last - first) / c.period).round().max(1.0);
     let density = (c.edges.len() as f64 / uis).clamp(0.01, 1.0);
     let bw = if loop_bw > 0.0 { loop_bw } else { c.rate() / 1667.0 };
-    let wn_te = 2.0 * std::f64::consts::PI * bw * c.period / density; // natural frequency x time between edges
+    // natural frequency x time between edges, at most where the discrete 2nd-order loop is still stable
+    let wn_te = (2.0 * std::f64::consts::PI * bw * c.period / density).min(0.6);
     let (kp, ki) =
         if second_order { ((2.0 * 0.707 * wn_te).min(1.0), wn_te * wn_te * density) } else { (wn_te.min(1.0), 0.0) };
     let mut period = c.period;
@@ -208,7 +211,7 @@ pub fn recover_clock_pll(
         }
         let err = te - next;
         next += kp * err;
-        period += ki * err;
+        period = (period + ki * err).clamp(0.9 * c.period, 1.1 * c.period);
     }
     while next <= end + period {
         ticks.push(next);
