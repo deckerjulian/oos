@@ -114,6 +114,9 @@ Changed:
 
 Fixed:
 
+- An update that brings another device tree starts by kexec again when the loader seeded the kernel's address
+  randomisation: the seed is carried into the new tree as 0, which kexec-tools requires (issue #193; host test; the
+  developer's unit writes no seed, so it has not run on a unit).
 - The G key lights up while the generator's output is on, and the LA key while the logic analyser is on; both stayed
   dark before (contributed by halma1).
 - DCC decodes the signal of a live track (contributed by halma1, tested on a layout with an ESU ECoS): a phase slip no

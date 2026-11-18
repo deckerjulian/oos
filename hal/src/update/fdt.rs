@@ -360,6 +360,12 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
             t.rsv.push(x);
         }
     }
+    // a loader that seeds the kernel's address randomisation writes `/chosen/kaslr-seed`; kexec-tools (`kexec_load`
+    // with `--dtb`) refuses a tree whose seed is not 0 ("kaslr-seed is not wiped to 0") and puts a fresh one into a seed
+    // of 0, so the carried-over seed is wiped (issue #193)
+    if let Some(seed) = t.root.kid_mut("chosen").and_then(|c| c.props.iter_mut().find(|x| x.0 == "kaslr-seed")) {
+        seed.1.iter_mut().for_each(|b| *b = 0);
+    }
     t.boot_cpu = r.boot_cpu;
     Ok((t.to_bytes(), n + rsv_n))
 }
@@ -462,6 +468,25 @@ mod tests {
         assert!(m.root.kid("memory").is_some() && m.root.kid("gone").is_none() && m.root.kid("gpu").is_some());
         assert_eq!(m.rsv, vec![(0x460_0000, 0x17000)], "nor its reservation");
         assert_eq!(n, 6);
+    }
+
+    // Issue #193 (found in a fork, checked on main): a running tree with a seed for the kernel's address randomisation
+    // passed it on to the kexec start, and kexec-tools refused the tree. Break it catches: a seed other than 0 in the
+    // merged tree, from the loader or from the new image; the property dropped instead of wiped (kexec-tools fills a
+    // seed of 0 with a fresh one).
+    #[test]
+    fn the_kaslr_seed_is_wiped_to_0() {
+        let seed: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
+        let old = node("", &[], vec![node("chosen", &[("bootargs", b"a\0")], vec![])]);
+        let run = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) =
+            with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the loader's seed");
+        let new = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) = with_loader_changes(&tree(new, vec![]), &tree(old.clone(), vec![]), &tree(old, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the new image's seed");
     }
 
     #[test]
