@@ -156,9 +156,9 @@ pub fn stat_text(ui: &Ui) -> String {
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
     let gpu = format!(
-        "{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}",
+        "{} pipeline {} interp {:?} acquired {} used {} dropped {} measured {} compress k {}",
         gpu,
-        crate::drawpipe::mode(),
+        crate::drawpipe::status(),
         crate::sparse::interp(),
         acq,
         used,

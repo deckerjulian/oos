@@ -51,7 +51,7 @@ when a user notices it.
   remote command, the menu row and the table in `docs/scpi.md` follow from the row
   ([ADR 0043](docs/adr/code/0043-one-declaration-per-setting.md),
   [ADR 0044](docs/adr/code/0044-settings-table-real-numbers-and-row-steps.md)). The groups with a table so far: Display,
-  the trigger values, acquisition, math, the meters, the channels, the draw path, mask, histogram, Bode, the logic
+  the trigger values, acquisition, math, the meters, the channels, mask, histogram, Bode, the logic
   analyser's switch, spectrum, eye and power. A setting of the other groups is still written out in each of those
   places.
 - **Also touch** its field of the model (`ui/src/model/`), its `Item` and its place in a menu (`ui/src/ui/item.rs`,

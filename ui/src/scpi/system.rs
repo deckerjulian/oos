@@ -1,10 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:SYSTem`: the error queue (`ERRor?`), `STATe?`, `GRAPhics`, `PIPeline` (a row of settings/system.rs), `AOUTput`,
-//! `LOG`, `SET` and `GET`, and the fork's `:SYSTem:DEBug:...` nodes with the raw state of the FPGA units. A new
-//! `:SYSTem` setting of a setup file is a row of that table; another command goes into `system_cmd` here (a debug node
-//! into `system_debug_cmd`), with its line in docs/scpi.md; either with its query in ui/tests/scpi.txt (AGENTS.md).
+//! `:SYSTem`: the error queue (`ERRor?`), `STATe?`, `GRAPhics`, `PIPeline` (kept for scripts: Batch is the only draw
+//! path), `AOUTput`, `LOG`, `SET` and `GET`, and the fork's `:SYSTem:DEBug:...` nodes with the raw state of the FPGA
+//! units. A new command goes into `system_cmd` here (a debug node into `system_debug_cmd`), with its line in
+//! docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
 use super::{kw, parse_bool, Scpi};
 use crate::board::{board, Board};
@@ -59,12 +59,14 @@ impl Scpi {
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
             }
-            // the rows of settings/system.rs (Acquire > Draw path); a change does not mark the model changed
-            if let Some(row) = crate::settings::command(&crate::settings::system::SLICES, &nodes[1..]) {
+            // the draw path of earlier versions (ADR 0059): Batch is the only one. A released command, kept so a
+            // script that sets or asks it goes on: the query answers BATC, BATCh is taken and changes nothing, the
+            // removed FRAMes (or STANdard) is refused
+            if kw(nodes[1], "PIPeline") {
                 if query {
-                    return t(&row.query(&ui.m, 0));
+                    return t("BATC");
                 }
-                if !row.take(&mut ui.m, 0, arg) {
+                if !arg.trim().to_ascii_uppercase().starts_with("BATC") {
                     self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 }
                 return None;
@@ -231,28 +233,27 @@ mod aux_out_tests {
 mod draw_path_tests {
     use super::*;
 
-    // Break it catches: the draw path switch not reaching the model or the setup, or the pipe running where the
-    // switch is off
+    // Break it catches: `:SYSTem:PIPeline` of earlier versions gone (a script that sets or asks it gets -113), taking
+    // the removed frames path without an error, or leaving something in the setup
     #[test]
-    fn draw_path_over_scpi_in_the_menu_and_the_setup() {
+    fn the_old_draw_path_command_answers_batch() {
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
-        assert_eq!(q(&mut ui, ":SYST:PIP?"), "BATC", "Batch is the default (ADR 0029)");
-        q(&mut ui, ":SYST:PIP STANdard");
-        assert!(!ui.m.draw_batch);
-        assert!(crate::store::setup_text(&ui.m).contains("draw_path = standard\n"));
-        assert!(!crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().draw_batch);
-        q(&mut ui, ":SYSTem:PIPeline BATCh");
-        assert!(ui.m.draw_batch);
-        assert!(crate::store::setup_text(&ui.m).contains("draw_path = batch\n"));
-        let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
-        assert!(back.draw_batch);
+        let setup = crate::store::setup_text(&ui.m);
+        assert_eq!(q(&mut ui, ":SYST:PIP?"), "BATC");
+        for ok in [":SYSTem:PIPeline BATCh", ":SYST:PIP batc"] {
+            q(&mut ui, ok);
+            assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"", "{}", ok);
+        }
+        for refused in [":SYST:PIP FRAMes", ":SYST:PIP STANdard", ":SYST:PIP FRAM", ":SYST:PIP BOGUS"] {
+            q(&mut ui, refused);
+            assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"), "{}", refused);
+        }
+        assert_eq!(q(&mut ui, ":SYSTem:PIPeline?"), "BATC");
+        assert_eq!(crate::store::setup_text(&ui.m), setup);
+        assert!(!setup.contains("draw_path"));
         // the demo source is not the hardware: no workers
         ui.step(0.02);
         assert!(crate::drawpipe::pipe().is_none());
-        q(&mut ui, ":SYST:PIP FRAM");
-        assert!(!ui.m.draw_batch);
-        q(&mut ui, ":SYST:PIP BOGUS");
-        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     }
 }

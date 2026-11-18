@@ -5,12 +5,12 @@
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
 //! `:CHANnel`, `:TRIGger`, `:ACQuire` and `:BODE` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs,
-//! scpi/system.rs, scpi/mask.rs, scpi/histogram.rs, scpi/la.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
+//! scpi/mask.rs, scpi/histogram.rs, scpi/la.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
 //! and write the model; what a change sets off on the screen (redraw, statistics) stays with the caller.
 //!
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
 //! (settings/acquisition.rs), the math settings (settings/math.rs), the meters (settings/meters.rs), the channel
-//! settings (settings/channel.rs), the draw path (settings/system.rs), the switches of the mask test
+//! settings (settings/channel.rs), the switches of the mask test
 //! (settings/mask.rs), the histogram (settings/histogram.rs), the Bode page (settings/bode.rs), the
 //! switch of the logic analyser (settings/la.rs), the spectrum page (settings/spectrum.rs), the eye page
 //! (settings/eye.rs) and the power analysis (settings/power.rs) have tables; the other
@@ -36,7 +36,6 @@ pub mod math;
 pub mod meters;
 pub mod power;
 pub mod spectrum;
-pub mod system;
 pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
@@ -191,7 +190,6 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(meters::DVM_SLICES)
         .chain(meters::COUNTER_SLICES)
         .chain(channel::SLICES)
-        .chain(system::SLICES)
         .chain(mask::SLICES)
         .chain(histogram::SLICES)
         .chain(bode::SLICES)

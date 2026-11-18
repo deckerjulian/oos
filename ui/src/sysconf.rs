@@ -214,6 +214,9 @@ impl SysConf {
                 // the telnet shell of earlier versions (ADR 0054): taken with any value and dropped, so an older file
                 // loads without a refused line and the key is not written again
                 "remote.telnet" => true,
+                // the switch between the draw paths of earlier versions (Batch is the only one, ADR 0059): taken with
+                // any value and dropped like `remote.telnet`
+                "acq.pipeline" => true,
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
@@ -479,19 +482,15 @@ pub fn default_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
 
-    // Break it catches: a fork key (acq.pipeline, perf.place, acq.prearm) that only /oos/system.conf can set, so the
+    // Break it catches: a fork key (acq.interp, perf.place, acq.prearm) that only /oos/system.conf can set, so the
     // unit image's defaults (/etc/oos/system.conf) do nothing; or an image default that beats the user's setting
     #[test]
     fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
-        let image = "acq.pipeline = batch\nperf.place = on\n";
+        let image = "acq.interp = fast\nperf.place = on\n";
         let v = |settings: &str, k: &str| super::value(&super::fork_text_of(settings, image), k).map(str::to_string);
-        assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
+        assert_eq!(v("", "acq.interp").as_deref(), Some("fast"));
         assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
-        assert_eq!(
-            v("acq.pipeline =\n", "acq.pipeline").as_deref(),
-            Some(""),
-            "an empty value in the settings wins too"
-        );
+        assert_eq!(v("acq.interp =\n", "acq.interp").as_deref(), Some(""), "an empty value in the settings wins too");
         assert_eq!(v("", "acq.prearm"), None);
     }
     use super::*;
@@ -687,6 +686,19 @@ mod tests {
         let (base, bad) = SysConf::image_defaults("net.allow = 192.0.2.0/24\nremote.telnet = off\n");
         assert!(bad.is_empty() && !base.text().contains("telnet"), "{:?}", bad);
         assert!(!SysConf::default().text().contains("telnet"));
+    }
+
+    // Break it catches: a settings file that chose a draw path (`acq.pipeline`, before Batch was the only one) that
+    // no longer loads cleanly, or whose line is kept and written again
+    #[test]
+    fn an_old_draw_path_line_is_taken_and_dropped() {
+        for v in ["frames", "standard", "batch", ""] {
+            let old = format!("ntp = on\nacq.pipeline = {} # the way back\n", v);
+            let (c, bad) = SysConf::parse(&old);
+            assert!(bad.is_empty(), "{}: {:?}", v, bad);
+            assert_eq!(c, SysConf { ntp: true, ..Default::default() });
+            assert!(!c.text().contains("pipeline"), "{}", c.text());
+        }
     }
 
     // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's

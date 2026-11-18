@@ -60,8 +60,8 @@ impl Ui {
 
     /// The per-frame polls and ticks, and the wall time.
     fn step_polls(&mut self, dt_wall: f64) {
-        // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
-        crate::drawpipe::set_enabled(self.m.draw_batch && self.src.is_hw());
+        // the deposit workers (drawpipe.rs) draw the hardware's batches; the other sources have no batches
+        crate::drawpipe::set_enabled(self.src.is_hw());
         // System > Features: what is left out runs nothing
         self.features_enforce();
         self.poll_reference_measurements();
@@ -839,11 +839,11 @@ pub struct FastFrame {
     pub fold: [Option<crate::fastdraw::Fold>; NCH],
 }
 
-/// Helper threads of the fast path (`Ui::fast_draw_all`): none while the deposit workers of batch mode have batches
-/// to draw, where they keep the small cores busy: a helper there waited for a core, and the frame loop for the helper
-/// (issue #186); the queue then holds only the newest frame of each batch, one or two a screen. Without batches to
-/// draw (batches of one frame, at slow time bases) every frame comes through the queue, and the helpers draw them as
-/// in the frames mode: the frame loop alone took fewer of them a screen and left the others out (unit 2026-11-18).
+/// Helper threads of the fast path (`Ui::fast_draw_all`): none while the deposit workers have batches to draw, where
+/// they keep the small cores busy: a helper there waited for a core, and the frame loop for the helper (issue #186);
+/// the queue then holds only the newest frame of each batch, one or two a screen. Without batches to draw (batches of
+/// one frame, at slow time bases) every frame comes through the queue, and the helpers draw them: the frame loop
+/// alone took fewer of them a screen and left the others out (unit 2026-11-18).
 pub(super) fn fast_helpers() -> usize {
     if crate::drawpipe::pipe().is_some_and(|p| p.busy()) {
         0
@@ -883,7 +883,7 @@ pub fn fast_plan(
     }
     let src = &f.ch[m.trig_src];
     let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-    // the full search of `fastdraw::edge_smooth` (the Batch path takes `trignear::edge_smooth_near`)
+    // the full search of `fastdraw::edge_smooth` (the workers take `trignear::edge_smooth_near`)
     let t = crate::drawpipe::refine_edge(m, f, col, |s| crate::fastdraw::edge_smooth(src, f.pre, s, |_| true));
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
     let ti = t.ti;

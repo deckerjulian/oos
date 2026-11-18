@@ -64,19 +64,25 @@ Removed:
 - The native Windows build: `build-windows.ps1`, `run-windows.ps1` and the desktop window with its keyboard and mouse
   shortcuts and its file dialog. On a computer OOS runs with `oos-ui --serve` and the web remote in a browser, on
   Linux, macOS and Windows inside WSL 2 (ADR 0033). The scope is not affected.
+- The frames draw path (Standard) and its switch: Acquire > Draw path is gone, the scope always draws with Batch,
+  which puts every acquired frame into the picture and now holds the screen rate (issue #186, ADR 0059).
+  `acq.pipeline` in an older `/oos/system.conf` is ignored and no longer written, `OOS_PIPELINE` is not read, and
+  `draw_path` in an older setup is passed over. `:SYSTem:PIPeline?` answers `BATC`, `:SYSTem:PIPeline BATCh` is
+  taken and changes nothing, `FRAMes` and `STANdard` are refused with -224. The status line says `pipeline Off`
+  instead of `pipeline Frames` with a source other than the hardware, and System info no longer names the path
+  (unit: starts in Batch, `:SYSTem:PIPeline` as above, about 29 pictures a second; the Acquire menu was checked on
+  the host only).
 
 Changed:
 
-- Batch draw path (Acquire > Draw path = Batch): at 10 us/div the screen shows about 29 pictures a second with one,
+- Batch draw path: at 10 us/div the screen shows about 29 pictures a second with one,
   two or four channels, where it showed 14 to 19 (unit). The workers fold their maps once a screen on the little
   cores, and the frame loop swaps them in. Frames that are read and not drawn now count as dropped in `:SYSTem:STAT?`.
 - System > Overclock is only in the menu with `adc.overclock = on` in `/oos/system.conf`, or while `limits.conf` already
   sets another clock: above 1.25 GHz every step boots, but records at the full rate lose samples (unit). Every step
   above 1.25 GHz is marked "(test)".
-- The waveform is drawn with the Batch path by default (Acquire > Draw path): from 100 ns to 500 us/div it draws 1.2 to
+- The waveform is drawn with the Batch path (the only one, see Removed): from 100 ns to 500 us/div it draws 1.2 to
   3.4 times as many of the acquired frames, 5269 instead of 1563 a second with one channel at 100 ns/div (unit).
-  `acq.pipeline = frames` in system.conf starts with Standard; the path at start-up comes from system.conf, not from
-  the last setup (ADR 0029).
 - system.conf: of two lines with the same key the last one wins, and `#` starts a comment only at the start of a line
   or after a space or tab, as `oos-conf` reads it.
 - `trig.serial_hw`, `acq.frame0`, `zone.batch` and `mask.map.*` are also taken from the image defaults
