@@ -4,9 +4,44 @@
 //! Acquisition per frame: `Ui::step` takes what the source delivered since the last frame under the run state (RUN,
 //! SINGLE, STOP, segments), starts the measurements of the newest record in the background and keeps the trace
 //! brightness and persistence maps; the fast path for the queued hardware frames (`Ui::fast_draw_all`), the record
-//! shown after a STOP and the HDMI header line are here too. A new per-frame job goes into `Ui::step`.
+//! shown after a STOP and the HDMI header line are here too. A new per-frame job goes into `Ui::step`; a part that
+//! takes what its thread or its hardware probe has for it on each frame gets a line in `POLLS` (ADR 0061).
 
 use super::*;
+
+/// What a part runs on each frame to take what its thread or its probe has for it.
+type Poll = fn(&mut Ui);
+
+/// What the frame loop takes on each frame from the services and the hardware probes, after the clock has moved, in
+/// this order (the order of the calls the list replaced). A new `*_poll` goes here, or into `POLLED_ELSEWHERE` with
+/// the place it is called from; `every_poll_is_in_polls` names one that is in neither.
+const POLLS: [(&str, Poll); 13] = [
+    ("update_poll", Ui::update_poll),
+    ("wlan_poll", Ui::wlan_poll),
+    ("ntp_poll", Ui::ntp_poll),
+    ("ssh_poll", Ui::ssh_poll),
+    ("allow_poll", Ui::allow_poll),
+    ("usb_poll", Ui::usb_poll),
+    ("bt_poll", Ui::bt_poll),
+    ("ch_hold_poll", Ui::ch_hold_poll),
+    ("counter_poll", Ui::counter_poll),
+    ("dvm_poll", Ui::dvm_poll),
+    ("mask_hw_poll", Ui::mask_hw_poll),
+    ("zone_hw_poll", Ui::zone_hw_poll),
+    ("la_probe_poll", Ui::la_probe_poll),
+];
+
+/// The polls that are called from elsewhere on purpose, and why. The list only gets shorter (ADR 0061).
+#[cfg(test)]
+const POLLED_ELSEWHERE: [(&str, &str); 7] = [
+    ("sim_poll", "step_polls, before relayout, and sim.rs while a SIM run is started"),
+    ("eye_auto_poll", "step_polls, before relayout, and the eye page's own step"),
+    ("sysinfo_poll", "step_guards, after auto_step"),
+    ("cal_poll", "step_guards, after auto_step"),
+    ("meas_poll", "step_meas_rows: the measurements of the newest record, before their rows are taken"),
+    ("unit_blocked_poll", "mask_hw_poll asks it first"),
+    ("seg_poll", "step_run_state, with whether the acquisition runs"),
+];
 
 /// What the acquisition of one step took: records, times, the pending clear and the newest raw deep record.
 struct StepTake {
@@ -73,19 +108,9 @@ impl Ui {
         self.now += dt_wall;
         self.meas_hold_tick();
         self.workspace_hold_tick();
-        self.update_poll();
-        self.wlan_poll();
-        self.ntp_poll();
-        self.ssh_poll();
-        self.allow_poll();
-        self.usb_poll();
-        self.bt_poll();
-        self.ch_hold_poll();
-        self.counter_poll();
-        self.dvm_poll();
-        self.mask_hw_poll();
-        self.zone_hw_poll();
-        self.la_probe_poll();
+        for (_, poll) in POLLS {
+            poll(self);
+        }
         self.log_tick();
         self.m.clamp_offsets();
     }
@@ -973,5 +998,46 @@ pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, map: &mut [u16], f:
             }
             None => {}
         },
+    }
+}
+
+#[cfg(test)]
+mod polls_tests {
+    use super::{POLLED_ELSEWHERE, POLLS};
+
+    /// Every `fn *_poll(&mut self, ...)` of the screen is in `POLLS` or in `POLLED_ELSEWHERE`, and both name only
+    /// polls that exist, each once (ADR 0061).
+    #[test]
+    fn every_poll_is_in_polls() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+            for e in std::fs::read_dir(dir).expect("ui/src/ui").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&p).unwrap_or_default();
+                    for part in text.split("fn ").skip(1) {
+                        if let Some(name) = part.find("(&mut self").map(|k| &part[..k]) {
+                            if name.ends_with("_poll") && name.bytes().all(|c| c.is_ascii_lowercase() || c == b'_') {
+                                out.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"), &mut found);
+        found.sort();
+        found.dedup();
+        let listed: Vec<&str> = POLLS.iter().map(|p| p.0).chain(POLLED_ELSEWHERE.iter().map(|p| p.0)).collect();
+        let missing: Vec<&String> = found.iter().filter(|f| !listed.contains(&f.as_str())).collect();
+        assert!(missing.is_empty(), "polls in neither POLLS nor POLLED_ELSEWHERE: {:?}", missing);
+        let stale: Vec<&&str> = listed.iter().filter(|l| !found.iter().any(|f| f == *l)).collect();
+        assert!(stale.is_empty(), "listed but not found: {:?}", stale);
+        let mut once = listed.clone();
+        once.sort();
+        once.dedup();
+        assert_eq!(once.len(), listed.len(), "a poll is listed twice");
     }
 }
