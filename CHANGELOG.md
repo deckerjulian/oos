@@ -175,6 +175,9 @@ Fixed:
   start; it is left out like any picture oos-ui cannot read.
 - The power-on picture: one that claims a size of 2^31 bytes of pixels or more (65536 x 65536) no longer ends
   oos-ui; it is refused unless the file holds all its pixels.
+- Bode with a generator on the USB port: a device that answers with transfers of no data and never ends the answer
+  no longer holds the generator's thread for ever. After 16 such transfers the read fails, and the Bode page says
+  that `*IDN?` failed.
 
 ## 0.1.13
 

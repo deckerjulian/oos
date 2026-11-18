@@ -38,11 +38,6 @@ pub(crate) const KNOWN: &[Known] = &[
         repro: crate::mdns::tests::hostile_known_mdns_answer_it_cannot_read,
     },
     Known {
-        name: "usbtmc-empty-transfers-forever",
-        what: "usbtmc::Usbtmc::read asks for ever while a device answers with transfers of no data and no end",
-        repro: network::hostile_known_usbtmc_empty_transfers_forever,
-    },
-    Known {
         name: "setup-refused-line-half-applied",
         what: "store::set applies the first values of a line it then refuses: an infinite Bode sweep time stays",
         repro: files::hostile_known_setup_refused_line_half_applied,

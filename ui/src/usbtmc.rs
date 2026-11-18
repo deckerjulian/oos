@@ -30,6 +30,8 @@ pub const HEADER: usize = 12;
 const CHUNK: usize = 4096;
 /// An answer longer than this is cut off with an error.
 const MAX_ANSWER: usize = 1 << 20;
+/// Transfers without data and without the end of the message that one answer may have before it is given up.
+const MAX_EMPTY: usize = 16;
 
 /// Header of a DEV_DEP_MSG_OUT transfer with `size` data bytes; `eom` on the last transfer of a message.
 pub fn out_header(tag: u8, size: u32, eom: bool) -> [u8; HEADER] {
@@ -170,6 +172,7 @@ impl<B: Bulk> Usbtmc<B> {
         let mut out = Vec::new();
         // a multiple of every bulk packet size (64 at full speed, 512 at high speed), so no transfer overflows
         let mut buf = vec![0u8; (HEADER + CHUNK).next_multiple_of(512)];
+        let mut empty = 0;
         loop {
             let tag = self.next_tag();
             self.send(&request_header(tag, CHUNK as u32, None))?;
@@ -196,6 +199,13 @@ impl<B: Bulk> Usbtmc<B> {
             }
             if out.len() > MAX_ANSWER {
                 return Err("answer too long".into());
+            }
+            // a device that sends nothing and never ends the message would be asked for ever
+            if data.is_empty() {
+                empty += 1;
+                if empty >= MAX_EMPTY {
+                    return Err(format!("{} transfers without data and without an end", empty));
+                }
             }
         }
     }
