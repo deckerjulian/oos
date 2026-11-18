@@ -7,16 +7,24 @@
 use super::*;
 
 /// One request whose sender closes its side after the last byte; the server is polled until it has closed the
-/// connection. What came back.
-fn exchange(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> Vec<u8> {
+/// connection. What came back, or why the answer did not end: a server that keeps the connection open fails after
+/// 10 s instead of holding the test.
+fn exchange(
+    h: &mut Http,
+    ui: &mut Ui,
+    cv: &Canvas,
+    scpi: &mut crate::scpi::Scpi,
+    req: Vec<u8>,
+) -> Result<Vec<u8>, String> {
     let port = h.port().unwrap();
     let client = std::thread::spawn(move || {
-        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", port)).map_err(|e| format!("connect: {e}"))?;
+        c.set_read_timeout(Some(std::time::Duration::from_secs(10))).map_err(|e| e.to_string())?;
         let _ = c.write_all(&req);
         let _ = c.shutdown(std::net::Shutdown::Write);
         let mut out = Vec::new();
-        let _ = c.read_to_end(&mut out);
-        out
+        c.read_to_end(&mut out).map_err(|e| format!("the answer did not end ({e}) after {} bytes", out.len()))?;
+        Ok(out)
     });
     while !client.is_finished() {
         h.poll(ui, cv, scpi);
@@ -68,7 +76,7 @@ fn hostile_requests() {
         if sandboxed(b) {
             return Ok(());
         }
-        let answer = exchange(&mut h, &mut ui, &cv, &mut scpi, b.to_vec());
+        let answer = exchange(&mut h, &mut ui, &cv, &mut scpi, b.to_vec())?;
         // whole: the head ends, and the body is exactly as long as the head says (as the server reads the length)
         let head_end = b.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
         let whole = head_end.is_some_and(|e| {

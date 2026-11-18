@@ -41,14 +41,14 @@ const SETTERS: [&str; 16] = [
 
 /// What the test leaves out so it stays inside the test process: a command (not a query) that reads a file named
 /// by the client, that reaches for the network or starts a thread (`:BODE`, `:SIM`, `:CALibrate`), or that changes
-/// the board's state shared by every test of this process (`MAP`, `LANE`).
+/// the board's state shared by every test of this process (`MAP`, `LANE`). Their queries only read, and are asked.
 fn sandboxed(text: &str) -> bool {
     text.split(['\n', '\r', ';']).any(|command| {
         let head = command.trim().split(char::is_whitespace).next().unwrap_or("").to_ascii_uppercase();
         let nodes: Vec<&str> = head.trim_end_matches('?').split(':').filter(|n| !n.is_empty()).collect();
         let root = nodes.first().is_some_and(|n| ["BODE", "SIM", "CAL"].iter().any(|r| n.starts_with(r)));
         let node = nodes.iter().any(|n| ["LOAD", "IMP", "MAP", "LANE"].iter().any(|r| n.starts_with(r)));
-        (root && !head.ends_with('?')) || node
+        (root || node) && !head.ends_with('?')
     })
 }
 
