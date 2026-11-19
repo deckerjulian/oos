@@ -58,18 +58,6 @@ impl Ui {
             return (p.title)(self, menu);
         }
         match menu {
-            MenuId::Features => "Features".into(),
-            MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
-            MenuId::Afg => "Generator (GI/GO)".into(),
-            MenuId::ViewMore => self.view_name().into(),
-            MenuId::La => self.la_title(),
-            MenuId::LaLines => "Logic analyser \u{b7} lines shown".into(),
-            MenuId::LaPat => "Pattern \u{b7} D0-D15".into(),
-            MenuId::Main => "Menu".into(),
-            MenuId::Measure => "Measure settings".into(),
-            MenuId::MeasAdd => "Add measurement".into(),
-            MenuId::MeasSelected => format!("Selected measurements ({})", self.measurement_count()),
-            MenuId::MeasHold => "Add".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
                 Some(p) if p.it == Item::NumEntry => self.numpad_title(),

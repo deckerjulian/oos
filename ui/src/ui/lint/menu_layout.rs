@@ -126,8 +126,8 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u
     };
     use MenuId::*;
-    // the pages not in `PAGES` yet, and channel 4 (`PAGES` opens a channel page with channel 1)
-    for m in [Main, Channel(3), Measure, MeasAdd, MeasHold, Afg, La, LaLines, LaPat] {
+    // the channel pages of the other channels (`PAGES` opens them with channel 1)
+    for m in [Channel(1), Channel(3)] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }

@@ -373,20 +373,12 @@ impl Ui {
         if let Some(a) = pages::page(self.menu_root()).and_then(|p| p.anchor) {
             return a(self, self.menu_root());
         }
-        match self.menu_root() {
-            MenuId::Main => (self.menu_btn().x, false),
-            MenuId::ViewMore => (self.scr.w, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => {
-                self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
-            }
-            MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
-            // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self
-                .top_buttons()
-                .iter()
-                .find(|t| t.0 == TopBtn::Menu(m))
-                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
-        }
+        // under its top-bar button, if it has one; else centred above the cards
+        let m = self.menu_root();
+        self.top_buttons()
+            .iter()
+            .find(|t| t.0 == TopBtn::Menu(m))
+            .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true))
     }
 
     pub(super) fn dlg_layout(&self) -> Option<Dlg> {

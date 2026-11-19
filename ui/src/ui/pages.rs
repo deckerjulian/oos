@@ -6,9 +6,8 @@
 //! `Decoders(k)` are one entry each, and the functions get the `MenuId` with its parameter. `Pick` is no page: it is
 //! the picker of a row, and the page whose `picks` holds that row answers for a picked line.
 //!
-//! A new page: its module, its `MenuId` variant and its line here; `every_page_is_complete` names a kind that has
-//! neither a line nor a place in `NOT_YET_IN_PAGES`, the pages still answered by the arms of the shared files. That
-//! list only gets shorter.
+//! A new page: its module, its `MenuId` variant and its line here; `every_page_is_complete` names a kind that has no
+//! line, or two.
 
 use super::*;
 
@@ -50,6 +49,9 @@ const CH_CARD: Option<Anchor> = Some(|u, m| {
 });
 const TIME_CARD: Option<Anchor> = Some(|u, _| (u.cards().1.x + u.cards().1.w / 2, false));
 const TRIG_CARD: Option<Anchor> = Some(|u, _| (u.cards().2.x + u.cards().2.w / 2, false));
+/// Above the card of the logic analyser or of the generator, where the model has it; else in the middle.
+const LA_CARD: Option<Anchor> = Some(|u, _| u.aux_cards().0.map_or((u.scr.w / 2, false), |r| (r.x + r.w / 2, false)));
+const GEN_CARD: Option<Anchor> = Some(|u, _| u.aux_cards().1.map_or((u.scr.w / 2, false), |r| (r.x + r.w / 2, false)));
 
 /// The channel of a channel page.
 fn ch_of(m: MenuId) -> usize {
@@ -95,7 +97,7 @@ macro_rules! page {
     };
 }
 
-pub(super) const PAGES: [Page; 36] = [
+pub(super) const PAGES: [Page; 48] = [
     Page {
         id: MenuId::Network,
         title: |_, _| "Network".into(),
@@ -305,6 +307,52 @@ pub(super) const PAGES: [Page; 36] = [
                 .collect()
         })
     ),
+    plain(
+        MenuId::Main,
+        |_, _| "Menu".into(),
+        |u, _| u.main_groups().into_iter().flat_map(|g| g.1).collect(),
+        Some(|u, _| (u.menu_btn().x, false)),
+        None,
+    ),
+    page!(MenuId::Measure, "Measure settings", |u, _| u.measure_items(), None),
+    page!(MenuId::MeasHold, "Add", |_, _| vec![Item::AddMeas], None),
+    // its catalogue is a layout of its own (`catalog_dialog`), not rows
+    page!(MenuId::MeasAdd, "Add measurement", |_, _| Vec::new(), None),
+    plain(
+        MenuId::MeasSelected,
+        |u, _| format!("Selected measurements ({})", u.measurement_count()),
+        |u, _| u.measurement_catalog(),
+        None,
+        None,
+    ),
+    page!(MenuId::Features, "Features", |u, m| u.features_items(m).unwrap_or_default(), None),
+    plain(
+        MenuId::Decoders(0),
+        |_, m| {
+            let k = if let MenuId::Decoders(k) = m { k } else { 0 };
+            format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE))
+        },
+        |u, m| u.features_items(m).unwrap_or_default(),
+        None,
+        None,
+    ),
+    plain(MenuId::Afg, |_, _| "Generator (GI/GO)".into(), |u, _| u.afg_items(), GEN_CARD, None),
+    plain(
+        MenuId::ViewMore,
+        |u, _| u.view_name().into(),
+        |u, _| u.view_more_items(),
+        Some(|u, _| (u.scr.w, true)),
+        None,
+    ),
+    plain(MenuId::La, |u, _| u.la_title(), |u, _| u.la_items(), LA_CARD, None),
+    plain(MenuId::LaLines, |_, _| "Logic analyser \u{b7} lines shown".into(), |u, _| u.la_line_items(), LA_CARD, None),
+    plain(
+        MenuId::LaPat,
+        |_, _| "Pattern \u{b7} D0-D15".into(),
+        |_, _| (0..16).map(Item::LaPat).collect(),
+        LA_CARD,
+        None,
+    ),
 ];
 
 /// The entry of the kind of `m`.
@@ -419,24 +467,6 @@ pub(super) const LAYOUTS: &[Layout] = &[
     ),
 ];
 
-/// The kinds whose pages are still answered by the arms of `menu_items.rs`, `menu_text.rs`, `menu_dialog.rs` and
-/// `menu_actions.rs`, until they move into `PAGES` (ADR 0060). Only gets shorter.
-#[cfg(test)]
-const NOT_YET_IN_PAGES: [MenuId; 12] = [
-    MenuId::Main,
-    MenuId::Measure,
-    MenuId::MeasAdd,
-    MenuId::MeasHold,
-    MenuId::Features,
-    MenuId::Decoders(0),
-    MenuId::Afg,
-    MenuId::ViewMore,
-    MenuId::La,
-    MenuId::LaLines,
-    MenuId::LaPat,
-    MenuId::MeasSelected,
-];
-
 /// One `MenuId` of every kind but `Pick`. The `match` makes a new variant a compile error here until it is listed.
 #[cfg(test)]
 pub(super) fn every_kind() -> Vec<MenuId> {
@@ -512,7 +542,7 @@ mod tests {
         std::mem::discriminant(&a) == std::mem::discriminant(&b)
     }
 
-    /// Every kind of page is in `PAGES` or in `NOT_YET_IN_PAGES`, not in both, each once; every entry of `PAGES` has
+    /// Every kind of page is in `PAGES`, once; every entry of `PAGES` has
     /// a title and rows (ADR 0060).
     #[test]
     fn every_page_is_complete() {
@@ -520,16 +550,16 @@ mod tests {
         let mut missing = Vec::new();
         for m in every_kind() {
             let listed = PAGES.iter().filter(|p| same(p.id, m)).count();
-            let waiting = NOT_YET_IN_PAGES.iter().filter(|w| same(**w, m)).count();
-            if listed + waiting != 1 {
-                missing.push(format!("{:?}: {} in PAGES, {} in NOT_YET_IN_PAGES", m, listed, waiting));
+            if listed != 1 {
+                missing.push(format!("{:?}: {} times in PAGES", m, listed));
             }
         }
         for p in &PAGES {
             if (p.title)(&ui, p.id).is_empty() {
                 missing.push(format!("{:?}: no title", p.id));
             }
-            if (p.items)(&ui, p.id).is_empty() {
+            // Add measurement is the catalogue, a layout of its own (`catalog_dialog`), not rows
+            if (p.items)(&ui, p.id).is_empty() && !same(p.id, MenuId::MeasAdd) {
                 missing.push(format!("{:?}: no rows", p.id));
             }
         }
@@ -616,6 +646,14 @@ mod tests {
         (u.m.dpt_v, u.m.dpt_i, u.m.dpt_g, u.m.dpt_4ch) = (Ch(0), Ch(1), Ch(2), Ch(3));
         u.m.dpt_4th = DptFourth::Gate;
         assert_eq!(u.off_sources(MenuId::Dpt), vec![0, 1, 2, 3]);
+    }
+
+    /// Every status box of the top bar opens a page of the table (ADR 0063).
+    #[test]
+    fn every_status_box_opens_a_page_of_pages() {
+        for b in &super::super::bars::STATUS_BOXES {
+            assert!(page(b.page).is_some(), "the {} box opens {:?}, which is not in PAGES", b.label, b.page);
+        }
     }
 
     /// A picker is answered by one page at most: of the rows of every page, and of the pickers a page opens itself.
