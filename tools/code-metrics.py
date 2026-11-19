@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""code-metrics.py: long functions, `.unwrap()`, modules without a header and the menu pages not yet in `PAGES`, in the
-four crates (issue 120, ADR 0060).
+"""code-metrics.py: long functions, `.unwrap()`, modules without a header, the menu pages not yet in `PAGES` and the
+loose fields of the screen's state, in the four crates (issue 120, ADR 0060, ADR 0062).
 
-    tools/code-metrics.py [ROOT]            one line: the four counts
+    tools/code-metrics.py [ROOT]            one line: the five counts
     tools/code-metrics.py --list [ROOT]     each count with what is behind it
     tools/code-metrics.py --enforce [ROOT]  the counts against tools/code-metrics.txt; exit 1 when one differs
     tools/code-metrics.py --lower [ROOT]    write the counts that went down into tools/code-metrics.txt
@@ -22,6 +22,8 @@ folder `tests/`.
             inner attributes (`#![...]`) before it are no code. --list names them.
   menu-arms lines of code that name a `MenuId::` in the shared menu files (MENU_FILES), the part of the pages that
             has not moved into `PAGES` of ui/src/ui/pages.rs yet (ADR 0060). --list: the count of each file.
+  ui-fields the fields of `struct Ui` (ui/src/ui.rs) that are not the state of one part: a field whose type is
+            `module::Type` is a part's state, every other field is loose (ADR 0062). --list names the loose ones.
 
 Without an option a report: it exits 0 whatever it counts. With --enforce the counts are numbers that only go down
 (ADR 0037), kept in tools/code-metrics.txt, one `<count> <key>` per line as in tools/ratchet.txt: a count above its
@@ -156,6 +158,30 @@ def menu_arms(text):
     return sum(1 for line in text.splitlines() if "MenuId::" in line.split("//")[0])
 
 
+UI_STRUCT = "ui/src/ui.rs"  # where `struct Ui` is
+
+
+def ui_fields(text):
+    """The fields of `pub struct Ui` that are not a part's state (`name: module::Type`), by name."""
+    loose, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("pub struct Ui {"):
+            inside = True
+        elif inside and line.startswith("}"):
+            break
+        elif inside and line.startswith("    ") and not line.startswith("     "):
+            field = line.strip()
+            for vis in ("pub(crate) ", "pub(super) ", "pub "):
+                field = field.removeprefix(vis)
+            name, colon, ty = field.partition(":")
+            if not colon or not name.isidentifier():
+                continue
+            module, sep, typ = ty.strip().rstrip(",").partition("::")
+            if not (sep and module.isidentifier() and module.islower() and typ[:1].isupper() and typ.isidentifier()):
+                loose.append(name)
+    return loose
+
+
 def counts(root):
     """The counts as (key, what, items, total); items are the lines --list prints. The keys name the counts in the
     summary and in tools/code-metrics.txt."""
@@ -170,6 +196,7 @@ def counts(root):
         if not has_header(text):
             headless.append(rel)
     arms = [(menu_arms(texts[rel]), rel) for rel in MENU_FILES if rel in texts]
+    loose = ui_fields(texts.get(UI_STRUCT, ""))
     long_fns.sort(key=lambda f: (-f[0], f[1], f[2]))
     per_file.sort(key=lambda f: (-f[0], f[1]))
     return [
@@ -180,6 +207,7 @@ def counts(root):
         ("headers", "files without a //! header, of %d" % len(texts), len(headless), headless),
         ("menu-arms", "lines naming a MenuId in the shared menu files", sum(n for n, _ in arms),
          ["%d %s" % a for a in arms]),
+        ("ui-fields", "fields of struct Ui that are not a part's state", len(loose), loose),
     ]
 
 

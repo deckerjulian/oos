@@ -194,7 +194,7 @@ fn screen_in_order_on(scr: Screen) {
         let f = u.fonts();
         // top bar, with every mix of the status boxes that can be there (ADR 0063): those that come and go are set by
         // the state their `shown` reads, so a box that is not set up here fails the count below
-        let sticks: [fn(&mut Ui, bool); 3] = [|u, on| u.wlan_stick = on, |u, on| u.bt_stick = on, |u, on| u.usb = on];
+        let sticks: [fn(&mut Ui, bool); 3] = [|u, on| u.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.usb = on];
         for k in 0..1usize << sticks.len() {
             for (i, set) in sticks.iter().enumerate() {
                 set(&mut u, k & 1 << i != 0);
