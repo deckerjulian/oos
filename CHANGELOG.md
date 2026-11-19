@@ -7,12 +7,6 @@ Changed:
 - A picker longer than the screen scrolls by its bar, a finger and the knob, as the other lists do (ADR 0006): a WLAN
   scan lists every network it found, not the 17 strongest, and the Bluetooth pickers every device, not the first 18.
 
-Fixed:
-
-- An update that brings another device tree starts by kexec again when the loader seeded the kernel's address
-  randomisation: the seed is carried into the new tree as 0, which kexec-tools requires (issue #193; host test; the
-  developer's unit writes no seed, so it has not run on a unit).
-
 ## 0.1.14
 
 Released on 2026-11-19. Fixes from the review of 0.1.13 and from the forum's and the issues' reports, Bluetooth and a
