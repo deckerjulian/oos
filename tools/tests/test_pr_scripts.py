@@ -126,9 +126,10 @@ class PullRequests(unittest.TestCase):
         name("graphql_datareposito").write_text(json.dumps(
             {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": threads}}}}}))
 
-    def ci(self, compare="success", kept=False, scope=None, differs=False, calibrated=False):
-        """The run of CI for the commit abc: the conclusions of its jobs compare and scope (None: did not run), and
-        whether they kept what differed."""
+    def ci(self, compare="success", kept=False, scope=None, differs=False, calibrated=False, live=False):
+        """The run of CI for the commit abc: the conclusions of its jobs compare and scope (None: did not run), whether
+        they kept what differed, and the signs that the comparison had calibration values and found the live run
+        equal."""
         name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
         name("repos/owner/oos/actions/runs?head_sha=abc&event=pull_request&per_page=20").write_text(json.dumps(
             {"workflow_runs": [{"id": 5, "name": "Gate"}, {"id": 9, "name": "CI"}]}))
@@ -137,7 +138,8 @@ class PullRequests(unittest.TestCase):
                       {"name": "scope", "conclusion": scope or "skipped"}]}))
         name("repos/owner/oos/actions/runs/9/artifacts").write_text(json.dumps(
             {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs),
-                                                         ("compare-calibrated", calibrated)) if keep]}))
+                                                         ("compare-calibrated", calibrated),
+                                                         ("compare-live", live)) if keep]}))
 
     def run_tool(self, tool, tries="1", ok=True, dry=True):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
@@ -325,10 +327,10 @@ class PullRequests(unittest.TestCase):
         # refactoring of them would have passed without a unit
         text = (ROOT / "tools" / "pr-gate.sh").read_text()
         assign = "".join(line + "\n" for line in text.split("\n")
-                         if re.match(r"(hardware|live|proven|testonly)=", line))
-        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven" "$testonly"'],
+                         if re.match(r"(hardware|live|looped|proven|testonly)=", line))
+        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$looped" "$proven" "$testonly"'],
                              capture_output=True, text=True, check=True).stdout.split("\n")
-        hardware, live, proven, testonly = (re.compile(p) for p in out[:4])
+        hardware, live, looped, proven, testonly = (re.compile(p) for p in out[:5])
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
         # the tests inside the hardware paths are a class of their own, before $live and $proven (ADR 0072)
         tests = [f for f in files if hardware.search(f) and testonly.search(f)]
@@ -344,6 +346,12 @@ class PullRequests(unittest.TestCase):
                              f"{f}: its parent {parent.relative_to(ROOT)} must bring it in only under #[cfg(test)]")
         files = [f for f in files if hardware.search(f) and not testonly.search(f)]
         self.assertGreater(len(files), 100, "the tree's hardware paths")
+        # the files the live run reaches are a class of their own too, before $live and $proven (ADR 0073)
+        reached = [f for f in files if looped.search(f)]
+        stale = [a for a in alternatives(looped.pattern) if not any(re.search(a, f) for f in reached)]
+        self.assertEqual(stale, [], "named in $looped, not in the tree")
+        self.assertEqual([f for f in reached if proven.search(f)], [], "in $looped and $proven")
+        files = [f for f in files if not looped.search(f)]
         self.assertEqual([f for f in files if not live.search(f) and not proven.search(f)], [],
                          "in neither $live nor $proven of tools/pr-gate.sh: class it")
         self.assertEqual([f for f in files if live.search(f) and proven.search(f)], [], "in both")
@@ -364,7 +372,7 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "pending", "not a refactoring by its title")
         self.pull(regs, title="Lints: x", body="**Behaviour:** changed")
         self.assertEqual(self.gate()["unit"], "pending", "it does not say unchanged")
-        for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/roll.rs", "hal/src/dho/selfcal.rs",
+        for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/selfcal.rs",
                      "hal/src/dho/boot/mod.rs", "hal/src/update/pkg.rs", "fpgad/src/bin/oos-update.rs",
                      "fpgad/src/main.rs", "fpgad/src/dho/mod.rs", "fpgad/src/dho/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
             self.pull(regs + [live], title="Refactor: x", body=unchanged)
@@ -381,6 +389,32 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "pending", "the comparison found a difference")
         self.ci(compare=None)
         self.assertEqual(self.gate()["unit"], "pending", "the comparison has not run")
+
+    def test_a_refactoring_the_live_run_found_equal(self):
+        # ADR 0073: the files the live run reaches on every path pass with the live run compared, and only with it
+        unchanged = "**Behaviour:** unchanged.\n"
+        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs"]
+        for looped in ("hal/src/dho/roll.rs",):
+            self.ci(calibrated=True, live=True)
+            self.pull(regs + [looped], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "success", f"{looped}: the live run found it equal")
+            self.pull([looped], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "success", f"{looped} alone")
+            self.ci(calibrated=True)
+            self.pull(regs + [looped], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "pending", f"{looped}: the live run was not compared")
+            self.ci(calibrated=True, live=True)
+            self.pull(regs + [looped], title="UI: a new mode", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "pending", f"{looped}: not a refactoring by its title")
+            self.ci(calibrated=True, live=True, kept=True)
+            self.pull(regs + [looped], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "pending", f"{looped}: the comparison found a difference")
+        # the rest of the board code still needs a unit, the live run compared or not
+        self.ci(calibrated=True, live=True)
+        for other in ("ui/src/board/dho/hw.rs", "ui/src/board/dho/hw/plan.rs", "ui/src/board/dho/hw/seg.rs",
+                      "hal/src/dho/seg.rs", "hal/src/dho/seq/exec.rs"):
+            self.pull(["hal/src/dho/roll.rs", other], title="Refactor: x", body=unchanged)
+            self.assertEqual(self.gate()["unit"], "pending", f"{other}: paths the live run does not reach")
 
     def test_labels(self):
         self.pull(["hal/src/dho/seq.rs", "docs/protocols/trigger.md", "tools/check.sh"], title="Trigger: something")
