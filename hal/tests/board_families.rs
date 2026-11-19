@@ -7,7 +7,7 @@
 //! `tools/board/<name>/plan-matrix.sh`, the keys of `etc/oos-board` the build and the scripts read, a `bin/oos-board`
 //! that answers every command the common scripts ask, and its row in the table "Board families" of docs/porting.md,
 //! whose family name is the `Target`'s, and the commands of oos-fpgad for it (`fpgad/src/<name>/mod.rs` with its
-//! `run`). A row or a `Target` without a folder fails too.
+//! `run`, brought in and chosen as `board` by `fpgad/src/main.rs`). A row or a `Target` without a folder fails too.
 
 use oos_hal::target::FAMILIES;
 use std::collections::BTreeSet;
@@ -167,6 +167,13 @@ fn missing(name: &str, family: Option<&str>, cmds: &BTreeSet<String>) -> Vec<Str
         .is_ok_and(|s| s.contains("pub(crate) fn run(cmd: &str, args: &[String])"))
     {
         out.push(format!("{}: the commands of oos-fpgad for the family, with `pub(crate) fn run`", fpgad));
+    }
+    // the neutral main of oos-fpgad brings the module in and can choose it as `board`
+    let main = read(&t.join("fpgad/src/main.rs"));
+    for line in [format!("mod {};", name), format!("use {} as board;", name)] {
+        if !main.lines().any(|l| l.trim() == line) {
+            out.push(format!("fpgad/src/main.rs: `{}`", line));
+        }
     }
     let matrix = format!("tools/board/{}/plan-matrix.sh", name);
     if !t.join(&matrix).is_file() {

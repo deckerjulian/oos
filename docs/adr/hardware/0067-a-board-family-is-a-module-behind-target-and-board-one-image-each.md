@@ -76,7 +76,9 @@ maintainer answered these questions in the session of 2026-11-19; this record wr
   - a build switch that picks `target::ACTIVE` and `board::Active` (today they are constants);
   - the family argument of the host tools;
   - the split of `oos-fpgad` into a neutral part and `fpgad/src/dho/`. That split comes with `Behaviour: unchanged`,
-    proven by `tools/compare-base.sh`. Until it lands, `oos-fpgad` is not one of the parts the check asks for.
+    proven by `tools/compare-base.sh`. It landed with #304 (no build switch in `oos-fpgad` yet, it comes with the first
+    port); since then the check asks for `fpgad/src/<name>/mod.rs` and its `mod` and `use ... as board` lines in
+    `fpgad/src/main.rs`.
 - CI time grows with each family. ADR 0040 (CI runs what a change reaches) keeps a change in one family's module
   from building the others.
 - A unit of each family is needed at a bench before the maintainer calls it ready. Register sequences, timing, start
