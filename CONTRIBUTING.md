@@ -43,8 +43,8 @@ generated, and a test that fails, with the name of the item and of the missing p
 ([ADR 0046](docs/adr/process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md)). A part that cannot be there
 stands in a list in that test with its reason; the list only gets shorter. [AGENTS.md](AGENTS.md#adding-something)
 has the short form, [docs/architecture.md](docs/architecture.md#where-a-change-goes) says where every other kind of
-change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the texts true"), and a `CHANGELOG.md` entry
-when a user notices it.
+change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the texts true"), and a file in
+`changelog.d/` when a user notices it ([changelog.d/README.md](changelog.d/README.md)).
 
 ### A new setting
 
@@ -348,8 +348,9 @@ The same way for everyone, the maintainer included
   only the scope's build compiles). A branch from before 2026-11-17 runs `cargo fmt` on itself first and rebases
   then.
 - Commits: `Area: what changed, as a statement`, one topic each, the body says why and how it was tested; formatting
-  and lint fixes in commits of their own. A change people would notice on the scope gets a `CHANGELOG.md` entry
-  ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+  and lint fixes in commits of their own. A change people would notice on the scope gets a file in `changelog.d/`
+  ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md),
+  [ADR 0065](docs/adr/process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md)).
 
 A change that decides something others will build on (a structure, a rule of the screen, a way to treat the hardware)
 comes with a decision record: [docs/adr](docs/adr/README.md).

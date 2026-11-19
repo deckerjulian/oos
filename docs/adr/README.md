@@ -21,6 +21,7 @@ A decision that touches two categories goes where its consequences are largest a
 
 ## Index
 
+<!-- index: written by tools/adr-index.py from the records; run it instead of editing these lines -->
 | ADR | Category | Decision | Status |
 |---|---|---|---|
 | [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted |
@@ -39,9 +40,9 @@ A decision that touches two categories goes where its consequences are largest a
 | [0014](process/0014-refactorings-keep-every-pixel.md) | process | A refactoring keeps every pixel and every register write | accepted, amended by ADR 0032 |
 | [0015](process/0015-say-how-you-know.md) | process | Every statement about the hardware says how it is known | accepted |
 | [0016](process/0016-rust-code-formatted-by-rustfmt.md) | process | Rust code is formatted by rustfmt with the tree's settings, and CI checks it | accepted |
-| [0017](process/0017-lints-clippy-warnings-are-errors.md) | process | Clippy runs in CI; its warnings are errors, with a short list of allowed lints | accepted, amended by ADR 0045 and ADR 0048 |
-| [0018](process/0018-one-agents-md-for-people-and-agents.md) | process | One `AGENTS.md` holds the instructions for coding agents; it points to the rules | accepted |
-| [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, checked where a tool can | accepted |
+| [0017](process/0017-lints-clippy-warnings-are-errors.md) | process | Clippy runs in CI; its warnings are errors, with a short list of allowed lints that says why | accepted, amended by ADR 0045 and ADR 0048 |
+| [0018](process/0018-one-agents-md-for-people-and-agents.md) | process | One `AGENTS.md` holds the project's instructions for coding agents; it points to the rules, it does not repeat them | accepted |
+| [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, written down and checked where a tool can | accepted |
 | [0020](process/0020-checks-in-layers-one-command-on-the-host.md) | process | The checks come in layers; one command runs every host layer, the same as CI | accepted, amended by ADR 0032 |
 | [0021](process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md) | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | superseded by ADR 0033 |
 | [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted |
@@ -50,7 +51,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted, amended by ADR 0054 |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted, amended by ADR 0030 |
 | [0027](system/0027-newer-wlan-drivers-as-backported-modules.md) | system | A WLAN driver of a newer kernel comes as a module beside 6.12, with a patch of its own | accepted |
-| [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path; Standard stays as the way back | superseded by ADR 0059 |
+| [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path | superseded by ADR 0059 |
 | [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | accepted |
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | accepted |
 | [0032](process/0032-ci-compares-a-pull-request-with-its-base.md) | process | CI compares the pictures and the register sequences of a pull request with its base | accepted |
@@ -65,25 +66,27 @@ A decision that touches two categories goes where its consequences are largest a
 | [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
 | [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted, amended by ADR 0052 |
 | [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | accepted |
-| [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way (amends ADR 0043) | accepted |
-| [0045](process/0045-the-toolchain-and-the-base-images-are-pinned.md) | process | The Rust tool chain and the base images of the containers are pinned; the weekly run tries the newest Rust (amends ADR 0017) | accepted |
+| [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way | accepted |
+| [0045](process/0045-the-toolchain-and-the-base-images-are-pinned.md) | process | The Rust tool chain and the base images of the containers are pinned | accepted |
 | [0046](process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md) | process | Every kind of extension has one registry, one recipe and one check that names what is missing | accepted |
 | [0047](process/0047-parsers-of-outside-input-have-hostile-input-tests.md) | process | Every parser of outside input has a hostile-input test in `cargo test` | accepted |
-| [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only (amends ADR 0017) | accepted |
-| [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings are numbers that only go down | accepted |
-| [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path: proven, live or boot | accepted |
-| [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit, and the comparison with the base covers the live paths | accepted |
-| [0054](system/0054-ssh-is-the-only-shell-on-the-network.md) | system | SSH is the only shell on the network; there is no telnet (supersedes the telnet part of ADR 0025) | accepted |
-| [0055](code/0055-the-remote-interface-is-stable-and-versioned.md) | code | The remote interface (SCPI, HTTP routes, MCP tools) is public, marked stable or experimental, and versioned; a breaking change of a stable entry needs a deprecation and a new major version | accepted |
-| [0056](code/0056-add-ons-run-outside-the-core-and-use-a-stable-extension-interface.md) | code | Add-ons run outside the core as processes of their own, started by OOS, and use the stable remote interface and its extension endpoints; no plugins in `oos-ui` | accepted |
+| [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only | accepted |
+| [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings only go down | accepted |
+| [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path | accepted |
+| [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit | accepted |
+| [0054](system/0054-ssh-is-the-only-shell-on-the-network.md) | system | SSH is the only shell on the network; there is no telnet | accepted |
+| [0055](code/0055-the-remote-interface-is-stable-and-versioned.md) | code | The remote interface (SCPI and HTTP) is stable and versioned | accepted |
+| [0056](code/0056-add-ons-run-outside-the-core-and-use-a-stable-extension-interface.md) | code | Add-ons run outside the core and use a stable extension interface | accepted |
 | [0057](system/0057-bluetooth-input-through-bluez.md) | system | Bluetooth mice and keyboards through BlueZ on a system bus of their own | accepted |
-| [0058](code/0058-a-protocol-decoder-is-described-and-run-in-oos-dsp-and-shown-in-oos-ui.md) | code | A protocol decoder is described and run in oos-dsp (`ModuleInfo`, `oos_dsp::protocols::MODULES`) and shown in oos-ui (`Protocol`, the presentation only) (amends ADR 0002) | accepted |
-| [0059](code/0059-batch-is-the-only-draw-path.md) | code | Batch is the only draw path; the frames path and its switch are removed (supersedes ADR 0029) | accepted |
+| [0058](code/0058-a-protocol-decoder-is-described-and-run-in-oos-dsp-and-shown-in-oos-ui.md) | code | A protocol decoder is described and run in oos-dsp and shown in oos-ui | accepted |
+| [0059](code/0059-batch-is-the-only-draw-path.md) | code | Batch is the only draw path | accepted |
 | [0060](code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md) | code | A menu page is declared once, in a table of pages; a new page is one file and one line | proposed |
 | [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | proposed |
 | [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | proposed |
-| [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries (amends ADR 0007) | proposed |
-| [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | `ui/` is a workspace; a layer of `oos-ui` whose count is 0 leaves it as a crate of its own, the system services (`oos-system`) first, the transports (`oos-remote`) next (amends ADR 0001 and ADR 0049) | proposed |
+| [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries | proposed |
+| [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first | proposed |
+| [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | proposed |
+<!-- end of the index -->
 
 ## Reading order for agents
 
@@ -99,7 +102,8 @@ short on purpose; reading the ones that apply costs minutes and saves a review r
    over all categories, so a number names one record wherever it is filed.
 2. Fill it in: the context (what forced a decision, the measurements), the decision in one or two sentences, the
    alternatives that were looked at and why they lost, the consequences (also the unwelcome ones).
-3. Add its line to the index above, in the same pull request as the change it belongs to.
+3. Run `tools/adr-index.py`, which writes its line into the index above from the record (ADR 0065), and commit it
+   in the same pull request as the change it belongs to.
 4. Open the pull request with the status `proposed`. It stays open at least 72 hours for discussion and is merged as
    `accepted` when no objection is left open, or as `rejected` (ADR 0031).
 
