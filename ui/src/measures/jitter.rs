@@ -413,7 +413,8 @@ fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Op
     if !(hi > lo) {
         return None;
     }
-    let (summary, clk) = crate::ui::eye_infer(v, dt, (rate > 0.0).then_some(rate)).ok()?;
+    let (summary, clk) =
+        oos_dsp::eye::infer(v, dt, (rate > 0.0).then_some(rate), false).map(|(s, clk)| (s.samples_per_ui, clk)).ok()?;
     let tie = oos_dsp::eye::tie(&clk.edges, &clk);
     let j = oos_dsp::eye::jitter(&tie);
     let mut means = oos_dsp::eye::EdgeMeans::default();
