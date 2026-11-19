@@ -20,8 +20,8 @@ pub(super) fn header_probe() -> bool {
 /// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
 /// volts of the records.
 #[cfg(target_os = "linux")]
-pub(super) fn levels_measure<C: oos_hal::dho::boot::Clock>(
-    bar: &mut oos_hal::dho::bus::Bar1,
+pub(super) fn levels_measure<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
     clock: &mut C,
     s: &Settings,
     gain: &[f64; 4],
@@ -261,14 +261,13 @@ pub(super) fn dvm_reading(
 /// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
 /// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
 #[cfg(target_os = "linux")]
-pub(super) fn counter_tick<C: oos_hal::dho::boot::Clock>(
-    bar: &mut oos_hal::dho::bus::Bar1,
+pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
     clock: &mut C,
     out: &HwShared,
     counting: &mut Option<(crate::board::CounterWant, u64)>,
     n: &mut u64,
 ) {
-    use oos_hal::dho::bus::Bus;
     use oos_hal::dho::counter;
     let want = out.lock().unwrap().counter_want;
     if want != counting.map(|c| c.0) {

@@ -25,11 +25,11 @@ pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(target_os = "linux")]
-pub(super) fn disarm(
+pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
     armed: &mut Option<(Settings, u64)>,
     state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
 ) {
     if armed.take().is_some() {
         if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, |_| {}) {

@@ -7,6 +7,7 @@
 
 mod decode;
 mod plan;
+mod port;
 mod seg;
 mod serial;
 mod settings;
@@ -54,6 +55,28 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
+/// `seq::execute` on the loop's unit: the steps with their AFE steps, the read into a new buffer.
+#[cfg(target_os = "linux")]
+fn execute<P: port::Port>(
+    steps: &[oos_hal::dho::seq::Step],
+    bar: &mut P::Bus,
+    afe: Option<&mut P::Afe>,
+    c2h: &mut P::Stream,
+    lines: &mut P::Lines,
+    clock: &mut P::Clock,
+) -> Result<Vec<u8>, String> {
+    let mut dma = oos_hal::dho::bus::DmaBuf::new();
+    oos_hal::dho::seq::execute_on(steps, bar, afe, c2h, lines, &mut dma, clock, |_| {}, || false)?;
+    Ok(dma.into_vec())
+}
+
+/// A line for the status of the acquisition (the log, and System info).
+#[cfg(target_os = "linux")]
+fn report(out: &HwShared, s: String) {
+    eprintln!("oos-ui hw: {}", s);
+    out.lock().unwrap().status = s;
+}
+
 /// The time from `t` to `now`, both microseconds of the loop's clock.
 #[cfg(target_os = "linux")]
 fn since(now: u64, t: u64) -> std::time::Duration {
@@ -66,17 +89,13 @@ fn since(now: u64, t: u64) -> std::time::Duration {
 pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option<String>) -> HwShared {
     use oos_hal::dho::boot::Clock;
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
-    use oos_hal::dho::{adc, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
         crate::placement::place(crate::placement::Role::Hw);
         // every wait and every time of the loop on one clock (ADR 0053): the system's here, a host run's in a test
         let mut clock = oos_hal::dho::boot::SysClock::default();
-        let status = |s: String| {
-            eprintln!("oos-ui hw: {}", s);
-            out.lock().unwrap().status = s;
-        };
+        let status = |s: String| report(&out, s);
         // started with the start-up (rcS): nothing of the hardware is touched before its `end` line, written after
         // oos-fpgad cold-boot exited (its GPIO lines are free then)
         if let Some(path) = &start_up {
@@ -99,11 +118,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         if v != FPGA_VERSION {
             return status(format!("unexpected FPGA version {:#x}, not touching it", v));
         }
-        let mut c2h = match std::fs::File::open("/dev/xdma0_c2h_0") {
+        let c2h = match std::fs::File::open("/dev/xdma0_c2h_0") {
             Ok(f) => f,
             Err(e) => return status(format!("/dev/xdma0_c2h_0: {}", e)),
         };
-        let mut afe_bus = if program_afe {
+        let afe_bus = if program_afe {
             match afe::GpioAfe::open() {
                 Ok(b) => Some(b),
                 Err(e) => return status(format!("AFE GPIO: {}", e)),
@@ -111,6 +130,24 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         } else {
             None
         };
+        let lines = oos_hal::dho::lines::UnitLines;
+        run(port::Hw { bar, c2h, afe: afe_bus, lines, clock, port: port::Scope }, app_mask, program_afe, cal_dir, out);
+    });
+    shared
+}
+
+/// The acquisition loop on the unit `hw` (ADR 0053): the screen's settings to the FPGA, its records to the screen,
+/// every wait and every time on `hw.clock`. `spawn` gives it the scope; it names none of the scope's own types.
+#[cfg(target_os = "linux")]
+fn run<P: port::Port>(hw: port::Hw<P>, app_mask: u32, program_afe: bool, cal_dir: String, out: HwShared) {
+    use oos_hal::dho::afg::GenLines;
+    use oos_hal::dho::boot::Clock;
+    use oos_hal::dho::bus::Bus;
+    use oos_hal::dho::lines::Lines;
+    use oos_hal::dho::{adc, seq};
+    {
+        let status = |s: String| report(&out, s);
+        let port::Hw { mut bar, mut c2h, afe: mut afe_bus, mut lines, mut clock, port: mut unit } = hw;
         let mut cal = match afe::Cal::load_from(&cal_dir) {
             Ok((c, from)) => {
                 status(format!(
@@ -155,7 +192,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut done_seen: Option<u64> = None;
         let mut mode = Slow::Off;
         let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
-        let mut afg_io: Option<oos_hal::dho::afg::Io> = None;
+        let mut afg_io: Option<P::Gen> = None;
         let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
         let mut stamp;
         let mut xadc_at: Option<u64> = None;
@@ -219,7 +256,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 out.lock().unwrap().xadc = x;
                 // LA probe detect, also with the LA off: without a probe it cannot be switched on
                 if oos_hal::model::platform().caps.la {
-                    let p = oos_hal::dho::la::probe_present().ok();
+                    let p = lines.la_probe().ok();
                     out.lock().unwrap().la_probe = p;
                 }
             }
@@ -237,8 +274,6 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     (Some(afe), Some(c)) => {
                         let cancel_out = out.clone();
                         let cancel = move || cancel_out.lock().unwrap().cal_cancel;
-                        let mut lines = oos_hal::dho::lines::UnitLines;
-                        let mut clock = oos_hal::dho::boot::SysClock::default();
                         let mut unit = oos_hal::dho::selfcal::Unit {
                             bar: &mut bar,
                             afe,
@@ -312,8 +347,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
                 if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
                     if afg_io.is_none() {
-                        afg_io =
-                            oos_hal::dho::afg::Io::open().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
+                        afg_io = unit.open_gen().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
                     }
                     if let Some(io) = afg_io.as_mut() {
                         // a running output keeps running when the change allows it
@@ -327,7 +361,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                     f * 1e6,
                                     a * 1e9,
                                     o * 1e9,
-                                    io.relays(),
+                                    io.relay_code(),
                                 )
                             });
                         let ops = if let Some(q) = quick {
@@ -339,13 +373,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 f * 1e6,
                                 a * 1e9,
                                 o * 1e9,
-                                io.relays(),
+                                io.relay_code(),
                                 md,
                             )
                         } else {
-                            oos_hal::dho::afg::idle(a * 1e9, o * 1e9, f * 1e6, io.relays())
+                            oos_hal::dho::afg::idle(a * 1e9, o * 1e9, f * 1e6, io.relay_code())
                         };
-                        io.apply(&mut bar, &ops);
+                        oos_hal::dho::afg::run(&mut bar, io, &mut clock, &ops);
                         status(format!(
                             "generator: {}",
                             if on { format!("{:?} {} Hz {} Vpp {} V {:?}", wave, f, a, o, md) } else { "off".into() }
@@ -446,7 +480,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             replayed = Some(v);
                             let (rb, ti) = stop_plan(lb, lp, v.0, v.1);
                             let steps = state.reread_steps(&rb, lp, *idx);
-                            match seq::execute(&steps, &mut bar, None, &mut c2h, |_| {}) {
+                            match execute::<P>(&steps, &mut bar, None, &mut c2h, &mut lines, &mut clock) {
                                 Ok(bytes) => {
                                     let fb = seq::frame_bytes(&rb, lp);
                                     n += 1;
@@ -477,7 +511,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
                 match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
-                        if let Err(e) = seq::execute(&steps, &mut bar, afe_bus.as_mut(), &mut c2h, |_| {}) {
+                        if let Err(e) =
+                            execute::<P>(&steps, &mut bar, afe_bus.as_mut(), &mut c2h, &mut lines, &mut clock)
+                        {
                             status(format!("configure: {}", e));
                             clock.sleep_us(500000);
                             continue;
@@ -593,7 +629,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 };
                 // LA on: its words come in chunks of their own in the same stream (la.md 4.4)
                 let la_t = s.la.is_some().then(|| oos_hal::dho::la::timing(&p, s.mask));
-                let sweep_start = |state: &mut seq::State, bar: &mut oos_hal::dho::bus::Bar1, rp: &roll::Params| {
+                let sweep_start = |state: &mut seq::State, bar: &mut P::Bus, rp: &roll::Params| {
                     match scan {
                         Some((delay_fs, _)) => {
                             let pos = roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
@@ -865,7 +901,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
             if let Some((tr, seen, logged)) = avg.as_mut().filter(|a| a.1 != avg_clear) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
+                if let Err(e) = execute::<P>(&state.avg_clear_steps(), &mut bar, None, &mut c2h, &mut lines, &mut clock)
+                {
                     status(format!("average clear: {}", e));
                 }
                 tr.reset();
@@ -1252,7 +1289,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         first_left = false;
                     }
                     if after.is_some_and(|a| a.clear) {
-                        if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
+                        if let Err(e) =
+                            execute::<P>(&state.avg_clear_steps(), &mut bar, None, &mut c2h, &mut lines, &mut clock)
+                        {
                             status(format!("average clear: {}", e));
                         }
                     }
@@ -1283,10 +1322,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         g.dropped += 1;
                     }
-                    crate::drawpipe::Counters::add(
-                        &crate::drawpipe::counters().dropped,
-                        (g.dropped - dropped_before) as u64,
-                    );
+                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, g.dropped - dropped_before);
                     if let Some(f) = g.queue.back() {
                         g.frame = f.clone();
                     }
@@ -1314,8 +1350,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 }
             }
         }
-    });
-    shared
+    }
 }
 
 /// Writes the scan points `v` into the sweep picture (`width` points) from `at`, wrapping at the right edge.

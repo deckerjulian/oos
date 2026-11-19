@@ -43,14 +43,14 @@ impl TrimPending {
 
 /// The unit side of `coretrim`: measure unit runs and ADC core offset writes.
 #[cfg(target_os = "linux")]
-struct UnitTrim<'a, C> {
-    bar: &'a mut oos_hal::dho::bus::Bar1,
+struct UnitTrim<'a, B, C> {
+    bar: &'a mut B,
     clock: &'a mut C,
     adc: &'a mut oos_hal::dho::adc::Adc,
 }
 
 #[cfg(target_os = "linux")]
-impl<C: oos_hal::dho::boot::Clock> oos_hal::dho::coretrim::TrimHw for UnitTrim<'_, C> {
+impl<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock> oos_hal::dho::coretrim::TrimHw for UnitTrim<'_, B, C> {
     fn slots(&mut self) -> Option<[oos_hal::dho::levels::Slot; 8]> {
         let clock = &mut *self.clock;
         oos_hal::dho::levels::run(self.bar, &mut |us| clock.sleep_us(us as u64))
@@ -59,7 +59,6 @@ impl<C: oos_hal::dho::boot::Clock> oos_hal::dho::coretrim::TrimHw for UnitTrim<'
         self.clock.sleep_us(ms as u64 * 1000);
     }
     fn set_offset(&mut self, core: usize, o: i32) {
-        use oos_hal::dho::bus::Bus;
         for w in self.adc.core_offset(core, o) {
             self.clock.sleep_us(w.pre_us as u64);
             self.bar.wr(w.reg, w.val);
@@ -92,8 +91,8 @@ pub(super) fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
 /// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
 /// done (matched, or nothing to change); false to try again at a later configuration.
 #[cfg(target_os = "linux")]
-pub(super) fn core_trim<C: oos_hal::dho::boot::Clock>(
-    bar: &mut oos_hal::dho::bus::Bar1,
+pub(super) fn core_trim<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
     clock: &mut C,
     state: &mut oos_hal::dho::seq::State,
     cal: &mut oos_hal::dho::adc::CalAdc,

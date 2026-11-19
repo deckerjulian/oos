@@ -675,6 +675,8 @@ pub fn idle(a_nv: f64, o_nv: f64, f_uhz: f64, current: u8) -> Vec<Op> {
 pub trait GenLines {
     fn relays(&mut self, code: u8);
     fn power(&mut self, on: bool);
+    /// The relay code set now (bit n = afg_in(n+1)).
+    fn relay_code(&self) -> u8;
 }
 
 /// Runs a generator sequence: the register writes on `bar`, the relays and the supply on `lines`, the waits on `clock`.
@@ -739,6 +741,9 @@ impl GenLines for Io {
     fn power(&mut self, on: bool) {
         self.power.set(on);
     }
+    fn relay_code(&self) -> u8 {
+        Io::relays(self)
+    }
 }
 
 #[cfg(test)]
@@ -757,6 +762,9 @@ mod tests {
             }
             fn power(&mut self, on: bool) {
                 self.0.push(format!("power {}", on));
+            }
+            fn relay_code(&self) -> u8 {
+                0
             }
         }
         let ops =

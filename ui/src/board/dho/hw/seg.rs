@@ -33,11 +33,11 @@ pub(super) struct SegRun {
 /// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
 /// are no longer the configured ones).
 #[cfg(target_os = "linux")]
-pub(super) fn seg_abort(
+pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
     run: &mut Option<SegRun>,
     state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
     out: &HwShared,
 ) {
     let Some(r) = run.take() else { return };
@@ -56,14 +56,14 @@ pub(super) fn seg_abort(
 /// play single segments on request.
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn seg_step<C: oos_hal::dho::boot::Clock>(
+pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, R: std::io::Read>(
     run: &mut Option<SegRun>,
     s: &Settings,
     p: &hz::Params,
     state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
+    bar: &mut B,
     clock: &mut C,
-    c2h: &mut std::fs::File,
+    c2h: &mut R,
     dma: &mut oos_hal::dho::bus::DmaBuf,
     out: &HwShared,
     n: &mut u64,
