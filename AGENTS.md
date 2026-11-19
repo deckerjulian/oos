@@ -135,7 +135,7 @@ missing part, when one is forgotten (ADR 0046). The steps, with the commands for
 | SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
 | HTTP route or MCP tool | an arm of `Http::answer` in `ui/remote/src/http.rs`, or of `Site::answer` for `site::Ctx` in `ui/src/site.rs` when the screen answers it (an MCP tool: `site::mcp`) | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
 | register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, its line in the board's matrix `tools/board/dho/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
-| board family (ADR 0067) | a `Target` in `hal/src/<name>/target.rs`, listed in `FAMILIES` (`hal/src/target.rs`) | `ui/src/board/<name>/`, `rootfs/board/<name>/` (`etc/oos-board`, `bin/oos-board`), its row in `docs/porting.md`, its device tree | `hal/tests/board_families.rs::every_board_family_is_complete` |
+| board family (ADR 0067) | a `Target` in `hal/src/<name>/target.rs`, listed in `FAMILIES` (`hal/src/target.rs`) | `ui/src/board/<name>/`, `fpgad/src/<name>/`, `rootfs/board/<name>/` (`etc/oos-board`, `bin/oos-board`), `tools/board/<name>/plan-matrix.sh`, its row in `docs/porting.md`, its device tree | `hal/tests/board_families.rs::every_board_family_is_complete` |
 
 `tools/link-check.py` (layer `text`) keeps this table and the recipes true: every file and every test they name
 exists.
@@ -152,7 +152,7 @@ is written in its home and linked from elsewhere. A pull request that changes on
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
 | an HTTP route or MCP tool (`ui/remote/src/http.rs`, `ui/src/site.rs`, `ui/src/site/`) | `docs/http.md`, `wiki/Remote-Control.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, a file in `changelog.d/` |
-| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
+| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs` (`oos-fpgad`: of `fpgad/src/dho/mod.rs`), and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
 | installing, updating, starting | `docs/boot.md`, `docs/update.md`, `wiki/Installation.md`, `wiki/Updates-and-Going-Back.md` |
 | a tool in `tools/` | `tools/README.md` |
