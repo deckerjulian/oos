@@ -63,12 +63,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
                 if w[2] == "push" {
                     ui.key(cw + 2);
                 } else {
-                    // a turn, not a loop that stops the screen for minutes
-                    let n = num(w[2]).clamp(-100, 100);
-                    for _ in 0..n.abs() {
-                        ui.key(if n > 0 { cw } else { cw + 1 });
-                        ui.now += 0.2; // no acceleration for scripted turns
-                    }
+                    ui.knob_turn(cw, num(w[2]));
                 }
             }
         }

@@ -28,9 +28,9 @@ impl Ui {
             Ev::Touch { id, phase, x, y } => self.multi_touch(id, phase, x, y),
             Ev::Wheel { x, y, steps, ctrl, shift, alt } => {
                 if self.menu_open {
-                    crate::cmd::run(self, &format!("knob multi1 {steps:+}"));
+                    self.knob_turn(key::MULTI1_CW, steps);
                 } else if alt {
-                    crate::cmd::run(self, &format!("knob tlevel {:+}", steps.clamp(-32, 32) * 5));
+                    self.knob_turn(key::TLEVEL_CW, steps.clamp(-32, 32) * 5);
                 } else if ctrl {
                     self.pointer_wheel(x, y, steps, true);
                 } else if shift {
@@ -39,6 +39,17 @@ impl Ui {
                     self.pointer_wheel(x, y, steps, false);
                 }
             }
+        }
+    }
+
+    /// `n` steps of the knob whose clockwise key is `cw` (`KNOB_NAMES`), counterclockwise for `n` < 0: the mouse wheel,
+    /// and `knob <name> <n>` of a script or the web page (cmd.rs). At most 100 at a time, a turn and not a loop that
+    /// stops the screen for minutes; 0.2 s apart, so a scripted turn gets no acceleration.
+    pub fn knob_turn(&mut self, cw: u8, n: i32) {
+        let n = n.clamp(-100, 100);
+        for _ in 0..n.abs() {
+            self.key(if n > 0 { cw } else { cw + 1 });
+            self.now += 0.2;
         }
     }
 
@@ -1398,5 +1409,40 @@ impl Ui {
         if self.menu_open && self.grid.contains(x, y) {
             self.close_menu();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::testkit::demo_ui;
+
+    fn wheel(ui: &mut Ui, steps: i32, alt: bool) {
+        ui.handle(Ev::Wheel { x: 10, y: 10, steps, ctrl: false, shift: false, alt });
+    }
+
+    /// What a turn left: the menu's focus and the whole setup.
+    fn state(ui: &Ui) -> (usize, String) {
+        (ui.focus, crate::store::setup_text(&ui.m))
+    }
+
+    /// With a menu open the wheel is Multi 1, with Alt the trigger level (5 steps a notch): each as `knob <name> <n>`
+    /// of a script turns it, and the turn changes something.
+    #[test]
+    fn the_wheel_turns_multi1_in_a_menu_and_the_trigger_level_with_alt() {
+        let (mut wheeled, mut scripted, untouched) = (demo_ui(), demo_ui(), demo_ui());
+        for ui in [&mut wheeled, &mut scripted] {
+            ui.open_menu(MenuId::Channel(0));
+        }
+        wheel(&mut wheeled, 2, false);
+        crate::cmd::run(&mut scripted, "knob multi1 +2");
+        assert_eq!(state(&wheeled), state(&scripted));
+        assert_ne!(state(&wheeled).0, untouched.focus, "Multi 1 moved the focus");
+
+        let (mut wheeled, mut scripted, untouched) = (demo_ui(), demo_ui(), demo_ui());
+        wheel(&mut wheeled, -3, true);
+        crate::cmd::run(&mut scripted, "knob tlevel -15");
+        assert_eq!(state(&wheeled), state(&scripted));
+        assert_ne!(state(&wheeled).1, state(&untouched).1, "the trigger level moved");
     }
 }
