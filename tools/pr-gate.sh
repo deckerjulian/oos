@@ -54,7 +54,7 @@ proven="${proven}uarttrig|wpu|zone|zonegeom)\.rs$)"
 # the tests inside the hardware paths: files that only `cargo test` compiles (their parent module brings them in with
 # `#[cfg(test)]`, which tools/tests/test_pr_scripts.py checks), never a program for the scope. No run on a unit can tell
 # anything about them, so for `unit` they are not hardware paths (ADR 0072)
-testonly='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/src/)(.*/)?([a-z_]*_)?tests\.rs$'
+testonly='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/src/)(.*/)?([a-z][a-z0-9_]*_)?tests\.rs$'
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'

@@ -293,7 +293,7 @@ class PullRequests(unittest.TestCase):
         # ADR 0072: a test file of a hardware path is never in a program for the scope
         self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/model.rs", "ui/Cargo.toml"])
         self.assertEqual(self.gate()["unit"], "success", "only tests inside the hardware paths")
-        self.pull(["hal/src/update/hostile_tests.rs", "hal/src/dho/boot/tests.rs"])
+        self.pull(["hal/src/update/hostile_tests.rs", "hal/src/dho/boot/tests.rs", "hal/src/dho/v2_tests.rs"])
         self.assertEqual(self.gate()["unit"], "success")
         self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/board/dho/hw.rs"])
         self.assertEqual(self.gate()["unit"], "pending", "the code beside the tests still needs a unit")
