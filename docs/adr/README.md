@@ -24,7 +24,7 @@ A decision that touches two categories goes where its consequences are largest a
 <!-- index: written by tools/adr-index.py from the records; run it instead of editing these lines -->
 | ADR | Category | Decision | Status |
 |---|---|---|---|
-| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted |
+| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted, amended by ADR 0064 |
 | [0002](code/0002-extension-by-registered-modules.md) | code | Decoders, measurements and analyser pages are modules behind one registration | accepted, amended by ADR 0058 |
 | [0003](code/0003-gpu-drawing-in-a-helper-process.md) | code | The GPU draws from commands in a helper process; the CPU stays the fallback | accepted |
 | [0004](code/0004-standard-draw-path-by-default.md) | code | Two draw paths: Standard by default, Batch to choose | superseded by ADR 0029 |
@@ -71,7 +71,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0046](process/0046-every-kind-of-extension-has-a-recipe-and-a-check.md) | process | Every kind of extension has one registry, one recipe and one check that names what is missing | accepted |
 | [0047](process/0047-parsers-of-outside-input-have-hostile-input-tests.md) | process | Every parser of outside input has a hostile-input test in `cargo test` | accepted |
 | [0048](process/0048-too-many-arguments-is-allowed-in-hal-only.md) | process | `too_many_arguments` is allowed for the whole crate in hal only | accepted |
-| [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings only go down | accepted |
+| [0049](code/0049-the-layers-inside-oos-ui.md) | code | The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings only go down | accepted, amended by ADR 0064 |
 | [0052](process/0052-what-a-run-on-a-unit-covers-by-class-of-path.md) | process | What a run on a unit has to cover depends on the class of the path | accepted |
 | [0053](code/0053-the-board-code-runs-on-a-host-against-a-simulated-unit.md) | code | The board code runs on a host against a simulated unit | accepted |
 | [0054](system/0054-ssh-is-the-only-shell-on-the-network.md) | system | SSH is the only shell on the network; there is no telnet | accepted |
@@ -84,8 +84,8 @@ A decision that touches two categories goes where its consequences are largest a
 | [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | proposed |
 | [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | proposed |
 | [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries | proposed |
-| [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first | proposed |
-| [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | proposed |
+| [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first | accepted |
+| [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents

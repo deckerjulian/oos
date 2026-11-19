@@ -1,6 +1,7 @@
 # ADR 0049: The modules of `oos-ui` are in layers; a table says what a layer may name, and the crossings only go down
 
-- Status: accepted (2026-11-18, by the maintainer)
+- Status: accepted (2026-11-18, by the maintainer), amended by ADR 0064 (a layer whose count is 0 may leave as a
+  crate)
 - Date: 2026-11-18
 - Category: code
 

@@ -1,6 +1,6 @@
 # ADR 0065: Lists that every change adds to are written by a tool or kept as a file per entry
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-18
 - Category: process
 
