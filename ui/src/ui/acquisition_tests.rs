@@ -1378,3 +1378,54 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
         assert_eq!(ui.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
     }
 }
+
+// Break it catches: a changed setting while running emptied the picture at the next step, with or without a record in
+// it. At a slow time base or with a Normal sweep waiting for its trigger the screen stayed empty until the next record,
+// so every step of the trigger level looked like a trigger that had stopped working (#280, a DHO804 on 0.1.13).
+#[test]
+fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
+    use super::*;
+    for persist in [0, PERSIST.len() - 1] {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.persist = persist;
+        ui.m.trig_level = 0.15;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        let push = |ui: &Ui, seq: u64, high: usize| {
+            let window = ui.m.time_per_div() as f64 * HDIV as f64;
+            let n = 100_000usize;
+            let v: Vec<f32> = (0..n).map(|k| if (k / high) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+            shared.lock().unwrap().queue.push_back(crate::board::Frame {
+                seq,
+                stamp: ui.m.hw_stamp,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                ..Default::default()
+            });
+        };
+        // the first step publishes the settings; then one record, a 0.3 V square
+        ui.step(0.033);
+        push(&ui, 1, 4000);
+        ui.step(0.033);
+        let picture = ui.ph.map[0].clone();
+        assert!(picture.iter().any(|&c| c != 0), "the record is in the picture");
+        // the trigger level moves: steps without a record keep the picture
+        ui.adjust(Item::TrigLevel, 1);
+        for _ in 0..5 {
+            ui.step(0.033);
+            assert!(ui.ph.map[0] == picture, "persistence {persist}: the picture left with the setting");
+        }
+        // the next record replaces it: the old trace is gone, also with infinite persistence
+        push(&ui, 2, 1000);
+        ui.step(0.033);
+        let next = ui.ph.map[0].clone();
+        assert!(next.iter().any(|&c| c != 0), "persistence {persist}: the new record is drawn");
+        assert!(next != picture, "persistence {persist}: the new record is the picture");
+    }
+}

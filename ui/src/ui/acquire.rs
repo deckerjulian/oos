@@ -241,14 +241,18 @@ impl Ui {
             self.stop_ti_off = None;
             (self.stop_raw, self.stop_pic) = (None, None);
         }
-        if self.dirty_map {
+        // a changed setting while running: the picture is replaced when the next record is drawn, not at once. A step
+        // without a record (a slow time base, a Normal sweep waiting for its trigger) kept an empty screen, and every
+        // step of the trigger level looked like a trigger that had stopped working (#280). Kept until a record clears it
+        let deferred = self.dirty_map && self.m.run == RunState::Run;
+        if self.dirty_map && !deferred {
             self.ph.clear();
             self.phz.clear();
             self.dirty_map = false;
         }
         // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
         // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
-        let clear_pending = persist == 0.0;
+        let clear_pending = persist == 0.0 || deferred;
         if persist > 0.0 {
             let f = (-dt_wall / persist as f64).exp() as f32;
             self.ph.decay(f);
@@ -289,6 +293,11 @@ impl Ui {
             self.step_fast_frames(&mut take);
         }
         self.step_records(&mut take, k, dt_wall, hw_seg);
+        if deferred && !take.clear_pending {
+            // the first record after the change was drawn on a cleared picture (`step_commit` clears the zoom picture
+            // too; the fast path does not run with zoom)
+            self.dirty_map = false;
+        }
         self.step_rates(&take, dt_wall, persist);
         self.step_measure(&mut take);
     }
