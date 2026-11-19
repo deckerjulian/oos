@@ -46,7 +46,8 @@ sums=
 case ${1:-} in
 --record-sums)
 	dir=${2:?--record-sums DIR}
-	[ -z "$(git status --porcelain --untracked-files=no)" ] || stop "--record-sums needs a tree without changes"
+	# untracked files too: layout-check.sh renders every ui/tests/*.txt, committed or not
+	[ -z "$(git status --porcelain)" ] || stop "--record-sums needs a tree without changes or untracked files"
 	mkdir -p "$dir" || stop "cannot make $dir"
 	(cd ui && tools/layout-check.sh record target/layout-sums) || stop "this tree does not render"
 	(cd fpgad && cargo build --release --locked --quiet) || stop "oos-fpgad does not build"
