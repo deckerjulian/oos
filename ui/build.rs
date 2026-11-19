@@ -7,5 +7,5 @@
 include!("../hal/board_cfg.rs");
 
 fn main() {
-    board_cfg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+    board_cfg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")), "../hal/board_cfg.rs");
 }
