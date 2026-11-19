@@ -98,6 +98,10 @@ pub struct Target {
 /// The board this build is for.
 pub const ACTIVE: Target = crate::dho::target::DHO;
 
+/// Every board family in the tree, `ACTIVE` among them (ADR 0067). `hal/tests/board_families.rs` keeps this list equal
+/// to the folders of `rootfs/board/`, and the tests below compare each family's `etc/oos-board` with its `Target`.
+pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,8 +112,12 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../rootfs")
     }
 
-    fn board_file() -> HashMap<String, String> {
-        let t = std::fs::read_to_string(rootfs().join("board").join(ACTIVE.name).join("etc/oos-board")).unwrap();
+    /// Marks of the stock partition table that the update checks and the scripts do not yet: family, mark, why.
+    const MARKS_ONLY_IN_TARGET: [(&str, &str, &str); 1] =
+        [("dho", "0x00038000@0x0004c000(backup)", "issue #288: oos-oneshot and card-install.py do not ask for it yet")];
+
+    fn board_file(name: &str) -> HashMap<String, String> {
+        let t = std::fs::read_to_string(rootfs().join("board").join(name).join("etc/oos-board")).unwrap();
         t.lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -118,13 +126,20 @@ mod tests {
             .collect()
     }
 
-    /// The scripts of the image and the code must agree on where things are on the card.
+    /// The scripts of the image and the code must agree on where things are on the card, for every family.
     #[test]
     fn the_scripts_see_the_same_board() {
-        let f = board_file();
-        let n = |k: &str| f[k].parse::<u64>().unwrap_or_else(|_| panic!("{} = {}", k, f[k]));
-        let l = ACTIVE.layout;
-        assert_eq!(f["OOS_BOARD"], ACTIVE.name);
+        assert!(FAMILIES.iter().any(|t| t.name == ACTIVE.name), "ACTIVE is not in FAMILIES");
+        for t in FAMILIES {
+            the_scripts_see_the_same(t);
+        }
+    }
+
+    fn the_scripts_see_the_same(t: &Target) {
+        let f = board_file(t.name);
+        let n = |k: &str| f[k].parse::<u64>().unwrap_or_else(|_| panic!("{}: {} = {}", t.name, k, f[k]));
+        let l = t.layout;
+        assert_eq!(f["OOS_BOARD"], t.name);
         for (k, v) in [
             ("OOS_PARM_LBA", l.parm_lba),
             ("OOS_BCB_LBA", l.bcb_lba),
@@ -137,12 +152,20 @@ mod tests {
             ("OOS_OOSDATA_SECTORS", l.oosdata_sectors),
             ("OOS_BOOT_SECTORS", l.boot_bytes as u64 / 512),
         ] {
-            assert_eq!(n(k), v, "{}", k);
+            assert_eq!(n(k), v, "{}: {}", t.name, k);
         }
-        assert_eq!(f["OOS_CARD_CONTROLLER"], ACTIVE.card_controller);
-        for m in f["OOS_PARM_MARKS"].split_whitespace() {
-            assert!(ACTIVE.parm_marks.contains(&m), "{}", m);
+        assert_eq!(f["OOS_CARD_CONTROLLER"], t.card_controller);
+        // the same marks both ways: a mark left out of the file would let the scripts take a card without it. `parm`
+        // is the magic, which the scripts check apart; the known differences only get fewer.
+        let mut file: Vec<&str> = f["OOS_PARM_MARKS"].split_whitespace().collect();
+        let only: Vec<&str> = MARKS_ONLY_IN_TARGET.iter().filter(|m| m.0 == t.name).map(|m| m.1).collect();
+        for m in &only {
+            assert!(t.parm_marks.contains(m) && !file.contains(m), "{}: {} is no longer a difference", t.name, m);
         }
+        let mut code: Vec<&str> = t.parm_marks.iter().copied().filter(|m| *m != "parm" && !only.contains(m)).collect();
+        file.sort_unstable();
+        code.sort_unstable();
+        assert_eq!(file, code, "{}: OOS_PARM_MARKS and Target::parm_marks", t.name);
         // the kernel gets the data partition from the command line
         let part = format!("blkdevparts=mmcblk0:{}M@{}M(oosdata)", l.oosdata_sectors / 2048, l.oosdata_lba / 2048);
         assert!(f["OOS_BOOTARGS"].contains(&part), "{}", f["OOS_BOOTARGS"]);
@@ -151,13 +174,16 @@ mod tests {
     /// The start-up and the common scripts ask the board (`oos-board`, `/etc/oos-board`) and know no address of it.
     #[test]
     fn the_common_scripts_know_no_board() {
-        let f = board_file();
         let mut bad = Vec::new();
         let dir = rootfs().join("initramfs");
         let mut files = vec![dir.join("etc/rcS")];
         files.extend(std::fs::read_dir(dir.join("bin")).unwrap().flatten().map(|e| e.path()));
-        let mut words: Vec<String> = ["oos-fpgad".to_string(), ACTIVE.card_controller.to_string()].to_vec();
-        words.extend(f.iter().filter(|(k, _)| k.ends_with("_LBA")).map(|(_, v)| v.clone()));
+        let mut words: Vec<String> = vec!["oos-fpgad".to_string()];
+        for t in FAMILIES {
+            let f = board_file(t.name);
+            words.push(t.card_controller.to_string());
+            words.extend(f.iter().filter(|(k, _)| k.ends_with("_LBA")).map(|(_, v)| v.clone()));
+        }
         for p in files {
             for line in std::fs::read_to_string(&p).unwrap().lines().filter(|l| !l.trim_start().starts_with('#')) {
                 if words.iter().any(|w| line.contains(w.as_str())) {
