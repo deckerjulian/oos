@@ -1,6 +1,6 @@
 # ADR 0064: A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 
