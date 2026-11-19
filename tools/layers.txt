@@ -9,5 +9,5 @@
 0 ui-settings-up
 0 ui-signal-up
 0 ui-store-up
-7 ui-transport-skip
+4 ui-transport-skip
 0 ui-unplaced

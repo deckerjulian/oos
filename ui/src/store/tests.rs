@@ -42,7 +42,7 @@ fn damaged_waveform_files_are_refused_not_a_panic() {
     assert_eq!(f.u32(0), Err("truncated waveform".to_string()));
     assert_eq!(f.u16(usize::MAX), Err("truncated waveform".to_string()));
 }
-use crate::gfx::rgb;
+use crate::gfx::{rgb, Canvas};
 use crate::math::{MathOp, Window};
 
 #[test]
