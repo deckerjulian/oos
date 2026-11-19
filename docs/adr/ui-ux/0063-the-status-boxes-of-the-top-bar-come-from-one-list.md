@@ -1,6 +1,6 @@
 # ADR 0063: The status boxes of the top bar come from one list, right of the four entries
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-18
 - Category: ui-ux
 
@@ -20,14 +20,17 @@ would touch all of them again and double the combinations.
 
 - **The boxes are a list**, `STATUS_BOXES` in `ui/src/ui/bars.rs`, in the order they stand from the right edge of
   the bar, as they do today: LAN, then WLAN, BT and USB to its left. An entry says when the box is there, its label,
-  its dot (off, on, warning), the page it opens and the menu root that lights it (ADR 0060). Placing, drawing, hit
+  its width, whether it is a small box of one line or one of two lines, how it draws its dot and text, and the page
+  it opens, whose open menu also lights it (ADR 0060). Placing, drawing, hit
   testing and lighting are one function each for every box.
 - **They are status, not entries.** They do not count against the four entries of ADR 0007. A box shows the state of
   something plugged in or connected and opens its page; a function that is not a state gets no box (ADR 0007 still
   holds: it starts as a row of its menu).
 - **At most five boxes.** The bar's room on the smallest screen decides; a sixth needs a new record.
-- **The check.** The layout lint places every subset of `STATUS_BOXES` at every screen size and text size, from the
-  list, so a new box is covered without a line in the lint. A test fails on a box whose page is not in `PAGES`.
+- **The check.** The layout lint places every mix of the boxes that come and go at every screen size and text size,
+  and checks that a box of two lines has room for an address. It switches each such box on by the state its `shown`
+  reads, one line each; a new box without its line fails the lint's count. A test fails on a box whose page is not in
+  `PAGES`.
 
 ## Alternatives
 
@@ -41,7 +44,7 @@ would touch all of them again and double the combinations.
 - A new box is one entry; its place, its hit area and its lit state follow.
 - The lint covers 2^n mixes by itself; with five boxes, 32.
 - The `AGENTS.md` rule "the top bar keeps its four entries" is read as ADR 0007's buttons; the boxes are this record.
-- Worth a second look if a box needs a shape the list cannot give (two lines, a value that changes every frame).
+- Worth a second look if a box needs a shape the list cannot give (a value that changes every frame).
 
 ## References
 

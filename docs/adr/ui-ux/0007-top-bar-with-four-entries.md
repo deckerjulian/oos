@@ -1,6 +1,6 @@
 # ADR 0007: The top bar holds four entries; everything else starts from the start menu
 
-- Status: accepted
+- Status: accepted, amended by ADR 0063 (the status boxes beside the four entries come from one list)
 - Date: 2026-11-14
 - Category: ui-ux
 

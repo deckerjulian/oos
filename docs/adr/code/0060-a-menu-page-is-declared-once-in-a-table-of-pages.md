@@ -1,6 +1,6 @@
 # ADR 0060: A menu page is declared once, in a table of pages; a new page is one file and one line
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 
@@ -46,21 +46,25 @@ lights for stays `menu_root`. The states the layout lint opens a page in, beyond
 `LAYOUTS` beside `PAGES`, built for the tests only.
 
 The shared code asks `PAGES` and keeps no arm for a single page. A page that needs something the table has no field
-for gets the field, for every page, in a pull request of its own.
+for gets the field, for every page, in a pull request of its own. When this record was accepted, every page was in
+`PAGES` (#239, #250, #266, #270); what the shared files still decide for single pages is the layout of a few dialogs
+of their own (the start menu, Measure, the measurement page and its chooser, Hold, View more), the next field
+(`layout`).
 
 - **One file and one line.** A new page is its module and its line in `PAGES`; it touches `MenuId` and `Item` for its
   variants and nothing else of the shared menu code.
 - **The check.** `pages.rs::every_page_is_complete` walks one `MenuId` of every kind but `Pick` (a list in the test;
   an exhaustive `match` on `MenuId` beside it fails to compile when a new variant is not in it) and names each one
-  without an entry, without a title or without rows. The
+  without an entry, without a title or without rows (but Add measurement, whose dialog is the measurement page). The
   layout lint opens every page of `PAGES`, and every state of `LAYOUTS` with the pickers it names, so a page cannot
   be left out of it. The recipe goes into the table of AGENTS.md ("Adding something") and CONTRIBUTING.md.
 - **A number that only goes down** (ADR 0037): the pull request that adds `PAGES` adds a count of the lines that name
-  a `MenuId` in the shared menu files to `tools/code-metrics.py` (`ui-menu-arms` in `tools/code-metrics.txt`). The
+  a `MenuId` in the shared menu files to `tools/code-metrics.py` (`menu-arms` in `tools/code-metrics.txt`). The
   pages move into the table one group per pull request, each a refactoring that keeps every pixel (ADR 0014), and the
   number goes down with each.
 - **Analyser pages stay as they are.** `ANALYSERS` is the registry of a page kind with more parts (SCPI, Features,
-  setups, drawing); its pages get their `PAGES` lines from it, not by hand.
+  setups, drawing); the menus of its pages have their lines in `PAGES` like every other page, and
+  `analysers.rs::every_page_is_complete` takes a menu in `PAGES` as listed.
 
 ## Alternatives
 
@@ -77,10 +81,10 @@ for gets the field, for every page, in a pull request of its own.
 - A feature pull request with a page touches its own file, the variants and one line; two feature pull requests no
   longer meet in `menu_items.rs` and `menu_text.rs`.
 - The shared menu files shrink to the code that is the same for every page. Their size goes down with
-  `ui-menu-arms`.
+  `menu-arms` (191 before the move, 82 after it).
 - A page's behaviour is read in one file. What is still in `ui.rs` about it is its state (ADR 0062).
-- The move is many pull requests of no behaviour change; they are announced in an issue (ADR 0031) and follow each
-  other, never two at once, because they all touch the same shared files.
+- The move is many pull requests of no behaviour change; they follow each other, never two at once, because they all
+  touch the same shared files.
 - Worth a second look if pages start to need many fields that only one page uses: then a trait is the better shape.
 
 ## References

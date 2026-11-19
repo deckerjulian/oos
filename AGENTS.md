@@ -67,7 +67,7 @@ there. These instructions are the same for every agent and every person; the rea
   edit it.
 - Keep the look: neutral colours, white accent, round shapes, no empty areas; colours come from the named constants,
   not literals in drawing code; the top bar keeps its four entries (ADR 0007, ADR 0008), and its status boxes come
-  from one list (ADR 0063, proposed). A second UI or a new layout of the screen needs a decision record first.
+  from one list (ADR 0063). A second UI or a new layout of the screen needs a decision record first.
 
 ## The development agent
 
