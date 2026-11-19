@@ -125,16 +125,14 @@ grep -E '^\./[^ ]+ +([0-9]+ px|line [0-9]+:)' "$work/pictures.txt" | head -n 12 
 	cp "ui/target/layout-new/$name" "$work/differing/new/$name"
 done
 
+# the base's oos-fpgad: the one kept with the sums, else built in its tree
 base_fpgad=$tree/fpgad/target/release/oos-fpgad
 if [ "$cached" = 1 ]; then
 	base_fpgad=$sums/oos-fpgad
-	built="$root"
 else
-	built="$tree $root"
+	(cd "$tree/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $tree"
 fi
-for t in $built; do
-	(cd "$t/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $t"
-done
+(cd "$root/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $root"
 if [ -z "$cal" ]; then
 	# no files of a unit: the made-up set, written new by this tree's oos-fpgad and read by both sides. A failure
 	# stops the comparison: without the set the calibrated values would silently not be compared.
