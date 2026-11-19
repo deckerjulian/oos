@@ -48,7 +48,7 @@ def parse(name, text):
     lines = text.rstrip("\n").split("\n")
     if lines[0] not in PARTS:
         raise ValueError("%s/%s: the first line is not one of %s" % (FOLDER, name, " ".join(PARTS)))
-    if len(lines) < 3 or lines[1] != "" or not lines[2].startswith("- "):
+    if len(lines) < 3 or lines[1] != "" or not lines[2].startswith("- ") or not lines[2][2:].strip():
         raise ValueError("%s/%s: an empty line, then an item (`- ...`), after the part" % (FOLDER, name))
     items = lines[2:]
     for k, line in enumerate(items, 3):
@@ -56,6 +56,8 @@ def parse(name, text):
             raise ValueError("%s/%s:%d: longer than %d columns" % (FOLDER, name, k, WIDTH))
         if line and not (line.startswith("- ") or line.startswith("  ")):
             raise ValueError("%s/%s:%d: neither an item (`- `) nor its next line (two spaces)" % (FOLDER, name, k))
+        if line and not line[2:].strip():
+            raise ValueError("%s/%s:%d: an item or its next line without text" % (FOLDER, name, k))
     return lines[0], items
 
 

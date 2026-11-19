@@ -91,6 +91,7 @@ class Changes(Tree):
                          ("Fixed:", ["- one", "  more", "- two"]))
         for text, fault in [("Fixes:\n\n- a\n", "first line"), ("Fixed:\n- a\n", "empty line"),
                             ("Fixed:\n\n- a", "newline"), ("Fixed:\n\n- a\nb\n", "neither"),
+                            ("Fixed:\n\n- \n", "empty line"), ("Fixed:\n\n- a\n- \n", "without text"),
                             ("Fixed:\n\n- " + "x" * 120 + "\n", "columns")]:
             with self.assertRaisesRegex(ValueError, fault):
                 log.parse("x.md", text)
