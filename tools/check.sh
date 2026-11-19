@@ -198,7 +198,7 @@ layer_test() {
 
 # the programs for the scope build for every board family of rootfs/board/ (OOS_BOARD, ADR 0067), dho first
 layer_target() {
-    for b in dho $(ls rootfs/board | grep -vx dho); do
+    for b in dho $(for d in rootfs/board/*/; do basename "$d"; done | grep -vx dho); do
         for c in ui fpgad; do
             (cd "$c" && OOS_BOARD=$b strict cargo check --locked --target aarch64-unknown-linux-musl) ||
                 fail "target: $c for the board family $b"
