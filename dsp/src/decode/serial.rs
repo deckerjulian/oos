@@ -26,8 +26,19 @@ pub static UART: ModuleInfo = ModuleInfo::new("Uart", "UART", "serial")
     .bit(|_, sh| 1.0 / sh.baud)
     .decoder(|l| Ok(uart(l.main(), l.dt, l.sh.baud, l.sh.bits, l.sh.parity, l.thr, l.hy, l.sh.uart_inv)));
 
+/// The most characters at the start of a record that `uart` leaves out because the record begins inside one.
+pub const UART_LEFT_OUT: usize = 4;
+
 /// UART: start bit, `bits` data bits LSB first, parity, 1 stop bit; idle high (`invert` = idle low). Samples each
 /// bit in its middle, timed from the start-bit edge.
+///
+/// A record that begins inside a character shows data bits going low before any start bit, and nothing in those bits
+/// says which edge is the first start bit. Unless the record shows the line idle before its first edge for as long as
+/// all data bits (inside a character it is never idle that long before it goes low), every edge of the first
+/// character time is tried as the first start bit, and the readings with the fewest errors stay. The characters are
+/// listed from where those readings agree, and the ones before are left out rather than guessed, at most
+/// `UART_LEFT_OUT`. When the record begins on the idle level, the reading from its first edge is among them, and its
+/// first characters keep the beat of the regular stream after that point, they are real and stay.
 pub fn uart(
     v: &[f32],
     dt: f64,
@@ -39,55 +50,110 @@ pub fn uart(
     invert: bool,
 ) -> Vec<Packet> {
     let spb = 1.0 / baud / dt;
-    let mut out = Vec::new();
     if spb < 2.5 {
-        return out;
+        return Vec::new();
     }
     let st = states(v, thr, hyst);
     let level = |x: f64| -> Option<bool> { st.get(x as usize).copied().flatten().map(|b| b != invert) };
     let e = edges(v, thr, hyst);
     let nb = bits as f64 + if parity == Parity::None { 0.0 } else { 1.0 };
-    let mut busy_until = 0.0;
-    for x in &e {
-        // a start bit: transition to the active (low) level, not inside the previous frame
-        if x.rising != invert || x.t < busy_until {
-            continue;
-        }
-        let s = x.t;
-        if level(s + 0.5 * spb) != Some(false) {
-            continue;
-        }
-        let mut val = 0u32;
-        let mut ones = 0;
-        let mut complete = true;
-        for b in 0..bits {
-            match level(s + (1.5 + b as f64) * spb) {
-                Some(true) => {
-                    val |= 1 << b;
-                    ones += 1;
-                }
-                Some(false) => {}
-                None => complete = false,
+    // the transitions to the active (low) level that have a start bit's half behind them
+    let starts: Vec<f64> =
+        e.iter().filter(|x| x.rising == invert && level(x.t + 0.5 * spb) == Some(false)).map(|x| x.t).collect();
+    // the characters when `starts[from]` is the first start bit
+    let chain = |from: usize| -> Vec<Packet> {
+        let mut out = Vec::new();
+        let mut busy_until = 0.0;
+        for &s in &starts[from..] {
+            // not inside the previous frame
+            if s < busy_until {
+                continue;
             }
-        }
-        let par_ok = match parity {
-            Parity::None => true,
-            p => match level(s + (1.5 + bits as f64) * spb) {
-                Some(pb) => (ones + pb as u32).is_multiple_of(2) == (p == Parity::Even),
-                None => {
-                    complete = false;
-                    false
+            let mut val = 0u32;
+            let mut ones = 0;
+            let mut complete = true;
+            for b in 0..bits {
+                match level(s + (1.5 + b as f64) * spb) {
+                    Some(true) => {
+                        val |= 1 << b;
+                        ones += 1;
+                    }
+                    Some(false) => {}
+                    None => complete = false,
                 }
-            },
-        };
-        let stop = level(s + (1.5 + nb) * spb);
-        if !complete || stop.is_none() {
-            break;
+            }
+            let par_ok = match parity {
+                Parity::None => true,
+                p => match level(s + (1.5 + bits as f64) * spb) {
+                    Some(pb) => (ones + pb as u32).is_multiple_of(2) == (p == Parity::Even),
+                    None => {
+                        complete = false;
+                        false
+                    }
+                },
+            };
+            let stop = level(s + (1.5 + nb) * spb);
+            if !complete || stop.is_none() {
+                break;
+            }
+            out.push(Packet::new(Kind::Data, s, s + (2.0 + nb) * spb, val, stop == Some(true) && par_ok));
+            busy_until = s + (1.0 + nb + 0.5) * spb;
         }
-        out.push(Packet::new(Kind::Data, s, s + (2.0 + nb) * spb, val, stop == Some(true) && par_ok));
-        busy_until = s + (1.0 + nb + 0.5) * spb;
+        out
+    };
+    let Some(&first) = starts.first() else { return Vec::new() };
+    // since when the record shows the line idle before that edge: its first sample, or the last return to idle
+    let idle_since = e
+        .iter()
+        .take_while(|x| x.t < first)
+        .filter(|x| x.rising != invert)
+        .map(|x| x.t)
+        .last()
+        .or((level(0.0) == Some(true)).then_some(0.0));
+    if idle_since.is_some_and(|t| first - t >= (nb - 0.5) * spb) {
+        return chain(0);
     }
-    out
+    // a character the record starts inside ends within one character time: the first start bit is an edge of that
+    // time, or the first one after it
+    let within = starts.iter().take_while(|&&t| t <= (nb + 2.0) * spb).count();
+    let tried = (within + 1).min(starts.len()).min(16);
+    let readings: Vec<Vec<Packet>> = (0..tried).map(&chain).collect();
+    let errors = |r: &Vec<Packet>| r.iter().filter(|p| !p.ok).count();
+    let fewest = readings.iter().map(errors).min().unwrap_or(0);
+    let kept: Vec<&Vec<Packet>> = readings.iter().filter(|r| errors(r) == fewest).collect();
+    // two readings that share a start bit are the same from there on: the first character of the earliest reading
+    // that every other one has too
+    let agreed = kept[1..]
+        .iter()
+        .map(|other| kept[0].iter().position(|p| other.binary_search_by(|q| q.t0.total_cmp(&p.t0)).is_ok()))
+        .try_fold(0, |from, at| at.map(|at| from.max(at)));
+    // The line idle at the start of the record: its first edge is as likely the start bit of a character as a data bit
+    // of one the record cut into. When the reading from it is among the best and its first characters keep the beat of
+    // the regular stream behind the point where the readings agree, they are real and stay: a clean record that starts
+    // a few bit times before `Hello` lists it whole, where dropping the characters before that point listed `llo`.
+    if level(0.0) == Some(true)
+        && errors(&readings[0]) == fewest
+        && agreed.is_some_and(|from| from > 0 && uart_on_beat(&readings[0], from, spb))
+    {
+        return readings[0].clone();
+    }
+    match agreed {
+        Some(from) => kept[0][from.min(UART_LEFT_OUT)..].to_vec(),
+        // readings that never meet (a short record, or one pattern repeated): the earliest stands, as before
+        None => kept[0].clone(),
+    }
+}
+
+/// The characters of `r` before `from` keep the beat of the characters after it: those come at one distance (a
+/// regular stream, half a bit of tolerance), and each one before lies a whole number of those distances earlier.
+fn uart_on_beat(r: &[Packet], from: usize, spb: f64) -> bool {
+    let tail = &r[from..];
+    if tail.len() < 3 {
+        return false;
+    }
+    let d = tail.windows(2).take(from + 2).map(|w| w[1].t0 - w[0].t0).fold(f64::INFINITY, f64::min);
+    let regular = tail.windows(2).take(from + 2).all(|w| (w[1].t0 - w[0].t0 - d).abs() <= 0.5 * spb);
+    regular && (0..from).all(|k| (r[k].t0 - (tail[0].t0 - (from - k) as f64 * d)).abs() <= 0.5 * spb)
 }
 
 /// I2C on SDA and SCL.
@@ -375,6 +441,114 @@ mod tests {
         )
         .iter()
         .any(|x| !x.ok));
+    }
+
+    // Break it catches: a record that starts inside a character listed false first characters (FF, ED on a 9600 Bd
+    // text line of a DHO924S) made of the data bits behind the first falling edge.
+    /// UART frames with the given idle after each stop bit (repeated), from 10 bit times of idle; and the end time.
+    fn uart_gapped(msg: &[u8], baud: f64, gaps: &[f64]) -> (crate::sim::Logic, f64) {
+        let tb = 1.0 / baud;
+        let mut l = crate::sim::Logic::new(0.0, 3.3, tb / 50.0);
+        l.push(0.0, true);
+        let mut t = 10.0 * tb;
+        for (i, &b) in msg.iter().enumerate() {
+            l.push(t, false);
+            t += tb;
+            for k in 0..8 {
+                l.push(t, (b >> k) & 1 == 1);
+                t += tb;
+            }
+            l.push(t, true);
+            t += tb * (1.0 + gaps[i % gaps.len()]);
+        }
+        (l, t)
+    }
+
+    // Break it catches: a record that begins on the idle line a few bit times before a character lost it with the
+    // characters after it (`llo` for `Hello`), and a record cut anywhere into a stream listed a false character or left
+    // out more than `UART_LEFT_OUT`. Text and random bytes, back to back, with regular gaps and with irregular ones.
+    #[test]
+    fn uart_cut_anywhere_lists_no_false_character_and_keeps_a_clean_start() {
+        let baud = 9600.0;
+        let spbs = 10usize;
+        let dt = 1.0 / baud / spbs as f64;
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rnd = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut msgs: Vec<Vec<u8>> = vec![b"Hello OOS\r\n0123".to_vec(), b"AT+CGMR\r\nOK\r\n".to_vec()];
+        for _ in 0..4 {
+            msgs.push((0..20).map(|_| (rnd() >> 32) as u8).collect());
+        }
+        let irregular: Vec<f64> = (0..37).map(|_| (rnd() >> 40) as f64 / (1u64 << 24) as f64 * 4.0).collect();
+        for gaps in [vec![0.0], vec![0.5], vec![3.0], irregular] {
+            let regular = gaps.len() == 1;
+            for msg in &msgs {
+                let (l, end) = uart_gapped(msg, baud, &gaps);
+                let whole = sample(|t| l.v(t), 0.0, dt, ((end * baud + 10.0) * spbs as f64) as usize);
+                let truth = uart(&whole, dt, baud, 8, Parity::None, 1.65, 0.2, false);
+                assert_eq!(truth.iter().map(|p| p.value as u8).collect::<Vec<_>>(), *msg);
+                let first = truth[0].t0 as usize;
+                for cut in first - 9 * spbs..first + 24 * spbs {
+                    let p = uart(&whole[cut..], dt, baud, 8, Parity::None, 1.65, 0.2, false);
+                    // the characters whose start bit lies in the record
+                    let real: Vec<&Packet> = truth.iter().filter(|q| q.t0 as usize >= cut).collect();
+                    for q in &p {
+                        let at = q.t0 + cut as f64;
+                        let ok = real.iter().any(|r| (r.t0 - at).abs() <= 2.0 && r.value == q.value);
+                        assert!(
+                            ok,
+                            "gaps {gaps:?}, cut {}: false character {:#04x}",
+                            cut as i64 - first as i64,
+                            q.value
+                        );
+                    }
+                    let listed_from = p.first().map_or(f64::INFINITY, |q| q.t0 + cut as f64);
+                    let left_out = real.iter().filter(|r| r.t0 + 2.0 < listed_from).count();
+                    assert!(
+                        left_out <= UART_LEFT_OUT,
+                        "gaps {gaps:?}, cut {}: {left_out} left out",
+                        cut as i64 - first as i64
+                    );
+                    // a regular stream: a record that begins on the idle line before the first character keeps it
+                    if regular && cut < first {
+                        assert_eq!(left_out, 0, "gaps {gaps:?}: {} samples of idle lost a character", first - cut);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uart_lists_no_character_the_start_of_the_record_leaves_open() {
+        let baud = 9600.0;
+        let dt = 1.0 / baud / 10.0;
+        let msg = b"Hello OOS
+0123";
+        let l = uart_logic(msg, baud, 8, None, 3.0, 0.0, 3.3);
+        let whole = sample(|t| l.v(t), 0.0, dt, 2000);
+        let all = uart(&whole, dt, baud, 8, Parity::None, 1.65, 0.2, false);
+        assert_eq!(all.iter().map(|x| x.value as u8).collect::<Vec<_>>(), msg);
+        // cut inside the first character, at every sample from its start bit to its stop bit: what is listed is the
+        // end of the message, without a wrong character in front, and at most `UART_LEFT_OUT` go with the cut one
+        let first = all[0].t0 as usize;
+        for cut in first + 2..first + 98 {
+            let p = uart(&whole[cut..], dt, baud, 8, Parity::None, 1.65, 0.2, false);
+            let text: Vec<u8> = p.iter().map(|x| x.value as u8).collect();
+            assert!(
+                msg.ends_with(&text) && text.len() + 1 + UART_LEFT_OUT >= msg.len(),
+                "cut {} samples into the character: {:?}",
+                cut - first,
+                text
+            );
+            assert!(p.iter().all(|x| x.ok));
+        }
+        // a record that starts in the idle line a character before the first one keeps it
+        let p = uart(&whole[first - 90..], dt, baud, 8, Parity::None, 1.65, 0.2, false);
+        assert_eq!(p.iter().map(|x| x.value as u8).collect::<Vec<_>>(), msg);
     }
 
     #[test]
