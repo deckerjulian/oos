@@ -163,10 +163,12 @@ one() {
 		status "$sha" waited pending "open for $age h of $hours h"
 	fi
 
-	# owner
+	# owner: the maintainer's last review of this commit that decides something. A reply to a thread is a review in
+	# the state COMMENTED too, and one written after the approval must not hide it (#333); a dismissed approval counts
 	approved=$(api --paginate "repos/$repo/pulls/$n/reviews" |
 		jq -s --arg m "$maintainer" --arg s "$sha" \
-			'add | [.[] | select(.user.login == $m and .commit_id == $s)] | last | .state == "APPROVED"')
+			'add | [.[] | select(.user.login == $m and .commit_id == $s and .state != "COMMENTED" and .state != "PENDING")]
+			| last | .state == "APPROVED"')
 	held=false
 	case " $labels " in *" hold "*) held=true ;; esac
 	if [ $held = true ]; then
