@@ -24,17 +24,7 @@ impl Ui {
     /// A ref is stored memory, so a switched-off channel does not blank it.
     pub(super) fn off_sources(&self, menu: MenuId) -> Vec<usize> {
         let m = &self.m;
-        let ch = WaveId::Ch;
-        let page = pages::page(menu);
-        let want: Vec<WaveId> = match menu {
-            _ if page.is_some() => page.and_then(|p| p.sources).map_or(Vec::new(), |f| f(self)),
-            MenuId::Dvm if self.offline => Vec::new(),
-            MenuId::Dvm => {
-                [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect()
-            }
-            MenuId::Decode if !m.dec_on_la() => decode_wave(m.dec_src).into_iter().collect(),
-            _ => Vec::new(),
-        };
+        let want: Vec<WaveId> = pages::page(menu).and_then(|p| p.sources).map_or(Vec::new(), |f| f(self));
         let mut v: Vec<usize> = want
             .into_iter()
             .filter_map(|id| match id {
@@ -53,28 +43,13 @@ impl Ui {
         }
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
-            MenuId::Channel(c) => self.channel_items(c),
-            MenuId::ChMore(c) => self.ch_more_items(c),
-            MenuId::Horizontal => self.horizontal_items(),
-            MenuId::Trigger => self.trigger_items(),
             // the Horizontal Menu key opens Acquire; time base and zoom one level down
-            MenuId::Acquire => self.acquire_items(),
-            MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
-            MenuId::Dvm => self.dvm_items(),
             // in the order of the groups of `measure_layout`
             MenuId::Measure => self.measure_items(),
             MenuId::MeasHold => vec![Item::AddMeas],
-            MenuId::Decode => self.decode_items(),
-            MenuId::Bus => self.bus_items(),
-            MenuId::Ref => self.ref_items(),
             MenuId::MeasAdd => Vec::new(),
             MenuId::MeasSelected => self.measurement_catalog(),
-            MenuId::Cursor => self.cursor_items(),
-            MenuId::Display => self.display_items(),
-            MenuId::Storage => self.storage_items(),
             MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
-            MenuId::Sim => self.sim_items(),
-            MenuId::SimAdvanced => self.sim_advanced_items(),
             MenuId::Afg => self.afg_items(),
             MenuId::ViewMore => self.view_more_items(),
             MenuId::La => self.la_items(),
@@ -84,14 +59,13 @@ impl Ui {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
             }
-            MenuId::Math => self.math_items(),
             // the pages of `PAGES`, answered above
             _ => Vec::new(),
         }
     }
 
     /// The channel menu of channel `c`.
-    fn channel_items(&self, c: usize) -> Vec<Item> {
+    pub(super) fn channel_items(&self, c: usize) -> Vec<Item> {
         vec![
             Item::ChOn(c),
             Item::ChScale(c),
@@ -107,12 +81,12 @@ impl Ui {
     }
 
     /// The second level of the channel menu of channel `c`.
-    fn ch_more_items(&self, c: usize) -> Vec<Item> {
+    pub(super) fn ch_more_items(&self, c: usize) -> Vec<Item> {
         vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand]
     }
 
     /// The time base menu, with the zoom rows while zoomed.
-    fn horizontal_items(&self) -> Vec<Item> {
+    pub(super) fn horizontal_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::HScale,
             Item::HFine,
@@ -131,7 +105,7 @@ impl Ui {
     }
 
     /// The acquire menu: mode, average, depth, segments, cores, alias.
-    fn acquire_items(&self) -> Vec<Item> {
+    pub(super) fn acquire_items(&self) -> Vec<Item> {
         let mut v = vec![Item::AcqMode];
         if self.m.acq == AcqMode::Average {
             v.push(Item::AcqAvg);
@@ -156,7 +130,7 @@ impl Ui {
     }
 
     /// The voltmeter and counter menu.
-    fn dvm_items(&self) -> Vec<Item> {
+    pub(super) fn dvm_items(&self) -> Vec<Item> {
         vec![
             Item::DvmOn,
             Item::DvmSrc,
@@ -193,7 +167,7 @@ impl Ui {
     }
 
     /// The reference menu; Load only with its feature on.
-    fn ref_items(&self) -> Vec<Item> {
+    pub(super) fn ref_items(&self) -> Vec<Item> {
         vec![
             Item::RefSrc,
             Item::RefSave,
@@ -214,7 +188,7 @@ impl Ui {
     }
 
     /// The cursor menu, with the rows of the cursor mode.
-    fn cursor_items(&self) -> Vec<Item> {
+    pub(super) fn cursor_items(&self) -> Vec<Item> {
         if self.m.cursor == CursorMode::Off {
             vec![Item::CurMode]
         } else if self.m.cursor == CursorMode::Xy {
@@ -227,7 +201,7 @@ impl Ui {
     }
 
     /// The display menu; the trend selectors while the trend pane is shown.
-    fn display_items(&self) -> Vec<Item> {
+    pub(super) fn display_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::Open(MenuId::Windows),
             Item::Views,
@@ -255,7 +229,7 @@ impl Ui {
     }
 
     /// The storage menu.
-    fn storage_items(&self) -> Vec<Item> {
+    pub(super) fn storage_items(&self) -> Vec<Item> {
         vec![
             Item::StoreDest,
             Item::StoreSlot,
@@ -399,7 +373,7 @@ impl Ui {
     }
 
     /// The math menu, with the rows of the operation.
-    fn math_items(&self) -> Vec<Item> {
+    pub(super) fn math_items(&self) -> Vec<Item> {
         if self.m.math == MathOp::Off {
             vec![Item::MathSel, Item::MathFam, Item::MathOpI]
         } else if self.m.math == MathOp::Expr {

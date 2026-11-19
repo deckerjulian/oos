@@ -210,10 +210,12 @@ mod tests {
                 assert!(names(&wiki_scpi, k), "{}: {} is not in the :VIEW row of wiki/SCPI-and-VXI-11.md", a.name(), k);
             }
             assert!(names(&wiki, fname), "{}: {} is not named under Analysers in wiki/Features.md", a.name(), fname);
+            // the layout check opens every page of the table of pages (ADR 0060) and the menus of its own list
             let menu = format!("{:?},", a.menu());
             assert!(
-                fits.lines().any(|l| l.trim() == menu),
-                "{}: its menu {} is not in the list of menus_fit_at (ui/src/ui/lint/menu_layout.rs)",
+                super::pages::page(a.menu()).is_some() || fits.lines().any(|l| l.trim() == menu),
+                "{}: its menu {} is neither in the table of pages nor in the list of menus_fit_at \
+                 (ui/src/ui/lint/menu_layout.rs)",
                 a.name(),
                 menu
             );

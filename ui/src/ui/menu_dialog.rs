@@ -371,13 +371,9 @@ impl Ui {
     /// (the dialog sits above it).
     fn menu_anchor(&self) -> (i32, bool) {
         if let Some(a) = pages::page(self.menu_root()).and_then(|p| p.anchor) {
-            return a(self);
+            return a(self, self.menu_root());
         }
-        let (chs, tr, trg) = self.cards();
         match self.menu_root() {
-            MenuId::Channel(c) | MenuId::ChMore(c) => (chs[c].x + chs[c].w / 2, false),
-            MenuId::Horizontal => (tr.x + tr.w / 2, false),
-            MenuId::Trigger => (trg.x + trg.w / 2, false),
             MenuId::Main => (self.menu_btn().x, false),
             MenuId::ViewMore => (self.scr.w, true),
             MenuId::La | MenuId::LaLines | MenuId::LaPat => {
