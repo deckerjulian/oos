@@ -324,7 +324,7 @@ The steps, in order. A later step waits for the earlier ones it names.
 
 | # | Step | Waits for | Record | Issue, measure |
 |---|---|---|---|---|
-| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (the 39 reads of `oos_hal::model::platform()` and the like go through `Board`) | | ADR 0049 | `tools/layers.txt` |
+| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (39 paths where the board code, mostly the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name) | | ADR 0049 | `tools/layers.txt` |
 | 2 | The state of the screen in its parts: the loose fields of `Ui` | | ADR 0060–0063 | ui-fields in `tools/code-metrics.txt` |
 | 3 | HTTP moves to `oos-remote`; the screenshot encoder stays in `oos-ui` | 1 (transport-skip 0) | ADR 0064 | |
 | 4 | `oos-model`, then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
@@ -335,7 +335,8 @@ The steps, in order. A later step waits for the earlier ones it names.
 | 9 | Add-ons as their own processes with a manifest, using the interface of step 8 | 8 | ADR 0056 | #206 |
 
 The steps 1, 2, 5 and 7 do not depend on each other and can run side by side, in different files. A port to a new
-board family (ADR 0067) starts after step 7. A file that has grown back over 1500 lines (`ui/src/drawpipe.rs`, 1906)
+board family (ADR 0067) can start any time as a module in development; it becomes ready, with a release image,
+after step 7. A file that has grown back over 1500 lines (`ui/src/drawpipe.rs`, 1906)
 is split along the way (goal S1 of #120).
 
 ## Where a change goes
