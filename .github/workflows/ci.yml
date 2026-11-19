@@ -4,7 +4,8 @@
 # reach (tools/ci-parts.sh, ADR 0040): a change of the tools or the documents builds nothing, one of fpgad does not
 # run the tests of ui. A push to main runs every part. The job `test` at the end is the one required check: it passes
 # when all of them passed; clippy is one of the parts (ADR 0017), and the numbers that only go down (ADR 0037) are
-# checked in the job `files`. A pull request is also compared with its base (job compare).
+# checked in the job `files`. A pull request is also compared with its base (job compare), whose side of the
+# comparison a push to main keeps in the cache (job sums).
 #
 # A pull request that only changes documents or host tools runs the jobs `parts` and `files` and skips the rest.
 #
@@ -175,6 +176,14 @@ jobs:
       # the Rust that rust-toolchain.toml names (ADR 0045). The base is built in a tree of its own with the file of its
       # commit: the two sides build with different compilers only when the pull request changes the pin
       - run: rustup toolchain install --no-self-update
+      # what the push of the base kept of it (job `sums`): with it the base is built only when something differs
+      - name: The base's commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/compare-sums
+          key: compare-sums-${{ steps.base.outputs.sha }}
       # Both sides are built the same way, so the comparison does not need the release's slow link step: without it a
       # build of oos-ui takes a third of the time (measured on 2026-11-17: 20 s instead of 68 s on a laptop).
       - name: Pictures and register sequences against the base (tools/compare-base.sh)
@@ -184,7 +193,8 @@ jobs:
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
         run: |
           rc=0
-          tools/compare-base.sh HEAD^1 || rc=$?
+          # without a kept set, or one of another commit, compare-base.sh builds the base as before
+          tools/compare-base.sh --base-sums "$RUNNER_TEMP/compare-sums" HEAD^1 || rc=$?
           [ ! -f ui/target/compare-base/summary.md ] || cat ui/target/compare-base/summary.md >> "$GITHUB_STEP_SUMMARY"
           # how many lines of code the pull request adds or removes: to see, not a gate
           if [ -d ui/target/compare-base/tree ]; then
@@ -231,6 +241,29 @@ jobs:
           else
             echo "nothing differs"
           fi
+  # What the pull requests onto this commit of main need of it as their base, kept in the cache under the commit: the
+  # sums of its pictures, stored files and remote answers and its oos-fpgad (tools/compare-base.sh --record-sums).
+  # `compare` reads them and builds the base only when something differs (measured: 18 s instead of about 90 s on a
+  # laptop). Not one of the parts of `test`: without the set a pull request is compared as before.
+  sums:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - name: The sums of this commit for the comparison (tools/compare-base.sh --record-sums)
+        # built as `compare` builds them
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'off'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+        run: tools/compare-base.sh --record-sums "$RUNNER_TEMP/compare-sums"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/compare-sums
+          key: compare-sums-${{ github.sha }}
   # Whether the programs that run on the scope change at all (ADR 0041): oos-ui, oos-fpgad and oos-update, built
   # from the pull request and from its base in this one folder, compared byte for byte. Equal programs let the status
   # `unit` pass without a run on a unit (tools/pr-gate.sh); a pull request whose programs differ keeps the artifact
