@@ -112,6 +112,10 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../rootfs")
     }
 
+    /// Marks of the stock partition table that the update checks and the scripts do not yet: family, mark, why.
+    const MARKS_ONLY_IN_TARGET: [(&str, &str, &str); 1] =
+        [("dho", "0x00038000@0x0004c000(backup)", "issue #288: oos-oneshot and card-install.py do not ask for it yet")];
+
     fn board_file(name: &str) -> HashMap<String, String> {
         let t = std::fs::read_to_string(rootfs().join("board").join(name).join("etc/oos-board")).unwrap();
         t.lines()
@@ -151,9 +155,17 @@ mod tests {
             assert_eq!(n(k), v, "{}: {}", t.name, k);
         }
         assert_eq!(f["OOS_CARD_CONTROLLER"], t.card_controller);
-        for m in f["OOS_PARM_MARKS"].split_whitespace() {
-            assert!(t.parm_marks.contains(&m), "{}: {}", t.name, m);
+        // the same marks both ways: a mark left out of the file would let the scripts take a card without it. `parm`
+        // is the magic, which the scripts check apart; the known differences only get fewer.
+        let mut file: Vec<&str> = f["OOS_PARM_MARKS"].split_whitespace().collect();
+        let only: Vec<&str> = MARKS_ONLY_IN_TARGET.iter().filter(|m| m.0 == t.name).map(|m| m.1).collect();
+        for m in &only {
+            assert!(t.parm_marks.contains(m) && !file.contains(m), "{}: {} is no longer a difference", t.name, m);
         }
+        let mut code: Vec<&str> = t.parm_marks.iter().copied().filter(|m| *m != "parm" && !only.contains(m)).collect();
+        file.sort_unstable();
+        code.sort_unstable();
+        assert_eq!(file, code, "{}: OOS_PARM_MARKS and Target::parm_marks", t.name);
         // the kernel gets the data partition from the command line
         let part = format!("blkdevparts=mmcblk0:{}M@{}M(oosdata)", l.oosdata_sectors / 2048, l.oosdata_lba / 2048);
         assert!(f["OOS_BOOTARGS"].contains(&part), "{}", f["OOS_BOOTARGS"]);
