@@ -9,10 +9,11 @@
 //! ending in `_on` take one, so a host run waits in virtual time; the others are those with the system clock.
 
 use super::{frames, read_len, unpad_in, wait_steps, Settings, State, Step};
+use crate::dho::afe::{self, AfeBus};
 use crate::dho::boot::{Clock, SysClock};
-use crate::dho::hz;
-#[cfg(target_os = "linux")]
-use crate::dho::{afe, la};
+use crate::dho::bus::Bus;
+use crate::dho::lines::Lines;
+use crate::dho::{hz, la};
 
 /// One batch on the unit: arm `frames(s, p)` frames, wait for the first, then let the ring fill until all frames are
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
@@ -127,47 +128,44 @@ pub fn raw_settings(s: &Settings) -> Settings {
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
 /// decodes: the same writes as the arm `acquire_batch` would issue next, earlier. Read it with `acquire_batch(..,
 /// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`.
-#[cfg(target_os = "linux")]
-pub fn prearm(
+pub fn prearm<B: Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
-    bar: &mut crate::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
     log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute(&st.arm_only_steps(s, p), bar, None, c2h, log).map(|_| ())
+    execute_bus(&st.arm_only_steps(s, p), bar, c2h, &mut crate::dho::bus::DmaBuf::new(), log)
 }
 
 /// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`).
-#[cfg(target_os = "linux")]
-pub fn disarm(
+pub fn disarm<B: Bus, R: std::io::Read>(
     st: &mut State,
-    bar: &mut crate::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
     log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute(&st.disarm_steps(), bar, None, c2h, log).map(|_| ())
+    execute_bus(&st.disarm_steps(), bar, c2h, &mut crate::dho::bus::DmaBuf::new(), log)
 }
 
 /// The LA read of the acquisition just read out (`la_read_steps`) on the unit: LA words, bit n = Dn, word `start` of
 /// `la::window` first.
-#[cfg(target_os = "linux")]
-pub fn acquire_la(
+pub fn acquire_la<B: Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
-    bar: &mut crate::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
     log: impl FnMut(String),
 ) -> Result<Vec<u16>, String> {
     let (n, _) = la::window(&la::timing(p, s.mask));
     let steps = st.la_read_steps(s, p);
-    match execute(&steps, bar, None, c2h, log) {
-        Ok(bytes) => Ok(la::words(&bytes, n as usize)),
+    let mut dma = crate::dho::bus::DmaBuf::new();
+    match execute_bus(&steps, bar, c2h, &mut dma, log) {
+        Ok(()) => Ok(la::words(dma.data(), n as usize)),
         Err(e) => {
             // the read failed before `la::restore` ran: without it the stream stays on the LA and the analog is gone
-            use crate::dho::bus::Bus;
             for (off, v) in la::restore(&mut st.sh) {
                 bar.wr(off, v);
             }
@@ -321,25 +319,39 @@ pub fn execute_into_until(
     afe_bus: Option<&mut afe::GpioAfe>,
     c2h: &mut std::fs::File,
     dma: &mut crate::dho::bus::DmaBuf,
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+) -> Result<(), String> {
+    let mut lines = crate::dho::lines::UnitLines;
+    execute_on(steps, bar, afe_bus, c2h, &mut lines, dma, &mut SysClock::default(), log, stop)
+}
+
+/// `execute_into_until` on any unit: the register window, the front-end bus (None: an AFE step is an error), the
+/// stream, the single lines and the clock are given. The unit's are `Bar1`, `GpioAfe`, the C2H file, `UnitLines` and
+/// `SysClock`; a host run gives the simulated unit's (ADR 0053).
+pub fn execute_on<B: Bus, A: AfeBus, R: std::io::Read, L: Lines, C: Clock>(
+    steps: &[Step],
+    bar: &mut B,
+    mut afe_bus: Option<&mut A>,
+    c2h: &mut R,
+    lines: &mut L,
+    dma: &mut crate::dho::bus::DmaBuf,
+    clock: &mut C,
     mut log: impl FnMut(String),
     stop: impl Fn() -> bool,
 ) -> Result<(), String> {
-    use crate::dho::bus::Bus;
-    let mut afe_bus = afe_bus;
-    let mut clock = SysClock::default();
     for s in steps {
         match s {
             Step::Afe(afe::Op::Afe { ch, reg, val }) => {
-                use afe::AfeBus;
                 afe_bus.as_deref_mut().ok_or("AFE step without AFE bus")?.write(*ch, *reg, *val)
             }
-            Step::Afe(afe::Op::Gear { ch, gear }) => afe::set_gear(*ch, *gear).map_err(|e| format!("gear: {}", e))?,
+            Step::Afe(afe::Op::Gear { ch, gear }) => lines.gear(*ch, *gear).map_err(|e| format!("gear: {}", e))?,
             Step::Afe(afe::Op::Adc(w)) => {
                 clock.sleep_us(100);
                 bar.wr(0x1034, *w);
                 clock.sleep_us(100);
             }
-            _ => plain_step(s, bar, c2h, dma, &mut clock, &mut log, &stop)?,
+            _ => plain_step(s, bar, c2h, dma, clock, &mut log, &stop)?,
         }
     }
     Ok(())

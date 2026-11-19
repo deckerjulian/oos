@@ -418,6 +418,90 @@ mod tests {
         }
     }
 
+    // Break it catches: an executor that sets a gear past the lines it is given, or waits for the ADC word on the wall
+    // clock
+    #[test]
+    fn the_executor_drives_the_front_end_the_lines_and_the_clock_it_is_given() {
+        use crate::dho::afe::Op;
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, None, None));
+        let mut afe = crate::dho::boot::sim::AfeStub { writes: 0, reads: 0 };
+        let mut lines = crate::dho::lines::Recorded::default();
+        let steps = [
+            Step::Afe(Op::Afe { ch: 0, reg: 0x21, val: 0x0a91 }),
+            Step::Afe(Op::Gear { ch: 1, gear: 1 }),
+            Step::Afe(Op::Adc(0x0154_5251)),
+            Step::Sleep { us: 300 },
+            Step::Wr((0x10b0, 5)),
+        ];
+        let t0 = u.borrow().now_us();
+        let mut dma = DmaBuf::new();
+        seq::execute_on(&steps, &mut bar, Some(&mut afe), &mut c2h, &mut lines, &mut dma, &mut clock, |_| {}, || false)
+            .unwrap();
+        assert_eq!((afe.writes, lines.gears.clone()), (1, vec![(1, 1)]));
+        // 100 us before and after the ADC word, its write, the sleep, the last write
+        assert_eq!(u.borrow().now_us() - t0, 100 + 10 + 100 + 300 + 10);
+        let writes: Vec<(u32, u32)> = u
+            .borrow()
+            .trace
+            .iter()
+            .filter_map(|e| if let Event::Write { off, v, .. } = e { Some((*off, *v)) } else { None })
+            .collect();
+        assert_eq!(writes, [(0x1034, 0x0154_5251), (0x10b0, 5)]);
+        // without a front-end bus an AFE step is refused, not skipped
+        let none: Option<&mut crate::dho::boot::sim::AfeStub> = None;
+        let r =
+            seq::execute_on(&steps[..1], &mut bar, none, &mut c2h, &mut lines, &mut dma, &mut clock, |_| {}, || false);
+        assert!(r.is_err());
+    }
+
+    // Break it catches: a self-calibration that sets gears past its lines, waits on the wall clock, or configures a
+    // channel through another executor than the one it is given
+    #[test]
+    fn the_self_calibration_runs_on_the_sides_it_is_given() {
+        use crate::dho::afe::Op;
+        use crate::dho::selfcal::{CalHw, Unit};
+        // the made-up calibration set (madeup.rs), in its files as calfile writes them
+        let pay = crate::dho::madeup::payloads([0, 1, 2, 3]);
+        let f =
+            |n: &str| crate::dho::calfile::build(&pay.iter().find(|p| p.0 == n).unwrap().1, crate::dho::madeup::STAMP);
+        let cal = crate::dho::afe::Cal::from_bytes(
+            &f("cal_lsb.hex"),
+            &f("cal_afe_zero.hex"),
+            &f("cal_afe_bandwidth.hex"),
+            f("cal_vertical.hex"),
+        );
+        let cal_adc = crate::dho::adc::CalAdc::from_file_bytes(&f("cal_adc.hex")).unwrap();
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (mut state, p) = configured(&s);
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, None, None));
+        let mut afe = crate::dho::boot::sim::AfeStub { writes: 0, reads: 0 };
+        let mut lines = crate::dho::lines::Recorded::default();
+        let cancel = || false;
+        let mut unit = Unit {
+            bar: &mut bar,
+            afe: &mut afe,
+            c2h: &mut c2h,
+            lines: &mut lines,
+            clock: &mut clock,
+            state: &mut state,
+            cal: &cal,
+            cal_adc: Some(&cal_adc),
+            cancel: &cancel,
+            adc_new: None,
+        };
+        let t0 = u.borrow().now_us();
+        unit.apply(&[Op::Gear { ch: 2, gear: 1 }, Op::Adc(0x0155_000c), Op::Afe { ch: 2, reg: 0x21, val: 1 }]);
+        unit.sleep_ms(5);
+        assert_eq!(u.borrow().now_us() - t0, 100 + 10 + 100 + 5000, "the ADC word and the sleep on the clock");
+        // the normal set-up of one channel: its steps through `execute_on`, its gear on the lines
+        unit.configure(1, 0).expect("configure on the simulated unit");
+        assert!(afe.writes > 1, "the front end was written: {}", afe.writes);
+        assert_eq!(lines.gears.first(), Some(&(2, 1)));
+        assert!(lines.gears.iter().skip(1).any(|&(ch, _)| ch == 1), "configure set the gear of CH2: {:?}", lines.gears);
+    }
+
     // Break it catches: an executor that waits on the wall clock, or a ring wait that counts frames by anything but
     // the time that passed
     #[test]
