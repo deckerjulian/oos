@@ -16,7 +16,9 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-  # Copilot's review, and the maintainer resolving its comments, change the status review
+  # Copilot's review, and the maintainer resolving its comments, change the status review. On a fork's pull request
+  # these events get a token that cannot write, whatever `permissions` says: the job is left out there, and
+  # gate-review.yml runs the gate on main with a token that may, as soon as this run is done (#333)
   pull_request_review:
     types: [submitted]
   pull_request_review_comment:
@@ -31,7 +33,10 @@ concurrency:
   group: gate-${{ github.event.pull_request.number || 'all' }}
 jobs:
   gate:
-    if: github.repository == 'dekajoule/oos'
+    if: >-
+      github.repository == 'dekajoule/oos' &&
+      !(startsWith(github.event_name, 'pull_request_review') &&
+        github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

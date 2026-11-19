@@ -250,6 +250,12 @@ class PullRequests(unittest.TestCase):
         self.pull(["ui/src/ui.rs"], author="someone", fork=True,
                   reviews=[("owner", "APPROVED", "abc"), ("owner", "CHANGES_REQUESTED", "abc")])
         self.assertEqual(self.gate()["owner"], "pending", "the last review counts")
+        self.pull(["ui/src/ui.rs"], author="someone", fork=True,
+                  reviews=[("owner", "APPROVED", "abc"), ("owner", "COMMENTED", "abc")])
+        self.assertEqual(self.gate()["owner"], "success", "a reply to a thread after the approval (#333)")
+        self.pull(["ui/src/ui.rs"], author="someone", fork=True,
+                  reviews=[("owner", "APPROVED", "abc"), ("owner", "DISMISSED", "abc"), ("owner", "COMMENTED", "abc")])
+        self.assertEqual(self.gate()["owner"], "pending", "a dismissed approval")
         self.pull(["ui/src/ui.rs"], author="Copilot", bot=True)
         self.assertEqual(self.gate()["owner"], "pending", "a bot that is not Dependabot")
 
