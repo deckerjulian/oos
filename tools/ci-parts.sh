@@ -17,8 +17,8 @@
 #
 # What reaches what: the crates depend on each other as hal <- ui, hal <- fpgad, dsp <- ui; keys/ is compiled into
 # hal, the tests of hal read rootfs/. A change of how the checks run (this file, tools/check.sh, the workflow,
-# rustfmt.toml, the script that reads the decoders out of ui/Cargo.toml) reaches everything, and so does a name nothing here knows outside the paths
-# that hold no code for the host checks (documents, tools that have their own tests in the job `files`, the image).
+# rustfmt.toml) reaches everything, and so does a name nothing here knows outside the paths that hold no code for the
+# host checks (documents, tools that have their own tests in the job `files`, the image).
 # In doubt: everything. Touches no scope and no network.
 set -eu
 all=0
@@ -39,7 +39,7 @@ if [ $all = 0 ]; then
 		esac
 		case $f in
 		'') ;;
-		.github/workflows/ci.yml | tools/check.sh | tools/ci-parts.sh | rustfmt.toml | ui/tools/decoder-features.sh)
+		.github/workflows/ci.yml | tools/check.sh | tools/ci-parts.sh | rustfmt.toml)
 			hal=1 dsp=1 ui=1 fpgad=1 ;;
 		hal/* | keys/*) hal=1 ;;
 		# read by the tests of hal, not built into anything
@@ -72,11 +72,6 @@ if [ $rust = 1 ]; then
 	[ $((ui + fpgad)) = 0 ] || { name="$name, target" layers="$layers target"; }
 	add "$name" "$layers" small
 	add clippy clippy clippy
-fi
-if [ $ui = 1 ]; then
-	add "decoders, core" decoders:core core
-	add "decoders, each 1" decoders:each/1 each1
-	add "decoders, each 2" decoders:each/2 each2
 fi
 echo "matrix=[$entries]"
 [ $compare = 1 ] && echo compare=true || echo compare=false

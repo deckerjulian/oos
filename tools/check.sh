@@ -5,17 +5,15 @@
 #
 #   tools/check.sh                 every enforced layer, in order; stops at the first that fails
 #   tools/check.sh test target     only these layers
-#   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools,
-#                                  decoders:core decoders:each, and decoders:each/1 and each/2 (each half of the
-#                                  optional decoders). CI runs the parts a change can reach next to each other
-#                                  (tools/ci-parts.sh).
+#   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools. CI runs the
+#                                  parts a change can reach next to each other (tools/ci-parts.sh).
 #   tools/check.sh list            the layers, and which are enforced
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
 # ui/tools/layout-check.sh and tools/plan-matrix.sh (tools/compare-base.sh runs both against a commit before the
 # change, and so does CI for a pull request), tools/perf-guard.sh, tools/device-test.py.
 #
-# Layers: fmt clippy text syntax test target decoders ratchet sim. A compiler warning fails a layer like an error (ADR 0017).
+# Layers: fmt clippy text syntax test target ratchet sim. A compiler warning fails a layer like an error (ADR 0017).
 # Needs a Rust tool chain with the aarch64-unknown-linux-musl target, python3 and git; touches no scope. The layer sim
 # also needs Docker that runs arm64 containers, qemu-system-aarch64 and the builds it names; it is run by name.
 set -e
@@ -23,9 +21,9 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
 crates="hal dsp ui fpgad"
-layers="fmt clippy text syntax test target decoders ratchet sim"
+layers="fmt clippy text syntax test target ratchet sim"
 # sim needs Docker and builds that CI's check job lacks: it is run by name
-enforced="fmt clippy text syntax test target decoders ratchet"
+enforced="fmt clippy text syntax test target ratchet"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -213,34 +211,6 @@ layer_target() {
     done
 }
 
-# the core decoders only, and every optional decoder alone (tests that need every decoder skip themselves)
-# with a part: core (the build without optional decoders), each (every optional decoder alone), each/1 or each/2
-# (the first or the second half of them)
-layer_decoders() {
-    if [ -z "$1" ] || [ "$1" = core ]; then
-        (cd ui && strict cargo test --locked --no-default-features) || fail "decoders: core only"
-        (cd ui && strict cargo check --locked --target aarch64-unknown-linux-musl --no-default-features) ||
-            fail "decoders: core only, target"
-    fi
-    case ${1:-each} in each | each/*)
-        # one name a line (the list comes as one line)
-        all=$(ui/tools/decoder-features.sh list | tr -s ' \t' '\n\n' | grep -v '^$')
-        n=$(printf '%s\n' "$all" | wc -l)
-        half=$(((n + 1) / 2))
-        case $1 in
-        each/1) all=$(printf '%s\n' "$all" | head -n "$half") ;;
-        each/2) all=$(printf '%s\n' "$all" | tail -n +"$((half + 1))") ;;
-        esac
-        [ -n "$all" ] || fail "decoders: no optional decoder in ${1:-each}"
-        say "decoders alone: $(echo $all)"
-        for d in $all; do
-            (cd ui && strict cargo check --locked --all-targets --no-default-features --features "dec-$d") ||
-                fail "decoders: dec-$d alone"
-        done
-        ;;
-    esac
-}
-
 # the numbers that only go down: the size of the large files, switched-off lints, `unsafe`, what a remote command
 # or a setting lacks (docs/scpi.md, the comparison's queries; tools/scpi-coverage.txt), long functions, `.unwrap()`
 # and modules without a header (tools/code-metrics.txt), code that crosses a layer (tools/layers.txt) (ADR 0037,
@@ -276,13 +246,12 @@ fi
 run=${*:-$enforced}
 # a layer, or layer:part
 parts_test="$crates tools"
-parts_decoders="core each each/1 each/2"
 for l in $run; do
     name=${l%%:*}
     case " $layers " in *" $name "*) ;; *) fail "unknown layer '$name' (layers: $layers)" ;; esac
     case $l in
     *:*)
-        case $name in test) parts=$parts_test ;; decoders) parts=$parts_decoders ;; *) parts= ;; esac
+        case $name in test) parts=$parts_test ;; *) parts= ;; esac
         case " $parts " in
         *" ${l#*:} "*) ;;
         *) fail "no part '${l#*:}' in layer '$name' (parts: ${parts:-none})" ;;

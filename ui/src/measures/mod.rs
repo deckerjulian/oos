@@ -590,6 +590,6 @@ mod tests {
                 }
             }
         }
-        crate::ui::testkit::stored_names("measurement-ids.txt", &stored, true);
+        crate::ui::testkit::stored_names("measurement-ids.txt", &stored);
     }
 }

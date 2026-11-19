@@ -11,50 +11,35 @@
 //! finds and starts with) stands next to the decoder and is listed in `oos_dsp::protocols::MODULES`; the module names
 //! it with [`Protocol::info`].
 //!
-//! Every decoder is a module. The seven core protocols (`core.rs`: UART, I2C, SPI, CAN, LIN, Parallel, C-PHY) are
-//! always built and keep the first places, since the hardware trigger types and SCPI name them (`Proto::UART` ...).
-//! Every other file is behind a Cargo feature (`dec-<file>`, all on by default), so a build can leave decoders out.
+//! Every decoder is a module, and every module is always built (docs/adr/code/0071). The seven core protocols
+//! (`core.rs`: UART, I2C, SPI, CAN, LIN, Parallel, C-PHY) keep the first places, since the hardware trigger types and
+//! SCPI name them (`Proto::UART` ...). `decoders.off` in /oos/system.conf leaves decoders out at run time.
 //! `docs/protocol-modules.md` walks through writing one, and `example.rs` (compiled in the tests) uses every hook.
 
 use crate::model::{Model, Proto, Slope};
 use oos_dsp::decode::Packet;
 use oos_dsp::protocols::ModuleInfo;
 
-#[cfg(feature = "dec-avionics")]
 mod avionics;
 mod core;
-#[cfg(feature = "dec-dcc")]
 mod dcc;
-#[cfg(feature = "dec-debug")]
 mod debug;
-#[cfg(feature = "dec-dmx512")]
 mod dmx512;
 #[cfg(test)]
 pub mod example;
-#[cfg(feature = "dec-i2s")]
 mod i2s;
-#[cfg(feature = "dec-i3c")]
 mod i3c;
-#[cfg(feature = "dec-linecode")]
 mod linecode;
-#[cfg(feature = "dec-onewire")]
 mod onewire;
-#[cfg(feature = "dec-qspi")]
 mod qspi;
-#[cfg(feature = "dec-serial")]
 mod serial;
-#[cfg(feature = "dec-spdif")]
 mod spdif;
-#[cfg(feature = "dec-usb")]
 mod usb;
-#[cfg(feature = "dec-usbpd")]
 mod usbpd;
-#[cfg(feature = "dec-vehicle")]
 mod vehicle;
 
 /// The registered modules. The order is the order in the Decode menu; the core protocols come first, at fixed places.
-/// Never reuse or change a module's `key`: saved setups refer to it. A module behind a feature that is off is missing
-/// from the list, and a setup that names it loads without its decoder.
+/// Never reuse or change a module's `key`: saved setups refer to it.
 pub static MODULES: &[&dyn Protocol] = &[
     // the core decoders at fixed places (`Proto::UART` ...): never move them
     &core::Uart,
@@ -64,49 +49,27 @@ pub static MODULES: &[&dyn Protocol] = &[
     &core::Lin,
     &core::Parallel,
     &core::Cphy,
-    #[cfg(feature = "dec-dmx512")]
     &dmx512::Dmx512,
-    #[cfg(feature = "dec-spdif")]
     &spdif::Spdif,
-    #[cfg(feature = "dec-usbpd")]
     &usbpd::UsbPd,
-    #[cfg(feature = "dec-dcc")]
     &dcc::Dcc,
-    #[cfg(feature = "dec-linecode")]
     &linecode::Manchester,
-    #[cfg(feature = "dec-linecode")]
     &linecode::Mlt3,
-    #[cfg(feature = "dec-serial")]
     &serial::Uart9,
-    #[cfg(feature = "dec-serial")]
     &serial::ModbusRtu,
-    #[cfg(feature = "dec-serial")]
     &serial::ModbusAscii,
-    #[cfg(feature = "dec-onewire")]
     &onewire::OneWire,
-    #[cfg(feature = "dec-onewire")]
     &onewire::Ds2482,
-    #[cfg(feature = "dec-debug")]
     &debug::Swd,
-    #[cfg(feature = "dec-debug")]
     &debug::Jtag,
-    #[cfg(feature = "dec-qspi")]
     &qspi::Qspi,
-    #[cfg(feature = "dec-i3c")]
     &i3c::I3c,
-    #[cfg(feature = "dec-vehicle")]
     &vehicle::CanFd,
-    #[cfg(feature = "dec-vehicle")]
     &vehicle::FlexRay,
-    #[cfg(feature = "dec-vehicle")]
     &vehicle::Sent,
-    #[cfg(feature = "dec-avionics")]
     &avionics::Arinc429,
-    #[cfg(feature = "dec-avionics")]
     &avionics::Mil1553,
-    #[cfg(feature = "dec-i2s")]
     &i2s::I2s,
-    #[cfg(feature = "dec-usb")]
     &usb::Usb,
     #[cfg(test)]
     &example::Example,
@@ -128,7 +91,6 @@ pub enum Row {
     CanRate,
     /// CAN: the line is CAN-H (else CAN-L or a transceiver's RX)
     CanH,
-    #[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
     UsbSpeed,
     CphyRate,
     /// the event table in ASCII
@@ -153,11 +115,9 @@ pub fn shared(m: &crate::model::Model) -> Shared {
 }
 
 /// The baud rates of the Decode menu (`decode::BAUDS`), as the choices of a module's option row.
-#[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 pub const BAUD_NAMES: [&str; 10] =
     ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "460800", "921600"];
 /// The default of a baud row: 115200, as the UART decoder.
-#[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 pub const BAUD_DEFAULT: usize = 7;
 
 /// The decoder settings of a setup from before a protocol became a module: what its option rows were kept in.
@@ -246,7 +206,6 @@ pub struct Demo {
 pub type Memory = Option<Box<dyn std::any::Any + Send>>;
 
 /// The memory of a view as the module's own type `T`, made with `T::default()` when it is empty or of another type.
-#[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 pub fn memory<T: Default + Send + 'static>(m: &mut Memory) -> &mut T {
     if !m.as_ref().is_some_and(|b| b.is::<T>()) {
         *m = Some(Box::new(T::default()));
@@ -255,7 +214,6 @@ pub fn memory<T: Default + Send + 'static>(m: &mut Memory) -> &mut T {
 }
 
 /// Colour hint of a view's status line.
-#[cfg_attr(not(feature = "decoders"), allow(dead_code))] // for the optional modules
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tone {
     Neutral,
@@ -538,9 +496,8 @@ mod tests {
     /// What a decoder needs besides its module, each failure with its name and the part that is missing: its key in
     /// ui/tests/golden/decoder-keys.txt (a key never changes: `OOS_BLESS=1 cargo test --locked -q protocols::tests`
     /// adds the line of a new one and no other), its `ModuleInfo` in `oos_dsp::protocols::MODULES` at the same place
-    /// (and, in the whole build, a module for every decoder there), its name under Protocol decoders in
-    /// wiki/Features.md, demo traffic or the reason it has none, with demo traffic its case in
-    /// `extended_decoders_decode_their_demo`, and for its file the Cargo feature among the default ones. The number of
+    /// (and a module for every decoder there), its name under Protocol decoders in wiki/Features.md, demo traffic or
+    /// the reason it has none, and with demo traffic its case in `extended_decoders_decode_their_demo`. The number of
     /// decoders the wiki and README.md give is the number registered. What a `ModuleInfo` needs is checked in oos-dsp
     /// (dsp/src/protocols.rs).
     #[test]
@@ -559,7 +516,7 @@ mod tests {
                 None => assert!(m.demo().is_some(), "{}: no demo traffic, and no reason in NO_DEMO", m.key()),
             }
         }
-        // the optional modules with demo traffic are shown on the screen of the demo by a test
+        // the modules beyond the core ones with demo traffic are shown on the screen of the demo by a test
         let shown = include_str!("../ui/tests.rs");
         let shown = shown.split_once("fn extended_decoders_decode_their_demo()").expect("the test of the demos").1;
         let shown = shown.split_once("\n}\n").expect("its end").0;
@@ -572,10 +529,8 @@ mod tests {
                 case
             );
         }
-        // a build with fewer decoders has fewer keys than the list, and fewer than the texts count
-        let whole = cfg!(feature = "decoders");
         let keys: Vec<&str> = mods.iter().map(|m| m.key()).collect();
-        // a module is a decoder of oos-dsp, in the order of its registry; the whole build has every one of them
+        // a module is a decoder of oos-dsp, in the order of its registry, and every one of them has its module
         let dsp = &oos_dsp::protocols::MODULES;
         for m in &mods {
             let registered = dsp.iter().any(|&i| std::ptr::eq(i, m.info()));
@@ -583,36 +538,12 @@ mod tests {
         }
         let order: Vec<&str> = dsp.iter().map(|i| i.key).filter(|k| keys.contains(k)).collect();
         assert_eq!(keys, order, "MODULES: not in the order of oos_dsp::protocols::MODULES");
-        for i in dsp.iter().filter(|_| whole) {
+        for i in dsp.iter() {
             assert!(keys.contains(&i.key), "{}: in oos_dsp::protocols::MODULES, no module in ui/src/protocols", i.key);
         }
-        exempt_once("NO_DEMO", &NO_DEMO.map(|x| x.0), &keys, whole);
-        stored_names("decoder-keys.txt", &mods.iter().map(|m| m.key().to_string()).collect::<Vec<_>>(), whole);
-        if whole {
-            assert_eq!(count_of(&wiki, "Protocol decoders"), Some(mods.len()), "the number in wiki/Features.md");
-            assert_eq!(
-                count_of(&document("README.md"), "protocol decoders"),
-                Some(mods.len()),
-                "the number in README.md"
-            );
-        }
-        // every file here but the core ones is a feature of its own, on by default
-        let (toml, this) = (include_str!("../../Cargo.toml"), include_str!("mod.rs"));
-        let default = toml.lines().find(|l| l.starts_with("decoders = ")).expect("the decoders of ui/Cargo.toml");
-        for file in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src/protocols")).unwrap() {
-            let file = file.unwrap().file_name().into_string().unwrap();
-            let Some(name) = file.strip_suffix(".rs").filter(|n| !["mod", "core", "example"].contains(n)) else {
-                continue;
-            };
-            assert!(
-                toml.contains(&format!("\ndec-{} = []\n", name)),
-                "{}: no feature dec-{} in ui/Cargo.toml",
-                file,
-                name
-            );
-            assert!(default.contains(&format!("\"dec-{}\"", name)), "{}: dec-{} is not in `decoders`", file, name);
-            let line = format!("#[cfg(feature = \"dec-{}\")]\nmod {};\n", name, name);
-            assert!(this.contains(&line), "{}: no `mod {};` behind its feature in protocols/mod.rs", file, name);
-        }
+        exempt_once("NO_DEMO", &NO_DEMO.map(|x| x.0), &keys);
+        stored_names("decoder-keys.txt", &mods.iter().map(|m| m.key().to_string()).collect::<Vec<_>>());
+        assert_eq!(count_of(&wiki, "Protocol decoders"), Some(mods.len()), "the number in wiki/Features.md");
+        assert_eq!(count_of(&document("README.md"), "protocol decoders"), Some(mods.len()), "the number in README.md");
     }
 }

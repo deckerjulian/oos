@@ -211,7 +211,6 @@ fn hardware_zone_tables_agree_with_the_software_zones() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn uart_from_the_decoder_settings() {
     use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
     let mut m = Model::default();

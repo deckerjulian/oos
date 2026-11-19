@@ -74,7 +74,6 @@ fn hostile_decoder_records() {
 }
 
 // Break it catches: a CS# frame that ends where it starts, with a clock edge at that instant, panics (#181)
-#[cfg(feature = "dec-qspi")]
 #[test]
 fn hostile_qspi_zero_frame() {
     let Some(m) = MODULES.iter().find(|m| m.key() == "Qspi") else { panic!("no QSPI decoder in this build") };

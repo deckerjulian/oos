@@ -602,7 +602,7 @@ mod tests {
         let features = section(&document("wiki/Features.md"), "**Trigger**");
         let shots = include_str!("../../tests/triggers.txt");
         assert_eq!(TRIG_TYPES.len(), TYPES.len(), "TRIG_TYPES and TYPES list the same types");
-        exempt_once("NOT_SHOT", &NOT_SHOT.map(|x| x.0), &TRIG_TYPES, true);
+        exempt_once("NOT_SHOT", &NOT_SHOT.map(|x| x.0), &TRIG_TYPES);
         let mut seen = std::collections::HashSet::new();
         for (k, (t, stored, long, short)) in TYPES.into_iter().enumerate() {
             assert_eq!(row(t), k, "{:?}: its row in TYPES", t);
