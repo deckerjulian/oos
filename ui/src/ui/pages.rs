@@ -13,8 +13,8 @@
 use super::*;
 
 /// Where a dialog stands: the x of the middle of what opened it, and whether that is in the top bar (the dialog hangs
-/// below it) or at the bottom (the dialog sits above it).
-type Anchor = fn(&Ui) -> (i32, bool);
+/// below it) or at the bottom (the dialog sits above it). It gets the page's `MenuId`, with its channel.
+type Anchor = fn(&Ui, MenuId) -> (i32, bool);
 
 /// One page of the menus.
 pub(super) struct Page {
@@ -37,7 +37,39 @@ pub(super) struct Page {
 }
 
 /// Below the LAN box of the top bar: the pages of the network.
-const NET_BOX: Option<Anchor> = Some(|u| (u.net_box().x + u.net_box().w / 2, true));
+const NET_BOX: Option<Anchor> = Some(|u, _| (u.net_box().x + u.net_box().w / 2, true));
+
+/// Above a card at the bottom: the channel's, the time base's or the trigger's.
+const CH_CARD: Option<Anchor> = Some(|u, m| {
+    let c = match m {
+        MenuId::Channel(c) | MenuId::ChMore(c) => c,
+        _ => 0,
+    };
+    let r = u.cards().0[c];
+    (r.x + r.w / 2, false)
+});
+const TIME_CARD: Option<Anchor> = Some(|u, _| (u.cards().1.x + u.cards().1.w / 2, false));
+const TRIG_CARD: Option<Anchor> = Some(|u, _| (u.cards().2.x + u.cards().2.w / 2, false));
+
+/// The channel of a channel page.
+fn ch_of(m: MenuId) -> usize {
+    match m {
+        MenuId::Channel(c) | MenuId::ChMore(c) => c,
+        _ => 0,
+    }
+}
+
+/// A page of a title, rows, an anchor and the signals it reads, without pickers of its own.
+#[allow(clippy::type_complexity)]
+const fn plain(
+    id: MenuId,
+    title: fn(&Ui, MenuId) -> String,
+    items: fn(&Ui, MenuId) -> Vec<Item>,
+    anchor: Option<Anchor>,
+    sources: Option<fn(&Ui) -> Vec<WaveId>>,
+) -> Page {
+    Page { id, title, items, anchor, picks: none, pick: no_pick, wide: none, sources }
+}
 
 fn none(_: Item) -> bool {
     false
@@ -61,7 +93,7 @@ macro_rules! page {
     };
 }
 
-pub(super) const PAGES: [Page; 20] = [
+pub(super) const PAGES: [Page; 36] = [
     Page {
         id: MenuId::Network,
         title: |_, _| "Network".into(),
@@ -190,6 +222,87 @@ pub(super) const PAGES: [Page; 20] = [
     page!(MenuId::Zone, "Zone trigger", |u, _| u.zone_items(), None),
     page!(MenuId::Mask, "Mask test", |u, _| u.mask_items(), Some(|u| vec![WaveId::Ch(u.m.mask_src)])),
     page!(MenuId::Utility, "System", |u, _| u.utility_items(), None),
+    plain(MenuId::Channel(0), |_, m| format!("CH{}", ch_of(m) + 1), |u, m| u.channel_items(ch_of(m)), CH_CARD, None),
+    plain(
+        MenuId::ChMore(0),
+        |_, m| format!("CH{} more", ch_of(m) + 1),
+        |u, m| u.ch_more_items(ch_of(m)),
+        CH_CARD,
+        None,
+    ),
+    plain(MenuId::Horizontal, |_, _| "Horizontal".into(), |u, _| u.horizontal_items(), TIME_CARD, None),
+    plain(MenuId::Trigger, |_, _| "Trigger".into(), |u, _| u.trigger_items(), TRIG_CARD, None),
+    page!(MenuId::Acquire, "Acquire", |u, _| u.acquire_items(), None),
+    plain(
+        MenuId::Cursor,
+        |u, _| {
+            let src = u.selected_workspace_source().map_or("No source".into(), |id| u.wave_name(id));
+            format!("Cursor \u{b7} {}", src)
+        },
+        |u, _| u.cursor_items(),
+        None,
+        None,
+    ),
+    page!(MenuId::Display, "Display", |u, _| u.display_items(), None),
+    page!(MenuId::Math, "Math", |u, _| u.math_items(), None),
+    plain(
+        MenuId::Ref,
+        |u, _| {
+            u.refs[u.ref_sel].as_ref().map_or(format!("Reference R{} \u{b7} empty", u.ref_sel + 1), |r| {
+                format!("Reference R{}{}{}", u.ref_sel + 1, if r.label.is_empty() { "" } else { " \u{b7} " }, r.label)
+            })
+        },
+        |u, _| u.ref_items(),
+        None,
+        None,
+    ),
+    page!(
+        MenuId::Decode,
+        "Decode",
+        |u, _| u.decode_items(),
+        Some(|u| if u.m.dec_on_la() { Vec::new() } else { decode_wave(u.m.dec_src).into_iter().collect() })
+    ),
+    page!(MenuId::Bus, "Bus \u{b7} I2C", |u, _| u.bus_items(), None),
+    plain(
+        MenuId::Storage,
+        // where the files go now; /tmp is in RAM: say so
+        |u, _| {
+            if u.save_dir() == std::path::Path::new(crate::store::USB_DIR) {
+                "Storage \u{b7} USB stick".into()
+            } else if u.save_dir().starts_with("/tmp") {
+                format!("Storage \u{b7} {} (lost at power-off)", u.save_dir().display())
+            } else {
+                format!("Storage \u{b7} {}", u.save_dir().display())
+            }
+        },
+        |u, _| u.storage_items(),
+        None,
+        None,
+    ),
+    page!(MenuId::Sim, "SIM", |u, _| u.sim_items(), None),
+    page!(MenuId::SimAdvanced, "SIM advanced", |u, _| u.sim_advanced_items(), None),
+    plain(
+        MenuId::MeasPair,
+        |u, _| format!("Pairs {} to {}", u.pair_source_caption(u.meas_src), u.pair_source_caption(u.meas_src_b)),
+        |_, _| (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
+        None,
+        None,
+    ),
+    page!(
+        MenuId::Dvm,
+        "DVM and counter",
+        |u, _| u.dvm_items(),
+        Some(|u| {
+            let m = &u.m;
+            if u.offline {
+                return Vec::new();
+            }
+            [m.dvm_on.then_some(WaveId::Ch(m.dvm_src)), m.cnt_on.then_some(WaveId::Ch(m.cnt_src))]
+                .into_iter()
+                .flatten()
+                .collect()
+        })
+    ),
 ];
 
 /// The entry of the kind of `m`.
@@ -307,29 +420,13 @@ pub(super) const LAYOUTS: &[Layout] = &[
 /// The kinds whose pages are still answered by the arms of `menu_items.rs`, `menu_text.rs`, `menu_dialog.rs` and
 /// `menu_actions.rs`, until they move into `PAGES` (ADR 0060). Only gets shorter.
 #[cfg(test)]
-const NOT_YET_IN_PAGES: [MenuId; 28] = [
+const NOT_YET_IN_PAGES: [MenuId; 12] = [
     MenuId::Main,
-    MenuId::Channel(0),
-    MenuId::ChMore(0),
-    MenuId::Horizontal,
-    MenuId::Trigger,
-    MenuId::Acquire,
     MenuId::Measure,
     MenuId::MeasAdd,
     MenuId::MeasHold,
-    MenuId::MeasPair,
-    MenuId::Dvm,
-    MenuId::Cursor,
-    MenuId::Display,
-    MenuId::Math,
-    MenuId::Ref,
-    MenuId::Decode,
-    MenuId::Bus,
-    MenuId::Storage,
     MenuId::Features,
     MenuId::Decoders(0),
-    MenuId::Sim,
-    MenuId::SimAdvanced,
     MenuId::Afg,
     MenuId::ViewMore,
     MenuId::La,
