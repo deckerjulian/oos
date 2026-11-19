@@ -224,7 +224,7 @@ flowchart TB
     subgraph uiL["oos-ui (ui/src/)"]
         main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
         transport["transport<br/>http; in the crate oos-remote (ui/remote/): vxi11, hislip, announce<br/>frame the messages of a computer"]
-        command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
+        command["command<br/>scpi, cmd, site<br/>the interpreters: SCPI, control commands, the web remote's answers"]
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
         signal["signal<br/>wave, trig, protocols, measures, platform, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
@@ -359,7 +359,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
-| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `announce.rs`; ADR 0064), or `ui/src/http.rs` for the web remote; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `announce.rs`; ADR 0064), or `ui/src/http.rs` for the web remote (what the screen answers there: `ui/src/site.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
 | a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
 | the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
 | a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |

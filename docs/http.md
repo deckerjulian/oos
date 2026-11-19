@@ -1,9 +1,11 @@
 # OOS HTTP reference
 
 The web remote of `oos-ui` answers on TCP port 8080 (`--web-port` on a computer; System > Network > Remote services
-switches it, [network.md](network.md) 4). Every route is one arm of the `match` in `Http::answer`
-(`ui/src/http.rs`); the MCP tools are in `mcp` of the same file. This page lists each of them with what it takes and
-what it answers, read from the code. SCPI through MCP is the interpreter of [scpi.md](scpi.md).
+switches it, [network.md](network.md) 4). Every route is one arm of the `match` in `Http::answer` (`ui/src/http.rs`,
+the transport: pages, pictures, uploads, key commands) or, asked last, in `site::answer` (`ui/src/site.rs`, what the
+screen answers: its state, the last record, an update package, MCP); the MCP tools are in `site::mcp`. This page lists
+each of them with what it takes and what it answers, read from the code. SCPI through MCP is the interpreter of
+[scpi.md](scpi.md).
 
 Each entry carries one mark of [ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md) (the
 marks below are its first ones, and the interface has no version query yet):
@@ -13,7 +15,7 @@ marks below are its first ones, and the interface has no version query yet):
 - **internal**: listed so that this page and its check know every route; no part of the interface.
 
 The text of an error message is not part of the interface; its status code is. `tools/http-coverage.py` (layer
-`ratchet` of `tools/check.sh`) fails when a route of `Http::answer` or an MCP tool has no entry here, when an entry
+`ratchet` of `tools/check.sh`) fails when a route of the two or an MCP tool has no entry here, when an entry
 has no mark, or when an entry names a route the code does not answer.
 
 ## Requests
@@ -67,7 +69,8 @@ at it; the firewall of the scope applies to every port.
 
 ## Routes
 
-The status of an answer is chosen in `Http::answer`: 409 where the route says so, 404 and 403 for the bodies `not
+The status of an answer is chosen in `Http::answer`: 409 where the route says so (`site::answer` says it with the
+body), 404 and 403 for the bodies `not
 found` and `refused`, 202 for an MCP notification, else 200.
 
 ### `GET /`
