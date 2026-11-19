@@ -42,14 +42,14 @@ impl TrimPending {
 }
 
 /// The unit side of `coretrim`: measure unit runs and ADC core offset writes.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 struct UnitTrim<'a, B, C> {
     bar: &'a mut B,
     clock: &'a mut C,
     adc: &'a mut oos_hal::dho::adc::Adc,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 impl<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock> oos_hal::dho::coretrim::TrimHw for UnitTrim<'_, B, C> {
     fn slots(&mut self) -> Option<[oos_hal::dho::levels::Slot; 8]> {
         let clock = &mut *self.clock;
@@ -90,7 +90,7 @@ pub(super) fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
 /// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and in `overlay`, and saves the
 /// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
 /// done (matched, or nothing to change); false to try again at a later configuration.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn core_trim<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
     bar: &mut B,
     clock: &mut C,

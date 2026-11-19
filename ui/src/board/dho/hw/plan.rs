@@ -24,7 +24,7 @@ pub(super) fn prearm_on() -> bool {
 pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
     armed: &mut Option<(Settings, u64)>,
     state: &mut oos_hal::dho::seq::State,
@@ -132,7 +132,7 @@ const FRAME1_SPAN: usize = 32;
 pub(super) const FRAME1_CHECK_MAX: u32 = 100_000;
 
 /// Counts a frame 1 left out (`frame1_off_trigger`) and logs the count at 1, 2, 4, 8, ...
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn frame1_left_out() {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

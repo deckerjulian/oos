@@ -18,45 +18,47 @@ mod units;
 
 #[cfg(any(target_os = "linux", test))]
 pub use self::decode::{codes_into, decode, decode_into};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::decode::{decode_with, la_record, POOL};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::plan::{
     batch_plan, deep_raw_settings, disarm, edge_check, final_replay, frame0_check_wanted, frame0_drop, frame0_left_out,
     frame1_left_out, frame1_off_trigger, prearm_keeps_replay, prearm_on, stop_plan, FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
 pub use self::serial::serial_debug;
 #[cfg(any(target_os = "linux", test))]
 pub use self::settings::roll_la_t0;
 pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, ROLL_TDIV};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::settings::{avg_kind, raw_for_ui, raw_newest, single_wants_more};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::trim::{core_offset_tight, core_trim, load_overlay, overlay_in_use, TrimPending, TRIM_TRIES};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use self::units::{
     counter_tick, dvm_reading, dvm_step, hw_merge, hw_status_on, levels_measure, unit_key, DvmKey, DvmStep, UnitGuard,
 };
 pub use self::units::{dvm_hw_on, mask_hw_on, mask_map, mask_map_set, zone_hw_on};
 use super::cores;
 #[cfg(target_os = "linux")]
+use crate::board::Shared;
+#[cfg(any(target_os = "linux", test))]
 use crate::board::{Frame, Slow};
-#[cfg(target_os = "linux")]
-use crate::board::{HwShared, Shared, QUEUE_MAX, QUEUE_SAMPLES};
+#[cfg(any(target_os = "linux", test))]
+use crate::board::{HwShared, QUEUE_MAX, QUEUE_SAMPLES};
 use crate::model::*;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::{afe, hz, roll};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
 /// `seq::execute` on the loop's unit: the steps with their AFE steps, the read into a new buffer.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn execute<P: port::Port>(
     steps: &[oos_hal::dho::seq::Step],
     bar: &mut P::Bus,
@@ -71,14 +73,14 @@ fn execute<P: port::Port>(
 }
 
 /// A line for the status of the acquisition (the log, and System info).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn report(out: &HwShared, s: String) {
     eprintln!("oos-ui hw: {}", s);
     out.lock().unwrap().status = s;
 }
 
 /// The time from `t` to `now`, both microseconds of the loop's clock.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn since(now: u64, t: u64) -> std::time::Duration {
     std::time::Duration::from_micros(now.saturating_sub(t))
 }
@@ -131,15 +133,23 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             None
         };
         let lines = oos_hal::dho::lines::UnitLines;
-        run(port::Hw { bar, c2h, afe: afe_bus, lines, clock, port: port::Scope }, app_mask, program_afe, cal_dir, out);
+        let hw = port::Hw { bar, c2h, afe: afe_bus, lines, clock, port: port::Scope };
+        run(hw, app_mask, program_afe, cal_dir, out, || true);
     });
     shared
 }
 
 /// The acquisition loop on the unit `hw` (ADR 0053): the screen's settings to the FPGA, its records to the screen,
 /// every wait and every time on `hw.clock`. `spawn` gives it the scope; it names none of the scope's own types.
-#[cfg(target_os = "linux")]
-fn run<P: port::Port>(hw: port::Hw<P>, app_mask: u32, program_afe: bool, cal_dir: String, out: HwShared) {
+#[cfg(any(target_os = "linux", test))]
+fn run<P: port::Port>(
+    hw: port::Hw<P>,
+    app_mask: u32,
+    program_afe: bool,
+    cal_dir: String,
+    out: HwShared,
+    mut keep_going: impl FnMut() -> bool,
+) {
     use oos_hal::dho::afg::GenLines;
     use oos_hal::dho::boot::Clock;
     use oos_hal::dho::bus::Bus;
@@ -245,7 +255,8 @@ fn run<P: port::Port>(hw: port::Hw<P>, app_mask: u32, program_afe: bool, cal_dir
         let mut trim_tries = [0u8; 11];
         let mut trim_pending: Option<TrimPending> = None;
         let mut slots_done: Option<u64> = None;
-        loop {
+        // one pass per call of `keep_going`: always on the scope, a counted number in a host run
+        while keep_going() {
             let last_read = fresh.take();
             counter_tick(&mut bar, &mut clock, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)

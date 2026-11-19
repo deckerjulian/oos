@@ -182,7 +182,7 @@ pub fn codes_into(
 
 /// Read-out buffers of the batch mode: one being read, two with the deposit workers (each holds one share and has room
 /// for one more).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) const POOL: usize = 3;
 
 /// The read-out buffer lent to the deposit workers as it is (drawpipe.rs).

@@ -4,19 +4,19 @@
 //! The hardware segmented recording of the acquisition thread: its state, its abort and one step of it per
 //! pass of the loop. A change of how segments are recorded or read back goes here.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use super::decode::decode;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use super::settings::seg_read_plan;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::board::{Frame, HwShared};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::hz;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 
 /// A hardware segmented recording.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) struct SegRun {
     /// `HwSeg::run` it belongs to
     run: u64,
@@ -32,7 +32,7 @@ pub(super) struct SegRun {
 
 /// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
 /// are no longer the configured ones).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
     run: &mut Option<SegRun>,
     state: &mut oos_hal::dho::seq::State,
@@ -54,7 +54,7 @@ pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
 /// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
 /// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
 /// play single segments on request.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, R: std::io::Read>(
     run: &mut Option<SegRun>,

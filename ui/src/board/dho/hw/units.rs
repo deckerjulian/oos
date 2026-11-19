@@ -5,7 +5,7 @@
 //! and zone unit (comparator mapping, stall guard, merge into the settings), the DVM block and the frequency
 //! counter. A new opt-in unit gets its switch and its steps here.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::board::HwShared;
 use oos_hal::dho::auxout;
 use oos_hal::dho::seq::Settings;
@@ -19,7 +19,7 @@ pub(super) fn header_probe() -> bool {
 
 /// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
 /// volts of the records.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn levels_measure<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
     bar: &mut B,
     clock: &mut C,
@@ -260,7 +260,7 @@ pub(super) fn dvm_reading(
 
 /// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
 /// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
     bar: &mut B,
     clock: &mut C,

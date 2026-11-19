@@ -1200,3 +1200,62 @@ fn decode_and_align_a_square() {
     // the software edge (level 1.5 V) sits at the centre of the screen window
     assert!(r.ch[0][495] < 0.5 && r.ch[0][505] > 2.0, "{} {}", r.ch[0][495], r.ch[0][505]);
 }
+
+/// The simulated unit as the loop's port (ADR 0053): its register window, stream and clock, a front-end stub, lines that
+/// record, and a generator that is not there.
+struct SimPort;
+struct NoGen;
+
+impl oos_hal::dho::afg::GenLines for NoGen {
+    fn relays(&mut self, _code: u8) {}
+    fn power(&mut self, _on: bool) {}
+    fn relay_code(&self) -> u8 {
+        0
+    }
+}
+
+impl super::port::Port for SimPort {
+    type Bus = oos_hal::dho::sim::Bar;
+    type Stream = oos_hal::dho::sim::Stream;
+    type Afe = oos_hal::dho::boot::sim::AfeStub;
+    type Lines = oos_hal::dho::lines::Recorded;
+    type Clock = oos_hal::dho::sim::Time;
+    type Gen = NoGen;
+    fn open_gen(&mut self) -> std::io::Result<NoGen> {
+        Ok(NoGen)
+    }
+}
+
+// Stage 1b.3: the loop compiles on a host and runs against the simulated unit. Break it catches: a loop that names
+// the scope's own types, waits on the wall clock, or arms, plays and delivers nothing on a unit that triggers
+#[test]
+fn the_acquisition_loop_runs_on_the_simulated_unit() {
+    use oos_hal::dho::sim::{unit, Event, Scene, View};
+    let mut m = Model::default();
+    m.ch[0].on = true;
+    let want = super::settings(&m, false);
+    let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
+    let p = st.configure(&want, None, None).unwrap().1;
+    let cal = std::array::from_fn(|c| (want.ch[c].scale, want.ch[c].offset));
+    let view = View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+    // a 1 MHz sine, triggering every 50 us
+    let volts = Box::new(|_c: usize, t: f64| 0.5 * (2.0 * std::f64::consts::PI * 1e6 * t).sin());
+    let scene = Scene { volts, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
+    let (u, bar, c2h, clock) = unit(scene);
+    let lines = oos_hal::dho::lines::Recorded::default();
+    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: SimPort };
+    let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
+    out.lock().unwrap().want = Some(want.clone());
+    let mut passes = 0;
+    super::run(hw, want.mask, false, "/nonexistent".into(), out.clone(), || {
+        passes += 1;
+        passes <= 40
+    });
+    let g = out.lock().unwrap();
+    assert!(g.status.starts_with("configured") || !g.queue.is_empty(), "status: {}", g.status);
+    let u = u.borrow();
+    let played = u.trace.iter().filter(|e| matches!(e, Event::Played { .. })).count();
+    let recorded = u.trace.iter().filter(|e| matches!(e, Event::Recorded { .. })).count();
+    assert!(recorded > 0 && played > 0, "recorded {} played {}: {}", recorded, played, g.status);
+    assert!(!g.queue.is_empty() || g.frame.ch.iter().any(|c| !c.is_empty()), "no frame delivered: {}", g.status);
+}
