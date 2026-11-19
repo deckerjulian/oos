@@ -20,11 +20,13 @@ itself: it installs the image, starts the scope from power off and checks it, an
 
 - The same permission as for any run on a unit: the maintainer has said in the session that the agent may use the
   scope (AGENTS.md), and the other sessions agreed.
-- The tool cuts the power only when the scope answers over SSH and no `oos-update` runs (an install, a rollback, the
-  start-up watcher). An install started by kexec has no SSH and says "Do not power off": the tool refuses then.
-- `--force` only when the scope has not answered for 10 minutes and its screen cannot be asked. A unit that is stuck
-  is what the outlet is for, and a power cut never touches the FPGA flash, `/rigol/data`, `uboot`, `trust` or
-  `parameter` (ADR 0009).
+- The tool cuts the power only while it holds the scope's update lock (`/oos/update/state.lock`, which every write of
+  `oos-update` takes) over SSH, and only when no `oos-update` runs (an install, a rollback, the start-up watcher). So
+  no update can begin to write between the check and the cut. An install started by kexec has no SSH and says "Do not
+  power off": the tool refuses then. That the scope's busybox has `flock` is assumed; without it the tool refuses.
+- `--force` only cuts a scope that does not answer at all, never one that answers and is busy, and only when it has
+  not answered for 10 minutes and its screen cannot be asked. A unit that is stuck is what the outlet is for, and a
+  power cut never touches the FPGA flash, `/rigol/data`, `uboot`, `trust` or `parameter` (ADR 0009).
 - A run of the class `boot`: install (`oos-update install`, dry run first), power off for 30 s and on (`cycle`), wait
   for the start-up watcher to confirm, `tools/device-test.py --tier a0`. The pull request names each step and the
   commit it ran for (ADR 0069).

@@ -22,10 +22,16 @@ case $url in
 *) echo '{}' ;;
 esac
 '''
-# ssh ... COMMAND: the scope answers with $SSH_ANSWER, or not at all when $SSH_DOWN is set
+# ssh ... COMMAND: a scope that is down (exit 255), whose update lock is taken (exit 1), where an oos-update runs
+# (busy, exit 3), or that holds its lock for the cut (held, until it is ended)
 SSH = r'''#!/bin/sh
-[ -z "${SSH_DOWN:-}" ] || exit 255
-printf '%s' "${SSH_ANSWER:-}"
+case ${SCOPE:-idle} in
+down) exit 255 ;;
+locked) exit 1 ;;
+busy) echo 412; echo busy; exit 3 ;;
+esac
+echo held
+exec sleep 30
 '''
 # the program of `cmd:`: logs what it was asked
 OUTLET = r'''#!/bin/sh
@@ -73,16 +79,21 @@ class BenchPower(unittest.TestCase):
         self.assertEqual((rc, calls), (0, ["outlet", "off", "outlet", "on"]))
 
     def test_no_power_cut_while_an_update_may_write(self):
-        rc, out, calls = self.run_tool("off", SSH_ANSWER="412")
+        rc, out, calls = self.run_tool("off", SCOPE="busy")
         self.assertEqual((rc, calls), (2, []), "oos-update runs: nothing switched")
         self.assertIn("oos-update runs", out)
-        rc, out, calls = self.run_tool("cycle", "--wait", "0", SSH_DOWN="1")
+        rc, out, calls = self.run_tool("off", "--force", SCOPE="busy")
+        self.assertEqual((rc, calls), (2, []), "--force never cuts a scope that answers and is busy")
+        rc, out, calls = self.run_tool("cycle", "--wait", "0", SCOPE="locked")
+        self.assertEqual((rc, calls), (2, []), "the update lock is taken")
+        self.assertIn("lock", out)
+        rc, out, calls = self.run_tool("cycle", "--wait", "0", SCOPE="down")
         self.assertEqual((rc, calls), (2, []), "the scope does not answer: it may be installing")
         rc, out, calls = self.run_tool("off", scope=None)
         self.assertEqual((rc, calls), (2, []), "nobody to ask")
-        rc, _, calls = self.run_tool("off", "--force", SSH_DOWN="1")
-        self.assertEqual((rc, calls), (0, ["http://plug/rpc/Switch.Set?id=0&on=false"]), "--force switches anyway")
-        rc, _, calls = self.run_tool("on", SSH_DOWN="1")
+        rc, _, calls = self.run_tool("off", "--force", SCOPE="down")
+        self.assertEqual((rc, calls), (0, ["http://plug/rpc/Switch.Set?id=0&on=false"]), "--force: a scope that is down")
+        rc, _, calls = self.run_tool("on", SCOPE="down")
         self.assertEqual(rc, 0, "switching on asks nobody")
 
     def test_wrong_use(self):

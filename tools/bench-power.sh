@@ -8,10 +8,11 @@
 #   tools/bench-power.sh on | off               switch it
 #   tools/bench-power.sh cycle [--wait S]       off, S seconds (default 30, as docs/update.md asks), on
 #
-# Before `off` and `cycle` it asks the scope over SSH (OOS_SCOPE, the same key and port as tools/device-deploy.sh)
-# whether an oos-update runs: an install, a rollback or the start-up watcher. Then it refuses, and so it does when the
-# scope does not answer: an install started by kexec has no SSH and must not lose power. `--force` switches anyway;
-# ADR 0070 says when the agent may use it.
+# Before `off` and `cycle` it takes the scope's update lock over SSH (OOS_SCOPE, the same key and port as
+# tools/device-deploy.sh) and holds it while it cuts the power, so no update can begin to write; it refuses when an
+# oos-update runs (an install, a rollback, the start-up watcher), when the lock is taken, and when the scope does not
+# answer: an install started by kexec has no SSH and must not lose power. `--force` only cuts a scope that does not
+# answer at all; ADR 0070 says when the agent may use it.
 #
 # The outlet, from OOS_POWER or the file local/bench.conf (a line OOS_POWER=...; local/ stays out of git):
 #   shelly:HOST       a Shelly of the second generation or later, through its local RPC (Switch.Set, id 0)
@@ -71,22 +72,53 @@ outlet() {
 	esac
 }
 
-# whether the scope may lose power now: it answers, and no oos-update runs
-idle() {
-	[ $force = 0 ] || return 0
-	[ -n "${OOS_SCOPE:-}" ] || stop "OOS_SCOPE is not set: the scope cannot be asked whether an update runs (--force)"
-	busy=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p "${OOS_SSH_PORT:-22}" \
-		${OOS_SSH_IDENTITY:+-i "$OOS_SSH_IDENTITY"} "root@$OOS_SCOPE" 'pidof oos-update || true') ||
-		stop "the scope does not answer: it may be installing an update (--force once that is ruled out)"
-	[ -z "$busy" ] || stop "oos-update runs on the scope (pid $busy): wait until it is done"
+# hold the scope's update lock for the power cut (ADR 0070): over SSH, `flock -n` on the lock every write of
+# oos-update takes (docs/update.md), and inside it no oos-update may run (an install, a rollback, the start-up
+# watcher). While the SSH session holds the lock no update can begin a write, so the cut cannot fall into one. Busybox's
+# flock on the scope is assumed, not yet verified on hardware: without it the scope answers 127 and the cut is refused.
+# --force only for a scope that does not answer at all; a scope that answers and is busy is never cut.
+lock=/oos/update/state.lock
+held=
+holder=
+hold() {
+	[ -n "${OOS_SCOPE:-}" ] || stop "OOS_SCOPE is not set: the scope cannot be asked whether an update runs"
+	held=$(mktemp)
+	ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p "${OOS_SSH_PORT:-22}" \
+		${OOS_SSH_IDENTITY:+-i "$OOS_SSH_IDENTITY"} "root@$OOS_SCOPE" \
+		"flock -n $lock -c 'if pidof oos-update; then echo busy; exit 3; fi; echo held; sleep 120'" >"$held" 2>&1 &
+	holder=$!
+	i=0
+	while [ $i -lt 20 ]; do
+		grep -qx held "$held" && return 0
+		if ! kill -0 "$holder" 2>/dev/null; then
+			rc=0
+			wait "$holder" || rc=$?
+			grep -qx busy "$held" && stop "oos-update runs on the scope: wait until it is done"
+			if [ $rc = 255 ]; then
+				[ $force = 1 ] && { echo "the scope does not answer: --force, cutting anyway" >&2; return 0; }
+				stop "the scope does not answer: it may be installing an update (--force once that is ruled out)"
+			fi
+			stop "the update lock of the scope is taken, or flock is missing there (exit $rc)"
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	release
+	stop "the scope did not take its update lock within 20 s"
 }
+# end the SSH session that holds the lock (after the cut it is gone anyway)
+release() {
+	[ -z "$holder" ] || kill "$holder" 2>/dev/null || true
+	[ -z "$held" ] || rm -f "$held"
+}
+trap release EXIT
 
 case $cmd in
 status) outlet status ;;
 on) outlet on; echo on ;;
-off) idle; outlet off; echo off ;;
+off) hold; outlet off; echo off ;;
 cycle)
-	idle
+	hold
 	outlet off
 	echo "off, on again in $wait s"
 	sleep "$wait"
