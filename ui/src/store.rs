@@ -25,6 +25,7 @@ mod settings_snapshot;
 mod setup_read;
 #[cfg(test)]
 mod tests;
+pub mod views;
 mod waveform;
 pub use import::*;
 pub use paths::*;

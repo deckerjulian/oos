@@ -33,6 +33,19 @@ impl AView {
         AView::Inverter,
         AView::Dpt,
     ];
+
+    /// The views a setup keeps (`view = <word>`): every one but the bandwidth test, a procedure and not a page to come
+    /// back to. A new analyser page goes here too (ui/analysers.rs checks it).
+    pub const STORED: [AView; 8] = [
+        AView::Scope,
+        AView::Spectrum,
+        AView::Eye,
+        AView::Power,
+        AView::Bode,
+        AView::Magnetic,
+        AView::Inverter,
+        AView::Dpt,
+    ];
 }
 
 /// Where the eye is drawn. The full page is the default. Side and Under are extra panes and leave that page available.

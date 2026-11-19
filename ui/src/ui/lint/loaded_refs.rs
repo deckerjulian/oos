@@ -509,7 +509,7 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     u.m.bode_start = bf;
     u.m.bode_stop = bf * 4.0;
     u.m.bode_points = 3;
-    u.m.bode_gen = bode::BUILTIN;
+    u.m.bode_gen = crate::model::bode::BUILTIN;
     let run = u.m.run;
     u.bode_activate(Item::BodeRun);
     assert!(!u.bode.running);

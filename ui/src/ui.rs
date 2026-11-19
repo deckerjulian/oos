@@ -331,7 +331,7 @@ const REF_COLORS: [(&str, Rgb); 5] = [
 ];
 pub use crate::measures::pairs::pair_unit;
 
-pub(crate) use analysers::{scpi_views, stored_views};
+pub(crate) use analysers::scpi_views;
 
 pub use eyepage::EYE_ITEMS;
 // the limits that the model, the settings and the setup files count with too (model/limits.rs)

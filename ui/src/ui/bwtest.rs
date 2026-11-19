@@ -239,10 +239,6 @@ impl super::analysers::Analyser for BandwidthPage {
         MenuId::BwTest
     }
 
-    fn stored(&self) -> bool {
-        false
-    }
-
     /// Identify (what is connected to the inputs) sits beside it in the start menu.
     fn start(&self) -> Vec<Item> {
         vec![Item::Open(MenuId::BwTest), Item::IdentifyAct]
