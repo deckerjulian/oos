@@ -151,7 +151,7 @@ is written in its home and linked from elsewhere. A pull request that changes on
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
 | an HTTP route or MCP tool (`ui/src/http.rs`, `ui/src/http/`, `ui/src/site.rs`) | `docs/http.md`, `wiki/Remote-Control.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, a file in `changelog.d/` |
-| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs` (`oos-fpgad`: of `fpgad/src/dho/mod.rs`), and the page that names the option |
+| an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
 | installing, updating, starting | `docs/boot.md`, `docs/update.md`, `wiki/Installation.md`, `wiki/Updates-and-Going-Back.md` |
 | a tool in `tools/` | `tools/README.md` |
