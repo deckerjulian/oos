@@ -1,6 +1,6 @@
 0 allow dsp
 5 allow fpgad
-2 allow hal
+1 allow hal
 17 allow ui
 0 unsafe dsp
 4 unsafe fpgad
