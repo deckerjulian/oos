@@ -92,6 +92,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0069](process/0069-unit-tested-holds-for-the-commits-it-was-given-for.md) | process | `unit-tested` holds for the commits it was given for | accepted |
 | [0070](process/0070-the-agent-switches-the-bench-units-power-through-an-outlet.md) | process | The agent switches the bench unit's power through an outlet, and runs the boot class itself | proposed |
 | [0071](code/0071-every-decoder-is-built-in-and-left-out-at-run-time.md) | code | Every decoder is built into oos-ui; System > Features leaves decoders out at run time | proposed |
+| [0072](process/0072-the-tests-inside-the-hardware-paths-need-no-run-on-a-unit.md) | process | The tests inside the hardware paths need no run on a unit | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents
