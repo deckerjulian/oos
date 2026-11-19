@@ -4,7 +4,7 @@
 0 ui-base-up
 39 ui-board-up
 0 ui-command-up
-2 ui-model-up
+0 ui-model-up
 0 ui-screen-up
 0 ui-settings-up
 0 ui-signal-up
