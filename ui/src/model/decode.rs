@@ -13,10 +13,6 @@ pub enum Proto {
     Module(u8),
 }
 
-/// Every protocol of the Decode menu, in the order of `protocols::MODULES`.
-pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
-    std::sync::LazyLock::new(|| (0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
-
 impl Proto {
     pub const UART: Proto = Proto::Module(0);
     pub const I2C: Proto = Proto::Module(1);
@@ -25,39 +21,6 @@ impl Proto {
     pub const LIN: Proto = Proto::Module(4);
     pub const PARALLEL: Proto = Proto::Module(5);
     pub const CPHY: Proto = Proto::Module(6);
-
-    /// The module behind the protocol.
-    pub fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
-        let Proto::Module(i) = self;
-        Some(crate::protocols::get(i))
-    }
-
-    /// Name in saved setups: the module's key.
-    pub fn key(self) -> String {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).key().to_string()
-    }
-
-    pub fn from_key(k: &str) -> Option<Proto> {
-        PROTOS.iter().copied().find(|p| p.key() == k)
-    }
-
-    pub fn name(self) -> &'static str {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).name()
-    }
-
-    /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
-    pub fn roles(self) -> [Option<&'static str>; 4] {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).info().roles
-    }
-
-    /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
-    pub fn diff_ok(self) -> bool {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).info().diff_ok
-    }
 }
 
 /// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
@@ -86,34 +49,13 @@ pub struct DecCfg {
     pub mode: u8,
     pub bits: u32,
     pub parity: oos_dsp::decode::Parity,
-    pub opt: [u8; crate::protocols::OPTS],
+    pub opt: [u8; oos_dsp::protocols::OPTS],
 }
 
 /// Decoders at once.
 pub const DECODERS: usize = 4;
 
 impl Model {
-    /// Switches the decoder's protocol and nothing else (SCPI configures an instrument, not the demo's sources); a
-    /// module that is newly chosen starts from its default options.
-    pub fn set_dec_proto_only(&mut self, p: Proto) {
-        if let (Proto::Module(i), true) = (p, self.dec_proto != p) {
-            self.dec_opt = crate::protocols::opt_default(i);
-        }
-        self.dec_proto = p;
-    }
-
-    /// The option settings of the decoder's protocol module, in range.
-    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
-        let Proto::Module(i) = self.dec_proto;
-        crate::protocols::opt_fit(i, self.dec_opt)
-    }
-
-    /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
-    pub fn bus_bit(&self) -> f64 {
-        let Proto::Module(i) = self.dec_proto;
-        crate::protocols::get(i).info().bit_time(&self.dec_opts(), &crate::protocols::shared(self))
-    }
-
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
         DecCfg {

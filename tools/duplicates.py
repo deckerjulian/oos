@@ -31,7 +31,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ("hal/src", "dsp/src", "ui/src", "ui/system/src", "fpgad/src")  # ui/system: a crate of ui (ADR 0064)
+SOURCES = ("hal/src", "dsp/src", "ui/src", "ui/system/src", "ui/remote/src", "fpgad/src")  # ui/system: a crate of ui (ADR 0064)
 MIN = 8
 
 TEST_MOD = re.compile(r"^(\s*)(?:pub(?:\([a-z]+\))? )?mod ([A-Za-z0-9_]+) \{$")

@@ -18,8 +18,6 @@ use std::time::{Duration, Instant};
 const JOIN_TIMEOUT: Duration = Duration::from_secs(30);
 /// wpa_supplicant's state is read this often.
 const POLL: Duration = Duration::from_secs(2);
-/// Lines of the two-column network pickers that fit the screen.
-const LIST_MAX: usize = 18;
 /// Characters of a network name in a picker line.
 const NAME_MAX: usize = 24;
 
@@ -204,9 +202,8 @@ impl Ui {
             Report::Scan(r) => {
                 self.wlan.busy = None;
                 match r {
-                    Ok(mut v) => {
-                        // strongest first; the last line stays for "Other network"
-                        v.truncate(LIST_MAX - 1);
+                    Ok(v) => {
+                        // strongest first, then "Other network"; a long list scrolls (ADR 0006)
                         self.wlan.nets = v;
                         if self.menu_open && self.menu == MenuId::Network {
                             self.open_picker(Item::WlanNet);
@@ -275,7 +272,7 @@ impl Ui {
     }
 
     pub(super) fn wlan_forget_options(&self) -> Vec<String> {
-        self.wlan.link.saved.iter().take(LIST_MAX).map(|n| short(&wlan::name(&n.ssid))).collect()
+        self.wlan.link.saved.iter().map(|n| short(&wlan::name(&n.ssid))).collect()
     }
 
     /// A line of the scan list was picked.
@@ -912,6 +909,51 @@ mod tests {
         Net { ssid: name.as_bytes().to_vec(), signal: -50, freq: 2437, security: s }
     }
 
+    /// A scan with more networks than fit on the screen: none is cut off; the picker scrolls by the knob, the bar and
+    /// a finger (ADR 0006), and a tap picks the network under it.
+    #[test]
+    fn a_long_scan_list_scrolls_and_a_tap_picks_what_shows() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.wlan.link.stick = true;
+        ui.open_menu(MenuId::Network);
+        let nets: Vec<Net> = (0..40).map(|k| net(&format!("Net {k:02}"), Security::Psk)).collect();
+        ui.wlan_report(Report::Scan(Ok(nets)));
+        assert_eq!(ui.menu, MenuId::Pick);
+        let shows = |ui: &Ui, k: usize| ui.dlg_layout().unwrap().rows[k].ctrl.w > 0;
+        let bar = |ui: &Ui| ui.dlg_layout().unwrap().bar.expect("the list scrolls").0;
+        assert!(bar(&ui).needed() && bar(&ui).top() == 0 && shows(&ui, 0) && !shows(&ui, 40));
+        // the knob back from the first line wraps to Other network at the end, and the window follows it
+        ui.key(0xbb);
+        assert_eq!(ui.focus, 40);
+        assert!(shows(&ui, 40) && !shows(&ui, 0));
+        assert_eq!(bar(&ui).top(), bar(&ui).max());
+        // the window stays where it is while the focus moves inside it
+        ui.key(0xbb);
+        assert_eq!(bar(&ui).top(), bar(&ui).max());
+        // a finger drawn down two lines shows two earlier lines; the focus stays on an option that shows
+        let (b, area) = ui.dlg_layout().unwrap().bar.unwrap();
+        let pitch = b.track.h / b.shown;
+        let (x, y) = (area.x + 30, area.y + 10);
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Move, x, y: y + 2 * pitch + 5 });
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y: y + 2 * pitch + 5 });
+        assert_eq!(bar(&ui).top(), b.max() - 2);
+        assert!(shows(&ui, ui.focus));
+        // the thumb to the top shows the first network again
+        let th = bar(&ui).thumb();
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x: th.x + 20, y: th.y + 5 });
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Move, x: th.x + 20, y: b.track.y - 100 });
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: th.x + 20, y: b.track.y - 100 });
+        assert_eq!(bar(&ui).top(), 0);
+        // a tap on the first line picks Net 00, and the first line shows nothing scrolled out
+        let first = ui.dlg_layout().unwrap().rows[0].ctrl;
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x: first.x + 10, y: first.y + 10 });
+        ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: first.x + 10, y: first.y + 10 });
+        assert!(
+            matches!(&ui.wlan.osk.as_ref().expect("asks for the password").what, OskFor::Pass(s) if s == b"Net 00")
+        );
+    }
+
     fn tap_key(ui: &mut Ui, want: Key) {
         let r = ui
             .wlan
@@ -1329,8 +1371,9 @@ mod tests {
             many.push(net(&format!("Nachbar {}", i), Security::Psk));
         }
         ui.wlan_report(Report::Scan(Ok(many)));
-        assert_eq!(ui.options(Item::WlanNet).len(), LIST_MAX);
+        assert_eq!(ui.options(Item::WlanNet).len(), 35, "every network and Other network, none cut off");
         let d = ui.dlg_layout().unwrap();
+        assert!(d.bar.is_some_and(|(b, _)| b.needed()), "a list longer than the screen scrolls");
         assert!(
             d.r.y >= 0 && d.r.y + d.r.h <= PANEL_H && d.rows.iter().all(|r| r.ctrl.y + r.ctrl.h <= d.r.y + d.r.h),
             "{:?}",

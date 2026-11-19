@@ -500,22 +500,10 @@ impl Model {
             TrigType::Timeout | TrigType::Duration => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 6e-3,
             TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
             // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
-            TrigType::Bus => self
-                .dec_proto
-                .module()
-                .and_then(|p| p.info().frame_span(&self.dec_opts(), &crate::protocols::shared(self)))
-                .unwrap_or(200.0 * self.bus_bit()),
+            TrigType::Bus => self.bus_frame_span(),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
         }
-    }
-
-    /// The logic analyser is on (and the model has it).
-    /// Comparator hysteresis of the trigger in divisions, as the hardware gets it (trigger.md 2.3): 0.3, 0.7 with
-    /// noise reject, more at 2 mV/div and below (the table of the trigger source's scale at the BNC).
-    pub fn trig_hyst_div(&self) -> f32 {
-        let c = &self.ch[self.trig_src.min(NCH - 1)];
-        crate::board::board().trig_hyst_div(c.volts_per_div() as f64 / c.probe as f64, self.trig_nrej) as f32
     }
 
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and

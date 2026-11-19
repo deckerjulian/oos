@@ -253,7 +253,7 @@ impl Ui {
             ctrl: lay.gate,
             ctl: Ctl::Seg(vec!["Screen".into(), "Full record".into()], Some(usize::from(self.m.meas_full_record))),
         });
-        Dlg { r: lay.r, close: lay.close, back: lay.back, rows, heads: Vec::new() }
+        Dlg { r: lay.r, close: lay.close, back: lay.back, rows, heads: Vec::new(), bar: None }
     }
 
     fn content_h(&self) -> i32 {
@@ -751,7 +751,7 @@ mod integration_tests {
         let ids: HashSet<_> = listed().into_iter().filter(|c| c.kind == Kind::Module).map(|c| c.id).collect();
         assert_eq!(ids.iter().filter(|&&id| id < 1000).count(), 83);
         for id in 0..=255 {
-            assert_eq!(catalog_id_valid(id), ids.contains(&id), "persisted ID{id}");
+            assert_eq!(crate::measures::catalog_id_valid(id), ids.contains(&id), "persisted ID{id}");
         }
     }
 

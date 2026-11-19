@@ -16,7 +16,6 @@
 // is #[cfg(test)] or carries an allow with its reason.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-mod announce;
 mod board;
 mod cmd;
 mod compress;
@@ -31,7 +30,6 @@ mod framestats;
 mod gfx;
 mod gpu;
 mod hid;
-mod hislip;
 mod http;
 #[cfg(target_os = "linux")]
 mod input;
@@ -42,6 +40,7 @@ mod measures;
 mod model;
 #[cfg(test)]
 mod perfguard;
+mod platform;
 mod protocols;
 mod scpi;
 mod settings;
@@ -53,7 +52,6 @@ mod trig;
 mod trignear;
 mod ui;
 mod vpu;
-mod vxi11;
 mod wave;
 mod words;
 mod zone;
@@ -61,6 +59,8 @@ mod zone;
 // the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
 #[cfg(target_os = "linux")]
 use oos_system::hostname;
+// the transports (ADR 0064), generic over the program they carry: here always `scpi::Program`
+use oos_remote::{announce, hislip, vxi11};
 use oos_system::{
     base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
 };
@@ -246,7 +246,7 @@ fn lan(
     scope: bool,
     args: &[String],
     acl: &netacl::Shared,
-) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server, announce::Announcer) {
+) -> (http::Http, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>, announce::Announcer) {
     let (web, scpi, vxi, hislip) = lan_servers(scope, args, acl);
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
     let ann = announce::Announcer::open(&services);
@@ -258,7 +258,7 @@ fn lan_servers(
     scope: bool,
     args: &[String],
     acl: &netacl::Shared,
-) -> (http::Http, scpi::Scpi, vxi11::Server, hislip::Server) {
+) -> (http::Http, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>) {
     let mut web = http::Http::open(lan_port(args, "--web-port", 8080));
     let mut scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
     let mut vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
@@ -712,8 +712,8 @@ struct Device {
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
     remote_now: Option<[bool; 5]>,
-    hislip: hislip::Server,
-    vxi: vxi11::Server,
+    hislip: hislip::Server<scpi::Program>,
+    vxi: vxi11::Server<scpi::Program>,
     scpi: scpi::Scpi,
     web: http::Http,
     scpi_port: u16,

@@ -1,85 +1,11 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Hostile input for what arrives in frames: VXI-11 (ONC RPC records), SNTP answers, the answers of a USBTMC
-//! device and the frames of the front-panel MCU. HiSLIP, mDNS and HTTP are tested in their own modules, where their
-//! private parts are.
+//! Hostile input for what arrives in frames: SNTP answers, the answers of a USBTMC device and the frames of the
+//! front-panel MCU. VXI-11, HiSLIP, mDNS and HTTP are tested in their own modules, where their private parts are.
 
 use super::run;
 use crate::board::Board;
-use crate::vxi11::{core, parse_call, portmap, take_record, Link, CORE_PROG, PMAP_PROG};
-
-/// One RPC call as a record: the last-fragment mark and the length, the call header, the arguments.
-fn rpc(xid: u32, prog: u32, proc_: u32, args: &[u32], data: &[u8]) -> Vec<u8> {
-    let mut m = Vec::new();
-    for v in [xid, 0, 2, prog, 1, proc_, 0, 0, 0, 0].iter().chain(args) {
-        m.extend_from_slice(&v.to_be_bytes());
-    }
-    if !data.is_empty() {
-        m.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        m.extend_from_slice(data);
-        m.resize(m.len().next_multiple_of(4), 0);
-    }
-    let mut rec = (0x8000_0000 | m.len() as u32).to_be_bytes().to_vec();
-    rec.extend(m);
-    rec
-}
-
-/// `take_record`, `parse_call`, `portmap` and `core` (VXI-11 on TCP 111 and its core port): return for any bytes;
-/// a record taken is no longer than the bytes it came from and leaves the buffer shorter; an answer is whole XDR
-/// words and starts with the call's number; there are never more than 16 links.
-#[test]
-fn hostile_vxi11_records() {
-    let two_fragments = {
-        let whole = rpc(9, CORE_PROG, 11, &[0, 1000, 1000, 8], b"*IDN?\n");
-        let body = &whole[4..];
-        let mut b = (12u32).to_be_bytes().to_vec();
-        b.extend_from_slice(&body[..12]);
-        b.extend_from_slice(&(0x8000_0000 | (body.len() - 12) as u32).to_be_bytes());
-        b.extend_from_slice(&body[12..]);
-        b
-    };
-    let session: Vec<u8> = [
-        rpc(1, PMAP_PROG, 3, &[CORE_PROG, 1, 6, 0], b""),
-        rpc(2, CORE_PROG, 10, &[77, 0, 1000], b"inst0"),
-        rpc(3, CORE_PROG, 11, &[0, 1000, 1000, 8], b":CHAN1:SCAL 0.5;:CHAN1:SCAL?\n"),
-        rpc(4, CORE_PROG, 12, &[0, 1024, 1000, 1000, 0, 10], b""),
-        rpc(5, CORE_PROG, 15, &[0, 0, 1000, 1000], b""),
-        rpc(6, CORE_PROG, 23, &[0], b""),
-    ]
-    .concat();
-    let read = rpc(7, CORE_PROG, 12, &[0, 1, 1000, 1000, 0, 10], b"");
-    let seeds: [&[u8]; 3] = [&session, &two_fragments, &read];
-    run("vxi11::core", &seeds, 1, |b| {
-        let mut buf = b.to_vec();
-        // one link is open, with an answer waiting
-        let mut links = vec![Some(Link::default())];
-        if let Some(l) = links[0].as_mut() {
-            l.out.extend_from_slice(b"OOS,unit\n");
-        }
-        let mut exec = |c: &str| if c.ends_with('?') { b"1".to_vec() } else { Vec::new() };
-        loop {
-            let before = buf.len();
-            let Some(rec) = take_record(&mut buf) else { break };
-            if buf.len() + 4 > before || rec.len() + buf.len() > before {
-                return Err(format!("a record of {} bytes left {} of {} bytes", rec.len(), buf.len(), before));
-            }
-            let Some(c) = parse_call(&rec) else { continue };
-            for reply in [portmap(&c), core(&c, &mut links, &mut exec)] {
-                if reply.len() % 4 != 0 || reply.len() < 24 || reply[..4] != c.xid.to_be_bytes() {
-                    return Err(format!("the answer {reply:02x?} to call {}", c.xid));
-                }
-            }
-            if links.len() > 16 {
-                return Err(format!("{} links", links.len()));
-            }
-        }
-        if buf.len() > b.len() {
-            return Err("the buffer grew".into());
-        }
-        Ok(())
-    });
-}
 
 /// `sntp::parse` (the answer of a time server, UDP): returns for any bytes; an answer it takes is at least 48
 /// bytes from a server (mode 4, version 1..=4) to this request, of stratum 1..=15, synchronised, with a transmit

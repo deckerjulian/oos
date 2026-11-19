@@ -2,8 +2,25 @@
 
 ## Unreleased
 
-Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
-it also ran on a DHO924S (2026-11-16).
+Changed:
+
+- A picker longer than the screen scrolls by its bar, a finger and the knob, as the other lists do (ADR 0006): a WLAN
+  scan lists every network it found, not the 17 strongest, and the Bluetooth pickers every device, not the first 18.
+
+Fixed:
+
+- An update that brings another device tree starts by kexec again when the loader seeded the kernel's address
+  randomisation: the seed is carried into the new tree as 0, which kexec-tools requires (issue #193; host test; the
+  developer's unit writes no seed, so it has not run on a unit).
+
+## 0.1.14
+
+Released on 2026-11-19. Fixes from the review of 0.1.13 and from the forum's and the issues' reports, Bluetooth and a
+WLAN stick with its driver, mice and keyboards, a number pad for values, and the DHO802/DHO812 verified by a user's
+install. Telnet, the native Windows build and the frames draw path are gone. The code of oos-ui is split into crates and
+tables of pages and services without a change of what the scope does. All of it is tested on the host; marked "(unit)"
+where it also ran on a DHO924S. The release build itself ran on a DHO924S from its kexec start (the device tests of tier
+a0); its first start from power-on, which confirms an update, was not tried before the release.
 
 Added:
 
@@ -120,9 +137,9 @@ Changed:
 
 Fixed:
 
-- An update that brings another device tree starts by kexec again when the loader seeded the kernel's address
-  randomisation: the seed is carried into the new tree as 0, which kexec-tools requires (issue #193; host test; the
-  developer's unit writes no seed, so it has not run on a unit).
+- A remote client (SCPI on port 5555, VXI-11, HiSLIP) that reads its answers slowly or not at all no longer slows
+  the screen: answers go out as the network takes them, and the client's next command waits until its answers are
+  out. Before, such a client could hold the screen and the keys for up to 30 s per answer (#192; host tests).
 - A `cal_vertical.hex` with 64-byte records (one block group, seen on a DHO804) is read at 64 bytes a record instead
   of stopping oos-ui at every start; a calibration file whose scale keys are out of order is not used, and the scope
   starts uncalibrated instead of stopping (issue #37; host tests, and the usual 56-byte file still loads on a DHO924S).

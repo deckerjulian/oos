@@ -404,7 +404,7 @@ fn setup_quick_key() {
 #[test]
 #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn setup_protocols_by_name() {
-    for &p in PROTOS.iter() {
+    for &p in crate::protocols::PROTOS.iter() {
         let m = Model { dec_proto: p, ..Default::default() };
         let text = setup_text(&m);
         assert!(text.contains(&format!("dec_proto = {}\n", p.key())));

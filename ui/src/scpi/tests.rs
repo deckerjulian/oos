@@ -10,6 +10,8 @@ use super::measure::meas_token;
 use super::*;
 use crate::math::{MathOp, MATH_REF_BASE};
 use crate::wave::Source;
+use std::io::{ErrorKind, Write};
+use std::time::Duration;
 
 use crate::ui::testkit::{q as line, scpi_session as session};
 
@@ -17,6 +19,7 @@ mod decode;
 mod measure;
 mod reference;
 mod settings;
+mod transports;
 
 // Break it catches: a root moved out of exec_cmd that answers, changes or reports an error otherwise than before
 // (scale and position set on the model, a bad number, an unknown node, the debug nodes)
@@ -578,7 +581,7 @@ fn generic_model_queries_preserve_statistics_configuration_and_pending_requests(
     let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (stream, _) = listener.accept().unwrap();
     let pending = b":MEAS:ITEM? VPP,CHAN1".to_vec();
-    s.clients.push(Client { s: stream, buf: pending.clone(), program: None });
+    s.clients.push(Client { s: stream, buf: pending.clone(), program: None, out: Default::default(), closing: false });
     for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {
         assert!(!line(&mut s, &mut ui, &cv, query).is_empty(), "{query} must return its existing reply");
         assert_eq!(
@@ -792,4 +795,65 @@ fn additional_action_queries_never_start_calibration_bode_or_force() {
     let old = ui.meas_pair_sources();
     line(&mut scpi, &mut ui, &canvas, ":MEAS:SOUR R1,WRONG");
     assert_eq!(ui.meas_pair_sources(), old, "invalid secondary source cannot partially apply");
+}
+
+/// #192: a client that asks for much and reads nothing costs the frame loop a write that does not wait, not the
+/// screen (every `poll` returns while it reads nothing). Its replies wait in its outbox, its next lines wait until
+/// they are out, another client is answered at once, and when it reads at last every reply arrives, whole and in order.
+#[test]
+fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
+    let (mut s, mut ui, cv) = reference_session();
+    let port = s.port().unwrap();
+    // a waveform as text is about 50 kB: 40 lines of 20 queries ask for 40 MB, far more than the socket buffers hold
+    // (Linux lets those of the loopback grow to several MB)
+    line(&mut s, &mut ui, &cv, ":WAV:SOUR R1;:WAV:FORM ASC");
+    let mut slow = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let line_of = |k: usize| format!("{}*ESR?\n", ":WAV:DATA?;".repeat(19 - k % 2));
+    for k in 0..40 {
+        slow.write_all(line_of(k).as_bytes()).unwrap();
+    }
+    // every pass returns: the loop does not wait for the client; its replies wait in the outbox and its later lines
+    // are not run yet
+    for _ in 0..200 {
+        s.poll(&mut ui, &cv);
+    }
+    assert_eq!(s.clients.len(), 1);
+    assert!(!s.clients[0].out.is_empty(), "replies wait in the outbox");
+    assert!(s.clients[0].buf.contains(&b'\n'), "later lines wait until the replies before them are out");
+    let mut other = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    other.write_all(b"*ESR?\n").unwrap();
+    other.set_nonblocking(true).unwrap();
+    let (mut answer, mut n, t) = ([0u8; 16], 0, std::time::Instant::now());
+    while !answer[..n].contains(&b'\n') {
+        assert!(t.elapsed() < Duration::from_secs(20), "the other client got no answer");
+        s.poll(&mut ui, &cv);
+        match other.read(&mut answer[n..]) {
+            Ok(k) => n += k,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            Err(e) => panic!("{:?}", e),
+        }
+    }
+    assert_eq!(&answer[..n], b"0\n");
+    let reader = std::thread::spawn(move || {
+        let mut got = Vec::new();
+        slow.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        let mut b = vec![0u8; 1 << 16];
+        while got.iter().filter(|&&c| c == b'\n').count() < 40 {
+            let k = slow.read(&mut b).expect("the replies keep coming");
+            assert!(k > 0, "closed before all replies were there");
+            got.extend_from_slice(&b[..k]);
+        }
+        got
+    });
+    let t = std::time::Instant::now();
+    while !reader.is_finished() {
+        assert!(t.elapsed() < Duration::from_secs(30));
+        s.poll(&mut ui, &cv);
+    }
+    let got = reader.join().unwrap();
+    let lines: Vec<&[u8]> = got.split(|&c| c == b'\n').filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 40);
+    for (k, l) in lines.iter().enumerate() {
+        assert_eq!(l.iter().filter(|&&c| c == b';').count(), 19 - k % 2, "reply {} has its own answers", k);
+    }
 }

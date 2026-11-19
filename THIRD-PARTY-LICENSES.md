@@ -58,7 +58,7 @@ also holds the parts listed here. Each keeps its own licence.
 | `libc` crate | as in `ui/Cargo.lock` | MIT OR Apache-2.0 | linked into `oos-ui`, `oos-fpgad`, `oos-update` | `rust.txt`, `Apache-2.0.txt` | not required |
 | Roboto (roboto-classic) | as in `ui/tools/fonts/` | Apache-2.0 | its glyphs, drawn into `oos-ui` | `Apache-2.0.txt` ([ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt)) | not required |
 
-The versions are those of release 0.1.13. `rootfs/deps.lock` pins the archives the image builds from, with their
+The versions are those of release 0.1.14. `rootfs/deps.lock` pins the archives the image builds from, with their
 checksums; the Ubuntu and Alpine packages come from the container images the build scripts name (`ubuntu:26.04`,
 `alpine:3.22`), and a release carries the source packages of the versions that were in its image. A package that
 links a library in keeps the library's version of the day it was built: `busybox.version` of a build names the one

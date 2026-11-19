@@ -437,6 +437,7 @@ impl Ui {
                 } else if base == 0xb0 {
                     // multi 1 selects the item
                     self.focus = (self.focus as i32 + dir).rem_euclid(items.len() as i32) as usize;
+                    self.pick_follow_focus();
                 } else {
                     // multi 2 changes the value
                     if Self::kind(it) != Kind::Action {

@@ -77,9 +77,7 @@ mod timebase;
 mod waveform;
 #[cfg(test)]
 use std::io::Read;
-use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
 
 /// One bounded SCPI message, retained by its transport while *OPC? is pending.
 #[derive(Default)]
@@ -133,43 +131,43 @@ impl Program {
     }
 }
 
+// what a transport of oos-remote hands to this interpreter (ADR 0022, ADR 0064)
+impl oos_remote::Program for Program {
+    fn new(text: &str) -> Self {
+        Program::new(text)
+    }
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+    fn has_reply(&self) -> bool {
+        self.has_reply
+    }
+}
+
 struct Client {
     s: TcpStream,
     buf: Vec<u8>,
     program: Option<Program>,
+    /// the replies not yet written (#192): its next command runs once they are out
+    out: crate::net::Outbox,
+    /// the client closed its side: it is dropped once its replies are out
+    closing: bool,
+}
+
+impl Client {
+    /// Writes what the socket takes now of the replies not yet written.
+    fn flush(&mut self) -> crate::net::Sent {
+        self.out.flush(&self.s)
+    }
 }
 
 /// Longest command line (`:SOURce:ARB:DATA` with its samples is the longest there is); a client past it is dropped.
 const MAX_LINE: usize = 4 << 20;
 /// Connections at once.
 const MAX_CLIENTS: usize = 8;
-/// A message stops here: one answer may be a long record, ten thousand of them in one line may not.
-pub const RESP_MAX: usize = 64 << 20;
+pub use crate::net::RESP_MAX;
 const ERR_MAX: usize = 20;
 const ERR_LEN: usize = 256;
-/// A client that takes no data for this long, or not all of a response in `SEND_LIMIT`, is dropped: the server runs in
-/// the main loop, the screen and the keys wait while it writes.
-const SEND_STALL: Duration = Duration::from_secs(2);
-const SEND_LIMIT: Duration = Duration::from_secs(30);
-
-/// Writes `d` to a client; false when it was given up (the connection is then to be closed).
-pub fn send(s: &mut TcpStream, d: &[u8]) -> bool {
-    let end = std::time::Instant::now() + SEND_LIMIT;
-    let _ = s.set_write_timeout(Some(SEND_STALL));
-    let mut p = 0;
-    while p < d.len() {
-        if std::time::Instant::now() >= end {
-            return false;
-        }
-        match s.write(&d[p..]) {
-            Ok(0) => return false,
-            Ok(n) => p += n,
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(_) => return false,
-        }
-    }
-    true
-}
 
 pub struct Scpi {
     l: Option<TcpListener>,
@@ -373,7 +371,13 @@ impl Scpi {
                 let _ = s.set_nodelay(true);
                 // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
                 if self.clients.len() < MAX_CLIENTS {
-                    self.clients.push(Client { s, buf: Vec::new(), program: None });
+                    self.clients.push(Client {
+                        s,
+                        buf: Vec::new(),
+                        program: None,
+                        out: Default::default(),
+                        closing: false,
+                    });
                 }
             }
         }
@@ -384,13 +388,18 @@ impl Scpi {
         }
         let mut i = 0;
         while i < self.clients.len() {
+            // what is still to be written goes first, as much as the socket takes now (#192)
+            if self.clients[i].flush() == crate::net::Sent::Gone {
+                self.clients.remove(i);
+                continue;
+            }
             let mut tmp = [0u8; 4096];
             let mut closed = false;
             // the client sent its last bytes (`echo "*IDN?" | nc host 5555` closes its side after the line): what came
-            // before is still answered, as in 0.1.12 and on the stock system
-            let mut eof = false;
+            // before is still answered, as in 0.1.12 and on the stock system; nothing more is read
+            let mut eof = self.clients[i].closing;
             let mut read_bytes = 0;
-            loop {
+            while !eof {
                 match crate::net::read_now(&self.clients[i].s, &mut tmp) {
                     Ok(0) => {
                         eof = true;
@@ -418,7 +427,8 @@ impl Scpi {
             if eof && self.clients[i].program.is_some() {
                 closed = true;
             }
-            while !closed {
+            // a client still taking a reply gets its next one after it, so its replies keep their order and do not pile up
+            while !closed && self.clients[i].out.is_empty() {
                 if self.clients[i].program.is_none() {
                     let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else {
                         break;
@@ -428,24 +438,27 @@ impl Scpi {
                 }
                 let mut program = self.clients[i].program.take().unwrap();
                 let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
-                    // after the end of the input a program that would have to wait is dropped
-                    if !eof {
+                    // after the end of the input a program that would have to wait is dropped, and no later line runs
+                    if eof {
+                        self.clients[i].buf.clear();
+                    } else {
                         self.clients[i].program = Some(program);
                     }
                     break;
                 };
                 if program.has_reply {
                     response.push(b'\n');
-                    if !send(&mut self.clients[i].s, &response) {
-                        closed = true;
-                        break;
-                    }
+                    self.clients[i].out.push(&response);
+                    closed = self.clients[i].flush() == crate::net::Sent::Gone;
                 }
             }
-            closed |= eof || self.clients[i].buf.len() > MAX_LINE;
-            if closed {
+            let c = &mut self.clients[i];
+            // at the end of its input a client leaves once every line it sent is answered and the replies are out
+            let ended = eof && (!c.out.is_empty() || c.buf.contains(&b'\n'));
+            if closed || c.buf.len() > MAX_LINE || (eof && !ended) {
                 self.clients.remove(i);
             } else {
+                c.closing = ended;
                 i += 1;
             }
         }

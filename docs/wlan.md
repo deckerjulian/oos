@@ -31,8 +31,8 @@ option `RTL8XXXU_UNTESTED`. Another driver needs its modules in `boot/build-dev-
 
 The network box at the top right, or System > Network:
 
-- **Find WLAN networks:** scans for a few seconds, then lists the 17 strongest names with their signal. Tap one and enter the
-  password. A saved network joins without one. **Other network** takes a hidden name, then a password (empty: open).
+- **Find WLAN networks:** scans for a few seconds, then lists every name it found with its signal, the strongest first
+  (a long list scrolls). Tap one and enter the password. A saved network joins without one. **Other network** takes a hidden name, then a password (empty: open).
 - **Forget WLAN network:** lists the saved networks, a tap removes one.
 - **WLAN details:** connection, signal, address, MAC of the stick.
 
