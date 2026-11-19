@@ -8,7 +8,6 @@
 //! analysers, math, generator, and the start values in `defaults.rs`. A new setting goes into the struct here, its
 //! type and its methods into the file of its area.
 
-use crate::board::{board, Board};
 use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
@@ -78,9 +77,9 @@ pub fn gen_count() -> usize {
     oos_hal::model::platform().caps.generators.min(NGEN)
 }
 
-/// The memory depths of the board (Acquire menu).
+/// The memory depths of the board (Acquire menu): the table of this build's board (`oos_hal::target::DEPTHS`).
 pub fn mdepths() -> &'static [(&'static str, u64)] {
-    board().depths()
+    oos_hal::target::DEPTHS
 }
 
 /// Channel names of the unit, "CH1".."CHn" (option lists of channel sources).

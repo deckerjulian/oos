@@ -44,13 +44,16 @@ The code keeps the board apart:
 
 - What the GUI takes from the board: the channel slots (`Board::MAX_CHANNELS`, the unit's own count from `Caps::channels`),
   the generators (`Board::MAX_GENERATORS`, `Caps::generators`; with more than one the generator page gets a selector and
-  SCPI takes `:SOURce<n>`), the memory depths (`Board::depths`) and the couplings (`Board::couplings`, `Coupling::Dc50` for
-  a 50 ohm path). `oos_dsp::CHANNELS` must equal `MAX_CHANNELS`, the compiler checks it. With 2 generators, and with 2 or
-  6 channels, the neutral code was tried on the host: it builds, and with 2 generators all tests pass.
+  SCPI takes `:SOURce<n>`) and the couplings (`Board::couplings`, `Coupling::Dc50` for a 50 ohm path). The memory
+  depths of the Acquire menu are data of the board in hal (`target::DEPTHS`), so the model reads them without the
+  board. `oos_dsp::CHANNELS` must equal `MAX_CHANNELS`, the compiler checks it. With 2 generators, and with 2 or 6
+  channels, the neutral code was tried on the host: it builds, and with 2 generators all tests pass.
 
 A port adds `hal/src/<board>/` with its `Target`, `ui/src/board/<board>/` with its `Board` and `rootfs/board/<board>/`,
-and points `target::ACTIVE` and `board::Active` at them; the image is built with `OOS_BOARD=<board>`. The compiler names
-every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that board's `oos-board` calls it.
+and points `target::ACTIVE`, `target::DEPTHS` and `board::Active` at them (the hal test
+`the_depths_come_from_the_active_family` holds the first two together); the image is built with `OOS_BOARD=<board>`. The
+compiler names every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that
+board's `oos-board` calls it.
 
 ## Board families
 
