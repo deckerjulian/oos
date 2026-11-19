@@ -1222,6 +1222,7 @@ impl Ui {
         if phase == Phase::Down
             && (self.full_btn().1.contains(x, y)
                 || self.zoom_btn().1.contains(x, y)
+                || self.win_btn().1.contains(x, y)
                 || (self.m.zoom && self.zoom_readout().contains(x, y)))
         {
             self.workspace.gesture = None;

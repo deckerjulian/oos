@@ -822,7 +822,7 @@ impl Ui {
             cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
         }
         // right-aligned, but left of the full-screen, zoom and more buttons in the corner, and inside the plot
-        let right = (self.full_home().0.x - 8).min(a.x + a.w - 8);
+        let right = (self.full_btn().0.x - 8).min(a.x + a.w - 8);
         let w = (f.s.width(&status) + 16).min((right - a.x - 8).max(40));
         let r = Rect::new(right - w, a.y + 22, w, 20);
         cv.round(r, 4, PANEL_BG, 230);

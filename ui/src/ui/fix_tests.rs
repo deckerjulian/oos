@@ -144,7 +144,7 @@ fn a_floating_measurement_card_never_covers_the_zoom_bar_or_the_corner_buttons()
         let (head, body) = u.results_rects().unwrap();
         let card = Rect::new(head.x, head.y, head.w, head.h + body.h);
         let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
-        assert!(!hits(u.full_btn().0) && !hits(u.zoom_btn().0), "{place:?} covers a corner button: {card:?}");
+        assert!(!u.corner_btns().into_iter().any(hits), "{place:?} covers a corner button: {card:?}");
         assert!(!hits(u.zoom_readout()), "{place:?} covers the zoom bar: {card:?}");
     }
 }
@@ -161,9 +161,8 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
         let g = u.grid;
         let apart = card.x >= g.right() || g.x >= card.right() || card.y >= g.bottom() || g.y >= card.bottom();
         assert!(apart, "{dock:?}: card {card:?} overlaps the plot {g:?}");
-        let (full, zoom) = (u.full_btn().0, u.zoom_btn().0);
         let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
-        assert!(!hits(full) && !hits(zoom), "{dock:?} covers a corner button");
+        assert!(!u.corner_btns().into_iter().any(hits), "{dock:?} covers a corner button");
         assert!(
             card.y >= TOP.h && card.bottom() <= BOTTOM.y + 1 && card.x >= 0 && card.right() <= W,
             "{dock:?} {card:?} on screen"
@@ -234,7 +233,7 @@ fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_but
     for y in (u.area.y..u.area.bottom()).step_by(3) {
         let x = u.right_tag_x(u.area, y, 24);
         let tag = Rect::new(x, y, 24, 14);
-        assert!(!hit(tag, u.full_btn().0) && !hit(tag, u.zoom_btn().0), "tag at y {y} covers a button");
+        assert!(!u.corner_btns().into_iter().any(|r| hit(tag, r)), "tag at y {y} covers a button");
     }
 }
 

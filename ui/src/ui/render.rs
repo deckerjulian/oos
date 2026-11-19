@@ -127,11 +127,9 @@ impl Ui {
         self.draw_info(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
-        // the zoom magnifier belongs to the scope picture: an analyser page has its own controls under it
-        if !(self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none())
-            && !self.view_on()
-        {
+        if self.plot_btns_shown() {
             self.draw_zoom_btn(cv);
+            self.draw_win_btn(cv);
         }
         self.draw_auto_bar(cv);
         self.draw_strip(cv);

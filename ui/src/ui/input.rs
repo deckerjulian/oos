@@ -7,14 +7,10 @@
 
 use super::*;
 
-/// The corner button's place when a press takes it, and the place it had before.
-type FullFrom = (i32, i32, Option<(i32, i32)>);
-
 /// What a press hits, found before the touch state starts.
 struct PressHits {
     in_plot: bool,
     zmap: Option<(Rect, f32, f32)>,
-    full_from: Option<FullFrom>,
     grip: Option<(scroll::List, scroll::Grip)>,
 }
 
@@ -592,25 +588,21 @@ impl Ui {
     /// One finger's press, move or lift in the area of the current window.
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
         let covered = self.dlg_layout().is_some_and(|d| d.r.contains(x, y));
+        // the corner buttons are taps that stay in place: a press on one is no drag of the trace or of the button
+        let on_btn = !covered
+            && (self.full_btn().1.contains(x, y)
+                || (self.plot_btns_shown() && (self.zoom_btn().1.contains(x, y) || self.win_btn().1.contains(x, y))));
         let in_plot = ph == Phase::Down
             && self.grid.contains(x, y)
             && !covered
+            && !on_btn
             && !(self.eye_open() && self.eye_pane_rect().contains(x, y));
-        // a press on the corner button moves that button; it is not a drag of the trace
-        let on_full = ph == Phase::Down && !covered && self.full_btn().1.contains(x, y);
-        // the plot buttons are taps; a zoom box starts on the waveform, not on them
+        // a zoom box starts on the waveform, not on the zoom bar or the view button
         let on_chrome = ph == Phase::Down
-            && (on_full
-                || (self.zoom_btn().1.contains(x, y) && !self.view_on())
+            && ((self.zoom_btn().1.contains(x, y) && !self.view_on())
                 || (self.m.zoom && self.zoom_readout().contains(x, y))
                 || (self.view_on() && self.view_btn().contains(x, y)));
         let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
-        let full_from = if on_full {
-            let (r, _) = self.full_btn();
-            Some((r.x, r.y, self.full_at))
-        } else {
-            None
-        };
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
         let grip = if ph == Phase::Down
             && !self.m.touch_lock
@@ -623,7 +615,7 @@ impl Ui {
             None
         };
         match ph {
-            Phase::Down => self.touch_down(x, y, PressHits { in_plot, zmap, full_from, grip }),
+            Phase::Down => self.touch_down(x, y, PressHits { in_plot, zmap, grip }),
             Phase::Move => self.touch_move(x, y),
             _ => self.touch_up(x, y),
         }
@@ -631,7 +623,7 @@ impl Ui {
 
     /// A press: the touch state starts, and what the finger is on picks the drag it may become.
     fn touch_down(&mut self, x: i32, y: i32, hits: PressHits) {
-        let PressHits { in_plot, zmap, full_from, grip } = hits;
+        let PressHits { in_plot, zmap, grip } = hits;
         let t = &mut self.touch;
         let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
         *t = TouchState {
@@ -656,9 +648,7 @@ impl Ui {
             t.drag = Drag::Scroll(l, g);
             return;
         }
-        if let Some((ox, oy, prev)) = full_from {
-            t.drag = Drag::FullBtn { ox, oy, prev };
-        } else if !in_plot {
+        if !in_plot {
             // a finger held on the card of a channel that is on: AC/DC, as the channel key
             let (chs, _, _) = self.cards();
             self.card_hold =
@@ -944,15 +934,6 @@ impl Ui {
                     *p = (x, y);
                 }
             }
-            Drag::FullBtn { ox, oy, prev } => {
-                // past the tap slop the button follows the finger; a shorter move is still a tap
-                if dx.abs() >= 16 || dy.abs() >= 16 {
-                    let (px, py) = self.clamp_full(ox + dx, oy + dy);
-                    self.full_at = Some((px, py));
-                } else {
-                    self.full_at = prev;
-                }
-            }
             Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
                 let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD) {
                     t.start_cur + dy as f32 / self.area.h as f32
@@ -972,7 +953,7 @@ impl Ui {
         }
     }
 
-    /// A lift: it ends the drag, finishes a zone, a zoom box or the corner button, or is a tap.
+    /// A lift: it ends the drag, finishes a zone or a zoom box, or is a tap.
     fn touch_up(&mut self, x: i32, y: i32) {
         let t = &mut self.touch;
         let was = (t.down, t.drag, t.x0, t.y0, t.held);
@@ -993,17 +974,6 @@ impl Ui {
         }
         if was.1 == Drag::ZoomBox {
             self.finish_zoom_box();
-            return;
-        }
-        if let Drag::FullBtn { ox, oy, prev } = was.1 {
-            let (dx, dy) = (x - was.2, y - was.3);
-            if dx.abs() < 16 && dy.abs() < 16 {
-                self.full_at = prev;
-                self.tap(was.2, was.3);
-            } else {
-                let (px, py) = self.clamp_full(ox + dx, oy + dy);
-                self.full_at = Some((px, py));
-            }
             return;
         }
         if self.dialog.is_some() {
@@ -1241,6 +1211,9 @@ impl Ui {
         if self.zoom_btn().1.contains(x, y) && !self.view_on() {
             self.set_zoom(!self.m.zoom);
             return;
+        }
+        if self.win_btn().1.contains(x, y) && self.plot_btns_shown() {
+            return self.toggle_menu(MenuId::Windows);
         }
         if self.zoom_close_tap(x, y) {
             return;

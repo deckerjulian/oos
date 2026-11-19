@@ -561,12 +561,6 @@ enum Drag {
     Zone(usize),
     /// draw-a-box is armed: draw repeated zoom boxes until a tap/menu cancels
     ZoomBox,
-    /// the corner button: its drawn origin when the finger went down, and where it sat before this gesture
-    FullBtn {
-        ox: i32,
-        oy: i32,
-        prev: Option<(i32, i32)>,
-    },
     Offset(usize),
     RefOffset(usize),
     Delay,
@@ -732,8 +726,6 @@ pub struct Ui {
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
     /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
     full: bool,
-    /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
-    full_at: Option<(i32, i32)>,
     /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
     /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
     full_asked: bool,

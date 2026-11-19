@@ -316,9 +316,9 @@ impl Ui {
             ),
         };
         let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
-        // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
+        // A floating card never covers the corner buttons or the zoom bar.
         let floating = docked.is_none();
-        for r in if floating { vec![self.full_btn().0, self.zoom_btn().0] } else { Vec::new() } {
+        for r in if floating { self.corner_btns().to_vec() } else { Vec::new() } {
             let r = Rect::new(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
             if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y {
                 x = (r.x - rw).max(0);
