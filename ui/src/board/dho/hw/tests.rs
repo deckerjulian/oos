@@ -1201,31 +1201,6 @@ fn decode_and_align_a_square() {
     assert!(r.ch[0][495] < 0.5 && r.ch[0][505] > 2.0, "{} {}", r.ch[0][495], r.ch[0][505]);
 }
 
-/// The simulated unit as the loop's port (ADR 0053): its register window, stream and clock, a front-end stub, lines that
-/// record, and a generator that is not there.
-struct SimPort;
-struct NoGen;
-
-impl oos_hal::dho::afg::GenLines for NoGen {
-    fn relays(&mut self, _code: u8) {}
-    fn power(&mut self, _on: bool) {}
-    fn relay_code(&self) -> u8 {
-        0
-    }
-}
-
-impl super::port::Port for SimPort {
-    type Bus = oos_hal::dho::sim::Bar;
-    type Stream = oos_hal::dho::sim::Stream;
-    type Afe = oos_hal::dho::boot::sim::AfeStub;
-    type Lines = oos_hal::dho::lines::Recorded;
-    type Clock = oos_hal::dho::sim::Time;
-    type Gen = NoGen;
-    fn open_gen(&mut self) -> std::io::Result<NoGen> {
-        Ok(NoGen)
-    }
-}
-
 // Stage 1b.3: the loop compiles on a host and runs against the simulated unit. Break it catches: a loop that names
 // the scope's own types, waits on the wall clock, or arms, plays and delivers nothing on a unit that triggers
 #[test]
@@ -1243,7 +1218,7 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let scene = Scene { volts, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
     let (u, bar, c2h, clock) = unit(scene);
     let lines = oos_hal::dho::lines::Recorded::default();
-    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: SimPort };
+    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
     out.lock().unwrap().want = Some(want.clone());
     let mut passes = 0;

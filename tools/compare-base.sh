@@ -13,13 +13,17 @@
 #                                    report names every picture with the box of its change as before
 #   tools/compare-base.sh --record-sums DIR
 #                                    keeps in DIR what --base-sums reads, of this tree as committed (HEAD, no changes):
-#                                    the sums of its pictures, stored files and remote answers, its oos-fpgad, the commit
-#                                    (CI: the push to main fills a cache that the pull requests onto it read)
+#                                    the sums of its pictures, stored files and remote answers, its oos-fpgad, the files
+#                                    of its live run (live/), the commit (CI: the push to main fills a cache that the pull
+#                                    requests onto it read)
 #
 # Checks BASE out into a tree of its own (ui/target/compare-base/tree, a git worktree that stays for the next run),
 # builds it, records its pictures, stored files and remote answers (ui/tools/layout-check.sh) and its register
 # sequences (tools/plan-matrix.sh), does the same with the working tree as it is, uncommitted changes included, and
-# compares.
+# compares. Then it runs the acquisition loop against the simulated unit on both sides (the live run, ADR 0053:
+# `board::dho::hw::liverun`, a test of oos-ui that writes one file per case of its matrix: the unit's trace and the
+# frames delivered) and compares those files. A base from before the live run has none: that part is then left out and
+# the summary says so.
 #
 # The register sequences are printed with the calibration files in OOS_CAL_DIR, else in local/cal of this tree, else
 # with a made-up calibration set: `oos-fpgad made-up-cal` of this tree writes it once into the work folder, and both
@@ -27,9 +31,9 @@
 # that calibration changes, but not the values of a real unit. CI has no files of a unit and takes this way. Only an
 # oos-fpgad from before the made-up set leaves the calibrated values out of both sides.
 #
-# Exit 0: nothing differs. 1: a picture or a register sequence differs. 2: the comparison could not be made.
-# The report is in ui/target/compare-base/: summary.md, pictures.txt, registers.diff and differing/ with both
-# versions of the first pictures that differ. Touches no scope.
+# Exit 0: nothing differs. 1: a picture, a register sequence or the live run differs. 2: the comparison could not be
+# made. The report is in ui/target/compare-base/: summary.md, pictures.txt, registers.diff, live.diff and differing/
+# with both versions of the first pictures that differ. Touches no scope.
 set -u
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -40,6 +44,17 @@ tree=$work/tree
 stop() {
 	echo "compare-base.sh: $*" >&2
 	exit 2
+}
+
+# The live run of tree $1 into folder $2 (made new). Returns 1 when that tree has no live run.
+live_run() {
+	[ -f "$1/ui/src/board/dho/hw/liverun.rs" ] || return 1
+	rm -rf "$2" && mkdir -p "$2" || stop "cannot make $2"
+	# absolute: the test runs in $1/ui
+	set -- "$1" "$(cd "$2" && pwd)"
+	(cd "$1/ui" && OOS_LIVE_OUT=$2 cargo test --locked --quiet --bin oos-ui -- board::dho::hw::liverun) \
+		>"$2.log" 2>&1 || stop "the live run fails in $1: $(tail -n 3 "$2.log")"
+	ls "$2"/*.txt >/dev/null 2>&1 || stop "the live run of $1 wrote no file"
 }
 
 sums=
@@ -53,6 +68,7 @@ case ${1:-} in
 	(cd fpgad && cargo build --release --locked --quiet) || stop "oos-fpgad does not build"
 	cp ui/target/layout-sums.sums "$dir/layout-base.sums" && cp fpgad/target/release/oos-fpgad "$dir/oos-fpgad" &&
 		git rev-parse HEAD >"$dir/commit" || stop "cannot write $dir"
+	live_run "$root" "$dir/live" || rm -rf "$dir/live"
 	echo "kept the sums of $(git log -1 --format='%h %s') in $dir"
 	exit 0
 	;;
@@ -165,11 +181,39 @@ else
 fi
 echo "$registers_line"
 
+echo "== the acquisition loop on the simulated unit (live run)"
+live=0
+if live_run "$root" "$work/live-new"; then
+	# the base's files: kept with the sums, else run in its tree; a base from before the live run has none
+	live_base=
+	if [ "$cached" = 1 ] && [ -d "$sums/live" ]; then
+		live_base=$sums/live
+	elif live_run "$tree" "$work/live-base"; then
+		live_base=$work/live-base
+	fi
+	cases=$(find "$work/live-new" -name '*.txt' | wc -l | tr -d ' ')
+	if [ -z "$live_base" ]; then
+		live_line="not compared: the base has no live run ($cases cases in this tree)"
+	elif diff -ru "$live_base" "$work/live-new" >"$work/live.diff"; then
+		live_line="all $cases cases equal (the unit's trace and the frames delivered)"
+	else
+		live=1
+		differ=$(grep -c '^diff ' "$work/live.diff" || true)
+		only=$(grep -c '^Only in ' "$work/live.diff" || true)
+		live_line="$((differ + only)) of $cases cases differ, see live.diff"
+		head -n 40 "$work/live.diff"
+	fi
+else
+	live_line="not run: this tree has no live run"
+fi
+echo "$live_line"
+
 {
 	echo "### Against $(git log -1 --format='%h' "$base")"
 	echo
 	echo "- Pictures, stored files, remote answers: $(tail -n 1 "$work/pictures.txt")"
 	echo "- Register sequences: $registers_line"
+	echo "- Live run of the acquisition loop: $live_line"
 	if [ "$pictures" = 1 ]; then
 		echo
 		echo '```'
@@ -182,6 +226,12 @@ echo "$registers_line"
 		head -n 60 "$work/registers.diff"
 		echo '```'
 	fi
+	if [ "$live" = 1 ]; then
+		echo
+		echo '```diff'
+		head -n 60 "$work/live.diff"
+		echo '```'
+	fi
 } >"$work/summary.md"
 
-[ "$pictures" = 0 ] && [ "$registers" = 0 ]
+[ "$pictures" = 0 ] && [ "$registers" = 0 ] && [ "$live" = 0 ]

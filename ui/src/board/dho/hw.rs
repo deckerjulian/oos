@@ -6,6 +6,8 @@
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
 mod decode;
+#[cfg(test)]
+mod liverun;
 mod plan;
 mod port;
 mod seg;
