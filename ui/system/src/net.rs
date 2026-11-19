@@ -5,7 +5,7 @@
 //! waiting: nothing in the loop may block on the network (#192).
 
 use std::io;
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
 /// A reply that moves no byte for this long gives its client up: it takes no data.
@@ -44,6 +44,62 @@ pub fn read_now(s: &TcpStream, buf: &mut [u8]) -> io::Result<usize> {
 /// Whether a read error only means "nothing now" (try again in the next pass).
 pub fn later(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted)
+}
+
+/// Takes the connections waiting on `l`, without waiting. One from a peer `acl` leaves out is dropped, which closes it;
+/// the others are made blocking again, with no Nagle delay, and handed to `take` (which may drop one too, as when the
+/// server has all the connections it takes).
+pub fn accept_from(l: &TcpListener, acl: &crate::netacl::Shared, mut take: impl FnMut(TcpStream)) {
+    while let Ok((s, peer)) = l.accept() {
+        if !acl.permits_peer(Ok(peer)) {
+            continue;
+        }
+        let _ = s.set_nonblocking(false);
+        let _ = s.set_nodelay(true);
+        take(s);
+    }
+}
+
+/// What `read_some` saw: the peer closed its side (`eof`), or the connection is to be closed (`closed`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadEnd {
+    pub eof: bool,
+    pub closed: bool,
+}
+
+/// Reads what has arrived on `s` into `buf`, without waiting, in pieces of up to `chunk` bytes (at most 8192), and stops
+/// after `budget` bytes, so the frame loop serves every connection in its turn. `closed` when `buf` would grow over
+/// `cap` or the read fails.
+pub fn read_some(s: &TcpStream, buf: &mut Vec<u8>, cap: usize, chunk: usize, budget: usize) -> ReadEnd {
+    let mut tmp = [0u8; 8192];
+    let tmp = &mut tmp[..chunk.clamp(1, 8192)];
+    let mut end = ReadEnd::default();
+    let mut read = 0;
+    loop {
+        match read_now(s, tmp) {
+            Ok(0) => {
+                end.eof = true;
+                break;
+            }
+            Ok(n) => {
+                if buf.len() + n > cap {
+                    end.closed = true;
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                read += n;
+                if read >= budget {
+                    break;
+                }
+            }
+            Err(e) if later(&e) => break,
+            Err(_) => {
+                end.closed = true;
+                break;
+            }
+        }
+    }
+    end
 }
 
 /// Writes what `s` takes of `buf` now, without waiting: `WouldBlock` when it takes nothing. The socket does not block
@@ -228,6 +284,54 @@ mod tests {
                 r => panic!("{:?}", r),
             }
         }
+    }
+
+    /// `read_some` (the reads of SCPI, VXI-11 and HiSLIP): nothing there returns at once with no end; the data come in
+    /// calls of at most the budget, in pieces; the end after the data; a piece that would take the buffer over its cap
+    /// closes the connection and is not kept.
+    #[test]
+    fn read_some_stops_at_its_budget_the_end_and_the_cap() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        let mut buf = Vec::new();
+        assert_eq!(read_some(&s, &mut buf, 1000, 10, 30), ReadEnd::default());
+        assert!(buf.is_empty());
+        c.write_all(&[7u8; 100]).unwrap();
+        let t = Instant::now();
+        let mut calls = 0;
+        while buf.len() < 100 && t.elapsed().as_secs() < 2 {
+            let before = buf.len();
+            assert_eq!(read_some(&s, &mut buf, 1000, 10, 30), ReadEnd::default());
+            assert!(buf.len() - before <= 30, "one call read {} of a budget of 30", buf.len() - before);
+            calls += (buf.len() > before) as usize;
+        }
+        assert_eq!(buf, vec![7u8; 100]);
+        assert!(calls >= 4, "100 bytes in calls of at most 30: {} calls", calls);
+        drop(c);
+        let t = Instant::now();
+        let end = loop {
+            let e = read_some(&s, &mut buf, 1000, 10, 30);
+            if e != ReadEnd::default() || t.elapsed().as_secs() >= 2 {
+                break e;
+            }
+        };
+        assert_eq!(end, ReadEnd { eof: true, closed: false });
+        assert_eq!(buf.len(), 100);
+        // 40 bytes already there, a cap of 45: the first piece of 10 would go over it
+        let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        c.write_all(&[1u8; 64]).unwrap();
+        let mut buf = vec![0u8; 40];
+        let t = Instant::now();
+        let end = loop {
+            let e = read_some(&s, &mut buf, 45, 10, 30);
+            if e != ReadEnd::default() || t.elapsed().as_secs() >= 2 {
+                break e;
+            }
+        };
+        assert_eq!(end, ReadEnd { eof: false, closed: true });
+        assert_eq!(buf, vec![0u8; 40], "the piece over the cap is not kept");
     }
 
     /// A client that reads nothing: the first flush returns at once with most of a long reply left, the reply goes out

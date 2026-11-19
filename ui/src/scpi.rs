@@ -366,23 +366,19 @@ impl Scpi {
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
-            while let Ok((s, peer)) = l.accept() {
-                if !self.acl.permits_peer(Ok(peer)) {
-                    continue; // dropped: closes the connection
-                }
-                let _ = s.set_nonblocking(false);
-                let _ = s.set_nodelay(true);
-                // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
-                if self.clients.len() < MAX_CLIENTS {
-                    self.clients.push(Client {
+            let (clients, limits) = (&mut self.clients, self.send_limits);
+            // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_some`)
+            crate::net::accept_from(l, &self.acl, |s| {
+                if clients.len() < MAX_CLIENTS {
+                    clients.push(Client {
                         s,
                         buf: Vec::new(),
                         program: None,
-                        out: crate::net::Outbox::with(self.send_limits),
+                        out: crate::net::Outbox::with(limits),
                         closing: false,
                     });
                 }
-            }
+            });
         }
         // net.allow changed on the screen: a client the list now leaves out is closed, as at `accept`
         if self.acl.changed(&mut self.acl_seen) {
@@ -396,35 +392,14 @@ impl Scpi {
                 self.clients.remove(i);
                 continue;
             }
-            let mut tmp = [0u8; 4096];
             let mut closed = false;
             // the client sent its last bytes (`echo "*IDN?" | nc host 5555` closes its side after the line): what came
             // before is still answered, as in 0.1.12 and on the stock system; nothing more is read
             let mut eof = self.clients[i].closing;
-            let mut read_bytes = 0;
-            while !eof {
-                match crate::net::read_now(&self.clients[i].s, &mut tmp) {
-                    Ok(0) => {
-                        eof = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        if self.clients[i].buf.len() + n > MAX_LINE {
-                            closed = true;
-                            break;
-                        }
-                        self.clients[i].buf.extend_from_slice(&tmp[..n]);
-                        read_bytes += n;
-                        if read_bytes >= 65536 {
-                            break;
-                        }
-                    }
-                    Err(e) if crate::net::later(&e) => break,
-                    Err(_) => {
-                        closed = true;
-                        break;
-                    }
-                }
+            if !eof {
+                let c = &mut self.clients[i];
+                let end = crate::net::read_some(&c.s, &mut c.buf, MAX_LINE, 4096, 65536);
+                (eof, closed) = (end.eof, end.closed);
             }
             // a program waiting for an operation (`*OPC?`) when the client went is not resumed: no later command of it runs
             if eof && self.clients[i].program.is_some() {
