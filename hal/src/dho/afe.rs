@@ -56,14 +56,14 @@ pub fn vertical_stride(len: usize) -> usize {
 }
 
 fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+    i32::from_le_bytes(crate::bytes_at(b, o))
 }
 
 impl Cal {
     pub fn from_bytes(lsb: &[u8], zero: &[u8], bw: &[u8], vertical: Vec<u8>) -> Cal {
         let mut c = Cal { lsb: [0.0; 16], zero: [0; 80], bw: [0; 80], vertical, keys: Vec::new() };
         for i in 0..16 {
-            c.lsb[i] = f64::from_le_bytes(lsb[HDR + 8 * i..HDR + 8 * i + 8].try_into().unwrap());
+            c.lsb[i] = f64::from_le_bytes(crate::bytes_at(lsb, HDR + 8 * i));
         }
         for i in 0..80 {
             c.zero[i] = i32_at(zero, HDR + 4 * i);
@@ -134,9 +134,9 @@ impl Cal {
             *x = i32_at(b, 8 + 4 * k);
         }
         Rec {
-            key: i64::from_le_bytes(b[0..8].try_into().unwrap()),
+            key: i64::from_le_bytes(crate::bytes_at(b, 0)),
             g,
-            gain: f64::from_le_bytes(b[40..48].try_into().unwrap()),
+            gain: f64::from_le_bytes(crate::bytes_at(b, 40)),
             zero: i32_at(b, 48),
             last: i32_at(b, 52),
         }
@@ -178,7 +178,7 @@ impl Cal {
 
     /// The 20 zero trims of channel `ch` (cal_afe_zero).
     pub fn zero_trims(&self, ch: usize) -> [i32; 20] {
-        self.zero[ch * 20..ch * 20 + 20].try_into().unwrap()
+        std::array::from_fn(|k| self.zero[ch * 20 + k])
     }
 
     /// First record whose scale key is >= `nv` (nV/div). The UI's scales pass through f32, where 100 mV reads
@@ -598,7 +598,7 @@ impl Afe {
         // a block group the file leaves empty has gain 0 everywhere: a dead channel, the first group is close enough
         let var = if cal.block_filled(var, self.ch) { var } else { 0 };
         let r = cal.rec(var, self.ch, cal.scale_index(scale_nv));
-        let g: [i32; 7] = r.g[..7].try_into().unwrap();
+        let g: [i32; 7] = std::array::from_fn(|k| r.g[k]);
         let z = cal.zero_trims(self.ch);
         self.set_config(o, cal, g, &z);
         r
@@ -858,7 +858,7 @@ pub fn set_gear(ch: usize, gear: u8) -> std::io::Result<()> {
     if !std::path::Path::new("/dev/dac_gear_change").exists() {
         use std::sync::Mutex;
         static LINES: Mutex<Vec<(usize, crate::dho::gpio::Line)>> = Mutex::new(Vec::new());
-        let mut lines = LINES.lock().unwrap();
+        let mut lines = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, l)) = lines.iter().find(|(c, _)| *c == ch) {
             l.set(gear & 1 != 0);
         } else {
