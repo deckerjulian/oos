@@ -373,14 +373,10 @@ impl<P: crate::Program> Server<P> {
         }
         for (l, core) in [(&self.pm_tcp, false), (&self.core_tcp, true)] {
             if let Some(l) = l {
-                while let Ok((s, peer)) = l.accept() {
-                    if !self.acl.permits_peer(Ok(peer)) {
-                        continue;
-                    }
-                    let _ = s.set_nonblocking(false);
-                    let _ = s.set_nodelay(true);
-                    if self.conns.len() < MAX_CONNS {
-                        self.conns.push(Conn {
+                let conns = &mut self.conns;
+                oos_system::net::accept_from(l, &self.acl, |s| {
+                    if conns.len() < MAX_CONNS {
+                        conns.push(Conn {
                             s,
                             buf: Vec::new(),
                             core,
@@ -389,7 +385,7 @@ impl<P: crate::Program> Server<P> {
                             closing: false,
                         });
                     }
-                }
+                });
             }
         }
         // net.allow changed on the screen: a connection the list now leaves out is closed with its links
@@ -400,31 +396,10 @@ impl<P: crate::Program> Server<P> {
             // what is still to be written goes first, as much as the socket takes now (#192)
             closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
             let mut eof = self.conns[i].closing;
-            let mut tmp = [0u8; 8192];
-            let mut read_bytes = 0;
-            while !closed && !eof {
-                match oos_system::net::read_now(&self.conns[i].s, &mut tmp) {
-                    Ok(0) => {
-                        eof = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        if self.conns[i].buf.len() + n > MAX_RECORD {
-                            closed = true;
-                            break;
-                        }
-                        self.conns[i].buf.extend_from_slice(&tmp[..n]);
-                        read_bytes += n;
-                        if read_bytes >= 65536 {
-                            break;
-                        }
-                    }
-                    Err(e) if oos_system::net::later(&e) => break,
-                    Err(_) => {
-                        closed = true;
-                        break;
-                    }
-                }
+            if !closed && !eof {
+                let c = &mut self.conns[i];
+                let end = oos_system::net::read_some(&c.s, &mut c.buf, MAX_RECORD, 8192, 65536);
+                (eof, closed) = (end.eof, end.closed);
             }
             // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined; the next call once the
             // replies before it are out, also the calls a client sent before it closed its side

@@ -380,14 +380,10 @@ impl<P: crate::Program> Server<P> {
 
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
         if let Some(l) = &self.l {
-            while let Ok((s, peer)) = l.accept() {
-                if !self.acl.permits_peer(Ok(peer)) {
-                    continue; // dropped: closes the connection
-                }
-                let _ = s.set_nonblocking(false);
-                let _ = s.set_nodelay(true);
-                if self.conns.len() < MAX_CONNS {
-                    self.conns.push(Conn {
+            let conns = &mut self.conns;
+            oos_system::net::accept_from(l, &self.acl, |s| {
+                if conns.len() < MAX_CONNS {
+                    conns.push(Conn {
                         s,
                         buf: Vec::new(),
                         peer: Peer { role: Role::New, session: 0, pending: Vec::new(), msgid: 0, program: None },
@@ -395,41 +391,20 @@ impl<P: crate::Program> Server<P> {
                         closing: false,
                     });
                 }
-            }
+            });
         }
         // net.allow changed on the screen: a connection the list now leaves out is closed with its session
         let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
-            let mut tmp = [0u8; 8192];
             let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
             // what is still to be written goes first, as much as the socket takes now (#192)
             closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
             let mut eof = self.conns[i].closing;
-            let mut read_bytes = 0;
-            while !closed && !eof {
-                match oos_system::net::read_now(&self.conns[i].s, &mut tmp) {
-                    Ok(0) => {
-                        eof = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        if self.conns[i].buf.len() + n > MAX_PAYLOAD + HEADER {
-                            closed = true;
-                            break;
-                        }
-                        self.conns[i].buf.extend_from_slice(&tmp[..n]);
-                        read_bytes += n;
-                        if read_bytes >= 65536 {
-                            break;
-                        }
-                    }
-                    Err(e) if oos_system::net::later(&e) => break,
-                    Err(_) => {
-                        closed = true;
-                        break;
-                    }
-                }
+            if !closed && !eof {
+                let c = &mut self.conns[i];
+                let end = oos_system::net::read_some(&c.s, &mut c.buf, MAX_PAYLOAD + HEADER, 8192, 65536);
+                (eof, closed) = (end.eof, end.closed);
             }
             let clearing =
                 self.conns[i].buf.get(2).is_some_and(|typ| matches!(*typ, DEVICE_CLEAR_COMPLETE | ASYNC_DEVICE_CLEAR));
