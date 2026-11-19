@@ -48,6 +48,7 @@ mod menu_dialog;
 mod menu_items;
 mod menu_text;
 mod motor;
+mod numpad;
 mod offline;
 mod overclock;
 mod pages;
@@ -101,7 +102,6 @@ pub mod views;
 #[cfg(test)]
 use acquire::{fast_deposit, fast_plan, fast_take_next};
 use item::{Item, PARTS};
-pub use views::VIEWS_MAX;
 #[cfg(test)]
 mod backend_followup_tests;
 mod bwtest;
@@ -234,11 +234,8 @@ const HISTORY_LA_WORDS: usize = 1_000_000;
 pub const SEGMENTS: [usize; 12] = [0, 10, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000];
 /// Most segments of the software recording (history RAM).
 pub const SEG_MAX: usize = 1000;
-/// Most hardware segments (the stock UI limit; the frame memory holds up to 491,520 of the smallest).
-pub const SEG_HW_MAX: usize = 100_000;
 /// Hardware segments: intervals after each segment (0x4068, at most 2^32 x 6.4 ns = 27 s).
 pub const SEG_IVLS: [f32; 8] = [0.0, 1e-6, 10e-6, 100e-6, 1e-3, 10e-3, 100e-3, 1.0];
-pub const SEG_IVL_MAX: f32 = 10.0;
 
 // dark theme
 const BG: Rgb = rgb(0x0a, 0x0a, 0x0b);
@@ -282,7 +279,6 @@ const CAL_BANNER: Rgb = rgb(0x30, 0x22, 0x08);
 /// Stops of the density scale, rare to frequent (`heat_palette`).
 const HEAT_STOPS: [(f32, f32, f32); 5] =
     [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
-pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
 pub mod key {
@@ -333,8 +329,6 @@ const REF_COLORS: [(&str, Rgb); 5] = [
     ("Blue", rgb(0x70, 0xa8, 0xf8)),
     ("Violet", rgb(0xc8, 0x88, 0xf0)),
 ];
-/// Kinds of delay and phase measurement and of second panes, for the setups.
-pub const PAIRS_N: usize = tools::PAIRS.len();
 /// The short names of the two-source variants (strip, SCPI).
 pub fn pair_short_name(k: usize) -> &'static str {
     tools::PAIRS[k.min(PAIRS_N - 1)].0
@@ -350,15 +344,9 @@ pub fn pair_unit(k: usize) -> &'static str {
 
 pub(crate) use analysers::{scpi_views, stored_views};
 
-/// Clock recovery of the eye for the measurement modules: samples per UI and the recovered clock.
-pub fn eye_infer(v: &[f32], dt: f64, rate: Option<f64>) -> Result<(f64, oos_dsp::eye::Clock), String> {
-    eyepage::automatic::infer(v, dt, rate, false).map(|(s, clk)| (s.samples_per_ui, clk))
-}
-pub const PANES_N: usize = tables::PANES.len();
 pub use eyepage::EYE_ITEMS;
-pub use panes::{PANE_HARMS, TREND_SEL_N};
-pub use tools::{CNT_MODES, DVM_MODES};
-pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
+// the limits that the model, the settings and the setup files count with too (model/limits.rs)
+pub use crate::model::{CNT_MODES, DVM_MODES, PAIRS_N, PANE_HARMS, SEG_HW_MAX, SEG_IVL_MAX, VIEWS_MAX};
 
 /// Keys of the frequency keypad: the unit ends the entry.
 const FREQ_KEYS: [&str; 18] =
@@ -969,11 +957,10 @@ pub struct Ui {
     wlan_stick: bool,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
     pub mouse: pointer::Mouse,
-    /// System > Network > Bluetooth (ui/bt.rs); a Bluetooth stick is plugged in (`hci0`), and how many devices are
-    /// connected through it as inputs (the top bar)
+    /// System > Network > Bluetooth (ui/bt.rs), and the stick and its inputs for the top bar
     bt: bt::BtUi,
-    bt_stick: bool,
-    bt_inputs: usize,
+    /// the number pad of a value row (ui/numpad.rs)
+    numpad: numpad::NumPad,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,

@@ -34,7 +34,7 @@ pub fn wave_csv(rec: &Record, m: &Model) -> String {
 /// Logic analyser record as CSV: the lines shown, one row at the record start and one for every change of them, so a
 /// record of millions of samples stays small and nothing is lost (the levels hold until the next row). The last row is
 /// the end of the record.
-pub fn la_csv(la: &crate::ui::la::LaRec, lines: &[usize]) -> String {
+pub fn la_csv(la: &crate::logic::LaRec, lines: &[usize]) -> String {
     let mask = lines.iter().fold(0u16, |m, &n| m | 1 << n);
     let mut s = String::from("Time (s)");
     for n in lines {

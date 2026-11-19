@@ -555,7 +555,8 @@ fn items(payload: &[u8], key: &[u32; 4]) -> Vendor {
     let mut v = Vendor::default();
     let mut o = 0;
     while o + 12 <= payload.len() {
-        let (id, n) = (u32_at(payload, o + 4).unwrap(), u32_at(payload, o + 8).unwrap() as usize);
+        let (Some(id), Some(n)) = (u32_at(payload, o + 4), u32_at(payload, o + 8)) else { break };
+        let n = n as usize;
         let Some(item) = payload.get(o + 12..(o + 12).saturating_add(n)) else { break };
         o += 12 + n;
         let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else {

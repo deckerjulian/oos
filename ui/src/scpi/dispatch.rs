@@ -14,23 +14,11 @@ use super::decode::bus_index;
 use super::display::bmp;
 use super::math::math_index;
 use super::ser;
-use super::{arg_item, arg_rest, block, e, kw, nearest, num, parse_bool, parse_ch, parse_wave, suffix, Scpi};
+use super::{arg_item, arg_rest, block, e, kw, num, parse_bool, parse_ch, parse_wave, suffix, Scpi};
 use crate::board::{board, Board};
 use crate::gfx::Canvas;
 use crate::model::*;
 use crate::ui::Ui;
-
-/// Fine scale (`:CHANnel<n>:VERNier ON`): the first row of the calibrated scale ladder at or above `want` (V/div at the
-/// BNC), so the range never cuts the signal off, as `vscale` step and factor on it.
-fn fine_scale(want: f32) -> (usize, f32) {
-    let rows = board().vscale_steps_nv();
-    let nv = want as f64 * 1e9 * (1.0 - 1e-6);
-    let row = rows.iter().copied().find(|&k| k as f64 >= nv).unwrap_or(rows[rows.len() - 1]);
-    let row = (row as f64 * 1e-9) as f32;
-    let i = VSCALES.iter().rposition(|&s| s <= row * 1.000001).unwrap_or(0);
-    let f = row / VSCALES[i];
-    (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f })
-}
 
 impl Scpi {
     pub(super) fn exec_cmd(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
@@ -375,7 +363,7 @@ impl Scpi {
                     }
                     let old = ch.volts_per_div();
                     let want = num(arg).filter(|&v| v > 0.0)? / ch.probe;
-                    (ch.vscale, ch.vfine) = if fine { fine_scale(want) } else { (nearest(&VSCALES, want), 1.0) };
+                    (ch.vscale, ch.vfine) = Ui::vscale_for(want, fine);
                     if expand_gnd && old > 0.0 {
                         ch.offset *= ch.volts_per_div() / old;
                     }

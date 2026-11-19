@@ -12,7 +12,7 @@
 //! menu offers the ones the unit has, or the references while it measures them offline).
 
 use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
-use crate::ui::{CNT_MODES, DVM_MODES};
+use crate::model::{CNT_MODES, DVM_MODES};
 
 /// The rows of `:DVM`, for the docs table and the SCPI handler.
 pub const DVM_SLICES: [&[Setting]; 1] = [&DVM];

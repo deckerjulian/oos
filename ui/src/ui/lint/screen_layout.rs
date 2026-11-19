@@ -194,7 +194,7 @@ fn screen_in_order_on(scr: Screen) {
         let f = u.fonts();
         // top bar, with every mix of the status boxes that can be there (ADR 0063): those that come and go are set by
         // the state their `shown` reads, so a box that is not set up here fails the count below
-        let sticks: [fn(&mut Ui, bool); 3] = [|u, on| u.wlan_stick = on, |u, on| u.bt_stick = on, |u, on| u.usb = on];
+        let sticks: [fn(&mut Ui, bool); 3] = [|u, on| u.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.usb = on];
         for k in 0..1usize << sticks.len() {
             for (i, set) in sticks.iter().enumerate() {
                 set(&mut u, k & 1 << i != 0);
@@ -220,9 +220,19 @@ fn screen_in_order_on(scr: Screen) {
         for set in sticks {
             set(&mut u, false);
         }
-        // the two lines of the network box: room for an address, the first line's descent above the second's capitals
+        // the two lines of the network box: room for an address, the first line's descent above the second's capitals;
+        // every status box of two lines has the room for an address too (issue #23)
         let n = u.net_box();
         assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
+        for set in sticks {
+            set(&mut u, true);
+        }
+        for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
+            assert!(20 + f.sb.width("255.255.255.255") <= r.w, "{:?}: {} box too narrow for an address", ts, b.label);
+        }
+        for set in sticks {
+            set(&mut u, false);
+        }
         assert!(n.y + 5 + cap(&f.s) + f.s.descent <= n.y + n.h - 4 - cap(&f.sb), "{:?}: {:?}", ts, n);
         // a strip row holds its text
         let bh = u.lay().strip_row - 2;

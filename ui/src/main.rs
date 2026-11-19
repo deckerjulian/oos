@@ -36,6 +36,7 @@ mod http;
 #[cfg(target_os = "linux")]
 mod input;
 mod layout;
+mod logic;
 mod math;
 mod measures;
 mod model;

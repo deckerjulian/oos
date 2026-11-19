@@ -7,6 +7,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- A number pad for the values of a channel's scale and offset, the time base and its position and the trigger level
+  (#22): a tap on the value opens it, a key with the unit (`mV`, `V`, `µs` ...) sets it, as `:CHANnel<n>:SCALe` and
+  the other remote commands do ([First Steps](wiki/First-Steps.md#the-keyboard)).
 - USB and Bluetooth mice and keyboards ([First Steps](wiki/First-Steps.md#mouse-and-keyboard)): the mouse is the
   finger, with a pointer while it is in use that moves in even steps; the keys stand in for the front panel and type
   into the on-screen keyboard. oos-ui takes them for itself, so no key reaches the console shell behind the screen
@@ -120,6 +123,13 @@ Fixed:
 - A `cal_vertical.hex` with 64-byte records (one block group, seen on a DHO804) is read at 64 bytes a record instead
   of stopping oos-ui at every start; a calibration file whose scale keys are out of order is not used, and the scope
   starts uncalibrated instead of stopping (issue #37; host tests, and the usual 56-byte file still loads on a DHO924S).
+- The WLAN box of the top bar is as wide as the LAN box at every text size: at the normal size its address ran out
+  of it (#23).
+- SSC Freq Dev and SSC Modulation Rate are measured on the modulation (issue #196). The deviation was the span of
+  single cycles, mostly their timing error (about 9,400 ppm for a 5,000 ppm test clock, now about 5,500); it is now
+  the span of the rate averaged over 1/32 of the modulation period, which reads a sine 0.2 % and a triangle 3 % under
+  its span. The rate was the nearest spectral bin; it is now interpolated between bins, and with fewer than four
+  modulation periods in the record fitted with a sine (33 kHz with three periods read 29.3 kHz, now 33.0 kHz).
 - Double pulse: Ipeak and Irrm are the turn-on peak, not the end of the inductor's ramp later in the second pulse, so
   Trr, Qrr and the diode's d/dt have values. The descriptions of Td(off), Tf and Toff name the current fall they
   measure, not a voltage rise.
