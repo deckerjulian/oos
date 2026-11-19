@@ -91,7 +91,8 @@ work on its own (ADR 0039). Everything above holds for it, and:
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
   request what ran on the unit. Without that the pull request waits, unless CI's job `scope` finds the programs
-  for the scope byte-identical to the base's (`tools/scope-binaries.sh`, ADR 0041), or it is a refactoring of
+  for the scope byte-identical to the base's, panic places and symbol names left out (`tools/scope-binaries.sh`,
+  ADR 0041, ADR 0068), or it is a refactoring of
   code that builds register sequences, which the comparison proves (title `Lints:` or `Refactor:`, `Behaviour:
   unchanged`; not the start, the update, `ui/src/board/` or the live paths of `hal/src/dho/`, ADR 0042): then `unit`
   passes by itself. Register sequences, timing, start and update are what the run on a unit is for.

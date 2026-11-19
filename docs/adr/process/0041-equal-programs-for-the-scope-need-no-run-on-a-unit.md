@@ -1,6 +1,6 @@
 # ADR 0041: A change that leaves the programs for the scope byte-identical needs no run on a unit
 
-- Status: accepted (2026-11-17, by the maintainer)
+- Status: accepted (2026-11-17, by the maintainer), amended by ADR 0068
 - Date: 2026-11-17
 - Category: process
 

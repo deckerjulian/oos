@@ -1,6 +1,6 @@
 # ADR 0068: The comparison of the programs for the scope leaves out the places of their panics and their symbol names
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-19
 - Category: process
 
