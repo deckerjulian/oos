@@ -914,7 +914,6 @@ pub fn configure(
 
 /// `configure` with the mirrored offset of an inverted channel (3.5) and the coupling: `dc` Some(true) DC, Some(false)
 /// AC, None leaves it as it is (GND, 3.3). The coupling is written only when it changes.
-#[allow(clippy::too_many_arguments)]
 pub fn configure_ch(
     afe: &mut Afe,
     cal: &Cal,
