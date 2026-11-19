@@ -33,6 +33,8 @@ const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
+/// Answers waiting for their clients (`Http::sending`); one more closes its connection unanswered.
+const MAX_SENDING: usize = 8;
 /// A body above this (an update package, a waveform) is taken one at a time: a second one is answered 503 when its
 /// head is in, so the requests waiting hold at most one large body and `MAX_PENDING` small ones.
 const LARGE_BODY: usize = MAX_OTHER;
@@ -84,6 +86,7 @@ impl Default for Offer {
     }
 }
 
+/// 503 on a connection nothing was written to yet: under 200 bytes, which its empty send buffer takes at once.
 fn busy_answer(s: &TcpStream) {
     let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
     let msg = "busy, try again";
@@ -507,6 +510,8 @@ pub struct Http {
     pending: Vec<Pending>,
     /// the waveform upload being parsed
     wave: Option<WaveJob>,
+    /// answers the client has not taken yet, written as it takes them (ADR 0066); the connection closes after
+    sending: Vec<(TcpStream, crate::net::Outbox)>,
     shots: Arc<Shots>,
     /// who may install an update or use MCP (empty: everyone); checked per request, so a change counts at once
     pub acl: crate::netacl::Shared,
@@ -689,6 +694,7 @@ impl Http {
             l: Self::bind(port),
             pending: Vec::new(),
             wave: None,
+            sending: Vec::new(),
             shots: Shots::new(),
             acl: crate::netacl::Shared::default(),
             offer: Offer::default(),
@@ -784,6 +790,7 @@ impl Http {
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
+        self.sending.retain_mut(|(s, out)| out.flush(s) == crate::net::Sent::Later);
         self.shots.tick(cv);
         self.finish_wave(ui);
         self.accept_new();
@@ -802,6 +809,8 @@ impl Http {
             let mut too_big = false;
             // answered when the head is in, before any of the body is kept: 403 refused, 503 busy
             let mut early = None;
+            // what goes back before the connection closes
+            let mut last = None;
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
                 let n = h
@@ -844,15 +853,12 @@ impl Http {
                     Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}",
                     msg.len()
                 );
-                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-                let _ = s.write_all(head.as_bytes());
+                last = Some(head.into_bytes());
                 dead = true;
             } else if too_big {
-                let msg = b"request too large";
-                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", msg.len());
-                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-                let _ = s.write_all(head.as_bytes());
-                let _ = s.write_all(msg);
+                let msg = "request too large";
+                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len());
+                last = Some(head.into_bytes());
                 dead = true;
             } else if complete {
                 if !self.answer(i, hdr_end, ui, cv, scpi, &mut cmds) {
@@ -863,7 +869,10 @@ impl Http {
                 dead = true;
             }
             if dead {
-                self.pending.remove(i);
+                let p = self.pending.remove(i);
+                if let Some(bytes) = last {
+                    self.send(p.s, bytes);
+                }
             } else {
                 i += 1;
             }
@@ -874,16 +883,25 @@ impl Http {
     /// Answers the waveform upload whose parsing has finished.
     fn finish_wave(&mut self, ui: &mut Ui) {
         if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
-            let mut job = self.wave.take().unwrap();
+            let job = self.wave.take().unwrap();
             let status = if ok { "200 OK" } else { "409 Conflict" };
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
-                Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n{text}",
                 text.len()
             );
-            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
-            let _ = job.s.write_all(head.as_bytes());
-            let _ = job.s.write_all(text.as_bytes());
+            self.send(job.s, head.into_bytes());
+        }
+    }
+
+    /// Writes `bytes` to `s` as far as it takes them now; the rest goes out on the next passes (`sending`), and the
+    /// connection closes when all is out, when the client takes nothing for `net::SEND_STALL` or when `MAX_SENDING`
+    /// answers already wait.
+    fn send(&mut self, s: TcpStream, bytes: Vec<u8>) {
+        let mut out = crate::net::Outbox::default();
+        out.push(&bytes);
+        if out.flush(&s) == crate::net::Sent::Later && self.sending.len() < MAX_SENDING {
+            self.sending.push((s, out));
         }
     }
 
@@ -1001,12 +1019,13 @@ impl Http {
             if !send_in_background(s, head, body) {
                 busy_answer(s);
             }
-        } else {
-            let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-            let _ = s.write_all(head.as_bytes());
-            let _ = s.write_all(&body);
+            return true;
         }
-        true
+        let mut bytes = head.into_bytes();
+        bytes.extend_from_slice(&body);
+        let p = self.pending.remove(i);
+        self.send(p.s, bytes);
+        false
     }
 
     /// POST /waveform to `slot`: the request goes whole to the parser, or is answered busy while one is parsed; the

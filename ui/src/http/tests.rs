@@ -362,6 +362,35 @@ fn page_lets_the_viewer_pick_png_or_bmp() {
     assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
 }
 
+/// ADR 0066: an answer the client does not take yet waits in `sending`, the frame loop goes on, and it goes out whole
+/// once the client reads.
+#[test]
+fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
+    const HANG: Duration = Duration::from_secs(300);
+    let mut h = Http::open(0);
+    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+    let (s, _) = l.accept().unwrap();
+    // far more than the socket buffers hold, also on Linux
+    let answer: Vec<u8> = (0..32u32 << 20).map(|i| i as u8).collect();
+    h.send(s, answer.clone());
+    assert_eq!(h.sending.len(), 1, "the rest waits");
+    h.poll(&mut ui, &cv, &mut scpi);
+    assert_eq!(h.sending.len(), 1, "a pass takes what the socket takes and goes on");
+    let reader = std::thread::spawn(move || {
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).unwrap();
+        got
+    });
+    let t = std::time::Instant::now();
+    while !h.sending.is_empty() {
+        assert!(t.elapsed() < HANG);
+        h.poll(&mut ui, &cv, &mut scpi);
+    }
+    assert!(reader.join().unwrap() == answer, "the answer arrives whole, and the connection closes after it");
+}
+
 /// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
 /// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
 #[test]
