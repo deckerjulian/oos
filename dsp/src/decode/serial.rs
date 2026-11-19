@@ -97,8 +97,11 @@ pub static I2C: ModuleInfo = ModuleInfo::new("I2c", "I2C", "serial")
     .bit(|_, _| 2.5e-6)
     .decoder(|l| Ok(i2c(l.main(), l.need(1, "source channel off")?, l.thr, l.hy)));
 
+/// `value2` of the data byte a controller ends a read with: it is not acknowledged, and that is no error (`ok`).
+pub const I2C_NAK_END: u32 = 1;
+
 /// I2C: START/STOP from SDA edges while SCL is high, bits sampled at SCL rising edges, 9th bit = ACK (low).
-/// One threshold and hysteresis for both lines.
+/// One threshold and hysteresis for both lines. The byte a controller ends a read with is no error (`i2c_read_end`).
 pub fn i2c(sda: &[f32], scl: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
     i2c_at(sda, scl, thr, hyst, thr, hyst)
 }
@@ -149,6 +152,28 @@ pub fn i2c_at(sda: &[f32], scl: &[f32], sda_thr: f32, sda_hyst: f32, scl_thr: f3
                     first = false;
                     nbits = 0;
                     bits = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+    i2c_read_end(out)
+}
+
+/// The last byte of a read is not acknowledged by the controller: that is how it ends the read. It is `ok`, with
+/// [`I2C_NAK_END`] in `value2`, when its address was acknowledged and a stop, a repeated start or the end of the record
+/// follows. Any other byte that was not acknowledged stays an error.
+fn i2c_read_end(mut out: Vec<Packet>) -> Vec<Packet> {
+    let mut reading = false;
+    for k in 0..out.len() {
+        match out[k].kind {
+            Kind::Start | Kind::RepStart | Kind::Stop => reading = false,
+            Kind::Addr { read } => reading = read && out[k].ok,
+            Kind::Data if reading && !out[k].ok => {
+                let next = out.get(k + 1);
+                if next.is_none_or(|n| matches!(n.kind, Kind::Stop | Kind::RepStart | Kind::Start)) {
+                    out[k].ok = true;
+                    out[k].value2 = Some(I2C_NAK_END);
                 }
             }
             _ => {}
@@ -379,10 +404,39 @@ mod tests {
                 (Kind::RepStart, 0, true),
                 (Kind::Addr { read: true }, 0x50, true),
                 (Kind::Data, 0xab, true),
-                (Kind::Data, 0xcd, false), // master NACKs the last read byte
+                (Kind::Data, 0xcd, true), // the controller does not acknowledge the last byte it reads: no error
                 (Kind::Stop, 0, true),
             ]
         );
+    }
+
+    // Break it catches: the byte a controller ends a read with was an error like any byte that is not acknowledged,
+    // so every read of a working bus ended in an error (351 of 393 messages of a capture of a real bus).
+    #[test]
+    fn i2c_the_byte_that_ends_a_read_is_no_error() {
+        let pk = |kind: Kind, value: u32, ok: bool| Packet::new(kind, 0.0, 1.0, value, ok);
+        let (rd, wr) = (Kind::Addr { read: true }, Kind::Addr { read: false });
+        let ended = |raw: &[Packet]| -> Vec<(bool, Option<u32>)> {
+            i2c_read_end(raw.to_vec()).iter().filter(|x| x.kind == Kind::Data).map(|x| (x.ok, x.value2)).collect()
+        };
+        let end = (true, Some(I2C_NAK_END));
+        let (start, stop) = (pk(Kind::Start, 0, true), pk(Kind::Stop, 0, true));
+        let data = |value: u32, ok: bool| pk(Kind::Data, value, ok);
+        // a read of two bytes, ended by a stop, by a repeated start, and by the end of the record
+        for last in [Some(Kind::Stop), Some(Kind::RepStart), None] {
+            let mut raw = vec![start.clone(), pk(rd, 0x50, true), data(0x10, true), data(0x12, false)];
+            raw.extend(last.map(|k| pk(k, 0, true)));
+            assert_eq!(ended(&raw), [(true, None), end], "{last:?}");
+        }
+        // a byte that is not acknowledged in the middle of a read is an error; the last one still ends it
+        let raw = [start.clone(), pk(rd, 0x50, true), data(1, false), data(2, false), stop.clone()];
+        assert_eq!(ended(&raw), [(false, None), end]);
+        // nobody answered the address: what follows is no read that ends well
+        let raw = [start.clone(), pk(rd, 0x50, false), data(0xff, false), stop.clone()];
+        assert_eq!(ended(&raw), [(false, None)]);
+        // a write that is not acknowledged is an error
+        let raw = [start, pk(wr, 0x50, true), data(1, true), data(2, false), stop];
+        assert_eq!(ended(&raw), [(true, None), (false, None)]);
     }
 
     /// Clock and data can sit at different levels. A threshold that fits the data misses a smaller clock.

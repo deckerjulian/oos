@@ -1309,6 +1309,8 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
             format!("{}", p.value as u8 as char)
         }
         _ => match p.value2 {
+            // the byte a controller ends a read with: not acknowledged, and no error
+            Some(oos_dsp::decode::I2C_NAK_END) if m.dec_proto == Proto::I2C => format!("{} N", hex(p.value)),
             Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
             None if m.dec_proto == Proto::I2C && !p.ok => format!("{} N", hex(p.value)),
             None => hex(p.value),
