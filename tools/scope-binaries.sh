@@ -1,9 +1,10 @@
 #!/bin/sh
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-# scope-binaries.sh - whether a change changes the programs that run on the scope at all (docs/adr/process/0041):
-# builds the programs of the image (oos-ui, oos-fpgad, oos-update) for the scope from this commit and from BASE, in
-# this same folder one after the other, and compares them byte for byte. Equal programs need no run on a unit.
+# scope-binaries.sh - whether a change changes the programs that run on the scope at all (docs/adr/process/0041,
+# 0068): builds the programs of the image (oos-ui, oos-fpgad, oos-update) for the scope from this commit and from
+# BASE, in this same folder one after the other, without the places of their panics and their symbol table, and
+# compares them byte for byte. Equal programs need no run on a unit.
 #
 #   tools/scope-binaries.sh [BASE]     BASE: a commit; default: where this branch left origin/main
 #
@@ -33,13 +34,18 @@ back=$(git symbolic-ref --quiet --short HEAD || echo "$here")
 target=aarch64-unknown-linux-musl
 # the decoders the image has: as the image build asks for them, whatever this shell has set
 unset OOS_DECODERS OOS_DECODERS_OFF
+# What the comparison leaves out (ADR 0068): the place of each panic in the source (`-Zlocation-detail=none`: file,
+# line and column, which every line moved above changes) and the symbol table (`-Cstrip=symbols`: names only). Both
+# are data the programs never act on, they only print or name it. The flag is unstable: RUSTC_BOOTSTRAP lets the pinned
+# release take it for these two builds, which are compared and thrown away; the image is built without it.
+flags="\"--remap-path-prefix=$root=/oos\", \"-Zlocation-detail=none\", \"-Cstrip=symbols\""
 sums() { # sums NAME: build the programs, print their sums
 	# shellcheck disable=SC2046
-	(cd ui && cargo build --release --locked --quiet --target "$target" $(tools/decoder-features.sh) \
-		--config "target.$target.rustflags=[\"--remap-path-prefix=$root=/oos\"]") || return 1
-	# the remap is added to the crate's own target flags (.cargo/config.toml), not put in their place
-	(cd fpgad && cargo build --release --locked --quiet --target "$target" \
-		--config "target.$target.rustflags=[\"--remap-path-prefix=$root=/oos\"]") || return 1
+	(cd ui && RUSTC_BOOTSTRAP=1 cargo build --release --locked --quiet --target "$target" \
+		$(tools/decoder-features.sh) --config "target.$target.rustflags=[$flags]") || return 1
+	# the flags are added to the crate's own target flags (.cargo/config.toml), not put in their place
+	(cd fpgad && RUSTC_BOOTSTRAP=1 cargo build --release --locked --quiet --target "$target" \
+		--config "target.$target.rustflags=[$flags]") || return 1
 	shasum -a 256 "ui/target/$target/release/oos-ui" "fpgad/target/$target/release/oos-fpgad" \
 		"fpgad/target/$target/release/oos-update" |
 		awk -v n="$1" '{ sub(".*/", "", $2); print n, $2, $1 }'
