@@ -19,16 +19,20 @@ AGENT = "dekajoule-oos-agent[bot]"
 FAKE_GH = r'''#!/bin/sh
 [ "$1" = api ] || exit 9
 shift
-path= ; expr=
+path= ; expr= ; method=GET
 while [ $# -gt 0 ]; do
 	case $1 in
 	--paginate) ;;
 	--jq) expr=$2; shift ;;
+	--method) method=$2; shift ;;
+	--input) shift ;;
 	-f) shift ;;
 	*) path=$1 ;;
 	esac
 	shift
 done
+# a call that changes something: written to $FAKE_GH/calls, answered with nothing
+[ "$method" = GET ] || { echo "$method $path" >> "$FAKE_GH/calls"; echo '{}'; exit 0; }
 case $path in graphql) path="graphql_$(printf '%s' "$expr" | tr -dc 'a-z' | cut -c1-12)" ;; esac
 file="$FAKE_GH/$(printf '%s' "$path" | tr '/?=' '___').json"
 # a call that fails once: the marker goes with the first call
@@ -135,10 +139,11 @@ class PullRequests(unittest.TestCase):
             {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs),
                                                          ("compare-calibrated", calibrated)) if keep]}))
 
-    def run_tool(self, tool, tries="1", ok=True):
+    def run_tool(self, tool, tries="1", ok=True, dry=True):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
                    OOS_REPO="owner/oos", OOS_API_TRIES=tries, OOS_API_WAIT="0")
-        out = subprocess.run(["sh", str(ROOT / "tools" / tool), "--dry", "7"], env=env, capture_output=True, text=True)
+        args = ["--dry", "7"] if dry else ["7"]
+        out = subprocess.run(["sh", str(ROOT / "tools" / tool), *args], env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode == 0, ok, out.stderr)
         return out.stdout
 
@@ -358,6 +363,38 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.labels(), {"area/docs", "type/docs"})
         self.pull(["rust-toolchain.toml"], title="CI: something")
         self.assertIn("risk/hardware", self.labels(), "the compiler builds every program for the scope")
+
+    def test_unit_tested_holds_for_the_commits_it_was_given_for(self):
+        # ADR 0069: a commit of the branch's own after the label takes it away; a merge of main does not
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+
+        def history(label_hours, commits):
+            name("repos/owner/oos/issues/7/events").write_text(json.dumps(
+                [{"event": "labeled", "label": {"name": "unit-tested"}, "created_at": ago(label_hours)},
+                 {"event": "labeled", "label": {"name": "area/hal"}, "created_at": ago(0)}]))
+            name("repos/owner/oos/pulls/7/commits").write_text(json.dumps(
+                [{"parents": [{}] * parents, "commit": {"committer": {"date": ago(hours)}}}
+                 for hours, parents in commits]))
+
+        self.pull(["hal/src/dho/seq.rs"], labels=["unit-tested"])
+        history(1, [(3, 1), (2, 1)])
+        self.assertNotIn("-unit-tested", self.labels(), "every commit came before the run on the unit")
+        history(1, [(3, 1), (0.5, 2)])
+        self.assertNotIn("-unit-tested", self.labels(), "a merge of main after it")
+        history(1, [(3, 1), (0.5, 1)])
+        self.assertIn("-unit-tested", self.labels(), "a commit after it: run on the unit again")
+        # and without --dry the label is taken away through the API, the other labels are still added
+        calls = self.dir / "calls"
+        out = self.run_tool("pr-labels.sh", dry=False)
+        self.assertIn("unit-tested taken away", out)
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["DELETE repos/owner/oos/issues/7/labels/unit-tested", "POST repos/owner/oos/issues/7/labels"])
+        calls.unlink()
+        history(1, [(3, 1)])
+        self.run_tool("pr-labels.sh", dry=False)
+        self.assertEqual(calls.read_text().splitlines(), ["POST repos/owner/oos/issues/7/labels"], "nothing taken away")
+        self.pull(["hal/src/dho/seq.rs"])
+        self.assertNotIn("-unit-tested", self.labels(), "no label, nothing to take away")
 
 
 if __name__ == "__main__":
