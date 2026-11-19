@@ -360,7 +360,7 @@ pub struct Model {
     /// Window of each reference trace in a split (not Stacked).
     pub ref_win: [usize; NREF],
     pub meas: Vec<(Meas, WaveId)>,
-    /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
+    /// delay and phase: entry of `measures::pairs::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
     /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
     pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,

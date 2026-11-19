@@ -329,24 +329,13 @@ const REF_COLORS: [(&str, Rgb); 5] = [
     ("Blue", rgb(0x70, 0xa8, 0xf8)),
     ("Violet", rgb(0xc8, 0x88, 0xf0)),
 ];
-/// The short names of the two-source variants (strip, SCPI).
-pub fn pair_short_name(k: usize) -> &'static str {
-    tools::PAIRS[k.min(PAIRS_N - 1)].0
-}
-/// The unit of a two-source variant: degrees for phase, none for the setup/hold violation count, else seconds.
-pub fn pair_unit(k: usize) -> &'static str {
-    match tools::PAIRS[k.min(PAIRS_N - 1)].1 {
-        tools::PairKind::Phase => "\u{b0}",
-        tools::PairKind::SetupAndHold => "",
-        _ => "s",
-    }
-}
+pub use crate::measures::pairs::pair_unit;
 
 pub(crate) use analysers::{scpi_views, stored_views};
 
 pub use eyepage::EYE_ITEMS;
 // the limits that the model, the settings and the setup files count with too (model/limits.rs)
-pub use crate::model::{CNT_MODES, DVM_MODES, PAIRS_N, PANE_HARMS, SEG_HW_MAX, SEG_IVL_MAX, VIEWS_MAX};
+pub use crate::model::{CNT_MODES, DVM_MODES, PANE_HARMS, SEG_HW_MAX, SEG_IVL_MAX, VIEWS_MAX};
 
 /// Keys of the frequency keypad: the unit ends the entry.
 const FREQ_KEYS: [&str; 18] =

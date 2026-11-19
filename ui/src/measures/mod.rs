@@ -76,7 +76,7 @@ pub enum Mark {
 pub enum Kind {
     /// a standard measurement of the scope (strip, statistics, per-measurement settings)
     Standard(Meas),
-    /// a two-source variant of the scope (`tools::PAIRS` index)
+    /// a two-source variant of the scope (`pairs::PAIRS` index)
     Pair(usize),
     /// the module's [`MeasModule::compute`]; stored as a `cat` row with its `id`
     Module,
@@ -391,7 +391,7 @@ pub fn meas_name(k: Meas) -> &'static str {
 
 /// The name a pair variant has on the page.
 pub fn pair_name(k: usize) -> &'static str {
-    all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(crate::ui::pair_short_name(k), |(_, d)| d.name)
+    all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(pairs::pair_short_name(k), |(_, d)| d.name)
 }
 
 #[cfg(test)]
@@ -427,7 +427,7 @@ mod tests {
         for &k in oos_dsp::measure::ALL.iter() {
             assert_eq!(all().filter(|(_, d)| d.kind == Kind::Standard(k)).count(), 1, "{k:?}");
         }
-        for k in 0..crate::ui::PAIRS_N {
+        for k in 0..crate::model::PAIRS_N {
             assert_eq!(all().filter(|(_, d)| d.kind == Kind::Pair(k)).count(), 1, "pair {k}");
         }
         // what setups store is what the setup reader takes
@@ -439,9 +439,9 @@ mod tests {
     /// A pair tile shows the unit its strip row and SCPI readout carry (Setup + Hold is a count of violations).
     #[test]
     fn pair_tiles_have_the_unit_of_their_value() {
-        for k in 0..crate::ui::PAIRS_N {
+        for k in 0..crate::model::PAIRS_N {
             let d = all().find(|(_, d)| d.kind == Kind::Pair(k)).unwrap().1;
-            assert_eq!(d.unit, crate::ui::pair_unit(k), "{}", d.name);
+            assert_eq!(d.unit, pairs::pair_unit(k), "{}", d.name);
         }
     }
 
