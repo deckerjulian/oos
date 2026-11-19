@@ -646,10 +646,11 @@ fn frame0_of_a_small_batch_is_kept_at_the_trigger_point() {
 // that is due before the configuration has stood for TRIM_HOLD.
 #[test]
 fn core_trim_waits_for_a_standing_configuration() {
-    let t0 = std::time::Instant::now();
+    // microseconds of the loop's clock
+    let (t0, hold) = (7_000_000u64, TRIM_HOLD.as_micros() as u64);
     let p = TrimPending { mode: 2, mask: 0b100, since: t0 };
-    assert!(!p.due(t0) && !p.due(t0 + TRIM_HOLD - std::time::Duration::from_millis(1)));
-    assert!(p.due(t0 + TRIM_HOLD) && TRIM_HOLD >= std::time::Duration::from_secs(1));
+    assert!(!p.due(t0) && !p.due(t0 + hold - 1_000));
+    assert!(p.due(t0 + hold) && TRIM_HOLD >= std::time::Duration::from_secs(1));
 }
 
 #[test]

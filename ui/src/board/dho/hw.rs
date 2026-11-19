@@ -54,16 +54,25 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
+/// The time from `t` to `now`, both microseconds of the loop's clock.
+#[cfg(target_os = "linux")]
+fn since(now: u64, t: u64) -> std::time::Duration {
+    std::time::Duration::from_micros(now.saturating_sub(t))
+}
+
 /// Starts the acquisition thread (`app_mask` = channel set the stock system left behind; `program_afe` = OOS sets the
 /// AFEs from the UI channel settings, else they keep the stock set-up and the UI V/div must match it).
 #[cfg(target_os = "linux")]
 pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option<String>) -> HwShared {
+    use oos_hal::dho::boot::Clock;
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
     use oos_hal::dho::{adc, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     std::thread::spawn(move || {
         crate::placement::place(crate::placement::Role::Hw);
+        // every wait and every time of the loop on one clock (ADR 0053): the system's here, a host run's in a test
+        let mut clock = oos_hal::dho::boot::SysClock::default();
         let status = |s: String| {
             eprintln!("oos-ui hw: {}", s);
             out.lock().unwrap().status = s;
@@ -77,7 +86,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 match v.finished {
                     Some(Ok(())) => break,
                     Some(Err(e)) => return status(format!("acquisition hardware not started: {}", e)),
-                    None => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    None => clock.sleep_us(100000),
                 }
             }
         }
@@ -136,20 +145,20 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // the same for the LA words: ring, sweep picture (as f32 for `scan_write`; a word is exact in it)
         let mut ring_la: std::collections::VecDeque<u16> = Default::default();
         let mut sweep_la: Vec<f32> = Vec::new();
-        let mut published = std::time::Instant::now();
+        let mut published = clock.now_us();
         // scan: the sweep picture per channel (one screen), write position, last 0x1204, SINGLE sweep complete
         let mut sweep: [Vec<f32>; NCH] = Default::default();
         let mut cursor = 0usize;
         let mut last_info = roll::ScanInfo::default();
         let mut halted = false;
         // 0x40d0 reported done; the last chunks of the sweep are read once more before the stop
-        let mut done_seen: Option<std::time::Instant> = None;
+        let mut done_seen: Option<u64> = None;
         let mut mode = Slow::Off;
         let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
         let mut afg_io: Option<oos_hal::dho::afg::Io> = None;
         let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
         let mut stamp;
-        let mut xadc_at: Option<std::time::Instant> = None;
+        let mut xadc_at: Option<u64> = None;
         let mut la_fails = 0u32;
         // STOP: the last batch (its read settings, parameters, newest frame in the ring) and the view last read for
         let mut last_batch: Option<(Settings, hz::Params, u32)> = None;
@@ -161,12 +170,12 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // the raw second read of the newest frame of a compressed batch (compress.rs)
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
-        let mut deep_last: Option<std::time::Instant> = None;
+        let mut deep_last: Option<u64> = None;
         // the settings of the last batch read, and whether its record was left out as the first with new ones
         let mut read_with: Option<Settings> = None;
         let mut first_left = false;
         // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
-        let mut comp_last: Option<std::time::Instant> = None;
+        let mut comp_last: Option<u64> = None;
         // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
         // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
         let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
@@ -184,10 +193,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
         let mut avg: Option<(oos_hal::dho::avg::Tracker, u64, u32)> = None;
         // the frequency counter: what runs since when, and the readings so far
-        let mut counting: Option<(crate::board::CounterWant, std::time::Instant)> = None;
+        let mut counting: Option<(crate::board::CounterWant, u64)> = None;
         let mut count_n = 0u64;
         // the DVM block: what it runs on since when, the readings so far, and the number of the configurations applied
-        let mut dvm_run: Option<(DvmKey, std::time::Instant)> = None;
+        let mut dvm_run: Option<(DvmKey, u64)> = None;
         let mut dvm_n = 0u64;
         let mut configs = 0u64;
         // the mask/zone unit's stall guard
@@ -201,10 +210,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut slots_done: Option<u64> = None;
         loop {
             let last_read = fresh.take();
-            counter_tick(&mut bar, &out, &mut counting, &mut count_n);
+            counter_tick(&mut bar, &mut clock, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
-            if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
-                xadc_at = Some(std::time::Instant::now());
+            let now = clock.now_us();
+            if xadc_at.is_none_or(|t| since(now, t) >= std::time::Duration::from_secs(1)) {
+                xadc_at = Some(now);
                 let x = oos_hal::dho::board::read_xadc(&mut bar);
                 out.lock().unwrap().xadc = x;
                 // LA probe detect, also with the LA off: without a probe it cannot be switched on
@@ -352,7 +362,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                clock.sleep_us(50000);
                 continue;
             };
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
@@ -451,7 +461,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 Err(e) => status(format!("STOP read: {}", e)),
                             }
                         }
-                        _ => std::thread::sleep(std::time::Duration::from_millis(20)),
+                        _ => clock.sleep_us(20000),
                     }
                     continue;
                 }
@@ -469,7 +479,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     Ok((steps, p)) => {
                         if let Err(e) = seq::execute(&steps, &mut bar, afe_bus.as_mut(), &mut c2h, |_| {}) {
                             status(format!("configure: {}", e));
-                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            clock.sleep_us(500000);
                             continue;
                         }
                         la_fails = 0;
@@ -480,7 +490,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         // configuration replaces the wait
                         let m = state.mode.min(10);
                         trim_pending = (core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES)
-                            .then(|| TrimPending { mode: m, mask: want.mask, since: std::time::Instant::now() });
+                            .then(|| TrimPending { mode: m, mask: want.mask, since: clock.now_us() });
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => {
@@ -491,7 +501,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                     Err(e) => {
                         status(format!("settings: {}", e));
-                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        clock.sleep_us(500000);
                         continue;
                     }
                 }
@@ -505,7 +515,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             if !seg_recording {
                 use oos_hal::dho::dvm;
                 let want = out.lock().unwrap().dvm_want;
-                let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
+                let now = clock.now_us();
+                let elapsed = dvm_run.map_or(0.0, |r| since(now, r.1).as_secs_f64());
                 let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
                 match step {
                     DvmStep::Start(lane) => {
@@ -527,7 +538,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     DvmStep::Idle => {}
                 }
                 if step != DvmStep::Idle {
-                    dvm_run = key.map(|k| (k, std::time::Instant::now()));
+                    let now = clock.now_us();
+                    dvm_run = key.map(|k| (k, now));
                 }
             }
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
@@ -537,14 +549,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 lw.filter(|w| mode == Slow::Off && !seg_recording && stamp >= w.1 && levels_done != Some(w.0))
             {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let v = levels_measure(&mut bar, &s, &state.gain, runs);
+                let v = levels_measure(&mut bar, &mut clock, &s, &state.gain, runs);
                 out.lock().unwrap().levels = Some((id, v));
                 levels_done = Some(id);
             }
             // the core trim of the current configuration, with nothing armed
-            if let Some(t) =
-                trim_pending.filter(|t| mode == Slow::Off && !seg_recording && t.due(std::time::Instant::now()))
-            {
+            let now = clock.now_us();
+            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && !seg_recording && t.due(now)) {
                 trim_pending = None;
                 // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
                 let gen_on = afg_done.is_some_and(|d| d.0);
@@ -552,7 +563,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     if let Some(c) = cal_adc.as_mut() {
                         disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                         trim_tries[t.mode] += 1;
-                        trim_done[t.mode] = core_trim(&mut bar, &mut state, c, &mut trim_overlay, t.mask);
+                        trim_done[t.mode] = core_trim(&mut bar, &mut clock, &mut state, c, &mut trim_overlay, t.mask);
                     }
                 }
             }
@@ -560,9 +571,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let sw = out.lock().unwrap().slots_want;
             if let Some(id) = sw.filter(|&id| mode == Slow::Off && !seg_recording && slots_done != Some(id)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let r = oos_hal::dho::levels::run(&mut bar, &mut |us| {
-                    std::thread::sleep(std::time::Duration::from_micros(us as u64))
-                });
+                let r = oos_hal::dho::levels::run(&mut bar, &mut |us| clock.sleep_us(us as u64));
                 out.lock().unwrap().slots =
                     Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
                 slots_done = Some(id);
@@ -624,7 +633,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // SINGLE scan complete: wait for the next SINGLE press
                     let go = std::mem::take(&mut out.lock().unwrap().rearm);
                     if !go {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        clock.sleep_us(20000);
                         continue;
                     }
                     sweep_start(&mut state, &mut bar, &rp);
@@ -638,7 +647,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let c = roll::chunks(bar.rd(0x11e8));
                 let c = if la_t.is_some() { roll::la_chunks(c) } else { c };
                 if c == 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(9));
+                    clock.sleep_us(9000);
                 } else {
                     let buf = match oos_hal::dho::bus::read_dma(&mut c2h, c * roll::CHUNK_BYTES, |_, _| {}) {
                         Ok(b) => b,
@@ -719,13 +728,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         // done arrives a few chunks before the end of the sweep (unit: 4 chunks): read on until the
                         // last column is in (cursor back at 0) or 100 ms passed
                         if info.done {
-                            done_seen = Some(std::time::Instant::now());
+                            done_seen = Some(clock.now_us());
                         }
                     }
-                    if done_seen.is_some_and(|t| cursor == 0 || t.elapsed().as_millis() >= 100) {
+                    let now = clock.now_us();
+                    if done_seen.is_some_and(|t| cursor == 0 || since(now, t).as_millis() >= 100) {
                         status(format!(
                             "scan: sweep complete {} ms after done, cursor {} of {}",
-                            done_seen.unwrap().elapsed().as_millis(),
+                            since(now, done_seen.unwrap()).as_millis(),
                             cursor,
                             keep
                         ));
@@ -737,8 +747,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         halted = single;
                     }
                 }
-                if done || published.elapsed().as_millis() >= 33 {
-                    published = std::time::Instant::now();
+                let now = clock.now_us();
+                if done || since(now, published).as_millis() >= 33 {
+                    published = now;
                     n += 1;
                     let f = if scan.is_some() {
                         let mut ch = sweep.clone();
@@ -805,7 +816,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     g.halted = halted;
                 }
                 if done && !halted {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    clock.sleep_us(500000);
                     sweep_start(&mut state, &mut bar, &rp);
                     cursor = 0;
                 }
@@ -816,19 +827,29 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                if let Err(e) =
-                    seg_step(&mut segrun, &s, &p, &mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n, stamp)
-                {
+                if let Err(e) = seg_step(
+                    &mut segrun,
+                    &s,
+                    &p,
+                    &mut state,
+                    &mut bar,
+                    &mut clock,
+                    &mut c2h,
+                    &mut dma,
+                    &out,
+                    &mut n,
+                    stamp,
+                ) {
                     status(format!("segments: {}", e));
                     seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    clock.sleep_us(200000);
                 }
                 continue;
             }
             // STOP, after the hold above: no arming until RUN or SINGLE (the UI's final-frame request is answered there)
             if hold {
                 out.lock().unwrap().final_ack = final_req;
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                clock.sleep_us(5000);
                 continue;
             }
             if std::mem::take(&mut paused) {
@@ -838,7 +859,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let b = batch_plan(&s, &p);
             if !single_wants_more(&b, single_done, stamp) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                clock.sleep_us(2000);
                 continue;
             }
             // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
@@ -865,21 +886,22 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the frame count, so the read waits at most one frame longer
             let pipe = crate::drawpipe::pipe();
             let idle = || pipe.is_some_and(|x| x.help(&mut helper));
-            let t_batch = std::time::Instant::now();
-            let got = seq::acquire_batch_idle(
+            let t_batch = clock.now_us();
+            let got = seq::acquire_batch_on(
                 &mut state,
                 &b,
                 &p,
                 &mut bar,
                 &mut c2h,
                 &mut dma,
+                &mut clock,
                 ahead,
                 25,
                 |_| {},
                 changed,
                 idle,
             );
-            let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
+            let batch_ms = since(clock.now_us(), t_batch).as_secs_f32() * 1e3;
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
             }
@@ -910,9 +932,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // once per compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
                     let raw_frame = if raw_newest(&b, &p)
                         && count > 0
-                        && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD)
+                        && comp_last.is_none_or(|t| since(clock.now_us(), t) >= crate::compress::RAW_PERIOD)
                     {
-                        comp_last = Some(std::time::Instant::now());
+                        comp_last = Some(clock.now_us());
                         // the flag first: a guard taken in the argument would be held for the whole decode
                         let mc = out.lock().unwrap().cores;
                         match seq::read_raw_again(
@@ -943,14 +965,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
                     // once per deepmeas::PERIOD while running (deepmeas.rs)
                     let deep_want = out.lock().unwrap().deep_raw;
+                    let now_deep = clock.now_us();
                     let deep = deep_want.filter(|_| count > 0).and_then(|w| {
-                        deep_raw_settings(&b, &p).filter(|ds| {
-                            crate::deepmeas::due(w, deep_last, std::time::Instant::now(), seq::frame_bytes(ds, &p))
-                        })
+                        deep_raw_settings(&b, &p)
+                            .filter(|ds| crate::deepmeas::due(w, deep_last, now_deep, seq::frame_bytes(ds, &p)))
                     });
                     let raw_frame = match deep {
                         Some(ds) if raw_frame.is_none() => {
-                            deep_last = Some(std::time::Instant::now());
+                            deep_last = Some(clock.now_us());
                             let mc = out.lock().unwrap().cores;
                             match seq::read_raw_again(
                                 &mut state,
@@ -1288,7 +1310,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     if guard.batch(e.contains("no acquisition"), unit, unit_key(&b, mask_map())) {
                         status("mask/zone unit: no acquisition twice, software fallback for these settings".into());
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    clock.sleep_us(200000);
                 }
             }
         }

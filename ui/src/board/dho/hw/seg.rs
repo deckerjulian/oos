@@ -56,12 +56,13 @@ pub(super) fn seg_abort(
 /// play single segments on request.
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn seg_step(
+pub(super) fn seg_step<C: oos_hal::dho::boot::Clock>(
     run: &mut Option<SegRun>,
     s: &Settings,
     p: &hz::Params,
     state: &mut oos_hal::dho::seq::State,
     bar: &mut oos_hal::dho::bus::Bar1,
+    clock: &mut C,
     c2h: &mut std::fs::File,
     dma: &mut oos_hal::dho::bus::DmaBuf,
     out: &HwShared,
@@ -100,14 +101,14 @@ pub(super) fn seg_step(
         return Ok(());
     }
     let Some(r) = run.as_mut() else {
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        clock.sleep_us(10000);
         return Ok(());
     };
     if r.recording {
         let x = seg::status(bar, r.n);
         out.lock().unwrap().seg.recorded = x.recorded;
         if !x.complete(r.n) && running {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            clock.sleep_us(10000);
             return Ok(());
         }
         let tag = seg::first_trigger(bar);
@@ -127,7 +128,7 @@ pub(super) fn seg_step(
         let cnt = rs.frames.min(r.count - r.next);
         if r.deliver && out.lock().unwrap().queue.len() + cnt as usize > crate::board::QUEUE_MAX {
             // the screen has not taken the last batch yet
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            clock.sleep_us(5000);
             return Ok(());
         }
         let st = seg::stamps(state, &rs, p, bar, c2h, r.next, cnt)?;
@@ -175,7 +176,7 @@ pub(super) fn seg_step(
             out.lock().unwrap().seg.shown = Some((k, f));
         }
         Some(_) => out.lock().unwrap().seg.want = None,
-        None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        None => clock.sleep_us(10000),
     }
     Ok(())
 }
