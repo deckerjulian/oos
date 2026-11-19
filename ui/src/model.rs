@@ -294,6 +294,8 @@ pub struct Model {
     pub trig_level: f32,
     pub slope: Slope,
     pub trig_mode: TrigMode,
+    /// the sweep (Auto or Normal) before a Single, which Run goes back to (`Model::run_sweep`); not part of a setup
+    pub sweep_before_single: TrigMode,
     /// trigger holdoff, seconds (0 = the shortest there is)
     pub holdoff: f32,
     pub trig_type: TrigType,

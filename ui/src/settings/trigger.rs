@@ -55,7 +55,7 @@ pub const EDGE: [Setting; 3] = [
         accept: None,
         step: None,
         get: |m, _| Val::Index(TRIG_MODES.iter().position(|&t| t == m.trig_mode).unwrap_or(0)),
-        put: |m, _, v| m.trig_mode = TRIG_MODES[v.index()],
+        put: |m, _, v| m.set_sweep(TRIG_MODES[v.index()]),
     },
     Setting {
         key: "holdoff",

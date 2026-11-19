@@ -179,8 +179,8 @@ impl Ui {
             0x15..=0x18 => self.channel_key(k),
             key::RUNSTOP => {
                 m.run = if m.run == RunState::Run { RunState::Stop } else { RunState::Run };
-                if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
-                    m.trig_mode = TrigMode::Auto;
+                if m.run == RunState::Run {
+                    m.run_sweep();
                 }
                 if m.run == RunState::Run && (m.n_on() > 0 || m.la_on()) {
                     m.floor_live_tdiv();
@@ -189,7 +189,7 @@ impl Ui {
             key::SINGLE => {
                 self.operation_serial = self.operation_serial.wrapping_add(1);
                 self.single_operation = self.operation_serial;
-                m.trig_mode = TrigMode::Single;
+                m.set_sweep(TrigMode::Single);
                 m.run = RunState::Run;
                 self.single_armed = false;
                 self.dirty_map = true;
