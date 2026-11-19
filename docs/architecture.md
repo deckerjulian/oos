@@ -259,6 +259,8 @@ the arrows everywhere yet: the paths against them are counted in `tools/layers.t
 A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everywhere), runs it only with `--execute`,
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
+`fpgad/src/main.rs` is the neutral part: it reads the unit, answers `model` and refuses another board; every other
+command goes to the module of the board family, `fpgad/src/dho/` (ADR 0067), whose header lists the commands.
 
 ## Where the structure is going
 
@@ -305,8 +307,7 @@ flowchart TB
     halboard --> halcore
 ```
 
-Drawn from: ADR 0001, 0049, 0053, 0055, 0056, 0064 and 0067. The boxes marked "later" and the split of `oos-fpgad` do
-not exist yet. An arrow reads "may depend on" and carries on down the arrows. `oos-ui` may name every crate below it.
+Drawn from: ADR 0001, 0049, 0053, 0055, 0056, 0064 and 0067. The boxes marked "later" do not exist yet. An arrow reads "may depend on" and carries on down the arrows. `oos-ui` may name every crate below it.
 
 | Crate or folder | Its job | Today |
 |---|---|---|
@@ -317,7 +318,7 @@ not exist yet. An arrow reads "may depend on" and carries on down the arrows. `o
 | `oos-model` | what the user has set: the model and the settings table | in `oos-ui` |
 | `oos-store` | setup and waveform files | in `oos-ui` |
 | `oos-ui` (`ui/src/`) | frame loop, screen, interpreters, signal, the board door and its acquisition | the rest stays here |
-| `oos-fpgad` (`fpgad/`) | a neutral command line, the board's commands in `fpgad/src/<family>/` | DHO only, not split |
+| `oos-fpgad` (`fpgad/`) | a neutral command line, the board's commands in `fpgad/src/<family>/` | split; `dho` only |
 | add-ons | own processes over the remote interface | not started (#206) |
 
 The steps, in order. A later step waits for the earlier ones it names.

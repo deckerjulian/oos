@@ -319,7 +319,7 @@ class PullRequests(unittest.TestCase):
 
     def test_a_refactoring_the_comparison_found_equal(self):
         unchanged = "**Behaviour:** unchanged.\n"
-        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/compcheck.rs"]
+        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/dho/compcheck.rs"]
         self.ci(calibrated=True)
         self.pull(regs, title="Lints: the findings in the trigger code", body=unchanged)
         self.assertEqual(self.gate()["unit"], "success", "register sequences, which the comparison proves")
@@ -331,7 +331,7 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "pending", "it does not say unchanged")
         for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/roll.rs", "hal/src/dho/selfcal.rs",
                      "hal/src/dho/boot/mod.rs", "hal/src/update/pkg.rs", "fpgad/src/bin/oos-update.rs",
-                     "fpgad/src/main.rs", "fpgad/src/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
+                     "fpgad/src/main.rs", "fpgad/src/dho/mod.rs", "fpgad/src/dho/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
             self.pull(regs + [live], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "pending", f"{live}: timing, start or update need a unit")
         self.pull(["rust-toolchain.toml"], title="Refactor: x", body=unchanged)
