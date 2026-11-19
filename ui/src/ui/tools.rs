@@ -14,6 +14,28 @@ mod refs;
 #[path = "scpi_helpers_tests.rs"]
 mod scpi_helpers_tests;
 use oos_dsp::measure::{burst_width, duration_n, time_outside, Analysis};
+/// The state of the counter (ADR 0062).
+#[derive(Default)]
+pub(super) struct Counter {
+    /// edges so far, counted in the records
+    pub total: u64,
+    /// frequency statistics
+    pub stat: MStat,
+    /// the hardware counter: latest reading
+    pub hw: Option<crate::board::CounterRead>,
+    /// a number raised by Clear counter
+    pub clear: u64,
+}
+
+/// The state of the DVM (ADR 0062).
+#[derive(Default)]
+pub(super) struct Dvm {
+    /// the FPGA's DVM block (`dvm.hw = on`): latest reading
+    pub hw: Option<crate::board::DvmRead>,
+    /// `:SYSTem:DEBug:DVM:LANE`: a lane forced for the DVM block (one channel only)
+    pub lane: Option<u32>,
+}
+
 /// Statistics of the on-screen histogram, in the source channel's units.
 pub(crate) struct HistStat {
     pub sum: u64,
@@ -431,14 +453,14 @@ impl Ui {
             ch: m.cnt_src,
             mode: m.cnt_mode.min(2),
             digits: m.cnt_digits,
-            clear: self.cnt_clear,
+            clear: self.cnt.clear,
         });
         let Some(r) = self.src.hw_counter(want) else { return };
         match r {
-            Some(r) if Some(r.n) != self.cnt_hw.map(|x| x.n) => {
+            Some(r) if Some(r.n) != self.cnt.hw.map(|x| x.n) => {
                 if let Some(t) = r.period.filter(|_| self.m.cnt_mode == 0) {
                     let v = 1.0 / t;
-                    let st = &mut self.cnt_stat;
+                    let st = &mut self.cnt.stat;
                     if st.n == 0 {
                         (st.min, st.max) = (v, v);
                     }
@@ -447,10 +469,10 @@ impl Ui {
                     st.min = st.min.min(v);
                     st.max = st.max.max(v);
                 }
-                self.cnt_hw = Some(r);
+                self.cnt.hw = Some(r);
             }
             Some(_) => {}
-            None => self.cnt_hw = None,
+            None => self.cnt.hw = None,
         }
     }
 
@@ -465,10 +487,10 @@ impl Ui {
             return;
         }
         let a = &self.ana[c];
-        self.cnt_total += a.rises.len() as u64;
+        self.cnt.total += a.rises.len() as u64;
         let v = self.meas_at(WaveId::Ch(c), Meas::Freq);
         if v.is_finite() {
-            let st = &mut self.cnt_stat;
+            let st = &mut self.cnt.stat;
             if st.n == 0 {
                 (st.min, st.max) = (v, v);
             }
@@ -496,7 +518,7 @@ impl Ui {
         let c = self.m.cnt_src.min(NCH - 1);
         let on = self.m.ch[c].on;
         let v = if self.src.is_hw() {
-            let r = self.cnt_hw.filter(|_| on)?;
+            let r = self.cnt.hw.filter(|_| on)?;
             match self.m.cnt_mode {
                 2 => r.total as f64,
                 1 => r.period?,
@@ -504,7 +526,7 @@ impl Ui {
             }
         } else {
             match self.m.cnt_mode {
-                2 => self.cnt_total as f64,
+                2 => self.cnt.total as f64,
                 1 if on => self.meas_at(WaveId::Ch(c), Meas::Period),
                 0 if on => self.meas_at(WaveId::Ch(c), Meas::Freq),
                 _ => return None,
@@ -514,10 +536,10 @@ impl Ui {
     }
 
     pub(crate) fn counter_clear(&mut self) {
-        self.cnt_total = 0;
-        self.cnt_stat = MStat::default();
-        self.cnt_clear += 1;
-        self.cnt_hw = None;
+        self.cnt.total = 0;
+        self.cnt.stat = MStat::default();
+        self.cnt.clear += 1;
+        self.cnt.hw = None;
     }
 
     /// The FPGA's DVM block (on the unit with `dvm.hw = on`, docs/fork/dvm.md): the channel it should measure, and its
@@ -525,16 +547,16 @@ impl Ui {
     pub(super) fn dvm_poll(&mut self) {
         let m = &self.m;
         let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw())
-            .then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
+            .then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm.lane });
         if let Some(r) = self.src.hw_dvm(want) {
-            self.dvm_hw = r;
+            self.dvm.hw = r;
         }
     }
 
     /// The DVM block's value of the source in the current mode, volts; None without a reading of this channel that the
     /// decode took.
     pub(super) fn dvm_hw_value(&self) -> Option<f64> {
-        let r = self.dvm_hw.filter(|r| r.ch == self.m.dvm_src && self.m.ch[r.ch].on)?;
+        let r = self.dvm.hw.filter(|r| r.ch == self.m.dvm_src && self.m.ch[r.ch].on)?;
         Some(r.volts?[self.m.dvm_mode.min(2)])
     }
 
@@ -572,19 +594,19 @@ impl Ui {
 
     /// `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` (fork, unit debug): the DVM block reads lane n with one channel acquired.
     pub fn dvm_lane_set(&mut self, lane: Option<u32>) {
-        self.dvm_lane = lane.map(|l| l & 3);
+        self.dvm.lane = lane.map(|l| l & 3);
     }
 
     /// The forced lane, `AUTO` without one.
     pub fn dvm_lane_text(&self) -> String {
-        self.dvm_lane.map_or("AUTO".into(), |l| l.to_string())
+        self.dvm.lane.map_or("AUTO".into(), |l| l.to_string())
     }
 
     /// `:SYSTem:DEBug:DVM?` (fork): the DVM block's latest reading, raw, for the unit session (docs/fork/dvm.md), next to
     /// the software DVM of the same source and mode. `off` without a reading.
     pub fn dvm_debug_text(&self) -> String {
         let sw = self.dvm_sw_value();
-        let Some(r) = self.dvm_hw else {
+        let Some(r) = self.dvm.hw else {
             return format!("off,sw={:.6e}", sw);
         };
         let v = r.volts.map_or("none".to_string(), |v| format!("{:.6e};{:.6e};{:.6e}", v[0], v[1], v[2]));
@@ -635,20 +657,20 @@ impl Ui {
                 let digits = self.m.cnt_digits as usize;
                 let on = self.m.ch[c].on;
                 let hw = self.src.is_hw();
-                let hw_t = self.cnt_hw.and_then(|r| r.period).filter(|_| on);
+                let hw_t = self.cnt.hw.and_then(|r| r.period).filter(|_| on);
                 let period = self.meas_at(WaveId::Ch(c), Meas::Period);
                 let frequency = self.meas_at(WaveId::Ch(c), Meas::Freq);
                 let t = match self.m.cnt_mode {
-                    2 if hw => self.cnt_hw.map_or("----".into(), |r| fmt_count(r.total as f64)),
+                    2 if hw => self.cnt.hw.map_or("----".into(), |r| fmt_count(r.total as f64)),
                     1 if hw => hw_t.map_or("----".into(), |t| si_digits(t, "s", digits)),
                     0 if hw => hw_t.map_or("----".into(), |t| si_digits(1.0 / t, "Hz", digits)),
-                    2 => fmt_count(self.cnt_total as f64),
+                    2 => fmt_count(self.cnt.total as f64),
                     1 if on && period.is_finite() => si_digits(period, "s", digits),
                     0 if on && frequency.is_finite() => si_digits(frequency, "Hz", digits),
                     _ => "----".into(),
                 };
                 v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
-                let st = self.cnt_stat;
+                let st = self.cnt.stat;
                 if self.m.cnt_mode == 0 && st.n > 1 {
                     v.push((
                         "min / max".into(),

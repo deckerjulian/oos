@@ -890,16 +890,8 @@ pub struct Ui {
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],
-    /// counter: edges so far, frequency statistics
-    cnt_total: u64,
-    cnt_stat: MStat,
-    /// the hardware counter (tools.rs): latest reading, and a number raised by Clear counter
-    cnt_hw: Option<crate::board::CounterRead>,
-    cnt_clear: u64,
-    /// the FPGA's DVM block (tools.rs, `dvm.hw = on`): latest reading
-    dvm_hw: Option<crate::board::DvmRead>,
-    /// `:SYSTem:DEBug:DVM:LANE`: a lane forced for the DVM block (one channel only)
-    dvm_lane: Option<u32>,
+    cnt: tools::Counter,
+    dvm: tools::Dvm,
     /// source B of delay and phase
     meas_src_b: WaveId,
     /// the reference the Slot rows work on
