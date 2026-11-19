@@ -91,6 +91,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0068](process/0068-the-comparison-of-the-programs-leaves-out-panic-places-and-symbol-names.md) | process | The comparison of the programs for the scope leaves out the places of their panics and their symbol names | accepted |
 | [0069](process/0069-unit-tested-holds-for-the-commits-it-was-given-for.md) | process | `unit-tested` holds for the commits it was given for | accepted |
 | [0070](process/0070-the-agent-switches-the-bench-units-power-through-an-outlet.md) | process | The agent switches the bench unit's power through an outlet, and runs the boot class itself | proposed |
+| [0072](process/0072-the-tests-inside-the-hardware-paths-need-no-run-on-a-unit.md) | process | The tests inside the hardware paths need no run on a unit | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents

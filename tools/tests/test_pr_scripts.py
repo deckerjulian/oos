@@ -289,6 +289,17 @@ class PullRequests(unittest.TestCase):
         self.pull(["ui/src/ui.rs", "hal/src/fsutil.rs", "docs/boot.md"])
         self.assertEqual(self.gate()["unit"], "success")
 
+    def test_the_tests_inside_the_hardware_paths_need_no_scope(self):
+        # ADR 0072: a test file of a hardware path is never in a program for the scope
+        self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/model.rs", "ui/Cargo.toml"])
+        self.assertEqual(self.gate()["unit"], "success", "only tests inside the hardware paths")
+        self.pull(["hal/src/update/hostile_tests.rs", "hal/src/dho/boot/tests.rs", "hal/src/dho/v2_tests.rs"])
+        self.assertEqual(self.gate()["unit"], "success")
+        self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/board/dho/hw.rs"])
+        self.assertEqual(self.gate()["unit"], "pending", "the code beside the tests still needs a unit")
+        self.pull(["ui/src/board/dho/tests_of_mine.rs"])
+        self.assertEqual(self.gate()["unit"], "pending", "a name that only begins like a test file")
+
     def test_equal_programs_for_the_scope(self):
         self.pull(["hal/src/dho/seq.rs", "fpgad/Cargo.toml"])
         self.ci(scope="success")
@@ -307,12 +318,25 @@ class PullRequests(unittest.TestCase):
         # Break it catches: fpgad's board commands moved out of main.rs into new files that $live did not name, so a
         # refactoring of them would have passed without a unit
         text = (ROOT / "tools" / "pr-gate.sh").read_text()
-        assign = "".join(line + "\n" for line in text.split("\n") if re.match(r"(hardware|live|proven)=", line))
-        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven"'],
+        assign = "".join(line + "\n" for line in text.split("\n")
+                         if re.match(r"(hardware|live|proven|testonly)=", line))
+        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven" "$testonly"'],
                              capture_output=True, text=True, check=True).stdout.split("\n")
-        hardware, live, proven = (re.compile(p) for p in out[:3])
+        hardware, live, proven, testonly = (re.compile(p) for p in out[:4])
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-        files = [f for f in files if hardware.search(f)]
+        # the tests inside the hardware paths are a class of their own, before $live and $proven (ADR 0072)
+        tests = [f for f in files if hardware.search(f) and testonly.search(f)]
+        self.assertGreater(len(tests), 3, "the test files of the hardware paths")
+        for f in tests:
+            path = ROOT / f
+            name = path.stem
+            parent = path.parent.with_suffix(".rs")
+            if not parent.exists():
+                parent = path.parent / "mod.rs"
+            text = parent.read_text()
+            self.assertRegex(text, r"#\[cfg\(test\)\]\s*\n\s*(pub(\([a-z]+\))? )?mod " + name + ";",
+                             f"{f}: its parent {parent.relative_to(ROOT)} must bring it in only under #[cfg(test)]")
+        files = [f for f in files if hardware.search(f) and not testonly.search(f)]
         self.assertGreater(len(files), 100, "the tree's hardware paths")
         self.assertEqual([f for f in files if not live.search(f) and not proven.search(f)], [],
                          "in neither $live nor $proven of tools/pr-gate.sh: class it")
