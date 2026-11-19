@@ -5,6 +5,8 @@
 
 use crate::font::Font;
 
+pub mod png;
+
 pub type Rgb = u32;
 
 pub const fn rgb(r: u32, g: u32, b: u32) -> Rgb {

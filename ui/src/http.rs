@@ -219,7 +219,7 @@ impl Shots {
             if std::thread::Builder::new().name("web-png".into()).spawn(move || me.encoder()).is_err() {
                 // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "");
+                return answer_shot(s, None, crate::gfx::png::png_of(cv).into(), "");
             }
             st.thread = true;
         }
@@ -353,7 +353,7 @@ impl Shots {
                     }
                     (vpu, vpu_failed) = (None, true);
                 }
-                crate::store::png(w, h, &px).into()
+                crate::gfx::png::png(w, h, &px).into()
             });
             let took = t0.elapsed();
             let mut st = self.lock();
@@ -1179,7 +1179,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 J::Arr(vec![J::obj(&[
                     ("type", J::s("image")),
                     ("mimeType", J::s("image/png")),
-                    ("data", J::Str(crate::base64::encode(&crate::store::png_of(cv)))),
+                    ("data", J::Str(crate::base64::encode(&crate::gfx::png::png_of(cv)))),
                 ])]),
             )]),
             _ => return Some(err(id, -32602.0, "unknown tool")),

@@ -331,14 +331,14 @@ pub fn ppm_into(b: &[u8], cv: &mut Canvas) -> Option<(i32, i32)> {
     if max != 255 || w <= 0 || h <= 0 || b.len() < p + w as usize * h as usize * 3 {
         return None;
     }
-    cv.fill(crate::gfx::Rect::new(0, 0, cv.w, cv.h), 0);
+    cv.fill(Rect::new(0, 0, cv.w, cv.h), 0);
     let (ox, oy) = ((cv.w - w) / 2, (cv.h - h) / 2);
     for y in 0..h {
         for x in 0..w {
             let (cx, cy) = (ox + x, oy + y);
             if (0..cv.w).contains(&cx) && (0..cv.h).contains(&cy) {
                 let k = p + (y as usize * w as usize + x as usize) * 3;
-                cv.px[(cy * cv.w + cx) as usize] = crate::gfx::rgb(b[k] as u32, b[k + 1] as u32, b[k + 2] as u32);
+                cv.px[(cy * cv.w + cx) as usize] = rgb(b[k] as u32, b[k + 1] as u32, b[k + 2] as u32);
             }
         }
     }

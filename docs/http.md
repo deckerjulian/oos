@@ -211,7 +211,7 @@ found` and `refused`, 202 for an MCP notification, else 200.
 
 - Mark: **stable**
 - Request: no arguments.
-- Answer: one `image` content item, `mimeType` `image/png`, `data` the screen as PNG in base64 (`store::png_of`,
+- Answer: one `image` content item, `mimeType` `image/png`, `data` the screen as PNG in base64 (`gfx::png::png_of`,
   made at the call).
 
 ### `GET /update`
