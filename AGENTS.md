@@ -95,7 +95,8 @@ work on its own (ADR 0039). Everything above holds for it, and:
   for the scope byte-identical to the base's, panic places and symbol names left out (`tools/scope-binaries.sh`,
   ADR 0041, ADR 0068), or it is a refactoring of code that builds register sequences, which the comparison proves
   (title `Lints:` or `Refactor:`, `Behaviour: unchanged`; not the start, the update, `ui/src/board/` or the live paths
-  of `hal/src/dho/`, ADR 0042): then `unit` passes by itself. Register sequences, timing, start and update are what the run on a unit is for.
+  of `hal/src/dho/`, ADR 0042), or of board code the live run reaches on every path (`$looped` of `tools/pr-gate.sh`)
+  when the comparison ran the live run on both sides and found it equal (ADR 0073): then `unit` passes by itself. Register sequences, timing, start and update are what the run on a unit is for.
 - It never removes `hold`, and never merges or asks to merge a pull request of somebody else or of another bot.
 - When main is red it fixes that first and does nothing else.
 - At the end it reports to the maintainer: what it opened and merged, what ran on the unit, what it left open.
