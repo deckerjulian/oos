@@ -250,7 +250,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
     let shared = out.clone();
     // the drawing workers are another test's when its screen switched them on: this loop keeps out of them (their
     // hand-over is run on a unit, docs/board-on-a-host.md 7)
-    crate::drawpipe::keep_out(true);
+    let _out = crate::drawpipe::keep_out();
     super::run(hw, super::settings(&m, false).mask, false, "/nonexistent".into(), out.clone(), || {
         pass += 1;
         let mut g = shared.lock().unwrap();
