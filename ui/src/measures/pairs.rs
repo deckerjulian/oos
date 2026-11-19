@@ -2,10 +2,56 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The two-source variants of the scope (delay, phase, skew, setup and hold from source A to source B) on the
-//! measurement page. The scope computes them (`tools::PAIRS`); this module only gives them their tiles.
+//! measurement page: the table of the variants (`PAIRS`), which the scope computes, and their tiles.
 
 use super::*;
 use Mark::*;
+
+/// What a channel-pair row measures. The edge flags choose the edges of delay, phase and skew.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PairKind {
+    Delay,
+    Phase,
+    Skew,
+    Setup,
+    Hold,
+    SetupAndHold,
+}
+
+/// Channel pairs: name, kind, edge of A rising, edge of B rising. New rows stay at the end so a saved index still
+/// means the same row.
+pub const PAIRS: [(&str, PairKind, bool, bool); crate::model::PAIRS_N] = [
+    ("Delay rise-rise", PairKind::Delay, true, true),
+    ("Delay fall-fall", PairKind::Delay, false, false),
+    ("Delay rise-fall", PairKind::Delay, true, false),
+    ("Delay fall-rise", PairKind::Delay, false, true),
+    ("Phase rise-rise", PairKind::Phase, true, true),
+    ("Phase fall-fall", PairKind::Phase, false, false),
+    ("Phase rise-fall", PairKind::Phase, true, false),
+    ("Phase fall-rise", PairKind::Phase, false, true),
+    ("Skew rise-rise", PairKind::Skew, true, true),
+    ("Skew fall-fall", PairKind::Skew, false, false),
+    ("Skew rise-fall", PairKind::Skew, true, false),
+    ("Skew fall-rise", PairKind::Skew, false, true),
+    ("Setup time", PairKind::Setup, true, true),
+    ("Hold time", PairKind::Hold, true, true),
+    ("Setup+Hold", PairKind::SetupAndHold, true, true),
+    ("Setup fall", PairKind::Setup, false, true),
+    ("Hold fall", PairKind::Hold, false, true),
+];
+
+/// The short names of the two-source variants (strip, SCPI).
+pub fn pair_short_name(k: usize) -> &'static str {
+    PAIRS[k.min(crate::model::PAIRS_N - 1)].0
+}
+/// The unit of a two-source variant: degrees for phase, none for the setup/hold violation count, else seconds.
+pub fn pair_unit(k: usize) -> &'static str {
+    match PAIRS[k.min(crate::model::PAIRS_N - 1)].1 {
+        PairKind::Phase => "\u{b0}",
+        PairKind::SetupAndHold => "",
+        _ => "s",
+    }
+}
 
 static DEFS: [Def; 17] = [
     pair(

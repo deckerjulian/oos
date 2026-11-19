@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The limits and tables of the screen that the model, the settings and the setup files count with too: they belong
-//! to what the user can set, not to how it is drawn. The screen's own tables (`ui::tools::PAIRS`, `ui::tables::PANES`,
-//! `ui::logger::LOG_STEPS`) are as long as the counts here; the compiler holds them to it.
+//! to what the user can set, not to how it is drawn. The tables they count (`measures::pairs::PAIRS`,
+//! `ui::tables::PANES`, `ui::logger::LOG_STEPS`) are as long as the counts here; the compiler holds them to it.
 
 use super::MEAS_SELECTION_MAX;
 
@@ -18,7 +18,7 @@ pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 /// DVM modes and counter modes.
 pub const DVM_MODES: [&str; 3] = ["DC", "AC rms", "AC+DC rms"];
 pub const CNT_MODES: [&str; 3] = ["Frequency", "Period", "Totalize"];
-/// Kinds of delay and phase measurement and of second panes, for the setups (`ui::tools::PAIRS`).
+/// Kinds of delay and phase measurement and of second panes, for the setups (`measures::pairs::PAIRS`).
 pub const PAIRS_N: usize = 17;
 /// The second panes (`ui::tables::PANES`).
 pub const PANES_N: usize = 6;
