@@ -50,6 +50,8 @@ stop() {
 live_run() {
 	[ -f "$1/ui/src/board/dho/hw/liverun.rs" ] || return 1
 	rm -rf "$2" && mkdir -p "$2" || stop "cannot make $2"
+	# absolute: the test runs in $1/ui
+	set -- "$1" "$(cd "$2" && pwd)"
 	(cd "$1/ui" && OOS_LIVE_OUT=$2 cargo test --locked --quiet --bin oos-ui -- board::dho::hw::liverun) \
 		>"$2.log" 2>&1 || stop "the live run fails in $1: $(tail -n 3 "$2.log")"
 	ls "$2"/*.txt >/dev/null 2>&1 || stop "the live run of $1 wrote no file"

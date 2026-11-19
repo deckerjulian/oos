@@ -159,20 +159,25 @@ fn signal(f: f64, square: bool) -> Box<dyn Fn(usize, f64) -> f64> {
     })
 }
 
-/// One line of a frame: its fields and, per channel with points, the count, the extremes and the mean (to 0.1 mV).
+/// One line of a frame: its fields and, per channel with points, the count, the extremes, the mean (to 0.1 mV) and a
+/// checksum of every sample (FNV-1a over their bits), so a change of any sample shows in the comparison.
 fn frame_line(f: &Frame) -> String {
     let mut s =
         format!("frame {} dt {:e} pre {} env {} roll {} scan {}", f.seq, f.dt, f.pre, f.envelope, f.roll, f.scan);
     for (c, v) in f.ch.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
         let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
         let mean = v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64;
-        s += &format!(" | CH{} n {} lo {:.4} hi {:.4} mean {:.4}", c + 1, v.len(), lo, hi, mean);
+        let sum = v
+            .iter()
+            .flat_map(|x| x.to_bits().to_le_bytes())
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+        s += &format!(" | CH{} n {} lo {:.4} hi {:.4} mean {:.4} sum {:016x}", c + 1, v.len(), lo, hi, mean, sum);
     }
     s
 }
 
-/// Runs `case` and returns the unit's trace and the frames delivered.
-fn run_case(case: &Case) -> (String, Vec<Frame>) {
+/// Runs `case` and returns the unit's trace, the frames delivered and the channels of the settings.
+fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
     let mut m = Model::default();
     (case.model)(&mut m);
     let want = super::settings(&m, false);
@@ -190,6 +195,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>) {
     let (u, bar, c2h, clock) = unit(scene);
     let hw = Hw { bar, c2h, afe: None, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
+    let mask = want.mask;
     out.lock().unwrap().want = Some(want);
     let mut pass = 0;
     let shared = out.clone();
@@ -209,7 +215,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>) {
     });
     let frames: Vec<Frame> = out.lock().unwrap().queue.iter().cloned().collect();
     let trace = u.borrow().trace_text();
-    (trace, frames)
+    (trace, frames, mask)
 }
 
 // Stage 2 of ADR 0053: the loop against the simulated unit for every case of the matrix. Break it catches: a case
@@ -222,7 +228,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         std::fs::create_dir_all(d).expect("OOS_LIVE_OUT is a folder");
     }
     for case in CASES {
-        let (trace, frames) = run_case(case);
+        let (trace, frames, mask) = run_case(case);
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
             text += &trace;
@@ -232,17 +238,49 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             }
             std::fs::write(d.join(format!("{}.txt", case.name)), text).expect("write the case's file");
         }
-        let played = trace.lines().filter(|l| l.starts_with("Played")).count();
+        let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
+        let (played, streamed) = (count("Played"), count("Stream"));
         if case.period_us.is_some() {
             assert!(played > 0 && !frames.is_empty(), "{}: played {}, {} frames", case.name, played, frames.len());
+            let volts = signal(case.freq_hz, case.square);
             for f in &frames {
-                for v in f.ch.iter().filter(|v| !v.is_empty()) {
+                let on = (0..4).filter(|&c| !f.ch[c].is_empty()).fold(0, |m, c| m | 1 << c);
+                assert_eq!(on, mask, "{}: frame {} has the channels {:#x}", case.name, f.seq, on);
+                for (c, v) in f.ch.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
                     let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
                     assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "{}: {} to {} V", case.name, lo, hi);
+                    // every sample, where a point is one sample: the scene's triggers are whole periods of its
+                    // signal apart, so point i is the signal (i - pre) points after a trigger at phase 0 (a square
+                    // not at its edges, where the sign of the sine is the rounding's)
+                    if !f.envelope {
+                        for (i, &x) in v.iter().enumerate() {
+                            let t = (i as f64 - f.pre as f64) * f.dt;
+                            if case.square && (2.0 * std::f64::consts::PI * case.freq_hz * t).sin().abs() < 1e-3 {
+                                continue;
+                            }
+                            let want = volts(c, t);
+                            assert!(
+                                (x as f64 - want).abs() < 2e-3,
+                                "{}: CH{} point {}: {} V, not {} V",
+                                case.name,
+                                c + 1,
+                                i,
+                                x,
+                                want
+                            );
+                        }
+                    }
                 }
             }
         } else {
-            assert!(frames.is_empty() && played == 0, "{}: {} frames without a trigger", case.name, frames.len());
+            assert!(
+                frames.is_empty() && played == 0 && streamed == 0,
+                "{}: {} frames, {} plays, {} stream reads without a trigger",
+                case.name,
+                frames.len(),
+                played,
+                streamed
+            );
         }
     }
 }
