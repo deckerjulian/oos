@@ -245,7 +245,7 @@ mod tests {
         // the free sweep's rows (with no input channel, so the reference level shows), the connection of an external
         // generator
         u.m.bode_sw_in = 0;
-        if (0..crate::ui::bode::GENERATORS.len()).any(|g| {
+        if (0..crate::model::bode::GENERATORS.len()).any(|g| {
             u.m.bode_gen = g;
             u.items(MenuId::Bode).contains(&it)
         }) {

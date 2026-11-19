@@ -438,11 +438,11 @@ fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             .is_some_and(|i| (1..=crate::model::VIEWS_MAX).contains(&i)) =>
         {
             let i: usize = k[4..].parse().unwrap_or(1);
-            m.view_slots[i - 1] = crate::ui::views::slot_checked(v)?;
+            m.view_slots[i - 1] = super::views::slot_checked(v)?;
         }
         // setups before the Layout mode: true = Waveform, false = Mirror
         "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
-        "view" => m.view = p_enum(v, &crate::ui::stored_views())?,
+        "view" => m.view = p_enum(v, &AView::STORED)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -461,7 +461,7 @@ fn set_bode_spec_power(m: &mut Model, k: &str, v: &str) -> Result<bool, String> 
             m.bode_points = p_u32(w[2])?.clamp(2, 1000) as usize;
             m.bode_in = WaveId::parse(w[4])?;
             m.bode_out = WaveId::parse(w[5])?;
-            m.bode_gen = p_idx(w[6], crate::ui::bode::GENERATORS.len())?;
+            m.bode_gen = p_idx(w[6], crate::model::bode::GENERATORS.len())?;
             m.bode_addr = w.get(7).map_or("", |a| a.trim()).to_string();
         }
         "bode_sweep" => {

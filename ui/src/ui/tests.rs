@@ -673,7 +673,7 @@ fn bode_sweep_with_the_builtin_generator() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) =
-        (bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
+        (crate::model::bode::BUILTIN, 1e3, 1e5, 3, WaveId::Ch(0), WaveId::Ch(0));
     (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
     ui.activate(Item::BodeRun);
     assert!(ui.m.afg_on && ui.m.afg_freq == 1e3 && ui.m.afg_offset == 0.0);

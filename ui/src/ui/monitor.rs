@@ -33,7 +33,7 @@ impl Ui {
             match k {
                 "xy" => xy = v == "true",
                 "full" => full = v == "true",
-                _ if views::is_view_key(k) => {
+                _ if crate::store::views::is_view_key(k) => {
                     let _ = crate::store::set(&mut m, k, v);
                 }
                 _ => {}

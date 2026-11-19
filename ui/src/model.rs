@@ -14,6 +14,7 @@ use crate::math::{MathOp, Window};
 
 mod acquisition;
 mod analysers;
+pub mod bode;
 mod channels;
 mod decode;
 mod defaults;
@@ -618,7 +619,7 @@ pub struct Model {
     pub dpt_zoom: DptZoom,
     /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
     pub bode_usb: bool,
-    /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
+    /// Bode with a generator that sweeps on its own (`model::bode::FREE`, same start/stop): sweep time (s), logarithmic
     /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
     /// `bode_ref` dBV)
     pub bode_sw_time: f64,

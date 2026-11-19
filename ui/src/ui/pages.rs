@@ -166,7 +166,7 @@ pub(super) const PAGES: [Page; 48] = [
         |u, _| u.bode_items(),
         Some(|u| {
             let m = &u.m;
-            if m.bode_gen == bode::FREE {
+            if m.bode_gen == crate::model::bode::FREE {
                 [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(WaveId::Ch), Some(WaveId::Ch(m.bode_sync))]
                     .into_iter()
                     .flatten()
@@ -582,13 +582,13 @@ mod tests {
             (
                 MenuId::Bode,
                 "free with an input",
-                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (bode::FREE, Ch(0), 2, 3),
+                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (crate::model::bode::FREE, Ch(0), 2, 3),
                 &[0, 1, 3],
             ),
             (
                 MenuId::Bode,
                 "free without an input",
-                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (bode::FREE, Ch(0), 0, 3),
+                |m| (m.bode_gen, m.bode_out, m.bode_sw_in, m.bode_sync) = (crate::model::bode::FREE, Ch(0), 0, 3),
                 &[0, 3],
             ),
             (MenuId::Bode, "generator", |m| (m.bode_gen, m.bode_in, m.bode_out) = (5, Ch(1), Ch(2)), &[1, 2]),

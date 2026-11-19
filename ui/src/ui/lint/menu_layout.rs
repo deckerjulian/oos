@@ -199,11 +199,11 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Split")), "Windows split", &mut out);
     walk(&|| open(Windows, &|u| u.select_option(Item::WinLayout, "Four")), "Windows four", &mut out);
-    walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
+    walk(&|| open(Bode, &|u| u.m.bode_gen = crate::model::bode::FREE), "Bode free sweep", &mut out);
     walk(
         &|| {
             open(Bode, &|u| {
-                u.m.bode_gen = bode::FREE;
+                u.m.bode_gen = crate::model::bode::FREE;
                 u.m.bode_sw_in = 0
             })
         },

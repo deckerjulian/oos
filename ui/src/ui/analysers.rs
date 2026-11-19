@@ -32,11 +32,6 @@ pub(super) trait Analyser: Sync {
         None
     }
 
-    /// Whether setups keep it as the view (`view = <AView>`). A page that runs a procedure says no.
-    fn stored(&self) -> bool {
-        true
-    }
-
     /// Its entries in the start menu (Analysers group).
     fn start(&self) -> Vec<Item> {
         vec![Item::Open(self.menu())]
@@ -82,11 +77,6 @@ pub(crate) fn scpi_views() -> Vec<(&'static str, AView)> {
     std::iter::once(("SCOPe", AView::Scope))
         .chain(ANALYSERS.iter().filter_map(|a| a.scpi().map(|k| (k, a.view()))))
         .collect()
-}
-
-/// The views a setup may keep.
-pub(crate) fn stored_views() -> Vec<AView> {
-    std::iter::once(AView::Scope).chain(ANALYSERS.iter().filter(|a| a.stored()).map(|a| a.view())).collect()
 }
 
 #[cfg(test)]
@@ -156,12 +146,19 @@ mod tests {
             s.exec_line(&mut ui, &cv, &format!(":VIEW {k}"));
             assert_eq!(ui.m.view, v, ":VIEW {k}");
         }
-        for v in stored_views() {
+        for v in AView::STORED {
             let m = Model { view: v, ..Default::default() };
             assert_eq!(crate::store::parse_setup(&crate::store::setup_text(&m)).unwrap().view, v);
         }
         let bw = of(AView::Step).unwrap();
-        assert!(bw.scpi().is_none() && !bw.stored(), "the bandwidth test is a procedure, not a stored view");
+        assert!(bw.scpi().is_none() && !AView::STORED.contains(&AView::Step), "the bandwidth test is a procedure");
+        for a in ANALYSERS.iter().filter(|a| a.view() != AView::Step) {
+            assert!(
+                AView::STORED.contains(&a.view()),
+                "{:?}: a page a setup keeps, missing in AView::STORED",
+                a.view()
+            );
+        }
     }
 
     /// Every page with what is stored of it: its feature id (`features.off` in system.conf), the word a setup keeps
