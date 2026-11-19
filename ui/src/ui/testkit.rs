@@ -71,26 +71,24 @@ pub fn count_of(text: &str, what: &str) -> Option<usize> {
 }
 
 /// Every key of the exemption list `list` is one of `all` and stands in it once: an entry left behind by a removed or
-/// renamed item fails, so the list holds no debt that is not there (docs/adr/process/0046). `whole` is false for a
-/// build that leaves items out; the keys are then only checked for doubles.
-pub fn exempt_once<T: PartialEq + std::fmt::Debug>(list: &str, keys: &[T], all: &[T], whole: bool) {
+/// renamed item fails, so the list holds no debt that is not there (docs/adr/process/0046).
+pub fn exempt_once<T: PartialEq + std::fmt::Debug>(list: &str, keys: &[T], all: &[T]) {
     for (i, k) in keys.iter().enumerate() {
-        assert!(!whole || all.contains(k), "{}: {:?} is no longer registered, take it out", list, k);
+        assert!(all.contains(k), "{}: {:?} is no longer registered, take it out", list, k);
         assert!(!keys[..i].contains(k), "{}: {:?} stands twice", list, k);
     }
 }
 
 /// Checks the names a kind of extension stores against its list `ui/tests/golden/<file>`, one a line (`#` starts a
-/// comment). Every name of `registered` has its line, and with `whole` (a build that has every module) every line is
-/// still registered as it stands: a stored name never changes and is never given to something else
+/// comment). Every name of `registered` has its line, and every line is still registered as it stands: a stored name never changes and is never given to something else
 /// (docs/adr/code/0002). The list only gains lines: with `OOS_BLESS=1` the missing ones are added at its end, and
 /// none is changed or removed.
-pub fn stored_names(file: &str, registered: &[String], whole: bool) {
+pub fn stored_names(file: &str, registered: &[String]) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(file);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("ui/tests/golden/{}: {}", file, e));
     let listed: Vec<&str> = text.lines().filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
     let new: Vec<&str> = registered.iter().map(String::as_str).filter(|r| !listed.contains(r)).collect();
-    let gone: Vec<&str> = listed.iter().copied().filter(|l| whole && !registered.iter().any(|r| r == l)).collect();
+    let gone: Vec<&str> = listed.iter().copied().filter(|l| !registered.iter().any(|r| r == l)).collect();
     let bless = std::env::var("OOS_BLESS").is_ok_and(|v| v == "1");
     if bless {
         let lines: String = new.iter().map(|l| format!("{}\n", l)).collect();

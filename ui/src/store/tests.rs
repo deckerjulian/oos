@@ -402,7 +402,6 @@ fn setup_quick_key() {
 
 /// Every protocol is stored by name; the USB decoder with its D- source and speed.
 #[test]
-#[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn setup_protocols_by_name() {
     for &p in crate::protocols::PROTOS.iter() {
         let m = Model { dec_proto: p, ..Default::default() };

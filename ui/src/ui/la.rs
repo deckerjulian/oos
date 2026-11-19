@@ -663,7 +663,6 @@ mod decode_tests {
 
     /// The switch of the decoder names no protocol: that is the row below it.
     #[test]
-    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn decoder_switch_is_not_named_after_a_protocol() {
         assert_eq!(ui_on(Proto::from_key("I2s").unwrap()).item_label(Item::DecOn), "Decoder");
     }

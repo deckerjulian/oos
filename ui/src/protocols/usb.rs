@@ -84,11 +84,7 @@ mod tests {
     // Break it catches: the demo traffic of a module decoding to nothing
     #[test]
     fn the_demos_decode() {
-        for p in [
-            &Usb as &dyn Protocol,
-            #[cfg(feature = "dec-i2s")]
-            &super::super::i2s::I2s,
-        ] {
+        for p in [&Usb as &dyn Protocol, &super::super::i2s::I2s] {
             let d = p.demo().unwrap();
             let dt = 1e-8;
             let n = (d.period / dt) as usize;

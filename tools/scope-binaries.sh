@@ -14,7 +14,7 @@
 #                                      commit, this script and rust-toolchain.toml: the caller keys it by all three.
 #
 # Both are built as boot/build-dev-image.sh builds them (release for aarch64-unknown-linux-musl, the crates' own
-# profile and target flags, the decoders of ui/tools/decoder-features.sh), with the folder's path replaced by /oos.
+# profile and target flags), with the folder's path replaced by /oos.
 # Cargo puts the absolute path of a crate into the names of its symbols, so the two sides are built in this folder,
 # not in two: the tree is checked out at BASE for the second build and back again after it. It refuses a tree with
 # changes. Prints the SHA-256 of each program on both sides.
@@ -58,17 +58,14 @@ fi
 here=$(git rev-parse HEAD)
 back=$(git symbolic-ref --quiet --short HEAD || echo "$here")
 target=aarch64-unknown-linux-musl
-# the decoders the image has: as the image build asks for them, whatever this shell has set
-unset OOS_DECODERS OOS_DECODERS_OFF
 # What the comparison leaves out (ADR 0068): the place of each panic in the source (`-Zlocation-detail=none`: file,
 # line and column, which every line moved above changes) and the symbol table (`-Cstrip=symbols`: names only). Both
 # are data the programs never act on, they only print or name it. The flag is unstable: RUSTC_BOOTSTRAP lets the pinned
 # release take it for these two builds, which are compared and thrown away; the image is built without it.
 flags="\"--remap-path-prefix=$root=/oos\", \"-Zlocation-detail=none\", \"-Cstrip=symbols\""
 sums() { # sums NAME: build the programs, print their sums
-	# shellcheck disable=SC2046
 	(cd ui && RUSTC_BOOTSTRAP=1 cargo build --release --locked --quiet --target "$target" \
-		$(tools/decoder-features.sh) --config "target.$target.rustflags=[$flags]") || return 1
+		--config "target.$target.rustflags=[$flags]") || return 1
 	# the flags are added to the crate's own target flags (.cargo/config.toml), not put in their place
 	(cd fpgad && RUSTC_BOOTSTRAP=1 cargo build --release --locked --quiet --target "$target" \
 		--config "target.$target.rustflags=[$flags]") || return 1

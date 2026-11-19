@@ -70,7 +70,6 @@ fn snapshot() -> String {
 
 #[test]
 // the golden file holds the keys and commands of every decoder; a build with the core decoders only has fewer
-#[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn every_stored_key_and_scpi_setter_does_what_the_golden_file_says() {
     let text = snapshot();
     if std::env::var("OOS_BLESS").is_ok_and(|v| v == "1") {

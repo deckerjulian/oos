@@ -98,8 +98,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   walks through it.
 - **Also touch** the decoder in the file of its family under `dsp/src/decode/`, its generator in
   `dsp/src/decode/gen.rs` or `dsp/src/decode/gen/` and its tests in the family's module of `dsp/tests/decode/`; for a
-  new file of `ui/src/protocols/` its `mod` line and its feature `dec-<file>` in `ui/Cargo.toml` (the feature and the
-  `decoders` list); with demo traffic its case in `ui/src/ui/tests.rs::extended_decoders_decode_their_demo`; its name
+  new file of `ui/src/protocols/` its `mod` line; with demo traffic its case in `ui/src/ui/tests.rs::extended_decoders_decode_their_demo`; its name
   under Protocol decoders in `wiki/Features.md`, and the number of decoders there and in `README.md`.
 - **Generate** its line of `ui/tests/golden/decoder-keys.txt` with
   `(cd ui && OOS_BLESS=1 cargo test --locked -q protocols::tests)`. The list only gains lines: a key never changes.

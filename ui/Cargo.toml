@@ -6,27 +6,8 @@ edition = "2021"
 description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
 license = "GPL-2.0-or-later"
 
-# Decoders beyond the seven core ones (UART, I2C, SPI, CAN, LIN, Parallel, C-PHY, always built), one feature per
-# file in src/protocols. All are on by default; a build without some: `--no-default-features --features "..."`, or
-# OOS_DECODERS / OOS_DECODERS_OFF with build.sh and boot/build-dev-image.sh (tools/decoder-features.sh).
-[features]
-default = ["decoders"]
-decoders = ["dec-dmx512", "dec-spdif", "dec-usbpd", "dec-dcc", "dec-linecode", "dec-serial", "dec-onewire", "dec-debug", "dec-qspi", "dec-i3c", "dec-vehicle", "dec-avionics", "dec-i2s", "dec-usb"]
-dec-dmx512 = []
-dec-spdif = []
-dec-usbpd = []
-dec-dcc = []
-dec-linecode = []
-dec-serial = []
-dec-onewire = []
-dec-debug = []
-dec-qspi = []
-dec-i3c = []
-dec-vehicle = []
-dec-avionics = []
-dec-i2s = []
-dec-usb = []
-
+# Every decoder is always built in; `decoders.off` in /oos/system.conf (System > Features) leaves some out at run time
+# (docs/adr/code/0071).
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }

@@ -1,6 +1,6 @@
 # ADR 0040: CI runs the parts a change can reach, and the tests run optimised
 
-- Status: accepted (2026-11-17, asked for by the maintainer)
+- Status: accepted (2026-11-17, asked for by the maintainer), amended by ADR 0071 (no decoder jobs)
 - Date: 2026-11-17
 - Category: process
 
