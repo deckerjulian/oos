@@ -5,8 +5,13 @@
 //! script (run in node where there is one) and the `net.allow` checks. A new test of `http` goes here.
 
 use super::*;
+use crate::gfx::Canvas;
+use crate::net::SENDERS;
+use crate::shots::{same_pixels, Live, LONG_POLL};
 use crate::ui::Ui;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 mod hostile;
 
@@ -94,12 +99,14 @@ fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::S
 fn web_demo() {
     let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
+    // the page's live view, as main.rs has it
+    let live = Live::default();
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
     let end = Instant::now() + Duration::from_secs(var("OOS_WEB_DEMO_S", 300));
     while Instant::now() < end {
         ui.step(0.04);
         ui.render(&mut cv);
-        for c in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
+        for c in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live)) {
             println!("web: {}", c);
             crate::cmd::run(&mut ui, &c);
         }
@@ -114,6 +121,8 @@ fn web_demo() {
 fn scpi_validation_fixture() {
     let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
     let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+    // the page's live view, as main.rs has it
+    let live = Live::default();
     let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
     assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
     let mut ui = crate::ui::testkit::demo_ui();
@@ -127,7 +136,7 @@ fn scpi_validation_fixture() {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        for command in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
+        for command in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live)) {
             crate::cmd::run(&mut ui, &command);
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -482,6 +491,7 @@ fn large_answers_go_through_a_thread() {
     let _sends = sends();
     use std::sync::atomic::Ordering::SeqCst;
     let mut h = Http::open(0);
+    let live = Live::default();
     let mut ui = crate::ui::testkit::demo_ui();
     // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
     let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -498,7 +508,7 @@ fn large_answers_go_through_a_thread() {
             out
         });
         while !t.is_finished() {
-            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
             std::thread::sleep(Duration::from_millis(1));
         }
         let out = t.join().unwrap();
@@ -538,8 +548,8 @@ fn live_picture_from_the_frame_loop_without_a_copy() {
 /// The long poll as a hang guard, a minute instead of the tests' second: a debug PNG takes most of a second, more
 /// on a busy computer, and a request that waited out the long poll before the first picture was made got an empty
 /// 200. The clients of these tests wait as long (`PICTURE_WAIT`).
-fn slow_encoder_guard(h: &Http) {
-    h.shots.lock().long_poll = Some(PICTURE_WAIT);
+fn slow_encoder_guard(live: &Live) {
+    live.shots.lock().long_poll = Some(PICTURE_WAIT);
 }
 
 /// How long a test's client waits for its picture: a hang guard, not a time the test depends on.
@@ -547,16 +557,17 @@ const PICTURE_WAIT: Duration = Duration::from_secs(60);
 
 fn live_picture_hand_over(frames_first: bool) {
     let mut h = Http::open(0);
+    let live = Live::default();
     // the request waits for its picture however long the encoder takes (`slow_encoder_guard`)
-    slow_encoder_guard(&h);
+    slow_encoder_guard(&live);
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
     let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
     let mut frame = 0u32;
     // the first screen handed over (the canvas got another buffer): the one before the render
     let mut shown: Option<Vec<u32>> = None;
-    let mut one_frame = |h: &mut Http, cv: &mut Canvas, shown: &mut Option<Vec<u32>>| {
+    let mut one_frame = |cv: &mut Canvas, shown: &mut Option<Vec<u32>>| {
         let (before, buf) = (cv.px.clone(), cv.px.as_ptr());
-        h.before_render(cv, true);
+        live.before_render(cv, true);
         if cv.px.as_ptr() != buf && shown.is_none() {
             *shown = Some(before);
         }
@@ -566,8 +577,8 @@ fn live_picture_hand_over(frames_first: bool) {
     };
     if frames_first {
         for _ in 0..3 {
-            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
-            one_frame(&mut h, &mut cv, &mut shown);
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
+            one_frame(&mut cv, &mut shown);
         }
         assert!(shown.is_none(), "nothing handed over before a request");
     }
@@ -580,20 +591,20 @@ fn live_picture_hand_over(frames_first: bool) {
         out
     });
     // the request is in before the next frame, whatever the load; the screen at that moment
-    while h.shots.lock().waiting.is_empty() && !t.is_finished() {
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
+    while live.shots.lock().waiting.is_empty() && !t.is_finished() {
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
         std::thread::sleep(Duration::from_millis(1));
     }
     let at_request = cv.px.clone();
     while !t.is_finished() {
-        one_frame(&mut h, &mut cv, &mut shown);
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
+        one_frame(&mut cv, &mut shown);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
         std::thread::sleep(Duration::from_millis(5));
     }
     let out = t.join().unwrap();
     let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
     assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-    let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+    let png = |px: &[u32]| crate::gfx::png::png(cv.w as u32, cv.h as u32, px);
     if frames_first {
         // the frame loop runs: the next screen goes over by a buffer swap, and it is the picture
         let shown = shown.expect("a screen was handed over");
@@ -602,15 +613,6 @@ fn live_picture_hand_over(frames_first: bool) {
         // before the first frame: the screen of that moment, copied
         assert!(out[e..] == png(&at_request), "the PNG of the screen at the request");
     }
-}
-
-/// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
-#[test]
-fn a_picture_answers_only_its_own_format() {
-    assert!(Shots::fits(false, false, false) && Shots::fits(true, true, false));
-    assert!(!Shots::fits(false, true, false) && !Shots::fits(false, true, true), "PNG asked, JPEG made");
-    assert!(!Shots::fits(true, false, false), "JPEG asked, PNG made while the VPU works: wait for the JPEG");
-    assert!(Shots::fits(true, false, true), "the VPU failed: PNG for everyone");
 }
 
 /// System > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
@@ -630,13 +632,14 @@ fn live_picture_with_the_gpu_is_a_picture_read_back() {
 
 fn live_picture_gpu(frames_first: bool) {
     let mut h = Http::open(0);
-    slow_encoder_guard(&h);
+    let live = Live::default();
+    slow_encoder_guard(&live);
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
     let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
     if frames_first {
         // the frame loop runs before anybody asks
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
-        h.before_gpu_frame();
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
+        live.before_gpu_frame();
     }
     let t = std::thread::spawn(move || {
         let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -647,30 +650,30 @@ fn live_picture_gpu(frames_first: bool) {
         out
     });
     // the request is in before the next frame, whatever the load; the screen at that moment
-    while h.shots.lock().waiting.is_empty() && !t.is_finished() {
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
+    while live.shots.lock().waiting.is_empty() && !t.is_finished() {
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
         std::thread::sleep(Duration::from_millis(1));
     }
     let at_request = cv.px.clone();
     let mut read_back = Vec::new();
     let mut frame = 0u32;
     while !t.is_finished() {
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
         let before = cv.px.clone();
-        h.before_gpu_frame();
+        live.before_gpu_frame();
         assert!(cv.px == before, "the canvas keeps the last picture read back");
         frame += 1;
         if frame.is_multiple_of(3) {
             cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
             read_back.push(cv.px.clone());
-            h.picture_read_back(&cv);
+            live.picture_read_back(&cv);
         }
         std::thread::sleep(Duration::from_millis(5));
     }
     let out = t.join().unwrap();
     let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
     assert!(out.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&out[..e]));
-    let png = |px: &[u32]| crate::store::png(cv.w as u32, cv.h as u32, px);
+    let png = |px: &[u32]| crate::gfx::png::png(cv.w as u32, cv.h as u32, px);
     if frames_first {
         assert!(read_back.iter().any(|p| out[e..] == png(p)), "the PNG of a picture read back");
     } else {
@@ -696,6 +699,7 @@ fn live_picture_once_per_screen_and_long_poll() {
         assert!(!same_pixels(&a, &a[..n.saturating_sub(1)]) || n == 0);
     }
     let mut h = Http::open(0);
+    let live = Live::default();
     let mut ui = crate::ui::testkit::demo_ui();
     let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
     ui.render(&mut cv);
@@ -721,7 +725,7 @@ fn live_picture_once_per_screen_and_long_poll() {
                     cv.fill(crate::gfx::Rect::new(10, 60, 300, 40), crate::gfx::rgb(30, 250, 30));
                     changed = true;
                 }
-                h.poll(&mut Ctx::new(ui, cv, scpi));
+                h.poll(&mut Ctx::new(ui, cv, scpi).with_live(&live));
                 std::thread::sleep(Duration::from_millis(1));
             }
             let out = t.join().unwrap();
@@ -730,32 +734,32 @@ fn live_picture_once_per_screen_and_long_poll() {
             let tag = head.lines().find_map(|l| l.strip_prefix("ETag: ")).unwrap_or("").to_string();
             (head, tag, out[e..].to_vec(), t0.elapsed())
         };
-    let encodes = |h: &Http| h.shots.lock().encodes;
-    let png_of = |cv: &Canvas| crate::store::png(cv.w as u32, cv.h as u32, &cv.px);
+    let encodes = || live.shots.lock().encodes;
+    let png_of = |cv: &Canvas| crate::gfx::png::png(cv.w as u32, cv.h as u32, &cv.px);
     // the long poll is a minute but where it is waited out: a debug PNG takes most of a second, and the encoder
     // waits twice its last encode before the next copy (`SHOT_DUTY`), so the test's one second could end before a
     // picture is made on a slow or busy computer (a viewer without a picture then got an empty one)
-    let long_poll = |h: &Http, d: Duration| h.shots.lock().long_poll = Some(d);
-    long_poll(&h, Duration::from_secs(60));
+    let long_poll = |d: Duration| live.shots.lock().long_poll = Some(d);
+    long_poll(Duration::from_secs(60));
     let (head, tag1, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
     assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: image/png"), "{}", head);
     assert!(tag1.starts_with('"') && tag1.ends_with('"') && tag1.len() > 2, "{}", head);
     assert!(body == png_of(&cv), "the PNG of the screen");
     // the screen unchanged, the viewer has it: it waits the long poll out, then 304 without a body, no encode
-    long_poll(&h, LONG_POLL);
+    long_poll(LONG_POLL);
     let (head, tag, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
     assert!(head.starts_with("HTTP/1.1 304") && body.is_empty() && tag == tag1, "{}", head);
     assert!(took >= LONG_POLL, "answered after {:?}", took);
-    long_poll(&h, Duration::from_secs(60));
+    long_poll(Duration::from_secs(60));
     // a viewer without it gets the same picture, without a new encode
     let (head, tag, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
     assert!(head.starts_with("HTTP/1.1 200") && tag == tag1 && body == png_of(&cv), "{}", head);
-    assert_eq!(encodes(&h), 1);
+    assert_eq!(encodes(), 1);
     // the screen changes while the viewer waits: the new picture comes before the long poll ends (a 304 would come
     // after a minute)
     let (head, tag2, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
     assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
-    assert_eq!(encodes(&h), 2);
+    assert_eq!(encodes(), 2);
     // a foreign page still gets nowhere
     let r = request(
         &mut h,

@@ -8,30 +8,55 @@
 
 use crate::gfx::Canvas;
 use crate::scpi::Scpi;
+use crate::shots::Live;
 use crate::ui::Ui;
+use std::net::TcpStream;
 
-/// What an answer of the web server may use: the screen, its last picture and the SCPI interpreter, for one pass of
-/// the frame loop.
+/// What an answer of the web server may use: the screen, its last picture, the SCPI interpreter and the live picture,
+/// for one pass of the frame loop.
 pub struct Ctx<'a> {
     ui: &'a mut Ui,
     cv: &'a Canvas,
     scpi: &'a mut Scpi,
+    live: Option<&'a Live>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(ui: &'a mut Ui, cv: &'a Canvas, scpi: &'a mut Scpi) -> Ctx<'a> {
-        Ctx { ui, cv, scpi }
+        Ctx { ui, cv, scpi, live: None }
     }
 
-    /// The last picture of the screen.
-    pub fn canvas(&self) -> &Canvas {
-        self.cv
+    /// With the live picture of the frame loop: without it `/screen.png` and `/screen.jpg` are answered 503 (tests
+    /// that ask for no picture).
+    pub fn with_live(mut self, live: &'a Live) -> Ctx<'a> {
+        self.live = Some(live);
+        self
     }
 
     /// `Ui::waveform_epoch`: a waveform upload of an older session does not go into the slot.
     pub fn waveform_epoch(&self) -> u64 {
         self.ui.waveform_epoch()
     }
+}
+
+/// Every pass of the web server, before its requests: the live picture's turn (`Live::tick`).
+pub fn pass(cx: &Ctx) {
+    if let Some(live) = cx.live {
+        live.tick(cx.cv);
+    }
+}
+
+/// `GET /screen.png` or `/screen.jpg` on `s` (`have`: the ETag of If-None-Match): the live picture answers it.
+pub fn picture(cx: &Ctx, s: &TcpStream, have: Option<String>, jpeg: bool) {
+    match cx.live {
+        Some(live) => live.request(s, have, cx.cv, jpeg),
+        None => crate::net::busy_answer(s),
+    }
+}
+
+/// Whether `GET /cmd` may run the text command `line` (keys, knobs, taps: `cmd::remote_ok`).
+pub fn remote_ok(_cx: &Ctx, line: &str) -> bool {
+    crate::cmd::remote_ok(line)
 }
 
 /// The longest waveform file `POST /waveform` takes.
@@ -98,6 +123,7 @@ pub fn answer(cx: &mut Ctx, route: &str, post: bool, body: &[u8]) -> Option<(&'s
             Ok(m) => ok("text/plain", m.into_bytes()),
             Err(e) => ok("text/plain", format!("REFUSED: {}", e).into_bytes()),
         },
+        "/screen.bmp" => ok("image/bmp", crate::scpi::bmp(cx.cv)),
         "/mcp" => match mcp(&String::from_utf8_lossy(body), cx) {
             Some(r) => ok("application/json", r.into_bytes()),
             None => ok("", Vec::new()),

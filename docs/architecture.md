@@ -201,7 +201,7 @@ Threads:
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
-| web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
+| web-png, web-send | the web remote's PNG of the screen (`shots.rs`; made only of a changed screen, at most 20 a second and half a core) and the large answers (`net::send_in_background`); SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 | bt | System > Network > Bluetooth's client of bluetoothd (`ui/src/ui/bt.rs` over `hal::bluez`): the state every 2 s, scan, pair, connect, forget, and the pairing agent's answers; started with the first look at the page, so the frame loop never waits on the radio |
 | ntp | SNTP exchange and clock step when Time from NTP is on (`ui/system/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
