@@ -9,6 +9,28 @@
 
 use super::*;
 
+/// How long the parts of a frame took (ms): the `stats` line of the console reads them, and the fast path sizes its
+/// share of a screen by them (`fast_budget`). The times of the frame loop are smoothed over the frames; those of the
+/// GPU helper are its last frame as it reported it. ADR 0062.
+#[derive(Default)]
+pub(crate) struct FrameTimes {
+    /// `Ui::step` as a whole (smoothed)
+    pub step: f32,
+    /// parts of `step` (smoothed): taking records from the source, drawing them into the phosphor maps
+    pub acq: f32,
+    pub draw: f32,
+    /// drawing the screen and showing it (smoothed)
+    pub render: f32,
+    pub present: f32,
+    /// System > Graphics = GPU: the helper's last panel frame, not smoothed: upload, draw, read back; None on the CPU
+    pub gpu: Option<[f32; 6]>,
+    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame
+    /// (not smoothed)
+    pub gpu_screens: Option<(f32, Option<f32>)>,
+    /// parts of `step` (smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
+    pub parts: [f32; 4],
+}
+
 /// What a part runs on each frame to take what its thread or its probe has for it.
 type Poll = fn(&mut Ui);
 
@@ -472,8 +494,8 @@ impl Ui {
         } else if self.m.run == RunState::Run && self.now - self.last_rec_t > wait_after {
             self.m.status = TrigStatus::Wait;
         }
-        self.t_acq += 0.05 * (take.ta - self.t_acq);
-        self.t_draw += 0.05 * (take.td - self.t_draw);
+        self.times.acq += 0.05 * (take.ta - self.times.acq);
+        self.times.draw += 0.05 * (take.td - self.times.draw);
         let rate = take.got as f32 / dt_wall.max(1e-3) as f32;
         self.wfm_rate += 0.1 * (rate - self.wfm_rate);
         self.wfm_total += take.got as u64;
@@ -635,7 +657,7 @@ impl Ui {
     /// Time of a screen the fast path may spend (ms): what a frame of the 30 a second (33 ms) leaves after the rest of
     /// the step, drawing and showing the screen, less 2 ms of slack; 5 to 28 ms.
     pub(super) fn fast_budget(&self) -> f32 {
-        let rest = (self.t_step - self.t_fast).max(0.0) + self.t_render + self.t_present;
+        let rest = (self.times.step - self.t_fast).max(0.0) + self.times.render + self.times.present;
         (31.0 - rest).clamp(5.0, 28.0)
     }
 

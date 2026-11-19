@@ -956,18 +956,7 @@ pub struct Ui {
     remote: remote::RemoteUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
-    pub t_step: f32,
-    /// parts of `t_step` (ms, smoothed): taking records from the source, drawing them into the phosphor maps
-    pub t_acq: f32,
-    pub t_draw: f32,
-    pub t_render: f32,
-    pub t_present: f32,
-    /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
-    pub t_gpu: Option<[f32; 6]>,
-    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame (ms)
-    pub t_gpu_screens: Option<(f32, Option<f32>)>,
-    /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
-    pub t_parts: [f32; 4],
+    pub(crate) times: acquire::FrameTimes,
     pub info: String,
     pub dirty_map: bool,
     vmax: [u32; NCH],
