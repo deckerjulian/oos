@@ -14,8 +14,9 @@ base's. On 2026-11-19 three changes that do not change what the programs do stil
   line moved changes those numbers. The same was seen in stage 0a of ADR 0053: functions added in the middle of three
   files, never called by the programs, changed all three. The same code as a test module at the end of a file left
   them byte-identical.
-- **Dead code removed.** #309 takes a simulator that the programs never call out of `hal/src/dho/seg.rs`. All three
-  programs differed, the lines of the code after it having moved.
+- **Code moved out of a file.** A first version of #309 (not pushed) moved a simulator that the programs never call
+  out of `hal/src/dho/seg.rs`, and all three programs differed (reported by the session that wrote it; not tried
+  here with the new comparison).
 - **A build script.** #302 adds build scripts to `oos-hal` and `oos-ui` that set the same `cfg` for the same code. All
   three programs differed.
 - Most refactorings move lines. Under ADR 0041 they need a run on a unit even when the comparison of ADR 0032 and
@@ -26,7 +27,6 @@ Tried on 2026-11-19 on the host, with the pinned Rust 1.100.0:
 | Change | Byte for byte (ADR 0041) | Without panic places and symbols |
 |---|---|---|
 | a comment line in `seq/samples.rs` | all three differ | all three equal |
-| #309 (dead code removed from `hal/src/dho/seg.rs`, ADR 0053 stage 0b.1) | all three differ | all three equal |
 | #302 (build scripts of hal and ui) | all three differ | oos-fpgad and oos-update equal, oos-ui differs |
 
 oos-ui of #302 still differs in most of its bytes, because the build script of `oos-ui` changes how the program is laid
@@ -69,4 +69,4 @@ equal, as in ADR 0041.**
 
 ## References
 
-ADR 0032, ADR 0041, ADR 0042, ADR 0045, ADR 0053, `tools/scope-binaries.sh`, `tools/pr-gate.sh`, #302, #309.
+ADR 0032, ADR 0041, ADR 0042, ADR 0045, ADR 0053, `tools/scope-binaries.sh`, `tools/pr-gate.sh`, #302.
