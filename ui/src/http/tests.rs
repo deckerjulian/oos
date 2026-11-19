@@ -99,12 +99,14 @@ fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::S
 fn web_demo() {
     let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
     let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
+    // the page's live view, as main.rs has it
+    let live = Live::default();
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
     let end = Instant::now() + Duration::from_secs(var("OOS_WEB_DEMO_S", 300));
     while Instant::now() < end {
         ui.step(0.04);
         ui.render(&mut cv);
-        for c in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
+        for c in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live)) {
             println!("web: {}", c);
             crate::cmd::run(&mut ui, &c);
         }
@@ -119,6 +121,8 @@ fn web_demo() {
 fn scpi_validation_fixture() {
     let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
     let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+    // the page's live view, as main.rs has it
+    let live = Live::default();
     let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
     assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
     let mut ui = crate::ui::testkit::demo_ui();
@@ -132,7 +136,7 @@ fn scpi_validation_fixture() {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        for command in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
+        for command in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live)) {
             crate::cmd::run(&mut ui, &command);
         }
         std::thread::sleep(Duration::from_millis(10));

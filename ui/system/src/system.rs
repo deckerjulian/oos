@@ -91,11 +91,13 @@ fn status(rc: libc::c_int) -> io::Result<()> {
 pub const WEB_NICE: i32 = 10;
 
 /// The threads of the web remote (encoder, senders) run only on what the scope leaves over: scheduling class
-/// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC
-/// (RK3399: the four A53; the frame loop keeps the two A72 for itself). Nice 10 where that fails.
+/// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC.
+/// Which cores those are, the kernel says at run time (`cpu_capacity`, `placement::little_cores`); no number of cores
+/// is built in. On the RK3399 they are the four A53, and the two A72 stay for the frame loop: assumed from the SoC's
+/// documentation, not checked here. Nice 10 where `SCHED_IDLE` fails.
 pub fn lower_priority() {
-    // not in the tests (of oos-ui too, which turns on `testkit`): with every core busy with tests in parallel (CI), a thread at SCHED_IDLE got no time for
-    // seconds, and a viewer waiting for a picture got 304 or 503 instead
+    // not in the tests (of oos-ui too, which turns on `testkit`): with every core busy with tests in parallel (CI), a
+    // thread at SCHED_IDLE got no time for seconds, and a viewer waiting for a picture got 304 or 503 instead
     #[cfg(target_os = "linux")]
     if !cfg!(any(test, feature = "testkit")) {
         let tid = crate::system::idle_current_thread(WEB_NICE);
