@@ -752,6 +752,7 @@ impl Http {
                     eprintln!("oos-ui: web remote off");
                 }
                 self.pending.clear();
+                self.sending.clear();
             }
         }
     }
@@ -895,12 +896,16 @@ impl Http {
     }
 
     /// Writes `bytes` to `s` as far as it takes them now; the rest goes out on the next passes (`sending`), and the
-    /// connection closes when all is out, when the client takes nothing for `net::SEND_STALL` or when `MAX_SENDING`
-    /// answers already wait.
+    /// connection closes when all is out, or when the client takes nothing for `net::SEND_STALL` or has not taken all
+    /// after `net::SEND_LIMIT`. While `MAX_SENDING` answers already wait, it closes unanswered: no byte of an answer
+    /// that could not be finished.
     fn send(&mut self, s: TcpStream, bytes: Vec<u8>) {
+        if self.sending.len() >= MAX_SENDING {
+            return;
+        }
         let mut out = crate::net::Outbox::default();
         out.push(&bytes);
-        if out.flush(&s) == crate::net::Sent::Later && self.sending.len() < MAX_SENDING {
+        if out.flush(&s) == crate::net::Sent::Later {
             self.sending.push((s, out));
         }
     }

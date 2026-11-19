@@ -391,6 +391,35 @@ fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
     assert!(reader.join().unwrap() == answer, "the answer arrives whole, and the connection closes after it");
 }
 
+/// Web remote off: the answers still waiting for their clients are dropped with the connections, as the requests
+/// being read are; and while `MAX_SENDING` answers wait, one more closes without a byte of it.
+#[test]
+fn switching_the_web_remote_off_drops_the_answers_that_wait() {
+    let mut h = Http::open(0);
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut pair = || {
+        let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        (c, l.accept().unwrap().0)
+    };
+    let mut clients = Vec::new();
+    for _ in 0..MAX_SENDING {
+        let (c, s) = pair();
+        let mut out = crate::net::Outbox::default();
+        out.push(b"an answer still waiting");
+        h.sending.push((s, out));
+        clients.push(c);
+    }
+    let (mut ninth, s) = pair();
+    h.send(s, b"HTTP/1.1 200 OK\r\n\r\nshort".to_vec());
+    assert_eq!(h.sending.len(), MAX_SENDING, "the ninth is not kept");
+    ninth.set_read_timeout(Some(Duration::from_secs(300))).unwrap();
+    let mut got = Vec::new();
+    ninth.read_to_end(&mut got).unwrap();
+    assert!(got.is_empty(), "the ninth gets no part of its answer: {:?}", String::from_utf8_lossy(&got));
+    h.set_open(None);
+    assert!(h.sending.is_empty() && h.pending.is_empty());
+}
+
 /// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
 /// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
 #[test]

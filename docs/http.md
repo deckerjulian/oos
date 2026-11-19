@@ -28,8 +28,8 @@ has no mark, or when an entry names a route the code does not answer.
 - Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503
   of `busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once.
   A smaller one, a 403 or 413 and the result of an upload go out as the client takes them, from an outbox that the
-  frame loop writes from on every pass without waiting (ADR 0066); a client that takes nothing for 2 s, or a ninth
-  such answer, closes the connection.
+  frame loop writes from on every pass without waiting (ADR 0066). The connection closes when a client takes nothing
+  for 2 s or has not taken the whole answer after 30 s; while eight answers wait, a ninth closes unanswered.
 
 Limits (constants at the top of `ui/src/http.rs`):
 
