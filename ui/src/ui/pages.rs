@@ -33,7 +33,7 @@ pub(super) struct Page {
     /// the pickers that are one wide column, for long lines (network and device names)
     pub wide: fn(Item) -> bool,
     /// the signals it reads: a channel among them that is off gets a button to switch it on (`off_sources`)
-    pub sources: Option<fn(&Ui) -> Vec<WaveId>>,
+    pub sources: Option<Sources>,
 }
 
 /// Below the LAN box of the top bar: the pages of the network.
@@ -59,14 +59,16 @@ fn ch_of(m: MenuId) -> usize {
     }
 }
 
+/// The signals a page reads (`Page::sources`).
+type Sources = fn(&Ui) -> Vec<WaveId>;
+
 /// A page of a title, rows, an anchor and the signals it reads, without pickers of its own.
-#[allow(clippy::type_complexity)]
 const fn plain(
     id: MenuId,
     title: fn(&Ui, MenuId) -> String,
     items: fn(&Ui, MenuId) -> Vec<Item>,
     anchor: Option<Anchor>,
-    sources: Option<fn(&Ui) -> Vec<WaveId>>,
+    sources: Option<Sources>,
 ) -> Page {
     Page { id, title, items, anchor, picks: none, pick: no_pick, wide: none, sources }
 }

@@ -961,13 +961,10 @@ pub struct Ui {
     wlan_stick: bool,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
     pub mouse: pointer::Mouse,
-    /// System > Network > Bluetooth (ui/bt.rs); a Bluetooth stick is plugged in (`hci0`), and how many devices are
-    /// connected through it as inputs (the top bar)
+    /// System > Network > Bluetooth (ui/bt.rs), and the stick and its inputs for the top bar
     bt: bt::BtUi,
     /// the number pad of a value row (ui/numpad.rs)
     numpad: numpad::NumPad,
-    bt_stick: bool,
-    bt_inputs: usize,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,

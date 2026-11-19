@@ -147,12 +147,11 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
     let vds = &vds[..n];
     let id_raw = &id[..n];
     let pct = (gate_pct / 100.0).clamp(0.01, 0.49);
-    let Some(g) = vgs.map(|g| &g[..n]).filter(|g| swing(g).is_some()) else {
+    let Some((g, (gmin, gmax))) = vgs.map(|g| &g[..n]).and_then(|g| Some((g, swing(g)?))) else {
         out.note = "no gate";
         ungated(&mut out, vds, id_raw, dt);
         return out;
     };
-    let (gmin, gmax) = swing(g).unwrap();
     let ev = edges(g, ((gmin + gmax) / 2.0) as f32, (0.1 * (gmax - gmin)) as f32);
     let rises: Vec<f64> = ev.iter().filter(|e| e.rising).map(|e| e.t).collect();
     let falls: Vec<f64> = ev.iter().filter(|e| !e.rising).map(|e| e.t).collect();
