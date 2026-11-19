@@ -9,9 +9,11 @@ use crate::gfx::Canvas;
 use crate::net::SENDERS;
 use crate::shots::{same_pixels, Live, LONG_POLL};
 use crate::ui::Ui;
+use oos_remote::http::{Offer, PAGE, SEND_INLINE};
 use std::io::{Read, Write};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
+use std::time::Instant;
 
 mod hostile;
 
@@ -24,61 +26,15 @@ fn sends() -> MutexGuard<'static, ()> {
     SENDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-#[test]
-fn a_foreign_site_gets_nowhere() {
-    let f =
-        |h: &str, route: &str, post: bool| foreign(&format!("GET {} HTTP/1.1\r\n{}\r\n\r\n", route, h), route, post);
-    // tools and the page of the scope itself
-    assert!(!f("Host: 192.168.177.64:8080", "/cmd", false));
-    assert!(!f("Host: x", "/cmd", false));
-    assert!(!f("Host: dho924.local:8080", "/cmd", false));
-    assert!(!f("Host: [fe80::1]:8080", "/cmd", false));
-    // the scope by its global IPv6 address (net.ipv6 = on), with and without the port, and the page's own requests
-    assert!(!f("Host: [2001:db8:5:7:1d2e:3f4a:5b6c:7d8e]:8080", "/cmd", false));
-    assert!(!f("Host: [2001:db8:5:7::7d8e]", "/cmd", false));
-    assert!(!f(
-        "Host: [2001:DB8:5:7::7D8E]:8080\r\nOrigin: http://[2001:db8:5:7::7d8e]:8080\r\nSec-Fetch-Site: same-origin",
-        "/update",
-        true
-    ));
-    assert!(f("Host: [2001:db8:5:7::7d8e]:8080\r\nOrigin: http://[2001:db8:5:7::1]:8080", "/update", true));
-    assert!(f("Host: [2001:db8::1].evil.example:8080", "/cmd", false));
-    assert!(!f("", "/cmd", false));
-    assert!(!f(
-        "Host: 192.168.177.64:8080\r\nOrigin: http://192.168.177.64:8080\r\nSec-Fetch-Site: same-origin",
-        "/update",
-        true
-    ));
-    // a page elsewhere
-    assert!(f("Host: 192.168.177.64:8080\r\nOrigin: https://evil.example", "/update", true));
-    assert!(f("Host: 192.168.177.64:8080\r\nOrigin: null", "/mcp", true));
-    assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/cmd", false));
-    assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/screen.png", false));
-    // rebinding: a foreign name that resolves to the scope
-    assert!(f("Host: evil.example:8080", "/wave.csv", false));
-    // a link to the page
-    assert!(!f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/", false));
-    assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/update", true));
-    assert!(f("Host: 192.168.177.64:8080\r\nOrigin: https://evil.example", "/waveform", true));
-    assert!(f("Host: 192.168.177.64:8080\r\nSec-Fetch-Site: cross-site", "/ui-state", false));
-}
-
-#[test]
-fn waveform_names_are_display_names() {
-    assert_eq!(waveform_name("name=C%3A%5Ccaptures%5Cclock.wfm"), "clock.wfm");
-    assert_eq!(waveform_name("name=..%2F..%2Fclock%0A.csv"), "clock.csv");
-    assert_eq!(waveform_name("slot=2"), "waveform.csv");
-}
-
 /// One request over a real socket; the server is polled until the answer is complete.
-fn request(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> String {
+fn request(h: &mut Web, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> String {
     String::from_utf8_lossy(&request_raw(h, ui, cv, scpi, req)).into_owned()
 }
 
-fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> Vec<u8> {
-    let addr = h.l.as_ref().unwrap().local_addr().unwrap();
+fn request_raw(h: &mut Web, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> Vec<u8> {
+    let port = h.port().unwrap();
     let t = std::thread::spawn(move || {
-        let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
         c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
         let _ = c.write_all(&req);
         let mut out = Vec::new();
@@ -98,7 +54,7 @@ fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::S
 #[ignore]
 fn web_demo() {
     let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-    let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
+    let mut h = Web::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
     // the page's live view, as main.rs has it
     let live = Live::default();
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
@@ -120,7 +76,7 @@ fn web_demo() {
 #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
 fn scpi_validation_fixture() {
     let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
-    let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
+    let mut h = Web::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16);
     // the page's live view, as main.rs has it
     let live = Live::default();
     let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16);
@@ -143,13 +99,13 @@ fn scpi_validation_fixture() {
     }
 }
 
-fn get(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, path: &str) -> String {
+fn get(h: &mut Web, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, path: &str) -> String {
     request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
 }
 
 #[test]
 fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let mut ui = crate::ui::testkit::demo_ui();
     let store = crate::ui::testkit::Scratch::new("http-no-write");
     ui.store_dir = store.clone();
@@ -208,7 +164,7 @@ fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
 /// seconds, with the scope's screen and keys stopped). A session changed meanwhile does not get the late file.
 #[test]
 fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let port = h.port().unwrap();
     let csv = "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n";
@@ -227,7 +183,7 @@ fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
     for (slot, change) in [(3, false), (5, true)] {
         let mut c = upload(slot);
         let until = Instant::now() + Duration::from_secs(60);
-        while h.wave.is_none() {
+        while !h.uploading() {
             assert!(Instant::now() < until, "the upload was not taken");
             h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             assert!(ui.ref_shown_slot(slot - 1).is_none(), "the poll that takes the upload does not parse it");
@@ -235,7 +191,7 @@ fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
         if change {
             ui.return_to_live();
         }
-        while h.wave.is_some() {
+        while h.uploading() {
             assert!(Instant::now() < until, "the parse did not end");
             h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             std::thread::sleep(Duration::from_millis(1));
@@ -254,16 +210,20 @@ fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
 
 #[test]
 fn waveform_upload_has_its_own_limit_and_origin_protection() {
-    assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
+    assert_eq!(crate::store::MAX_WAVEFORM_BYTES, 128 << 20, "native and browser imports share the parser byte limit");
     assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let reply = request(
         &mut h,
         &mut ui,
         &cv,
         &mut scpi,
-        format!("POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", MAX_WAVEFORM + 1).into_bytes(),
+        format!(
+            "POST /waveform?name=x.bin HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            crate::store::MAX_WAVEFORM_BYTES + 1
+        )
+        .into_bytes(),
     );
     assert!(reply.starts_with("HTTP/1.1 413"), "{reply}");
     let reply = request(
@@ -343,7 +303,7 @@ setTimeout(() => {
 
 #[test]
 fn page_lets_the_viewer_pick_png_or_bmp() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
     let script = page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
@@ -372,74 +332,12 @@ fn page_lets_the_viewer_pick_png_or_bmp() {
     assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
 }
 
-/// ADR 0066: an answer the client does not take yet waits in `sending`, the frame loop goes on, and it goes out whole
-/// once the client reads.
-#[test]
-fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
-    const HANG: Duration = Duration::from_secs(300);
-    let mut h = Http::open(0);
-    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
-    let (s, _) = l.accept().unwrap();
-    // far more than the socket buffers hold, also on Linux
-    let answer: Vec<u8> = (0..32u32 << 20).map(|i| i as u8).collect();
-    h.send(s, answer.clone());
-    assert_eq!(h.sending.len(), 1, "the rest waits");
-    h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
-    assert_eq!(h.sending.len(), 1, "a pass takes what the socket takes and goes on");
-    let reader = std::thread::spawn(move || {
-        let mut got = Vec::new();
-        c.read_to_end(&mut got).unwrap();
-        got
-    });
-    let t = std::time::Instant::now();
-    while !h.sending.is_empty() {
-        assert!(t.elapsed() < HANG);
-        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
-    }
-    assert!(reader.join().unwrap() == answer, "the answer arrives whole, and the connection closes after it");
-}
-
-/// Web remote off: the answers still waiting for their clients are dropped with the connections, as the requests
-/// being read are; and while `MAX_SENDING` answers wait, one more closes without a byte of it.
-#[test]
-fn switching_the_web_remote_off_drops_the_answers_that_wait() {
-    let mut h = Http::open(0);
-    let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let pair = || {
-        let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
-        (c, l.accept().unwrap().0)
-    };
-    let mut clients = Vec::new();
-    for _ in 0..MAX_SENDING {
-        let (c, s) = pair();
-        let mut out = crate::net::Outbox::default();
-        out.push(b"an answer still waiting");
-        h.sending.push((s, out));
-        clients.push(c);
-    }
-    let (mut ninth, s) = pair();
-    h.send(s, b"HTTP/1.1 200 OK\r\n\r\nshort".to_vec());
-    assert_eq!(h.sending.len(), MAX_SENDING, "the ninth is not kept");
-    ninth.set_read_timeout(Some(Duration::from_secs(300))).unwrap();
-    let mut got = Vec::new();
-    ninth.read_to_end(&mut got).unwrap();
-    assert!(got.is_empty(), "the ninth gets no part of its answer: {:?}", String::from_utf8_lossy(&got));
-    h.set_open(None);
-    assert!(h.sending.is_empty() && h.pending.is_empty());
-}
-
 /// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
 /// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
 #[test]
 fn the_update_page_shows_the_state_the_last_result_and_the_form() {
-    let page = update_page("state <a> & b", "last <x>");
-    assert!(page.contains("<pre>state &lt;a> &amp; b</pre>") && page.contains(">last &lt;x></pre>"), "{page}");
-    assert!(page.contains(r#"<input type="file" id="f" accept=".oosupd">"#), "{page}");
-    assert!(page.contains(&format!("<style>{STYLE}</style>")), "the page has the style of the remote");
     let _sends = sends();
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let r = get(&mut h, &mut ui, &cv, &mut scpi, "/update");
     let (status, last) = ui.update_state();
@@ -452,7 +350,7 @@ fn the_update_page_shows_the_state_the_last_result_and_the_form() {
 #[test]
 fn pages_and_downloads() {
     let _sends = sends();
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let r = get(&mut h, &mut ui, &cv, &mut scpi, "/");
     assert!(r.starts_with("HTTP/1.1 200") && r.contains("/screen.png") && r.contains("/update"), "{}", &r[..200]);
@@ -490,7 +388,7 @@ fn pages_and_downloads() {
 fn large_answers_go_through_a_thread() {
     let _sends = sends();
     use std::sync::atomic::Ordering::SeqCst;
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let live = Live::default();
     let mut ui = crate::ui::testkit::demo_ui();
     // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
@@ -498,9 +396,9 @@ fn large_answers_go_through_a_thread() {
     ui.render(&mut cv);
     let mut scpi = crate::scpi::Scpi::open(0);
     for path in ["/screen.bmp", "/screen.png"] {
-        let addr = h.l.as_ref().unwrap().local_addr().unwrap();
+        let port = h.port().unwrap();
         let t = std::thread::spawn(move || {
-            let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
             c.write_all(format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).as_bytes()).unwrap();
             let mut out = Vec::new();
@@ -556,12 +454,12 @@ fn slow_encoder_guard(live: &Live) {
 const PICTURE_WAIT: Duration = Duration::from_secs(60);
 
 fn live_picture_hand_over(frames_first: bool) {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let live = Live::default();
     // the request waits for its picture however long the encoder takes (`slow_encoder_guard`)
     slow_encoder_guard(&live);
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
-    let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+    let port = h.port().unwrap();
     let mut frame = 0u32;
     // the first screen handed over (the canvas got another buffer): the one before the render
     let mut shown: Option<Vec<u32>> = None;
@@ -631,11 +529,11 @@ fn live_picture_with_the_gpu_is_a_picture_read_back() {
 }
 
 fn live_picture_gpu(frames_first: bool) {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let live = Live::default();
     slow_encoder_guard(&live);
     let (mut scpi, mut ui, mut cv) = crate::ui::testkit::scpi_session();
-    let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+    let port = h.port().unwrap();
     if frames_first {
         // the frame loop runs before anybody asks
         h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live));
@@ -698,16 +596,16 @@ fn live_picture_once_per_screen_and_long_poll() {
         }
         assert!(!same_pixels(&a, &a[..n.saturating_sub(1)]) || n == 0);
     }
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let live = Live::default();
     let mut ui = crate::ui::testkit::demo_ui();
     let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
     ui.render(&mut cv);
     let mut scpi = crate::scpi::Scpi::open(0);
-    let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+    let port = h.port().unwrap();
     // a viewer in a thread; the server is polled meanwhile, and `change` alters the screen after 100 ms
     let shot =
-        |h: &mut Http, ui: &mut Ui, scpi: &mut crate::scpi::Scpi, cv: &mut Canvas, have: Option<&str>, change: bool| {
+        |h: &mut Web, ui: &mut Ui, scpi: &mut crate::scpi::Scpi, cv: &mut Canvas, have: Option<&str>, change: bool| {
             let inm = have.map_or(String::new(), |t| format!("If-None-Match: {}\r\n", t));
             let req = format!("GET /screen.png?t=1 HTTP/1.1\r\nHost: x\r\n{}\r\n", inm).into_bytes();
             let t0 = Instant::now();
@@ -773,7 +671,7 @@ fn live_picture_once_per_screen_and_long_poll() {
 
 #[test]
 fn update_upload_limits() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let post = |path: &str, body: &[u8]| {
         let mut r = format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
@@ -820,7 +718,7 @@ fn update_upload_limits() {
 /// not wait for a body.
 #[test]
 fn a_large_body_at_a_time_and_net_allow_before_the_body() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let head = |path: &str, n: usize| format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {n}\r\n\r\n");
     // a large upload in progress: its head and a part of its body
@@ -829,14 +727,14 @@ fn a_large_body_at_a_time_and_net_allow_before_the_body() {
     first.write_all(head("/update", 8 << 20).as_bytes()).unwrap();
     first.write_all(&vec![0u8; 64 << 10]).unwrap();
     let until = Instant::now() + Duration::from_secs(60);
-    while !h.pending.iter().any(|p| p.req.len() >= head("/update", 8 << 20).len() + (64 << 10)) {
+    while !h.reading().iter().any(|p| p.0 >= head("/update", 8 << 20).len() + (64 << 10)) {
         assert!(Instant::now() < until, "the first upload was not taken");
         h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         std::thread::sleep(Duration::from_millis(1));
     }
-    let taken = h.pending.iter().find(|p| p.large).expect("the first upload is the large body");
-    assert_eq!(taken.need, Some(head("/update", 8 << 20).len() + (8 << 20)));
-    assert!(taken.req.capacity() <= taken.need.unwrap(), "reserved for the request, not doubled past it");
+    let (_, need, room, _) = h.reading().into_iter().find(|p| p.3).expect("the first upload is the large body");
+    assert_eq!(need, Some(head("/update", 8 << 20).len() + (8 << 20)));
+    assert!(room <= need.unwrap(), "reserved for the request, not doubled past it");
     for path in ["/waveform?slot=1", "/update"] {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 2 << 20).into_bytes());
         assert!(r.starts_with("HTTP/1.1 503"), "{path}: {r}");
@@ -860,7 +758,7 @@ fn a_large_body_at_a_time_and_net_allow_before_the_body() {
 // (Remote services > Allowed) refused or let in an update only after a restart of oos-ui
 #[test]
 fn net_allow_follows_a_change_without_a_restart() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     // the list the screen sets, shared with the server; the test's connections come from 198.51.100.7
     let acl = crate::netacl::Shared::default();
@@ -883,7 +781,7 @@ fn net_allow_follows_a_change_without_a_restart() {
 
 #[test]
 fn identification_names_the_listeners() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(crate::hislip::PORT) });
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
@@ -894,17 +792,8 @@ fn identification_names_the_listeners() {
 }
 
 #[test]
-fn identification_names_custom_hislip_port_without_advertising_the_default() {
-    let xml = lxi_identification(&Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(14880) });
-    assert!(xml.contains("TCPIP::hislip0,14880::INSTR"), "{xml}");
-    assert!(!xml.contains("TCPIP::hislip0::INSTR"), "{xml}");
-    let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false, hislip_port: None });
-    assert!(!closed.contains("InstrumentAddressString"), "{closed}");
-}
-
-#[test]
 fn cmd_takes_keys_knobs_and_touch_only() {
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let get = |c: &str| format!("GET /cmd?c={} HTTP/1.1\r\n\r\n", c).into_bytes();
     for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""] {
@@ -916,15 +805,6 @@ fn cmd_takes_keys_knobs_and_touch_only() {
     for c in ["key runstop", "knob vscale +1", "tap 100 200", "drag 1 2 3 4"] {
         assert!(crate::cmd::remote_ok(c), "{}", c);
     }
-}
-
-#[test]
-fn unescape_survives_any_bytes() {
-    assert_eq!(unescape("key%20runstop+x"), "key runstop x");
-    // two-byte characters right after the %: the slice used to fall inside one
-    assert_eq!(unescape("a%é1"), "a1");
-    assert_eq!(unescape("%€"), String::from_utf8_lossy(&[0xac]));
-    assert_eq!(unescape("x%4"), "x%4");
 }
 
 #[test]
@@ -1104,16 +984,16 @@ fn a_port_taken_at_the_start_is_taken_once_it_is_free() {
     for web in [true, false] {
         let holder = crate::net6::tcp(0).expect("a free port");
         let port = holder.local_addr().unwrap().port();
-        let (mut h, mut scpi) = (Http::open(0), crate::scpi::Scpi::open(0));
-        let listens = |h: &Http, s: &crate::scpi::Scpi| if web { h.port() } else { s.port() };
+        let (mut h, mut scpi) = (Web::open(0), crate::scpi::Scpi::open(0));
+        let listens = |h: &Web, s: &crate::scpi::Scpi| if web { h.port() } else { s.port() };
         if web {
-            h = Http::open(port);
+            h = Web::open(port);
         } else {
             scpi = crate::scpi::Scpi::open(port);
         }
         assert_eq!(listens(&h, &scpi), None, "web {web}: the port is taken");
         let again =
-            |h: &mut Http, s: &mut crate::scpi::Scpi| if web { h.listen_again(port) } else { s.listen_again(port) };
+            |h: &mut Web, s: &mut crate::scpi::Scpi| if web { h.listen_again(port) } else { s.listen_again(port) };
         assert!(!again(&mut h, &mut scpi), "web {web}: still taken");
         drop(holder);
         assert!(again(&mut h, &mut scpi), "web {web}: free now");

@@ -99,7 +99,7 @@ flowchart TB
         acq["Acquisition thread<br/>board/dho/hw.rs"]
     end
     subgraph remP["oos-remote (ui/remote/), a crate of the workspace ui/"]
-        transports["Transports<br/>VXI-11, HiSLIP, LXI and DNS-SD announcement"]
+        transports["Transports<br/>VXI-11, HiSLIP, the web server, LXI and DNS-SD announcement"]
     end
     subgraph sysP["oos-system (ui/system/), a crate of the workspace ui/"]
         sys["System services<br/>mDNS, SNTP, SSH, USBTMC, net.allow, clock, system.conf, thread placement"]
@@ -136,8 +136,9 @@ Rule for all crates: no vendor code is in the tree. Only dependency of the four 
 as a crate of its own below `ui/`, with one lock file and one target folder for all of them
 ([ADR 0064](adr/code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md)). The first is
 `oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`; the second `oos-remote`
-(`ui/remote/`): VXI-11, HiSLIP and their announcement, generic over the program they hand to the interpreter
-(`oos_remote::Program`, which `scpi::Program` implements). `oos-ui` brings its modules into its crate
+(`ui/remote/`): VXI-11, HiSLIP, the web server and their announcement, generic over the program they hand to the
+interpreter (`oos_remote::Program`, which `scpi::Program` implements) and, for the web server, over what the screen
+answers (`oos_remote::http::Site`, which `site::Ctx` implements; the live picture stays in `oos-ui`, `shots.rs`). `oos-ui` brings its modules into its crate
 root (`main.rs`), so they are named `crate::sysconf` there as before, and the compiler refuses a path from
 `oos-system` back into `oos-ui`.
 
@@ -223,7 +224,7 @@ store does not name the board.
 flowchart TB
     subgraph uiL["oos-ui (ui/src/)"]
         main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
-        transport["transport<br/>http; in the crate oos-remote (ui/remote/): vxi11, hislip, announce<br/>frame the messages of a computer"]
+        transport["transport<br/>in the crate oos-remote (ui/remote/): vxi11, hislip, http, announce<br/>frame the messages of a computer"]
         command["command<br/>scpi, cmd, site<br/>the interpreters: SCPI, control commands, the web remote's answers"]
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
@@ -275,7 +276,7 @@ flowchart TB
     end
     subgraph uiW["Workspace ui/"]
         ui["oos-ui (ui/src/)<br/>frame loop, screen, interpreters (SCPI, cmd, web site),<br/>signal and analysis, the board door and its acquisition"]
-        remote["oos-remote (ui/remote/)<br/>transports: VXI-11, HiSLIP, announce, later HTTP"]
+        remote["oos-remote (ui/remote/)<br/>transports: VXI-11, HiSLIP, HTTP, announce"]
         store["oos-store (later)<br/>setup and waveform files"]
         model["oos-model (later)<br/>model and settings table"]
         system["oos-system (ui/system/)<br/>system services"]
@@ -313,7 +314,7 @@ not exist yet. An arrow reads "may depend on" and carries on down the arrows. `o
 | `oos-hal` (`hal/`) | step lists, buses, cold boot, update; the board's part in `hal/src/<family>/` | `dho` only; `FAMILIES` lists it |
 | `oos-dsp` (`dsp/`) | signal processing on `f32` slices, decoders, measurements | as targeted |
 | `oos-system` (`ui/system/`) | mDNS, SNTP, SSH, `net.allow`, clock, `system.conf` | done (ADR 0064) |
-| `oos-remote` (`ui/remote/`) | the transports, which only frame messages for the interpreters (ADR 0022) | done without HTTP |
+| `oos-remote` (`ui/remote/`) | the transports, which only frame messages for the interpreters (ADR 0022) | done |
 | `oos-model` | what the user has set: the model and the settings table | in `oos-ui` |
 | `oos-store` | setup and waveform files | in `oos-ui` |
 | `oos-ui` (`ui/src/`) | frame loop, screen, interpreters, signal, the board door and its acquisition | the rest stays here |
@@ -359,7 +360,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
-| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `announce.rs`; ADR 0064), or `ui/src/http.rs` for the web remote (what the screen answers there: `ui/src/site.rs`); a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `http.rs`, `announce.rs`; ADR 0064); what the screen answers on the web: `ui/src/site.rs`; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
 | a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
 | the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
 | a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |

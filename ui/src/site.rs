@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! What the web remote answers from the screen (ADR 0049, the command layer, beside `cmd` and `scpi`): its state, the
-//! last record as a file, an update package, a waveform file for a reference slot, and MCP. http.rs is the transport:
-//! it reads the requests, keeps the limits and sends the answers, and hands a request here through `Ctx`, the one
-//! thing of the screen it holds. It names nothing of the screen itself, so it can leave oos-ui (ADR 0064).
+//! last record as a file, an update package, a waveform file for a reference slot, the live picture, and MCP. The
+//! transport is `oos_remote::http` (ADR 0064): it reads the requests, keeps the limits and sends the answers, and asks
+//! the screen through `oos_remote::http::Site`, which `Ctx` is for one pass of the frame loop.
 
 use crate::gfx::Canvas;
 use crate::scpi::Scpi;
@@ -32,103 +32,103 @@ impl<'a> Ctx<'a> {
         self.live = Some(live);
         self
     }
+}
 
-    /// `Ui::waveform_epoch`: a waveform upload of an older session does not go into the slot.
-    pub fn waveform_epoch(&self) -> u64 {
+/// The waveform files `POST /waveform` takes, read on the web server's thread.
+pub type Upload = Vec<crate::store::WaveTrace>;
+
+/// The web server of oos-ui: the transport of oos-remote with the screen's uploads.
+pub type Web = oos_remote::http::Http<Upload>;
+
+impl oos_remote::http::Site for Ctx<'_> {
+    type Upload = Upload;
+    const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
+
+    /// The live picture's turn (`Live::tick`).
+    fn pass(&mut self) {
+        if let Some(live) = self.live {
+            live.tick(self.cv);
+        }
+    }
+
+    /// The live picture answers it; 503 without one (tests that ask for no picture).
+    fn picture(&mut self, s: &TcpStream, have: Option<String>, jpeg: bool) {
+        match self.live {
+            Some(live) => live.request(s, have, self.cv, jpeg),
+            None => crate::net::busy_answer(s),
+        }
+    }
+
+    /// Keys, knobs and taps (`cmd::remote_ok`).
+    fn remote_ok(&self, line: &str) -> bool {
+        crate::cmd::remote_ok(line)
+    }
+
+    /// /ui-state, /stamp, /wave.csv, /la.csv, /wave.bin, POST /update, /screen.bmp and /mcp.
+    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)> {
+        let ok = |ctype: &'static str, b: Vec<u8>| Some((ctype, b, false));
+        let file = |ctype: &'static str, r: Result<Vec<u8>, String>| match r {
+            Ok(b) => Some((ctype, b, false)),
+            Err(e) => Some(("text/plain", e.into_bytes(), true)),
+        };
+        let ui = &mut *self.ui;
+        match route {
+            "/ui-state" if !post => ok("application/json", ui.workflow_state().into_bytes()),
+            // the scope's local time for the names of the page's downloads; empty while its clock is not set
+            "/stamp" => ok("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
+            "/wave.csv" => file("text/csv; charset=utf-8", ui.web_wave_csv().map(String::into_bytes)),
+            "/la.csv" => file("text/csv; charset=utf-8", ui.web_la_csv().map(String::into_bytes)),
+            "/wave.bin" => file("application/octet-stream", ui.web_wave_bin()),
+            "/update" if post => match ui.update_upload(body) {
+                Ok(m) => ok("text/plain", m.into_bytes()),
+                Err(e) => ok("text/plain", format!("REFUSED: {}", e).into_bytes()),
+            },
+            "/screen.bmp" => ok("image/bmp", crate::scpi::bmp(self.cv)),
+            "/mcp" => match mcp(&String::from_utf8_lossy(body), self) {
+                Some(r) => ok("application/json", r.into_bytes()),
+                None => ok("", Vec::new()),
+            },
+            _ => None,
+        }
+    }
+
+    /// The state as `oos-update status --quick` gives it, and the result of the last upload.
+    fn update_state(&mut self) -> (String, String) {
+        let (status, last) = self.ui.update_state();
+        (status, last.to_string())
+    }
+
+    /// `Ui::waveform_epoch`.
+    fn waveform_epoch(&self) -> u64 {
         self.ui.waveform_epoch()
     }
-}
 
-/// Every pass of the web server, before its requests: the live picture's turn (`Live::tick`).
-pub fn pass(cx: &Ctx) {
-    if let Some(live) = cx.live {
-        live.tick(cx.cv);
+    fn parse_upload(file: &[u8], name: &str) -> Result<Upload, String> {
+        crate::store::parse_wave(file, name)
     }
-}
 
-/// `GET /screen.png` or `/screen.jpg` on `s` (`have`: the ETag of If-None-Match): the live picture answers it.
-pub fn picture(cx: &Ctx, s: &TcpStream, have: Option<String>, jpeg: bool) {
-    match cx.live {
-        Some(live) => live.request(s, have, cx.cv, jpeg),
-        None => crate::net::busy_answer(s),
-    }
-}
-
-/// Whether `GET /cmd` may run the text command `line` (keys, knobs, taps: `cmd::remote_ok`).
-pub fn remote_ok(_cx: &Ctx, line: &str) -> bool {
-    crate::cmd::remote_ok(line)
-}
-
-/// The longest waveform file `POST /waveform` takes.
-pub const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
-
-/// The traces of a waveform file, or why it was not read.
-pub type Traces = Result<Vec<crate::store::WaveTrace>, String>;
-
-/// Reads a waveform file of `POST /waveform` (on the web server's thread for it, not the frame loop).
-pub fn parse_upload(file: &[u8], name: &str) -> Traces {
-    crate::store::parse_wave(file, name)
-}
-
-/// Puts the traces of an upload into reference slot `slot` (R1 is 0) when the session is still the one of `epoch`:
-/// (taken, the text for the page).
-pub fn take_upload(cx: &mut Ctx, parsed: Traces, name: &str, slot: usize, epoch: u64) -> (bool, String) {
-    let ui = &mut *cx.ui;
-    let previous = ui.ref_slot();
-    let result = if ui.waveform_epoch() != epoch {
-        Err("The session changed while the file was read; load it again.".to_string())
-    } else {
-        parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, name, slot))
-    };
-    match result {
-        Ok(()) => {
-            let hint = if ui.record_mode() {
-                "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
-            } else {
-                "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
-            };
-            (true, format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint))
+    fn take_upload(&mut self, parsed: Result<Upload, String>, name: &str, slot: usize, epoch: u64) -> (bool, String) {
+        let ui = &mut *self.ui;
+        let previous = ui.ref_slot();
+        let result = if ui.waveform_epoch() != epoch {
+            Err("The session changed while the file was read; load it again.".to_string())
+        } else {
+            parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, name, slot))
+        };
+        match result {
+            Ok(()) => {
+                let hint = if ui.record_mode() {
+                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
+                } else {
+                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
+                };
+                (true, format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint))
+            }
+            Err(error) => {
+                ui.ref_slot_set(previous);
+                (false, error)
+            }
         }
-        Err(error) => {
-            ui.ref_slot_set(previous);
-            (false, error)
-        }
-    }
-}
-
-/// What `GET /update` shows: the state as `oos-update status --quick` gives it, and the result of the last upload.
-pub fn update_state(cx: &Ctx) -> (String, String) {
-    let (status, last) = cx.ui.update_state();
-    (status, last.to_string())
-}
-
-/// The answer of a route of the screen: (content type, body, whether the body is the reason it failed and not the
-/// data asked for); None for a route that is not one of them. An empty content type is 202 with no body (an MCP
-/// notification).
-pub fn answer(cx: &mut Ctx, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)> {
-    let ok = |ctype: &'static str, b: Vec<u8>| Some((ctype, b, false));
-    let file = |ctype: &'static str, r: Result<Vec<u8>, String>| match r {
-        Ok(b) => Some((ctype, b, false)),
-        Err(e) => Some(("text/plain", e.into_bytes(), true)),
-    };
-    let ui = &mut *cx.ui;
-    match route {
-        "/ui-state" if !post => ok("application/json", ui.workflow_state().into_bytes()),
-        // the scope's local time for the names of the page's downloads; empty while its clock is not set
-        "/stamp" => ok("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
-        "/wave.csv" => file("text/csv; charset=utf-8", ui.web_wave_csv().map(String::into_bytes)),
-        "/la.csv" => file("text/csv; charset=utf-8", ui.web_la_csv().map(String::into_bytes)),
-        "/wave.bin" => file("application/octet-stream", ui.web_wave_bin()),
-        "/update" if post => match ui.update_upload(body) {
-            Ok(m) => ok("text/plain", m.into_bytes()),
-            Err(e) => ok("text/plain", format!("REFUSED: {}", e).into_bytes()),
-        },
-        "/screen.bmp" => ok("image/bmp", crate::scpi::bmp(cx.cv)),
-        "/mcp" => match mcp(&String::from_utf8_lossy(body), cx) {
-            Some(r) => ok("application/json", r.into_bytes()),
-            None => ok("", Vec::new()),
-        },
-        _ => None,
     }
 }
 
@@ -209,3 +209,6 @@ pub fn mcp(body: &str, cx: &mut Ctx) -> Option<String> {
     };
     Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
 }
+
+#[cfg(test)]
+mod tests;

@@ -30,7 +30,6 @@ mod framestats;
 mod gfx;
 mod gpu;
 mod hid;
-mod http;
 #[cfg(target_os = "linux")]
 mod input;
 mod layout;
@@ -62,7 +61,7 @@ mod zone;
 #[cfg(target_os = "linux")]
 use oos_system::hostname;
 // the transports (ADR 0064), generic over the program they carry: here always `scpi::Program`
-use oos_remote::{announce, hislip, vxi11};
+use oos_remote::{announce, hislip, http, vxi11};
 use oos_system::{
     base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
 };
@@ -249,7 +248,7 @@ fn lan(
     scope: bool,
     args: &[String],
     acl: &netacl::Shared,
-) -> (http::Http, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>, announce::Announcer) {
+) -> (site::Web, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>, announce::Announcer) {
     let (web, scpi, vxi, hislip) = lan_servers(scope, args, acl);
     let services = announce::listening(web.port(), scpi.port(), vxi.service_port(), hislip.port());
     let ann = announce::Announcer::open(&services);
@@ -261,8 +260,8 @@ fn lan_servers(
     scope: bool,
     args: &[String],
     acl: &netacl::Shared,
-) -> (http::Http, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>) {
-    let mut web = http::Http::open(lan_port(args, "--web-port", 8080));
+) -> (site::Web, scpi::Scpi, vxi11::Server<scpi::Program>, hislip::Server<scpi::Program>) {
+    let mut web = site::Web::open(lan_port(args, "--web-port", 8080));
     let mut scpi = scpi::Scpi::open(lan_port(args, "--scpi-port", 5555));
     let mut vxi = if scope { vxi11::Server::open() } else { vxi11::Server::closed() };
     let hislip_port = lan_port(args, "--hislip-port", hislip::PORT);
@@ -718,7 +717,7 @@ struct Device {
     hislip: hislip::Server<scpi::Program>,
     vxi: vxi11::Server<scpi::Program>,
     scpi: scpi::Scpi,
-    web: http::Http,
+    web: site::Web,
     /// the live picture of the web remote (`/screen.png`), handed the screens of the frame loop
     live: shots::Live,
     scpi_port: u16,

@@ -7,8 +7,9 @@
     tools/http-coverage.py --list [ROOT]   also every route and tool with its mark
 
 ROOT is the top of a tree (default: this tree). Read from it as it is:
-  the routes     the arms of `match route { ... }` in `fn answer` of ui/src/http.rs (the transport's routes), then of
-                 ui/src/site.rs (the routes the screen answers, which http.rs asks last): each string pattern is a path.
+  the routes     the arms of `match route { ... }` in `fn answer` of ui/remote/src/http.rs (the transport's routes),
+                 then of ui/src/site.rs (the routes the screen answers, which http.rs asks last): each string pattern
+                 is a path.
                  A guard `if post` makes the arm a POST route, `if !post` a GET route (every method but POST is taken
                  as GET); an arm without a guard answers every method, or GET when an earlier arm of the same path
                  took POST. Arms of `_` (the foreign check, not found) are no route. Any other guard has to be in
@@ -30,7 +31,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HTTP_RS = "ui/src/http.rs"
+HTTP_RS = "ui/remote/src/http.rs"
 SITE_RS = "ui/src/site.rs"
 HTTP_MD = "docs/http.md"
 MARKS = ("stable", "experimental", "internal")
@@ -95,11 +96,13 @@ def block(src, open_at):
 
 
 def fn_tokens(src, name):
-    """The tokens of the body of `fn name` (a method or a free function), empty without one."""
-    m = re.search(r"\bfn " + re.escape(name) + r"\b", src)
-    if not m:
-        return []
-    return block(src, src.index("{", m.end()))
+    """The tokens of the body of the first `fn name` that has one (a method or a free function; a declaration of a
+    trait, which ends in `;`, is passed over), empty without one."""
+    for m in re.finditer(r"\bfn " + re.escape(name) + r"\b", src):
+        brace, semi = src.find("{", m.end()), src.find(";", m.end())
+        if brace >= 0 and (semi < 0 or brace < semi):
+            return block(src, brace)
+    return []
 
 
 def match_arms(src, toks, scrutinee):
