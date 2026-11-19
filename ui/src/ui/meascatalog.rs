@@ -253,7 +253,7 @@ impl Ui {
             ctrl: lay.gate,
             ctl: Ctl::Seg(vec!["Screen".into(), "Full record".into()], Some(usize::from(self.m.meas_full_record))),
         });
-        Dlg { r: lay.r, close: lay.close, back: lay.back, rows, heads: Vec::new() }
+        Dlg { r: lay.r, close: lay.close, back: lay.back, rows, heads: Vec::new(), bar: None }
     }
 
     fn content_h(&self) -> i32 {

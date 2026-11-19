@@ -289,10 +289,11 @@ impl Ui {
         }
         let opts = self.options(it);
         let cur = self.value(it);
-        self.pick = Some(Pick { it, menu: self.menu, parent: self.parent, focus: self.focus });
+        self.pick = Some(Pick { it, menu: self.menu, parent: self.parent, focus: self.focus, top: 0 });
         self.parent = Some(self.menu);
         self.menu = MenuId::Pick;
         self.focus = opts.iter().position(|o| *o == cur).unwrap_or(0);
+        self.pick_follow_focus();
     }
 
     /// Leaves the picker for the menu it was opened from (after a pick, or with Back).
@@ -423,21 +424,36 @@ impl Ui {
             (1, l.dlg_col, DLG_ROW, 16)
         };
         let nrows = (n + cols - 1) / cols;
-        let w = 24 + cols * cw + (cols - 1) * gap;
-        let h = DLG_HEAD + nrows * rh + 6;
-        let (ax, top) = self.menu_anchor();
         let fr = self.frame();
+        // a picker longer than the screen shows a window of its lines and scrolls (ADR 0006)
+        let picker = matches!(items.first(), Some(Item::PickOpt(_)));
+        let (shown, first) = if picker { self.pick_window(nrows, cols, rh) } else { (nrows, 0) };
+        let scrolls = shown < nrows;
+        let lines_w = cols * cw + (cols - 1) * gap;
+        let w = 24 + lines_w + if scrolls { scroll::BAR_W + 4 } else { 0 };
+        let h = DLG_HEAD + shown * rh + 6;
+        let (ax, top) = self.menu_anchor();
         let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
         let y = if top { fr.top.bottom() + 4 } else { (fr.bottom.y - 4 - h).max(fr.top.bottom() + 4) };
         let r = Rect::new(x, y, w, h);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
         let back = self.parent.map(|_| Rect::new(close.x - 88, close.y, 82, DLG_CTRL));
+        let bar = scrolls.then(|| {
+            let area = Rect::new(r.x + 12, r.y + DLG_HEAD, lines_w, shown * rh - (rh - DLG_CTRL));
+            let track = Rect::new(area.right() + 4, area.y, scroll::BAR_W, area.h);
+            (scroll::Bar { track, total: nrows, shown, pos: first }, area)
+        });
         let mut rows = Vec::new();
         for (i, &it) in items.iter().enumerate() {
             let i = i as i32;
             if grid {
                 let (col, row) = (i % cols, i / cols);
-                let ctrl = Rect::new(r.x + 12 + col * (cw + gap), r.y + DLG_HEAD + row * rh, cw, DLG_CTRL);
+                // a line scrolled out of the window has no place: it is neither drawn nor hit
+                let ctrl = if (first..first + shown).contains(&row) {
+                    Rect::new(r.x + 12 + col * (cw + gap), r.y + DLG_HEAD + (row - first) * rh, cw, DLG_CTRL)
+                } else {
+                    Rect::new(r.x, r.y, 0, 0)
+                };
                 rows.push(Row { it, label: Rect::new(ctrl.x, ctrl.y, 0, 0), ctrl, ctl: Ctl::Button });
                 continue;
             }
@@ -453,7 +469,29 @@ impl Ui {
             };
             rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
         }
-        Some(Dlg { r, close, back, rows, heads: Vec::new() })
+        Some(Dlg { r, close, back, rows, heads: Vec::new(), bar })
+    }
+
+    /// The lines of the open picker that show, and the first of them: all of them when they fit between the bars,
+    /// else as many as fit, from the stored position moved just far enough that the focused option is among them.
+    fn pick_window(&self, lines: i32, cols: i32, rh: i32) -> (i32, i32) {
+        let Some(p) = self.pick else { return (lines, 0) };
+        let fr = self.frame();
+        let room = fr.bottom.y - 4 - (fr.top.bottom() + 4);
+        let fit = ((room - DLG_HEAD - 6) / rh).max(1);
+        if lines <= fit {
+            return (lines, 0);
+        }
+        let line = self.focus as i32 / cols;
+        (fit, p.top.clamp(line + 1 - fit, line).clamp(0, lines - fit))
+    }
+
+    /// Keeps the position of a long picker where it shows the focused option (after the knob moved the focus).
+    pub(super) fn pick_follow_focus(&mut self) {
+        let Some(top) = self.dlg_layout().and_then(|d| d.bar).map(|(b, _)| b.pos) else { return };
+        if let Some(p) = self.pick.as_mut() {
+            p.top = top;
+        }
     }
 
     /// Start menu: one row of up to 6 buttons per group, the group label left of it; above the Menu button.
@@ -480,7 +518,7 @@ impl Ui {
             }
             line += n;
         }
-        Dlg { r, close, back: None, rows, heads }
+        Dlg { r, close, back: None, rows, heads, bar: None }
     }
 
     /// The group of the measurement settings a row belongs to (`MEASURE_GROUPS`).
@@ -557,7 +595,7 @@ impl Ui {
         let r = Rect::new(x, y, w, h);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
         let back = self.parent.map(|_| Rect::new(close.x - 88, close.y, 82, DLG_CTRL));
-        Dlg { r, close, back, rows, heads }
+        Dlg { r, close, back, rows, heads, bar: None }
     }
 
     /// Font and box of the text of a menu button, and whether it fits: centred in the button while it fits, else
@@ -624,7 +662,13 @@ impl Ui {
         for (r, name) in &d.heads {
             cv.text_in(&f.sb, *r, 0, name, DIM);
         }
+        if let Some((bar, _)) = d.bar {
+            bar.draw(cv);
+        }
         for (i, row) in d.rows.iter().enumerate() {
+            if row.ctrl.w == 0 {
+                continue; // scrolled out of a long picker
+            }
             let focus = i == self.focus;
             let kind = Self::kind(row.it);
             if row.label.w > 0 && kind != Kind::Action {
