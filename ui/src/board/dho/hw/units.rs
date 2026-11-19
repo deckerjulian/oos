@@ -5,7 +5,7 @@
 //! and zone unit (comparator mapping, stall guard, merge into the settings), the DVM block and the frequency
 //! counter. A new opt-in unit gets its switch and its steps here.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::board::HwShared;
 use oos_hal::dho::auxout;
 use oos_hal::dho::seq::Settings;
@@ -19,9 +19,10 @@ pub(super) fn header_probe() -> bool {
 
 /// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
 /// volts of the records.
-#[cfg(target_os = "linux")]
-pub(super) fn levels_measure(
-    bar: &mut oos_hal::dho::bus::Bar1,
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn levels_measure<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
+    clock: &mut C,
     s: &Settings,
     gain: &[f64; 4],
     runs: u32,
@@ -29,7 +30,7 @@ pub(super) fn levels_measure(
     use oos_hal::dho::levels;
     let mut got = Vec::with_capacity(runs as usize);
     for _ in 0..runs {
-        match levels::run(bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))) {
+        match levels::run(bar, &mut |us| clock.sleep_us(us as u64)) {
             Some(r) => got.push(r),
             None => return [None; 4],
         }
@@ -259,14 +260,14 @@ pub(super) fn dvm_reading(
 
 /// The FPGA's frequency counter, once per pass of the acquisition loop: (re)started when the UI wants another set-up,
 /// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
-#[cfg(target_os = "linux")]
-pub(super) fn counter_tick(
-    bar: &mut oos_hal::dho::bus::Bar1,
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
+    clock: &mut C,
     out: &HwShared,
-    counting: &mut Option<(crate::board::CounterWant, std::time::Instant)>,
+    counting: &mut Option<(crate::board::CounterWant, u64)>,
     n: &mut u64,
 ) {
-    use oos_hal::dho::bus::Bus;
     use oos_hal::dho::counter;
     let want = out.lock().unwrap().counter_want;
     if want != counting.map(|c| c.0) {
@@ -274,7 +275,7 @@ pub(super) fn counter_tick(
             Some(w) => {
                 let mode = [counter::Mode::Frequency, counter::Mode::Period, counter::Mode::Totalize][w.mode.min(2)];
                 bar.apply(&counter::start(&counter::Config { ch: w.ch, mode, digits: w.digits }));
-                *counting = Some((w, std::time::Instant::now()));
+                *counting = Some((w, clock.now_us()));
             }
             None => {
                 bar.apply(&counter::stop());
@@ -286,12 +287,12 @@ pub(super) fn counter_tick(
     }
     if let Some((w, t)) = *counting {
         let gate = counter::gate_s(w.digits);
-        if t.elapsed().as_secs_f64() >= gate + 0.1 {
+        if clock.now_us().saturating_sub(t) as f64 * 1e-6 >= gate + 0.1 {
             let r = counter::read(bar);
             *n += 1;
             out.lock().unwrap().counter =
                 Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
-            *counting = Some((w, std::time::Instant::now()));
+            *counting = Some((w, clock.now_us()));
         }
     }
 }

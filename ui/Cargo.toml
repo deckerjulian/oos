@@ -17,6 +17,8 @@ oos-remote = { path = "remote" }
 
 # the tests use the helpers of oos-system's tests too (a scratch directory, the test switches); the program does not
 [dev-dependencies]
+# the simulated unit, for the host run of the acquisition loop (ADR 0053); the program is built without it
+oos-hal = { path = "../hal", features = ["sim"] }
 oos-system = { path = "system", features = ["testkit"] }
 oos-remote = { path = "remote", features = ["testkit"] }
 

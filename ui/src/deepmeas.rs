@@ -104,9 +104,9 @@ pub fn period(bytes: usize) -> std::time::Duration {
 }
 
 /// The acquisition thread's rate limit: a raw deep read of `bytes` is due for every batch with `every`, else when its
-/// `period` has passed since the last (or none was made).
-pub fn due(w: Want, last: Option<std::time::Instant>, now: std::time::Instant, bytes: usize) -> bool {
-    w.every || last.is_none_or(|t| now.duration_since(t) >= period(bytes))
+/// `period` has passed since the last (or none was made). `last` and `now` are microseconds of the loop's clock.
+pub fn due(w: Want, last: Option<u64>, now: u64, bytes: usize) -> bool {
+    w.every || last.is_none_or(|t| std::time::Duration::from_micros(now.saturating_sub(t)) >= period(bytes))
 }
 
 #[cfg(test)]
@@ -188,15 +188,16 @@ mod tests {
         // three channels are read as four (the interleave ratio): 3.5 M points are 28 MB, not 21 MB
         assert!(!fits(1.25e9, 1e-3, 3_500_000, 3));
         assert!(fits(1.25e9, 1e-3, 3_000_000, 3));
-        let t = std::time::Instant::now();
+        let t = 5_000_000u64;
+        let us = |d: std::time::Duration| d.as_micros() as u64;
         let w = Want { every: false };
         let small = PERIOD_BYTES / 2;
         assert!(due(w, None, t, small));
-        assert!(!due(w, Some(t), t + std::time::Duration::from_millis(999), small));
-        assert!(due(w, Some(t), t + PERIOD, small));
+        assert!(!due(w, Some(t), t + 999_000, small));
+        assert!(due(w, Some(t), t + us(PERIOD), small));
         assert!(due(Want { every: true }, Some(t), t, 10 * PERIOD_BYTES));
         // a read of ten times the bytes waits ten times as long
-        assert!(!due(w, Some(t), t + PERIOD * 9, 10 * PERIOD_BYTES));
-        assert!(due(w, Some(t), t + PERIOD * 10, 10 * PERIOD_BYTES));
+        assert!(!due(w, Some(t), t + us(PERIOD * 9), 10 * PERIOD_BYTES));
+        assert!(due(w, Some(t), t + us(PERIOD * 10), 10 * PERIOD_BYTES));
     }
 }
