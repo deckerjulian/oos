@@ -18,7 +18,6 @@ use crate::dho::{afe, la};
 /// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
 /// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
-#[allow(clippy::too_many_arguments)]
 pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
@@ -35,7 +34,6 @@ pub fn acquire_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
 
 /// `acquire_batch` whose wait for a trigger ends with `Err(NEW_SETTINGS)` as soon as `stop()` says so (checked every
 /// 10 ms): in NORMAL without a trigger the wait lasts 2 s, and new settings would wait for it.
-#[allow(clippy::too_many_arguments)]
 pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
@@ -54,7 +52,6 @@ pub fn acquire_batch_until<B: crate::dho::bus::Bus, R: std::io::Read>(
 /// `acquire_batch_until` that lets the caller work while the ring fills: `idle()` is called instead of the sleep
 /// between two looks at the frame count, and the count is read after every call, so the read waits at most one call.
 /// `idle` returns false when it has nothing to do (the wait then sleeps as without it).
-#[allow(clippy::too_many_arguments)]
 pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
@@ -88,7 +85,6 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(
 /// same record, every sample (fork, docs/fork/compress.md). The ring is played again as for the LA read and the stamp
 /// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
 /// (`frame_bytes` of `raw_settings(s)`).
-#[allow(clippy::too_many_arguments)]
 pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
     st: &mut State,
     s: &Settings,
