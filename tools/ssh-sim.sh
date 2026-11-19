@@ -60,6 +60,20 @@ done
 [ -L /root/.ssh ] && [ "$(readlink /root/.ssh)" = /oos/ssh ] || fail "/root/.ssh"
 grep -q '^ssh-ed25519 ' /oos/ssh/dropbear_ed25519_host_key.pub || fail "host key .pub"
 
+echo "== net.ipv6: IPv4 only while off (the default), both while on (#330)"
+netstat -ltn 2>/dev/null | grep -q '0.0.0.0:22 ' || fail "no IPv4 listener"
+netstat -ltn 2>/dev/null | grep -q ':::22 ' && fail "an IPv6 listener with net.ipv6 off"
+if grep -q . /proc/net/if_inet6 2>/dev/null; then
+	conf "remote.ssh = on" "net.ipv6 = on"
+	run restart
+	netstat -ltn 2>/dev/null | grep -q ':::22 ' || fail "no IPv6 listener with net.ipv6 on"
+	conf "remote.ssh = on"
+	run restart
+	netstat -ltn 2>/dev/null | grep -q ':::22 ' && fail "an IPv6 listener after net.ipv6 went off"
+else
+	echo "(the container has no IPv6: the listener with net.ipv6 on is not checked)"
+fi
+
 echo "== password login"
 [ "$(pw_login 'echo in; id -u')" = "$(printf 'in\n0')" ] || fail "password login"
 ssh $H -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 root@127.0.0.1 true < /dev/null 2>/dev/null && fail "login without the password"
@@ -133,7 +147,8 @@ grep -q "$(cat /oos/ssh/password)" /tmp/oos-ssh.log && fail "the password is in 
 [ $ok = 1 ] && echo "ssh-sim: all passed" || { echo "ssh-sim: FAILED"; exit 1; }
 TEST
 
-docker run --rm --platform linux/arm64 --cap-add NET_ADMIN \
+# IPv6 on in the container (Docker leaves it off), so the listener of each `net.ipv6` setting is seen
+docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 \
 	-v "$w:/w:ro" -v "$root/rootfs/initramfs/bin:/src:ro" -v "$out:/out:ro" "$OOS_ALPINE" sh -euc '
 	apk add --no-cache openssh-client openssh-keygen sshpass >/dev/null
 	# the image busybox runs every applet from here on (the OpenSSH client and sshpass are the computer side)
