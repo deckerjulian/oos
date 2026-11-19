@@ -147,8 +147,10 @@ impl Unit {
         self.regs.get(&r).copied().unwrap_or(0)
     }
 
-    /// Records the frames whose trigger has come by now: each at the first trigger after the arm, or after the frame
-    /// before it (its pre- and post-trigger points must have passed). The record stops by itself after its last frame.
+    /// Records the frames whose trigger has come by now. The first takes the first trigger once its pre-trigger points
+    /// are filled after the arm (record-play.md: a record takes the pre-trigger fill, then the wait for the next edge);
+    /// a trigger inside the fill is not taken. Each later frame takes the first trigger after the pre- and post-trigger
+    /// points of the frame before it. The record stops by itself after its last frame.
     fn advance(&mut self) {
         let Some(r) = self.rec.as_mut() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
@@ -184,7 +186,9 @@ impl Unit {
 
     /// Plays the frames `first..=last` of the ring into the stream: per frame its header while 0x1010 bit 31 is clear,
     /// then 0x11f0 points of every channel of 0x4008[3:0] from point 0x1108 of the window, through the compression
-    /// when 0x1170 bit 31 is set (k in bits 13:0, `pairs::model` of the scene's samples).
+    /// when 0x1170 bit 31 is set (k in bits 13:0, `pairs::model` of the scene's samples). The read-out rounds 0x11f0 up
+    /// so that the words of a frame fill its 8-byte stride (`scu::readout_window`): the points beyond the window are
+    /// what `seq::unpad` drops as the padding. That the unit sends further samples there, and not zeros, is assumed.
     fn play(&mut self, first: u32, last: u32) {
         let mask = self.reg(0x4008) & 0xf;
         let (n, start) = (self.reg(0x11f0) as usize, self.reg(0x1108));
@@ -385,6 +389,9 @@ mod tests {
             assert_eq!(n, 4, "mask {:#x}: frames read", mask);
             let fb = seq::frame_bytes(&s, &p);
             assert_eq!(bytes.len(), 4 * fb, "mask {:#x}", mask);
+            if mask == 1 {
+                assert_ne!(fb % 8, 0, "one case has padding between the frames: four frames still decode in place");
+            }
             let u = u.borrow();
             for (k, f) in bytes.chunks_exact(fb).enumerate() {
                 let trig = u.trigger_fs(k as u32).expect("recorded");
