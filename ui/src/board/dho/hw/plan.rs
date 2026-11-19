@@ -108,6 +108,17 @@ pub(super) fn frame0_left_out(avail: usize, drop: bool, edge: Option<Edge>) -> b
     drop && avail > 1 && !(avail <= FRAME0_CHECK_MAX_FRAMES && edge == Some(Edge::At))
 }
 
+/// Whether frame 1 of a batch of `avail` frames is left out without its edge check: with the rule of #5 on (`drop`)
+/// in a batch longer than `FRAME0_CHECK_MAX_FRAMES`. Its edge can be at the trigger point while its pre-trigger part
+/// still holds older memory, a full-swing step before the trigger the edge check does not see (unit 2026-11-19: 1
+/// kpts, 10 us/div, batches of 26 to 32 frames, stray steps at -38 us within a minute of infinite persistence; two
+/// reporters counted none in 4,000 and 134,174 batches without frame 1). It costs one frame of a long batch; a short
+/// batch (slow time bases, issue #220) keeps the edge check.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn frame1_left_out_unseen(avail: usize, drop: bool) -> bool {
+    drop && avail > FRAME0_CHECK_MAX_FRAMES
+}
+
 /// What the edge check of a frame found (`edge_check`).
 #[cfg(any(target_os = "linux", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

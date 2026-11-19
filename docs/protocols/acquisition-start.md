@@ -350,6 +350,15 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
   - On the unit, every frame found was frame 1, and each was left out:
     - standard path (the frames path, removed since: ADR 0059): 22 in 270,000 frames;
     - batch path: 85 in 300,000 frames, none of them reaching a deposit worker.
+- That check does not see every bad frame 1: one whose edge is at the trigger point can still hold older memory before
+  it, drawn as a full-swing step about 38 us left of the trigger at 10 us/div.
+  - Verified on the unit (DHO924S, 2026-11-19, the same square and trigger, 1 kpts, 10 us/div, batches of 26 to 32
+    frames): with the check alone, 60 s of infinite persistence showed such steps (the high level from -50 to -33 us).
+  - Two reporters counted none without frame 1: 0 in 4,000 batches (rdtsc, 0.1.13) and 0 in 134,174 (mj1911).
+  - So in a batch of more than `FRAME0_CHECK_MAX_FRAMES` frames, oos-ui leaves frame 1 out unseen
+    (`hw::plan::frame1_left_out_unseen`). That costs one frame of a long batch. A small batch keeps the edge check, so
+    slow time bases keep their records (issue #220).
+  - Verified on the unit with that rule: two runs of 60 s of infinite persistence showed no trace off the square.
 
 ## Reading a stored frame again (STOP)
 
