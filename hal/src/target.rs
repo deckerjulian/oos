@@ -4,8 +4,9 @@
 //! The description of a board family: everything the neutral code needs to know about it (docs/porting.md). Where
 //! OOS lives on the card, what an update package is for, which models belong to it and what they can do.
 //!
-//! An image is built for one board family, so the choice is made when OOS is built (`ACTIVE`). The scripts in the
-//! image and the build read the same values from `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
+//! An image is built for one board family, so the choice is made when OOS is built (`ACTIVE`): `OOS_BOARD=<name>`,
+//! `dho` by default, sets `cfg(oos_board = "<name>")` for every crate (build.rs, ADR 0067). The scripts in the image
+//! and the build read the same values from `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
 
 use crate::model::{Caps, Limits};
 
@@ -95,7 +96,8 @@ pub struct Target {
     pub clock_steps: &'static [f64],
 }
 
-/// The board this build is for.
+/// The board this build is for: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
+#[cfg(oos_board = "dho")]
 pub const ACTIVE: Target = crate::dho::target::DHO;
 
 /// Every board family in the tree, `ACTIVE` among them (ADR 0067). `hal/tests/board_families.rs` keeps this list equal
@@ -105,6 +107,7 @@ pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
 /// The memory depths of the Acquire menu of the board this build is for (name, points per channel; 0 = Auto first).
 /// Setups store the position. Chosen together with `ACTIVE` (hal test `the_depths_come_from_the_active_family`); not
 /// a field of `Target`, which would change the layout of `Target` in every program.
+#[cfg(oos_board = "dho")]
 pub const DEPTHS: &[(&str, u64)] = &crate::dho::target::DEPTHS;
 
 #[cfg(test)]
@@ -129,6 +132,13 @@ mod tests {
             .filter_map(|l| l.split_once('='))
             .map(|(k, v)| (k.to_string(), v.trim_matches('"').to_string()))
             .collect()
+    }
+
+    /// The family this build was made for is the one `OOS_BOARD` named, or `dho` without it (build.rs).
+    #[test]
+    fn active_is_the_family_oos_board_names() {
+        let named = option_env!("OOS_BOARD").filter(|v| !v.is_empty()).unwrap_or("dho");
+        assert_eq!(ACTIVE.name, named);
     }
 
     /// The scripts of the image and the code must agree on where things are on the card, for every family.
