@@ -224,17 +224,17 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
 - **Also touch** `ui/src/board/<name>/` with its `Board` and its line in `ui/src/board/mod.rs`; `rootfs/board/<name>/`
   with `etc/oos-board` (the keys of `rootfs/board/dho/etc/oos-board`) and an executable `bin/oos-board` that answers
   every command `rcS` asks; the family's row in [docs/porting.md](docs/porting.md#board-families), in the state
-  `in development`; its matrix of register sequences `tools/board/<name>/plan-matrix.sh`, which `tools/plan-matrix.sh`
-  and the comparison run with `OOS_BOARD=<name>`; its device tree under `kernel/`; and the pages of `docs/protocols/`
-  its hardware code is written from. Build its image with `OOS_BOARD=<name>`. The maintainer changes the state to
-  `ready`.
+  `in development`; its commands of oos-fpgad in `fpgad/src/<name>/mod.rs` (`pub(crate) fn run`, as `dho` has them)
+  and the choice of that module in `fpgad/src/main.rs`; its matrix of register sequences
+  `tools/board/<name>/plan-matrix.sh`, which `tools/plan-matrix.sh` and the comparison run with `OOS_BOARD=<name>`;
+  its device tree under `kernel/`; and the pages of `docs/protocols/` its hardware code is written from. Build its
+  image with `OOS_BOARD=<name>`. The maintainer changes the state to `ready`.
 - **Generate** nothing.
 - **The check:** `hal/tests/board_families.rs::every_board_family_is_complete` fails, naming the family and the part,
-  when a folder of `rootfs/board/` lacks its `Target` in `FAMILIES`, its `impl Board for`, its `plan-matrix.sh`, a key
-  of `etc/oos-board`, a command of `bin/oos-board` or its row in docs/porting.md, and when a row or a `Target` has no
-  folder. The tests of `hal/src/target.rs` compare each family's `etc/oos-board` with its `Target`. `oos-fpgad` is not
-  yet one of the parts: it is a DHO800/DHO900 tool until it is split into a neutral part and one module per family
-  (ADR 0067).
+  when a folder of `rootfs/board/` lacks its `Target` in `FAMILIES`, its `impl Board for`, its commands of oos-fpgad,
+  its `plan-matrix.sh`, a key of `etc/oos-board`, a command of `bin/oos-board` or its row in docs/porting.md, and when
+  a row or a `Target` has no folder. The tests of `hal/src/target.rs` compare each family's `etc/oos-board` with its
+  `Target`.
 
 ## Where to develop
 
