@@ -62,6 +62,8 @@ struct Case {
     /// a square of the sine's sign instead of the sine (an edge a slow time base sees as steep)
     square: bool,
     period_us: Option<i128>,
+    /// the logic analyser on, its lines a count of `LA_TICK_S` steps
+    la: bool,
     passes: u32,
     script: &'static [(u32, Act)],
 }
@@ -85,6 +87,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: Some(50),
+        la: false,
         passes: 30,
         script: &[],
     },
@@ -94,6 +97,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: Some(50),
+        la: false,
         passes: 30,
         script: &[],
     },
@@ -103,6 +107,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: Some(50),
+        la: false,
         passes: 30,
         script: &[],
     },
@@ -112,6 +117,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e3,
         square: true,
         period_us: Some(1_000),
+        la: false,
         passes: 20,
         script: &[],
     },
@@ -121,6 +127,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: None,
+        la: false,
         passes: 6,
         script: &[],
     },
@@ -130,6 +137,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: None,
+        la: false,
         passes: 8,
         script: &[(3, Act::Set(|m| tdiv(m, 2e-6)))],
     },
@@ -139,6 +147,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: Some(50),
+        la: false,
         passes: 20,
         script: &[],
     },
@@ -148,6 +157,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e6,
         square: false,
         period_us: Some(50),
+        la: false,
         passes: 30,
         script: &[(12, Act::Hold)],
     },
@@ -157,6 +167,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e3,
         square: false,
         period_us: None,
+        la: false,
         passes: 40,
         script: &[],
     },
@@ -166,6 +177,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e3,
         square: false,
         period_us: None,
+        la: false,
         passes: 40,
         script: &[],
     },
@@ -175,6 +187,7 @@ const CASES: &[Case] = &[
         freq_hz: 1e3,
         square: false,
         period_us: None,
+        la: false,
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -184,10 +197,40 @@ const CASES: &[Case] = &[
         freq_hz: 1e3,
         square: false,
         period_us: None,
+        la: false,
         passes: SCAN_PASSES,
         script: &[(SCAN_PASSES / 2, Act::Rearm)],
     },
+    Case {
+        name: "roll-ch1-la-200ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = true, m.la.on = true).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        la: true,
+        passes: 40,
+        script: &[],
+    },
+    Case {
+        name: "scan-run-ch1-la-200ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = false, m.la.on = true).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        la: true,
+        passes: SCAN_PASSES,
+        script: &[],
+    },
 ];
+
+/// The step of the count on the logic analyser's lines: longer than the spacing of its words in every case, so two
+/// words next to each other differ by 0 or 1, and a chunk lost or out of order (100 words) shows as a larger step.
+const LA_TICK_S: f64 = 1e-4;
+
+/// The lines of the logic analyser at `t` s: the count of `LA_TICK_S` steps.
+fn la_lines(t: f64) -> u16 {
+    (t / LA_TICK_S) as u64 as u16
+}
 
 /// Passes of a scan case: a sweep of 2 s at 200 ms/div (a read and an empty poll of 9 ms per 4 to 5 chunks of 2 ms),
 /// the pause or the halt after it, and the start of the next sweep.
@@ -216,6 +259,14 @@ fn frame_line(f: &Frame) -> String {
             .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
         s += &format!(" | CH{} n {} lo {:.4} hi {:.4} mean {:.4} sum {:016x}", c + 1, v.len(), lo, hi, mean, sum);
     }
+    if let Some(la) = &f.la {
+        let sum = la
+            .words
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+        s += &format!(" | LA n {} t0 {:e} dt {:e} sum {:016x}", la.words.len(), la.t0, la.dt, sum);
+    }
     s
 }
 
@@ -230,6 +281,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
     let view = View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
     let scene = Scene {
         volts: signal(case.freq_hz, case.square),
+        la: case.la.then(|| Box::new(la_lines) as Box<dyn Fn(f64) -> u16>),
         first_fs: case.period_us.unwrap_or(1) * US,
         period_fs: case.period_us.map(|p| p * US),
         auto_fs: None,
@@ -320,6 +372,14 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                 for v in f.ch.iter().filter(|v| !v.is_empty()) {
                     let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
                     assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "{}: {} to {} V", case.name, lo, hi);
+                }
+            }
+            if case.la {
+                for f in frames.iter().filter(|f| f.roll || !f.partial) {
+                    let w = &f.la.as_ref().expect("the LA words with every picture").words;
+                    assert!(!w.is_empty(), "{}: picture {} without LA words", case.name, f.seq);
+                    let step = w.windows(2).map(|p| p[1].wrapping_sub(p[0])).max().unwrap_or(0);
+                    assert!(step <= 1, "{}: picture {}: the LA count steps by {}", case.name, f.seq, step);
                 }
             }
             if frames[0].scan {
