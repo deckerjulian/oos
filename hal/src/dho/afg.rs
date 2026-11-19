@@ -670,6 +670,30 @@ pub fn idle(a_nv: f64, o_nv: f64, f_uhz: f64, current: u8) -> Vec<Op> {
     o
 }
 
+/// The generator's lines: the five attenuator relays (bit n = afg_in(n+1)) and the supply of its output stage.
+/// On the unit they are `Io`; a host run gives its own (ADR 0053).
+pub trait GenLines {
+    fn relays(&mut self, code: u8);
+    fn power(&mut self, on: bool);
+}
+
+/// Runs a generator sequence: the register writes on `bar`, the relays and the supply on `lines`, the waits on `clock`.
+pub fn run<L: GenLines, C: crate::dho::boot::Clock>(
+    bar: &mut dyn crate::dho::bus::Bus,
+    lines: &mut L,
+    clock: &mut C,
+    ops: &[Op],
+) {
+    for op in ops {
+        match *op {
+            Op::Bar1 { off, val } => bar.wr(off, val),
+            Op::Gpio(code) => lines.relays(code),
+            Op::Power(on) => lines.power(on),
+            Op::SleepMs(ms) => clock.sleep_us(ms as u64 * 1000),
+        }
+    }
+}
+
 /// The generator's GPIO lines, held while OOS drives the generator, and the executor of the sequences.
 #[cfg(target_os = "linux")]
 pub struct Io {
@@ -701,24 +725,49 @@ impl Io {
         self.relays.iter().enumerate().fold(0, |c, (n, l)| c | (l.get() as u8) << n)
     }
     pub fn apply(&mut self, bar: &mut dyn crate::dho::bus::Bus, ops: &[Op]) {
-        for op in ops {
-            match *op {
-                Op::Bar1 { off, val } => bar.wr(off, val),
-                Op::Gpio(code) => {
-                    for (n, l) in self.relays.iter().enumerate() {
-                        l.set(code >> n & 1 == 1);
-                    }
-                }
-                Op::Power(on) => self.power.set(on),
-                Op::SleepMs(ms) => std::thread::sleep(std::time::Duration::from_millis(ms as u64)),
-            }
+        run(bar, self, &mut crate::dho::boot::SysClock::default(), ops)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl GenLines for Io {
+    fn relays(&mut self, code: u8) {
+        for (n, l) in self.relays.iter().enumerate() {
+            l.set(code >> n & 1 == 1);
         }
+    }
+    fn power(&mut self, on: bool) {
+        self.power.set(on);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: a sequence whose writes, relays, supply and waits run out of order, or whose waits take wall
+    // time instead of the clock's
+    #[test]
+    fn a_sequence_runs_on_the_lines_and_the_clock_it_is_given() {
+        #[derive(Default)]
+        struct Lines(Vec<String>);
+        impl GenLines for Lines {
+            fn relays(&mut self, code: u8) {
+                self.0.push(format!("relays {:05b}", code));
+            }
+            fn power(&mut self, on: bool) {
+                self.0.push(format!("power {}", on));
+            }
+        }
+        let ops =
+            [Op::Power(true), Op::SleepMs(20), Op::Gpio(0b10010), Op::Bar1 { off: 0x3000, val: 1 }, Op::SleepMs(5)];
+        let (mut bar, mut lines) = (crate::dho::bus::Recorder::default(), Lines::default());
+        let mut clock = crate::dho::boot::sim::SimClock { t_us: 0 };
+        run(&mut bar, &mut lines, &mut clock, &ops);
+        assert_eq!(lines.0, ["power true", "relays 10010"]);
+        assert_eq!(bar.writes, [(0x3000, 1)]);
+        assert_eq!(clock.t_us, 25_000, "the waits passed on the clock");
+    }
 
     fn unit_cal() -> Option<Cal> {
         Cal::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full"))

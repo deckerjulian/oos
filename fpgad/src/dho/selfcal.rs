@@ -182,10 +182,13 @@ fn selfcal_adc(
     let cancel = || false;
     let (mut bar, mut afe_bus) = (bar, afe_bus);
     let base = cal_adc.ok_or("no cal_adc.hex")?;
+    let (mut lines, mut clock) = (oos_hal::dho::lines::UnitLines, oos_hal::dho::boot::SysClock::default());
     let mut unit = sc::Unit {
         bar: &mut bar,
         afe: &mut afe_bus,
         c2h,
+        lines: &mut lines,
+        clock: &mut clock,
         state,
         cal,
         cal_adc: Some(base),
@@ -233,8 +236,19 @@ fn selfcal_all(
     let cancel = || false;
     let mut bar = bar;
     let mut afe_bus = afe_bus;
-    let mut unit =
-        sc::Unit { bar: &mut bar, afe: &mut afe_bus, c2h, state, cal, cal_adc, cancel: &cancel, adc_new: None };
+    let (mut lines, mut clock) = (oos_hal::dho::lines::UnitLines, oos_hal::dho::boot::SysClock::default());
+    let mut unit = sc::Unit {
+        bar: &mut bar,
+        afe: &mut afe_bus,
+        c2h,
+        lines: &mut lines,
+        clock: &mut clock,
+        state,
+        cal,
+        cal_adc,
+        cancel: &cancel,
+        adc_new: None,
+    };
     let adc_base = if has("--adc") { cal_adc } else { None };
     let t0 = std::time::Instant::now();
     let mut last = String::new();

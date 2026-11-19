@@ -227,10 +227,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     (Some(afe), Some(c)) => {
                         let cancel_out = out.clone();
                         let cancel = move || cancel_out.lock().unwrap().cal_cancel;
+                        let mut lines = oos_hal::dho::lines::UnitLines;
+                        let mut clock = oos_hal::dho::boot::SysClock::default();
                         let mut unit = oos_hal::dho::selfcal::Unit {
                             bar: &mut bar,
                             afe,
                             c2h: &mut c2h,
+                            lines: &mut lines,
+                            clock: &mut clock,
                             state: &mut state,
                             cal: c,
                             cal_adc: cal_adc.as_ref(),

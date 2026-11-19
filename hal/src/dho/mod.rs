@@ -23,6 +23,7 @@ pub mod gpio;
 pub mod hz;
 pub mod la;
 pub mod levels;
+pub mod lines;
 pub mod lmx2582;
 pub mod madeup;
 pub mod mask;
