@@ -104,7 +104,8 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   `(cd ui && OOS_BLESS=1 cargo test --locked -q protocols::tests)`. The list only gains lines: a key never changes.
 - **The check:** `ui/src/protocols/mod.rs::every_decoder_is_complete` fails on a decoder without its key in the list,
   its `ModuleInfo` in the registry of `oos-dsp` (or out of its order), its name in the wiki, demo traffic (or the
-  reason in `NO_DEMO`) or its case on the demo screen, on a decoder of `oos-dsp` without a module, and on a number of decoders in the texts that is not the number registered;
+  reason in `NO_DEMO`) or its case on the demo screen, on a decoder of `oos-dsp` without a module, and on a number of
+  decoders in the texts that is not the number registered;
   `dsp/src/protocols.rs::every_declared_module_is_registered` on a `ModuleInfo` that is not in the registry of
   `oos-dsp`, `dsp/src/protocols.rs::modules_are_well_formed` on a key or a name used twice or an info that is not in
   the file of its family, `dsp/src/protocols.rs::every_module_has_its_decoder_and_bit_time` on an info without the
