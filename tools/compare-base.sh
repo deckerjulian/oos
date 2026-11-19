@@ -6,6 +6,15 @@
 # of a refactoring; CI runs it for every pull request.
 #
 #   tools/compare-base.sh [BASE]     BASE: a commit; default: where this branch left origin/main
+#   tools/compare-base.sh --base-sums DIR [BASE]
+#                                    the same, with what --record-sums kept of BASE: when the pictures, stored files
+#                                    and remote answers of this tree have the same sums as BASE's and DIR holds BASE's
+#                                    oos-fpgad, BASE is not built. A difference falls back to building BASE, so the
+#                                    report names every picture with the box of its change as before
+#   tools/compare-base.sh --record-sums DIR
+#                                    keeps in DIR what --base-sums reads, of this tree as committed (HEAD, no changes):
+#                                    the sums of its pictures, stored files and remote answers, its oos-fpgad, the commit
+#                                    (CI: the push to main fills a cache that the pull requests onto it read)
 #
 # Checks BASE out into a tree of its own (ui/target/compare-base/tree, a git worktree that stays for the next run),
 # builds it, records its pictures, stored files and remote answers (ui/tools/layout-check.sh) and its register
@@ -33,6 +42,24 @@ stop() {
 	exit 2
 }
 
+sums=
+case ${1:-} in
+--record-sums)
+	dir=${2:?--record-sums DIR}
+	[ -z "$(git status --porcelain --untracked-files=no)" ] || stop "--record-sums needs a tree without changes"
+	mkdir -p "$dir" || stop "cannot make $dir"
+	(cd ui && tools/layout-check.sh record target/layout-sums) || stop "this tree does not render"
+	(cd fpgad && cargo build --release --locked --quiet) || stop "oos-fpgad does not build"
+	cp ui/target/layout-sums.sums "$dir/layout-base.sums" && cp fpgad/target/release/oos-fpgad "$dir/oos-fpgad" &&
+		git rev-parse HEAD >"$dir/commit" || stop "cannot write $dir"
+	echo "kept the sums of $(git log -1 --format='%h %s') in $dir"
+	exit 0
+	;;
+--base-sums)
+	sums=${2:?--base-sums DIR [BASE]}
+	shift 2
+	;;
+esac
 base=${1:-}
 if [ -z "$base" ]; then
 	base=$(git merge-base origin/main HEAD 2>/dev/null) || stop "no origin/main to compare with: name a commit"
@@ -59,11 +86,33 @@ else
 fi
 
 echo "== base $(git log -1 --format='%h %s' "$base")"
-echo "== pictures of the base"
-(cd "$tree" && ui/tools/layout-check.sh record) || stop "the base does not render"
-echo "== pictures of this tree"
-pictures=0
-ui/tools/layout-check.sh check target/compare-base/tree/ui/target/layout-base >"$work/pictures.txt" 2>&1 || pictures=$?
+# what --record-sums kept of the base, if it is of this base and complete
+cached=0
+if [ -n "$sums" ] && [ "$(cat "$sums/commit" 2>/dev/null)" = "$base" ] && [ -s "$sums/layout-base.sums" ] &&
+	[ -x "$sums/oos-fpgad" ]; then
+	cached=1
+fi
+pictures=
+if [ "$cached" = 1 ]; then
+	echo "== pictures of this tree, against the sums kept of the base"
+	(cd ui && tools/layout-check.sh record target/layout-new) >"$work/pictures.txt" 2>&1 || stop "this tree does not render"
+	if cmp -s "$sums/layout-base.sums" ui/target/layout-new.sums; then
+		n=$(grep -c '\.ppm$' ui/target/layout-new.sums)
+		m=$(grep -vc '\.ppm$' ui/target/layout-new.sums || true)
+		echo "all $n pictures and $m other files equal to the sums kept of the base" >"$work/pictures.txt"
+		pictures=0
+	else
+		echo "the pictures differ from the sums kept of the base: the base is built for the report"
+	fi
+fi
+if [ -z "$pictures" ]; then
+	echo "== pictures of the base"
+	(cd "$tree" && ui/tools/layout-check.sh record) || stop "the base does not render"
+	echo "== pictures of this tree"
+	pictures=0
+	ui/tools/layout-check.sh check target/compare-base/tree/ui/target/layout-base >"$work/pictures.txt" 2>&1 ||
+		pictures=$?
+fi
 cat "$work/pictures.txt"
 [ "$pictures" -le 1 ] || stop "this tree does not render"
 # the first pictures and files that differ, both versions, for the report
@@ -76,7 +125,14 @@ grep -E '^\./[^ ]+ +([0-9]+ px|line [0-9]+:)' "$work/pictures.txt" | head -n 12 
 	cp "ui/target/layout-new/$name" "$work/differing/new/$name"
 done
 
-for t in "$tree" "$root"; do
+base_fpgad=$tree/fpgad/target/release/oos-fpgad
+if [ "$cached" = 1 ]; then
+	base_fpgad=$sums/oos-fpgad
+	built="$root"
+else
+	built="$tree $root"
+fi
+for t in $built; do
 	(cd "$t/fpgad" && cargo build --release --locked --quiet) || stop "oos-fpgad does not build in $t"
 done
 if [ -z "$cal" ]; then
@@ -95,7 +151,7 @@ if [ -z "$cal" ]; then
 	cal_note="with the made-up calibration set"
 fi
 echo "== register sequences, $cal_note"
-OOS_CAL_DIR=$cal "$tree/tools/plan-matrix.sh" "$tree/fpgad/target/release/oos-fpgad" >"$work/registers-base.txt"
+OOS_CAL_DIR=$cal "$tree/tools/plan-matrix.sh" "$base_fpgad" >"$work/registers-base.txt"
 OOS_CAL_DIR=$cal tools/plan-matrix.sh fpgad/target/release/oos-fpgad >"$work/registers-new.txt"
 lines=$(wc -l <"$work/registers-new.txt" | tr -d ' ')
 [ "$lines" -gt 1000 ] || stop "tools/plan-matrix.sh printed only $lines lines"
