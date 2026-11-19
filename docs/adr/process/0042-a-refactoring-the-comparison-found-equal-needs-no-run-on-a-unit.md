@@ -30,8 +30,8 @@ calibrated ones included with the made-up calibration set (#98). It does not run
 - **What only a unit proves still needs one**, refactoring or not, unless the programs are byte-identical (ADR 0041):
   - start and update: `boot/`, `kernel/`, `rootfs/`, `hal/src/update/`, `hal/src/dho/boot/`,
     `fpgad/src/bin/oos-update.rs`;
-  - the commands of oos-fpgad that work on the board (`fpgad/src/main.rs`, `board.rs`, and the subcommand modules
-    `afg.rs`, `bringup.rs`, `roll.rs`, `selfcal.rs`, `tool.rs`);
+  - the commands of oos-fpgad that work on the board (`fpgad/src/main.rs`, and in `fpgad/src/dho/` since ADR 0067
+    `mod.rs`, `board.rs` and the subcommand modules `afg.rs`, `bringup.rs`, `roll.rs`, `selfcal.rs`, `tool.rs`);
   - timing and the live run against the board: `ui/src/board/`, and in `hal/src/dho/` the buses and read paths
     (`bus`, `gpio`, `panel`), the roll stream, segmented memory, self-calibration, core trim, levels, board
     supervision.

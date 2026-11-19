@@ -41,13 +41,13 @@ agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
+live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|'
 live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
 # in neither or in both), and one that is in neither counts as live: a new or a split file needs a unit until it is
 # classed
-proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
+proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/dho/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
 proven="${proven}hal/src/dho/seq/(frame|samples|settings)\.rs$|hal/src/dho/(acq|adc|afe|afg|auxout|avg|calfile|"
 proven="${proven}clock|counter|dvm|encode|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|sim|spu|target|tpu|"
 proven="${proven}uarttrig|wpu|zone|zonegeom)\.rs$)"
