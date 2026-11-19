@@ -688,6 +688,17 @@ impl MeasWorker {
     }
 }
 
+/// The screen: the state of each part, and what the whole screen shares (ADR 0062). A part keeps its state in a struct
+/// of its module and has one field here (`bt: bt::BtUi`, `cat: meascatalog::Catalog`, ...). What stays a field of its
+/// own here, and why:
+/// - the model `m` and the source `src`: every part reads the settings and the records;
+/// - the screen `scr` and the time `now`: every part draws on the one and counts by the other;
+/// - the open menu (`menu`, `menu_open`, `parent`, `menu_history`, `pick`, `focus`): the shared menu code runs every
+///   page from it (ADR 0060);
+/// - the finger (`touch`), the message (`toast`) and the dialog over all (`dialog`): one of each for the whole screen.
+///
+/// The other loose fields are still to move into their parts; `tools/code-metrics.py --list` names them (`ui-fields`,
+/// which only goes down).
 pub struct Ui {
     cat: meascatalog::Catalog,
     meas_page: usize,
