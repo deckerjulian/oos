@@ -8,8 +8,8 @@
 //! timed (ADR 0020).
 
 use oos_hal::dho::bus::DmaBuf;
-use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::{acquire_batch_until, Settings, State, NEW_SETTINGS};
+use oos_hal::dho::sim::{engine, Engine};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 

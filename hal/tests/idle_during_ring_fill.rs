@@ -7,8 +7,8 @@
 //! flag, so the counts say what happened on any computer. A sleep between two calls with work does not show in them.
 
 use oos_hal::dho::bus::{Bus, DmaBuf};
-use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::{acquire_batch_idle, Settings, State};
+use oos_hal::dho::sim::{engine, Engine};
 use std::time::{Duration, Instant};
 
 #[test]

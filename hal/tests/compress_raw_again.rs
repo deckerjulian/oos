@@ -6,8 +6,8 @@
 
 use oos_hal::dho::bus::DmaBuf;
 use oos_hal::dho::pairs;
-use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::{acquire_batch, compressed_len, frame_bytes, raw_settings, read_raw_again, Settings, State};
+use oos_hal::dho::sim::{engine, Engine};
 
 fn words(b: &[u8]) -> Vec<u16> {
     b.as_chunks::<2>().0.iter().map(|x| u16::from_le_bytes([x[0], x[1]])).collect()
