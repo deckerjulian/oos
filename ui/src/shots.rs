@@ -3,8 +3,8 @@
 
 //! The live picture of the web remote (`GET /screen.png`, `/screen.jpg`): the frame loop hands the screen over, a
 //! thread of its own makes PNG or JPEG (VPU) of a changed screen, and the viewers waiting for it get it. Base: it needs
-//! the canvas, the encoders and the senders of `net`, nothing of the screen's state; the web server (http.rs) hands it
-//! the requests through `site`.
+//! the canvas, the encoders and the senders of `net`, nothing of the screen's state; the web server (oos-remote's
+//! http.rs) hands it the requests through `site`.
 
 use crate::gfx::Canvas;
 use std::io::Write;
@@ -40,8 +40,8 @@ const VPU_RETRY: Duration = Duration::from_secs(60);
 /// The frame loop only copies the screen (2.4 MB), and only while somebody waits, and not more often than the encoder
 /// can keep up with on a third of a slow core (`SHOT_DUTY`), at most 20 times a second. The encoder thread compares the
 /// copy with the last picture, makes a PNG only of a changed screen and hands it to the waiting viewers; it and the
-/// senders get only the time the scope leaves over (`system::lower_priority`). The PNG used to be made in the frame loop:
-/// one viewer at 15 pictures a second took the scope's screen from 27 to 16 frames a second.
+/// senders get only the time the scope leaves over (`system::lower_priority`). The PNG used to be made in the frame
+/// loop: one viewer at 15 pictures a second took the scope's screen from 27 to 16 frames a second.
 pub struct Shots {
     st: Mutex<ShotState>,
     wake: Condvar,

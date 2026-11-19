@@ -1,7 +1,7 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The VPU's JPEG encoder for the live picture of the web remote (`http.rs`, `/screen.jpg`).
+//! The VPU's JPEG encoder for the live picture of the web remote (`shots.rs`, `/screen.jpg`).
 //!
 //! The RK3399 has a Hantro video unit whose encoder makes JPEG; Linux drives it with the upstream `hantro-vpu`
 //! driver as a V4L2 memory-to-memory device (kernel/config, the `vpu` node of the device tree). The screen goes in as

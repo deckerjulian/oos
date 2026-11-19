@@ -1,11 +1,11 @@
 # OOS HTTP reference
 
 The web remote of `oos-ui` answers on TCP port 8080 (`--web-port` on a computer; System > Network > Remote services
-switches it, [network.md](network.md) 4). Every route is one arm of the `match` in `Http::answer` (`ui/src/http.rs`,
-the transport: pages, pictures, uploads, key commands) or, asked last, in `site::answer` (`ui/src/site.rs`, what the
-screen answers: its state, the last record, an update package, MCP); the MCP tools are in `site::mcp`. This page lists
-each of them with what it takes and what it answers, read from the code. SCPI through MCP is the interpreter of
-[scpi.md](scpi.md).
+switches it, [network.md](network.md) 4). Every route is one arm of the `match` in `Http::answer`
+(`ui/remote/src/http.rs`, the transport in the crate oos-remote: pages, uploads, key commands) or, asked last, in
+`Site::answer` of `site::Ctx` (`ui/src/site.rs`, what the screen answers: its state, the last record, the pictures, an
+update package, MCP); the MCP tools are in `site::mcp`. This page lists each of them with what it takes and what it
+answers, read from the code. SCPI through MCP is the interpreter of [scpi.md](scpi.md).
 
 Each entry carries one mark of [ADR 0055](adr/code/0055-the-remote-interface-is-stable-and-versioned.md) (the
 marks below are its first ones, and the interface has no version query yet):
@@ -27,13 +27,13 @@ has no mark, or when an entry names a route the code does not answer.
 - The route is the path before `?`, as sent (no percent-decoding). Of the query parameters, `name` of
   `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
   refused.
-- Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503
-  of `net::busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once.
-  A smaller one, a 403 or 413 and the result of an upload go out as the client takes them, from an outbox that the
-  frame loop writes from on every pass without waiting (ADR 0066). The connection closes when a client takes nothing
-  for 2 s or has not taken the whole answer after 30 s; while eight answers wait, a ninth closes unanswered.
+- Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503 of
+  `net::busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once. A
+  smaller one, a 403 or 413 and the result of an upload go out as the client takes them, from an outbox that the frame
+  loop writes from on every pass without waiting (ADR 0066). The connection closes when a client takes nothing for 2 s
+  or has not taken the whole answer after 30 s; while eight answers wait, a ninth closes unanswered.
 
-Limits (constants at the top of `ui/src/http.rs`):
+Limits (constants at the top of `ui/remote/src/http.rs`):
 
 | What | Limit | Beyond it |
 |---|---|---|
@@ -57,7 +57,7 @@ Every route can answer these; the body is `text/plain`.
 | 413 | `request too large` | a body above its limit (announced or sent) |
 | 503 | `busy, try again` | a 2nd body above 1 MiB or waveform upload, a 3rd answer above 48 KiB, a 9th picture asked |
 
-**Foreign** (`foreign` in `ui/src/http.rs`): a request is refused when its `Host` names the scope neither by an
+**Foreign** (`foreign` in `ui/remote/src/http.rs`): a request is refused when its `Host` names the scope neither by an
 address nor by `localhost`, a single label or a `.local` name (DNS rebinding); when it has an `Origin` whose host and
 port differ from `Host`; or when `Sec-Fetch-Site` is `cross-site` or `same-site`, except for a `GET` of `/`,
 `/style.css`, `/update` and `/lxi/identification`, which a link may open. A client that sends neither `Origin` nor
@@ -69,7 +69,7 @@ at it; the firewall of the scope applies to every port.
 
 ## Routes
 
-The status of an answer is chosen in `Http::answer`: 409 where the route says so (`site::answer` says it with the
+The status of an answer is chosen in `Http::answer`: 409 where the route says so (`Site::answer` says it with the
 body), 404 and 403 for the bodies `not
 found` and `refused`, 202 for an MCP notification, else 200.
 
@@ -96,7 +96,8 @@ found` and `refused`, 202 for an MCP notification, else 200.
   once when it is at most 300 ms old, else after a fresh copy. A client that has the newest one waits until the
   screen changes, at most 2 s (long poll), then gets 304 with no body. 503 while 8 requests wait for a picture or
   two large answers are being sent.
-- Limits: pictures are made off the frame loop, only of a changed screen, at most 20 a second (`Shots`, `ui/src/shots.rs`).
+- Limits: pictures are made off the frame loop, only of a changed screen, at most 20 a second (`Shots`,
+  `ui/src/shots.rs`).
 - net.allow: no.
 
 ### `GET /screen.jpg`
@@ -226,7 +227,7 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Request: nothing.
 - Answer: 200 `text/html; charset=utf-8`, the update page: the state that `oos-update status --quick` prints, the
   result of the last job (`Ui::update_state`, `ui/src/ui/update.rs`), and the upload form (`update_page`,
-  `ui/src/http.rs`).
+  `ui/remote/src/http.rs`).
 - net.allow: no.
 
 ### `POST /update`
