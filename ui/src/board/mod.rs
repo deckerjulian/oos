@@ -10,7 +10,8 @@
 //! `board::dho` out of the rest of the crate.
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
-//! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
+//! tree). `OOS_BOARD=<name>` selects it for every crate (`cfg(oos_board = "<name>")`, build.rs, ADR 0067). A port adds
+//! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
 
 pub mod dho;
 mod record;
@@ -21,10 +22,12 @@ pub use record::{sw_trig_level, to_record, trigger_point};
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
 
-/// The board this build drives.
+/// The board this build drives: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
+#[cfg(oos_board = "dho")]
 pub type Active = dho::Dho;
 
 /// The board of this build.
+#[cfg(oos_board = "dho")]
 pub fn board() -> &'static Active {
     &dho::Dho
 }
