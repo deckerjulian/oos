@@ -362,6 +362,64 @@ fn page_lets_the_viewer_pick_png_or_bmp() {
     assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
 }
 
+/// ADR 0066: an answer the client does not take yet waits in `sending`, the frame loop goes on, and it goes out whole
+/// once the client reads.
+#[test]
+fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
+    const HANG: Duration = Duration::from_secs(300);
+    let mut h = Http::open(0);
+    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+    let (s, _) = l.accept().unwrap();
+    // far more than the socket buffers hold, also on Linux
+    let answer: Vec<u8> = (0..32u32 << 20).map(|i| i as u8).collect();
+    h.send(s, answer.clone());
+    assert_eq!(h.sending.len(), 1, "the rest waits");
+    h.poll(&mut ui, &cv, &mut scpi);
+    assert_eq!(h.sending.len(), 1, "a pass takes what the socket takes and goes on");
+    let reader = std::thread::spawn(move || {
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).unwrap();
+        got
+    });
+    let t = std::time::Instant::now();
+    while !h.sending.is_empty() {
+        assert!(t.elapsed() < HANG);
+        h.poll(&mut ui, &cv, &mut scpi);
+    }
+    assert!(reader.join().unwrap() == answer, "the answer arrives whole, and the connection closes after it");
+}
+
+/// Web remote off: the answers still waiting for their clients are dropped with the connections, as the requests
+/// being read are; and while `MAX_SENDING` answers wait, one more closes without a byte of it.
+#[test]
+fn switching_the_web_remote_off_drops_the_answers_that_wait() {
+    let mut h = Http::open(0);
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let pair = || {
+        let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        (c, l.accept().unwrap().0)
+    };
+    let mut clients = Vec::new();
+    for _ in 0..MAX_SENDING {
+        let (c, s) = pair();
+        let mut out = crate::net::Outbox::default();
+        out.push(b"an answer still waiting");
+        h.sending.push((s, out));
+        clients.push(c);
+    }
+    let (mut ninth, s) = pair();
+    h.send(s, b"HTTP/1.1 200 OK\r\n\r\nshort".to_vec());
+    assert_eq!(h.sending.len(), MAX_SENDING, "the ninth is not kept");
+    ninth.set_read_timeout(Some(Duration::from_secs(300))).unwrap();
+    let mut got = Vec::new();
+    ninth.read_to_end(&mut got).unwrap();
+    assert!(got.is_empty(), "the ninth gets no part of its answer: {:?}", String::from_utf8_lossy(&got));
+    h.set_open(None);
+    assert!(h.sending.is_empty() && h.pending.is_empty());
+}
+
 /// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
 /// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
 #[test]
