@@ -74,7 +74,7 @@ impl Ui {
             });
         }
         let back = self.parent.map(|_| Rect::new(close.x - 86, close.y, 78, DLG_CTRL));
-        Dlg { r, close, back, rows, heads: Vec::new() }
+        Dlg { r, close, back, rows, heads: Vec::new(), bar: None }
     }
 
     pub(super) fn draw_measurement_groups(&self, cv: &mut Canvas) {

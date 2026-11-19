@@ -480,6 +480,8 @@ struct Pick {
     menu: MenuId,
     parent: Option<MenuId>,
     focus: usize,
+    /// the first line of options shown, when the options are more than fit on the screen (ADR 0006)
+    top: i32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1193,6 +1195,8 @@ struct Dlg {
     rows: Vec<Row>,
     /// group labels (start menu)
     heads: Vec<(Rect, &'static str)>,
+    /// the scroll bar and the area of the rows, when the rows are more than fit (a long picker, ADR 0006)
+    bar: Option<(scroll::Bar, Rect)>,
 }
 
 /// Temperature map of the colour-graded display, 256 steps: blue (rare) -> cyan -> green -> yellow -> red (frequent).

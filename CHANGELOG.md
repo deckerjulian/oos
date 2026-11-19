@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+Changed:
+
+- A picker longer than the screen scrolls by its bar, a finger and the knob, as the other lists do (ADR 0006): a WLAN
+  scan lists every network it found, not the 17 strongest, and the Bluetooth pickers every device, not the first 18.
+
 ## 0.1.14
 
 Released on 2026-11-19. Fixes from the review of 0.1.13 and from the forum's and the issues' reports, Bluetooth and a

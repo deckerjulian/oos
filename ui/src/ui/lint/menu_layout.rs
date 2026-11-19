@@ -18,11 +18,14 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
     }
     for (i, row) in d.rows.iter().enumerate() {
         let c = row.ctrl;
+        if c.w == 0 {
+            continue; // scrolled out of a long picker: it has no place now
+        }
         let name = format!("{:?}", row.it);
         if c.y + c.h > d.r.y + d.r.h || c.x + c.w > d.r.x + d.r.w {
             bad(format!("{} outside the dialog", name));
         }
-        if d.rows[i + 1..].iter().any(|o| overlaps(o.ctrl, c)) {
+        if d.rows[i + 1..].iter().any(|o| o.ctrl.w > 0 && overlaps(o.ctrl, c)) {
             bad(format!("{} overlaps another row", name));
         }
         let kind = Ui::kind(row.it);

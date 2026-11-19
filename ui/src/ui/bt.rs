@@ -19,8 +19,6 @@ use std::time::Duration;
 const POLL: Duration = Duration::from_secs(2);
 /// How long "Find devices" listens.
 const SCAN: Duration = Duration::from_secs(10);
-/// Lines of a device picker.
-const LIST_MAX: usize = 18;
 /// Characters of a device name in a picker line.
 const NAME_MAX: usize = 22;
 
@@ -338,7 +336,6 @@ impl Ui {
         let heard = |d: &&Device| !d.paired && d.rssi.is_some() && (d.is_input() || d.named);
         let mut v: Vec<Device> = devices.iter().filter(heard).cloned().collect();
         v.sort_by_key(|d| (!d.is_input(), -(d.rssi.unwrap_or(-127) as i32)));
-        v.truncate(LIST_MAX);
         v
     }
 
@@ -349,7 +346,7 @@ impl Ui {
         self.bt.found.iter().filter(|d| now(d)).collect()
     }
 
-    /// Every paired device, for the details. Its pickers show the first `LIST_MAX` (a picker does not scroll).
+    /// Every paired device, for the details and its pickers (a long one scrolls, ADR 0006).
     fn bt_paired(&self) -> Vec<&Device> {
         self.bt.link.devices.iter().filter(|d| d.paired).collect()
     }
@@ -371,9 +368,7 @@ impl Ui {
     pub(super) fn bt_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
             Item::BtFound => self.bt_found().into_iter().map(Self::bt_line).collect(),
-            Item::BtPairedPick | Item::BtForgetPick => {
-                self.bt_paired().into_iter().take(LIST_MAX).map(Self::bt_line).collect()
-            }
+            Item::BtPairedPick | Item::BtForgetPick => self.bt_paired().into_iter().map(Self::bt_line).collect(),
             _ => return None,
         })
     }
@@ -448,7 +443,8 @@ impl Ui {
         v
     }
 
-    /// For the layout lint: a stick with more paired and heard devices than a picker has lines, all with long names.
+    /// For the layout lint: a stick with more paired and heard devices than a picker shows at once, all with long
+    /// names.
     #[cfg(test)]
     pub(super) fn bt_crowded_for_tests(&mut self) {
         let dev = |k: usize, paired: bool| Device {
@@ -462,8 +458,8 @@ impl Ui {
             rssi: if paired { None } else { Some(-100) },
             named: true,
         };
-        let mut devices: Vec<Device> = (0..LIST_MAX + 2).map(|k| dev(k, true)).collect();
-        devices.extend((0..LIST_MAX + 2).map(|k| dev(k, false)));
+        let mut devices: Vec<Device> = (0..40).map(|k| dev(k, true)).collect();
+        devices.extend((0..40).map(|k| dev(k, false)));
         self.bt.link = Link {
             stick: true,
             daemon: true,
