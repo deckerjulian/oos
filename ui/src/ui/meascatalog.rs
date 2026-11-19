@@ -12,6 +12,25 @@ pub(super) mod backend;
 use crate::measures::{self, Def, Kind, Mark, CATEGORIES};
 pub(super) use crate::measures::{meas_name as meas_long_name, pair_name as pair_long_name};
 
+/// The state of the page (ADR 0062): the category shown, the tile picked, which groups are open, how far it is
+/// scrolled, and the extra sources C and D of a measurement with four.
+pub(super) struct Catalog {
+    pub tab: u8,
+    pub sel: u16,
+    /// one bit per group of each category
+    pub open: [u16; CATEGORIES.len()],
+    /// pixels
+    pub scroll: i32,
+    pub c: WaveId,
+    pub d: WaveId,
+}
+
+impl Default for Catalog {
+    fn default() -> Self {
+        Catalog { tab: 0, sel: 1, open: [1; CATEGORIES.len()], scroll: 0, c: WaveId::Ch(2), d: WaveId::Ch(3) }
+    }
+}
+
 /// A tile of the page: one measurement of a module (`crate::measures`).
 type Cat = &'static Def;
 
@@ -81,7 +100,7 @@ impl Ui {
         format!("{roles} {}", c.name)
     }
     fn cat_sel(&self) -> Cat {
-        cat_from(self.cat_sel).unwrap_or_else(first_tile)
+        cat_from(self.cat.sel).unwrap_or_else(first_tile)
     }
 
     fn src_label(&self, id: WaveId) -> String {
@@ -94,10 +113,10 @@ impl Ui {
     /// The source rows of the page: as many as the category always shows, more when the measurement picked reads
     /// more; labelled as the category names them.
     fn source_slots(&self) -> Vec<(u8, &'static str, WaveId)> {
-        let cat = &CATEGORIES[(self.cat_tab as usize).min(CATEGORIES.len() - 1)];
+        let cat = &CATEGORIES[(self.cat.tab as usize).min(CATEGORIES.len() - 1)];
         let need = self.cat_sel().roles.iter().max().map_or(1, |r| r + 1);
         let n = cat.min.max(need).min(4);
-        let ids = [self.meas_src, self.meas_src_b, self.cat_c, self.cat_d];
+        let ids = [self.meas_src, self.meas_src_b, self.cat.c, self.cat.d];
         (0..n).map(|k| (k as u8, if n == 1 { cat.one } else { cat.slots[k] }, ids[k])).collect()
     }
 
@@ -138,12 +157,12 @@ impl Ui {
         let mut y = 0;
         let mut groups = Vec::new();
         let mut items = Vec::new();
-        let open = self.cat_open[self.cat_tab as usize];
+        let open = self.cat.open[self.cat.tab as usize];
         let cols = 3;
         let gap = 6;
         let bw = (view.w - 8 - (cols - 1) * gap) / cols;
         let bh = 42;
-        for (g, (_, list)) in tab_groups(self.cat_tab).iter().enumerate() {
+        for (g, (_, list)) in tab_groups(self.cat.tab).iter().enumerate() {
             groups.push(Hit { n: g as u16, r: Rect::new(0, y, view.w - 4, 40) });
             y += 44;
             if open & (1 << g) == 0 {
@@ -216,13 +235,13 @@ impl Ui {
             return None;
         }
         let lay = self.catalog_lay();
-        Some((scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat_scroll }, lay.view))
+        Some((scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat.scroll }, lay.view))
     }
 
     /// Where the list stands, kept in range (a folded group may have made it shorter).
     pub(super) fn cat_top(&self) -> i32 {
         let lay = self.catalog_lay();
-        self.cat_scroll.clamp(0, (lay.content - lay.view.h).max(0))
+        self.cat.scroll.clamp(0, (lay.content - lay.view.h).max(0))
     }
 
     fn catalog_set_on(&self, rect: Rect, c: Cat) -> Option<Rect> {
@@ -264,7 +283,7 @@ impl Ui {
         let h = self.content_h();
         let view = self.catalog_lay().view.h;
         let max = (h - view).max(0);
-        self.cat_scroll = self.cat_scroll.clamp(0, max);
+        self.cat.scroll = self.cat.scroll.clamp(0, max);
     }
 
     pub(super) fn draw_catalog(&self, cv: &mut Canvas) {
@@ -289,7 +308,7 @@ impl Ui {
         }
         // the categories; the one shown is filled
         for (i, rect) in lay.tabs.iter().enumerate() {
-            let on = i as u8 == self.cat_tab;
+            let on = i as u8 == self.cat.tab;
             btn(cv, *rect, if on { ACCENT } else { BTN }, BTN_BORDER);
             let name = CATEGORIES[i].name;
             let (font, tr, _) = self.btn_text(*rect, false, name);
@@ -313,7 +332,7 @@ impl Ui {
         cv.set_clip(Rect::new(tx, lay.preview.y, tw, lay.preview.h));
         cv.text(&f.mb, tx, lay.preview.y + 24, info.name, TEXT);
         if info.kind == Kind::Module && self.cat_added(sel) {
-            let reading = self.catalog_reading(sel, [self.meas_src, self.meas_src_b, self.cat_c, self.cat_d]);
+            let reading = self.catalog_reading(sel, [self.meas_src, self.meas_src_b, self.cat.c, self.cat.d]);
             let status = if reading.computing {
                 "Computing".into()
             } else if let Some(reason) = reading.reason {
@@ -344,11 +363,11 @@ impl Ui {
         }
         cv.set_clip(lay.view);
         let scroll = self.cat_top();
-        let open = self.cat_open[self.cat_tab as usize];
+        let open = self.cat.open[self.cat.tab as usize];
         for g in &lay.groups {
             let rect = screen_rect(lay.view, g.r, scroll);
             cv.rect(rect, GROUP_HEAD);
-            let name = tab_groups(self.cat_tab).get(g.n as usize).map(|g| g.0).unwrap_or("");
+            let name = tab_groups(self.cat.tab).get(g.n as usize).map(|g| g.0).unwrap_or("");
             cv.text_in(&f.s, Rect::new(rect.x + 10, rect.y, rect.w - 36, rect.h), 0, name, LABEL);
             if open & (1 << g.n) != 0 {
                 chevron_down(cv, rect.x + rect.w - 18, rect.y + rect.h / 2 - 3, DIM);
@@ -385,7 +404,7 @@ impl Ui {
             }
         }
         cv.no_clip();
-        scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat_scroll }.draw(cv);
+        scroll::Bar { track: lay.bar, total: lay.content, shown: lay.view.h, pos: self.cat.scroll }.draw(cv);
     }
 
     fn draw_mark(&self, cv: &mut Canvas, r: Rect, mark: Mark, col: Rgb) {
@@ -487,12 +506,12 @@ impl Ui {
         }
         for (i, rect) in lay.tabs.iter().enumerate() {
             if rect.contains(x, y) {
-                self.cat_tab = i as u8;
-                self.cat_scroll = 0;
+                self.cat.tab = i as u8;
+                self.cat.scroll = 0;
                 let first =
-                    tab_groups(self.cat_tab).first().and_then(|g| g.1.first()).copied().unwrap_or_else(first_tile);
-                if tab_groups(self.cat_tab).iter().all(|g| !g.1.iter().any(|d| d.id == self.cat_sel)) {
-                    self.cat_sel = first.id;
+                    tab_groups(self.cat.tab).first().and_then(|g| g.1.first()).copied().unwrap_or_else(first_tile);
+                if tab_groups(self.cat.tab).iter().all(|g| !g.1.iter().any(|d| d.id == self.cat.sel)) {
+                    self.cat.sel = first.id;
                 }
                 return true;
             }
@@ -519,11 +538,11 @@ impl Ui {
                 if g.r.contains(cx, cy) {
                     // one group open at a time: a tap opens it and closes the others, a tap on the open one closes it
                     let bit = 1u16 << g.n;
-                    let open = &mut self.cat_open[self.cat_tab as usize];
+                    let open = &mut self.cat.open[self.cat.tab as usize];
                     *open = if *open & bit != 0 { 0 } else { bit };
                     // an opened group comes to the top of the list; a folded one leaves the list where it can stand
-                    if self.cat_open[self.cat_tab as usize] & bit != 0 {
-                        self.cat_scroll = g.r.y;
+                    if self.cat.open[self.cat.tab as usize] & bit != 0 {
+                        self.cat.scroll = g.r.y;
                     }
                     self.clamp_scroll();
                     return true;
@@ -547,7 +566,7 @@ impl Ui {
                         }
                     }
                     // one tap: picked (the description shows) and added on the current sources, or removed
-                    self.cat_sel = it.n;
+                    self.cat.sel = it.n;
                     if let Some(c) = cat_from(it.n) {
                         self.catalog_add(c);
                     }
@@ -567,11 +586,11 @@ impl Ui {
         let (tab, g) = (0..CATEGORIES.len() as u8)
             .find_map(|t| tab_groups(t).iter().position(|g| g.1.iter().any(|d| d.id == c.id)).map(|g| (t, g)))
             .ok_or_else(|| format!("{:?} is in no group", name.trim()))?;
-        self.cat_tab = tab;
-        self.cat_open[tab as usize] = 1 << g;
-        self.cat_scroll = self.catalog_group_rect(g).map_or(0, |r| r.y - self.catalog_view().y + self.cat_top());
+        self.cat.tab = tab;
+        self.cat.open[tab as usize] = 1 << g;
+        self.cat.scroll = self.catalog_group_rect(g).map_or(0, |r| r.y - self.catalog_view().y + self.cat_top());
         self.clamp_scroll();
-        self.cat_sel = c.id;
+        self.cat.sel = c.id;
         self.catalog_add(c);
         Ok(())
     }
@@ -581,7 +600,7 @@ impl Ui {
             Kind::Standard(k) => self.m.meas.iter().any(|e| e.0 == k && e.1 == self.meas_src),
             Kind::Pair(k) => self.m.meas2.iter().any(|e| e.0 == k && e.1 == self.meas_src && e.2 == self.meas_src_b),
             Kind::Module => self.m.cat.iter().any(|e| {
-                e.0 == c.id && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat_c && e.4 == self.cat_d
+                e.0 == c.id && e.1 == self.meas_src && e.2 == self.meas_src_b && e.3 == self.cat.c && e.4 == self.cat.d
             }),
         }
     }
@@ -591,7 +610,7 @@ impl Ui {
             Kind::Standard(k) => self.activate(Item::MeasAdd(k)),
             Kind::Pair(k) => self.meas_pair_toggle(k),
             Kind::Module => {
-                let row = (c.id, self.meas_src, self.meas_src_b, self.cat_c, self.cat_d);
+                let row = (c.id, self.meas_src, self.meas_src_b, self.cat.c, self.cat.d);
                 if let Some(i) = self.m.cat.iter().position(|e| *e == row) {
                     self.m.cat.remove(i);
                     self.toast(&format!("{} removed", c.name));
@@ -721,7 +740,7 @@ mod integration_tests {
         let r = rect_of(&ui, tile(measures::std_id(Meas::Vpp)));
         tap(&mut ui, Rect::new(r.x, r.y, r.w / 2, r.h));
         assert_eq!(ui.m.meas, vec![(Meas::Vpp, WaveId::Ch(0))]);
-        assert_eq!(ui.cat_sel, measures::std_id(Meas::Vpp), "the description follows the tap");
+        assert_eq!(ui.cat.sel, measures::std_id(Meas::Vpp), "the description follows the tap");
         let r = rect_of(&ui, tile(measures::std_id(Meas::Vpp)));
         tap(&mut ui, Rect::new(r.x, r.y, r.w / 2, r.h));
         assert!(ui.m.meas.is_empty());
@@ -735,10 +754,10 @@ mod integration_tests {
         // one group open at a time
         let g = ui.catalog_group_rect(2).unwrap();
         tap(&mut ui, g);
-        assert_eq!(ui.cat_open[1], 1 << 2);
+        assert_eq!(ui.cat.open[1], 1 << 2);
         let g = ui.catalog_group_rect(2).unwrap();
         tap(&mut ui, g);
-        assert_eq!(ui.cat_open[1], 0);
+        assert_eq!(ui.cat.open[1], 0);
         // Selected opens the list of what is on, Back returns
         let sel = ui.catalog_lay().selected;
         tap(&mut ui, sel);
@@ -815,14 +834,14 @@ mod integration_tests {
         tap(&mut ui, c);
         assert_eq!(ui.pick.unwrap().it, Item::CatSourceC);
         ui.close_picker();
-        ui.cat_tab = measures::MOTOR;
-        ui.cat_sel = measures::motor::TORQUE;
+        ui.cat.tab = measures::MOTOR;
+        ui.cat.sel = measures::motor::TORQUE;
         let d = ui.catalog_lay().sources.into_iter().find(|hit| hit.n == 3).unwrap().r;
         tap(&mut ui, d);
         assert_eq!(ui.pick.unwrap().it, Item::CatSourceD);
         ui.close_picker();
         for tab in 0..CATEGORIES.len() {
-            ui.cat_tab = tab as u8;
+            ui.cat.tab = tab as u8;
             let lay = ui.catalog_lay();
             assert!(lay.bar.w >= 40 && lay.bar.h >= 80, "a scroll bar that a finger can hold");
             assert!(!overlaps(lay.gate, lay.settings) && lay.tabs.iter().all(|t| !overlaps(*t, lay.selected)));
@@ -998,7 +1017,7 @@ mod tests {
         put(&mut ui, 5, (0..n).map(|k| pwl(&gate, k as f64 * dt)).collect(), dt);
         ui.meas_src = WaveId::Ref(3);
         ui.meas_src_b = WaveId::Ref(4);
-        ui.cat_c = WaveId::Ref(5);
+        ui.cat.c = WaveId::Ref(5);
         ui.catalog_add(tile(measures::double_pulse::VPEAK));
         let peak = ready_rows(&mut ui).into_iter().find(|r| r.name == "Vpeak").unwrap();
         assert!((peak.v - 480.0).abs() < 1.0, "vpeak {}", peak.v);
@@ -1013,32 +1032,32 @@ mod tests {
         }
         ui.open_menu(MenuId::MeasAdd);
         ui.meas_src = WaveId::Ref(1);
-        ui.cat_tab = 0;
-        ui.cat_sel = measures::std_id(Meas::Vamp);
-        ui.cat_open[0] = 1;
-        ui.cat_scroll = 0;
+        ui.cat.tab = 0;
+        ui.cat.sel = measures::std_id(Meas::Vamp);
+        ui.cat.open[0] = 1;
+        ui.cat.scroll = 0;
         let mut cv = Canvas::new(W, H);
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-standard.png"), crate::store::png_of(&cv)).unwrap();
-        ui.cat_tab = 3;
-        ui.cat_sel = measures::jitter::JITTER_SUMMARY;
-        ui.cat_open[3] = 1;
-        ui.cat_scroll = 0;
+        ui.cat.tab = 3;
+        ui.cat.sel = measures::jitter::JITTER_SUMMARY;
+        ui.cat.open[3] = 1;
+        ui.cat.scroll = 0;
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-jitter.png"), crate::store::png_of(&cv)).unwrap();
-        ui.cat_tab = measures::POWER;
-        ui.cat_sel = measures::power::POWER_QUALITY;
-        ui.cat_open[measures::POWER as usize] = 1;
-        ui.cat_scroll = 0;
+        ui.cat.tab = measures::POWER;
+        ui.cat.sel = measures::power::POWER_QUALITY;
+        ui.cat.open[measures::POWER as usize] = 1;
+        ui.cat.scroll = 0;
         ui.meas_src = WaveId::Ch(0);
         ui.meas_src_b = WaveId::Ch(1);
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/oos-power.png"), crate::store::png_of(&cv)).unwrap();
         for tab in 0..CATEGORIES.len() {
-            ui.cat_tab = tab as u8;
-            ui.cat_scroll = 0;
-            ui.cat_open[tab] = 1;
-            ui.cat_sel = tab_groups(tab as u8)[0].1[0].id;
+            ui.cat.tab = tab as u8;
+            ui.cat.scroll = 0;
+            ui.cat.open[tab] = 1;
+            ui.cat.sel = tab_groups(tab as u8)[0].1[0].id;
             ui.render(&mut cv);
             std::fs::write(format!("{dir}/catalog-tab-{tab}.png"), crate::store::png_of(&cv)).unwrap();
         }

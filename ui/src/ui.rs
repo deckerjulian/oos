@@ -689,13 +689,7 @@ impl MeasWorker {
 }
 
 pub struct Ui {
-    /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
-    cat_tab: u8,
-    cat_sel: u16,
-    cat_open: [u16; crate::measures::CATEGORIES.len()],
-    cat_scroll: i32,
-    cat_c: WaveId,
-    cat_d: WaveId,
+    cat: meascatalog::Catalog,
     meas_page: usize,
     meas_catalog_page: usize,
     workflow_hold: Option<workflow::LiveSession>,

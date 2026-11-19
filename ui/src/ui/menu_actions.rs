@@ -308,12 +308,12 @@ impl Ui {
 
     pub(super) fn adjust(&mut self, it: Item, d: i32) {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
-            let current = if it == Item::CatSourceC { self.cat_c } else { self.cat_d };
+            let current = if it == Item::CatSourceC { self.cat.c } else { self.cat.d };
             let next = self.step_wave(current, d);
             if it == Item::CatSourceC {
-                self.cat_c = next;
+                self.cat.c = next;
             } else {
-                self.cat_d = next;
+                self.cat.d = next;
             }
             return;
         }

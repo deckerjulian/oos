@@ -427,10 +427,10 @@ impl Ui {
 
     pub(super) fn value(&self, it: Item) -> String {
         if it == Item::CatSourceC {
-            return self.wave_name(self.cat_c);
+            return self.wave_name(self.cat.c);
         }
         if it == Item::CatSourceD {
-            return self.wave_name(self.cat_d);
+            return self.wave_name(self.cat.d);
         }
         if let Some(v) = PARTS.iter().find_map(|p| p.value.and_then(|f| f(self, it))) {
             return v;
