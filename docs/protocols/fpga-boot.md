@@ -4,6 +4,9 @@
 
 - The acquisition FPGA is a Zynq XC7Z015 (Rigol calls it "K7"). Its images live in a QSPI flash on the FPGA side, slots at
   0x000000 (factory/default), 0x400000 (the one `start_rigol_app.sh` boots), 0x800000.
+- That flash is a Winbond W25Q128JV, 128 Mbit. **Verified on the unit** (DHO924S, every cold start logged from
+  2026-11-03 to 2026-11-15, under the stock system and under OOS): the Zynq's boot loader reports the flash's JEDEC ID
+  EF 40 18 (Winbond, 128 Mbit) on the Zynq's serial console before it loads an image.
 - The RK3399 does not see that flash. It talks over **SPI1 (`/dev/spidev1.0`, pins GPIO1_A7/B0/B1/B2)** to a boot monitor
   on the FPGA side, which understands short ASCII commands framed by `\r`.
 - After the image is running the FPGA brings up its PCIe endpoint (Xilinx XDMA, 10ee:7022, Gen2 x2). Only then may the
