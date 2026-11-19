@@ -360,6 +360,25 @@ impl Ui {
         if self.seg_adjust(it, d) {
             return;
         }
+        // a step of the search switch changes no setting: no new acquisition, no statistics cleared
+        if it == Item::SearchOn {
+            self.search_on = !self.search_on;
+            return;
+        }
+        let _ = self.adjust_scope(it, d) || self.adjust_tools(it, d) || self.adjust_more(it, d);
+        // moving the strip does not change what was measured
+        if it == Item::StripDock {
+            self.relayout();
+            return;
+        }
+        self.settings_changed();
+        if it == Item::Hdmi {
+            self.sync_full();
+        }
+    }
+
+    /// `adjust` of the channels, the time base, the logger and the trigger. True when `it` is one of them.
+    fn adjust_scope(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
         match it {
             Item::ChCoupling(c) => {
@@ -444,10 +463,6 @@ impl Ui {
                 }
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
-            Item::SearchOn => {
-                self.search_on = !self.search_on;
-                return;
-            }
             Item::TrigWhen => {
                 let all: &[WhenKind] = if m.trig_type == TrigType::Runt {
                     &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
@@ -474,6 +489,16 @@ impl Ui {
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
             Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
+            _ => return false,
+        }
+        true
+    }
+
+    /// `adjust` of the acquisition depth, measurements, cursors, references, zones, display and math. True when `it`
+    /// is one of them.
+    fn adjust_tools(&mut self, it: Item, d: i32) -> bool {
+        let m = &mut self.m;
+        match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => {
                 let cur = self.meas_src;
@@ -605,6 +630,15 @@ impl Ui {
                 self.workspace.measure_docked = true;
                 self.workspace.measure_float = None;
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// `adjust` of the decoder, zoom, XY, boot and storage choices, the mask and the reference slots. True when `it`
+    /// is one of them.
+    fn adjust_more(&mut self, it: Item, d: i32) -> bool {
+        match it {
             Item::DecOn => self.m.dec_on = !self.m.dec_on,
             Item::DecSel => {
                 let k = (self.m.dec_sel as i32 + d).rem_euclid(DECODERS as i32) as usize;
@@ -745,17 +779,9 @@ impl Ui {
                     r.on = !r.on;
                 }
             }
-            _ => {}
+            _ => return false,
         }
-        // moving the strip does not change what was measured
-        if it == Item::StripDock {
-            self.relayout();
-            return;
-        }
-        self.settings_changed();
-        if it == Item::Hdmi {
-            self.sync_full();
-        }
+        true
     }
 
     pub(super) fn clear_measurement_statistics(&mut self) {
