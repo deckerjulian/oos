@@ -89,6 +89,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0066](code/0066-the-network-services-stay-in-the-frame-loop-and-do-not-wait-for-their-clients.md) | code | The network services stay in the frame loop, and they do not wait for their clients | proposed |
 | [0067](hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md) | hardware | A board family is a module behind `Target` and `Board`, with an image of its own, and drives hardware once the maintainer calls it ready | proposed |
 | [0068](process/0068-the-comparison-of-the-programs-leaves-out-panic-places-and-symbol-names.md) | process | The comparison of the programs for the scope leaves out the places of their panics and their symbol names | accepted |
+| [0069](process/0069-unit-tested-holds-for-the-commits-it-was-given-for.md) | process | `unit-tested` holds for the commits it was given for | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents
