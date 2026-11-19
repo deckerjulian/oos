@@ -172,6 +172,8 @@ const ERR_LEN: usize = 256;
 pub struct Scpi {
     l: Option<TcpListener>,
     clients: Vec<Client>,
+    /// when a client that does not take its replies is given up (`net::Limits`); a test sets them far out
+    send_limits: crate::net::Limits,
     /// :WAVeform:SOURce, a channel or a reference slot
     wav_src: WaveId,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
@@ -254,6 +256,7 @@ impl Scpi {
         Scpi {
             l: Self::bind(port),
             clients: Vec::new(),
+            send_limits: Default::default(),
             wav_src: WaveId::Ch(0),
             wav_fmt: 0,
             wav_mode: 0,
@@ -375,7 +378,7 @@ impl Scpi {
                         s,
                         buf: Vec::new(),
                         program: None,
-                        out: Default::default(),
+                        out: crate::net::Outbox::with(self.send_limits),
                         closing: false,
                     });
                 }
