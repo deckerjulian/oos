@@ -6,7 +6,7 @@
 # when all of them passed; clippy is one of the parts (ADR 0017), and the numbers that only go down (ADR 0037) are
 # checked in the job `files`. A pull request is also compared with its base (job compare).
 #
-# A pull request that only changes documents or host tools runs the job `files` and skips the rest.
+# A pull request that only changes documents or host tools runs the jobs `parts` and `files` and skips the rest.
 #
 # What keeps the workflow itself safe: the token can only read; an action is named by the commit it was reviewed at
 # (the release in the comment), not by a tag that can be moved; the checkout leaves no credentials behind for later
@@ -24,10 +24,11 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  # The checks that need no compiler, and what the pull request changes.
-  files:
+  # What the pull request changes, and so which parts run (tools/ci-parts.sh, ADR 0040). A job of its own, so the
+  # jobs with a compiler start after these few seconds and not after the checks of `files` (about 20 s).
+  parts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.what.outputs.matrix }}
       compare: ${{ steps.what.outputs.compare }}
@@ -35,7 +36,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # the sign-off check and the list of changed files read every commit of a pull request
+          # the list of changed files reads every commit of a pull request
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
+          persist-credentials: false
+      - name: What the changes can reach (tools/ci-parts.sh)
+        id: what
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # on main every part runs; in a pull request the parts its changed files reach. In doubt: every part.
+          if [ -n "$BASE" ] && names=$(git diff --name-only "$BASE...$HEAD") && [ -n "$names" ]; then
+            printf '%s\n' "$names" | tools/ci-parts.sh > /tmp/parts
+          else
+            tools/ci-parts.sh --all > /tmp/parts
+          fi
+          cat /tmp/parts | tee -a "$GITHUB_OUTPUT"
+  # The checks that need no compiler, next to the jobs with one.
+  files:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the sign-off check reads every commit of a pull request
           fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
           persist-credentials: false
       # Dependabot cannot sign off: the squashed commit carries the maintainer's sign-off (ADR 0038)
@@ -68,19 +92,6 @@ jobs:
             exit 1
           fi
           cat /tmp/privacy
-      - name: What the changes can reach (tools/ci-parts.sh)
-        id: what
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          # on main every part runs; in a pull request the parts its changed files reach. In doubt: every part.
-          if [ -n "$BASE" ] && names=$(git diff --name-only "$BASE...$HEAD") && [ -n "$names" ]; then
-            printf '%s\n' "$names" | tools/ci-parts.sh > /tmp/parts
-          else
-            tools/ci-parts.sh --all > /tmp/parts
-          fi
-          cat /tmp/parts | tee -a "$GITHUB_OUTPUT"
       # a number the pull request raised in tools/ratchet.txt is a notice for the reviewer; the layer fails when the
       # tree is over a number
       - name: Numbers that only go down, against the base (tools/ratchet.sh)
@@ -93,12 +104,12 @@ jobs:
   # The layers with a compiler, next to each other: the parts tools/ci-parts.sh chose. Together with `files` they are
   # every enforced layer.
   check:
-    needs: files
-    if: needs.files.outputs.matrix != '[]'
+    needs: parts
+    if: needs.parts.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.files.outputs.matrix) }}
+        include: ${{ fromJSON(needs.parts.outputs.matrix) }}
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -127,7 +138,8 @@ jobs:
         run: tools/check.sh $LAYERS
   # The one required check: every enforced layer passed, or was skipped for a pull request of documents only.
   test:
-    needs: [files, check]
+    # parts too: if it failed, `check` is skipped, and a skipped job alone must not let `test` pass
+    needs: [parts, files, check]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -136,7 +148,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "files and check: $RESULTS"
+          echo "parts, files and check: $RESULTS"
           for r in $RESULTS; do
             case $r in
               success | skipped) ;;
@@ -147,8 +159,8 @@ jobs:
   # (ADR 0014, ADR 0032). It reports; it fails only when the comparison cannot be made, or when the pull request says
   # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.
   compare:
-    needs: files
-    if: github.event_name == 'pull_request' && needs.files.outputs.compare == 'true'
+    needs: parts
+    if: github.event_name == 'pull_request' && needs.parts.outputs.compare == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -225,8 +237,8 @@ jobs:
   # `scope-binaries-differ`, and needs the run. Only for a pull request that touches a path of a crate that a unit
   # proves, and nothing of the image. Like `compare`, it reports and does not fail for a difference.
   scope:
-    needs: files
-    if: github.event_name == 'pull_request' && needs.files.outputs.scope == 'true'
+    needs: parts
+    if: github.event_name == 'pull_request' && needs.parts.outputs.scope == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
