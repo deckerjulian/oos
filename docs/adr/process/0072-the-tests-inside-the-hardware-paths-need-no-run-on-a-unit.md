@@ -1,6 +1,6 @@
 # ADR 0072: The tests inside the hardware paths need no run on a unit
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-19
 - Category: process
 
