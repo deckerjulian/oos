@@ -196,9 +196,13 @@ layer_test() {
     fi
 }
 
+# the programs for the scope build for every board family of rootfs/board/ (OOS_BOARD, ADR 0067), dho first
 layer_target() {
-    for c in ui fpgad; do
-        (cd "$c" && strict cargo check --locked --target aarch64-unknown-linux-musl) || fail "target: $c"
+    for b in dho $(for d in rootfs/board/*/; do basename "$d"; done | grep -vx dho); do
+        for c in ui fpgad; do
+            (cd "$c" && OOS_BOARD=$b strict cargo check --locked --target aarch64-unknown-linux-musl) ||
+                fail "target: $c for the board family $b"
+        done
     done
     # ADR 0021: what runs on the scope depends on libc only; hal and dsp on every platform
     for c in hal dsp ui fpgad; do
