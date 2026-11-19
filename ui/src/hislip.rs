@@ -9,9 +9,7 @@
 //! acknowledged. What is here is the header, the initial exchange that lets a client send that payload, and the
 //! reply that carries the SCPI response back.
 
-use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
 
 pub const PORT: u16 = 4880;
 const HEADER: usize = 16;
@@ -339,7 +337,6 @@ impl Server {
                     continue; // dropped: closes the connection
                 }
                 let _ = s.set_nonblocking(false);
-                let _ = s.set_read_timeout(Some(Duration::from_millis(1)));
                 let _ = s.set_nodelay(true);
                 if self.conns.len() < MAX_CONNS {
                     self.conns.push(Conn {
@@ -363,7 +360,7 @@ impl Server {
             let mut eof = self.conns[i].closing;
             let mut read_bytes = 0;
             while !closed && !eof {
-                match self.conns[i].s.read(&mut tmp) {
+                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
                     Ok(0) => {
                         eof = true;
                         break;
@@ -379,7 +376,7 @@ impl Server {
                             break;
                         }
                     }
-                    Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => break,
+                    Err(e) if crate::net::later(&e) => break,
                     Err(_) => {
                         closed = true;
                         break;
@@ -388,8 +385,13 @@ impl Server {
             }
             let clearing =
                 self.conns[i].buf.get(2).is_some_and(|typ| matches!(*typ, DEVICE_CLEAR_COMPLETE | ASYNC_DEVICE_CLEAR));
-            // the messages of a connection are taken once the replies before them are out
-            let ready = !closed && !eof && self.conns[i].out.is_empty();
+            // the messages of a connection are taken once the replies before them are out, also those a client sent
+            // before it closed its side; a program that waits (`*OPC?`) is not resumed after the end of the input
+            let mut stop = false;
+            if eof {
+                self.conns[i].peer.program = None;
+            }
+            let ready = !closed && self.conns[i].out.is_empty();
             if ready && !clearing {
                 if let Some(mut program) = self.conns[i].peer.program.take() {
                     if let Some(mut response) = exec(&mut program) {
@@ -413,7 +415,7 @@ impl Server {
                     }
                 }
             }
-            while ready && !closed && !eof && self.conns[i].out.is_empty() {
+            while ready && !closed && !stop && self.conns[i].out.is_empty() {
                 if self.conns[i].peer.program.is_some()
                     && !self.conns[i]
                         .buf
@@ -427,7 +429,7 @@ impl Server {
                     Ok(None) => break,
                     Err(()) => {
                         self.conns[i].out.push(&encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
-                        eof = true;
+                        stop = true;
                         break;
                     }
                 };
@@ -448,10 +450,14 @@ impl Server {
                     self.conns[i].out.push(&m);
                 }
                 closed |= self.conns[i].flush() == crate::net::Sent::Gone;
-                eof |= out.close;
+                stop |= out.close;
             }
             // a client that closed its side, or one that was told a fatal error, goes once its messages are out
-            if eof && !closed {
+            // after a fatal error nothing more is taken from this connection
+            if stop {
+                self.conns[i].buf.clear();
+            }
+            if (eof || stop) && !closed {
                 self.conns[i].flush();
                 closed = self.conns[i].out.is_empty();
                 self.conns[i].closing = true;
@@ -473,6 +479,8 @@ impl Server {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::io::{ErrorKind, Read};
+    use std::time::Duration;
 
     /// What the server sends for `out`, in order.
     fn sent(out: &Out) -> Vec<Vec<u8>> {
@@ -640,6 +648,30 @@ mod tests {
             let mut abuf = Vec::new();
             assert_eq!(read_one(&mut a, &mut abuf).typ, ASYNC_INITIALIZE_RESPONSE);
             c.write_all(&encode(DATA_END, 0, 0xffff_ff00, b"*IDN?\n")).unwrap();
+            let data = read_one(&mut c, &mut buf);
+            assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
+        });
+        while !t.is_finished() {
+            h.poll(&mut exec_idn);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        t.join().unwrap();
+    }
+
+    /// A client that sends a query and closes its side at once (#192, Copilot's review of #269) still gets the
+    /// answer before the connection goes.
+    #[test]
+    fn a_query_before_the_end_of_the_input_is_still_answered() {
+        let mut h = Server::open(0);
+        let port = h.port().expect("port");
+        let t = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            c.write_all(&encode(INITIALIZE, 0, 0x0100_4F53, b"hislip0")).unwrap();
+            let mut buf = Vec::new();
+            assert_eq!(read_one(&mut c, &mut buf).typ, INITIALIZE_RESPONSE);
+            c.write_all(&encode(DATA_END, 0, 0xffff_ff00, b"*IDN?\n")).unwrap();
+            c.shutdown(std::net::Shutdown::Write).unwrap();
             let data = read_one(&mut c, &mut buf);
             assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
         });

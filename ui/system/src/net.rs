@@ -15,6 +15,9 @@ pub const SEND_LIMIT: Duration = Duration::from_secs(30);
 /// The most one message of a client may answer: one answer may be a long record, ten thousand of them in one line
 /// may not.
 pub const RESP_MAX: usize = 64 << 20;
+/// The most one connection writes in one pass of the frame loop: a client that reads fast still gets its reply over
+/// several passes (at 30 passes a second still 30 MB/s), so it cannot keep the loop writing either.
+pub const FLUSH_MAX: usize = 1 << 20;
 
 /// What has arrived on `s`, without waiting: `WouldBlock` when nothing has. The sockets themselves stay blocking; this
 /// read and `write_now` do not wait, each for itself.
@@ -97,11 +100,14 @@ impl Outbox {
             return Sent::Done;
         }
         let started = *self.started.get_or_insert(now);
-        loop {
-            match write_now(s, &self.data[self.at..]) {
+        let mut budget = FLUSH_MAX;
+        while budget > 0 {
+            let end = self.data.len().min(self.at + budget);
+            match write_now(s, &self.data[self.at..end]) {
                 Ok(0) => return Sent::Gone,
                 Ok(n) => {
                     self.at += n;
+                    budget -= n;
                     self.moved = Some(now);
                     if self.is_empty() {
                         // a long reply does not keep its memory
@@ -188,6 +194,37 @@ mod tests {
         assert!(out.is_empty());
         drop(s);
         assert!(reader.join().unwrap() == reply, "the reply arrives whole and in order");
+    }
+
+    /// However fast the client reads, one flush writes at most FLUSH_MAX: the rest waits for the next pass.
+    #[test]
+    fn one_flush_writes_at_most_its_budget() {
+        use std::io::Read;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut got = Vec::new();
+            c.read_to_end(&mut got).unwrap();
+            got.len()
+        });
+        let mut out = Outbox::default();
+        out.push(&vec![7u8; 4 * FLUSH_MAX]);
+        let mut passes = 0;
+        loop {
+            let left = out.data.len() - out.at;
+            let sent = out.flush(&s);
+            assert!(left - (out.data.len().saturating_sub(out.at)) <= FLUSH_MAX, "one pass wrote more than its budget");
+            passes += 1;
+            if sent == Sent::Done {
+                break;
+            }
+            assert_ne!(sent, Sent::Gone);
+            std::thread::yield_now();
+        }
+        assert!(passes >= 4, "{} passes", passes);
+        drop(s);
+        assert_eq!(reader.join().unwrap(), 4 * FLUSH_MAX);
     }
 
     #[test]

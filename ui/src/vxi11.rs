@@ -385,8 +385,8 @@ impl Server {
                 }
             }
             // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined; the next call once the
-            // replies before it are out
-            while !closed && !eof && self.conns[i].out.is_empty() {
+            // replies before it are out, also the calls a client sent before it closed its side
+            while !closed && self.conns[i].out.is_empty() {
                 let Some(msg) = take_record(&mut self.conns[i].buf) else {
                     break;
                 };
@@ -424,7 +424,7 @@ impl Server {
             }
             // what is left is one unfinished record: nothing beyond the announced maxRecvSize
             closed |= self.conns[i].buf.len() > MAX_RECORD;
-            // a client that closed its side goes now, or once its replies are out
+            // a client that closed its side goes once every whole call it sent is answered and the replies are out
             if eof && !closed {
                 closed = self.conns[i].out.is_empty();
                 self.conns[i].closing = true;
