@@ -368,57 +368,45 @@ mod tests {
     }
 
     #[test]
-    fn the_corner_button_stays_where_it_is_dropped() {
+    fn the_corner_buttons_stay_in_place_and_windows_opens_its_menu() {
         let mut u = ui();
         u.select_option(Item::Hdmi, "Mirror");
         render(&mut u);
-        let (home, hit) = u.full_btn();
-        let zoom_at = u.zoom_btn();
+        let at = u.corner_btns();
+        let (home, _) = u.full_btn();
         let (off, delay, level) = (u.m.ch[0].offset, u.m.delay, u.m.trig_level);
-        let x0 = home.x + home.w / 2;
-        let y0 = home.y + home.h / 2;
-        assert!(hit.contains(x0, y0));
-        let (x1, y1) = (home.x - 140, home.y + 70);
-        u.touch_ev(Phase::Down, x0, y0);
-        u.touch_ev(Phase::Move, x1, y1);
-        let (dx, dy) = (x1 - x0, y1 - y0);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (home.x + dx, home.y + dy));
-        u.touch_ev(Phase::Up, x1, y1);
-        assert_eq!(u.m.density, Density::Scope);
-        assert!(!u.full);
-        assert_eq!((u.m.ch[0].offset, u.m.delay, u.m.trig_level), (off, delay, level));
-        assert_eq!(u.zoom_btn(), zoom_at);
-        let (dropped, hit) = u.full_btn();
-        assert_eq!((dropped.x, dropped.y), (home.x + dx, home.y + dy));
-        // a tap on the dropped button still switches, and the button does not jump back
-        u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
-        assert_eq!(u.m.density, Density::Full);
-        assert!(u.full);
-        render(&mut u);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (dropped.x, dropped.y));
-        let (at, hit) = u.full_btn();
-        let (tx, ty) = (at.x + at.w / 2, at.y + at.h / 2);
-        assert!(hit.contains(tx, ty));
+        // a drag that starts on a corner button moves neither the button nor the trace, and is no tap
+        for r in at {
+            let (x0, y0) = (r.x + r.w / 2, r.y + r.h / 2);
+            u.touch_ev(Phase::Down, x0, y0);
+            u.touch_ev(Phase::Move, x0 - 140, y0 + 70);
+            u.touch_ev(Phase::Up, x0 - 140, y0 + 70);
+            render(&mut u);
+            assert_eq!(u.corner_btns(), at);
+            assert_eq!((u.m.ch[0].offset, u.m.delay, u.m.trig_level), (off, delay, level));
+            assert_eq!(u.m.density, Density::Scope);
+            assert!(!u.m.zoom && !u.menu_open);
+        }
+        // a tap on the expand button still switches, from the same place
+        let (tx, ty) = (home.x + home.w / 2, home.y + home.h / 2);
         u.touch_ev(Phase::Down, tx, ty);
         u.touch_ev(Phase::Up, tx + 4, ty - 3);
+        assert_eq!(u.m.density, Density::Full);
+        u.touch_ev(Phase::Down, tx, ty);
+        u.touch_ev(Phase::Up, tx, ty);
         assert_eq!(u.m.density, Density::Scope);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (at.x, at.y));
-        // a drag on the trace leaves the button where it was dropped
-        let a = u.area;
-        let (px, py) = (a.x + a.w / 2, a.y + a.h / 2);
-        assert!(!u.full_btn().1.contains(px, py));
-        u.touch_ev(Phase::Down, px, py);
-        u.touch_ev(Phase::Move, px - 40, py);
-        u.touch_ev(Phase::Up, px - 40, py);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (at.x, at.y));
-        // the button cannot leave the screen
-        let (b, _) = u.full_btn();
-        u.touch_ev(Phase::Down, b.x + 4, b.y + 4);
-        u.touch_ev(Phase::Move, b.x - 2000, b.y - 2000);
-        u.touch_ev(Phase::Up, b.x - 2000, b.y - 2000);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (0, 0));
         render(&mut u);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (0, 0));
+        assert_eq!(u.corner_btns(), at);
+        // the button under the magnifier opens the Windows menu, and a second tap closes it
+        let (w, hit) = u.win_btn();
+        assert!(hit.contains(w.x + w.w / 2, w.y + w.h / 2));
+        assert!(!hit.contains(u.zoom_btn().0.x + 4, u.zoom_btn().0.bottom() - 1));
+        u.tap(w.x + w.w / 2, w.y + w.h / 2);
+        assert!(u.menu_open && u.menu_root() == MenuId::Windows);
+        render(&mut u);
+        let (w, _) = u.win_btn();
+        u.tap(w.x + w.w / 2, w.y + w.h / 2);
+        assert!(!u.menu_open);
     }
 
     #[test]

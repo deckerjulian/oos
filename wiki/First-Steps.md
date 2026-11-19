@@ -68,10 +68,14 @@ On the same page each channel, each math channel that is on and the logic analys
 
 **Full screen:** the button with four corners at the top right of the plot hides the top bar and the cards. The same
 button, now with the corners pointing inwards, brings them back. Also on Display > Windows > Full screen. While the
-touch lock is on there is no full screen, because the Menu button is the way out of the lock.
+touch lock is on there is no full screen, because the Menu button is the way out of the lock. The button stays where
+it is: a drag that starts on it moves neither the button nor the trace.
 
-**Zoom box:** the box button under it arms one drag: the next drag on the plot draws a box, and that box is the zoom
-window. A tap does not zoom.
+**Zoom:** the magnifier under it opens and closes the zoom view. **Box** in the zoom bar arms one drag: the next drag
+on the plot draws a box, and that box is the zoom window. A tap does not zoom.
+
+**Windows:** the button with four small windows under the magnifier opens the Windows menu (density, HDMI output and
+the window layout); a second tap closes it. While zoom is on it sits under the zoom bar.
 
 ## Views
 

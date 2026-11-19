@@ -335,34 +335,13 @@ impl Ui {
         self.m.la_win = if self.m.la_on() { i % n } else { 0 };
     }
 
-    /// The corner the expand button keeps until it is dragged: (drawn, touch area).
-    pub(super) fn full_home(&self) -> (Rect, Rect) {
+    /// The expand button at the top right of the plot: (drawn, touch area). It is a tap target only; it does not move.
+    pub(super) fn full_btn(&self) -> (Rect, Rect) {
         let g = self.grid;
         // left of the view button while an analysis view has the plot
         let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
         let r = Rect::new(right - 36, g.y + 3, 36, 28);
-        Self::full_pair(r)
-    }
-
-    /// Touch area around a drawn corner button. At the home corner this is the same rectangle as before.
-    fn full_pair(r: Rect) -> (Rect, Rect) {
         (r, Rect::new(r.x - 8, r.y - 3, r.w + 16, 44))
-    }
-
-    /// The expand button, at the top right of the plot or where it was dropped: (drawn, touch area).
-    pub(super) fn full_btn(&self) -> (Rect, Rect) {
-        let (home, _) = self.full_home();
-        let r = match self.full_at {
-            Some((x, y)) => Rect::new(x, y, home.w, home.h),
-            None => home,
-        };
-        Self::full_pair(r)
-    }
-
-    /// Keeps the drawn corner button on the screen.
-    pub(super) fn clamp_full(&self, x: i32, y: i32) -> (i32, i32) {
-        let (home, _) = self.full_home();
-        (x.clamp(0, (W - home.w).max(0)), y.clamp(0, (H - home.h).max(0)))
     }
 
     pub(super) fn draw_full_btn(&self, cv: &mut Canvas) {
@@ -390,10 +369,34 @@ impl Ui {
 
     /// Corner magnifier toggles the zoom display. Draw-a-box is a separate tool.
     pub(super) fn zoom_btn(&self) -> (Rect, Rect) {
-        let (full, hit) = self.full_home();
-        // below the full-screen touch target, so the two buttons do not share a tap
-        let r = Rect::new(full.x, hit.y + hit.h + 2, full.w, full.h);
+        Self::below_btn(self.full_btn())
+    }
+
+    /// The Windows button under the magnifier opens the Windows menu: (drawn, touch area). While zoom is on, the
+    /// overview is too low for it, and it moves to the top of the zoomed view, under the zoom bar.
+    pub(super) fn win_btn(&self) -> (Rect, Rect) {
+        let (r, hit) = Self::below_btn(self.zoom_btn());
+        let top = if self.m.zoom && !self.view_on() { Self::split_zoom(self.grid).1.y + 3 } else { r.y };
+        let dy = top.max(r.y) - r.y;
+        (Rect::new(r.x, r.y + dy, r.w, r.h), Rect::new(hit.x, hit.y + dy, hit.w, hit.h))
+    }
+
+    /// A corner button under `above`, so the two buttons do not share a tap.
+    fn below_btn((above, hit): (Rect, Rect)) -> (Rect, Rect) {
+        let r = Rect::new(above.x, hit.y + hit.h + 2, above.w, above.h);
         (r, Rect::new(r.x - 5, r.y, r.w + 10, 40))
+    }
+
+    /// The magnifier and the Windows button belong to the scope picture: an analyser page has its own controls under
+    /// the expand button.
+    pub(super) fn plot_btns_shown(&self) -> bool {
+        !(self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none())
+            && !self.view_on()
+    }
+
+    /// The corner buttons as drawn, which floating cards and tags keep clear of.
+    pub(super) fn corner_btns(&self) -> [Rect; 3] {
+        [self.full_btn().0, self.zoom_btn().0, self.win_btn().0]
     }
 
     pub(super) fn draw_zoom_btn(&self, cv: &mut Canvas) {
@@ -407,6 +410,19 @@ impl Ui {
         cv.line(r.x + 5, r.y + 4, r.x + r.w - 5, r.y + r.h - 4, col);
         cv.round_outline(Rect::new(r.x + r.w - 16, r.y + 6, 8, 8), 4, col);
         cv.line(r.x + r.w - 15, r.y + 13, r.x + r.w - 21, r.y + 19, col);
+    }
+
+    pub(super) fn draw_win_btn(&self, cv: &mut Canvas) {
+        let (r, _) = self.win_btn();
+        let open = self.menu_open && self.menu_root() == MenuId::Windows;
+        cv.round(r, 5, PANEL_BG, 220);
+        cv.round_outline(r, 5, if open { AMBER } else { BTN_BORDER });
+        let col = if open { AMBER } else { TEXT };
+        // four small windows, two by two
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        for (sx, sy) in [(-1, -1), (0, -1), (-1, 0), (0, 0)] {
+            cv.round_outline(Rect::new(cx + sx * 11 + 1, cy + sy * 9 + 1, 9, 7), 2, col);
+        }
     }
 
     /// The box while a zoom-area drag is in progress.
