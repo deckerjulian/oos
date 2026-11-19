@@ -27,7 +27,7 @@ fn exchange(
         Ok(out)
     });
     while !client.is_finished() {
-        h.poll(ui, cv, scpi);
+        h.poll(&mut Ctx::new(ui, cv, scpi));
         std::thread::yield_now();
     }
     client.join().unwrap()

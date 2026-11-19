@@ -5,6 +5,7 @@
 //! script (run in node where there is one) and the `net.allow` checks. A new test of `http` goes here.
 
 use super::*;
+use crate::ui::Ui;
 use std::io::Read;
 
 mod hostile;
@@ -80,7 +81,7 @@ fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::S
         out
     });
     while !t.is_finished() {
-        h.poll(ui, cv, scpi);
+        h.poll(&mut Ctx::new(ui, cv, scpi));
         std::thread::sleep(Duration::from_millis(1));
     }
     t.join().unwrap()
@@ -98,7 +99,7 @@ fn web_demo() {
     while Instant::now() < end {
         ui.step(0.04);
         ui.render(&mut cv);
-        for c in h.poll(&mut ui, &cv, &mut scpi) {
+        for c in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
             println!("web: {}", c);
             crate::cmd::run(&mut ui, &c);
         }
@@ -126,7 +127,7 @@ fn scpi_validation_fixture() {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        for command in h.poll(&mut ui, &cv, &mut scpi) {
+        for command in h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi)) {
             crate::cmd::run(&mut ui, &command);
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -219,7 +220,7 @@ fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
         let until = Instant::now() + Duration::from_secs(60);
         while h.wave.is_none() {
             assert!(Instant::now() < until, "the upload was not taken");
-            h.poll(&mut ui, &cv, &mut scpi);
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             assert!(ui.ref_shown_slot(slot - 1).is_none(), "the poll that takes the upload does not parse it");
         }
         if change {
@@ -227,7 +228,7 @@ fn waveform_upload_is_parsed_off_the_frame_loop_and_committed_by_it() {
         }
         while h.wave.is_some() {
             assert!(Instant::now() < until, "the parse did not end");
-            h.poll(&mut ui, &cv, &mut scpi);
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             std::thread::sleep(Duration::from_millis(1));
         }
         let mut reply = String::new();
@@ -376,7 +377,7 @@ fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
     let answer: Vec<u8> = (0..32u32 << 20).map(|i| i as u8).collect();
     h.send(s, answer.clone());
     assert_eq!(h.sending.len(), 1, "the rest waits");
-    h.poll(&mut ui, &cv, &mut scpi);
+    h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
     assert_eq!(h.sending.len(), 1, "a pass takes what the socket takes and goes on");
     let reader = std::thread::spawn(move || {
         let mut got = Vec::new();
@@ -386,7 +387,7 @@ fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
     let t = std::time::Instant::now();
     while !h.sending.is_empty() {
         assert!(t.elapsed() < HANG);
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
     }
     assert!(reader.join().unwrap() == answer, "the answer arrives whole, and the connection closes after it");
 }
@@ -497,7 +498,7 @@ fn large_answers_go_through_a_thread() {
             out
         });
         while !t.is_finished() {
-            h.poll(&mut ui, &cv, &mut scpi);
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             std::thread::sleep(Duration::from_millis(1));
         }
         let out = t.join().unwrap();
@@ -565,7 +566,7 @@ fn live_picture_hand_over(frames_first: bool) {
     };
     if frames_first {
         for _ in 0..3 {
-            h.poll(&mut ui, &cv, &mut scpi);
+            h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
             one_frame(&mut h, &mut cv, &mut shown);
         }
         assert!(shown.is_none(), "nothing handed over before a request");
@@ -580,13 +581,13 @@ fn live_picture_hand_over(frames_first: bool) {
     });
     // the request is in before the next frame, whatever the load; the screen at that moment
     while h.shots.lock().waiting.is_empty() && !t.is_finished() {
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         std::thread::sleep(Duration::from_millis(1));
     }
     let at_request = cv.px.clone();
     while !t.is_finished() {
         one_frame(&mut h, &mut cv, &mut shown);
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         std::thread::sleep(Duration::from_millis(5));
     }
     let out = t.join().unwrap();
@@ -634,7 +635,7 @@ fn live_picture_gpu(frames_first: bool) {
     let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
     if frames_first {
         // the frame loop runs before anybody asks
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         h.before_gpu_frame();
     }
     let t = std::thread::spawn(move || {
@@ -647,14 +648,14 @@ fn live_picture_gpu(frames_first: bool) {
     });
     // the request is in before the next frame, whatever the load; the screen at that moment
     while h.shots.lock().waiting.is_empty() && !t.is_finished() {
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         std::thread::sleep(Duration::from_millis(1));
     }
     let at_request = cv.px.clone();
     let mut read_back = Vec::new();
     let mut frame = 0u32;
     while !t.is_finished() {
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         let before = cv.px.clone();
         h.before_gpu_frame();
         assert!(cv.px == before, "the canvas keeps the last picture read back");
@@ -720,7 +721,7 @@ fn live_picture_once_per_screen_and_long_poll() {
                     cv.fill(crate::gfx::Rect::new(10, 60, 300, 40), crate::gfx::rgb(30, 250, 30));
                     changed = true;
                 }
-                h.poll(ui, cv, scpi);
+                h.poll(&mut Ctx::new(ui, cv, scpi));
                 std::thread::sleep(Duration::from_millis(1));
             }
             let out = t.join().unwrap();
@@ -826,7 +827,7 @@ fn a_large_body_at_a_time_and_net_allow_before_the_body() {
     let until = Instant::now() + Duration::from_secs(60);
     while !h.pending.iter().any(|p| p.req.len() >= head("/update", 8 << 20).len() + (64 << 10)) {
         assert!(Instant::now() < until, "the first upload was not taken");
-        h.poll(&mut ui, &cv, &mut scpi);
+        h.poll(&mut Ctx::new(&mut ui, &cv, &mut scpi));
         std::thread::sleep(Duration::from_millis(1));
     }
     let taken = h.pending.iter().find(|p| p.large).expect("the first upload is the large body");
@@ -934,7 +935,7 @@ fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
     ui.m.trig_level = 10.0;
     let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
     let mut scpi = crate::scpi::Scpi::open(0);
-    let reply=mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut ui,&cv,&mut scpi).unwrap();
+    let reply=crate::site::mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut Ctx::new(&mut ui,&cv,&mut scpi)).unwrap();
     let reply = crate::json::parse(&reply).unwrap();
     assert_eq!(reply.get("result").unwrap().get("isError"), Some(&crate::json::J::Bool(true)));
     assert_eq!(
@@ -947,15 +948,15 @@ fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
 #[test]
 fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
-    let empty = mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
-            &mut ui, &cv, &mut scpi).unwrap();
+    let empty = crate::site::mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
     assert!(empty.contains("\"text\":\"\""), "{empty}");
     assert!(!empty.contains("\"text\":\"ok\""));
-    let write = mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
-            &mut ui, &cv, &mut scpi).unwrap();
+    let write = crate::site::mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
     assert!(write.contains("\"text\":\"ok\""), "{write}");
-    let compound = mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
-            &mut ui, &cv, &mut scpi).unwrap();
+    let compound = crate::site::mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
     assert!(compound.contains("\"text\":\";1\""), "{compound}");
 }
 
@@ -963,7 +964,7 @@ fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
 fn mcp_session() {
     use crate::json::{parse, J};
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
-    let mut call = |b: &str| mcp(b, &mut ui, &cv, &mut scpi).map(|r| parse(&r).unwrap());
+    let mut call = |b: &str| crate::site::mcp(b, &mut Ctx::new(&mut ui, &cv, &mut scpi)).map(|r| parse(&r).unwrap());
     let r =
         call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap();
     assert_eq!(r.get("result").and_then(|x| x.get("protocolVersion")).and_then(J::str), Some("2025-06-18"));

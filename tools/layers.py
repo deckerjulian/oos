@@ -90,7 +90,7 @@ UI_LAYERS = (
      "compress deepmeas drawpipe fastdraw framestats measures platform protocols sparse trig trignear wave"),
     ("store", "ui-store-up", "base model settings signal", "store"),
     ("screen", "ui-screen-up", "base model settings board signal store", "ui"),
-    ("command", "ui-command-up", "base model settings board signal store screen", "cmd scpi"),
+    ("command", "ui-command-up", "base model settings board signal store screen", "cmd scpi site"),
     ("transport", "ui-transport-skip", "base command", "announce hislip http vxi11"),
     ("main", None, None, "gpu input"),
 )

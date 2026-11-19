@@ -44,6 +44,7 @@ mod platform;
 mod protocols;
 mod scpi;
 mod settings;
+mod site;
 #[cfg(test)]
 mod soak;
 mod sparse;
@@ -225,7 +226,7 @@ fn serve(mut ui: Ui, args: &[String]) {
         scpi.poll(&mut ui, &cv);
         vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
-        for c in web.poll(&mut ui, &cv, &mut scpi) {
+        for c in web.poll(&mut site::Ctx::new(&mut ui, &cv, &mut scpi)) {
             cmd::run(&mut ui, &c);
         }
         ann.poll();
@@ -974,7 +975,7 @@ impl Device {
         self.scpi.poll(&mut self.ui, &self.cv);
         self.vxi.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
         self.hislip.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
-        for c in self.web.poll(&mut self.ui, &self.cv, &mut self.scpi) {
+        for c in self.web.poll(&mut site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi)) {
             if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &c) {
                 self.ui.shot_request = Some(p);
             }

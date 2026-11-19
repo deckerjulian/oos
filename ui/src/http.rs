@@ -21,7 +21,7 @@
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
-use crate::ui::Ui;
+use crate::site::Ctx;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
-const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
+const MAX_WAVEFORM: usize = crate::site::MAX_WAVEFORM;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
@@ -457,7 +457,7 @@ struct WaveJob {
     slot: usize,
     /// `Ui::waveform_epoch` at the upload: a session changed meanwhile does not get the late file
     epoch: u64,
-    parsed: std::sync::mpsc::Receiver<Result<Vec<crate::store::WaveTrace>, String>>,
+    parsed: std::sync::mpsc::Receiver<crate::site::Traces>,
 }
 
 impl WaveJob {
@@ -469,39 +469,20 @@ impl WaveJob {
             .name("web-wave".into())
             .spawn(move || {
                 lower_priority();
-                let _ = tx.send(crate::store::parse_wave(&req[body..], &file));
+                let _ = tx.send(crate::site::parse_upload(&req[body..], &file));
             })
             .ok()?;
         Some(WaveJob { s, name, slot, epoch, parsed })
     }
 
     /// The answer once the parse is done: the traces in the slot, or why not. None while it runs.
-    fn finish(&self, ui: &mut Ui) -> Option<(bool, String)> {
+    fn finish(&self, cx: &mut Ctx) -> Option<(bool, String)> {
         let parsed = match self.parsed.try_recv() {
             Ok(parsed) => parsed,
             Err(std::sync::mpsc::TryRecvError::Empty) => return None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The waveform reader stopped; try again.".into()),
         };
-        let previous = ui.ref_slot();
-        let result = if ui.waveform_epoch() != self.epoch {
-            Err("The session changed while the file was read; load it again.".to_string())
-        } else {
-            parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, &self.name, self.slot))
-        };
-        Some(match result {
-            Ok(()) => {
-                let hint = if ui.record_mode() {
-                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
-                } else {
-                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
-                };
-                (true, format!("Loaded {} into R{}. {}", self.name, ui.ref_slot() + 1, hint))
-            }
-            Err(error) => {
-                ui.ref_slot_set(previous);
-                (false, error)
-            }
-        })
+        Some(crate::site::take_upload(cx, parsed, &self.name, self.slot, self.epoch))
     }
 }
 
@@ -789,11 +770,11 @@ impl Http {
     }
 
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
-    pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
+    pub fn poll(&mut self, cx: &mut Ctx) -> Vec<String> {
         let mut cmds = Vec::new();
         self.sending.retain_mut(|(s, out)| out.flush(s) == crate::net::Sent::Later);
-        self.shots.tick(cv);
-        self.finish_wave(ui);
+        self.shots.tick(cx.canvas());
+        self.finish_wave(cx);
         self.accept_new();
         let mut i = 0;
         while i < self.pending.len() {
@@ -862,7 +843,7 @@ impl Http {
                 last = Some(head.into_bytes());
                 dead = true;
             } else if complete {
-                if !self.answer(i, hdr_end, ui, cv, scpi, &mut cmds) {
+                if !self.answer(i, hdr_end, cx, &mut cmds) {
                     continue;
                 }
                 dead = true;
@@ -882,8 +863,8 @@ impl Http {
     }
 
     /// Answers the waveform upload whose parsing has finished.
-    fn finish_wave(&mut self, ui: &mut Ui) {
-        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
+    fn finish_wave(&mut self, cx: &mut Ctx) {
+        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(cx)) {
             let job = self.wave.take().unwrap();
             let status = if ok { "200 OK" } else { "409 Conflict" };
             let head = format!(
@@ -925,15 +906,7 @@ impl Http {
     }
 
     /// Answers the complete request of connection `i`; false when the connection was handed on and is gone.
-    fn answer(
-        &mut self,
-        i: usize,
-        hdr_end: Option<usize>,
-        ui: &mut Ui,
-        cv: &Canvas,
-        scpi: &mut crate::scpi::Scpi,
-        cmds: &mut Vec<String>,
-    ) -> bool {
+    fn answer(&mut self, i: usize, hdr_end: Option<usize>, cx: &mut Ctx, cmds: &mut Vec<String>) -> bool {
         let Pending { s, req, .. } = &mut self.pending[i];
         // only the header as text: the body may be a 31 MB binary package
         let text = String::from_utf8_lossy(&req[..hdr_end.unwrap_or(req.len())]).into_owned();
@@ -945,19 +918,11 @@ impl Http {
         let peer_ok = self.acl.permits_peer(s.peer_addr());
         // an answer that is text for the page to show, not the data asked for
         let mut failed = false;
-        let mut csv = |r: Result<String, String>| match r {
-            Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
-            Err(e) => {
-                failed = true;
-                ("text/plain", e.into_bytes())
-            }
-        };
         let (ctype, body): (&str, Vec<u8>) = match route {
             _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
             "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
             "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
             "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
-            "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
             "/waveform" if post => {
                 let slot = query
                     .split('&')
@@ -969,44 +934,32 @@ impl Http {
                         ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
                     }
                     Some(slot) => {
-                        self.waveform_take(i, slot, query, hdr_end, ui);
+                        self.waveform_take(i, slot, query, hdr_end, cx);
                         return false;
                     }
                 }
             }
             "/screen.png" | "/screen.jpg" => {
                 let have = header(&text, "if-none-match").map(str::to_string);
-                self.shots.request(s, have, cv, route == "/screen.jpg");
+                self.shots.request(s, have, cx.canvas(), route == "/screen.jpg");
                 self.pending.remove(i);
                 return false;
             }
-            // the scope's local time for the names of the page's downloads; empty while its clock is not set
-            "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
-            "/wave.csv" => csv(ui.web_wave_csv()),
-            "/la.csv" => csv(ui.web_la_csv()),
-            "/wave.bin" => match ui.web_wave_bin() {
-                Ok(b) => ("application/octet-stream", b),
-                Err(e) => {
-                    failed = true;
-                    ("text/plain", e.into_bytes())
-                }
-            },
-            "/update" if post => match ui.update_upload(req_body) {
-                Ok(m) => ("text/plain", m.into_bytes()),
-                Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
-            },
-            "/update" => ("text/html; charset=utf-8", {
-                let (status, last) = ui.update_state();
-                update_page(&status, last).into_bytes()
+            "/update" if !post => ("text/html; charset=utf-8", {
+                let (status, last) = crate::site::update_state(cx);
+                update_page(&status, &last).into_bytes()
             }),
             "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
-            "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
-                Some(r) => ("application/json", r.into_bytes()),
-                None => ("", Vec::new()),
-            },
-            "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
+            "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cx.canvas())),
             "/cmd" => remote_cmds(query, cmds),
-            _ => ("text/plain", b"not found".to_vec()),
+            // what the screen answers: its state, the last record, an update package, MCP
+            _ => match crate::site::answer(cx, route, post, req_body) {
+                Some((ctype, body, bad)) => {
+                    failed = bad;
+                    (ctype, body)
+                }
+                None => ("text/plain", b"not found".to_vec()),
+            },
         };
         let status = if failed {
             "409 Conflict"
@@ -1035,14 +988,14 @@ impl Http {
 
     /// POST /waveform to `slot`: the request goes whole to the parser, or is answered busy while one is parsed; the
     /// connection leaves `pending` either way.
-    fn waveform_take(&mut self, i: usize, slot: usize, query: &str, hdr_end: Option<usize>, ui: &mut Ui) {
+    fn waveform_take(&mut self, i: usize, slot: usize, query: &str, hdr_end: Option<usize>, cx: &mut Ctx) {
         let Pending { s, req, .. } = &mut self.pending[i];
         if self.wave.is_some() {
             busy_answer(s);
             self.pending.remove(i);
         } else {
             // the request goes to the parser whole, its body is not copied out
-            let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
+            let (body, epoch) = (hdr_end.unwrap_or(req.len()), cx.waveform_epoch());
             let Pending { s, req, .. } = self.pending.remove(i);
             match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
                 Some(job) => self.wave = Some(job),
@@ -1134,83 +1087,6 @@ fn lxi_identification(o: &Offer) -> String {
 "#,
         env!("CARGO_PKG_VERSION")
     )
-}
-
-/// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
-pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Option<String> {
-    use crate::json::{parse, J};
-    let err = |id: J, code: f64, msg: &str| {
-        J::obj(&[
-            ("jsonrpc", J::s("2.0")),
-            ("id", id),
-            ("error", J::obj(&[("code", J::Num(code)), ("message", J::s(msg))])),
-        ])
-        .to_string()
-    };
-    let Some(req) = parse(body) else { return Some(err(J::Null, -32700.0, "parse error")) };
-    let id = req.get("id").cloned()?;
-    let method = req.get("method").and_then(J::str).unwrap_or("");
-    let params = req.get("params").cloned().unwrap_or(J::Null);
-    let text = |s: &str| J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(s))])]))]);
-    let result = match method {
-        "initialize" => {
-            let ver = params.get("protocolVersion").and_then(J::str).unwrap_or("2025-06-18").to_string();
-            J::obj(&[
-                ("protocolVersion", J::Str(ver)),
-                ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
-                ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
-            ])
-        }
-        "ping" => J::obj(&[]),
-        "tools/list" => {
-            let schema = |props: J, req: Vec<J>| {
-                J::obj(&[("type", J::s("object")), ("properties", props), ("required", J::Arr(req))])
-            };
-            J::obj(&[(
-                "tools",
-                J::Arr(vec![
-                    J::obj(&[
-                        ("name", J::s("scpi")),
-                        ("description", J::s("Run one SCPI program message on the oscilloscope (commands separated by ';'); returns the response of the queries.")),
-                        ("inputSchema", schema(J::obj(&[("command", J::obj(&[("type", J::s("string"))]))]), vec![J::s("command")])),
-                    ]),
-                    J::obj(&[
-                        ("name", J::s("screenshot")),
-                        ("description", J::s("The current oscilloscope screen as a PNG image.")),
-                        ("inputSchema", schema(J::obj(&[]), vec![])),
-                    ]),
-                ]),
-            )])
-        }
-        "tools/call" => match params.get("name").and_then(J::str) {
-            Some("scpi") => {
-                let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                match scpi.exec_message_checked(ui, cv, c) {
-                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply {
-                        "ok"
-                    } else {
-                        std::str::from_utf8(&r).unwrap_or("(binary response)")
-                    }),
-                    Err(error) => J::obj(&[
-                        ("isError", J::Bool(true)),
-                        ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])])),
-                    ]),
-                }
-            }
-            Some("screenshot") => J::obj(&[(
-                "content",
-                J::Arr(vec![J::obj(&[
-                    ("type", J::s("image")),
-                    ("mimeType", J::s("image/png")),
-                    ("data", J::Str(crate::base64::encode(&crate::gfx::png::png_of(cv)))),
-                ])]),
-            )]),
-            _ => return Some(err(id, -32602.0, "unknown tool")),
-        },
-        _ => return Some(err(id, -32601.0, "method not found")),
-    };
-    Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
 }
 
 /// A request a web page on another site made through the browser of the bench PC, not the page of the scope or a tool:
