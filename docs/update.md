@@ -12,7 +12,7 @@ while the PCIe driver loads (`its_build_mapti_cmd`, `its_build_inv_cmd`: the int
 previous kernel are still there); the display and the acquisition work, and the power-on after it has no warning.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
-`ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
+`ui/src/ui/update.rs` and `ui/remote/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
 
 ## What it protects against
 
@@ -235,7 +235,7 @@ that no install or rollback runs; after a cut job the next start stays stock. `o
 the image on trial is the one running. Images whose load addresses or sizes are outside what the loader handles
 (docs/boot.md) are refused at install.
 
-## Web upload limits (ui/src/http.rs)
+## Web upload limits (ui/remote/src/http.rs)
 
 At most 8 connections; bodies up to 70 MiB only for `POST /update` (128 MiB for `POST /waveform`, 1 MiB elsewhere),
 an announced larger `Content-Length` gets 413 at once; 10 s idle and 120 s per request. A body over 1 MiB is taken one

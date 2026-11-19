@@ -49,8 +49,8 @@ live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)
 # classed
 proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/dho/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
 proven="${proven}hal/src/dho/seq/(frame|samples|settings|tests)\.rs$|hal/src/dho/(acq|adc|afe|afg|auxout|avg|calfile|"
-proven="${proven}clock|counter|dvm|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|spu|target|tpu|uarttrig|"
-proven="${proven}wpu|zone|zonegeom)\.rs$)"
+proven="${proven}clock|counter|dvm|encode|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|spu|target|tpu|"
+proven="${proven}uarttrig|wpu|zone|zonegeom)\.rs$)"
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
