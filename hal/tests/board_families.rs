@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! What every board family has (ADR 0067, CONTRIBUTING.md "A new board family"): a folder of `rootfs/board/` is a
-//! family, and it needs its `Target` in `hal/src/<name>/target.rs`, its `Board` in `ui/src/board/<name>/`, the keys of
-//! `etc/oos-board` the build and the scripts read, a `bin/oos-board` that answers every command the common scripts ask,
-//! and its row in the table "Board families" of docs/porting.md, whose family name is the `Target`'s. A row without a
-//! folder fails too. `oos-fpgad` is not checked yet: it is the DHO800/DHO900 tool until it is split (ADR 0067).
+//! family, and it needs its `Target` in `oos_hal::target::FAMILIES` (`hal/src/target.rs` compares its values with
+//! `etc/oos-board`), its module in `ui/src/board/<name>/` with an `impl Board for`, the keys of `etc/oos-board` the build
+//! and the scripts read, a `bin/oos-board` that answers every command the common scripts ask, and its row in the table
+//! "Board families" of docs/porting.md, whose family name is the `Target`'s. A row or a `Target` without a folder fails
+//! too. `oos-fpgad` is not checked yet: it is the DHO800/DHO900 tool until it is split (ADR 0067).
 
+use oos_hal::target::FAMILIES;
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -91,6 +93,23 @@ fn commands() -> BTreeSet<String> {
     out
 }
 
+/// The Rust sources of a module: the files under its folder, or its one file.
+fn rust_files(dir: &Path, file: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_to_string(file).into_iter().collect();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                todo.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.extend(std::fs::read_to_string(&p));
+            }
+        }
+    }
+    out
+}
+
 /// Whether the shell script answers `cmd` with a `case` branch of its own.
 fn answers(script: &str, cmd: &str) -> bool {
     script.lines().map(str::trim_start).any(|l| {
@@ -102,26 +121,28 @@ fn answers(script: &str, cmd: &str) -> bool {
 fn missing(name: &str, family: Option<&str>, cmds: &BTreeSet<String>) -> Vec<String> {
     let t = top();
     let mut out = Vec::new();
-    let target = format!("hal/src/{}/target.rs", name);
-    match std::fs::read_to_string(t.join(&target)) {
-        Ok(s) => {
-            if !s.contains(": Target = Target {") || !s.contains(&format!("name: \"{}\",", name)) {
-                out.push(format!("{}: a `Target` with name \"{}\"", target, name));
-            }
+    // compiled in: a family in FAMILIES has a `Target` its module declares; the values of etc/oos-board are compared
+    // with it by `oos_hal::target`'s own tests
+    match FAMILIES.iter().find(|f| f.name == name) {
+        Some(tg) => {
             if let Some(f) = family {
-                if !s.contains(&format!("family_name: \"{}\",", f)) {
-                    out.push(format!("{}: family_name \"{}\", as in docs/porting.md", target, f));
+                if tg.family_name != f {
+                    out.push(format!(
+                        "family_name \"{}\" of its `Target`, \"{}\" in docs/porting.md",
+                        tg.family_name, f
+                    ));
                 }
             }
         }
-        Err(_) => out.push(format!("{} with its `Target`", target)),
+        None => out.push(format!("its `Target` (hal/src/{}/target.rs) in `oos_hal::target::FAMILIES`", name)),
     }
     if !read(&t.join("hal/src/lib.rs")).contains(&format!("pub mod {};", name)) {
         out.push(format!("`pub mod {};` in hal/src/lib.rs", name));
     }
     let board = t.join("ui/src/board");
-    if !board.join(name).is_dir() && !board.join(format!("{}.rs", name)).is_file() {
-        out.push(format!("ui/src/board/{}/ with its `Board`", name));
+    if !rust_files(&board.join(name), &board.join(format!("{}.rs", name))).iter().any(|s| s.contains("impl Board for "))
+    {
+        out.push(format!("ui/src/board/{}/ with its `impl Board for ...`", name));
     }
     if !read(&board.join("mod.rs")).contains(&format!("pub mod {};", name)) {
         out.push(format!("`pub mod {};` in ui/src/board/mod.rs", name));
@@ -170,6 +191,9 @@ fn every_board_family_is_complete() {
         if !STATES.contains(&state.as_str()) {
             bad.push(format!("docs/porting.md: the state of {} is \"{}\", not one of {:?}", family, state, STATES));
         }
+    }
+    for f in FAMILIES.iter().filter(|f| !folders.contains(f.name)) {
+        bad.push(format!("oos_hal::target::FAMILIES: {} has no folder rootfs/board/{}", f.family_name, f.name));
     }
     for name in &folders {
         let family = rows.iter().find(|r| &r.0 == name).map(|r| r.1.as_str());

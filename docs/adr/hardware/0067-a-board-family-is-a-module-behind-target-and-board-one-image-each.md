@@ -49,10 +49,11 @@ maintainer answered these questions in the session of 2026-11-19; this record wr
    tools that know the DHO800/DHO900 (`tools/plan-matrix.sh`, `tools/device-test.py`, the simulations). They take the
    family as an argument and keep `dho` as the default. A family's `bin/oos-board` calls its own subcommands.
 5. **A board family is a kind of extension (ADR 0046).** It is declared once, in its `Target`
-   (`hal/src/<name>/target.rs`). Its recipe is in [CONTRIBUTING.md](../../../CONTRIBUTING.md#a-new-board-family), and
+   (`hal/src/<name>/target.rs`), listed in `FAMILIES` of `hal/src/target.rs`, whose tests compare each family's
+   `etc/oos-board` with its `Target`. Its recipe is in [CONTRIBUTING.md](../../../CONTRIBUTING.md#a-new-board-family), and
    `hal/tests/board_families.rs` fails, naming the family and the part, when a folder of `rootfs/board/` lacks its
-   `Target`, its `Board` module, a key of `etc/oos-board`, a command of `bin/oos-board` or its row in
-   [porting.md](../../porting.md#board-families), and when a row there has no folder.
+   `Target` in `FAMILIES`, its `impl Board for`, a key of `etc/oos-board`, a command of `bin/oos-board` or its row in
+   [porting.md](../../porting.md#board-families), and when a row there or a `Target` has no folder.
 
 ## Alternatives
 

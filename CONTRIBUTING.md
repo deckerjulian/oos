@@ -218,8 +218,8 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
 
 ### A new board family
 
-- **Declare it** as a `Target` in `hal/src/<name>/target.rs`, with `name` equal to the folder name, and its line
-  `pub mod <name>;` in `hal/src/lib.rs`
+- **Declare it** as a `Target` in `hal/src/<name>/target.rs`, with `name` equal to the folder name, listed in
+  `FAMILIES` of `hal/src/target.rs`, and its line `pub mod <name>;` in `hal/src/lib.rs`
   ([ADR 0067](docs/adr/hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md)).
 - **Also touch** `ui/src/board/<name>/` with its `Board` and its line in `ui/src/board/mod.rs`; `rootfs/board/<name>/`
   with `etc/oos-board` (the keys of `rootfs/board/dho/etc/oos-board`) and an executable `bin/oos-board` that answers
@@ -228,8 +228,9 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   from. Build its image with `OOS_BOARD=<name>`. The maintainer changes the state to `ready`.
 - **Generate** nothing.
 - **The check:** `hal/tests/board_families.rs::every_board_family_is_complete` fails, naming the family and the part,
-  when a folder of `rootfs/board/` lacks its `Target`, its `Board` module, a key of `etc/oos-board`, a command of
-  `bin/oos-board` or its row in docs/porting.md, and when a row there has no folder. `oos-fpgad` is not yet one of
+  when a folder of `rootfs/board/` lacks its `Target` in `FAMILIES`, its `impl Board for`, a key of `etc/oos-board`, a
+  command of `bin/oos-board` or its row in docs/porting.md, and when a row or a `Target` has no folder. The tests of
+  `hal/src/target.rs` compare each family's `etc/oos-board` with its `Target`. `oos-fpgad` is not yet one of
   the parts: it is a DHO800/DHO900 tool until it is split into a neutral part and one module per family (ADR 0067).
 
 ## Where to develop
