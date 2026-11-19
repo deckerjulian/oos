@@ -11,7 +11,7 @@
 
 use super::*;
 // the settings are the model's, the record the signal's (ADR 0049); the page names them from here
-pub use crate::logic::{line_moves, pattern_at, LaRec};
+pub use crate::logic::LaRec;
 pub use crate::model::la::{available, HEIGHTS, PRESETS, THR_MAX, USER};
 use std::sync::Arc;
 
