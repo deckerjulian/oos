@@ -375,11 +375,16 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                 }
             }
             if case.la {
-                for f in frames.iter().filter(|f| f.roll || !f.partial) {
+                let mut swept = false;
+                for f in &frames {
                     let w = &f.la.as_ref().expect("the LA words with every picture").words;
                     assert!(!w.is_empty(), "{}: picture {} without LA words", case.name, f.seq);
-                    let step = w.windows(2).map(|p| p[1].wrapping_sub(p[0])).max().unwrap_or(0);
-                    assert!(step <= 1, "{}: picture {}: the LA count steps by {}", case.name, f.seq, step);
+                    // a partial scan picture after a whole sweep holds the sweep being written up to its write
+                    // position, then what is left of the sweep before: one jump at that seam, none anywhere else
+                    let jumps = w.windows(2).filter(|p| p[1].wrapping_sub(p[0]) > 1).count();
+                    let seams = usize::from(f.scan && f.partial && swept);
+                    assert!(jumps <= seams, "{}: picture {}: the LA count jumps {} times", case.name, f.seq, jumps);
+                    swept |= f.scan && !f.partial;
                 }
             }
             if frames[0].scan {
