@@ -93,7 +93,7 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
     } else if let Some(n) = m.trig_line() {
         // the hardware trigger on an LA line: the analog samples cannot refine it. Without any edge on the line the
         // frame came from the auto trigger.
-        f.la.as_ref().filter(|l| crate::ui::la::line_moves(l, n)).map(|_| f.pre as f64)
+        f.la.as_ref().filter(|l| crate::logic::line_moves(l, n)).map(|_| f.pre as f64)
     } else if m.bus_on_la() {
         // the matching field nearest the hardware trigger: the record moves to it, as with the channels
         f.la.as_ref().and_then(|l| {
@@ -106,7 +106,7 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         })
     } else if m.pat_on_la() {
         // a pattern over D lines: as above; the frame counts as triggered when the pattern occurs in it
-        f.la.as_ref().filter(|l| crate::ui::la::pattern_at(&l.words, &m.pat_la, 0).is_some()).map(|_| f.pre as f64)
+        f.la.as_ref().filter(|l| crate::logic::pattern_at(&l.words, &m.pat_la, 0).is_some()).map(|_| f.pre as f64)
     } else if usable {
         // nearest the hardware trigger among the events that leave the screen window inside the frame: the frame holds
         // little more than the window, and a noisy slow edge can cross the level far from `pre`
@@ -251,7 +251,7 @@ pub fn resample(
         conditioned: true,
     });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
-    let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
+    let la = f.la.as_ref().map(|l| crate::logic::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
     crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs }
 }
 
