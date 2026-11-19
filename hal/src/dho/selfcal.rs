@@ -823,13 +823,18 @@ pub fn rec_bytes(r: &Rec) -> [u8; 56] {
     b
 }
 
-/// cal_vertical payload with some blocks replaced: `base` = the current payload (16 blocks x 801 x 56 bytes).
+/// cal_vertical payload with some blocks replaced: `base` = the current payload (usually 16 blocks x 801 x 56 bytes;
+/// `afe::vertical_stride` for files with 64-byte records). A record keeps the bytes after its first 56, and a block of a
+/// group the file does not have is left out (the file's last group stands in for it, `afe::Cal::rec`).
 pub fn vertical_payload(base: &[u8], blocks: &[(usize, usize, Vec<Rec>)]) -> Vec<u8> {
     let mut p = base.to_vec();
+    let stride = crate::dho::afe::vertical_stride(p.len());
     for (var, ch, recs) in blocks {
         for (i, r) in recs.iter().enumerate().take(801) {
-            let o = ((var * 4 + ch) * 801 + i) * 56;
-            p[o..o + 56].copy_from_slice(&rec_bytes(r));
+            let o = ((var * 4 + ch) * 801 + i) * stride;
+            if let Some(dst) = p.get_mut(o..o + 56) {
+                dst.copy_from_slice(&rec_bytes(r));
+            }
         }
     }
     p
@@ -848,6 +853,20 @@ pub fn zero_payload(base: &[u8], ch: usize, z: &[i32; 20]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #37: the self-cal result of a unit with 64-byte cal_vertical records goes into its file at 64 bytes a
+    // record, keeps the two extra i32, and leaves out the groups the file does not have (it panicked before).
+    #[test]
+    fn vertical_payload_keeps_the_files_stride() {
+        let base: Vec<u8> = (0..4 * 801 * 64).map(|i| (i % 251) as u8).collect();
+        let r = Rec { key: 5, g: [1; 8], gain: 2.0, zero: 3, last: 4 };
+        let p = vertical_payload(&base, &[(0, 2, vec![r; 801]), (3, 1, vec![r; 801])]);
+        let o = (2 * 801 + 10) * 64;
+        assert_eq!(&p[o..o + 56], &rec_bytes(&r)[..]);
+        assert_eq!(&p[o + 56..o + 64], &base[o + 56..o + 64], "the two extra i32 stay");
+        assert_eq!(p.len(), base.len());
+        assert_eq!(&p[..2 * 801 * 64], &base[..2 * 801 * 64], "channel 0 and 1 of group 0 untouched");
+    }
 
     fn unit_cal() -> Option<(Cal, Vec<u8>)> {
         let dir = crate::dho::calfile::test_dir(true);

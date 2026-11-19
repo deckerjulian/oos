@@ -13,7 +13,13 @@ ZERO = rdcal('cal_afe_zero.hex', 'i', 80)                 # [ch*20 + i]
 BW = list(rdcal('cal_afe_bandwidth.hex', 'i', 80))        # [ch*20 + i]
 for ch in range(4): BW[ch*20+4], BW[ch*20+10], BW[ch*20+16] = 110, 97, 97   # fixed values that replace these entries of the file
 _v = open(CAL + 'cal_vertical.hex', 'rb').read()
-def vrec(var, ch, idx): return struct.unpack_from('<q8idii', _v, 28 + ((var*4 + ch)*801 + idx)*56)
+# bytes a record, as `hal::dho::afe::vertical_stride`: 64 for a payload of whole 64-byte groups that is not one of
+# 56-byte groups (a DHO804's file, issue #37), else 56; a file with fewer groups uses its last for the ones it lacks
+_P = len(_v) - 28
+_STRIDE = 64 if _P % (4*801*56) and not _P % (4*801*64) else 56
+_GROUPS = max(1, _P // (4*801*_STRIDE))
+def vrec(var, ch, idx):
+    return struct.unpack_from('<q8idii', _v, 28 + ((min(var, _GROUPS - 1)*4 + ch)*801 + idx)*_STRIDE)
 KEYS = [vrec(0, 0, i)[0] for i in range(801)]
 FILT = [(0, 0, 5), (0, 0, 23), (1, 0, 23), (2, 0, 23), (3, 3, 63)]   # same for all channels
 

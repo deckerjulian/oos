@@ -120,6 +120,9 @@ Changed:
 
 Fixed:
 
+- A `cal_vertical.hex` with 64-byte records (one block group, seen on a DHO804) is read at 64 bytes a record instead
+  of stopping oos-ui at every start; a calibration file whose scale keys are out of order is not used, and the scope
+  starts uncalibrated instead of stopping (issue #37; host tests, and the usual 56-byte file still loads on a DHO924S).
 - The WLAN box of the top bar is as wide as the LAN box at every text size: at the normal size its address ran out
   of it (#23).
 - SSC Freq Dev and SSC Modulation Rate are measured on the modulation (issue #196). The deviation was the span of
