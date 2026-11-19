@@ -52,6 +52,18 @@ A port adds `hal/src/<board>/` with its `Target`, `ui/src/board/<board>/` with i
 and points `target::ACTIVE` and `board::Active` at them; the image is built with `OOS_BOARD=<board>`. The compiler names
 every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that board's `oos-board` calls it.
 
+## Board families
+
+One image per family, chosen when OOS is built; a family is ready when the maintainer says so in a pull request that
+changes its row here, and only a ready family gets a release image
+([ADR 0067](adr/hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md)). The recipe is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#a-new-board-family); `hal/tests/board_families.rs` reads this table and fails
+when a row has no folder in `rootfs/board/` or a folder has no row.
+
+| Family | Folder | Models | State |
+|---|---|---|---|
+| DHO800/DHO900 | `dho` | the variants in `hal/src/dho/target.rs` ([models.md](models.md)) | ready |
+
 ## What does not carry over
 
 Everything that talks to the acquisition board, which on the DHO800/DHO900 is in `hal/src/dho/`:
