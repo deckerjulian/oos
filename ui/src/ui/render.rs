@@ -452,7 +452,7 @@ impl Ui {
 
     /// One part of `step` into `t_parts` (`:SYSTem:STATe?`).
     pub(super) fn prof_add(&mut self, i: usize, d: std::time::Duration) {
-        self.t_parts[i] += 0.05 * (d.as_secs_f32() * 1e3 - self.t_parts[i]);
+        self.times.parts[i] += 0.05 * (d.as_secs_f32() * 1e3 - self.times.parts[i]);
     }
 
     /// Brightness of a trace pixel by its count (`draw_traces`): floor + sqrt(hits / brightest), the intensity
