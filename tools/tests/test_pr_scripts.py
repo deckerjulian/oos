@@ -19,16 +19,20 @@ AGENT = "dekajoule-oos-agent[bot]"
 FAKE_GH = r'''#!/bin/sh
 [ "$1" = api ] || exit 9
 shift
-path= ; expr=
+path= ; expr= ; method=GET
 while [ $# -gt 0 ]; do
 	case $1 in
 	--paginate) ;;
 	--jq) expr=$2; shift ;;
+	--method) method=$2; shift ;;
+	--input) shift ;;
 	-f) shift ;;
 	*) path=$1 ;;
 	esac
 	shift
 done
+# a call that changes something: written to $FAKE_GH/calls, answered with nothing
+[ "$method" = GET ] || { echo "$method $path" >> "$FAKE_GH/calls"; echo '{}'; exit 0; }
 case $path in graphql) path="graphql_$(printf '%s' "$expr" | tr -dc 'a-z' | cut -c1-12)" ;; esac
 file="$FAKE_GH/$(printf '%s' "$path" | tr '/?=' '___').json"
 # a call that fails once: the marker goes with the first call
@@ -135,10 +139,11 @@ class PullRequests(unittest.TestCase):
             {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs),
                                                          ("compare-calibrated", calibrated)) if keep]}))
 
-    def run_tool(self, tool, tries="1", ok=True):
+    def run_tool(self, tool, tries="1", ok=True, dry=True):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
                    OOS_REPO="owner/oos", OOS_API_TRIES=tries, OOS_API_WAIT="0")
-        out = subprocess.run(["sh", str(ROOT / "tools" / tool), "--dry", "7"], env=env, capture_output=True, text=True)
+        args = ["--dry", "7"] if dry else ["7"]
+        out = subprocess.run(["sh", str(ROOT / "tools" / tool), *args], env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode == 0, ok, out.stderr)
         return out.stdout
 
@@ -378,6 +383,16 @@ class PullRequests(unittest.TestCase):
         self.assertNotIn("-unit-tested", self.labels(), "a merge of main after it")
         history(1, [(3, 1), (0.5, 1)])
         self.assertIn("-unit-tested", self.labels(), "a commit after it: run on the unit again")
+        # and without --dry the label is taken away through the API, the other labels are still added
+        calls = self.dir / "calls"
+        out = self.run_tool("pr-labels.sh", dry=False)
+        self.assertIn("unit-tested taken away", out)
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["DELETE repos/owner/oos/issues/7/labels/unit-tested", "POST repos/owner/oos/issues/7/labels"])
+        calls.unlink()
+        history(1, [(3, 1)])
+        self.run_tool("pr-labels.sh", dry=False)
+        self.assertEqual(calls.read_text().splitlines(), ["POST repos/owner/oos/issues/7/labels"], "nothing taken away")
         self.pull(["hal/src/dho/seq.rs"])
         self.assertNotIn("-unit-tested", self.labels(), "no label, nothing to take away")
 
