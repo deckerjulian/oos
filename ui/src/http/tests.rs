@@ -362,6 +362,25 @@ fn page_lets_the_viewer_pick_png_or_bmp() {
     assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
 }
 
+/// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
+/// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
+#[test]
+fn the_update_page_shows_the_state_the_last_result_and_the_form() {
+    let page = update_page("state <a> & b", "last <x>");
+    assert!(page.contains("<pre>state &lt;a> &amp; b</pre>") && page.contains(">last &lt;x></pre>"), "{page}");
+    assert!(page.contains(r#"<input type="file" id="f" accept=".oosupd">"#), "{page}");
+    assert!(page.contains(&format!("<style>{STYLE}</style>")), "the page has the style of the remote");
+    let _sends = sends();
+    let mut h = Http::open(0);
+    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+    let r = get(&mut h, &mut ui, &cv, &mut scpi, "/update");
+    let (status, last) = ui.update_state();
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
+    assert!(r.starts_with("HTTP/1.1 200") && r.contains("text/html"), "{r}");
+    assert!(r.contains(&format!("<pre>{}</pre>", esc(&status))), "{r}");
+    assert!(r.contains(&format!(r#"<pre id="r">{}</pre>"#, esc(last))), "{r}");
+}
+
 #[test]
 fn pages_and_downloads() {
     let _sends = sends();
