@@ -958,7 +958,7 @@ mod tests {
         let (mut st, p) = configured(&s);
         let ms = 1000 * US;
         let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, Some(ms), None));
-        let n = seg::start(&mut st, &s, &p, &mut bar, &mut c2h).unwrap();
+        let n = seg::start(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock).unwrap();
         assert_eq!(n, 20);
         clock.sleep_us(5_500);
         let x = seg::status(&mut bar, n);
@@ -968,8 +968,8 @@ mod tests {
         let first = *u.borrow().ring.values().next().unwrap();
         let tag = seg::first_trigger(&mut bar);
         assert_eq!(tag, Some((first / LATCH_TICK_FS) as u64), "the first trigger since the clear");
-        seg::stop(&mut st, &mut bar, &mut c2h).unwrap();
-        let sts = seg::stamps(&mut st, &s, &p, &mut bar, &mut c2h, 0, n).unwrap();
+        seg::stop(&mut st, &mut bar, &mut c2h, &mut clock).unwrap();
+        let sts = seg::stamps(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock, 0, n).unwrap();
         let mut tl = seg::Timeline::new(tag);
         for (k, x) in sts.iter().enumerate() {
             let t = tl.push(*x).unwrap();
@@ -980,7 +980,7 @@ mod tests {
         }
         let rs = seg::read_settings(&s, n);
         let mut dma = DmaBuf::new();
-        seg::read(&mut st, &rs, &p, &mut bar, &mut c2h, &mut dma, 0, n).unwrap();
+        seg::read(&mut st, &rs, &p, &mut bar, &mut c2h, &mut dma, &mut clock, 0, n).unwrap();
         assert_eq!(dma.data().len(), n as usize * seq::frame_bytes(&rs, &p));
     }
 }

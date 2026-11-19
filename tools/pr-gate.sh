@@ -44,12 +44,12 @@ hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|root
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
 live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|'
-live="${live}hal/src/dho/(bus|seg|gpio|lines|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
+live="${live}hal/src/dho/(bus|gpio|lines|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison's live run proves of the board code (ADR 0053, ADR 0073): the files whose every path of the loop
 # (docs/board-on-a-host.md 7) the live run reaches, so a change of what they do to the unit or deliver shows in its
 # trace and frames. A class of its own, before $live and $proven (it takes these files out of `ui/src/board/`); a file
 # joins only when the live run reaches all of its paths
-looped='^(hal/src/dho/roll\.rs$)'
+looped='^(ui/src/board/dho/hw/seg\.rs$|hal/src/dho/(roll|seg)\.rs$)'
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
 # in neither or in both), and one that is in neither counts as live: a new or a split file needs a unit until it is

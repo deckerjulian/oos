@@ -8,8 +8,10 @@
 //! 0.8 ns, the header of segment k carries the latch value of segment k - 1, and 0x4034 shows bits of 0x2320 while
 //! the FPGA still records.
 //!
-//! Generic over `Bus` and the C2H reader, so the whole sequence runs against `sim::Engine` on the host.
+//! Generic over `Bus`, the C2H reader and the clock of the steps' polls and sleeps (`Clock`), so the whole sequence
+//! runs against `sim::Engine` and the simulated unit on the host, on its virtual clock.
 
+use crate::dho::boot::Clock;
 use crate::dho::bus::{Bus, DmaBuf};
 use crate::dho::{hz, scu, seq};
 
@@ -110,41 +112,57 @@ pub fn read_pair<B: Bus>(bar: &mut B, lo: u32) -> u64 {
     join(l, bar.rd(lo + 4))
 }
 
+/// The steps on `clock`, with no log and no early end.
+fn run<B: Bus, R: std::io::Read, C: Clock>(
+    steps: &[seq::Step],
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut DmaBuf,
+    clock: &mut C,
+) -> Result<(), String> {
+    seq::execute_bus_on(steps, bar, c2h, dma, clock, &mut |_| {}, &|| false)
+}
+
 /// Arms the recording (`State::record_steps`); returns the frame count.
-pub fn start<B: Bus, R: std::io::Read>(
+pub fn start<B: Bus, R: std::io::Read, C: Clock>(
     st: &mut seq::State,
     s: &seq::Settings,
     p: &hz::Params,
     bar: &mut B,
     c2h: &mut R,
+    clock: &mut C,
 ) -> Result<u32, String> {
-    let mut dma = DmaBuf::new();
-    seq::execute_bus(&st.record_steps(s, p), bar, c2h, &mut dma, |_| {})?;
+    run(&st.record_steps(s, p), bar, c2h, &mut DmaBuf::new(), clock)?;
     Ok(seq::record_frames(s, p))
 }
 
 /// Ends a recording early or after the last frame: the stock StopScope (`State::disarm_steps`). Read `status` and
 /// `first_trigger` before it.
-pub fn stop<B: Bus, R: std::io::Read>(st: &mut seq::State, bar: &mut B, c2h: &mut R) -> Result<(), String> {
-    let mut dma = DmaBuf::new();
-    seq::execute_bus(&st.disarm_steps(), bar, c2h, &mut dma, |_| {})
+pub fn stop<B: Bus, R: std::io::Read, C: Clock>(
+    st: &mut seq::State,
+    bar: &mut B,
+    c2h: &mut R,
+    clock: &mut C,
+) -> Result<(), String> {
+    run(&st.disarm_steps(), bar, c2h, &mut DmaBuf::new(), clock)
 }
 
 /// Stamps of segments `first..first + count`: one stamp play each (`State::segment_stamp_steps`), its header, then the
 /// latched pair.
-pub fn stamps<B: Bus, R: std::io::Read>(
+pub fn stamps<B: Bus, R: std::io::Read, C: Clock>(
     st: &mut seq::State,
     s: &seq::Settings,
     p: &hz::Params,
     bar: &mut B,
     c2h: &mut R,
+    clock: &mut C,
     first: u32,
     count: u32,
 ) -> Result<Vec<Stamp>, String> {
     let mut dma = DmaBuf::new();
     let mut out = Vec::with_capacity(count as usize);
     for k in first..first + count {
-        seq::execute_bus(&st.segment_stamp_steps(s, p, k), bar, c2h, &mut dma, |_| {})?;
+        run(&st.segment_stamp_steps(s, p, k), bar, c2h, &mut dma, clock)?;
         let header = header_stamp(&dma.data()[..dma.data().len().min(16)]);
         out.push(Stamp { latch: Some(read_pair(bar, scu::stamp::LATCHED)), header });
     }
@@ -158,17 +176,18 @@ pub fn read_settings(s: &seq::Settings, frames: u32) -> seq::Settings {
 
 /// Reads segments `first..first + count` into `dma` with one type-4 play (`State::read_steps_at`). `s` from
 /// `read_settings`. The frames are `seq::frame_bytes(s, p)` each, header first.
-pub fn read<B: Bus, R: std::io::Read>(
+pub fn read<B: Bus, R: std::io::Read, C: Clock>(
     st: &mut seq::State,
     s: &seq::Settings,
     p: &hz::Params,
     bar: &mut B,
     c2h: &mut R,
     dma: &mut DmaBuf,
+    clock: &mut C,
     first: u32,
     count: u32,
 ) -> Result<(), String> {
-    seq::execute_bus(&st.read_steps_at(s, p, first, count), bar, c2h, dma, |_| {})
+    run(&st.read_steps_at(s, p, first, count), bar, c2h, dma, clock)
 }
 
 /// A model of the record engine and the play path for host runs of the whole sequence: what the steps of
@@ -519,8 +538,9 @@ mod tests {
         let s = settings(100);
         let mut st = State::handover(1, None);
         let p = st.configure(&s, None, None).unwrap().1;
+        let mut clock = crate::dho::boot::SysClock::default();
         let (eng, mut bar, mut c2h) = engine(Engine::new(5 * MS, MS, 7, p.ratio));
-        let n = start(&mut st, &s, &p, &mut bar, &mut c2h).unwrap();
+        let n = start(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock).unwrap();
         assert_eq!(n, 100);
         let mut polls = 0;
         // the model shows the unit's 0x4034 bit 5 from the first frame on; the recording must still run to N
@@ -535,8 +555,8 @@ mod tests {
         assert!(polls > 10, "progress in steps of 7: {} polls", polls);
         let tag = first_trigger(&mut bar);
         assert_eq!(tag, Some((5 * MS / LATCH_TICK_FS) as u64));
-        stop(&mut st, &mut bar, &mut c2h).unwrap();
-        let sts = stamps(&mut st, &s, &p, &mut bar, &mut c2h, 0, n).unwrap();
+        stop(&mut st, &mut bar, &mut c2h, &mut clock).unwrap();
+        let sts = stamps(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock, 0, n).unwrap();
         let mut tl = Timeline::new(tag);
         let times: Vec<f64> = sts.iter().map(|x| tl.push(*x).unwrap()).collect();
         for (k, t) in times.iter().enumerate() {
@@ -552,7 +572,7 @@ mod tests {
         assert_eq!(fb, 16 + 2 * 1000);
         let mut dma = DmaBuf::new();
         for (first, count) in [(0u32, 60u32), (60, 40)] {
-            read(&mut st, &rs, &p, &mut bar, &mut c2h, &mut dma, first, count).unwrap();
+            read(&mut st, &rs, &p, &mut bar, &mut c2h, &mut dma, &mut clock, first, count).unwrap();
             assert_eq!(dma.data().len(), count as usize * fb);
             for (j, f) in dma.data().chunks_exact(fb).enumerate() {
                 let k = first + j as u32;
@@ -569,16 +589,17 @@ mod tests {
         let s = settings(1000);
         let mut st = State::handover(1, None);
         let p = st.configure(&s, None, None).unwrap().1;
+        let mut clock = crate::dho::boot::SysClock::default();
         let (eng, mut bar, mut c2h) = engine(Engine::new(0, 10 * MS, 3, p.ratio));
-        let n = start(&mut st, &s, &p, &mut bar, &mut c2h).unwrap();
+        let n = start(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock).unwrap();
         let mut x = status(&mut bar, n);
         for _ in 0..4 {
             x = status(&mut bar, n);
         }
         assert!(!x.complete(n) && x.recorded > 0 && x.recorded < n);
-        stop(&mut st, &mut bar, &mut c2h).unwrap();
+        stop(&mut st, &mut bar, &mut c2h, &mut clock).unwrap();
         assert_eq!(eng.borrow().recorded, x.recorded);
-        let sts = stamps(&mut st, &s, &p, &mut bar, &mut c2h, 0, x.recorded).unwrap();
+        let sts = stamps(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock, 0, x.recorded).unwrap();
         assert_eq!(sts.len(), x.recorded as usize);
         assert_eq!(sts.last().unwrap().latch, Some(((x.recorded as i128 - 1) * 10 * MS / LATCH_TICK_FS) as u64));
     }

@@ -394,7 +394,7 @@ class PullRequests(unittest.TestCase):
         # ADR 0073: the files the live run reaches on every path pass with the live run compared, and only with it
         unchanged = "**Behaviour:** unchanged.\n"
         regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs"]
-        for looped in ("hal/src/dho/roll.rs",):
+        for looped in ("ui/src/board/dho/hw/seg.rs", "hal/src/dho/roll.rs", "hal/src/dho/seg.rs"):
             self.ci(calibrated=True, live=True)
             self.pull(regs + [looped], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "success", f"{looped}: the live run found it equal")
@@ -411,8 +411,7 @@ class PullRequests(unittest.TestCase):
             self.assertEqual(self.gate()["unit"], "pending", f"{looped}: the comparison found a difference")
         # the rest of the board code still needs a unit, the live run compared or not
         self.ci(calibrated=True, live=True)
-        for other in ("ui/src/board/dho/hw.rs", "ui/src/board/dho/hw/plan.rs", "ui/src/board/dho/hw/seg.rs",
-                      "hal/src/dho/seg.rs", "hal/src/dho/seq/exec.rs"):
+        for other in ("ui/src/board/dho/hw.rs", "ui/src/board/dho/hw/plan.rs", "hal/src/dho/seq/exec.rs"):
             self.pull(["hal/src/dho/roll.rs", other], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "pending", f"{other}: paths the live run does not reach")
 

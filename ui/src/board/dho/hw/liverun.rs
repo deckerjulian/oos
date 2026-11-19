@@ -50,8 +50,9 @@ enum Act {
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
     Rearm,
-    /// hardware segments: RUN starts a recording (`HwSeg::run`), a segment asked to be shown
+    /// hardware segments: RUN starts a recording (`HwSeg::run`), STOP ends it early, a segment asked to be shown
     SegRun,
+    SegStop,
     SegShow(u32),
     /// STOP that wants the newest frame read raw (`Shared::final_req`)
     FinalRaw,
@@ -311,6 +312,13 @@ const CASES: &[Case] = &[
         script: &[(1, Act::SegRun)],
         ..BASE
     },
+    Case {
+        name: "segments-stopped-early",
+        model: |m| segments(m, 1000),
+        period_us: Some(1_000),
+        script: &[(1, Act::SegRun), (5, Act::SegStop)],
+        ..BASE
+    },
     Case { name: "auto-ch1-1us-calibrated", model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0, cal: true, ..BASE },
     Case {
         name: "auto-ch1-200us-compressed-then-stop-raw",
@@ -479,6 +487,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
+                Act::SegStop => g.seg.running = false,
                 Act::SegShow(k) => g.seg.want = Some(*k),
                 Act::FinalRaw => g.final_req += 1,
                 Act::StopView(t, d) => g.stop_view = Some((*t, *d)),

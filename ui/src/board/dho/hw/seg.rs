@@ -33,16 +33,17 @@ pub(super) struct SegRun {
 /// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
 /// are no longer the configured ones).
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
+pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
     run: &mut Option<SegRun>,
     state: &mut oos_hal::dho::seq::State,
     bar: &mut B,
     c2h: &mut R,
+    clock: &mut C,
     out: &HwShared,
 ) {
     let Some(r) = run.take() else { return };
     if r.recording {
-        if let Err(e) = oos_hal::dho::seg::stop(state, bar, c2h) {
+        if let Err(e) = oos_hal::dho::seg::stop(state, bar, c2h, clock) {
             eprintln!("oos-ui hw: segments stop: {}", e);
         }
     }
@@ -77,9 +78,9 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
     };
     if running && run.as_ref().map_or(0, |r| r.run) != cmd {
         if run.as_ref().is_some_and(|r| r.recording) {
-            seg::stop(state, bar, c2h)?;
+            seg::stop(state, bar, c2h, clock)?;
         }
-        let total = seg::start(state, s, p, bar, c2h)?;
+        let total = seg::start(state, s, p, bar, c2h, clock)?;
         *run = Some(SegRun {
             run: cmd,
             n: total,
@@ -112,7 +113,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
             return Ok(());
         }
         let tag = seg::first_trigger(bar);
-        seg::stop(state, bar, c2h)?;
+        seg::stop(state, bar, c2h, clock)?;
         (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
         eprintln!(
             "oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}",
@@ -131,7 +132,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
             clock.sleep_us(5000);
             return Ok(());
         }
-        let st = seg::stamps(state, &rs, p, bar, c2h, r.next, cnt)?;
+        let st = seg::stamps(state, &rs, p, bar, c2h, clock, r.next, cnt)?;
         if r.next == 0 {
             // hardware check 5.3: header words 5..7 against the latch, frame by frame
             for (k, x) in st.iter().take(8).enumerate() {
@@ -141,7 +142,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
         let times: Vec<Option<f64>> = st.iter().map(|x| r.tl.push(*x)).collect();
         let mut frames = Vec::new();
         if r.deliver {
-            seg::read(state, &rs, p, bar, c2h, dma, r.next, cnt)?;
+            seg::read(state, &rs, p, bar, c2h, dma, clock, r.next, cnt)?;
             frames = dma
                 .data()
                 .chunks_exact(fb)
@@ -170,7 +171,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
         Some(k) if k < r.count => {
             out.lock().unwrap().seg.want = None;
             let one = oos_hal::dho::seg::read_settings(&rs, 1);
-            seg::read(state, &one, p, bar, c2h, dma, k, 1)?;
+            seg::read(state, &one, p, bar, c2h, dma, clock, k, 1)?;
             *n += 1;
             let f = Frame { stamp, ..decode(&dma.data()[..fb.min(dma.data().len())], &one, p, *n) };
             out.lock().unwrap().seg.shown = Some((k, f));
