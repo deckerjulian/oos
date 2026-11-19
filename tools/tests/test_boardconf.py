@@ -43,8 +43,9 @@ class CheckParm(unittest.TestCase):
         self.assertEqual(boardconf.check_parm(parm()), [])
 
     def test_the_marks_are_the_union_of_what_the_tools_checked(self):
+        # backup: OOS keeps its previous image in the slot after it, and the update refuses a card without it (#288)
         marks = BOARD["OOS_PARM_MARKS"].split()
-        for name in ("misc", "boot", "recovery"):
+        for name in ("misc", "boot", "recovery", "backup"):
             self.assertTrue(any(m.endswith(f"({name})") for m in marks), name)
 
     def test_every_missing_mark_is_named(self):
