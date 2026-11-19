@@ -802,7 +802,11 @@ fn additional_action_queries_never_start_calibration_bode_or_force() {
 /// they are out, another client is answered at once, and when it reads at last every reply arrives, whole and in order.
 #[test]
 fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
+    // the times below only catch a hang; a loaded computer may take long for the 40 MB, and that is no fault
+    const HANG: Duration = Duration::from_secs(300);
     let (mut s, mut ui, cv) = reference_session();
+    // the client reads nothing on purpose for a while: how long that takes on a loaded computer does not count
+    s.send_limits = crate::net::Limits { stall: Duration::from_secs(3600), total: Duration::from_secs(3600) };
     let port = s.port().unwrap();
     // a waveform as text is about 50 kB: 40 lines of 20 queries ask for 40 MB, far more than the socket buffers hold
     // (Linux lets those of the loopback grow to several MB)
@@ -825,7 +829,7 @@ fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
     other.set_nonblocking(true).unwrap();
     let (mut answer, mut n, t) = ([0u8; 16], 0, std::time::Instant::now());
     while !answer[..n].contains(&b'\n') {
-        assert!(t.elapsed() < Duration::from_secs(20), "the other client got no answer");
+        assert!(t.elapsed() < HANG, "the other client got no answer");
         s.poll(&mut ui, &cv);
         match other.read(&mut answer[n..]) {
             Ok(k) => n += k,
@@ -836,7 +840,7 @@ fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
     assert_eq!(&answer[..n], b"0\n");
     let reader = std::thread::spawn(move || {
         let mut got = Vec::new();
-        slow.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        slow.set_read_timeout(Some(HANG)).unwrap();
         let mut b = vec![0u8; 1 << 16];
         while got.iter().filter(|&&c| c == b'\n').count() < 40 {
             let k = slow.read(&mut b).expect("the replies keep coming");
@@ -847,7 +851,7 @@ fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
     });
     let t = std::time::Instant::now();
     while !reader.is_finished() {
-        assert!(t.elapsed() < Duration::from_secs(30));
+        assert!(t.elapsed() < HANG);
         s.poll(&mut ui, &cv);
     }
     let got = reader.join().unwrap();

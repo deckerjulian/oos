@@ -12,7 +12,7 @@ use std::net::{TcpListener, TcpStream, UdpSocket};
 
 pub const PMAP_PROG: u32 = 100_000;
 pub const CORE_PROG: u32 = 0x0607AF;
-pub const CORE_PORT: u16 = 9009;
+pub use oos_system::net::VXI11_CORE_PORT as CORE_PORT;
 /// Most data waiting on one connection: maxRecvSize of create_link and room for the RPC header.
 const MAX_RECORD: usize = (1 << 20) + 4096;
 

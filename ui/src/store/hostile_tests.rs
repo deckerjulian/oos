@@ -8,6 +8,7 @@
 use super::header_import_tests::{ag_f32, isf_i16, raw_f64, tr0_f32, wavedesc_i16, wfmx_f32};
 use super::tests::{custom, wfm_f32};
 use super::*;
+use crate::gfx::Canvas;
 use crate::hostile::run;
 
 /// A record of two channels, as a capture stores it.

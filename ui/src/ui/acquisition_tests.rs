@@ -1242,10 +1242,10 @@ fn fast_path_keeps_to_its_budget() {
     assert_eq!(ui.fast_max(), crate::board::QUEUE_MAX);
     // nothing else in the screen: 28 ms; a slow screen leaves at least 5
     assert_eq!(ui.fast_budget(), 28.0);
-    ui.t_render = 40.0;
+    ui.times.render = 40.0;
     assert_eq!(ui.fast_budget(), 5.0);
     // the take settles where the time meets the budget, with a fixed 3 ms a screen and 0.3 ms a frame
-    ui.t_render = 0.0;
+    ui.times.render = 0.0;
     // a queue always fuller than the take, 3 ms a screen and 0.3 ms a frame: settles where the time meets 28 ms
     let mut take = crate::board::QUEUE_MAX as f32;
     for _ in 0..40 {

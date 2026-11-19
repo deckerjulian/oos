@@ -1002,7 +1002,7 @@ impl Device {
         }
         let (drawn, hdmi_done) = self.gpu_frame(hdmi_frame);
         if !drawn {
-            (self.ui.t_gpu, self.ui.t_gpu_screens) = (None, None);
+            (self.ui.times.gpu, self.ui.times.gpu_screens) = (None, None);
             self.ui.render(&mut self.cv);
         }
         let t2 = Instant::now();
@@ -1015,9 +1015,9 @@ impl Device {
         self.hdmi_watch();
         self.ui.hdmi_out = self.hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
         let a = 0.05;
-        self.ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - self.ui.t_step);
-        self.ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - self.ui.t_render);
-        self.ui.t_present += a * ((t3 - t2).as_secs_f32() * 1000.0 - self.ui.t_present);
+        self.ui.times.step += a * ((t1 - t0).as_secs_f32() * 1000.0 - self.ui.times.step);
+        self.ui.times.render += a * ((t2 - t1).as_secs_f32() * 1000.0 - self.ui.times.render);
+        self.ui.times.present += a * ((t3 - t2).as_secs_f32() * 1000.0 - self.ui.times.present);
         self.chores();
     }
 
@@ -1132,8 +1132,8 @@ impl Device {
                     self.gpu_pending = Some((tp, b, th));
                 }
                 let t = g.times;
-                self.ui.t_gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
-                self.ui.t_gpu_screens =
+                self.ui.times.gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
+                self.ui.times.gpu_screens =
                     Some((t.panel, (self.hdmi.is_some() && self.hdmi_gpu == Some(true)).then_some(t.monitor)));
                 Ok(())
             })();

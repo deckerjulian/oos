@@ -5,9 +5,8 @@
 //! storage directory. This file writes the setup (`setup_text`, the `ref<N>.*` lines) and names the parts, each
 //! re-exported here so that callers say `store::<item>`: the setup reader in `setup_read.rs`, where files go and how
 //! they are written in `paths.rs`, CSV, OOS's waveform and mask files in `waveform.rs`, waveform files of other
-//! instruments in `import.rs`, PNG screenshots in `png.rs`.
+//! instruments in `import.rs`; PNG screenshots and PPM pictures come from `gfx::png` (base), re-exported here too.
 
-use crate::gfx::Canvas;
 use crate::math::{MATH_OPS, WINDOWS};
 use crate::model::*;
 use crate::wave::Record;
@@ -19,7 +18,6 @@ use std::path::{Path, PathBuf};
 mod header_import_tests;
 mod import;
 mod paths;
-mod png;
 #[cfg(test)]
 mod settings_snapshot;
 mod setup_read;
@@ -29,7 +27,8 @@ pub mod views;
 mod waveform;
 pub use import::*;
 pub use paths::*;
-pub use png::*;
+// the picture files (PNG, PPM) are base (gfx::png); a setup or a screenshot saved by store writes them
+pub use crate::gfx::png::*;
 pub use setup_read::*;
 pub use waveform::*;
 

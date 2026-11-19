@@ -61,11 +61,11 @@ fn dvm_and_counter_read_the_source() {
     let row = u.dvm_row();
     assert!(row[0].0.starts_with("DVM CH1") && row[1].0.starts_with("Counter CH1"), "{:?}", row);
     assert!(row[1].1.ends_with("Hz"), "{:?}", row);
-    assert!(u.cnt_total > 0);
+    assert!(u.cnt.total > 0);
     u.m.cnt_mode = 2;
     assert_ne!(u.dvm_row()[1].1, "----");
     u.counter_clear();
-    assert_eq!(u.cnt_total, 0);
+    assert_eq!(u.cnt.total, 0);
     // off source: no number, and the page offers to switch it on
     u.m.dvm_src = 3;
     assert!(!u.dvm_value().is_finite());
@@ -98,11 +98,11 @@ fn dvm_prefers_a_decoded_block_reading_of_its_source() {
         (crate::board::DvmRead { volts: None, ..r }, 0, sw),
     ];
     for (hw, mode, want) in cases {
-        u.dvm_hw = Some(hw);
+        u.dvm.hw = Some(hw);
         u.m.dvm_mode = mode;
         assert_eq!(u.dvm_value(), want, "{:?} mode {}", hw, mode);
     }
-    u.dvm_hw = Some(r);
+    u.dvm.hw = Some(r);
     u.m.dvm_mode = 0;
     let t = u.dvm_debug_text();
     assert!(t.starts_with("ch=1,lane=0,exp=28,n=3,cfg=0x00000039,sum_lo=0x00000001"), "{}", t);

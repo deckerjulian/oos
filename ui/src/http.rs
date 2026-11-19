@@ -219,7 +219,7 @@ impl Shots {
             if std::thread::Builder::new().name("web-png".into()).spawn(move || me.encoder()).is_err() {
                 // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "");
+                return answer_shot(s, None, crate::gfx::png::png_of(cv).into(), "");
             }
             st.thread = true;
         }
@@ -353,7 +353,7 @@ impl Shots {
                     }
                     (vpu, vpu_failed) = (None, true);
                 }
-                crate::store::png(w, h, &px).into()
+                crate::gfx::png::png(w, h, &px).into()
             });
             let took = t0.elapsed();
             let mut st = self.lock();
@@ -521,8 +521,31 @@ impl Drop for Http {
     }
 }
 
-/// Style of both pages (the update page uses it too).
-pub const STYLE: &str = r#"*{box-sizing:border-box}
+/// The web page /update: the state of `Ui::update_state` and an upload form.
+fn update_page(status: &str, last: &str) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
+    format!(
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS update</title>
+<style>{}</style></head>
+<body><header><b>OOS update</b><nav><a href="/">Remote</a></nav></header>
+<pre>{}</pre>
+<p>Package (<code>.oosupd</code>, signed): <input type="file" id="f" accept=".oosupd"> <button onclick="up()">Install</button></p>
+<pre id="r">{}</pre>
+<p>The new build starts on trial at the next power-on; a failed start writes the previous build back.
+Command line: <code>curl --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code></p>
+<script>
+function up(){{const f=document.getElementById('f').files[0];if(!f)return;const r=document.getElementById('r');
+r.textContent='uploading '+f.size+' bytes ...';
+fetch('/update',{{method:'POST',body:f}}).then(x=>x.text()).then(t=>{{r.textContent=t;setTimeout(()=>location.reload(),15000)}})}}
+</script></body></html>"#,
+        STYLE,
+        esc(status),
+        esc(last)
+    )
+}
+
+/// Style of both pages, the remote and /update.
+const STYLE: &str = r#"*{box-sizing:border-box}
 body{background:#14171c;color:#e4e7ea;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0 auto;max-width:1048px;padding:12px}
 header{display:flex;align-items:center;gap:14px;margin-bottom:10px}header b{font-size:17px}header nav{margin-left:auto;display:flex;gap:14px}
 a{color:#5cb2f0;text-decoration:none}a:hover{text-decoration:underline}
@@ -949,7 +972,10 @@ impl Http {
                 Ok(m) => ("text/plain", m.into_bytes()),
                 Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
             },
-            "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
+            "/update" => ("text/html; charset=utf-8", {
+                let (status, last) = ui.update_state();
+                update_page(&status, last).into_bytes()
+            }),
             "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
             "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
                 Some(r) => ("application/json", r.into_bytes()),
@@ -1153,7 +1179,7 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
                 J::Arr(vec![J::obj(&[
                     ("type", J::s("image")),
                     ("mimeType", J::s("image/png")),
-                    ("data", J::Str(crate::base64::encode(&crate::store::png_of(cv)))),
+                    ("data", J::Str(crate::base64::encode(&crate::gfx::png::png_of(cv)))),
                 ])]),
             )]),
             _ => return Some(err(id, -32602.0, "unknown tool")),

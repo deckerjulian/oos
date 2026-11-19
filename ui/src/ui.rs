@@ -890,16 +890,8 @@ pub struct Ui {
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],
-    /// counter: edges so far, frequency statistics
-    cnt_total: u64,
-    cnt_stat: MStat,
-    /// the hardware counter (tools.rs): latest reading, and a number raised by Clear counter
-    cnt_hw: Option<crate::board::CounterRead>,
-    cnt_clear: u64,
-    /// the FPGA's DVM block (tools.rs, `dvm.hw = on`): latest reading
-    dvm_hw: Option<crate::board::DvmRead>,
-    /// `:SYSTem:DEBug:DVM:LANE`: a lane forced for the DVM block (one channel only)
-    dvm_lane: Option<u32>,
+    cnt: tools::Counter,
+    dvm: tools::Dvm,
     /// source B of delay and phase
     meas_src_b: WaveId,
     /// the reference the Slot rows work on
@@ -964,18 +956,7 @@ pub struct Ui {
     remote: remote::RemoteUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
-    pub t_step: f32,
-    /// parts of `t_step` (ms, smoothed): taking records from the source, drawing them into the phosphor maps
-    pub t_acq: f32,
-    pub t_draw: f32,
-    pub t_render: f32,
-    pub t_present: f32,
-    /// System > Graphics = GPU: the helper's last panel frame (ms): upload, draw, read back; None on the CPU
-    pub t_gpu: Option<[f32; 6]>,
-    /// the helper's time of the last panel frame and, while the GPU draws for a monitor, of the last monitor frame (ms)
-    pub t_gpu_screens: Option<(f32, Option<f32>)>,
-    /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
-    pub t_parts: [f32; 4],
+    pub(crate) times: acquire::FrameTimes,
     pub info: String,
     pub dirty_map: bool,
     vmax: [u32; NCH],

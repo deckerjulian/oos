@@ -1085,12 +1085,12 @@ fn dvm_lane_scpi() {
     let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
     assert_eq!(q(&mut ui, ":SYST:DEB:DVM:LANE?"), "AUTO");
     q(&mut ui, ":SYSTem:DEBug:DVM:LANE 3");
-    assert_eq!((q(&mut ui, ":SYST:DEB:DVM:LANE?"), ui.dvm_lane), ("3".into(), Some(3)));
+    assert_eq!((q(&mut ui, ":SYST:DEB:DVM:LANE?"), ui.dvm.lane), ("3".into(), Some(3)));
     q(&mut ui, ":SYST:DEB:DVM:LANE 4");
-    assert_eq!(ui.dvm_lane, Some(3));
+    assert_eq!(ui.dvm.lane, Some(3));
     assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     q(&mut ui, ":SYST:DEB:DVM:LANE auto");
-    assert_eq!(ui.dvm_lane, None);
+    assert_eq!(ui.dvm.lane, None);
 }
 
 #[test]

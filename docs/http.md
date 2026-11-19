@@ -211,7 +211,7 @@ found` and `refused`, 202 for an MCP notification, else 200.
 
 - Mark: **stable**
 - Request: no arguments.
-- Answer: one `image` content item, `mimeType` `image/png`, `data` the screen as PNG in base64 (`store::png_of`,
+- Answer: one `image` content item, `mimeType` `image/png`, `data` the screen as PNG in base64 (`gfx::png::png_of`,
   made at the call).
 
 ### `GET /update`
@@ -219,7 +219,8 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Mark: **internal**
 - Request: nothing.
 - Answer: 200 `text/html; charset=utf-8`, the update page: the state that `oos-update status --quick` prints, the
-  result of the last job, and the upload form (`Ui::update_page`, `ui/src/ui/update.rs`).
+  result of the last job (`Ui::update_state`, `ui/src/ui/update.rs`), and the upload form (`update_page`,
+  `ui/src/http.rs`).
 - net.allow: no.
 
 ### `POST /update`
