@@ -81,12 +81,13 @@ executor.
   `now_us` returns the sum; the boot takes time only through `boot::Clock`, in the bundle `boot::Hw { bus, clock,
   pll, afe, early }`. `boot::dry_run` prints the whole boot against it (`oos-fpgad cold-boot`, a section of
   `tools/plan-matrix.sh`).
-- **`seg::sim::Engine`** (in `hal/src/dho/seg.rs`, 245 lines): a model of the record engine and the play path. Arm,
-  frames recorded per read of 0x4080, progress in 0x4010 and 0x4014, 0x4034, stop, the play of frames `first..=last`
-  into a byte stream with the frame header and its stamp, the FPGA compression (`pairs::point`), the hardware average
-  (`avg::mean_words`), the stamp latch. `SimBus` and `SimC2h` are its two sides. `seq::acquire_batch` and all of
-  `seg::*` are generic and run against it in the tests of `hal/src/dho/seg.rs` and `hal/src/dho/avg.rs`. Its sample
-  words are a pattern (the frame's number in the high byte), not a signal; it has no clock and no stream padding.
+- **`seg::sim::Engine`** (in `hal/src/dho/seg.rs`, 245 lines; named `dho::sim::Engine` too since stage 0b): a model of
+  the record engine and the play path. Arm, frames recorded per read of 0x4080, progress in 0x4010 and 0x4014, 0x4034,
+  stop, the play of frames `first..=last` into a byte stream with the frame header and its stamp, the FPGA compression
+  (`pairs::point`), the hardware average (`avg::mean_words`), the stamp latch. `SimBus` and `SimC2h` are its two sides.
+  `seq::acquire_batch` and all of `seg::*` are generic and run against it in the tests of `hal/src/dho/seg.rs` and
+  `hal/src/dho/avg.rs`. Its sample words are a pattern (the frame's number in the high byte), not a signal; it has no
+  clock and no stream padding.
 - **The demo source** (`ui/src/wave.rs`): `demo_signal(cfg, ch, t)` gives the volts of a channel at a time (the
   probe-compensation square, the demo lines of the protocol modules, the generator looped back). `acquire_demo`
   samples it on the screen grid, triggered by oos-dsp's software trigger, with jitter and noise from a seeded
@@ -115,12 +116,12 @@ executor.
 
 ### 3.1 Shape
 
-One model, `oos_hal::dho::sim::Unit`, in hal: no hardware, no dependency on oos-dsp or oos-ui (ADR 0001). The loop
-gets it through handles for its sides (register window, stream, front-end bus, single lines, clock) that share the
-model, as `SimBus` and `SimC2h` share `Engine` today. `seg::sim::Engine` moves into it and is not copied: its tests
-keep running, its word pattern becomes one of the scenes below. `boot::sim::SimClock` is its clock. `boot::sim::Unit`
-stays as it is: it answers another phase of the unit's life, and joining the two is worth it only when a host run
-starts at power-on.
+One model, `oos_hal::dho::sim::Unit`, in hal: no hardware, no dependency on oos-dsp or oos-ui (ADR 0001). The loop gets
+it through handles for its sides (register window, stream, front-end bus, single lines, clock) that share the model, as
+`SimBus` and `SimC2h` share `Engine` today. `Engine` is named in its module first (stage 0b, `hal/src/dho/sim.rs`) and
+is not copied: its tests keep running, its word pattern becomes one of the scenes below. `boot::sim::SimClock` is its
+clock. `boot::sim::Unit` stays as it is: it answers another phase of the unit's life, and joining the two is worth it
+only when a host run starts at power-on.
 
 ### 3.2 What it is told, and what it reads from the registers
 
@@ -167,13 +168,14 @@ the code under test in one more respect.
 | roll and scan chunks | 216 bytes: 8 header words (word 1 bit 1 marks a logic-analyser chunk, word 4 counts from 1, in scan from 1 in every sweep), 100 words; one chunk per 100 / ratio points at the spacing of `roll::params` | verified on the unit (roll-mode.md 8 and 9.1, "Scan with the LA on"; the marker bit as la.md 4.4 describes it); that roll points are min/max pairs is assumed (roll-mode.md 3.3) |
 | a read with nothing played | fails at once | not modelled: on the unit such a read ends with the driver's time-out (architecture.md, "Lessons from the first device tests") |
 
-The bytes are made by the inverse of the decode, which goes into hal next to it (`hal/src/dho/seq/samples.rs`,
-`hal/src/dho/seq/frame.rs`, `hal/src/dho/roll.rs`): volts to a code, channels to interleaved words, the padding, the
-header, a chunk. Round-trip tests hold the two together for what the decode keeps whole (raw words, padding, header,
-roll chunk): bytes, decoded and encoded again, are the same bytes for every code and every channel set; volts, encoded
-and decoded, come back within half a code. Compressed frames have no inverse, since a block keeps only its extremes:
-the model makes them with `pairs::model` from the scene's samples, and a test checks that their decode gives the
-extremes of each block of the scene, in the order they occur.
+The bytes are made by the inverse of the decode, in hal beside it (`hal/src/dho/encode.rs`, since stage 0a): volts to a
+code, channels to interleaved words, the padding, the header, a chunk. It is built for the tests only (`cfg(test)` and
+the feature `sim` of hal, since stage 0b), so the scope's programs stay the same programs. Round-trip tests hold the two
+together for what the decode keeps whole (raw words, padding, header, roll chunk): bytes, decoded and encoded again, are
+the same bytes for every channel set, with each of the 65536 codes in every word of a group; volts, encoded and decoded,
+come back within half a code. Compressed frames have no inverse, since a block keeps only its extremes: the model makes
+them with `pairs::model` from the scene's samples, and a test checks that their decode gives the extremes of each block
+of the scene, in the order they occur.
 
 So a host run goes: settings, step list, simulated unit, bytes, decode, `Frame`, `Record`, picture.
 
@@ -273,8 +275,8 @@ Each stage is one or two pull requests that can be proven by themselves. Sizes a
 
 | Stage | What | Files | Size | Proof | Risk |
 |---|---|---|---|---|---|
-| 0a | the inverse codec: volts to code, interleave, padding, header, roll chunk; round-trip tests | `hal/src/dho/seq/samples.rs`, `hal/src/dho/seq/frame.rs`, `hal/src/dho/roll.rs` | 150 and 150 of tests | host tests; the comparison finds nothing; nothing of the scope's programs calls the additions, so the job `scope` is expected to find them byte-identical and `unit` passes by ADR 0041 | low. If the job `scope` finds the programs different, the additions go behind a feature of hal that only tests switch on |
-| 0b | the simulated unit for triggered acquisitions: the model with clock, scene and trace; `Engine` moves into it | `oos_hal::dho::sim` (new), `hal/src/dho/seg.rs`, `hal/src/dho/avg.rs` (their tests) | 450 and 250 of tests | as 0a; `seq::acquire_batch` and `seg::*` run against it in hal's tests | low for the scope; the model can be wrong, see 5 |
+| 0a | the inverse codec: volts to code, interleave, padding, header, roll chunk; round-trip tests | `hal/src/dho/encode.rs` (new, `cfg(test)`) | 100 and 150 of tests | host tests; the comparison finds nothing; the module is built for the tests only, so the job `scope` finds the programs byte-identical and `unit` passes by ADR 0041 (the first try put the additions into the decode's files: the programs differed, as the lines of the code after them moved) | low |
+| 0b | the simulated unit for triggered acquisitions: the model with clock, scene and trace; `Engine` moves into it. Two pull requests: first the module `sim` behind the feature `sim` of hal (switched on by hal's dev-dependency on itself), which names `Engine`, then the model. Moving `Engine`'s code out of `seg.rs` changed the programs for the scope although they never call it, so it moves with stage 1, which runs on a unit anyway | `oos_hal::dho::sim` (new), `hal/src/dho/seg.rs`, `hal/src/dho/avg.rs` (their tests) | 450 and 250 of tests | as 0a; `seq::acquire_batch` and `seg::*` run against it in hal's tests | low for the scope; the model can be wrong, see 5 |
 | 1a | the executor takes any bus, stream, front-end bus, lines and clock; `selfcal::Unit` and the generator's executor too | `hal/src/dho/seq/exec.rs`, `hal/src/dho/selfcal.rs`, `hal/src/dho/afg.rs` | 200 | `Refactor:`, `Behaviour: unchanged`, the comparison finds nothing; time-outs tested in virtual time; one run on a unit | medium: the executor runs live with its timing. `exec.rs` is in `live` (`tools/pr-gate.sh`, ADR 0052), so this is a refactoring of a live path and the gate asks for the run on a unit |
 | 1b | the seam of section 4: `Port`, `Hw`, `hw::run`, the scope's port | `ui/src/board/dho/hw.rs`, `hw/plan.rs`, `hw/seg.rs`, `hw/units.rs`, `hw/trim.rs`, `ui/src/deepmeas.rs`, a new module for the port | 300 | as 1a; `tools/device-test.py --changed` on the unit (for `ui/src/board/`: acquisition, roll, trigger, front end, register sequences), and its frame rate against main on the same unit | medium: a unit of time mixed up turns 33 ms into 33 s. No lines move, so the diff can be read |
 | 2 | the host run: a test of oos-ui runs `hw::run` against the simulated unit for a matrix of settings and N records each, checks the frames against the scene and writes the trace; the comparison gets a third part | a test module of `hw/`, `tools/compare-base.sh`, `.github/workflows/ci.yml`, `tools/README.md`, `docs/architecture.md` | 400 and 60 in the tools | host tests (layer `test`); a test and tools only, so the programs for the scope are expected byte-identical (job `scope`); pictures and register sequences of the comparison equal, the new part reported as new | low for the scope; the run must not flake: virtual clock, one thread, no order taken from a hash map |
@@ -356,5 +358,5 @@ The target of T1, the acquisition loop and the roll stream, is reached with stag
 5. **The measure** of section 7: the list of 28 paths, and 17 as the target.
 6. **`boot::sim::Unit`** stays apart from the new model. Joining them would let a host run start at power-on; not
    planned here.
-7. This page is not yet in the list of [README.md](README.md), and the Tests table of
-   [architecture.md](architecture.md) says nothing of it: both come with the first stage that changes code.
+7. This page is in the list of [README.md](README.md) since stage 0a (the inverse codec). The Tests table of
+   [architecture.md](architecture.md) names the simulated unit with stage 0b, which adds it.

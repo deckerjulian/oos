@@ -91,10 +91,10 @@ work on its own (ADR 0039). Everything above holds for it, and:
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
   request what ran on the unit. Without that the pull request waits, unless CI's job `scope` finds the programs
-  for the scope byte-identical to the base's (`tools/scope-binaries.sh`, ADR 0041), or it is a refactoring of
-  code that builds register sequences, which the comparison proves (title `Lints:` or `Refactor:`, `Behaviour:
-  unchanged`; not the start, the update, `ui/src/board/` or the live paths of `hal/src/dho/`, ADR 0042): then `unit`
-  passes by itself. Register sequences, timing, start and update are what the run on a unit is for.
+  for the scope byte-identical to the base's, panic places and symbol names left out (`tools/scope-binaries.sh`,
+  ADR 0041, ADR 0068), or it is a refactoring of code that builds register sequences, which the comparison proves
+  (title `Lints:` or `Refactor:`, `Behaviour: unchanged`; not the start, the update, `ui/src/board/` or the live paths
+  of `hal/src/dho/`, ADR 0042): then `unit` passes by itself. Register sequences, timing, start and update are what the run on a unit is for.
 - It never removes `hold`, and never merges or asks to merge a pull request of somebody else or of another bot.
 - When main is red it fixes that first and does nothing else.
 - At the end it reports to the maintainer: what it opened and merged, what ran on the unit, what it left open.
@@ -132,8 +132,8 @@ missing part, when one is forgotten (ADR 0046). The steps, with the commands for
 | service (a thread of a part) | a `Service<J, R>` in its part's state (`ui/src/ui/service.rs`, ADR 0061), its poll in `POLLS` (`ui/src/ui/acquire.rs`) | `docs/architecture.md` (its thread) | `ui/src/ui/acquire.rs::every_poll_is_in_polls` |
 | analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
-| HTTP route or MCP tool | an arm of `Http::answer` in `ui/src/http.rs`, or of `site::answer` in `ui/src/site.rs` when the screen answers it (an MCP tool: `site::mcp`) | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
-| register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, `tools/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
+| HTTP route or MCP tool | an arm of `Http::answer` in `ui/remote/src/http.rs`, or of `Site::answer` for `site::Ctx` in `ui/src/site.rs` when the screen answers it (an MCP tool: `site::mcp`) | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
+| register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, its line in the board's matrix `tools/board/dho/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
 | board family (ADR 0067) | a `Target` in `hal/src/<name>/target.rs`, listed in `FAMILIES` (`hal/src/target.rs`) | `ui/src/board/<name>/`, `rootfs/board/<name>/` (`etc/oos-board`, `bin/oos-board`), its row in `docs/porting.md`, its device tree | `hal/tests/board_families.rs::every_board_family_is_complete` |
 
 `tools/link-check.py` (layer `text`) keeps this table and the recipes true: every file and every test they name
@@ -149,7 +149,7 @@ is written in its home and linked from elsewhere. A pull request that changes on
 | You change | Bring along |
 |---|---|
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
-| an HTTP route or MCP tool (`ui/src/http.rs`, `ui/src/http/`, `ui/src/site.rs`) | `docs/http.md`, `wiki/Remote-Control.md` |
+| an HTTP route or MCP tool (`ui/remote/src/http.rs`, `ui/src/site.rs`, `ui/src/site/`) | `docs/http.md`, `wiki/Remote-Control.md` |
 | a menu, a page or a setting a user sees | the page of that part in `wiki/`, a file in `changelog.d/` |
 | an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |

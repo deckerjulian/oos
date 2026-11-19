@@ -63,7 +63,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039, ADR 0041 and ADR 0042 |
 | [0039](process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md) | process | One development agent, with an identity of its own, opens and merges pull requests under the checks | accepted |
 | [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted |
-| [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
+| [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted, amended by ADR 0068 |
 | [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted, amended by ADR 0052 |
 | [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | accepted |
 | [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way | accepted |
@@ -88,6 +88,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | accepted |
 | [0066](code/0066-the-network-services-stay-in-the-frame-loop-and-do-not-wait-for-their-clients.md) | code | The network services stay in the frame loop, and they do not wait for their clients | proposed |
 | [0067](hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md) | hardware | A board family is a module behind `Target` and `Board`, with an image of its own, and drives hardware once the maintainer calls it ready | proposed |
+| [0068](process/0068-the-comparison-of-the-programs-leaves-out-panic-places-and-symbol-names.md) | process | The comparison of the programs for the scope leaves out the places of their panics and their symbol names | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents

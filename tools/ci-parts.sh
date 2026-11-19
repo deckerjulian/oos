@@ -47,7 +47,7 @@ if [ $all = 0 ]; then
 		dsp/*) dsp=1 ;;
 		ui/*) ui=1 ;;
 		fpgad/*) fpgad=1 ;;
-		tools/compare-base.sh | tools/plan-matrix.sh | tools/code-size.py) compare=1 ;;
+		tools/compare-base.sh | tools/plan-matrix.sh | tools/board/*/plan-matrix.sh | tools/code-size.py) compare=1 ;;
 		# no code of the host checks: documents, the image, the GPU helper (built and tried in the weekly run), the
 		# other workflows, the host tools (their tests and syntax run in the job files)
 		*.md | docs/* | wiki/* | boot/* | kernel/* | gpu/* | .github/* | tools/* | LICENSE | THIRD-PARTY-LICENSES.md | \

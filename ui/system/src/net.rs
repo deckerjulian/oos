@@ -154,6 +154,44 @@ impl Outbox {
     }
 }
 
+/// The answers of the web remote above `SEND_INLINE` of oos-remote's http.rs, and its live pictures, go out on threads
+/// of their own: over WLAN a picture takes long enough to stall the frame loop. At most this many at once; more are
+/// answered 503, and the page tries again.
+pub const MAX_SENDERS: usize = 2;
+pub const SEND_TIMEOUT_S: u64 = 30;
+pub static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A large answer in the background. False when too many run already, or no thread could be started.
+pub fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    let Ok(mut c) = s.try_clone() else { return false };
+    if SENDERS.fetch_add(1, SeqCst) >= MAX_SENDERS {
+        SENDERS.fetch_sub(1, SeqCst);
+        return false;
+    }
+    let t = std::thread::Builder::new().name("web-send".into()).spawn(move || {
+        crate::system::lower_priority();
+        let _ = c.set_write_timeout(Some(Duration::from_secs(SEND_TIMEOUT_S)));
+        use std::io::Write;
+        let _ = c.write_all(head.as_bytes());
+        let _ = c.write_all(body.as_ref());
+        SENDERS.fetch_sub(1, SeqCst);
+    });
+    if t.is_err() {
+        SENDERS.fetch_sub(1, SeqCst);
+        return false;
+    }
+    true
+}
+
+/// 503 on a connection nothing was written to yet: under 200 bytes, which its empty send buffer takes at once.
+pub fn busy_answer(s: &TcpStream) {
+    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+    let msg = "busy, try again";
+    use std::io::Write;
+    let _ = (&*s).write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", msg.len(), msg).as_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

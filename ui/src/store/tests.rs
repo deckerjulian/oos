@@ -1055,7 +1055,7 @@ fn png_encode_time() {
     let t = std::time::Instant::now();
     let mut same = false;
     for _ in 0..n {
-        same = crate::http::same_pixels(std::hint::black_box(&copy), std::hint::black_box(&cv.px));
+        same = crate::shots::same_pixels(std::hint::black_box(&copy), std::hint::black_box(&cv.px));
     }
     let per_cmp = t.elapsed().as_secs_f64() / n as f64;
     assert!(same);
