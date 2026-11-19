@@ -222,3 +222,24 @@ fn a_case_branch_is_an_answer() {
     assert!(!answers(s, "bring-up"));
     assert!(!answers(s, "usage"));
 }
+
+/// The family that each `pub const NAME` of hal/src/target.rs takes its value from (`crate::<family>::...`), in order.
+fn chosen(src: &str, name: &str) -> Vec<String> {
+    let head = format!("pub const {}:", name);
+    src.lines()
+        .filter(|l| l.starts_with(&head))
+        .filter_map(|l| Some(l.split("crate::").nth(1)?.split("::").next()?.to_string()))
+        .collect()
+}
+
+#[test]
+fn the_depths_come_from_the_active_family() {
+    let src = read(&top().join("hal/src/target.rs"));
+    let active = chosen(&src, "ACTIVE");
+    assert!(!active.is_empty(), "hal/src/target.rs has no `pub const ACTIVE`");
+    assert_eq!(chosen(&src, "DEPTHS"), active, "hal/src/target.rs: `DEPTHS` is not chosen with `ACTIVE`");
+    for f in FAMILIES {
+        let p = top().join("hal/src").join(f.name).join("target.rs");
+        assert!(read(&p).contains("pub const DEPTHS:"), "{}: its `DEPTHS` (the Acquire menu)", p.display());
+    }
+}

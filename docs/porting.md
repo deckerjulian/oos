@@ -50,8 +50,10 @@ The code keeps the board apart:
   channels, the neutral code was tried on the host: it builds, and with 2 generators all tests pass.
 
 A port adds `hal/src/<board>/` with its `Target`, `ui/src/board/<board>/` with its `Board` and `rootfs/board/<board>/`,
-and points `target::ACTIVE` and `board::Active` at them; the image is built with `OOS_BOARD=<board>`. The compiler names
-every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that board's `oos-board` calls it.
+and points `target::ACTIVE`, `target::DEPTHS` and `board::Active` at them (the hal test
+`the_depths_come_from_the_active_family` holds the first two together); the image is built with `OOS_BOARD=<board>`. The
+compiler names every part of the interface still missing. `oos-fpgad` is a DHO800/DHO900 tool and stays one; only that
+board's `oos-board` calls it.
 
 ## Board families
 
