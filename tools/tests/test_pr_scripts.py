@@ -359,6 +359,28 @@ class PullRequests(unittest.TestCase):
         self.pull(["rust-toolchain.toml"], title="CI: something")
         self.assertIn("risk/hardware", self.labels(), "the compiler builds every program for the scope")
 
+    def test_unit_tested_holds_for_the_commits_it_was_given_for(self):
+        # ADR 0069: a commit of the branch's own after the label takes it away; a merge of main does not
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+
+        def history(label_hours, commits):
+            name("repos/owner/oos/issues/7/events").write_text(json.dumps(
+                [{"event": "labeled", "label": {"name": "unit-tested"}, "created_at": ago(label_hours)},
+                 {"event": "labeled", "label": {"name": "area/hal"}, "created_at": ago(0)}]))
+            name("repos/owner/oos/pulls/7/commits").write_text(json.dumps(
+                [{"parents": [{}] * parents, "commit": {"committer": {"date": ago(hours)}}}
+                 for hours, parents in commits]))
+
+        self.pull(["hal/src/dho/seq.rs"], labels=["unit-tested"])
+        history(1, [(3, 1), (2, 1)])
+        self.assertNotIn("-unit-tested", self.labels(), "every commit came before the run on the unit")
+        history(1, [(3, 1), (0.5, 2)])
+        self.assertNotIn("-unit-tested", self.labels(), "a merge of main after it")
+        history(1, [(3, 1), (0.5, 1)])
+        self.assertIn("-unit-tested", self.labels(), "a commit after it: run on the unit again")
+        self.pull(["hal/src/dho/seq.rs"])
+        self.assertNotIn("-unit-tested", self.labels(), "no label, nothing to take away")
+
 
 if __name__ == "__main__":
     unittest.main()
