@@ -27,7 +27,8 @@ the change against them. It is advice: the maintainer decides, and a comment tha
   (ADR 0022). Hardware access outside `oos-hal`, or hardware in `oos-dsp` (ADR 0001). A new dependency of what runs on
   the scope (ADR 0013, ADR 0021). A decision record that is edited where it should be superseded, or a new one that is
   not `proposed` (ADR 0031).
-- **What is missing.** Documentation that the change makes wrong. A `CHANGELOG.md` entry for a change a user sees. A
+- **What is missing.** Documentation that the change makes wrong. A file in `changelog.d/` for a change a user sees
+  (ADR 0065; `CHANGELOG.md` itself changes only in a release). A
   test, where the change can be tested on the host. A test that depends on how fast the computer is (ADR 0020).
 - **Plain errors**: wrong arithmetic, a wrong unit, an index out of range, a lock held across a blocking call, an
   error that is dropped.

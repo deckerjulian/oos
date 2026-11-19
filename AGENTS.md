@@ -80,7 +80,9 @@ work on its own (ADR 0039). Everything above holds for it, and:
 - One topic per pull request, about 400 changed lines; `tools/check.sh`, `tools/compare-base.sh` and
   `tools/privacy-scan.py` before every push, and the maintainer's private check (a local hook). A change that is not
   meant to change behaviour says `Behaviour: unchanged`; one that is says what changes.
-- At most five of its pull requests are open at once, and no two change the same file.
+- At most five of its pull requests are open at once, and no two change the same file. A file a tool writes from
+  others does not count (the index of `docs/adr/README.md`, `tools/*.txt`, `ui/Cargo.lock`): after a rebase it runs
+  the tool again (ADR 0065).
 - It asks for Copilot's review of each pull request under the maintainer's account (`gh pr edit N --add-reviewer
   @copilot`, not through the App: GitHub asks Copilot by itself only for a person's pull request), reads it, fixes
   what is right, answers what is not, and resolves the threads; `review` passes only then. It never makes a check
@@ -139,21 +141,21 @@ exists.
 ## Keeping the texts true
 
 Every text has one home (ADR 0035): `README.md` is the entry page, `wiki/` the guide for people who use a scope
-(published as the wiki from the tree; never edited on the wiki itself), `docs/` the technical reference, `docs/adr/`
-the decisions, `CHANGELOG.md` what a user notices. A fact is written in its home and linked from elsewhere. A pull
-request that changes one of these brings the text along:
+(published as the wiki from the tree; never edited on the wiki itself), `docs/` the technical reference, `docs/adr/` the
+decisions, `CHANGELOG.md` what a user notices (a change not yet released is a file in `changelog.d/`, ADR 0065). A fact
+is written in its home and linked from elsewhere. A pull request that changes one of these brings the text along:
 
 | You change | Bring along |
 |---|---|
 | a remote command (`ui/src/scpi.rs`, `ui/src/scpi/`) | `docs/scpi.md`, `wiki/SCPI-and-VXI-11.md` |
 | an HTTP route or MCP tool (`ui/src/http.rs`, `ui/src/http/`) | `docs/http.md`, `wiki/Remote-Control.md` |
-| a menu, a page or a setting a user sees | the page of that part in `wiki/`, `CHANGELOG.md` |
+| a menu, a page or a setting a user sees | the page of that part in `wiki/`, a file in `changelog.d/` |
 | an option of `oos-ui` or `oos-fpgad` | the list at the top of its `main.rs`, and the page that names the option |
 | a register sequence, a hardware fact | the page in `docs/protocols/`, with how the fact is known |
 | installing, updating, starting | `docs/boot.md`, `docs/update.md`, `wiki/Installation.md`, `wiki/Updates-and-Going-Back.md` |
 | a tool in `tools/` | `tools/README.md` |
 | a crate, a program, a thread, what talks to what | `docs/architecture.md` and its diagrams |
-| something others build on | a new record in `docs/adr/` and its row in the index |
+| something others build on | a new record in `docs/adr/`, and `tools/adr-index.py` for its row in the index |
 
 Diagrams are Mermaid in a fenced block, one C4 level each (context, programs, parts), as `flowchart` with `subgraph`,
 with the source files named under them.
@@ -180,4 +182,5 @@ fast the computer is: one that fails only under load is fixed, not run again (AD
 English in code, comments, docs and commits. Lines of 120 columns. Files LF, UTF-8, a final newline, no trailing
 spaces, an `SPDX-License-Identifier: GPL-2.0-or-later` line in every source file of our own. Commit subjects
 `Area: what changed, as a statement` (`SCPI: a query is answered after the client closed its side`), one topic per
-commit, the body says why and how it was tested. User-visible changes get a `CHANGELOG.md` entry. Details: ADR 0019.
+commit, the body says why and how it was tested. User-visible changes get a file in `changelog.d/` (ADR 0065).
+Details: ADR 0019.
