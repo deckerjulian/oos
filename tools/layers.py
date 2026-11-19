@@ -26,7 +26,7 @@ path twice on one line counts once. A dependency is one of `[dependencies]` and 
 `[target.*]`; `[dev-dependencies]` serve the tests and do not count.
 
 Inside oos-ui every module has a layer and every layer a list of the layers it may name: the table UI_LAYERS below
-(ADR 0049). A file's module is its place below ui/src (`ui/src/store/png.rs` is `store::png`), or what a `#[path =
+(ADR 0049). A file's module is its place below ui/src (`ui/src/store/import.rs` is `store::import`), or what a `#[path =
 "file.rs"] mod name;` says of it, below the modules written out around that declaration; its layer is the one of the
 longest row that begins its name, so the row `ui` places every file below ui/src/ui/. A path counts where it is
 written from `crate`, `super` or `self`, also as a leaf of a `use`, and names a layer the file's layer may not name;
