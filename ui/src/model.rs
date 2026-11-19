@@ -8,7 +8,7 @@
 //! analysers, math, generator, and the start values in `defaults.rs`. A new setting goes into the struct here, its
 //! type and its methods into the file of its area.
 
-use crate::board::{board, Active, Board};
+use crate::board::{board, Board};
 use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
@@ -34,8 +34,9 @@ pub use limits::*;
 pub use math::*;
 pub use trigger::*;
 
-/// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`).
-pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
+/// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`). The board
+/// of the build has as many (`platform.rs` holds it to that at compile time).
+pub const NCH: usize = 4;
 /// Reference waveform slots, R1..R10. A slot is waveform memory, not a channel index.
 pub const NREF: usize = 10;
 /// Decoder namespace: CH0..3 and reserved legacy LA4..19 stay unchanged.
@@ -62,8 +63,9 @@ pub fn decode_source_name(source: usize) -> String {
 }
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
-/// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
-pub const NGEN: usize = <Active as Board>::MAX_GENERATORS;
+/// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`). The board of the
+/// build has as many (`platform.rs`).
+pub const NGEN: usize = 1;
 
 /// Analog inputs of the unit (`oos_hal::model::platform()`), at most NCH.
 pub fn n_ch() -> usize {
@@ -97,11 +99,6 @@ pub fn src_ok(s: usize) -> bool {
 
 /// Total selected single, pair and catalog rows, shared by UI and setup validation.
 pub const MEAS_SELECTION_MAX: usize = 1024;
-
-/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
-pub fn catalog_id_valid(id: u16) -> bool {
-    crate::measures::persisted(id)
-}
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
 /// that record's sample interval. Refs are not packed into the channel/math index.
@@ -470,7 +467,7 @@ pub struct Model {
     /// one bus on the plot
     pub bus: TraceBus,
     /// option settings of a protocol module (`protocols::Opt`), indices into its choices
-    pub dec_opt: [u8; crate::protocols::OPTS],
+    pub dec_opt: [u8; oos_dsp::protocols::OPTS],
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
@@ -810,30 +807,5 @@ mod platform_tests {
         m.gen_select(0);
         assert!(m.afg_freq == 5e3 && m.afg_on);
         assert_eq!(m.gen_ch(1).freq, 7e3);
-    }
-
-    #[test]
-    fn a_setup_of_another_board_fits_this_one() {
-        let mut m = Model::default();
-        assert!(!m.fit_platform());
-        if !board().couplings().contains(&Coupling::Dc50) {
-            m.ch[1].coupling = Coupling::Dc50;
-            assert!(m.fit_platform());
-            assert_eq!(m.ch[1].coupling, Coupling::Dc);
-        }
-    }
-
-    #[test]
-    fn the_boards_lists_are_usable() {
-        let d = mdepths();
-        assert_eq!(d[0].1, 0, "Auto first");
-        assert!(d.windows(2).all(|w| w[0].1 < w[1].1), "ascending");
-        assert_eq!(
-            d[d.len() - 1].1,
-            oos_hal::model::Limits::standard().max_mem[0],
-            "the list ends at the largest depth"
-        );
-        assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
-        assert!(n_ch() <= NCH && gen_count() <= NGEN);
     }
 }

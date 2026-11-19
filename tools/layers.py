@@ -87,7 +87,7 @@ UI_LAYERS = (
     ("settings", "ui-settings-up", "base model", "settings"),
     ("board", "ui-board-up", "base model", "board"),
     ("signal", "ui-signal-up", "base model board",
-     "compress deepmeas drawpipe fastdraw framestats measures protocols sparse trig trignear wave"),
+     "compress deepmeas drawpipe fastdraw framestats measures platform protocols sparse trig trignear wave"),
     ("store", "ui-store-up", "base model settings signal", "store"),
     ("screen", "ui-screen-up", "base model settings board signal store", "ui"),
     ("command", "ui-command-up", "base model settings board signal store screen", "cmd scpi"),

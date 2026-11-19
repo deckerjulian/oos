@@ -751,7 +751,7 @@ mod integration_tests {
         let ids: HashSet<_> = listed().into_iter().filter(|c| c.kind == Kind::Module).map(|c| c.id).collect();
         assert_eq!(ids.iter().filter(|&&id| id < 1000).count(), 83);
         for id in 0..=255 {
-            assert_eq!(catalog_id_valid(id), ids.contains(&id), "persisted ID{id}");
+            assert_eq!(crate::measures::catalog_id_valid(id), ids.contains(&id), "persisted ID{id}");
         }
     }
 

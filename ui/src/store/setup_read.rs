@@ -281,7 +281,7 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
                 let f: Vec<&str> = e.split(':').collect();
                 let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
                 let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
-                if !catalog_id_valid(id) {
+                if !crate::measures::catalog_id_valid(id) {
                     return Err(format!("unknown or non-Wave catalog id: {id}"));
                 }
                 if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX {

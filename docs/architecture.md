@@ -227,7 +227,7 @@ flowchart TB
         command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
-        signal["signal<br/>wave, trig, protocols, measures, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
+        signal["signal<br/>wave, trig, protocols, measures, platform, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
         settings["settings<br/>settings<br/>one row per setting"]
         board["board<br/>board<br/>the one door to the hardware"]
         model["model<br/>model, math, zone, decode, words, logic<br/>what the user has set"]

@@ -16,7 +16,7 @@
 //! Every other file is behind a Cargo feature (`dec-<file>`, all on by default), so a build can leave decoders out.
 //! `docs/protocol-modules.md` walks through writing one, and `example.rs` (compiled in the tests) uses every hook.
 
-use crate::model::Slope;
+use crate::model::{Model, Proto, Slope};
 use oos_dsp::decode::Packet;
 use oos_dsp::protocols::ModuleInfo;
 
@@ -350,6 +350,79 @@ impl dyn Protocol {
     /// The name of the module ([`ModuleInfo::name`]).
     pub fn name(&self) -> &'static str {
         self.info().name
+    }
+}
+
+/// Every protocol of the Decode menu, in the order of `MODULES`.
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
+    std::sync::LazyLock::new(|| (0..MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
+
+// What a protocol of the model is, and what the model's decoder settings mean, is asked of this registry: the model
+// holds the index and the option settings, the registry knows the modules (ADR 0049).
+impl Proto {
+    /// The module behind the protocol.
+    pub fn module(self) -> Option<&'static dyn Protocol> {
+        let Proto::Module(i) = self;
+        Some(get(i))
+    }
+
+    /// Name in saved setups: the module's key.
+    pub fn key(self) -> String {
+        let Proto::Module(i) = self;
+        get(i).key().to_string()
+    }
+
+    pub fn from_key(k: &str) -> Option<Proto> {
+        PROTOS.iter().copied().find(|p| p.key() == k)
+    }
+
+    pub fn name(self) -> &'static str {
+        let Proto::Module(i) = self;
+        get(i).name()
+    }
+
+    /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
+    pub fn roles(self) -> [Option<&'static str>; 4] {
+        let Proto::Module(i) = self;
+        get(i).info().roles
+    }
+
+    /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
+    pub fn diff_ok(self) -> bool {
+        let Proto::Module(i) = self;
+        get(i).info().diff_ok
+    }
+}
+
+impl Model {
+    /// Switches the decoder's protocol and nothing else (SCPI configures an instrument, not the demo's sources); a
+    /// module that is newly chosen starts from its default options.
+    pub fn set_dec_proto_only(&mut self, p: Proto) {
+        if let (Proto::Module(i), true) = (p, self.dec_proto != p) {
+            self.dec_opt = opt_default(i);
+        }
+        self.dec_proto = p;
+    }
+
+    /// The option settings of the decoder's protocol module, in range.
+    pub fn dec_opts(&self) -> [usize; OPTS] {
+        let Proto::Module(i) = self.dec_proto;
+        opt_fit(i, self.dec_opt)
+    }
+
+    /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
+    pub fn bus_bit(&self) -> f64 {
+        let Proto::Module(i) = self.dec_proto;
+        get(i).info().bit_time(&self.dec_opts(), &shared(self))
+    }
+
+    /// The record length the protocol trigger needs: a whole frame of the protocol before the trigger point (a module
+    /// may say: USB auto, low-speed packets), else 200 bit times.
+    pub fn bus_frame_span(&self) -> f64 {
+        self.dec_proto
+            .module()
+            .and_then(|p| p.info().frame_span(&self.dec_opts(), &shared(self)))
+            .unwrap_or(200.0 * self.bus_bit())
     }
 }
 

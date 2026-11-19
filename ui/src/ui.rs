@@ -336,6 +336,7 @@ pub(crate) use analysers::{scpi_views, stored_views};
 pub use eyepage::EYE_ITEMS;
 // the limits that the model, the settings and the setup files count with too (model/limits.rs)
 pub use crate::model::{CNT_MODES, DVM_MODES, PANE_HARMS, SEG_HW_MAX, SEG_IVL_MAX, VIEWS_MAX};
+pub(crate) use crate::protocols::PROTOS;
 
 /// Keys of the frequency keypad: the unit ends the entry.
 const FREQ_KEYS: [&str; 18] =
