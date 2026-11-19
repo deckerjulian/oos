@@ -960,8 +960,37 @@ pub fn set_enabled(on: bool) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// tests: `pipe` is None on this thread, whatever another test's screen switched on (`keep_out`)
+    static OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps the calling thread out of the workers (tests) while the guard lives: an acquisition loop run by a test must not
+/// feed the workers of another test's screen, which counts the records they draw. The guard puts back what was before
+/// when it is dropped, a panic included.
+#[cfg(test)]
+pub fn keep_out() -> KeepOut {
+    KeepOut(OUT.with(|o| o.replace(true)))
+}
+
+/// The guard of `keep_out`: the thread's setting before it.
+#[cfg(test)]
+pub struct KeepOut(bool);
+
+#[cfg(test)]
+impl Drop for KeepOut {
+    fn drop(&mut self) {
+        OUT.with(|o| o.set(self.0));
+    }
+}
+
 /// The pipe while the source is the hardware (started on first use), else None.
 pub fn pipe() -> Option<&'static Pipe> {
+    #[cfg(test)]
+    if OUT.with(|o| o.get()) {
+        return None;
+    }
     if !ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
@@ -1902,5 +1931,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Break it catches: a thread kept out of the workers for good after the live run, so a later test on the same
+    // thread never reaches them, or a guard that a panic leaves set
+    #[test]
+    fn keep_out_holds_while_its_guard_lives() {
+        let out = || OUT.with(|o| o.get());
+        assert!(!out());
+        {
+            let _g = keep_out();
+            assert!(out() && pipe().is_none());
+            let _inner = keep_out();
+            assert!(out());
+        }
+        assert!(!out(), "back after the guards");
+        let r = std::panic::catch_unwind(|| {
+            let _g = keep_out();
+            panic!("a failing case");
+        });
+        assert!(r.is_err() && !out(), "back after a panic");
     }
 }
