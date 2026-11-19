@@ -1411,3 +1411,38 @@ impl Ui {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::testkit::demo_ui;
+
+    fn wheel(ui: &mut Ui, steps: i32, alt: bool) {
+        ui.handle(Ev::Wheel { x: 10, y: 10, steps, ctrl: false, shift: false, alt });
+    }
+
+    /// What a turn left: the menu's focus and the whole setup.
+    fn state(ui: &Ui) -> (usize, String) {
+        (ui.focus, crate::store::setup_text(&ui.m))
+    }
+
+    /// With a menu open the wheel is Multi 1, with Alt the trigger level (5 steps a notch): each as `knob <name> <n>`
+    /// of a script turns it, and the turn changes something.
+    #[test]
+    fn the_wheel_turns_multi1_in_a_menu_and_the_trigger_level_with_alt() {
+        let (mut wheeled, mut scripted, untouched) = (demo_ui(), demo_ui(), demo_ui());
+        for ui in [&mut wheeled, &mut scripted] {
+            ui.open_menu(MenuId::Channel(0));
+        }
+        wheel(&mut wheeled, 2, false);
+        crate::cmd::run(&mut scripted, "knob multi1 +2");
+        assert_eq!(state(&wheeled), state(&scripted));
+        assert_ne!(state(&wheeled).0, untouched.focus, "Multi 1 moved the focus");
+
+        let (mut wheeled, mut scripted, untouched) = (demo_ui(), demo_ui(), demo_ui());
+        wheel(&mut wheeled, -3, true);
+        crate::cmd::run(&mut scripted, "knob tlevel -15");
+        assert_eq!(state(&wheeled), state(&scripted));
+        assert_ne!(state(&wheeled).1, state(&untouched).1, "the trigger level moved");
+    }
+}
