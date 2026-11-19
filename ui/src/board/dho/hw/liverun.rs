@@ -234,6 +234,16 @@ const CASES: &[Case] = &[
         passes: 60,
         script: &[(1, Act::SegRun), (40, Act::SegShow(7))],
     },
+    Case {
+        name: "segments-10-1ms-apart",
+        model: |m| (segments(m, 10), m.seg_ivl = 1e-3).0,
+        freq_hz: 1e6,
+        square: false,
+        period_us: Some(50),
+        la: false,
+        passes: 60,
+        script: &[(1, Act::SegRun)],
+    },
 ];
 
 /// The model with hardware segments: `n` of them, CH1 at 1 us/div.
@@ -440,10 +450,25 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             let stopped = g.seg.total > 0 && g.seg.recorded < g.seg.total;
             if g.seg.total > 0 {
                 assert!(g.seg.recorded > 0 && g.seg.read == g.seg.recorded, "{}: {}", case.name, seg_line(&g));
+                // a segment is a trigger of the scene, and the next is the first trigger after the record before it
+                // and the interval: back to back without one, a whole number of trigger periods apart, never less
+                // than the interval
                 let period = case.period_us.unwrap() as f64 * 1e-6;
-                for (k, t) in g.seg.times.iter().enumerate() {
-                    let t = t.unwrap_or_else(|| panic!("{}: segment {} without a stamp", case.name, k));
-                    assert!((t - k as f64 * period).abs() < 1e-9, "{}: segment {} at {} s", case.name, k, t);
+                let mut m = Model::default();
+                (case.model)(&mut m);
+                let ivl = m.seg_ivl as f64;
+                let times: Vec<f64> = g
+                    .seg
+                    .times
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| t.unwrap_or_else(|| panic!("{}: segment {} without a stamp", case.name, k)))
+                    .collect();
+                for (k, w) in times.windows(2).enumerate() {
+                    let periods = (w[1] - w[0]) / period;
+                    assert!((periods - periods.round()).abs() < 1e-6, "{}: segment {} at {} s", case.name, k + 1, w[1]);
+                    let want = if ivl == 0.0 { periods.round() == 1.0 } else { w[1] - w[0] >= ivl };
+                    assert!(want, "{}: segment {} {} s after the one before", case.name, k + 1, w[1] - w[0]);
                 }
                 let delivered = if stopped { 0 } else { g.seg.recorded as usize };
                 assert_eq!(frames.len(), delivered, "{}: frames delivered", case.name);

@@ -45,6 +45,8 @@ pub const STREAM_BYTE_FS: i128 = 10_000_000;
 pub const SWEEP_CHUNKS: u64 = 1000;
 /// Chunks of a sweep still to come when 0x40d0 reports it done (roll-mode.md 9.1: 3 to 4 on the unit).
 pub const DONE_EARLY: u64 = 4;
+/// One tick of the interval of a segmented record, 0x4068 (acquisition-start.md, `record_seq`: interval / 6.4e6).
+const INTERVAL_TICK_FS: i128 = 6_400_000;
 /// What 0x11e8 counts for a whole chunk waiting (roll-mode.md 2.2 and 8).
 const FILL_PER_CHUNK: u32 = 27;
 
@@ -225,15 +227,17 @@ impl Unit {
     /// Records the frames whose trigger has come by now. The first takes the first trigger once its pre-trigger points
     /// are filled after the arm (record-play.md: a record takes the pre-trigger fill, then the wait for the next edge);
     /// a trigger inside the fill is not taken. Each later frame takes the first trigger after the pre- and post-trigger
-    /// points of the frame before it. The record stops by itself after its last frame.
+    /// points of the frame before it and the wait of 0x4068 (the interval of a segmented record, `scu::record_arm`; that
+    /// the FPGA waits it after each frame is assumed). The record stops by itself after its last frame.
     fn advance(&mut self) {
         self.stream_chunks();
+        let wait = self.reg(0x4068) as i128 * INTERVAL_TICK_FS;
         let Some(r) = self.rec.as_mut() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
         loop {
             let from = match r.n {
                 0 => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
-                _ => self.ring[&(r.first + r.n - 1)] + span,
+                _ => self.ring[&(r.first + r.n - 1)] + span + wait,
             };
             let Some(at) = self.scene.next_trigger(from).filter(|&at| at <= self.t_fs) else { break };
             let k = r.first + r.n;
