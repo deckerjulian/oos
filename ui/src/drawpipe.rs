@@ -960,8 +960,25 @@ pub fn set_enabled(on: bool) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// tests: `pipe` is None on this thread, whatever another test's screen switched on (`keep_out`)
+    static OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps the calling thread out of the workers (tests): an acquisition loop run by a test must not feed the workers of
+/// another test's screen, which counts the records they draw.
+#[cfg(test)]
+pub fn keep_out(out: bool) {
+    OUT.with(|o| o.set(out));
+}
+
 /// The pipe while the source is the hardware (started on first use), else None.
 pub fn pipe() -> Option<&'static Pipe> {
+    #[cfg(test)]
+    if OUT.with(|o| o.get()) {
+        return None;
+    }
     if !ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
