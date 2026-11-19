@@ -5,7 +5,7 @@
 # run the tests of ui. A push to main runs every part. The job `test` at the end is the one required check: it passes
 # when all of them passed; clippy is one of the parts (ADR 0017), and the numbers that only go down (ADR 0037) are
 # checked in the job `files`. A pull request is also compared with its base (job compare), whose side of the
-# comparison a push to main keeps in the cache (job sums).
+# comparison a push to main keeps in the cache (job sums), and so is job scope (job scope-sums).
 #
 # A pull request that only changes documents or host tools runs the jobs `parts` and `files` and skips the rest.
 #
@@ -264,6 +264,28 @@ jobs:
         with:
           path: ${{ runner.temp }}/compare-sums
           key: compare-sums-${{ github.sha }}
+  # The same for `scope`: the SHA-256 of the programs for the scope of this commit (tools/scope-binaries.sh
+  # --sums-only), kept under the commit and the hashes of the script and of rust-toolchain.toml, which decide how they
+  # are built. A job of its own, next to `sums`: the programs are built as `scope` builds them, with the release
+  # profile, not with the settings of the comparison.
+  scope-sums:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - name: The sums of this commit's programs for the scope (tools/scope-binaries.sh --sums-only)
+        run: |
+          mkdir -p "$RUNNER_TEMP/scope-sums"
+          tools/scope-binaries.sh --sums-only > "$RUNNER_TEMP/scope-sums/sums.txt"
+          cat "$RUNNER_TEMP/scope-sums/sums.txt"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scope-sums
+          key: scope-sums-${{ github.sha }}-${{ hashFiles('tools/scope-binaries.sh', 'rust-toolchain.toml') }}
   # Whether the programs that run on the scope change at all (ADR 0041): oos-ui, oos-fpgad and oos-update, built
   # from the pull request and from its base in this one folder, compared byte for byte. Equal programs let the status
   # `unit` pass without a run on a unit (tools/pr-gate.sh); a pull request whose programs differ keeps the artifact
@@ -283,11 +305,23 @@ jobs:
       # the Rust that rust-toolchain.toml names, with the scope's target (ADR 0045); the base is checked out in this
       # folder with its own file
       - run: rustup toolchain install --no-self-update
+      # what the push of the base kept of it (job `scope-sums`): with it only this side is built. The key holds this
+      # tree's script and rust-toolchain.toml, so a pull request that changes either builds both sides as before
+      - name: The base's commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/scope-sums
+          key: scope-sums-${{ steps.base.outputs.sha }}-${{ hashFiles('tools/scope-binaries.sh', 'rust-toolchain.toml') }}
       - name: The programs for the scope against the base (tools/scope-binaries.sh)
         id: scope
         run: |
           rc=0
-          tools/scope-binaries.sh HEAD^1 > /tmp/scope.txt || rc=$?
+          kept=
+          [ ! -s "$RUNNER_TEMP/scope-sums/sums.txt" ] || kept="--base-sums $RUNNER_TEMP/scope-sums/sums.txt"
+          # shellcheck disable=SC2086
+          tools/scope-binaries.sh $kept HEAD^1 > /tmp/scope.txt || rc=$?
           cat /tmp/scope.txt | tee -a "$GITHUB_STEP_SUMMARY"
           echo "differs=$rc" >> "$GITHUB_OUTPUT"
           [ "$rc" -le 1 ]

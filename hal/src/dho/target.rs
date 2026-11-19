@@ -161,3 +161,19 @@ pub const DHO: Target = Target {
     set_adc_clock,
     clock_steps: &CLOCK_STEPS,
 };
+
+/// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`batch_plan` of the
+/// DHO board of oos-ui). New entries go to the end: setups store the position.
+pub const DEPTHS: [(&str, u64); 11] = [
+    ("Auto", 0),
+    ("1k", 1_000),
+    ("10k", 10_000),
+    ("100k", 100_000),
+    ("1M", 1_000_000),
+    ("10M", 10_000_000),
+    ("25M", 25_000_000),
+    ("50M", 50_000_000),
+    ("62.5M", 62_500_000),
+    ("100M", 100_000_000),
+    ("125M", 125_000_000),
+];

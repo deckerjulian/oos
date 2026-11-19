@@ -136,9 +136,6 @@ pub trait Board: Sync + 'static {
     fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64;
     fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64);
 
-    /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
-    fn depths(&self) -> &'static [(&'static str, u64)];
-
     // ---- front end
     /// the fine volts-per-division steps of the front end, in nV
     fn vscale_steps_nv(&self) -> Vec<i64>;
