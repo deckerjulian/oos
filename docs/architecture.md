@@ -382,9 +382,9 @@ c2h bytes ── deinterleave ──> per-channel u16 codes ── volts (scale,
 
 | Crate | Host tests | What they pin down |
 |---|---|---|
-| hal | `cargo test` in hal/ | write sequences against fixtures and device logs, cold boot against the unit model, panel CRCs, board logic |
+| hal | `cargo test` in hal/ | write sequences against fixtures and device logs, cold boot against the unit model, panel CRCs, board logic, the acquisition sequences against the simulated unit (ADR 0053) |
 | dsp | `cargo test` in dsp/ | every trigger, measurement, decoder and math function against signals with known answers |
-| ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage |
+| ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage; the acquisition loop against the simulated unit for a matrix of settings (`board::dho::hw::liverun`), which `tools/compare-base.sh` also compares with the base (ADR 0053) |
 | fpgad | `cargo test` in fpgad/ | option parsing, status interpretation |
 
 Every parser of outside input (files, the network, remote commands, the samples of a record) also has a hostile-input
