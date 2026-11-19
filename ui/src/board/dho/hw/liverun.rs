@@ -53,11 +53,20 @@ enum Act {
     /// hardware segments: RUN starts a recording (`HwSeg::run`), a segment asked to be shown
     SegRun,
     SegShow(u32),
+    /// STOP that wants the newest frame read raw (`Shared::final_req`)
+    FinalRaw,
+    /// in STOP: the view the screen shows (time per division, delay), read again from the stored record
+    StopView(f64, f64),
+    /// the force-trigger key
+    Force,
+    /// the measurements want the screen window of a deep record raw, for every batch (`Shared::deep_raw`)
+    DeepRaw,
 }
 
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
 /// the scene (None: it never triggers; roll and scan do not wait for it), the passes of the loop, and what the screen
 /// does at which pass.
+#[derive(Clone, Copy)]
 struct Case {
     name: &'static str,
     model: fn(&mut Model),
@@ -67,8 +76,31 @@ struct Case {
     period_us: Option<i128>,
     /// the logic analyser on, its lines a count of `LA_TICK_S` steps
     la: bool,
+    /// the loop starts with the made-up calibration set in its folder (else with none)
+    cal: bool,
+    /// the live compression on (`compress::enabled`, a switch of the unit that is off by default)
+    compress: bool,
     passes: u32,
     script: &'static [(u32, Act)],
+}
+
+/// What a case has unless it says otherwise.
+const BASE: Case = Case {
+    name: "",
+    model: |_| {},
+    freq_hz: 1e6,
+    square: false,
+    period_us: Some(50),
+    la: false,
+    cal: false,
+    compress: false,
+    passes: 30,
+    script: &[],
+};
+
+/// The memory depth of the menu named `name`.
+fn depth(m: &mut Model, name: &str) {
+    m.mdepth = mdepths().iter().position(|d| d.0 == name).expect("a depth of the menu");
 }
 
 fn tdiv(m: &mut Model, t: f32) {
@@ -91,6 +123,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 30,
         script: &[],
     },
@@ -101,6 +135,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 30,
         script: &[],
     },
@@ -111,6 +147,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 30,
         script: &[],
     },
@@ -121,6 +159,8 @@ const CASES: &[Case] = &[
         square: true,
         period_us: Some(1_000),
         la: false,
+        cal: false,
+        compress: false,
         passes: 20,
         script: &[],
     },
@@ -131,6 +171,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: 6,
         script: &[],
     },
@@ -141,6 +183,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: 8,
         script: &[(3, Act::Set(|m| tdiv(m, 2e-6)))],
     },
@@ -151,6 +195,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 20,
         script: &[],
     },
@@ -161,6 +207,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 30,
         script: &[(12, Act::Hold)],
     },
@@ -171,6 +219,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: 40,
         script: &[],
     },
@@ -181,6 +231,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: 40,
         script: &[],
     },
@@ -191,6 +243,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -201,6 +255,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: false,
+        cal: false,
+        compress: false,
         passes: SCAN_PASSES,
         script: &[(SCAN_PASSES / 2, Act::Rearm)],
     },
@@ -211,6 +267,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: true,
+        cal: false,
+        compress: false,
         passes: 40,
         script: &[],
     },
@@ -221,6 +279,8 @@ const CASES: &[Case] = &[
         square: false,
         period_us: None,
         la: true,
+        cal: false,
+        compress: false,
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -231,18 +291,54 @@ const CASES: &[Case] = &[
         square: false,
         period_us: Some(50),
         la: false,
+        cal: false,
+        compress: false,
         passes: 60,
         script: &[(1, Act::SegRun), (40, Act::SegShow(7))],
     },
     Case {
         name: "segments-10-1ms-apart",
         model: |m| (segments(m, 10), m.seg_ivl = 1e-3).0,
-        freq_hz: 1e6,
-        square: false,
-        period_us: Some(50),
-        la: false,
         passes: 60,
         script: &[(1, Act::SegRun)],
+        ..BASE
+    },
+    Case { name: "auto-ch1-1us-calibrated", model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0, cal: true, ..BASE },
+    Case {
+        name: "auto-ch1-200us-compressed-then-stop-raw",
+        compress: true,
+        model: |m| (ch(m, &[0]), tdiv(m, 2e-4)).0,
+        freq_hz: 1e3,
+        square: true,
+        period_us: Some(1_000),
+        passes: 20,
+        script: &[(14, Act::Hold), (14, Act::FinalRaw)],
+        ..BASE
+    },
+    Case {
+        name: "auto-then-stop-two-views",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        script: &[(12, Act::Hold), (14, Act::StopView(1e-6, 0.0)), (17, Act::StopView(5e-7, 1e-6))],
+        ..BASE
+    },
+    Case {
+        name: "auto-ch1-deep-10m-screen-window",
+        compress: true,
+        model: |m| (ch(m, &[0]), tdiv(m, 5e-3), depth(m, "10M")).0,
+        freq_hz: 1e3,
+        square: true,
+        period_us: Some(1_000),
+        passes: 6,
+        script: &[(1, Act::DeepRaw)],
+        ..BASE
+    },
+    Case {
+        name: "normal-no-trigger-force",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6), m.trig_mode = TrigMode::Normal).0,
+        period_us: None,
+        passes: 8,
+        script: &[(3, Act::Force)],
+        ..BASE
     },
 ];
 
@@ -300,11 +396,25 @@ fn frame_line(f: &Frame) -> String {
     s
 }
 
+/// The switches a case sets for the test's thread (`compress::force`, `deepmeas::force`): back to the build's when
+/// dropped.
+struct Switches;
+
+impl Drop for Switches {
+    fn drop(&mut self) {
+        crate::compress::force(None);
+        crate::deepmeas::force(None);
+    }
+}
+
 /// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings and what the loop left
 /// in the shared state.
 fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let mut m = Model::default();
     (case.model)(&mut m);
+    // the switches of this thread, put back when the case ends (a failing one too)
+    let _switches = Switches;
+    crate::compress::force(Some(case.compress));
     let want = super::settings(&m, false);
     let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
     let p = st.configure(&want, None, None).expect("settings the unit takes").1;
@@ -319,7 +429,9 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
         view,
     };
     let (u, bar, c2h, clock) = unit(scene);
-    let hw = Hw { bar, c2h, afe: None, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
+    // with the calibration the front ends are programmed too, through a stub that answers them
+    let afe = case.cal.then_some(oos_hal::dho::boot::sim::AfeStub { writes: 0, reads: 0 });
+    let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let mask = want.mask;
     {
@@ -330,11 +442,23 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let (mut pass, mut rearm_due) = (0, false);
     // roll and scan replace the picture in the queue: every one published is taken here, as the screen takes it
     let mut slow_frames: Vec<Frame> = Vec::new();
+    let mut replays: Vec<Frame> = Vec::new();
     let shared = out.clone();
+    // the made-up calibration set in a folder of this case (its files are always the same bytes)
+    let cal_dir = if case.cal {
+        let d = std::env::temp_dir().join(format!("oos-liverun-cal-{}", std::process::id()));
+        let d = d.to_str().expect("a folder name in UTF-8").to_string();
+        oos_hal::dho::madeup::write(&d).expect("the made-up set written");
+        d
+    } else {
+        "/nonexistent".to_string()
+    };
+    // the deep measurements' raw window is a switch of the build; on for this thread, as on the scope
+    crate::deepmeas::force(Some(true));
     // the drawing workers are another test's when its screen switched them on: this loop keeps out of them (their
     // hand-over is run on a unit, docs/board-on-a-host.md 7)
     let _out = crate::drawpipe::keep_out();
-    super::run(hw, super::settings(&m, false).mask, false, "/nonexistent".into(), out.clone(), || {
+    super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
         let mut g = shared.lock().unwrap();
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
@@ -348,6 +472,10 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
                 Act::SegShow(k) => g.seg.want = Some(*k),
+                Act::FinalRaw => g.final_req += 1,
+                Act::StopView(t, d) => g.stop_view = Some((*t, *d)),
+                Act::Force => g.force = true,
+                Act::DeepRaw => g.deep_raw = Some(crate::deepmeas::Want { every: true }),
             }
         }
         if rearm_due && g.halted {
@@ -356,10 +484,17 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
         if (g.frame.roll || g.frame.scan) && slow_frames.last().is_none_or(|f| f.seq != g.frame.seq) {
             slow_frames.push(g.frame.clone());
         }
+        // STOP: every view read again
+        if let Some(f) = g.replay.take() {
+            replays.push(f);
+        }
         pass <= case.passes
     });
     let queued = out.lock().unwrap().queue.iter().filter(|f| !f.roll && !f.scan).cloned().collect::<Vec<_>>();
-    let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).collect();
+    if case.cal {
+        let _ = std::fs::remove_dir_all(&cal_dir);
+    }
+    let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).chain(replays).collect();
     let trace = u.borrow().trace_text();
     (trace, frames, mask, out)
 }
@@ -405,6 +540,46 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         }
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
+        // what the screen asked for in the script was done
+        let asked = |f: fn(&Act) -> bool| case.script.iter().filter(|(_, a)| f(a)).count();
+        if asked(|a| matches!(a, Act::Force)) > 0 {
+            assert!(trace.contains("off: 8284, v: 32 }") && !g.force, "{}: no force pulse (0x205c bit 5)", case.name);
+        }
+        let views = asked(|a| matches!(a, Act::StopView(..)));
+        let replayed = frames.iter().filter(|f| f.fixed_ti.is_some()).count();
+        assert_eq!(replayed, views, "{}: every view in STOP read again from the stored record", case.name);
+        if asked(|a| matches!(a, Act::FinalRaw)) > 0 {
+            assert_eq!(g.final_ack, g.final_req, "{}: the final frame request answered", case.name);
+            let last = frames.last().expect("frames before the STOP");
+            assert!(!last.envelope, "{}: the newest frame read raw at STOP", case.name);
+        }
+        // live compression: the batches before the STOP came through it (frames of min/max pairs)
+        if case.compress && !case.script.iter().any(|(_, a)| matches!(a, Act::DeepRaw)) {
+            let before = &frames[..frames.len().saturating_sub(1)];
+            assert!(before.iter().any(|f| f.envelope), "{}: no frame through the live compression", case.name);
+        }
+        // the deep measurements: the record read compressed, then its screen window raw, every sample of more than
+        // the deepest compressed record
+        if asked(|a| matches!(a, Act::DeepRaw)) > 0 {
+            let raw = frames.iter().filter(|f| !f.envelope && f.ch[0].len() > crate::compress::MAX_DEPTH as usize);
+            assert!(raw.count() > 0, "{}: no raw screen window of the deep record", case.name);
+            let mut plays: Vec<&str> = trace
+                .lines()
+                .filter(|l| l.starts_with("Played"))
+                .filter_map(|l| l.find("bytes").map(|i| &l[i..]))
+                .collect();
+            plays.sort_unstable();
+            plays.dedup();
+            assert!(plays.len() >= 2, "{}: the compressed read and the raw window: {:?}", case.name, plays);
+        }
+        // the calibration reaches the configuration: the same case without it writes other values
+        if case.cal {
+            let (plain, _, _, _) = run_case(&Case { cal: false, ..*case });
+            let writes = |t: &str| -> Vec<String> {
+                t.lines().filter(|l| l.starts_with("Write")).map(|l| l[l.find("off").unwrap()..].to_string()).collect()
+            };
+            assert_ne!(writes(&trace), writes(&plain), "{}: the same writes as without the calibration", case.name);
+        }
         // roll or scan from the case's settings, not from what came out: a slow case that delivers nothing fails
         let slow = {
             let mut m = Model::default();
