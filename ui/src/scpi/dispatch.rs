@@ -289,9 +289,7 @@ impl Scpi {
             if !query && nodes.len() == 1 {
                 if kw(n0, "RUN") {
                     m.run = RunState::Run;
-                    if m.trig_mode == TrigMode::Single {
-                        m.trig_mode = TrigMode::Auto;
-                    }
+                    m.run_sweep();
                     return Some(None);
                 }
                 if kw(n0, "STOP") {
@@ -299,7 +297,7 @@ impl Scpi {
                     return Some(None);
                 }
                 if kw(n0, "SINGle") {
-                    m.trig_mode = TrigMode::Single;
+                    m.set_sweep(TrigMode::Single);
                     m.run = RunState::Run;
                     return Some(None);
                 }
