@@ -102,6 +102,10 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
+        // a time that is no number (NaN, inf) on any line: the stretches below compare times, and NaN compares false
+        if !t.is_finite() {
+            return Err("that file holds no waveform".into());
+        }
         let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
         if rest.peek().is_none() {
             continue;

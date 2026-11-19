@@ -482,6 +482,9 @@ fn csv_takes_its_sample_interval_over_the_whole_time_column() {
     assert!(parse_wave(b"0,1\n", "one.csv").is_err());
     assert!(parse_wave(b"1,1\n1,2\n1,3\n", "flat.csv").is_err());
     assert!(parse_wave(b"3,1\n2,2\n1,3\n", "back.csv").is_err());
+    // a time that is no number in the middle of the column
+    assert!(parse_wave(b"0,1\n0.1,2\nNaN,3\n0.2,4\n", "nan.csv").is_err());
+    assert!(parse_wave(b"0,1\n0.1,2\ninf,3\n0.2,4\n", "inf.csv").is_err());
 }
 
 // Break it catches: the last time of a file less its first, over all its lines. In a file of several sweeps or
