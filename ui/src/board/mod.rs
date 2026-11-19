@@ -10,7 +10,8 @@
 //! `board::dho` out of the rest of the crate.
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
-//! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
+//! tree). `OOS_BOARD=<name>` selects it for every crate (`cfg(oos_board = "<name>")`, build.rs, ADR 0067). A port adds
+//! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
 
 pub mod dho;
 mod record;
@@ -21,10 +22,12 @@ pub use record::{sw_trig_level, to_record, trigger_point};
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
 
-/// The board this build drives.
+/// The board this build drives: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
+#[cfg(oos_board = "dho")]
 pub type Active = dho::Dho;
 
 /// The board of this build.
+#[cfg(oos_board = "dho")]
 pub fn board() -> &'static Active {
     &dho::Dho
 }
@@ -132,9 +135,6 @@ pub trait Board: Sync + 'static {
     /// samples per column).
     fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64;
     fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64);
-
-    /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
-    fn depths(&self) -> &'static [(&'static str, u64)];
 
     // ---- front end
     /// the fine volts-per-division steps of the front end, in nV

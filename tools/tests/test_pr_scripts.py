@@ -19,16 +19,20 @@ AGENT = "dekajoule-oos-agent[bot]"
 FAKE_GH = r'''#!/bin/sh
 [ "$1" = api ] || exit 9
 shift
-path= ; expr=
+path= ; expr= ; method=GET
 while [ $# -gt 0 ]; do
 	case $1 in
 	--paginate) ;;
 	--jq) expr=$2; shift ;;
+	--method) method=$2; shift ;;
+	--input) shift ;;
 	-f) shift ;;
 	*) path=$1 ;;
 	esac
 	shift
 done
+# a call that changes something: written to $FAKE_GH/calls, answered with nothing
+[ "$method" = GET ] || { echo "$method $path" >> "$FAKE_GH/calls"; echo '{}'; exit 0; }
 case $path in graphql) path="graphql_$(printf '%s' "$expr" | tr -dc 'a-z' | cut -c1-12)" ;; esac
 file="$FAKE_GH/$(printf '%s' "$path" | tr '/?=' '___').json"
 # a call that fails once: the marker goes with the first call
@@ -135,10 +139,11 @@ class PullRequests(unittest.TestCase):
             {"artifacts": [{"name": n} for n, keep in (("compare-base", kept), ("scope-binaries-differ", differs),
                                                          ("compare-calibrated", calibrated)) if keep]}))
 
-    def run_tool(self, tool, tries="1", ok=True):
+    def run_tool(self, tool, tries="1", ok=True, dry=True):
         env = dict(os.environ, PATH=f"{self.dir / 'bin'}:{os.environ['PATH']}", FAKE_GH=str(self.dir),
                    OOS_REPO="owner/oos", OOS_API_TRIES=tries, OOS_API_WAIT="0")
-        out = subprocess.run(["sh", str(ROOT / "tools" / tool), "--dry", "7"], env=env, capture_output=True, text=True)
+        args = ["--dry", "7"] if dry else ["7"]
+        out = subprocess.run(["sh", str(ROOT / "tools" / tool), *args], env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode == 0, ok, out.stderr)
         return out.stdout
 
@@ -284,6 +289,17 @@ class PullRequests(unittest.TestCase):
         self.pull(["ui/src/ui.rs", "hal/src/fsutil.rs", "docs/boot.md"])
         self.assertEqual(self.gate()["unit"], "success")
 
+    def test_the_tests_inside_the_hardware_paths_need_no_scope(self):
+        # ADR 0072: a test file of a hardware path is never in a program for the scope
+        self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/model.rs", "ui/Cargo.toml"])
+        self.assertEqual(self.gate()["unit"], "success", "only tests inside the hardware paths")
+        self.pull(["hal/src/update/hostile_tests.rs", "hal/src/dho/boot/tests.rs", "hal/src/dho/v2_tests.rs"])
+        self.assertEqual(self.gate()["unit"], "success")
+        self.pull(["ui/src/board/dho/hw/tests.rs", "ui/src/board/dho/hw.rs"])
+        self.assertEqual(self.gate()["unit"], "pending", "the code beside the tests still needs a unit")
+        self.pull(["ui/src/board/dho/tests_of_mine.rs"])
+        self.assertEqual(self.gate()["unit"], "pending", "a name that only begins like a test file")
+
     def test_equal_programs_for_the_scope(self):
         self.pull(["hal/src/dho/seq.rs", "fpgad/Cargo.toml"])
         self.ci(scope="success")
@@ -302,12 +318,25 @@ class PullRequests(unittest.TestCase):
         # Break it catches: fpgad's board commands moved out of main.rs into new files that $live did not name, so a
         # refactoring of them would have passed without a unit
         text = (ROOT / "tools" / "pr-gate.sh").read_text()
-        assign = "".join(line + "\n" for line in text.split("\n") if re.match(r"(hardware|live|proven)=", line))
-        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven"'],
+        assign = "".join(line + "\n" for line in text.split("\n")
+                         if re.match(r"(hardware|live|proven|testonly)=", line))
+        out = subprocess.run(["sh", "-c", assign + 'printf "%s\\n" "$hardware" "$live" "$proven" "$testonly"'],
                              capture_output=True, text=True, check=True).stdout.split("\n")
-        hardware, live, proven = (re.compile(p) for p in out[:3])
+        hardware, live, proven, testonly = (re.compile(p) for p in out[:4])
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
-        files = [f for f in files if hardware.search(f)]
+        # the tests inside the hardware paths are a class of their own, before $live and $proven (ADR 0072)
+        tests = [f for f in files if hardware.search(f) and testonly.search(f)]
+        self.assertGreater(len(tests), 3, "the test files of the hardware paths")
+        for f in tests:
+            path = ROOT / f
+            name = path.stem
+            parent = path.parent.with_suffix(".rs")
+            if not parent.exists():
+                parent = path.parent / "mod.rs"
+            text = parent.read_text()
+            self.assertRegex(text, r"#\[cfg\(test\)\]\s*\n\s*(pub(\([a-z]+\))? )?mod " + name + ";",
+                             f"{f}: its parent {parent.relative_to(ROOT)} must bring it in only under #[cfg(test)]")
+        files = [f for f in files if hardware.search(f) and not testonly.search(f)]
         self.assertGreater(len(files), 100, "the tree's hardware paths")
         self.assertEqual([f for f in files if not live.search(f) and not proven.search(f)], [],
                          "in neither $live nor $proven of tools/pr-gate.sh: class it")
@@ -319,7 +348,7 @@ class PullRequests(unittest.TestCase):
 
     def test_a_refactoring_the_comparison_found_equal(self):
         unchanged = "**Behaviour:** unchanged.\n"
-        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/compcheck.rs"]
+        regs = ["hal/src/dho/tpu.rs", "hal/src/dho/seq.rs", "fpgad/src/dho/compcheck.rs"]
         self.ci(calibrated=True)
         self.pull(regs, title="Lints: the findings in the trigger code", body=unchanged)
         self.assertEqual(self.gate()["unit"], "success", "register sequences, which the comparison proves")
@@ -331,7 +360,7 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.gate()["unit"], "pending", "it does not say unchanged")
         for live in ("ui/src/board/dho/hw.rs", "hal/src/dho/bus.rs", "hal/src/dho/roll.rs", "hal/src/dho/selfcal.rs",
                      "hal/src/dho/boot/mod.rs", "hal/src/update/pkg.rs", "fpgad/src/bin/oos-update.rs",
-                     "fpgad/src/main.rs", "fpgad/src/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
+                     "fpgad/src/main.rs", "fpgad/src/dho/mod.rs", "fpgad/src/dho/board.rs", "rootfs/init", "hal/src/dho/seq/exec.rs"):
             self.pull(regs + [live], title="Refactor: x", body=unchanged)
             self.assertEqual(self.gate()["unit"], "pending", f"{live}: timing, start or update need a unit")
         self.pull(["rust-toolchain.toml"], title="Refactor: x", body=unchanged)
@@ -358,6 +387,38 @@ class PullRequests(unittest.TestCase):
         self.assertEqual(self.labels(), {"area/docs", "type/docs"})
         self.pull(["rust-toolchain.toml"], title="CI: something")
         self.assertIn("risk/hardware", self.labels(), "the compiler builds every program for the scope")
+
+    def test_unit_tested_holds_for_the_commits_it_was_given_for(self):
+        # ADR 0069: a commit of the branch's own after the label takes it away; a merge of main does not
+        name = lambda path: self.dir / (path.replace("/", "_").replace("?", "_").replace("=", "_") + ".json")
+
+        def history(label_hours, commits):
+            name("repos/owner/oos/issues/7/events").write_text(json.dumps(
+                [{"event": "labeled", "label": {"name": "unit-tested"}, "created_at": ago(label_hours)},
+                 {"event": "labeled", "label": {"name": "area/hal"}, "created_at": ago(0)}]))
+            name("repos/owner/oos/pulls/7/commits").write_text(json.dumps(
+                [{"parents": [{}] * parents, "commit": {"committer": {"date": ago(hours)}}}
+                 for hours, parents in commits]))
+
+        self.pull(["hal/src/dho/seq.rs"], labels=["unit-tested"])
+        history(1, [(3, 1), (2, 1)])
+        self.assertNotIn("-unit-tested", self.labels(), "every commit came before the run on the unit")
+        history(1, [(3, 1), (0.5, 2)])
+        self.assertNotIn("-unit-tested", self.labels(), "a merge of main after it")
+        history(1, [(3, 1), (0.5, 1)])
+        self.assertIn("-unit-tested", self.labels(), "a commit after it: run on the unit again")
+        # and without --dry the label is taken away through the API, the other labels are still added
+        calls = self.dir / "calls"
+        out = self.run_tool("pr-labels.sh", dry=False)
+        self.assertIn("unit-tested taken away", out)
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["DELETE repos/owner/oos/issues/7/labels/unit-tested", "POST repos/owner/oos/issues/7/labels"])
+        calls.unlink()
+        history(1, [(3, 1)])
+        self.run_tool("pr-labels.sh", dry=False)
+        self.assertEqual(calls.read_text().splitlines(), ["POST repos/owner/oos/issues/7/labels"], "nothing taken away")
+        self.pull(["hal/src/dho/seq.rs"])
+        self.assertNotIn("-unit-tested", self.labels(), "no label, nothing to take away")
 
 
 if __name__ == "__main__":

@@ -142,9 +142,9 @@ impl Ui {
         if let Some(key) = next {
             let _ = self.cached_pair(key.kind, key.a, key.b);
         }
+        // the phosphor maps stay (`poll_reference_measurements`)
         if changed {
             self.finish_deferred_capture_statistics();
-            self.dirty_map = true;
         }
     }
 }

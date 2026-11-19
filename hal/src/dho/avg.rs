@@ -102,8 +102,8 @@ mod tests {
 
     use crate::dho::acq::Mode;
     use crate::dho::bus::DmaBuf;
-    use crate::dho::seg::sim::{engine, Engine};
     use crate::dho::seq::{Settings, State, Step};
+    use crate::dho::sim::{engine, Engine};
 
     fn settings(mode: Mode) -> Settings {
         Settings { mode, tdiv: 100e-9, depth: 1000, window: None, frames: 10, ..Settings::default() }
@@ -165,8 +165,8 @@ mod tests {
         st: &mut State,
         s: &Settings,
         p: &crate::dho::hz::Params,
-        bar: &mut crate::dho::seg::sim::SimBus,
-        c2h: &mut crate::dho::seg::sim::SimC2h,
+        bar: &mut crate::dho::sim::SimBus,
+        c2h: &mut crate::dho::sim::SimC2h,
         dma: &mut DmaBuf,
     ) -> (u32, u16) {
         let count = seq::acquire_batch(st, s, p, bar, c2h, dma, false, 0, |_| {}).unwrap();

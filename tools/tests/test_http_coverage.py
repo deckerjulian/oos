@@ -137,13 +137,26 @@ class Coverage(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.write(HTTP_RS, HTTP_MD)
 
-    def write(self, rs, md):
-        for rel, text in ((cov.HTTP_RS, rs), (cov.HTTP_MD, md)):
+    def write(self, rs, md, site="// the screen's routes: none in these tests but the one that says so\n"):
+        for rel, text in ((cov.HTTP_RS, rs), (cov.SITE_RS, site), (cov.HTTP_MD, md)):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             (self.root / rel).write_text(text)
 
     def findings(self):
         return cov.check(str(self.root))[0]
+
+    def test_a_route_the_screen_answers_counts_after_those_of_the_transport(self):
+        site = 'pub fn answer() { match route { "/version" => ok(), "/update" => ok(), _ => None } }\n'
+        self.write(HTTP_RS, HTTP_MD, site)
+        found = self.findings()
+        self.assertIn("ui/remote/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md",
+                      found)
+        # /update took GET and POST in http.rs already: the arm of site.rs adds nothing, and needs no entry
+        self.assertEqual(len(found), 1, found)
+
+    def test_a_declaration_of_a_trait_is_no_body(self):
+        rs = "pub trait Site {\n    fn answer(&mut self, route: &str) -> Option<u8>;\n}\n" + HTTP_RS
+        self.assertEqual(cov.routes(rs)[0], cov.routes(HTTP_RS)[0])
 
     def test_routes_methods_and_tools(self):
         have, arms, findings = cov.routes(HTTP_RS)
@@ -169,7 +182,7 @@ class Coverage(unittest.TestCase):
                                                     '            "/" => ("text/html"')
         self.write(rs, HTTP_MD)
         self.assertEqual(self.findings(), [
-            "ui/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md"])
+            "ui/remote/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md"])
         # with its entry it passes
         self.write(rs, HTTP_MD + "\n### `GET /version`\n\n- Mark: **experimental**\n")
         self.assertEqual(self.findings(), [])
@@ -177,7 +190,7 @@ class Coverage(unittest.TestCase):
     def test_the_get_of_a_path_whose_post_is_documented_still_needs_its_own_entry(self):
         self.write(HTTP_RS, HTTP_MD.replace("### `GET /update`\n\n- Mark: **internal**\n\n", ""))
         self.assertEqual(self.findings(), [
-            "ui/src/http.rs: route GET /update has no entry `### \\`GET /update\\`` in docs/http.md"])
+            "ui/remote/src/http.rs: route GET /update has no entry `### \\`GET /update\\`` in docs/http.md"])
 
     def test_an_entry_without_one_known_mark_fails(self):
         md = HTTP_MD.replace("### `GET /`\n\n- Mark: **internal**", "### `GET /`\n\nThe page.")
@@ -198,8 +211,8 @@ class Coverage(unittest.TestCase):
         self.write(HTTP_RS, md)
         found = self.findings()
         self.assertEqual(len(found), 4, found)
-        self.assertIn("GET /gone: no such route in fn answer of ui/src/http.rs", found[0])
-        self.assertIn("POST /ui-state: fn answer of ui/src/http.rs takes only GET on /ui-state", found[1])
+        self.assertIn("GET /gone: no such route in fn answer of ui/remote/src/http.rs", found[0])
+        self.assertIn("POST /ui-state: fn answer of ui/remote/src/http.rs and ui/src/site.rs takes only GET on /ui-state", found[1])
         self.assertIn("MCP tool `nope`: no such tool in fn mcp", found[2])
         self.assertIn("GET /wave.csv has a second entry", found[3])
 
@@ -207,25 +220,25 @@ class Coverage(unittest.TestCase):
         rs = HTTP_RS.replace('"/" => ("text/html"', '"/secret" if peer_ok => ("text/plain", Vec::new()),\n'
                                                     '            "/" => ("text/html"')
         self.write(rs, HTTP_MD)
-        self.assertEqual(self.findings(), ["ui/src/http.rs: arm /secret has a guard this check does not know: "
+        self.assertEqual(self.findings(), ["ui/remote/src/http.rs: arm /secret has a guard this check does not know: "
                                            "`if peer_ok` (GUARDS)"])
 
     def test_a_path_added_to_the_arm_of_a_known_guard_is_not_passed_over(self):
         rs = HTTP_RS.replace('"/update" | "/mcp" if (post', '"/update" | "/mcp" | "/admin" if (post')
         self.write(rs, HTTP_MD)
         self.assertEqual(self.findings(), [
-            "ui/src/http.rs: arm /update | /mcp | /admin has the guard `if (post || route == \"/mcp\") && !peer_ok`, "
+            "ui/remote/src/http.rs: arm /update | /mcp | /admin has the guard `if (post || route == \"/mcp\") && !peer_ok`, "
             "which is known for /mcp | /update only (GUARDS)"])
 
     def test_tools_need_an_entry_and_the_same_name_in_list_and_call(self):
         self.write(HTTP_RS, HTTP_MD.replace("### MCP tool `screenshot`\n\n- Mark: **stable**\n", ""))
         self.assertEqual(self.findings(), [
-            "ui/src/http.rs: MCP tool `screenshot` has no entry `### MCP tool \\`screenshot\\`` in docs/http.md"])
+            "ui/src/site.rs: MCP tool `screenshot` has no entry `### MCP tool \\`screenshot\\`` in docs/http.md"])
         rs = HTTP_RS.replace('Some("screenshot") => text("png"),', 'Some("screenshot") => text("png"),\n'
                                                                     '            Some("hidden") => text("x"),')
         self.write(rs, HTTP_MD + "\n### MCP tool `hidden`\n\n- Mark: **internal**\n")
         self.assertEqual(self.findings(), [
-            "ui/src/http.rs: MCP tool `hidden` is answered by tools/call but not in tools/list"])
+            "ui/src/site.rs: MCP tool `hidden` is answered by tools/call but not in tools/list"])
 
     def test_main_exits_1_on_a_finding_and_0_on_this_tree(self):
         self.write(HTTP_RS, HTTP_MD.replace("### `POST /mcp`\n\n- Mark: **stable**\n", ""))
@@ -234,7 +247,7 @@ class Coverage(unittest.TestCase):
             self.assertEqual(cov.main([str(self.root)]), 1)
         self.assertIn("route GET/POST /mcp has no entry", out.getvalue())
         self.assertIn("1 findings", err.getvalue())
-        # the tree itself: every route and tool of ui/src/http.rs has its entry and mark in docs/http.md
+        # the tree itself: every route and tool of ui/remote/src/http.rs has its entry and mark in docs/http.md
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cov.main([str(ROOT)]), 0, out.getvalue())

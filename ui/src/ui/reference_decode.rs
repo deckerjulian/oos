@@ -513,7 +513,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn loaded_sources_are_selectable_in_every_decoder_role_and_survive_setup() {
         let mut ui = uart_ui(1000);
         ui.refs[9] = Some(reference(vec![0.0; 1000], 1e-9, -1e-6, 0.2));
@@ -548,7 +547,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn four_wire_and_mixed_inputs_align_at_native_physical_times() {
         let mut ui = crate::ui::testkit::demo_ui();
         let clk = |t: f64| {

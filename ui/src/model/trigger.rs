@@ -294,6 +294,21 @@ pub fn time_ladder() -> Vec<f32> {
 }
 
 impl Model {
+    /// Sets the sweep; a Single remembers the sweep before it (Auto or Normal), which Run goes back to.
+    pub fn set_sweep(&mut self, mode: TrigMode) {
+        if mode == TrigMode::Single && self.trig_mode != TrigMode::Single {
+            self.sweep_before_single = self.trig_mode;
+        }
+        self.trig_mode = mode;
+    }
+
+    /// Run after a Single: back to the sweep before the Single, Auto or Normal. Any other sweep stays.
+    pub fn run_sweep(&mut self) {
+        if self.trig_mode == TrigMode::Single {
+            self.trig_mode = self.sweep_before_single;
+        }
+    }
+
     fn dsp_slope(s: Slope) -> oos_dsp::trigger::Slope {
         match s {
             Slope::Rise => oos_dsp::trigger::Slope::Rising,
@@ -602,7 +617,7 @@ mod tests {
         let features = section(&document("wiki/Features.md"), "**Trigger**");
         let shots = include_str!("../../tests/triggers.txt");
         assert_eq!(TRIG_TYPES.len(), TYPES.len(), "TRIG_TYPES and TYPES list the same types");
-        exempt_once("NOT_SHOT", &NOT_SHOT.map(|x| x.0), &TRIG_TYPES, true);
+        exempt_once("NOT_SHOT", &NOT_SHOT.map(|x| x.0), &TRIG_TYPES);
         let mut seen = std::collections::HashSet::new();
         for (k, (t, stored, long, short)) in TYPES.into_iter().enumerate() {
             assert_eq!(row(t), k, "{:?}: its row in TYPES", t);

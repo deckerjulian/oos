@@ -235,7 +235,7 @@ impl Rig {
             "do" => self.ui.script_do(rest),
             "set" => rest.split_once(" = ").map_or(Err("no value".into()), |(l, v)| self.ui.script_set(l, v)),
             "mcp" => known(
-                crate::http::mcp(rest, &mut self.ui, &self.cv, &mut self.scpi)
+                crate::site::mcp(rest, &mut crate::site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi))
                     .is_some_and(|a| a.contains("\"result\"")),
             ),
             "key" => known(KEY_NAMES.iter().any(|(name, _)| *name == rest)),

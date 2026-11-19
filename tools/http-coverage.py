@@ -7,12 +7,14 @@
     tools/http-coverage.py --list [ROOT]   also every route and tool with its mark
 
 ROOT is the top of a tree (default: this tree). Read from it as it is:
-  the routes     the arms of `match route { ... }` in `fn answer` of ui/src/http.rs: each string pattern is a path.
+  the routes     the arms of `match route { ... }` in `fn answer` of ui/remote/src/http.rs (the transport's routes),
+                 then of ui/src/site.rs (the routes the screen answers, which http.rs asks last): each string pattern
+                 is a path.
                  A guard `if post` makes the arm a POST route, `if !post` a GET route (every method but POST is taken
                  as GET); an arm without a guard answers every method, or GET when an earlier arm of the same path
                  took POST. Arms of `_` (the foreign check, not found) are no route. Any other guard has to be in
                  GUARDS below with its reason, so that a new kind of arm is looked at rather than passed over;
-  the tools      the names `Some("name") =>` that the arm `"tools/call"` of `fn mcp` in ui/src/http.rs answers, and
+  the tools      the names `Some("name") =>` that the arm `"tools/call"` of `fn mcp` in ui/src/site.rs answers, and
                  the names (`"name", J::s("...")`) of the arm `"tools/list"` before it;
   the entries    the headings of docs/http.md of the form `### \\`METHOD /path\\`` and `### MCP tool \\`name\\``, each
                  with one line `- Mark: **stable**`, `**experimental**` or `**internal**` before the next heading.
@@ -29,7 +31,8 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HTTP_RS = "ui/src/http.rs"
+HTTP_RS = "ui/remote/src/http.rs"
+SITE_RS = "ui/src/site.rs"
 HTTP_MD = "docs/http.md"
 MARKS = ("stable", "experimental", "internal")
 
@@ -93,11 +96,13 @@ def block(src, open_at):
 
 
 def fn_tokens(src, name):
-    """The tokens of the body of `fn name` (a method or a free function), empty without one."""
-    m = re.search(r"\bfn " + re.escape(name) + r"\b", src)
-    if not m:
-        return []
-    return block(src, src.index("{", m.end()))
+    """The tokens of the body of the first `fn name` that has one (a method or a free function; a declaration of a
+    trait, which ends in `;`, is passed over), empty without one."""
+    for m in re.finditer(r"\bfn " + re.escape(name) + r"\b", src):
+        brace, semi = src.find("{", m.end()), src.find(";", m.end())
+        if brace >= 0 and (semi < 0 or brace < semi):
+            return block(src, brace)
+    return []
 
 
 def match_arms(src, toks, scrutinee):
@@ -145,18 +150,21 @@ def match_arms(src, toks, scrutinee):
     return arms
 
 
-def routes(src):
-    """The routes of Http::answer: {path: set of methods it is answered for, as entries name them}, the arms as
-    (path, methods) in their order, each of which needs an entry of one of its methods, and the findings (unknown
-    guards). An arm without a guard is {"GET", "POST"}, or {"GET"} after an arm of its path took POST."""
-    out, arms, findings, taken = {}, [], [], {}
-    for patterns, guard in match_arms(src, fn_tokens(src, "answer"), "route"):
+def routes(src, where=HTTP_RS, taken=None):
+    """The routes of `fn answer` of `src` (the file `where`): {path: set of methods it is answered for, as entries
+    name them}, the arms as (path, methods) in their order, each of which needs an entry of one of its methods, and the
+    findings (unknown guards). An arm without a guard is {"GET", "POST"}, or {"GET"} after an arm of its path took
+    POST, in this file or in one read before with the same `taken`."""
+    out, arms, findings = {}, [], []
+    taken = {} if taken is None else taken
+    body = fn_tokens(src, "answer")
+    for patterns, guard in match_arms(src, body, "route") if body else []:
         if patterns is None:
             continue
         if guard in GUARDS:
             if set(patterns) != GUARDS[guard][0]:
                 findings.append("%s: arm %s has the guard `if %s`, which is known for %s only (GUARDS)" %
-                                (HTTP_RS, " | ".join(patterns), guard, " | ".join(sorted(GUARDS[guard][0]))))
+                                (where, " | ".join(patterns), guard, " | ".join(sorted(GUARDS[guard][0]))))
             continue
         if guard == "post":
             methods = {"POST"}
@@ -166,10 +174,12 @@ def routes(src):
             methods = None
         else:
             findings.append("%s: arm %s has a guard this check does not know: `if %s` (GUARDS)" %
-                            (HTTP_RS, " | ".join(patterns), guard))
+                            (where, " | ".join(patterns), guard))
             continue
         for p in patterns:
             m = methods if methods is not None else {"GET", "POST"} - taken.get(p, set())
+            if not m:
+                continue  # every method of the path was taken by an arm before: this one answers none
             out.setdefault(p, set()).update(m)
             taken.setdefault(p, set()).update(m)
             arms.append((p, m))
@@ -214,19 +224,26 @@ def entries(md):
 
 def check(root):
     """(the findings, the routes and tools with their marks)."""
-    src, md = read(root, HTTP_RS), read(root, HTTP_MD)
-    have, arms, findings = routes(src)
-    called, listed = tools(src)
+    md, taken = read(root, HTTP_MD), {}
+    srcs = [(rel, read(root, rel)) for rel in (HTTP_RS, SITE_RS)]
+    have, arms, findings = {}, [], []
+    for rel, src in srcs:
+        h, a, f = routes(src, rel, taken)
+        for path, methods in h.items():
+            have.setdefault(path, set()).update(methods)
+        arms, findings = arms + a, findings + f
+    # fn mcp is in site.rs; the first one of the two files
+    called, listed = tools("\n".join(src for _, src in srcs))
     if not have:
-        findings.append("%s: no route found in `match route` of fn answer" % HTTP_RS)
+        findings.append("%s, %s: no route found in `match route` of fn answer" % (HTTP_RS, SITE_RS))
     if not called:
-        findings.append("%s: no MCP tool found in fn mcp" % HTTP_RS)
+        findings.append("%s: no MCP tool found in fn mcp" % SITE_RS)
     for name in called:
         if name not in listed:
-            findings.append("%s: MCP tool `%s` is answered by tools/call but not in tools/list" % (HTTP_RS, name))
+            findings.append("%s: MCP tool `%s` is answered by tools/call but not in tools/list" % (SITE_RS, name))
     for name in listed:
         if name not in called:
-            findings.append("%s: MCP tool `%s` is in tools/list but tools/call does not answer it" % (HTTP_RS, name))
+            findings.append("%s: MCP tool `%s` is in tools/list but tools/call does not answer it" % (SITE_RS, name))
     found, seen = [], set()
     for kind, key, marks, line in entries(md):
         where = "%s:%d" % (HTTP_MD, line)
@@ -235,12 +252,12 @@ def check(root):
             findings.append("%s: %s has a second entry" % (where, name))
         seen.add((kind, key))
         if kind == "route" and key[1] not in have:
-            findings.append("%s: %s: no such route in fn answer of %s" % (where, name, HTTP_RS))
+            findings.append("%s: %s: no such route in fn answer of %s or %s" % (where, name, HTTP_RS, SITE_RS))
         elif kind == "route" and key[0] not in have[key[1]]:
-            findings.append("%s: %s: fn answer of %s takes only %s on %s" %
-                            (where, name, HTTP_RS, " and ".join(sorted(have[key[1]])), key[1]))
+            findings.append("%s: %s: fn answer of %s and %s takes only %s on %s" %
+                            (where, name, HTTP_RS, SITE_RS, " and ".join(sorted(have[key[1]])), key[1]))
         if kind == "tool" and key not in called + listed:
-            findings.append("%s: %s: no such tool in fn mcp of %s" % (where, name, HTTP_RS))
+            findings.append("%s: %s: no such tool in fn mcp of %s" % (where, name, SITE_RS))
         if len(marks) != 1 or marks[0] not in MARKS:
             findings.append("%s: %s needs one line `- Mark: **stable**` (or experimental, internal), has %s" %
                             (where, name, ", ".join(marks) or "none"))
@@ -253,7 +270,7 @@ def check(root):
     for name in called:
         if ("tool", name) not in seen:
             findings.append("%s: MCP tool `%s` has no entry `### MCP tool \\`%s\\`` in %s" %
-                            (HTTP_RS, name, name, HTTP_MD))
+                            (SITE_RS, name, name, HTTP_MD))
     return findings, found
 
 

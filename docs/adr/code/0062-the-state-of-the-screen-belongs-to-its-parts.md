@@ -1,6 +1,6 @@
 # ADR 0062: The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer
 
-- Status: proposed
+- Status: accepted (2026-11-19, by the maintainer)
 - Date: 2026-11-18
 - Category: code
 
@@ -25,10 +25,10 @@ two more shared files a feature pull request touches (ADR 0060).
 - **A number that only goes down** (ADR 0037): the first pull request that moves fields adds a count of the fields
   of `Ui` that are not a part's state struct to `tools/code-metrics.py` (`ui-fields` in `tools/code-metrics.txt`; 208
   when this record was written). From then on the layer `ratchet` fails when it rises.
-- **The move** goes part by part, beside the move of the pages (ADR 0060): a pull request that moves a page into
-  `PAGES` moves its loose fields into its state too, as one refactoring that keeps every pixel (ADR 0014).
+- **The move** goes part by part, one group of fields per pull request, as a refactoring that keeps every pixel
+  (ADR 0014). A pull request that moves a page into `PAGES` (ADR 0060) may move the page's fields along.
 - **What stays in `Ui`**: what the whole screen shares, the model `m`, the source, the screen size, the open menu and
-  the focus. It is named in a list at the top of `struct Ui`, with the reason for each group.
+  the focus. It is named in a list in the comment of `struct Ui`, with the reason for each group.
 
 ## Alternatives
 

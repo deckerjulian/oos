@@ -39,7 +39,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
 | `*OPC` | Register completion of those finite operations in standard-event bit 0. |
 | `*ESR?` | Read and clear implemented event bits: OPC 0, query error 2, device error 3, execution error 4, command error 5. Starts clear; no power-on bit or complete status/SRQ subsystem. |
-| `:RUN` / `:STOP` | Idempotent acquisition assignments, also used for stored replay and SIM. |
+| `:RUN` / `:STOP` | Idempotent acquisition assignments, also used for stored replay and SIM. On the acquisition, `:RUN` after a Single goes back to the sweep before it, Auto or Normal. |
 | `:SINGle` | Arm once; wait for a qualified capture and then stop. |
 | `:TFORce` or `:TRIGger:FORCe` | Explicitly accept a capture without requiring a trigger match. |
 | `:AUToscale` / `:AUToscale?` | Start ADC Autoset / query whether it is running. Autoset does not fit a reference. |

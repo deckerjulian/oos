@@ -677,11 +677,12 @@ impl Ui {
             }
         }
         self.schedule_own_measurement();
+        // an answer changes numbers, not where a trace lies: the phosphor maps stay as they are. Marked for clearing
+        // (`dirty_map`), the live picture was emptied by the next step and stayed empty until the next record
         if changed {
             self.measure_channel_sources();
             self.measure_refs();
             self.finish_deferred_capture_statistics();
-            self.dirty_map = true;
         }
         self.poll_pair_measurements();
     }

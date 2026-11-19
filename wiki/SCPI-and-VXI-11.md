@@ -106,7 +106,7 @@ print(scope.query('*IDN?'))
 | `*RST` | the default settings (as the Default key) |
 | `*CLS` | clears the error queue, the event register and pending `*OPC` registrations |
 | `*OPC?` / `*OPC` / `*ESR?` | see [Synchronisation](#synchronisation-opc-esr) |
-| `:RUN`, `:STOP`, `:SINGle` | Run, Stop, one acquisition then Stop |
+| `:RUN`, `:STOP`, `:SINGle` | Run (on the live acquisition, after a Single with the sweep before it, Auto or Normal; a stored replay and SIM go to Normal), Stop, one acquisition then Stop |
 | `:TFORce` or `:TRIGger:FORCe` | force one trigger |
 | `:AUToscale` / `:AUToscale?` | start Auto / `1` while it runs |
 | `:CLEar` | clear persistence and measurement statistics |

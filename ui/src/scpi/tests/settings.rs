@@ -288,3 +288,25 @@ fn frozen_math_scpi_preserves_reference_ids_expression_parser_and_cycles() {
     assert_eq!(ui.m.math_ch(0).a, MATH_REF_BASE + 1);
     assert_eq!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?"), "0,\"No error\"");
 }
+
+// Break it catches: Run after a Single went to Auto whatever the sweep before the Single was, so a Normal sweep was
+// lost (seen on a DHO924S, over SCPI and with the Run/Stop key).
+#[test]
+fn run_after_single_goes_back_to_the_sweep_before_it() {
+    let (mut s, mut ui, cv) = session();
+    for sweep in ["NORM", "AUTO"] {
+        line(&mut s, &mut ui, &cv, &format!(":TRIG:SWE {sweep};:SING"));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?"), "SING");
+        line(&mut s, &mut ui, &cv, ":RUN");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?"), sweep, "after :SINGle and :RUN");
+        // the sweep set to Single, then Run
+        line(&mut s, &mut ui, &cv, ":TRIG:SWE SING;:RUN");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?"), sweep, "after :TRIGger:SWEep SINGle and :RUN");
+        // the keys: Single, then Run/Stop twice (stop, run)
+        ui.key(crate::ui::key::SINGLE);
+        ui.key(crate::ui::key::RUNSTOP);
+        ui.key(crate::ui::key::RUNSTOP);
+        assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?"), sweep, "after the Single key and Run/Stop");
+    }
+    assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+}

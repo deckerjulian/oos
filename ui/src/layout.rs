@@ -234,7 +234,7 @@ mod tests {
             if name == "layout.rs"
                 || name == "ui/lint.rs"
                 || name.starts_with("ui/lint/")
-                || name == "http/tests.rs"
+                || name == "site/tests.rs"
                 || name == "ui/tests.rs"
                 || name == "ui/menu_tests.rs"
                 || name == "ui/eyepage/tests.rs"

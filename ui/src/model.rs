@@ -8,7 +8,6 @@
 //! analysers, math, generator, and the start values in `defaults.rs`. A new setting goes into the struct here, its
 //! type and its methods into the file of its area.
 
-use crate::board::{board, Board};
 use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
@@ -78,9 +77,9 @@ pub fn gen_count() -> usize {
     oos_hal::model::platform().caps.generators.min(NGEN)
 }
 
-/// The memory depths of the board (Acquire menu).
+/// The memory depths of the board (Acquire menu): the table of this build's board (`oos_hal::target::DEPTHS`).
 pub fn mdepths() -> &'static [(&'static str, u64)] {
-    board().depths()
+    oos_hal::target::DEPTHS
 }
 
 /// Channel names of the unit, "CH1".."CHn" (option lists of channel sources).
@@ -294,6 +293,8 @@ pub struct Model {
     pub trig_level: f32,
     pub slope: Slope,
     pub trig_mode: TrigMode,
+    /// the sweep (Auto or Normal) before a Single, which Run goes back to (`Model::run_sweep`); not part of a setup
+    pub sweep_before_single: TrigMode,
     /// trigger holdoff, seconds (0 = the shortest there is)
     pub holdoff: f32,
     pub trig_type: TrigType,

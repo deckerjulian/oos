@@ -30,7 +30,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0004](code/0004-standard-draw-path-by-default.md) | code | Two draw paths: Standard by default, Batch to choose | superseded by ADR 0029 |
 | [0005](ui-ux/0005-one-measurement-page.md) | ui-ux | One measurement page; one tap adds or removes | accepted |
 | [0006](ui-ux/0006-lists-scroll-by-bar-and-finger.md) | ui-ux | Lists scroll by a scroll bar and by the finger, not by buttons | accepted |
-| [0007](ui-ux/0007-top-bar-with-four-entries.md) | ui-ux | The top bar holds four entries; everything else starts from the start menu | accepted |
+| [0007](ui-ux/0007-top-bar-with-four-entries.md) | ui-ux | The top bar holds four entries; everything else starts from the start menu | accepted, amended by ADR 0063 |
 | [0008](ui-ux/0008-own-visual-style.md) | ui-ux | An own look: neutral colours, white accent, round shapes, no empty areas | accepted |
 | [0009](hardware/0009-areas-oos-never-writes.md) | hardware | OOS never writes the FPGA flash, `/rigol/data`, `uboot`, `trust` or `parameter` | accepted |
 | [0010](hardware/0010-unverified-hardware-functions-are-opt-in.md) | hardware | A hardware function that is not verified on a unit is off by default | accepted |
@@ -43,7 +43,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0017](process/0017-lints-clippy-warnings-are-errors.md) | process | Clippy runs in CI; its warnings are errors, with a short list of allowed lints that says why | accepted, amended by ADR 0045 and ADR 0048 |
 | [0018](process/0018-one-agents-md-for-people-and-agents.md) | process | One `AGENTS.md` holds the project's instructions for coding agents; it points to the rules, it does not repeat them | accepted |
 | [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, written down and checked where a tool can | accepted |
-| [0020](process/0020-checks-in-layers-one-command-on-the-host.md) | process | The checks come in layers; one command runs every host layer, the same as CI | accepted, amended by ADR 0032 |
+| [0020](process/0020-checks-in-layers-one-command-on-the-host.md) | process | The checks come in layers; one command runs every host layer, the same as CI | accepted, amended by ADR 0032 and ADR 0071 |
 | [0021](process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md) | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | superseded by ADR 0033 |
 | [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted |
 | [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
@@ -62,8 +62,8 @@ A decision that touches two categories goes where its consequences are largest a
 | [0037](process/0037-numbers-that-only-go-down.md) | process | Numbers that only go down: large files, switched-off lints, `unsafe` | accepted |
 | [0038](process/0038-auto-merge-for-the-maintainer-and-the-bots.md) | process | A pull request of the maintainer or of a bot we set up is merged by itself when three questions are answered | accepted, amended by ADR 0039, ADR 0041 and ADR 0042 |
 | [0039](process/0039-one-development-agent-with-its-own-identity-merges-under-the-checks.md) | process | One development agent, with an identity of its own, opens and merges pull requests under the checks | accepted |
-| [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted |
-| [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted |
+| [0040](process/0040-ci-runs-what-a-change-can-reach-and-tests-run-optimised.md) | process | CI runs the parts a change can reach, and the tests run optimised | accepted, amended by ADR 0071 |
+| [0041](process/0041-equal-programs-for-the-scope-need-no-run-on-a-unit.md) | process | A change that leaves the programs for the scope byte-identical needs no run on a unit | accepted, amended by ADR 0068 |
 | [0042](process/0042-a-refactoring-the-comparison-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring of register-sequence code that the comparison found equal needs no run on a unit | accepted, amended by ADR 0052 |
 | [0043](code/0043-one-declaration-per-setting.md) | code | A setting is one row of a table, from which the setup file, SCPI, the menu and the docs follow | accepted |
 | [0044](code/0044-settings-table-real-numbers-and-row-steps.md) | code | The settings table holds the real numbers of the analyser pages, and a row may step in its own way | accepted |
@@ -80,13 +80,19 @@ A decision that touches two categories goes where its consequences are largest a
 | [0057](system/0057-bluetooth-input-through-bluez.md) | system | Bluetooth mice and keyboards through BlueZ on a system bus of their own | accepted |
 | [0058](code/0058-a-protocol-decoder-is-described-and-run-in-oos-dsp-and-shown-in-oos-ui.md) | code | A protocol decoder is described and run in oos-dsp and shown in oos-ui | accepted |
 | [0059](code/0059-batch-is-the-only-draw-path.md) | code | Batch is the only draw path | accepted |
-| [0060](code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md) | code | A menu page is declared once, in a table of pages; a new page is one file and one line | proposed |
-| [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | proposed |
-| [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | proposed |
-| [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries | proposed |
+| [0060](code/0060-a-menu-page-is-declared-once-in-a-table-of-pages.md) | code | A menu page is declared once, in a table of pages; a new page is one file and one line | accepted |
+| [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | accepted |
+| [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | accepted |
+| [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries | accepted |
 | [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first | accepted |
 | [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | accepted |
 | [0066](code/0066-the-network-services-stay-in-the-frame-loop-and-do-not-wait-for-their-clients.md) | code | The network services stay in the frame loop, and they do not wait for their clients | proposed |
+| [0067](hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md) | hardware | A board family is a module behind `Target` and `Board`, with an image of its own, and drives hardware once the maintainer calls it ready | proposed |
+| [0068](process/0068-the-comparison-of-the-programs-leaves-out-panic-places-and-symbol-names.md) | process | The comparison of the programs for the scope leaves out the places of their panics and their symbol names | accepted |
+| [0069](process/0069-unit-tested-holds-for-the-commits-it-was-given-for.md) | process | `unit-tested` holds for the commits it was given for | accepted |
+| [0070](process/0070-the-agent-switches-the-bench-units-power-through-an-outlet.md) | process | The agent switches the bench unit's power through an outlet, and runs the boot class itself | proposed |
+| [0071](code/0071-every-decoder-is-built-in-and-left-out-at-run-time.md) | code | Every decoder is built into oos-ui; System > Features leaves decoders out at run time | proposed |
+| [0072](process/0072-the-tests-inside-the-hardware-paths-need-no-run-on-a-unit.md) | process | The tests inside the hardware paths need no run on a unit | accepted |
 <!-- end of the index -->
 
 ## Reading order for agents

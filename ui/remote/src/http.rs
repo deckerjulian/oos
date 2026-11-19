@@ -3,7 +3,7 @@
 
 //! Web remote (HTTP, port 8080): live screen in the browser, clicks act as touch taps, buttons for keys and knobs.
 //!   GET /             page            GET /screen.png   current screen (PNG, 60 to 175 KB; the page's live view and saving;
-//!                                     made off the frame loop, with an ETag: If-None-Match gets 304; see `Shots`)
+//!                                     made off the frame loop, with an ETag: If-None-Match gets 304; see shots.rs)
 //!   GET /screen.bmp   current screen (24-bit BMP, 1.8 MB; the page can show this instead)
 //!   GET /screen.jpg   the live picture as JPEG from the VPU (`vpu.rs`; PNG where there is none), as /screen.png
 //!   GET /wave.csv, /la.csv   the last record, as Storage > CSV writes it
@@ -20,19 +20,51 @@
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
-use crate::gfx::Canvas;
-use crate::ui::Ui;
-use std::io::Write;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+/// What the web server asks of the program it serves (oos-ui: `site::Ctx`, the screen for one pass of its frame
+/// loop). The server reads the requests, keeps the limits and sends the answers; the pages, the pictures, the uploads
+/// and the routes of the screen are the program's.
+pub trait Site {
+    /// The traces of an uploaded waveform file, read on a thread of the server.
+    type Upload: Send + 'static;
+    /// The longest waveform file `POST /waveform` takes.
+    const MAX_WAVEFORM: usize;
+    /// Every pass, before the requests (the live picture's turn).
+    fn pass(&mut self);
+    /// `GET /screen.png` or `/screen.jpg` on `s` (`have`: the ETag of If-None-Match): the program answers it, now or
+    /// later.
+    fn picture(&mut self, s: &TcpStream, have: Option<String>, jpeg: bool);
+    /// Whether `GET /cmd` may run the text command `line`.
+    fn remote_ok(&self, line: &str) -> bool;
+    /// The answer of a route of the program: (content type, body, whether the body is the reason it failed and not
+    /// the data asked for); None for a route that is none of its. An empty content type is 202 with no body.
+    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)>;
+    /// What `GET /update` shows: the state of the update and the result of the last upload.
+    fn update_state(&mut self) -> (String, String);
+    /// The session of the screen: an upload that started in another one is not taken.
+    fn waveform_epoch(&self) -> u64;
+    /// Reads an uploaded waveform file (on the server's thread for it, not the frame loop).
+    fn parse_upload(file: &[u8], name: &str) -> Result<Self::Upload, String>;
+    /// Puts the traces of an upload into reference slot `slot` (R1 is 0) when the session is still the one of `epoch`:
+    /// (taken, the text for the page).
+    fn take_upload(
+        &mut self,
+        parsed: Result<Self::Upload, String>,
+        name: &str,
+        slot: usize,
+        epoch: u64,
+    ) -> (bool, String);
+}
 
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
-const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
 const MAX_OTHER: usize = 1 << 20;
 /// Open connections at once (more are closed at accept).
 const MAX_PENDING: usize = 8;
+/// Answers waiting for their clients (`Http::sending`); one more closes its connection unanswered.
+const MAX_SENDING: usize = 8;
 /// A body above this (an update package, a waveform) is taken one at a time: a second one is answered 503 when its
 /// head is in, so the requests waiting hold at most one large body and `MAX_PENDING` small ones.
 const LARGE_BODY: usize = MAX_OTHER;
@@ -42,34 +74,7 @@ const DEADLINE_S: u64 = 120;
 /// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
 /// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
 /// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
-const SEND_INLINE: usize = 48 << 10;
-/// At most this many at once; more are answered 503, and the page tries again.
-const MAX_SENDERS: usize = 2;
-const SEND_TIMEOUT_S: u64 = 30;
-static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// A large answer in the background. False when too many run already, or no thread could be started.
-fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static) -> bool {
-    use std::sync::atomic::Ordering::SeqCst;
-    let Ok(mut c) = s.try_clone() else { return false };
-    if SENDERS.fetch_add(1, SeqCst) >= MAX_SENDERS {
-        SENDERS.fetch_sub(1, SeqCst);
-        return false;
-    }
-    let t = std::thread::Builder::new().name("web-send".into()).spawn(move || {
-        lower_priority();
-        let _ = c.set_write_timeout(Some(Duration::from_secs(SEND_TIMEOUT_S)));
-        let _ = c.write_all(head.as_bytes());
-        let _ = c.write_all(body.as_ref());
-        SENDERS.fetch_sub(1, SeqCst);
-    });
-    if t.is_err() {
-        SENDERS.fetch_sub(1, SeqCst);
-        return false;
-    }
-    true
-}
-
+pub const SEND_INLINE: usize = 48 << 10;
 /// Which instrument addresses the identification page lists. The default is the scope: VXI-11 and the SCPI socket.
 #[derive(Clone, Debug)]
 pub struct Offer {
@@ -81,352 +86,6 @@ pub struct Offer {
 impl Default for Offer {
     fn default() -> Offer {
         Offer { scpi_port: Some(5555), vxi11: true, hislip_port: None }
-    }
-}
-
-fn busy_answer(s: &TcpStream) {
-    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-    let msg = "busy, try again";
-    let _ = (&*s).write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", msg.len(), msg).as_bytes());
-}
-
-/// Nice value of the threads of the web remote (Linux; a thread's own value), where `SCHED_IDLE` is not to be had.
-const WEB_NICE: i32 = 10;
-
-/// The threads of the web remote (encoder, senders) run only on what the scope leaves over: scheduling class
-/// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC
-/// (RK3399: the four A53; the frame loop keeps the two A72 for itself). Nice 10 where that fails.
-fn lower_priority() {
-    // not in the tests: with every core busy with tests in parallel (CI), a thread at SCHED_IDLE got no time for
-    // seconds, and a viewer waiting for a picture got 304 or 503 instead
-    #[cfg(target_os = "linux")]
-    if !cfg!(test) {
-        let tid = crate::system::idle_current_thread(WEB_NICE);
-        let _ = crate::system::pin_thread(tid, &crate::placement::little_cores());
-    }
-}
-
-/// The fastest the live picture is made: 20 a second.
-const SHOT_MIN: Duration = Duration::from_millis(50);
-/// The encoder's share of its core at most (half of a slow core, which is idle otherwise): the time between two copies
-/// is at least this many times the last encode.
-const SHOT_DUTY: u32 = 2;
-/// While the screen stands still, it is looked at again only this often.
-const SHOT_STILL: Duration = Duration::from_millis(200);
-/// After a request, pictures are made ahead for this long (a viewer that left costs no more than this).
-const SHOT_AHEAD: Duration = Duration::from_secs(1);
-/// A viewer that has the newest picture waits this long for the next one (long poll), then gets 304.
-const LONG_POLL: Duration = if cfg!(test) { Duration::from_millis(1000) } else { Duration::from_secs(2) };
-/// A picture from a copy at most this old goes out at once to a viewer that does not have it; else a fresh copy first.
-const SHOT_FRESH: Duration = Duration::from_millis(300);
-/// Connections waiting for a picture at most (more are answered 503).
-const SHOT_WAITING: usize = 8;
-/// After the VPU failed, JPEG is tried again this much later (PNG meanwhile).
-const VPU_RETRY: Duration = Duration::from_secs(60);
-
-/// The live picture of the web remote.
-///
-/// A viewer asks with the ETag of the picture it has (If-None-Match). Has it an older one, or none, it gets the newest
-/// at once. Has it the newest, the request waits (long poll) until the screen has changed and a new picture is made,
-/// at most `LONG_POLL`, then 304. So every new picture reaches the page without delay, and nothing is asked for in
-/// vain.
-///
-/// The frame loop only copies the screen (2.4 MB), and only while somebody waits, and not more often than the encoder
-/// can keep up with on a third of a slow core (`SHOT_DUTY`), at most 20 times a second. The encoder thread compares the
-/// copy with the last picture, makes a PNG only of a changed screen and hands it to the waiting viewers; it and the
-/// senders get only the time the scope leaves over (`lower_priority`). The PNG used to be made in the frame loop:
-/// one viewer at 15 pictures a second took the scope's screen from 27 to 16 frames a second.
-pub struct Shots {
-    st: Mutex<ShotState>,
-    wake: Condvar,
-}
-
-#[derive(Default)]
-struct ShotState {
-    /// a copy of the screen for the encoder: width, height, pixels
-    next: Option<(u32, u32, Vec<u32>)>,
-    /// the encoder works on a copy
-    busy: bool,
-    /// connections waiting for a picture newer than the ETag they have, since when, and in which format (JPEG; PNG
-    /// once the VPU failed)
-    waiting: Vec<(TcpStream, Option<String>, Instant, bool)>,
-    /// the last picture: its pixels (taken out by the encoder while it compares), size, PNG, ETag
-    px: Vec<u32>,
-    size: (u32, u32),
-    png: Option<Arc<[u8]>>,
-    tag: String,
-    /// when the last copy was taken, and the time to wait after it before the next
-    at: Option<Instant>,
-    /// the last request for the live picture: while it is recent, the next picture is made ahead of the next request
-    asked: Option<Instant>,
-    gap: Duration,
-    /// pixel buffer for the next copy
-    spare: Vec<u32>,
-    /// PNGs made so far
-    encodes: u64,
-    /// the live picture as JPEG from the VPU (`/screen.jpg`, `vpu.rs`) rather than PNG: as the last request asked;
-    /// the format of `png`; the VPU failed (PNG until `no_jpeg_at` + `VPU_RETRY`)
-    jpeg: bool,
-    pic_jpeg: bool,
-    no_jpeg: bool,
-    /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
-    no_jpeg_at: Option<Instant>,
-    /// tests: a long poll other than `LONG_POLL`
-    #[cfg(test)]
-    long_poll: Option<Duration>,
-    /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
-    frames: bool,
-    thread: bool,
-    quit: bool,
-}
-
-impl Shots {
-    fn new() -> Arc<Shots> {
-        Arc::new(Shots { st: Default::default(), wake: Default::default() })
-    }
-
-    fn lock(&self) -> MutexGuard<'_, ShotState> {
-        self.st.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// The answer to one `GET /screen.png` (`have`: the ETag of If-None-Match); the frame loop never encodes here.
-    fn request(self: &Arc<Self>, s: &TcpStream, have: Option<String>, cv: &Canvas, jpeg: bool) {
-        let mut st = self.lock();
-        st.asked = Some(Instant::now());
-        if st.no_jpeg && st.no_jpeg_at.is_some_and(|t| t.elapsed() >= VPU_RETRY) {
-            st.no_jpeg = false;
-        }
-        st.jpeg = jpeg && !st.no_jpeg;
-        // an older picture or none: the newest at once, when it is fresh (a screenshot must not be an old one) and in
-        // the format asked for
-        let fresh =
-            st.at.is_some_and(|t| t.elapsed() < SHOT_FRESH) && !st.busy && st.next.is_none() && st.pic_jpeg == st.jpeg;
-        if let Some(png) = st
-            .png
-            .clone()
-            .filter(|_| fresh && have.as_deref() != Some(st.tag.as_str()) && st.size == (cv.w as u32, cv.h as u32))
-        {
-            let tag = st.tag.clone();
-            drop(st);
-            return answer_shot(s, have.as_deref(), png, &tag);
-        }
-        if st.waiting.len() >= SHOT_WAITING {
-            drop(st);
-            return busy_answer(s);
-        }
-        if !st.thread {
-            let me = self.clone();
-            if std::thread::Builder::new().name("web-png".into()).spawn(move || me.encoder()).is_err() {
-                // no thread: the old way, in the frame loop
-                drop(st);
-                return answer_shot(s, None, crate::gfx::png::png_of(cv).into(), "");
-            }
-            st.thread = true;
-        }
-        let Ok(c) = s.try_clone() else { return };
-        let want = st.jpeg;
-        st.waiting.push((c, have, Instant::now(), want));
-        drop(st);
-        self.tick(cv);
-    }
-
-    /// Every frame: a copy for the encoder when the time has come and somebody waits, or asked within `SHOT_AHEAD` (the
-    /// picture is then ready when the viewer's next request comes); 304 to whoever waited too long.
-    fn tick(&self, cv: &Canvas) {
-        let mut st = self.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
-        if st.waiting.is_empty() && !watched {
-            return;
-        }
-        let now = Instant::now();
-        #[cfg(test)]
-        let long_poll = st.long_poll.unwrap_or(LONG_POLL);
-        #[cfg(not(test))]
-        let long_poll = LONG_POLL;
-        let (old, keep): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
-        st.waiting = keep;
-        if !old.is_empty() {
-            let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
-            let fit = |w: bool| Self::fits(w, st.pic_jpeg, st.no_jpeg);
-            let fits: Vec<bool> = old.iter().map(|w| fit(w.3)).collect();
-            drop(st);
-            for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
-                // the last picture in the format asked for, else "busy" (the page asks again)
-                if ok {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
-                } else {
-                    busy_answer(&c);
-                }
-            }
-            st = self.lock();
-        }
-        if !st.frames && Self::wanted(&st, now, watched) {
-            Self::give_copy(&mut st, cv, now);
-            self.wake.notify_one();
-        }
-    }
-
-    /// A copy of the screen for the encoder (the caller wakes it).
-    fn give_copy(st: &mut ShotState, cv: &Canvas, now: Instant) {
-        let mut px = std::mem::take(&mut st.spare);
-        px.clear();
-        px.extend_from_slice(&cv.px);
-        st.next = Some((cv.w as u32, cv.h as u32, px));
-        st.at = Some(now);
-    }
-
-    /// A picture in JPEG (`pic_jpeg`) or PNG answers a request for `want_jpeg`: the same format, or PNG for JPEG once
-    /// the VPU failed. A screenshot asked for as PNG must never get JPEG bytes (it is saved as .png).
-    fn fits(want_jpeg: bool, pic_jpeg: bool, no_jpeg: bool) -> bool {
-        want_jpeg == pic_jpeg || (want_jpeg && no_jpeg && !pic_jpeg)
-    }
-
-    /// Whether the encoder should get the screen now.
-    fn wanted(st: &ShotState, now: Instant, watched: bool) -> bool {
-        (!st.waiting.is_empty() || watched) && !st.busy && st.next.is_none() && st.at.is_none_or(|t| now - t >= st.gap)
-    }
-
-    /// Right before the frame loop renders the next screen (which clears and draws all of it): the shown screen goes to
-    /// the encoder by swapping buffers, no copy. A copy of 2.4 MB in the frame loop pushed everything else of the frame
-    /// out of the fast core's cache and made the whole frame about 10 % slower. `whole`: the next render draws every
-    /// pixel (not the start-up screen); else nothing is swapped and `tick` copies.
-    fn hand_over(&self, cv: &mut Canvas, whole: bool) {
-        let mut st = self.lock();
-        st.frames = whole;
-        let now = Instant::now();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
-        if !whole || !Self::wanted(&st, now, watched) {
-            return;
-        }
-        let mut px = std::mem::take(&mut st.spare);
-        px.resize(cv.px.len(), 0);
-        std::mem::swap(&mut px, &mut cv.px);
-        st.next = Some((cv.w as u32, cv.h as u32, px));
-        st.at = Some(now);
-        self.wake.notify_one();
-    }
-
-    fn encoder(&self) {
-        lower_priority();
-        let mut vpu: Option<crate::vpu::JpegEnc> = None;
-        let mut vpu_size = (0, 0);
-        let boot = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as u64 & 0xffff_ffff);
-        loop {
-            let mut st = self.lock();
-            while st.next.is_none() && !st.quit {
-                st = self.wake.wait(st).unwrap_or_else(|e| e.into_inner());
-            }
-            if st.quit {
-                return;
-            }
-            let Some((w, h, px)) = st.next.take() else { continue };
-            st.busy = true;
-            let last = std::mem::take(&mut st.px);
-            // the format of the oldest request waiting (one viewer may ask for JPEG, another for a PNG screenshot)
-            let jpeg = st.waiting.first().map_or(st.jpeg, |w| w.3) && !st.no_jpeg;
-            let known = st.png.is_some() && st.size == (w, h) && st.pic_jpeg == jpeg;
-            drop(st);
-            // the comparison and the encoding without the lock: the frame loop may ask meanwhile
-            let t0 = Instant::now();
-            let mut vpu_failed = false;
-            let png: Option<Arc<[u8]>> = (!known || !same_pixels(&last, &px)).then(|| {
-                if jpeg {
-                    if vpu_size != (w, h) {
-                        vpu = None;
-                    }
-                    if vpu.is_none() {
-                        match crate::vpu::JpegEnc::open(w as usize, h as usize) {
-                            Ok(e) => {
-                                eprintln!("oos-ui: JPEG encoder: VPU, {} in", e.input());
-                                (vpu, vpu_size) = (Some(e), (w, h));
-                            }
-                            Err(e) => eprintln!("oos-ui: JPEG encoder: {}", e),
-                        }
-                    }
-                    match vpu.as_mut().map(|e| e.encode(&px)) {
-                        Some(Ok(j)) => return j.into(),
-                        Some(Err(e)) => eprintln!("oos-ui: JPEG encoder: {}", e),
-                        None => {}
-                    }
-                    (vpu, vpu_failed) = (None, true);
-                }
-                crate::gfx::png::png(w, h, &px).into()
-            });
-            let took = t0.elapsed();
-            let mut st = self.lock();
-            st.busy = false;
-            if vpu_failed {
-                (st.no_jpeg, st.jpeg, st.no_jpeg_at) = (true, false, Some(Instant::now()));
-            }
-            let Some(png) = png else {
-                // the same screen: who has an older picture gets this one, who has it waits on; the next look later
-                st.gap = SHOT_STILL.max(took * SHOT_DUTY);
-                st.px = last;
-                st.spare = px;
-                let tag = st.tag.clone();
-                let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
-                let (lack, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut st.waiting)
-                    .into_iter()
-                    .partition(|w| w.1.as_deref() != Some(tag.as_str()) && Self::fits(w.3, pj, nj));
-                st.waiting = keep;
-                let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
-                drop(st);
-                for (c, have, _, _) in lack {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
-                }
-                continue;
-            };
-            st.gap = SHOT_MIN.max(took * SHOT_DUTY);
-            st.encodes += 1;
-            st.tag = format!("\"{:x}-{}\"", boot, st.encodes);
-            st.pic_jpeg = png.starts_with(&[0xff, 0xd8]);
-            st.png = Some(png.clone());
-            st.size = (w, h);
-            st.px = px;
-            st.spare = last;
-            // who asked for the other format waits for the next picture, made in that format
-            let (pj, nj) = (st.pic_jpeg, st.no_jpeg);
-            let (waiting, other): (Vec<_>, Vec<_>) =
-                std::mem::take(&mut st.waiting).into_iter().partition(|w| Self::fits(w.3, pj, nj));
-            st.waiting = other;
-            let tag = st.tag.clone();
-            drop(st);
-            for (c, have, _, _) in waiting {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag);
-            }
-        }
-    }
-}
-
-/// Whether two screens are the same, eight bytes at a step. `==` on the slices ends in musl's memcmp, which goes byte
-/// by byte: 12 ms for a screen on an A53, against about 1 ms here.
-pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
-    // 32 bytes at a time with an OR of the differences: no early exit per word, which lets the compiler use vectors
-    ca.iter().zip(cb).all(|(x, y)| x.iter().zip(y).fold(0u32, |d, (p, q)| d | (p ^ q)) == 0) && ra == rb
-}
-
-/// 304 when the viewer has this picture, else the PNG through a sender thread (503 when all are busy).
-fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
-    let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
-    if !tag.is_empty() && have == Some(tag) {
-        let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-        let _ = (&*s).write_all(
-            format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag)
-                .as_bytes(),
-        );
-        return;
-    }
-    let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
-    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag);
-    if !send_in_background(s, head, png) {
-        busy_answer(s);
     }
 }
 
@@ -447,78 +106,61 @@ struct Pending {
 /// A waveform upload (`POST /waveform`) parsed on a thread of its own: a file
 /// near the 128 MiB limit takes seconds to parse, which on the frame loop stopped the scope's screen and keys. The
 /// frame loop puts the traces into the slot (`Ui::commit_waveform_traces_at`) and answers the client, which waits.
-struct WaveJob {
+struct WaveJob<U> {
     s: TcpStream,
     name: String,
     /// R1 is 0
     slot: usize,
     /// `Ui::waveform_epoch` at the upload: a session changed meanwhile does not get the late file
     epoch: u64,
-    parsed: std::sync::mpsc::Receiver<Result<Vec<crate::store::WaveTrace>, String>>,
+    parsed: std::sync::mpsc::Receiver<Result<U, String>>,
 }
 
-impl WaveJob {
+impl<U: Send + 'static> WaveJob<U> {
     /// Starts parsing `req[body..]`; None when no thread could be started.
-    fn start(s: TcpStream, req: Vec<u8>, body: usize, name: String, slot: usize, epoch: u64) -> Option<WaveJob> {
+    fn start(
+        s: TcpStream,
+        req: Vec<u8>,
+        body: usize,
+        name: String,
+        slot: usize,
+        epoch: u64,
+        parse: fn(&[u8], &str) -> Result<U, String>,
+    ) -> Option<WaveJob<U>> {
         let (tx, parsed) = std::sync::mpsc::channel();
         let file = name.clone();
         std::thread::Builder::new()
             .name("web-wave".into())
             .spawn(move || {
-                lower_priority();
-                let _ = tx.send(crate::store::parse_wave(&req[body..], &file));
+                oos_system::system::lower_priority();
+                let _ = tx.send(parse(&req[body..], &file));
             })
             .ok()?;
         Some(WaveJob { s, name, slot, epoch, parsed })
     }
 
     /// The answer once the parse is done: the traces in the slot, or why not. None while it runs.
-    fn finish(&self, ui: &mut Ui) -> Option<(bool, String)> {
+    fn finish<S: Site<Upload = U>>(&self, site: &mut S) -> Option<(bool, String)> {
         let parsed = match self.parsed.try_recv() {
             Ok(parsed) => parsed,
             Err(std::sync::mpsc::TryRecvError::Empty) => return None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The waveform reader stopped; try again.".into()),
         };
-        let previous = ui.ref_slot();
-        let result = if ui.waveform_epoch() != self.epoch {
-            Err("The session changed while the file was read; load it again.".to_string())
-        } else {
-            parsed.and_then(|traces| ui.commit_waveform_traces_at(traces, &self.name, self.slot))
-        };
-        Some(match result {
-            Ok(()) => {
-                let hint = if ui.record_mode() {
-                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
-                } else {
-                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
-                };
-                (true, format!("Loaded {} into R{}. {}", self.name, ui.ref_slot() + 1, hint))
-            }
-            Err(error) => {
-                ui.ref_slot_set(previous);
-                (false, error)
-            }
-        })
+        Some(site.take_upload(parsed, &self.name, self.slot, self.epoch))
     }
 }
 
-pub struct Http {
+pub struct Http<U> {
     l: Option<TcpListener>,
     pending: Vec<Pending>,
     /// the waveform upload being parsed
-    wave: Option<WaveJob>,
-    shots: Arc<Shots>,
+    wave: Option<WaveJob<U>>,
+    /// answers the client has not taken yet, written as it takes them (ADR 0066); the connection closes after
+    sending: Vec<(TcpStream, oos_system::net::Outbox)>,
     /// who may install an update or use MCP (empty: everyone); checked per request, so a change counts at once
-    pub acl: crate::netacl::Shared,
+    pub acl: oos_system::netacl::Shared,
     /// the addresses the identification page names
     offer: Offer,
-}
-
-impl Drop for Http {
-    fn drop(&mut self) {
-        self.shots.lock().quit = true;
-        self.shots.wake.notify_all();
-    }
 }
 
 /// The web page /update: the state of `Ui::update_state` and an upload form.
@@ -557,7 +199,7 @@ select{background:#242a33;color:#e4e7ea;border:1px solid #3a424d;border-radius:6
 pre{background:#0d0f13;border:1px solid #2a3038;border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap}
 code{font:13px ui-monospace,Menlo,Consolas,monospace}"#;
 
-const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS remote</title>
+pub const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS remote</title>
 <link rel="stylesheet" href="/style.css">
 <style>img{display:block;width:100%;height:auto;border:1px solid #3a424d;border-radius:6px;cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
 .g{display:flex;flex-wrap:wrap;gap:12px 22px;margin-top:12px}.k span{display:block;font-size:12px;color:#9aa4af;margin-bottom:3px}.k div{display:flex;flex-wrap:wrap;gap:4px}
@@ -683,14 +325,14 @@ fn waveform_name(query: &str) -> String {
     }
 }
 
-impl Http {
-    pub fn open(port: u16) -> Http {
+impl<U: Send + 'static> Http<U> {
+    pub fn open(port: u16) -> Http<U> {
         Http {
             l: Self::bind(port),
             pending: Vec::new(),
             wave: None,
-            shots: Shots::new(),
-            acl: crate::netacl::Shared::default(),
+            sending: Vec::new(),
+            acl: oos_system::netacl::Shared::default(),
             offer: Offer::default(),
         }
     }
@@ -705,7 +347,7 @@ impl Http {
 
     /// `bind` without the message when the port is taken.
     fn bind_quietly(port: u16) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port);
+        let l = oos_system::net6::tcp(port);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
             eprintln!(
@@ -746,46 +388,17 @@ impl Http {
                     eprintln!("oos-ui: web remote off");
                 }
                 self.pending.clear();
+                self.sending.clear();
             }
         }
     }
 
-    /// Call right before rendering the next screen: hands the shown one to the live picture (`Shots::hand_over`).
-    /// `whole`: the render draws every pixel.
-    pub fn before_render(&mut self, cv: &mut Canvas, whole: bool) {
-        self.shots.hand_over(cv, whole);
-    }
-
-    /// System > Graphics = GPU: the frame loop hands over the pictures that come back from the GPU
-    /// (`picture_read_back`), `tick` copies none and nothing is swapped. `cv` holds the last picture read back, not
-    /// one drawn every frame: a buffer swapped out of it would stay in it, an older picture, until the next read.
-    pub fn before_gpu_frame(&mut self) {
-        self.shots.lock().frames = true;
-    }
-
-    /// System > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
-    pub fn picture_read_back(&self, cv: &Canvas) {
-        let mut st = self.shots.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
-        let now = Instant::now();
-        if Shots::wanted(&st, now, watched) {
-            Shots::give_copy(&mut st, cv, now);
-            self.shots.wake.notify_one();
-        }
-    }
-
-    /// The live picture would take the next screen (System > Graphics = GPU: read it back for it).
-    pub fn picture_wanted(&self) -> bool {
-        let st = self.shots.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
-        Shots::wanted(&st, Instant::now(), watched)
-    }
-
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
-    pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
+    pub fn poll<S: Site<Upload = U>>(&mut self, site: &mut S) -> Vec<String> {
         let mut cmds = Vec::new();
-        self.shots.tick(cv);
-        self.finish_wave(ui);
+        self.sending.retain_mut(|(s, out)| out.flush(s) == oos_system::net::Sent::Later);
+        site.pass();
+        self.finish_wave(site);
         self.accept_new();
         let mut i = 0;
         while i < self.pending.len() {
@@ -802,6 +415,8 @@ impl Http {
             let mut too_big = false;
             // answered when the head is in, before any of the body is kept: 403 refused, 503 busy
             let mut early = None;
+            // what goes back before the connection closes
+            let mut last = None;
             let complete = hdr_end.is_some_and(|e| {
                 let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
                 let n = h
@@ -814,7 +429,7 @@ impl Http {
                 let limit = if first.starts_with("post ") && upload_path == "/update" {
                     MAX_UPDATE
                 } else if first.starts_with("post ") && upload_path == "/waveform" {
-                    MAX_WAVEFORM
+                    S::MAX_WAVEFORM
                 } else {
                     MAX_OTHER
                 };
@@ -844,18 +459,15 @@ impl Http {
                     Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}",
                     msg.len()
                 );
-                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-                let _ = s.write_all(head.as_bytes());
+                last = Some(head.into_bytes());
                 dead = true;
             } else if too_big {
-                let msg = b"request too large";
-                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", msg.len());
-                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-                let _ = s.write_all(head.as_bytes());
-                let _ = s.write_all(msg);
+                let msg = "request too large";
+                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len());
+                last = Some(head.into_bytes());
                 dead = true;
             } else if complete {
-                if !self.answer(i, hdr_end, ui, cv, scpi, &mut cmds) {
+                if !self.answer(i, hdr_end, site, &mut cmds) {
                     continue;
                 }
                 dead = true;
@@ -863,7 +475,10 @@ impl Http {
                 dead = true;
             }
             if dead {
-                self.pending.remove(i);
+                let p = self.pending.remove(i);
+                if let Some(bytes) = last {
+                    self.send(p.s, bytes);
+                }
             } else {
                 i += 1;
             }
@@ -872,18 +487,31 @@ impl Http {
     }
 
     /// Answers the waveform upload whose parsing has finished.
-    fn finish_wave(&mut self, ui: &mut Ui) {
-        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(ui)) {
-            let mut job = self.wave.take().unwrap();
+    fn finish_wave<S: Site<Upload = U>>(&mut self, site: &mut S) {
+        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(site)) {
+            let job = self.wave.take().unwrap();
             let status = if ok { "200 OK" } else { "409 Conflict" };
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
-                Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                Cache-Control: no-store\r\nConnection: close\r\n\r\n{text}",
                 text.len()
             );
-            let _ = job.s.set_write_timeout(Some(Duration::from_secs(2)));
-            let _ = job.s.write_all(head.as_bytes());
-            let _ = job.s.write_all(text.as_bytes());
+            self.send(job.s, head.into_bytes());
+        }
+    }
+
+    /// Writes `bytes` to `s` as far as it takes them now; the rest goes out on the next passes (`sending`), and the
+    /// connection closes when all is out, or when the client takes nothing for `net::SEND_STALL` or has not taken all
+    /// after `net::SEND_LIMIT`. While `MAX_SENDING` answers already wait, it closes unanswered: no byte of an answer
+    /// that could not be finished.
+    fn send(&mut self, s: TcpStream, bytes: Vec<u8>) {
+        if self.sending.len() >= MAX_SENDING {
+            return;
+        }
+        let mut out = oos_system::net::Outbox::default();
+        out.push(&bytes);
+        if out.flush(&s) == oos_system::net::Sent::Later {
+            self.sending.push((s, out));
         }
     }
 
@@ -902,13 +530,11 @@ impl Http {
     }
 
     /// Answers the complete request of connection `i`; false when the connection was handed on and is gone.
-    fn answer(
+    fn answer<S: Site<Upload = U>>(
         &mut self,
         i: usize,
         hdr_end: Option<usize>,
-        ui: &mut Ui,
-        cv: &Canvas,
-        scpi: &mut crate::scpi::Scpi,
+        site: &mut S,
         cmds: &mut Vec<String>,
     ) -> bool {
         let Pending { s, req, .. } = &mut self.pending[i];
@@ -922,19 +548,11 @@ impl Http {
         let peer_ok = self.acl.permits_peer(s.peer_addr());
         // an answer that is text for the page to show, not the data asked for
         let mut failed = false;
-        let mut csv = |r: Result<String, String>| match r {
-            Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
-            Err(e) => {
-                failed = true;
-                ("text/plain", e.into_bytes())
-            }
-        };
         let (ctype, body): (&str, Vec<u8>) = match route {
             _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
             "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
             "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
             "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
-            "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
             "/waveform" if post => {
                 let slot = query
                     .split('&')
@@ -946,44 +564,31 @@ impl Http {
                         ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
                     }
                     Some(slot) => {
-                        self.waveform_take(i, slot, query, hdr_end, ui);
+                        self.waveform_take(i, slot, query, hdr_end, site);
                         return false;
                     }
                 }
             }
             "/screen.png" | "/screen.jpg" => {
                 let have = header(&text, "if-none-match").map(str::to_string);
-                self.shots.request(s, have, cv, route == "/screen.jpg");
+                site.picture(s, have, route == "/screen.jpg");
                 self.pending.remove(i);
                 return false;
             }
-            // the scope's local time for the names of the page's downloads; empty while its clock is not set
-            "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
-            "/wave.csv" => csv(ui.web_wave_csv()),
-            "/la.csv" => csv(ui.web_la_csv()),
-            "/wave.bin" => match ui.web_wave_bin() {
-                Ok(b) => ("application/octet-stream", b),
-                Err(e) => {
-                    failed = true;
-                    ("text/plain", e.into_bytes())
-                }
-            },
-            "/update" if post => match ui.update_upload(req_body) {
-                Ok(m) => ("text/plain", m.into_bytes()),
-                Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
-            },
-            "/update" => ("text/html; charset=utf-8", {
-                let (status, last) = ui.update_state();
-                update_page(&status, last).into_bytes()
+            "/update" if !post => ("text/html; charset=utf-8", {
+                let (status, last) = site.update_state();
+                update_page(&status, &last).into_bytes()
             }),
             "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
-            "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
-                Some(r) => ("application/json", r.into_bytes()),
-                None => ("", Vec::new()),
+            // what the screen answers: its state, the last record, an update package, MCP
+            "/cmd" => remote_cmds(query, cmds, site),
+            _ => match site.answer(route, post, req_body) {
+                Some((ctype, body, bad)) => {
+                    failed = bad;
+                    (ctype, body)
+                }
+                None => ("text/plain", b"not found".to_vec()),
             },
-            "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
-            "/cmd" => remote_cmds(query, cmds),
-            _ => ("text/plain", b"not found".to_vec()),
         };
         let status = if failed {
             "409 Conflict"
@@ -998,29 +603,37 @@ impl Http {
         };
         let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
         if body.len() > SEND_INLINE {
-            if !send_in_background(s, head, body) {
-                busy_answer(s);
+            if !oos_system::net::send_in_background(s, head, body) {
+                oos_system::net::busy_answer(s);
             }
-        } else {
-            let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-            let _ = s.write_all(head.as_bytes());
-            let _ = s.write_all(&body);
+            return true;
         }
-        true
+        let mut bytes = head.into_bytes();
+        bytes.extend_from_slice(&body);
+        let p = self.pending.remove(i);
+        self.send(p.s, bytes);
+        false
     }
 
     /// POST /waveform to `slot`: the request goes whole to the parser, or is answered busy while one is parsed; the
     /// connection leaves `pending` either way.
-    fn waveform_take(&mut self, i: usize, slot: usize, query: &str, hdr_end: Option<usize>, ui: &mut Ui) {
+    fn waveform_take<S: Site<Upload = U>>(
+        &mut self,
+        i: usize,
+        slot: usize,
+        query: &str,
+        hdr_end: Option<usize>,
+        site: &mut S,
+    ) {
         let Pending { s, req, .. } = &mut self.pending[i];
         if self.wave.is_some() {
-            busy_answer(s);
+            oos_system::net::busy_answer(s);
             self.pending.remove(i);
         } else {
             // the request goes to the parser whole, its body is not copied out
-            let (body, epoch) = (hdr_end.unwrap_or(req.len()), ui.waveform_epoch());
+            let (body, epoch) = (hdr_end.unwrap_or(req.len()), site.waveform_epoch());
             let Pending { s, req, .. } = self.pending.remove(i);
-            match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch) {
+            match WaveJob::start(s, req, body, waveform_name(query), slot - 1, epoch, S::parse_upload) {
                 Some(job) => self.wave = Some(job),
                 None => eprintln!("oos-ui: no thread for a waveform upload"),
             }
@@ -1039,7 +652,7 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
         if room == 0 {
             break;
         }
-        match crate::net::read_now(s, &mut buf[..room]) {
+        match oos_system::net::read_now(s, &mut buf[..room]) {
             Ok(0) => {
                 dead = true;
                 break;
@@ -1049,7 +662,7 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
                 got += n;
                 *t = Instant::now();
             }
-            Err(e) if crate::net::later(&e) => break,
+            Err(e) if oos_system::net::later(&e) => break,
             Err(_) => {
                 dead = true;
                 break;
@@ -1060,12 +673,12 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
 }
 
 /// GET /cmd: the commands `c=` of the query that a remote may give go to `cmds`; "refused" when one may not.
-fn remote_cmds(query: &str, cmds: &mut Vec<String>) -> (&'static str, Vec<u8>) {
+fn remote_cmds<S: Site>(query: &str, cmds: &mut Vec<String>, site: &S) -> (&'static str, Vec<u8>) {
     let mut refused = false;
     for kv in query.split('&') {
         if let Some(v) = kv.strip_prefix("c=") {
             let c = unescape(v);
-            if crate::cmd::remote_ok(&c) {
+            if site.remote_ok(&c) {
                 cmds.push(c);
             } else {
                 refused = true;
@@ -1083,7 +696,7 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-fn lxi_identification(o: &Offer) -> String {
+pub fn lxi_identification(o: &Offer) -> String {
     let mut addrs = String::new();
     if o.vxi11 {
         addrs.push_str("<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>\n");
@@ -1110,83 +723,6 @@ fn lxi_identification(o: &Offer) -> String {
 "#,
         env!("CARGO_PKG_VERSION")
     )
-}
-
-/// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
-pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Option<String> {
-    use crate::json::{parse, J};
-    let err = |id: J, code: f64, msg: &str| {
-        J::obj(&[
-            ("jsonrpc", J::s("2.0")),
-            ("id", id),
-            ("error", J::obj(&[("code", J::Num(code)), ("message", J::s(msg))])),
-        ])
-        .to_string()
-    };
-    let Some(req) = parse(body) else { return Some(err(J::Null, -32700.0, "parse error")) };
-    let id = req.get("id").cloned()?;
-    let method = req.get("method").and_then(J::str).unwrap_or("");
-    let params = req.get("params").cloned().unwrap_or(J::Null);
-    let text = |s: &str| J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(s))])]))]);
-    let result = match method {
-        "initialize" => {
-            let ver = params.get("protocolVersion").and_then(J::str).unwrap_or("2025-06-18").to_string();
-            J::obj(&[
-                ("protocolVersion", J::Str(ver)),
-                ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
-                ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
-            ])
-        }
-        "ping" => J::obj(&[]),
-        "tools/list" => {
-            let schema = |props: J, req: Vec<J>| {
-                J::obj(&[("type", J::s("object")), ("properties", props), ("required", J::Arr(req))])
-            };
-            J::obj(&[(
-                "tools",
-                J::Arr(vec![
-                    J::obj(&[
-                        ("name", J::s("scpi")),
-                        ("description", J::s("Run one SCPI program message on the oscilloscope (commands separated by ';'); returns the response of the queries.")),
-                        ("inputSchema", schema(J::obj(&[("command", J::obj(&[("type", J::s("string"))]))]), vec![J::s("command")])),
-                    ]),
-                    J::obj(&[
-                        ("name", J::s("screenshot")),
-                        ("description", J::s("The current oscilloscope screen as a PNG image.")),
-                        ("inputSchema", schema(J::obj(&[]), vec![])),
-                    ]),
-                ]),
-            )])
-        }
-        "tools/call" => match params.get("name").and_then(J::str) {
-            Some("scpi") => {
-                let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                match scpi.exec_message_checked(ui, cv, c) {
-                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply {
-                        "ok"
-                    } else {
-                        std::str::from_utf8(&r).unwrap_or("(binary response)")
-                    }),
-                    Err(error) => J::obj(&[
-                        ("isError", J::Bool(true)),
-                        ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])])),
-                    ]),
-                }
-            }
-            Some("screenshot") => J::obj(&[(
-                "content",
-                J::Arr(vec![J::obj(&[
-                    ("type", J::s("image")),
-                    ("mimeType", J::s("image/png")),
-                    ("data", J::Str(crate::base64::encode(&crate::gfx::png::png_of(cv)))),
-                ])]),
-            )]),
-            _ => return Some(err(id, -32602.0, "unknown tool")),
-        },
-        _ => return Some(err(id, -32601.0, "method not found")),
-    };
-    Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
 }
 
 /// A request a web page on another site made through the browser of the bench PC, not the page of the scope or a tool:
@@ -1224,6 +760,21 @@ fn foreign(head: &str, route: &str, post: bool) -> bool {
     }
     let page = !post && matches!(route, "/" | "/style.css" | "/update" | "/lxi/identification");
     !page && matches!(header("sec-fetch-site").as_deref(), Some("cross-site" | "same-site"))
+}
+
+/// What the tests of oos-ui see of a server they drive through the screen (ui/src/site/tests.rs).
+#[cfg(feature = "testkit")]
+impl<U> Http<U> {
+    /// A waveform upload is being read.
+    pub fn uploading(&self) -> bool {
+        self.wave.is_some()
+    }
+
+    /// The requests being read: (bytes so far, the whole length once its head is in, the room kept for it, whether its
+    /// body is the one large body).
+    pub fn reading(&self) -> Vec<(usize, Option<usize>, usize, bool)> {
+        self.pending.iter().map(|p| (p.req.len(), p.need, p.req.capacity(), p.large)).collect()
+    }
 }
 
 #[cfg(test)]

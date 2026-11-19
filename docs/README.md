@@ -20,6 +20,8 @@ and in our own words. The code of OOS is written to them
 - [network.md](network.md): Ethernet and a link at 10 Mbit/s, date and time from NTP, time zones, `/oos/system.conf`.
 - [ssh.md](ssh.md): SSH access, trusted keys and how to provision them.
 - [device-testing.md](device-testing.md): testing on a unit: only the tests a change reaches, retries, known failures.
+- [board-on-a-host.md](board-on-a-host.md): the board code on a host against a simulated unit (ADR 0053): what it
+  touches outside the program, the model, the seam, the stages and how far they are.
 - [models.md](models.md): model identity, capabilities, limits, overclocking, `/oos/limits.conf` and unit profiles.
 - [scpi.md](scpi.md): the SCPI reference: transports, syntax, every command OOS answers.
 - [http.md](http.md): the HTTP reference: every route of the web remote and the MCP tools, with their marks.
@@ -41,6 +43,7 @@ and in our own words. The code of OOS is written to them
   how the scope, the logic analyser and the generator work.
 - [hardware/README.md](hardware/README.md): buses and on-chip blocks of the RK3399 and what is attached to them.
 - [hardware/gpio-map.md](hardware/gpio-map.md): every GPIO with its pin, label and role.
+- [hardware/datasheets.md](hardware/datasheets.md): datasheets and manuals of the parts on the board, with how each part is known.
 
 ## Protocols
 

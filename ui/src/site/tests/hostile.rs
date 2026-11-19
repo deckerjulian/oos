@@ -5,12 +5,13 @@
 //! the routes, the queries, the upload paths and MCP are all read the way they are on a scope.
 
 use super::*;
+use crate::gfx::Canvas;
 
 /// One request whose sender closes its side after the last byte; the server is polled until it has closed the
 /// connection. What came back, or why the answer did not end: a server that keeps the connection open fails after
 /// 10 s instead of holding the test.
 fn exchange(
-    h: &mut Http,
+    h: &mut Web,
     ui: &mut Ui,
     cv: &Canvas,
     scpi: &mut crate::scpi::Scpi,
@@ -27,7 +28,7 @@ fn exchange(
         Ok(out)
     });
     while !client.is_finished() {
-        h.poll(ui, cv, scpi);
+        h.poll(&mut Ctx::new(ui, cv, scpi));
         std::thread::yield_now();
     }
     client.join().unwrap()
@@ -40,13 +41,13 @@ fn sandboxed(req: &[u8]) -> bool {
     [":BODE", ":SIM", ":CAL", "LOAD", ":IMP", "MAP", "LANE"].iter().any(|w| text.contains(w))
 }
 
-/// `Http::poll` and `Http::answer` (the web remote on TCP 8080: the page's requests, `/cmd`, the uploads to
+/// `Web::poll` and `Web::answer` (the web remote on TCP 8080: the page's requests, `/cmd`, the uploads to
 /// `/waveform` and `/update`, MCP): return for any bytes; a request whose head and body are whole is answered; an
 /// answer is a status line the server knows, a head, and a body as long as its Content-Length says.
 #[test]
 fn hostile_requests() {
     let _one_at_a_time = sends();
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let post = |path: &str, body: &[u8]| {
         let head = format!("POST {path} HTTP/1.1\r\nHost: 192.0.2.10:8080\r\nContent-Length: {}\r\n\r\n", body.len());

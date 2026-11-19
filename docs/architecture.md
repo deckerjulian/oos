@@ -99,7 +99,7 @@ flowchart TB
         acq["Acquisition thread<br/>board/dho/hw.rs"]
     end
     subgraph remP["oos-remote (ui/remote/), a crate of the workspace ui/"]
-        transports["Transports<br/>VXI-11, HiSLIP, LXI and DNS-SD announcement"]
+        transports["Transports<br/>VXI-11, HiSLIP, the web server, LXI and DNS-SD announcement"]
     end
     subgraph sysP["oos-system (ui/system/), a crate of the workspace ui/"]
         sys["System services<br/>mDNS, SNTP, SSH, USBTMC, net.allow, clock, system.conf, thread placement"]
@@ -136,8 +136,9 @@ Rule for all crates: no vendor code is in the tree. Only dependency of the four 
 as a crate of its own below `ui/`, with one lock file and one target folder for all of them
 ([ADR 0064](adr/code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md)). The first is
 `oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`; the second `oos-remote`
-(`ui/remote/`): VXI-11, HiSLIP and their announcement, generic over the program they hand to the interpreter
-(`oos_remote::Program`, which `scpi::Program` implements). `oos-ui` brings its modules into its crate
+(`ui/remote/`): VXI-11, HiSLIP, the web server and their announcement, generic over the program they hand to the
+interpreter (`oos_remote::Program`, which `scpi::Program` implements) and, for the web server, over what the screen
+answers (`oos_remote::http::Site`, which `site::Ctx` implements; the live picture stays in `oos-ui`, `shots.rs`). `oos-ui` brings its modules into its crate
 root (`main.rs`), so they are named `crate::sysconf` there as before, and the compiler refuses a path from
 `oos-system` back into `oos-ui`.
 
@@ -201,7 +202,7 @@ Threads:
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http, hislip, announce | SCPI on 5555, web remote on 8080 (polled by the main thread), HiSLIP on 4880 (a computer), mDNS announcement on 5353 |
-| web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
+| web-png, web-send | the web remote's PNG of the screen (`shots.rs`; made only of a changed screen, at most 20 a second and half a core) and the large answers (`net::send_in_background`); SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 | bt | System > Network > Bluetooth's client of bluetoothd (`ui/src/ui/bt.rs` over `hal::bluez`): the state every 2 s, scan, pair, connect, forget, and the pairing agent's answers; started with the first look at the page, so the frame loop never waits on the radio |
 | ntp | SNTP exchange and clock step when Time from NTP is on (`ui/system/src/sntp.rs`, the page in `ui/src/ui/time.rs`; `network.md`) |
@@ -223,8 +224,8 @@ store does not name the board.
 flowchart TB
     subgraph uiL["oos-ui (ui/src/)"]
         main["main<br/>main.rs, input, gpu<br/>the wiring: frame loop, inputs, GPU helper"]
-        transport["transport<br/>http; in the crate oos-remote (ui/remote/): vxi11, hislip, announce<br/>frame the messages of a computer"]
-        command["command<br/>scpi, cmd<br/>the interpreters: SCPI, control commands"]
+        transport["transport<br/>in the crate oos-remote (ui/remote/): vxi11, hislip, http, announce<br/>frame the messages of a computer"]
+        command["command<br/>scpi, cmd, site<br/>the interpreters: SCPI, control commands, the web remote's answers"]
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
         signal["signal<br/>wave, trig, protocols, measures, platform, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
@@ -259,6 +260,86 @@ the arrows everywhere yet: the paths against them are counted in `tools/layers.t
 A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everywhere), runs it only with `--execute`,
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
+`fpgad/src/main.rs` is the neutral part: it reads the unit, answers `model` and refuses another board; every other
+command goes to the module of the board family, `fpgad/src/dho/` (ADR 0067), whose header lists the commands.
+
+## Where the structure is going
+
+The sections above describe the tree as it is. This one shows where the decision records take it, and in which order
+the steps come. A step is a pull request, or a few of them. A refactoring proves `Behaviour: unchanged` with
+`tools/compare-base.sh`. The numbers that measure each step are in issue #120 and in the files of `tools/*.txt`, and
+they only go down (ADR 0037).
+
+```mermaid
+flowchart TB
+    subgraph outside["Outside the core"]
+        addons["Add-ons<br/>own processes, a manifest on the card<br/>ADR 0056"]
+        clients["GUIs, scripts, integrations<br/>on a computer"]
+    end
+    subgraph uiW["Workspace ui/"]
+        ui["oos-ui (ui/src/)<br/>frame loop, screen, interpreters (SCPI, cmd, web site),<br/>signal and analysis, the board door and its acquisition"]
+        remote["oos-remote (ui/remote/)<br/>transports: VXI-11, HiSLIP, HTTP, announce"]
+        store["oos-store (later)<br/>setup and waveform files"]
+        model["oos-model (later)<br/>model and settings table"]
+        system["oos-system (ui/system/)<br/>system services"]
+    end
+    subgraph fpgadW["fpgad/"]
+        cli["oos-fpgad: neutral command line"]
+        cliboard["one module per board family<br/>dho first (ADR 0067)"]
+    end
+    dsp["oos-dsp (dsp/)<br/>signal processing, decoders, measurements; no hardware"]
+    subgraph halW["hal/"]
+        halcore["oos-hal: neutral part<br/>model, target, update, wlan, bluez"]
+        halboard["one module per board family<br/>hal/src/dho/, its simulated unit (ADR 0053)"]
+    end
+    rootfs["rootfs/board/name/, kernel/dts/<br/>one image per board family"]
+    clients -- "SCPI, HTTP: stable, versioned (ADR 0055)" --> remote
+    addons -- "the same interface" --> remote
+    ui --> remote
+    ui --> store
+    ui --> dsp
+    ui -- "board/dho/ only" --> halboard
+    remote --> system
+    store --> model
+    model --> system
+    system --> halcore
+    cli --> cliboard
+    cliboard --> halboard
+    halboard --> halcore
+```
+
+Drawn from: ADR 0001, 0049, 0053, 0055, 0056, 0064 and 0067. The boxes marked "later" do not exist yet. An arrow reads "may depend on" and carries on down the arrows. `oos-ui` may name every crate below it.
+
+| Crate or folder | Its job | Today |
+|---|---|---|
+| `oos-hal` (`hal/`) | step lists, buses, cold boot, update; the board's part in `hal/src/<family>/` | `dho` only; `FAMILIES` lists it |
+| `oos-dsp` (`dsp/`) | signal processing on `f32` slices, decoders, measurements | as targeted |
+| `oos-system` (`ui/system/`) | mDNS, SNTP, SSH, `net.allow`, clock, `system.conf` | done (ADR 0064) |
+| `oos-remote` (`ui/remote/`) | the transports, which only frame messages for the interpreters (ADR 0022) | done |
+| `oos-model` | what the user has set: the model and the settings table | in `oos-ui` |
+| `oos-store` | setup and waveform files | in `oos-ui` |
+| `oos-ui` (`ui/src/`) | frame loop, screen, interpreters, signal, the board door and its acquisition | the rest stays here |
+| `oos-fpgad` (`fpgad/`) | a neutral command line, the board's commands in `fpgad/src/<family>/` | split; `dho` only |
+| add-ons | own processes over the remote interface | not started (#206) |
+
+The steps, in order. A later step waits for the earlier ones it names.
+
+| # | Step | Waits for | Record | Issue, measure |
+|---|---|---|---|---|
+| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (39 paths where the board code, mostly the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name) | | ADR 0049 | `tools/layers.txt` |
+| 2 | The state of the screen in its parts: the loose fields of `Ui` | | ADR 0060–0063 | ui-fields in `tools/code-metrics.txt` |
+| 3 | HTTP moves to `oos-remote`; the screenshot encoder stays in `oos-ui` | 1 (transport-skip 0) | ADR 0064 | |
+| 4 | `oos-model`, then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
+| 5 | The simulated unit in hal and the acquisition loop on a host; then `spawn` (1234 lines) is split, and the files the host run reaches leave the `live` list | | ADR 0053 | goal T1 of #120 |
+| 6 | The remaining long functions: `Scpi::exec_cmd` (1005 lines) as a table of subsystems, `Ui::adjust` and `Ui::activate` through the parts (after 2), the cold boot's `Ctx::run` (needs a unit). `Model::default` and `Ui::new` may stay as tables, with their reason | 2, 5 | | long-fns in `tools/code-metrics.txt` |
+| 7 | Preparing for more board families: a build switch for `target::ACTIVE` and `board::Active`, `oos-fpgad` split into a neutral part and a module `dho`, a family argument for the host tools, CI per family, the same partition marks in scripts and update (#288) | | ADR 0067 | `hal/tests/board_families.rs` |
+| 8 | A stable, versioned remote interface: SCPI and HTTP marked stable, experimental or internal, and versioned | 3 | ADR 0055 | #205, `tools/http-coverage.py` |
+| 9 | Add-ons as their own processes with a manifest, using the interface of step 8 | 8 | ADR 0056 | #206 |
+
+The steps 1, 2, 5 and 7 do not depend on each other and can run side by side, in different files. A port to a new
+board family (ADR 0067) can start any time as a module in development; it becomes ready, with a release image,
+after step 7. A file that has grown back over 1500 lines (`ui/src/drawpipe.rs`, 1906)
+is split along the way (goal S1 of #120).
 
 ## Where a change goes
 
@@ -280,7 +361,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
-| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `announce.rs`; ADR 0064), or `ui/src/http.rs` for the web remote; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
+| a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `http.rs`, `announce.rs`; ADR 0064); what the screen answers on the web: `ui/src/site.rs`; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
 | a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
 | the start, the image, an update | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/` | the simulations of `tools/check.sh` (`sim`), a run on a unit |
 | a host tool, a check | `tools/`, with its line in `tools/README.md` | `tools/tests/`, the layers of `tools/check.sh` |
@@ -301,9 +382,9 @@ c2h bytes ── deinterleave ──> per-channel u16 codes ── volts (scale,
 
 | Crate | Host tests | What they pin down |
 |---|---|---|
-| hal | `cargo test` in hal/ | write sequences against fixtures and device logs, cold boot against the unit model, panel CRCs, board logic |
+| hal | `cargo test` in hal/ | write sequences against fixtures and device logs, cold boot against the unit model, panel CRCs, board logic, the acquisition sequences against the simulated unit (ADR 0053) |
 | dsp | `cargo test` in dsp/ | every trigger, measurement, decoder and math function against signals with known answers |
-| ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage |
+| ui | `cargo test` in ui/ | menus, rendering (screenshots), every trigger type triggers on the demo, storage; the acquisition loop against the simulated unit for a matrix of settings (`board::dho::hw::liverun`), which `tools/compare-base.sh` also compares with the base (ADR 0053) |
 | fpgad | `cargo test` in fpgad/ | option parsing, status interpretation |
 
 Every parser of outside input (files, the network, remote commands, the samples of a record) also has a hostile-input

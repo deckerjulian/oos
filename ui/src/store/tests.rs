@@ -402,7 +402,6 @@ fn setup_quick_key() {
 
 /// Every protocol is stored by name; the USB decoder with its D- source and speed.
 #[test]
-#[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn setup_protocols_by_name() {
     for &p in crate::protocols::PROTOS.iter() {
         let m = Model { dec_proto: p, ..Default::default() };
@@ -455,6 +454,62 @@ fn csv_of_a_record() {
     assert!((back[0].dt - 1e-6).abs() < 1e-18);
     assert_eq!(back[0].v[0], 0.5);
     assert_eq!(back[1].v[2], 3.3);
+}
+
+// Break it catches: the time between samples taken from the first two lines alone. A file that writes its times with
+// five digits read 140 ns for 138.9 ns, and every frequency came out 0.8 % low; a file whose first two lines round to
+// the same time was refused as holding no waveform.
+#[test]
+fn csv_takes_its_sample_interval_over_the_whole_time_column() {
+    // 3600 samples over 500 us, the times written with five digits: the first step alone reads 140 ns
+    let step = 5e-4 / 3600.0;
+    let mut text = String::from("time_s,voltage_v\n");
+    for i in 0..3600 {
+        text += &format!("{:.4e},{}\n", -2.5e-4 + i as f64 * step, i % 7);
+    }
+    let t = &parse_wave(text.as_bytes(), "capture.csv").unwrap()[0];
+    assert_eq!(t.v.len(), 3600);
+    assert!((t.dt / step - 1.0).abs() < 2e-5, "{} against {step}", t.dt);
+    assert_eq!(t.t0, -2.5e-4);
+    // times written with three digits: the first lines repeat a time
+    let text = "X,CH1\nSecond,Volt,\n-5.11e-03,2.00e-02\n-5.11e-03,2.00e-02\n-5.10e-03,4.00e-02\n-5.10e-03,4.00e-02\n\
+                -5.09e-03,2.00e-02\n";
+    let t = &parse_wave(text.as_bytes(), "c.csv").unwrap()[0];
+    assert_eq!(t.v.len(), 5);
+    assert!((t.dt - 5e-6).abs() < 1e-12, "{}", t.dt);
+    // one line, or times that do not advance, are not a waveform
+    assert!(parse_wave(b"0,1\n", "one.csv").is_err());
+    assert!(parse_wave(b"1,1\n1,2\n1,3\n", "flat.csv").is_err());
+    assert!(parse_wave(b"3,1\n2,2\n1,3\n", "back.csv").is_err());
+    // a time that is no number in the middle of the column
+    assert!(parse_wave(b"0,1\n0.1,2\nNaN,3\n0.2,4\n", "nan.csv").is_err());
+    assert!(parse_wave(b"0,1\n0.1,2\ninf,3\n0.2,4\n", "inf.csv").is_err());
+}
+
+// Break it catches: the last time of a file less its first, over all its lines. In a file of several sweeps or
+// segments the time starts again, and that distance is not the length of the lines.
+#[test]
+fn csv_of_several_sweeps_takes_its_sample_interval_from_one_of_them() {
+    // two sweeps of 100 lines a microsecond apart, each from -50 us
+    let mut text = String::from("time_s,voltage_v\n");
+    for i in 0..200 {
+        text += &format!("{:.6e},{}\n", -5e-5 + (i % 100) as f64 * 1e-6, i % 7);
+    }
+    let t = &parse_wave(text.as_bytes(), "sweeps.csv").unwrap()[0];
+    assert_eq!((t.v.len(), t.t0), (200, -5e-5));
+    assert!((t.dt / 1e-6 - 1.0).abs() < 1e-9, "{}", t.dt);
+    // a sweep of 11 lines before one of 3600, the times written with five digits: the longer one gives the step
+    let step = 5e-4 / 3600.0;
+    let mut text = String::new();
+    for i in (0..11).chain(0..3600) {
+        text += &format!("{:.4e},{}\n", -2.5e-4 + i as f64 * step, i % 7);
+    }
+    let t = &parse_wave(text.as_bytes(), "sweeps.csv").unwrap()[0];
+    assert_eq!((t.v.len(), t.t0), (3611, -2.5e-4));
+    assert!((t.dt / step - 1.0).abs() < 2e-5, "{} against {step}", t.dt);
+    // a first sweep whose lines all have one time, then one that advances
+    let t = &parse_wave(b"5,1\n5,2\n5,3\n0,1\n2,2\n", "flat.csv").unwrap()[0];
+    assert_eq!((t.v.len(), t.t0, t.dt), (5, 5.0, 2.0));
 }
 
 /// A line wider than the reference slots ends the parse: before, one line of a million columns made a million
@@ -1055,7 +1110,7 @@ fn png_encode_time() {
     let t = std::time::Instant::now();
     let mut same = false;
     for _ in 0..n {
-        same = crate::http::same_pixels(std::hint::black_box(&copy), std::hint::black_box(&cv.px));
+        same = crate::shots::same_pixels(std::hint::black_box(&copy), std::hint::black_box(&cv.px));
     }
     let per_cmp = t.elapsed().as_secs_f64() / n as f64;
     assert!(same);

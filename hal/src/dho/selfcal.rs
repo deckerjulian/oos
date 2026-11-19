@@ -405,13 +405,15 @@ pub fn adc_cores(
     Ok(cal)
 }
 
-/// `CalHw` on the unit: AFE over the GPIO SPI bus, gear ioctl, FPGA ADC measure unit, the normal set-up through
-/// `seq` for `configure`.
-#[cfg(target_os = "linux")]
-pub struct Unit<'a> {
-    pub bar: &'a mut crate::dho::bus::Bar1,
-    pub afe: &'a mut crate::dho::afe::GpioAfe,
-    pub c2h: &'a mut std::fs::File,
+/// `CalHw` on a unit: AFE over its front-end bus, the gears over its lines, the FPGA ADC measure unit, the normal set-up
+/// through `seq` for `configure`, every wait on its clock. On the scope: `Bar1`, `GpioAfe`, the C2H file, `UnitLines`
+/// and `SysClock`; a host run gives the simulated unit's (ADR 0053).
+pub struct Unit<'a, B, A, R, L, C> {
+    pub bar: &'a mut B,
+    pub afe: &'a mut A,
+    pub c2h: &'a mut R,
+    pub lines: &'a mut L,
+    pub clock: &'a mut C,
     pub state: &'a mut crate::dho::seq::State,
     pub cal: &'a Cal,
     pub cal_adc: Option<&'a crate::dho::adc::CalAdc>,
@@ -420,52 +422,54 @@ pub struct Unit<'a> {
     pub adc_new: Option<crate::dho::adc::CalAdc>,
 }
 
-#[cfg(target_os = "linux")]
-impl CalHw for Unit<'_> {
+impl<B, A, R, L, C> CalHw for Unit<'_, B, A, R, L, C>
+where
+    B: crate::dho::bus::Bus,
+    A: crate::dho::afe::AfeBus,
+    R: std::io::Read,
+    L: crate::dho::lines::Lines,
+    C: crate::dho::boot::Clock,
+{
     fn apply(&mut self, ops: &[Op]) {
-        use crate::dho::afe::AfeBus;
-        use crate::dho::bus::Bus;
         for op in ops {
             match *op {
                 Op::Afe { ch, reg, val } => self.afe.write(ch, reg, val),
                 Op::Gear { ch, gear } => {
-                    let _ = crate::dho::afe::set_gear(ch, gear);
+                    let _ = self.lines.gear(ch, gear);
                 }
                 Op::Adc(w) => {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    self.clock.sleep_us(100);
                     self.bar.wr(0x1034, w);
-                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    self.clock.sleep_us(100);
                 }
             }
         }
     }
     fn afe_read(&mut self, ch: usize, reg: u8) -> u16 {
-        use crate::dho::afe::AfeBus;
         self.afe.read(ch, reg)
     }
     fn adc_mean(&mut self, _ch: usize) -> Option<f64> {
         // channel-only ADC mode: all 8 cores sample the channel [A: stock averages cores k and k+4]
-        let m = crate::dho::adc::measure(self.bar, &mut |ms| {
-            std::thread::sleep(std::time::Duration::from_millis(ms as u64))
-        })?;
+        let clock = &mut *self.clock;
+        let m = crate::dho::adc::measure(self.bar, &mut |ms| clock.sleep_us(ms as u64 * 1000))?;
         Some(m.iter().sum::<f64>() / 8.0)
     }
     fn sleep_ms(&mut self, ms: u32) {
-        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        self.clock.sleep_us(ms as u64 * 1000);
     }
     fn cancelled(&mut self) -> bool {
         (self.cancel)()
     }
     fn adc_op(&mut self, f: &mut dyn FnMut(&mut crate::dho::adc::Adc) -> Vec<crate::dho::adc::Wr>) {
-        use crate::dho::bus::Bus;
         for w in f(&mut self.state.adc) {
-            std::thread::sleep(std::time::Duration::from_micros(w.pre_us as u64));
+            self.clock.sleep_us(w.pre_us as u64);
             self.bar.wr(w.reg, w.val);
-            std::thread::sleep(std::time::Duration::from_micros(w.post_us as u64));
+            self.clock.sleep_us(w.post_us as u64);
         }
     }
     fn adc_slots(&mut self) -> Option<[f64; 8]> {
-        crate::dho::adc::measure(self.bar, &mut |ms| std::thread::sleep(std::time::Duration::from_millis(ms as u64)))
+        let clock = &mut *self.clock;
+        crate::dho::adc::measure(self.bar, &mut |ms| clock.sleep_us(ms as u64 * 1000))
     }
     fn use_cal_adc(&mut self, c: crate::dho::adc::CalAdc) {
         self.adc_new = Some(c);
@@ -476,7 +480,18 @@ impl CalHw for Unit<'_> {
         st.ch[ch].bw = bw;
         let adc = self.adc_new.as_ref().or(self.cal_adc);
         let (steps, _) = self.state.configure(&st, Some(self.cal), adc)?;
-        crate::dho::seq::execute(&steps, self.bar, Some(&mut *self.afe), self.c2h, |_| {})?;
+        let mut dma = crate::dho::bus::DmaBuf::new();
+        crate::dho::seq::execute_on(
+            &steps,
+            self.bar,
+            Some(&mut *self.afe),
+            self.c2h,
+            self.lines,
+            &mut dma,
+            self.clock,
+            |_| {},
+            || false,
+        )?;
         Ok(self.state.afe[ch].clone())
     }
 }

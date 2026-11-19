@@ -362,10 +362,10 @@ impl Ui {
         cv.no_clip();
     }
 
-    /// Left edge of a cursor tag at the right end of the plot: where it clears the full-screen and zoom buttons.
+    /// Left edge of a cursor tag at the right end of the plot: where it clears the corner buttons.
     pub(super) fn right_tag_x(&self, a: Rect, y: i32, w: i32) -> i32 {
         let mut x = a.x + a.w - 26;
-        for r in [self.full_btn().0, self.zoom_btn().0] {
+        for r in self.corner_btns() {
             if x + w > r.x - 2 && x < r.right() + 2 && y < r.bottom() + 2 && y + 14 > r.y - 2 {
                 x = r.x - 6 - w;
             }
@@ -458,7 +458,7 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_home().0.x - 16 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_btn().0.x - 16 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {

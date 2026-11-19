@@ -403,9 +403,9 @@ impl Ui {
                 let _ = self.catalog_reading(cat, [a, b, c, d]);
             }
         }
+        // the phosphor maps stay (`poll_reference_measurements`)
         if changed {
             self.finish_deferred_capture_statistics();
-            self.dirty_map = true;
         }
     }
 }
@@ -917,6 +917,59 @@ mod tests {
         for cat in [tile(measures::serial::DATA_RATE), tile(measures::serial::UNIT_INTERVAL)] {
             let r = wait(&mut ui, cat);
             assert!(r.value.is_nan() && r.reason.is_some());
+        }
+    }
+
+    // Break it catches: the answer of a background measurement marking the phosphor maps for clearing (`dirty_map`).
+    // The next step then emptied the live picture, and without a new record in that step the traces were gone until one
+    // came: on a DHO924S with six rows of the measurement page, 8 records and 18 pictures a second, a third of the
+    // pictures had no channel traces. With persistence the collected picture started over at every answer.
+    #[test]
+    fn a_measurement_that_finishes_leaves_the_live_picture() {
+        for persist in [0, PERSIST.len() - 1] {
+            let shared: crate::board::HwShared = Default::default();
+            let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+            ui.m.run = RunState::Run;
+            ui.m.persist = persist;
+            ui.m.trig_level = 0.15;
+            for c in 1..NCH {
+                ui.m.ch[c].on = false;
+            }
+            ui.m.meas.clear();
+            ui.m.meas2.clear();
+            let ch = WaveId::Ch(0);
+            ui.m.cat = vec![(measures::power::RIPPLE, ch, ch, ch, ch)];
+            // the first step publishes the settings; then one record: 100 k samples over 1.2 screens, a 0.3 V square
+            ui.step(0.033);
+            let window = ui.m.time_per_div() as f64 * HDIV as f64;
+            let n = 100_000usize;
+            let v: Vec<f32> = (0..n).map(|k| if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+            let frame = crate::board::Frame {
+                seq: 1,
+                stamp: ui.m.hw_stamp,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                ..Default::default()
+            };
+            shared.lock().unwrap().queue.push_back(frame);
+            ui.step(0.033);
+            let picture = ui.ph.map[0].clone();
+            assert!(picture.iter().any(|&c| c != 0), "the record is in the picture");
+            // the screen asks for the value, which starts the analysis; then steps without a new record until its
+            // answer is in (the time limit only guards against a worker that never answers)
+            let _ = ui.meas_rows();
+            assert!(ui.azr.catalog_measurements.borrow().submitted > 0, "the row is worked out in the background");
+            let end = Instant::now() + Duration::from_secs(30);
+            loop {
+                ui.step(0.033);
+                assert!(ui.ph.map[0] == picture, "persistence {persist}: the traces left the picture with the answer");
+                if !ui.catalog_measurement_busy() {
+                    break;
+                }
+                assert!(Instant::now() < end, "the measurement did not finish");
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
     }
 }

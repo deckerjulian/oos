@@ -93,11 +93,19 @@ pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
 /// than the reference slots ends the parse: a single line of many columns no longer makes as many traces.
 pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
     let mut columns: Vec<Vec<f32>> = Vec::new();
-    let mut times: [f64; 2] = [f64::NAN; 2];
+    // a stretch of lines whose time does not go back, as (first time, last time, lines): the one being read, and the
+    // longest of those before it that advance. A file of one sweep is one stretch
+    let mut stretch: (f64, f64, usize) = (f64::NAN, f64::NAN, 0);
+    let mut longest = stretch;
+    let mut first = f64::NAN;
     let mut rows = 0usize;
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
+        // a time that is no number (NaN, inf) on any line: the stretches below compare times, and NaN compares false
+        if !t.is_finite() {
+            return Err("that file holds no waveform".into());
+        }
         let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
         if rest.peek().is_none() {
             continue;
@@ -120,14 +128,33 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
         for c in &mut columns[k..] {
             c.push(f32::NAN);
         }
-        if rows < 2 {
-            times[rows] = t;
+        if rows == 0 {
+            first = t;
+        }
+        if stretch.2 > 0 && t < stretch.1 {
+            // the time goes back: the next sweep or segment of the file begins
+            if stretch.1 > stretch.0 && stretch.2 > longest.2 {
+                longest = stretch;
+            }
+            stretch = (t, t, 1);
+        } else {
+            stretch = (if stretch.2 == 0 { t } else { stretch.0 }, t, stretch.2 + 1);
         }
         rows += 1;
     }
+    if stretch.1 > stretch.0 && stretch.2 > longest.2 {
+        longest = stretch;
+    }
+    // the first time of a stretch and its last, over the steps between them. Not the first step alone: a file that
+    // rounds its times to a few digits has a first step that is off by a percent, or no step at all between its first
+    // two lines. Not the first time of the file and its last either: in a file of several sweeps the time starts
+    // again, and their distance is not that of the lines between them
+    let dt = match longest {
+        (a, b, lines) if lines >= 2 => (b - a) / (lines - 1) as f64,
+        _ => f64::NAN,
+    };
     // the time base the binary readers ask for: a time of inf gives an infinite step or start
-    let dt = times[1] - times[0];
-    if !oosw_timing_ok(rows, dt, times[0]) {
+    if !oosw_timing_ok(rows, dt, first) {
         return Err("that file holds no waveform".into());
     }
     let ntrace = columns.len();
@@ -136,7 +163,7 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
         .enumerate()
         .map(|(k, v)| {
             let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
-            WaveTrace { t0: times[0], dt, v, label }
+            WaveTrace { t0: first, dt, v, label }
         })
         .collect())
 }

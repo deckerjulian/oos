@@ -211,7 +211,6 @@ fn hardware_zone_tables_agree_with_the_software_zones() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
 fn uart_from_the_decoder_settings() {
     use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
     let mut m = Model::default();
@@ -647,10 +646,11 @@ fn frame0_of_a_small_batch_is_kept_at_the_trigger_point() {
 // that is due before the configuration has stood for TRIM_HOLD.
 #[test]
 fn core_trim_waits_for_a_standing_configuration() {
-    let t0 = std::time::Instant::now();
+    // microseconds of the loop's clock
+    let (t0, hold) = (7_000_000u64, TRIM_HOLD.as_micros() as u64);
     let p = TrimPending { mode: 2, mask: 0b100, since: t0 };
-    assert!(!p.due(t0) && !p.due(t0 + TRIM_HOLD - std::time::Duration::from_millis(1)));
-    assert!(p.due(t0 + TRIM_HOLD) && TRIM_HOLD >= std::time::Duration::from_secs(1));
+    assert!(!p.due(t0) && !p.due(t0 + hold - 1_000));
+    assert!(p.due(t0 + hold) && TRIM_HOLD >= std::time::Duration::from_secs(1));
 }
 
 #[test]
@@ -1199,4 +1199,44 @@ fn decode_and_align_a_square() {
     assert!(r.triggered);
     // the software edge (level 1.5 V) sits at the centre of the screen window
     assert!(r.ch[0][495] < 0.5 && r.ch[0][505] > 2.0, "{} {}", r.ch[0][495], r.ch[0][505]);
+}
+
+// Stage 1b.3: the loop compiles on a host and runs against the simulated unit. Break it catches: a loop that names
+// the scope's own types, waits on the wall clock, or arms, plays and delivers nothing on a unit that triggers
+#[test]
+fn the_acquisition_loop_runs_on_the_simulated_unit() {
+    use oos_hal::dho::sim::{unit, Event, Scene, View};
+    let mut m = Model::default();
+    m.ch[0].on = true;
+    let want = super::settings(&m, false);
+    let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
+    let p = st.configure(&want, None, None).unwrap().1;
+    let cal = std::array::from_fn(|c| (want.ch[c].scale, want.ch[c].offset));
+    let view = View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+    // a 1 MHz sine, triggering every 50 us
+    let volts = Box::new(|_c: usize, t: f64| 0.5 * (2.0 * std::f64::consts::PI * 1e6 * t).sin());
+    let scene = Scene { volts, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
+    let (u, bar, c2h, clock) = unit(scene);
+    let lines = oos_hal::dho::lines::Recorded::default();
+    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };
+    let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
+    out.lock().unwrap().want = Some(want.clone());
+    let mut passes = 0;
+    super::run(hw, want.mask, false, "/nonexistent".into(), out.clone(), || {
+        passes += 1;
+        passes <= 40
+    });
+    let g = out.lock().unwrap();
+    assert!(g.status.starts_with("configured") || !g.queue.is_empty(), "status: {}", g.status);
+    let u = u.borrow();
+    let played = u.trace.iter().filter(|e| matches!(e, Event::Played { .. })).count();
+    let recorded = u.trace.iter().filter(|e| matches!(e, Event::Recorded { .. })).count();
+    assert!(recorded > 0 && played > 0, "recorded {} played {}: {}", recorded, played, g.status);
+    assert!(!g.queue.is_empty() || g.frame.ch.iter().any(|c| !c.is_empty()), "no frame delivered: {}", g.status);
+    // the loop's waits went through the unit's clock: a wait on the wall clock would leave `slept_us` at 0
+    assert!(u.slept_us > 0 && u.now_us() as u64 > u.slept_us, "slept {} us of {} us", u.slept_us, u.now_us());
+    // what reached the screen's side is the scene: the 0.5 V sine, its crest and trough within 2 %
+    let f = g.queue.back().unwrap_or(&g.frame);
+    let (lo, hi) = f.ch[0].iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "CH1 from {} to {} V", lo, hi);
 }

@@ -37,6 +37,7 @@ impl Default for Model {
             trig_level: 0.0,
             slope: Slope::Rise,
             trig_mode: TrigMode::Auto,
+            sweep_before_single: TrigMode::Auto,
             holdoff: 0.0,
             trig_type: TrigType::Edge,
             trig_level2: 0.5,

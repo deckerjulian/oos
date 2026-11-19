@@ -4,19 +4,19 @@
 //! The hardware segmented recording of the acquisition thread: its state, its abort and one step of it per
 //! pass of the loop. A change of how segments are recorded or read back goes here.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use super::decode::decode;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use super::settings::seg_read_plan;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::board::{Frame, HwShared};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::hz;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 
 /// A hardware segmented recording.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) struct SegRun {
     /// `HwSeg::run` it belongs to
     run: u64,
@@ -32,12 +32,12 @@ pub(super) struct SegRun {
 
 /// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
 /// are no longer the configured ones).
-#[cfg(target_os = "linux")]
-pub(super) fn seg_abort(
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
     run: &mut Option<SegRun>,
     state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    c2h: &mut R,
     out: &HwShared,
 ) {
     let Some(r) = run.take() else { return };
@@ -54,15 +54,16 @@ pub(super) fn seg_abort(
 /// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
 /// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
 /// play single segments on request.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn seg_step(
+pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, R: std::io::Read>(
     run: &mut Option<SegRun>,
     s: &Settings,
     p: &hz::Params,
     state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
+    bar: &mut B,
+    clock: &mut C,
+    c2h: &mut R,
     dma: &mut oos_hal::dho::bus::DmaBuf,
     out: &HwShared,
     n: &mut u64,
@@ -100,14 +101,14 @@ pub(super) fn seg_step(
         return Ok(());
     }
     let Some(r) = run.as_mut() else {
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        clock.sleep_us(10000);
         return Ok(());
     };
     if r.recording {
         let x = seg::status(bar, r.n);
         out.lock().unwrap().seg.recorded = x.recorded;
         if !x.complete(r.n) && running {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            clock.sleep_us(10000);
             return Ok(());
         }
         let tag = seg::first_trigger(bar);
@@ -127,7 +128,7 @@ pub(super) fn seg_step(
         let cnt = rs.frames.min(r.count - r.next);
         if r.deliver && out.lock().unwrap().queue.len() + cnt as usize > crate::board::QUEUE_MAX {
             // the screen has not taken the last batch yet
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            clock.sleep_us(5000);
             return Ok(());
         }
         let st = seg::stamps(state, &rs, p, bar, c2h, r.next, cnt)?;
@@ -175,7 +176,7 @@ pub(super) fn seg_step(
             out.lock().unwrap().seg.shown = Some((k, f));
         }
         Some(_) => out.lock().unwrap().seg.want = None,
-        None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        None => clock.sleep_us(10000),
     }
     Ok(())
 }

@@ -41,16 +41,20 @@ agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|board|afg|bringup|roll|selfcal|tool)\.rs$|ui/src/board/|'
-live="${live}hal/src/dho/(bus|roll|seg|gpio|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
+live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/src/(bin/oos-update|main|dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|'
+live="${live}hal/src/dho/(bus|roll|seg|gpio|lines|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
 # in neither or in both), and one that is in neither counts as live: a new or a split file needs a unit until it is
 # classed
-proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
-proven="${proven}hal/src/dho/seq/(frame|samples|settings|tests)\.rs$|hal/src/dho/(acq|adc|afe|afg|auxout|avg|calfile|"
-proven="${proven}clock|counter|dvm|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|spu|target|tpu|uarttrig|"
-proven="${proven}wpu|zone|zonegeom)\.rs$)"
+proven='^(fpgad/(\.cargo/|\.gitignore$|Cargo\.(toml|lock)$|README\.md$|src/dho/compcheck\.rs$)|hal/src/dho/seq\.rs$|'
+proven="${proven}hal/src/dho/seq/(frame|samples|settings)\.rs$|hal/src/dho/(acq|adc|afe|afg|auxout|avg|calfile|"
+proven="${proven}clock|counter|dvm|encode|hz|la|lmx2582|madeup|mask|mod|pairs|readout|scu|serialtrig|sim|spu|target|tpu|"
+proven="${proven}uarttrig|wpu|zone|zonegeom)\.rs$)"
+# the tests inside the hardware paths: files that only `cargo test` compiles (their parent module brings them in with
+# `#[cfg(test)]`, which tools/tests/test_pr_scripts.py checks), never a program for the scope. No run on a unit can tell
+# anything about them, so for `unit` they are not hardware paths (ADR 0072)
+testonly='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/src/)(.*/)?([a-z][a-z0-9_]*_)?tests\.rs$'
 # what the comparison with the base does not see, so no change there goes in without the wait: the pipeline and its
 # scripts, the tools, the rules, the decision records
 unseen='^(\.github/|tools/|ui/tools/|docs/adr/|AGENTS\.md$|CLAUDE\.md$|CONTRIBUTING\.md$|LICENSE|THIRD-PARTY)'
@@ -208,17 +212,18 @@ one() {
 		fi
 	fi
 
-	# unit
-	if printf '%s\n' "$files" | grep -Eq "$hardware"; then
+	# unit: the files of the hardware paths, without the tests inside them
+	hw=$(printf '%s\n' "$files" | grep -Ev "$testonly" || true)
+	if printf '%s\n' "$hw" | grep -Eq "$hardware"; then
 		case " $labels " in
 		*" unit-tested "*) status "$sha" unit success "tried on a unit or released by the maintainer (label unit-tested)" ;;
 		*)
 			title=$(printf '%s' "$pr" | jq -r .title)
-			if ! printf '%s\n' "$files" | grep -Eq '^(boot|kernel|rootfs)/' &&
+			if ! printf '%s\n' "$hw" | grep -Eq '^(boot|kernel|rootfs)/' &&
 				[ "$(ci_job scope)" = success ] && [ "$(ci_kept scope-binaries-differ)" = 0 ]; then
 				status "$sha" unit success "the programs for the scope are byte-identical to the base's (job scope)"
-			elif ! printf '%s\n' "$files" | grep -Eq "$live" &&
-				! printf '%s\n' "$files" | grep -E "$hardware" | grep -Evq "$proven" &&
+			elif ! printf '%s\n' "$hw" | grep -Eq "$live" &&
+				! printf '%s\n' "$hw" | grep -E "$hardware" | grep -Evq "$proven" &&
 				printf '%s\n' "$title" | grep -Eq '^(Lints|Refactor):' && [ -n "$unchanged" ] &&
 				[ "$(ci_job compare)" = success ] && [ "$(ci_kept compare-base)" = 0 ] &&
 				[ "$(ci_kept compare-calibrated 0)" = 1 ]; then

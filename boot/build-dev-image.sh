@@ -4,8 +4,6 @@
 # build-dev-image.sh - the first OOS development boot image for `recovery` (Phase 2).
 #
 #   boot/build-dev-image.sh            -> boot/out/oos-dev.img (+ .sha256)
-#   OOS_DECODERS="usb dcc" / OOS_DECODERS_OFF="avionics" boot/build-dev-image.sh   fewer decoders in oos-ui
-#   (ui/tools/decoder-features.sh; the seven core decoders are always in)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -48,8 +46,7 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else s
 owner="$(id -u):$(id -g)"
 ui="$root/ui/target/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
-feat=$("$root/ui/tools/decoder-features.sh") || exit 1
-(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl $feat) || exit 1
+(cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
 fpgad="$root/fpgad/target/aarch64-unknown-linux-musl/release"
 (cd "$root/fpgad" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
 # oos-hw with the kernel's compiler (kernel/build-base.sh image), for arm64 whatever the host is; ELF e_machine 0xb7 is

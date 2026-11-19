@@ -30,37 +30,39 @@ pub(super) const TRIM_HOLD: std::time::Duration = std::time::Duration::from_secs
 pub(super) struct TrimPending {
     pub(super) mode: usize,
     pub(super) mask: u32,
-    pub(super) since: std::time::Instant,
+    /// microseconds of the loop's clock
+    pub(super) since: u64,
 }
 
 #[cfg(any(target_os = "linux", test))]
 impl TrimPending {
-    pub(super) fn due(&self, now: std::time::Instant) -> bool {
-        now.saturating_duration_since(self.since) >= TRIM_HOLD
+    pub(super) fn due(&self, now: u64) -> bool {
+        std::time::Duration::from_micros(now.saturating_sub(self.since)) >= TRIM_HOLD
     }
 }
 
 /// The unit side of `coretrim`: measure unit runs and ADC core offset writes.
-#[cfg(target_os = "linux")]
-struct UnitTrim<'a> {
-    bar: &'a mut oos_hal::dho::bus::Bar1,
+#[cfg(any(target_os = "linux", test))]
+struct UnitTrim<'a, B, C> {
+    bar: &'a mut B,
+    clock: &'a mut C,
     adc: &'a mut oos_hal::dho::adc::Adc,
 }
 
-#[cfg(target_os = "linux")]
-impl oos_hal::dho::coretrim::TrimHw for UnitTrim<'_> {
+#[cfg(any(target_os = "linux", test))]
+impl<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock> oos_hal::dho::coretrim::TrimHw for UnitTrim<'_, B, C> {
     fn slots(&mut self) -> Option<[oos_hal::dho::levels::Slot; 8]> {
-        oos_hal::dho::levels::run(self.bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)))
+        let clock = &mut *self.clock;
+        oos_hal::dho::levels::run(self.bar, &mut |us| clock.sleep_us(us as u64))
     }
     fn wait_ms(&mut self, ms: u32) {
-        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        self.clock.sleep_us(ms as u64 * 1000);
     }
     fn set_offset(&mut self, core: usize, o: i32) {
-        use oos_hal::dho::bus::Bus;
         for w in self.adc.core_offset(core, o) {
-            std::thread::sleep(std::time::Duration::from_micros(w.pre_us as u64));
+            self.clock.sleep_us(w.pre_us as u64);
             self.bar.wr(w.reg, w.val);
-            std::thread::sleep(std::time::Duration::from_micros(w.post_us as u64));
+            self.clock.sleep_us(w.post_us as u64);
         }
     }
 }
@@ -88,9 +90,10 @@ pub(super) fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
 /// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and in `overlay`, and saves the
 /// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
 /// done (matched, or nothing to change); false to try again at a later configuration.
-#[cfg(target_os = "linux")]
-pub(super) fn core_trim(
-    bar: &mut oos_hal::dho::bus::Bar1,
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn core_trim<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>(
+    bar: &mut B,
+    clock: &mut C,
     state: &mut oos_hal::dho::seq::State,
     cal: &mut oos_hal::dho::adc::CalAdc,
     overlay: &mut oos_hal::dho::coretrim::Overlay,
@@ -100,7 +103,7 @@ pub(super) fn core_trim(
     let mode = state.mode;
     let cur = cal.offsets(mode);
     let (groups, lsb) = coretrim::plan(mask, &state.gain);
-    let mut hw = UnitTrim { bar, adc: &mut state.adc };
+    let mut hw = UnitTrim { bar, clock, adc: &mut state.adc };
     // the registers may still hold what the cold boot or the stock system wrote: start from `cal`'s values
     for (n, &o) in cur.iter().enumerate() {
         coretrim::TrimHw::set_offset(&mut hw, n, o);

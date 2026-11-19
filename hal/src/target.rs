@@ -4,8 +4,9 @@
 //! The description of a board family: everything the neutral code needs to know about it (docs/porting.md). Where
 //! OOS lives on the card, what an update package is for, which models belong to it and what they can do.
 //!
-//! An image is built for one board family, so the choice is made when OOS is built (`ACTIVE`). The scripts in the
-//! image and the build read the same values from `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
+//! An image is built for one board family, so the choice is made when OOS is built (`ACTIVE`): `OOS_BOARD=<name>`,
+//! `dho` by default, sets `cfg(oos_board = "<name>")` for every crate (build.rs, ADR 0067). The scripts in the image
+//! and the build read the same values from `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
 
 use crate::model::{Caps, Limits};
 
@@ -95,8 +96,19 @@ pub struct Target {
     pub clock_steps: &'static [f64],
 }
 
-/// The board this build is for.
+/// The board this build is for: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
+#[cfg(oos_board = "dho")]
 pub const ACTIVE: Target = crate::dho::target::DHO;
+
+/// Every board family in the tree, `ACTIVE` among them (ADR 0067). `hal/tests/board_families.rs` keeps this list equal
+/// to the folders of `rootfs/board/`, and the tests below compare each family's `etc/oos-board` with its `Target`.
+pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
+
+/// The memory depths of the Acquire menu of the board this build is for (name, points per channel; 0 = Auto first).
+/// Setups store the position. Chosen together with `ACTIVE` (hal test `the_depths_come_from_the_active_family`); not
+/// a field of `Target`, which would change the layout of `Target` in every program.
+#[cfg(oos_board = "dho")]
+pub const DEPTHS: &[(&str, u64)] = &crate::dho::target::DEPTHS;
 
 #[cfg(test)]
 mod tests {
@@ -108,8 +120,8 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../rootfs")
     }
 
-    fn board_file() -> HashMap<String, String> {
-        let t = std::fs::read_to_string(rootfs().join("board").join(ACTIVE.name).join("etc/oos-board")).unwrap();
+    fn board_file(name: &str) -> HashMap<String, String> {
+        let t = std::fs::read_to_string(rootfs().join("board").join(name).join("etc/oos-board")).unwrap();
         t.lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -118,13 +130,27 @@ mod tests {
             .collect()
     }
 
-    /// The scripts of the image and the code must agree on where things are on the card.
+    /// The family this build was made for is the one `OOS_BOARD` named, or `dho` without it (build.rs).
+    #[test]
+    fn active_is_the_family_oos_board_names() {
+        let named = option_env!("OOS_BOARD").filter(|v| !v.is_empty()).unwrap_or("dho");
+        assert_eq!(ACTIVE.name, named);
+    }
+
+    /// The scripts of the image and the code must agree on where things are on the card, for every family.
     #[test]
     fn the_scripts_see_the_same_board() {
-        let f = board_file();
-        let n = |k: &str| f[k].parse::<u64>().unwrap_or_else(|_| panic!("{} = {}", k, f[k]));
-        let l = ACTIVE.layout;
-        assert_eq!(f["OOS_BOARD"], ACTIVE.name);
+        assert!(FAMILIES.iter().any(|t| t.name == ACTIVE.name), "ACTIVE is not in FAMILIES");
+        for t in FAMILIES {
+            the_scripts_see_the_same(t);
+        }
+    }
+
+    fn the_scripts_see_the_same(t: &Target) {
+        let f = board_file(t.name);
+        let n = |k: &str| f[k].parse::<u64>().unwrap_or_else(|_| panic!("{}: {} = {}", t.name, k, f[k]));
+        let l = t.layout;
+        assert_eq!(f["OOS_BOARD"], t.name);
         for (k, v) in [
             ("OOS_PARM_LBA", l.parm_lba),
             ("OOS_BCB_LBA", l.bcb_lba),
@@ -137,12 +163,16 @@ mod tests {
             ("OOS_OOSDATA_SECTORS", l.oosdata_sectors),
             ("OOS_BOOT_SECTORS", l.boot_bytes as u64 / 512),
         ] {
-            assert_eq!(n(k), v, "{}", k);
+            assert_eq!(n(k), v, "{}: {}", t.name, k);
         }
-        assert_eq!(f["OOS_CARD_CONTROLLER"], ACTIVE.card_controller);
-        for m in f["OOS_PARM_MARKS"].split_whitespace() {
-            assert!(ACTIVE.parm_marks.contains(&m), "{}", m);
-        }
+        assert_eq!(f["OOS_CARD_CONTROLLER"], t.card_controller);
+        // the same marks both ways: a mark left out of the file would let the scripts take a card without it. `parm`
+        // is the magic, which the scripts check apart.
+        let mut file: Vec<&str> = f["OOS_PARM_MARKS"].split_whitespace().collect();
+        let mut code: Vec<&str> = t.parm_marks.iter().copied().filter(|m| *m != "parm").collect();
+        file.sort_unstable();
+        code.sort_unstable();
+        assert_eq!(file, code, "{}: OOS_PARM_MARKS and Target::parm_marks", t.name);
         // the kernel gets the data partition from the command line
         let part = format!("blkdevparts=mmcblk0:{}M@{}M(oosdata)", l.oosdata_sectors / 2048, l.oosdata_lba / 2048);
         assert!(f["OOS_BOOTARGS"].contains(&part), "{}", f["OOS_BOOTARGS"]);
@@ -151,13 +181,16 @@ mod tests {
     /// The start-up and the common scripts ask the board (`oos-board`, `/etc/oos-board`) and know no address of it.
     #[test]
     fn the_common_scripts_know_no_board() {
-        let f = board_file();
         let mut bad = Vec::new();
         let dir = rootfs().join("initramfs");
         let mut files = vec![dir.join("etc/rcS")];
         files.extend(std::fs::read_dir(dir.join("bin")).unwrap().flatten().map(|e| e.path()));
-        let mut words: Vec<String> = ["oos-fpgad".to_string(), ACTIVE.card_controller.to_string()].to_vec();
-        words.extend(f.iter().filter(|(k, _)| k.ends_with("_LBA")).map(|(_, v)| v.clone()));
+        let mut words: Vec<String> = vec!["oos-fpgad".to_string()];
+        for t in FAMILIES {
+            let f = board_file(t.name);
+            words.push(t.card_controller.to_string());
+            words.extend(f.iter().filter(|(k, _)| k.ends_with("_LBA")).map(|(_, v)| v.clone()));
+        }
         for p in files {
             for line in std::fs::read_to_string(&p).unwrap().lines().filter(|l| !l.trim_start().starts_with('#')) {
                 if words.iter().any(|w| line.contains(w.as_str())) {
