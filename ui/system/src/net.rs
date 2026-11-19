@@ -19,6 +19,10 @@ pub const RESP_MAX: usize = 64 << 20;
 /// several passes (at 30 passes a second still 30 MB/s), so it cannot keep the loop writing either.
 pub const FLUSH_MAX: usize = 1 << 20;
 
+/// The TCP port of the VXI-11 core channel (oos-remote's vxi11.rs serves it, its portmapper on 111 names it; System >
+/// Network > Remote services shows it).
+pub const VXI11_CORE_PORT: u16 = 9009;
+
 /// What has arrived on `s`, without waiting: `WouldBlock` when nothing has. The sockets themselves stay blocking; this
 /// read and `write_now` do not wait, each for itself.
 ///

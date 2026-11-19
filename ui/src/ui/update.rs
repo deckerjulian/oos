@@ -94,9 +94,15 @@ impl Ui {
         d
     }
 
-    /// The web page /update.
-    pub fn update_page(&self) -> String {
-        page(&self.upd.last)
+    /// What the web page /update shows (http.rs): the state as `oos-update status --quick` gives it, and the result
+    /// of the last upload.
+    pub fn update_state(&self) -> (String, &str) {
+        let status = std::process::Command::new(BIN)
+            .args(["status", "--quick"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
+            .unwrap_or_else(|e| format!("{}: {}", BIN, e));
+        (status, &self.upd.last)
     }
 
     /// System > Boot mode.
@@ -272,34 +278,6 @@ fn wrap_lines(t: &str, w: usize) -> Vec<String> {
         }
     }
     out
-}
-
-/// The web page /update: state and an upload form.
-fn page(last: &str) -> String {
-    let status = std::process::Command::new(BIN)
-        .args(["status", "--quick"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
-        .unwrap_or_else(|e| format!("{}: {}", BIN, e));
-    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
-    format!(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS update</title>
-<style>{}</style></head>
-<body><header><b>OOS update</b><nav><a href="/">Remote</a></nav></header>
-<pre>{}</pre>
-<p>Package (<code>.oosupd</code>, signed): <input type="file" id="f" accept=".oosupd"> <button onclick="up()">Install</button></p>
-<pre id="r">{}</pre>
-<p>The new build starts on trial at the next power-on; a failed start writes the previous build back.
-Command line: <code>curl --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code></p>
-<script>
-function up(){{const f=document.getElementById('f').files[0];if(!f)return;const r=document.getElementById('r');
-r.textContent='uploading '+f.size+' bytes ...';
-fetch('/update',{{method:'POST',body:f}}).then(x=>x.text()).then(t=>{{r.textContent=t;setTimeout(()=>location.reload(),15000)}})}}
-</script></body></html>"#,
-        crate::http::STYLE,
-        esc(&status),
-        esc(last)
-    )
 }
 
 #[cfg(test)]
