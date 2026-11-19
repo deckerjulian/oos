@@ -88,6 +88,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | accepted |
 | [0066](code/0066-the-network-services-stay-in-the-frame-loop-and-do-not-wait-for-their-clients.md) | code | The network services stay in the frame loop, and they do not wait for their clients | proposed |
 | [0067](hardware/0067-a-board-family-is-a-module-behind-target-and-board-one-image-each.md) | hardware | A board family is a module behind `Target` and `Board`, with an image of its own, and drives hardware once the maintainer calls it ready | proposed |
+| [0068](process/0068-the-comparison-of-the-programs-leaves-out-panic-places-and-symbol-names.md) | process | The comparison of the programs for the scope leaves out the places of their panics and their symbol names | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents
