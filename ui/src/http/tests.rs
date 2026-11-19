@@ -397,7 +397,7 @@ fn an_answer_the_client_does_not_take_waits_and_does_not_hold_the_loop() {
 fn switching_the_web_remote_off_drops_the_answers_that_wait() {
     let mut h = Http::open(0);
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut pair = || {
+    let pair = || {
         let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         (c, l.accept().unwrap().0)
     };
