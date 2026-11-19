@@ -54,7 +54,7 @@ AREAS = {
 ALL = ("ALL",)
 RULES = (
     # what the unit does not run, and the tests' own helpers that only a run of everything proves
-    (r"^tools/(device-test\.py|device_select\.py|oosclient\.py|plan-matrix\.sh|device-deploy\.sh)$", ALL),
+    (r"^tools/(device-test\.py|device_select\.py|oosclient\.py|plan-matrix\.sh|board/[^/]+/plan-matrix\.sh|device-deploy\.sh)$", ALL),
     (r"\.md$|^docs/|^wiki/|^\.github/|^tools/|^ui/tests/|^dsp/tests/|^hal/tests/|^LICENSE|^\.[a-z]", ()),
     # the image, the update path and the build: anything can follow
     (r"^(boot|kernel|rootfs|hal/src/update)/|Cargo\.(toml|lock)$|^rustfmt\.toml$", ALL),

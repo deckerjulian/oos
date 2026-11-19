@@ -3,10 +3,11 @@
 
 //! What every board family has (ADR 0067, CONTRIBUTING.md "A new board family"): a folder of `rootfs/board/` is a
 //! family, and it needs its `Target` in `oos_hal::target::FAMILIES` (`hal/src/target.rs` compares its values with
-//! `etc/oos-board`), its module in `ui/src/board/<name>/` with an `impl Board for`, the keys of `etc/oos-board` the build
-//! and the scripts read, a `bin/oos-board` that answers every command the common scripts ask, and its row in the table
-//! "Board families" of docs/porting.md, whose family name is the `Target`'s. A row or a `Target` without a folder fails
-//! too. `oos-fpgad` is not checked yet: it is the DHO800/DHO900 tool until it is split (ADR 0067).
+//! `etc/oos-board`), its module in `ui/src/board/<name>/` with an `impl Board for`, its matrix of register sequences
+//! `tools/board/<name>/plan-matrix.sh`, the keys of `etc/oos-board` the build and the scripts read, a `bin/oos-board`
+//! that answers every command the common scripts ask, and its row in the table "Board families" of docs/porting.md,
+//! whose family name is the `Target`'s. A row or a `Target` without a folder fails too. `oos-fpgad` is not checked
+//! yet: it is the DHO800/DHO900 tool until it is split (ADR 0067).
 
 use oos_hal::target::FAMILIES;
 use std::collections::BTreeSet;
@@ -160,6 +161,10 @@ fn missing(name: &str, family: Option<&str>, cmds: &BTreeSet<String>) -> Vec<Str
             }
         }
         Err(_) => out.push(format!("rootfs/board/{}/etc/oos-board", name)),
+    }
+    let matrix = format!("tools/board/{}/plan-matrix.sh", name);
+    if !t.join(&matrix).is_file() {
+        out.push(format!("{}: its matrix of register sequences (tools/plan-matrix.sh)", matrix));
     }
     let script = dir.join("bin/oos-board");
     match std::fs::read_to_string(&script) {
