@@ -261,6 +261,14 @@ const CASES: &[Case] = &[
         script: &[(SCAN_PASSES / 2, Act::Rearm)],
     },
     Case {
+        name: "scan-run-ch1-200ms-delayed",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = false, m.delay = 1.5).0,
+        freq_hz: 1e3,
+        period_us: None,
+        passes: 60,
+        ..BASE
+    },
+    Case {
         name: "roll-ch1-la-200ms",
         model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = true, m.la.on = true).0,
         freq_hz: 1e3,
@@ -614,7 +622,16 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                     swept |= f.scan && !f.partial;
                 }
             }
-            if frames[0].scan {
+            // scan with the trigger point left of the screen: the scan trigger position, enabled (0x4058 bit 31)
+            let mut m = Model::default();
+            (case.model)(&mut m);
+            if frames[0].scan && m.delay as f64 > 5.1 * m.hw_time_per_div() as f64 {
+                let pos = trace.lines().filter(|l| l.starts_with("Write") && l.contains("off: 16472,"));
+                let on = pos.filter_map(|l| l.rsplit("v: ").next()?.trim_end_matches(" }").parse::<u32>().ok());
+                assert!(on.into_iter().any(|v| v & 1 << 31 != 0), "{}: no scan trigger position", case.name);
+            }
+            // a whole sweep and the next where the case runs long enough for one
+            if frames[0].scan && case.passes >= SCAN_PASSES {
                 assert!(frames.iter().any(|f| !f.partial), "{}: no sweep completed", case.name);
                 let sweeps = trace.lines().filter(|l| l.contains("counter: 1,")).count();
                 assert!(sweeps >= 2, "{}: {} sweeps started", case.name, sweeps);
