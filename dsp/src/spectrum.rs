@@ -652,10 +652,13 @@ pub struct Distortion {
     pub harmonics: Vec<(f64, f64)>,
 }
 
-/// 7-term Blackman-Harris window (side lobes < -160 dB, main lobe ±8 bins), so that leakage of the fundamental does
-/// not limit SNR measurements of 16-bit-class signals.
-fn bh7(i: usize, m: usize) -> f64 {
-    const A: [f64; 7] = [
+/// The windows of `distortion`, as cosine sums: (coefficients, half width of the main lobe in bins with its margin).
+/// 7-term Blackman-Harris (side lobes < -160 dB), so that leakage of the fundamental does not limit SNR measurements
+/// of 16-bit-class signals; it needs about twenty periods in the record, or the lobes of the fundamental and of the
+/// harmonics run into each other and into DC. With fewer periods a narrower window: 4-term Blackman-Harris (-92 dB)
+/// from ten periods, Hann (-31 dB, falling fast) below that.
+const BH7: (&[f64], f64) = (
+    &[
         0.271_051_400_693_42,
         0.433_297_939_234_48,
         0.218_122_999_543_11,
@@ -663,32 +666,64 @@ fn bh7(i: usize, m: usize) -> f64 {
         0.010_811_742_098_37,
         0.000_776_584_825_22,
         0.000_013_887_217_35,
-    ];
+    ],
+    9.0,
+);
+const BH4: (&[f64], f64) = (&[0.358_75, 0.488_29, 0.141_28, 0.011_68], 5.0);
+const HANN: (&[f64], f64) = (&[0.5, 0.5], 3.0);
+
+fn cos_sum(a: &[f64], i: usize, m: usize) -> f64 {
     let x = 2.0 * PI * i as f64 / m as f64;
-    A.iter()
+    a.iter()
         .enumerate()
         .map(|(k, a)| if k % 2 == 0 { a * (k as f64 * x).cos() } else { -a * (k as f64 * x).cos() })
         .sum()
 }
 
-/// THD, THD+N, SNR, SINAD, SFDR and ENOB of a sine record. The fundamental is the largest component (or the largest
-/// near `fundamental` Hz); its frequency is the power centroid of its main lobe. Each component's power is the sum of
-/// its main-lobe bins / ENBW (7-term Blackman-Harris window, mean removed). DC and the main lobes of the fundamental
-/// and the harmonics are excluded from the noise; the noise of the excluded bins is replaced by the mean noise per bin.
-/// Harmonics are searched at their aliased frequency. Returns `None` for records shorter than 64 samples or without a
-/// fundamental.
+/// THD, THD+N, SNR, SINAD, SFDR and ENOB of a record with one fundamental. The fundamental is the largest component
+/// (or the largest near `fundamental` Hz); its frequency is the power centroid of its main lobe. Each component's
+/// power is the sum of its main-lobe bins / ENBW (mean removed). DC and the main lobes of the fundamental and the
+/// harmonics are excluded from the noise; the noise of the excluded bins is replaced by the mean noise per bin.
+/// Harmonics are searched at their aliased frequency. The window follows the number of periods in the record (`BH7`):
+/// with the widest one on a record of five periods the lobe of the fundamental held the third harmonic, and a 10 kHz
+/// square read 16.2 kHz (seen on a DHO924S). Returns `None` for records shorter than 64 samples or without a
+/// fundamental. A record needs four periods or more: below that the fundamental lies in the bins left to DC.
 pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize) -> Option<Distortion> {
     let x: Vec<f64> = v.iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
-    let m = x.len();
-    if m < 64 || !(dt > 0.0) {
+    if x.len() < 64 || !(dt > 0.0) {
         return None;
     }
+    // the periods in the record: from the frequency given, else from a first look through the narrowest window
+    let span = x.len() as f64 * dt;
+    let periods = match fundamental {
+        Some(f) if f > 0.0 => f * span,
+        _ => distortion_with(&x, dt, None, 1, HANN)?.f1 * span,
+    };
+    let window = if periods >= 20.0 {
+        BH7
+    } else if periods >= 10.0 {
+        BH4
+    } else {
+        HANN
+    };
+    distortion_with(&x, dt, fundamental, harmonics, window)
+}
+
+/// `distortion` through one window of `BH7`, `BH4` and `HANN`, on the finite samples `x`.
+fn distortion_with(
+    x: &[f64],
+    dt: f64,
+    fundamental: Option<f64>,
+    harmonics: usize,
+    window: (&[f64], f64),
+) -> Option<Distortion> {
+    let m = x.len();
     let mean = x.iter().sum::<f64>() / m as f64;
     let n = m.next_power_of_two();
     let (mut re, mut im) = (vec![0.0; n], vec![0.0; n]);
     let (mut ws, mut ws2) = (0.0, 0.0);
     for i in 0..m {
-        let w = bh7(i, m);
+        let w = cos_sum(window.0, i, m);
         re[i] = (x[i] - mean) * w;
         ws += w;
         ws2 += w * w;
@@ -701,7 +736,7 @@ pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize
     let fs = 1.0 / dt;
     let df = fs / n as f64;
     let r = n as f64 / m as f64;
-    let hw = (9.0 * r).ceil() as usize;
+    let hw = (window.1 * r).ceil() as usize;
     if nb <= 2 * hw + 2 {
         return None;
     }

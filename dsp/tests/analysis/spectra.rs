@@ -173,6 +173,26 @@ fn distortion_thd_of_known_harmonics() {
     assert!(close(d2.thd_db, thd, 0.2));
 }
 
+// Break it catches: with five periods in the record the lobe of the fundamental held the third harmonic, and the
+// fundamental of a 10 kHz square was read as 16.2 kHz, of a ramp as 12.3 kHz (seen on a DHO924S).
+#[test]
+fn distortion_finds_the_fundamental_of_a_square_with_few_periods() {
+    let (n, f) = (3600usize, 10_000.0f64);
+    for periods in [4.6, 5.0, 5.3, 8.0, 12.5, 19.0, 21.0, 40.0] {
+        let dt = periods / f / n as f64;
+        let phase = |i: usize| (i as f64 * dt * f + 0.137).fract();
+        let square: Vec<f32> = (0..n).map(|i| if phase(i) < 0.5 { 0.5 } else { -0.5 }).collect();
+        let ramp: Vec<f32> = (0..n).map(|i| phase(i) as f32 - 0.5).collect();
+        let sine: Vec<f32> = (0..n).map(|i| (2.0 * PI * phase(i)).sin() as f32).collect();
+        for (name, v, thd) in [("square", &square, 20.0..50.0), ("ramp", &ramp, 20.0..85.0), ("sine", &sine, 0.0..1.0)]
+        {
+            let d = spectrum::distortion(v, dt, None, 9).unwrap();
+            assert!((d.f1 - f).abs() < 0.02 * f, "{name}, {periods} periods: fundamental {} Hz", d.f1);
+            assert!(thd.contains(&d.thd_pct), "{name}, {periods} periods: THD {} %", d.thd_pct);
+        }
+    }
+}
+
 #[test]
 fn distortion_snr_of_white_noise() {
     let dt = 1e-6;
