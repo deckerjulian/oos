@@ -5,6 +5,7 @@
 //! the routes, the queries, the upload paths and MCP are all read the way they are on a scope.
 
 use super::*;
+use crate::gfx::Canvas;
 
 /// One request whose sender closes its side after the last byte; the server is polled until it has closed the
 /// connection. What came back, or why the answer did not end: a server that keeps the connection open fails after

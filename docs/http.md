@@ -28,7 +28,7 @@ has no mark, or when an entry names a route the code does not answer.
   `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
   refused.
 - Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503
-  of `busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once.
+  of `net::busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once.
   A smaller one, a 403 or 413 and the result of an upload go out as the client takes them, from an outbox that the
   frame loop writes from on every pass without waiting (ADR 0066). The connection closes when a client takes nothing
   for 2 s or has not taken the whole answer after 30 s; while eight answers wait, a ninth closes unanswered.
@@ -96,7 +96,7 @@ found` and `refused`, 202 for an MCP notification, else 200.
   once when it is at most 300 ms old, else after a fresh copy. A client that has the newest one waits until the
   screen changes, at most 2 s (long poll), then gets 304 with no body. 503 while 8 requests wait for a picture or
   two large answers are being sent.
-- Limits: pictures are made off the frame loop, only of a changed screen, at most 20 a second (`Shots`).
+- Limits: pictures are made off the frame loop, only of a changed screen, at most 20 a second (`Shots`, `ui/src/shots.rs`).
 - net.allow: no.
 
 ### `GET /screen.jpg`

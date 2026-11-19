@@ -44,6 +44,7 @@ mod platform;
 mod protocols;
 mod scpi;
 mod settings;
+mod shots;
 mod site;
 #[cfg(test)]
 mod soak;
@@ -220,13 +221,14 @@ fn main() {
 fn serve(mut ui: Ui, args: &[String]) {
     let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args, &ui.acl());
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
+    let live = shots::Live::default();
     while !ui.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
         vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
-        for c in web.poll(&mut site::Ctx::new(&mut ui, &cv, &mut scpi)) {
+        for c in web.poll(&mut site::Ctx::new(&mut ui, &cv, &mut scpi).with_live(&live)) {
             cmd::run(&mut ui, &c);
         }
         ann.poll();
@@ -717,6 +719,8 @@ struct Device {
     vxi: vxi11::Server<scpi::Program>,
     scpi: scpi::Scpi,
     web: http::Http,
+    /// the live picture of the web remote (`/screen.png`), handed the screens of the frame loop
+    live: shots::Live,
     scpi_port: u16,
     web_port: u16,
     scope: bool,
@@ -832,6 +836,7 @@ impl Device {
             vxi,
             scpi,
             web,
+            live: Default::default(),
             scpi_port,
             web_port,
             scope,
@@ -975,7 +980,7 @@ impl Device {
         self.scpi.poll(&mut self.ui, &self.cv);
         self.vxi.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
         self.hislip.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
-        for c in self.web.poll(&mut site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi)) {
+        for c in self.web.poll(&mut site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi).with_live(&self.live)) {
             if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &c) {
                 self.ui.shot_request = Some(p);
             }
@@ -997,9 +1002,9 @@ impl Device {
         // the web page's picture: the screen the CPU draws next swaps out the shown one; with the GPU, `cv` changes
         // only when a picture comes back, and each one goes to the web page from there
         if self.gpu.is_some() {
-            self.web.before_gpu_frame();
+            self.live.before_gpu_frame();
         } else {
-            self.web.before_render(&mut self.cv, !self.ui.start_up_active());
+            self.live.before_render(&mut self.cv, !self.ui.start_up_active());
         }
         let (drawn, hdmi_done) = self.gpu_frame(hdmi_frame);
         if !drawn {
@@ -1067,7 +1072,7 @@ impl Device {
                 // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
                 // given to the GPU), else it would show a picture up to half a second old
                 let hdmi_cpu = self.hdmi.is_some() && self.hdmi_gpu == Some(false);
-                let read = shot || self.web.picture_wanted() || self.frame_n.is_multiple_of(15) || hdmi_cpu;
+                let read = shot || self.live.picture_wanted() || self.frame_n.is_multiple_of(15) || hdmi_cpu;
                 // 1. this frame's layers, while the GPU still puts the last one together
                 let tl = Instant::now();
                 self.gl.draw(&mut self.ui, self.cv.w, self.cv.h, false);
@@ -1078,7 +1083,7 @@ impl Device {
                     let back = tp.reads();
                     g.collect(tp, Some(&mut self.cv))?;
                     if back {
-                        self.web.picture_read_back(&self.cv);
+                        self.live.picture_read_back(&self.cv);
                     }
                     wait += g.times.wait;
                     self.disp.flip(bp);
@@ -1121,7 +1126,7 @@ impl Device {
                 hdmi_done = th.is_some() || (self.hdmi_gpu == Some(true) && hdmi_frame);
                 if shot {
                     g.collect(tp, Some(&mut self.cv))?;
-                    self.web.picture_read_back(&self.cv);
+                    self.live.picture_read_back(&self.cv);
                     self.disp.flip(b);
                     if let Some((t2, b2)) = th {
                         g.collect(t2, None)?;

@@ -8,7 +8,8 @@ license = "GPL-2.0-or-later"
 publish = false
 
 # `testkit`: the helpers that the tests of oos-ui use too (a scratch directory, the test switches of netacl and
-# sysconf). oos-ui turns it on for its tests only (its dev-dependency); the program for the scope is built without.
+# sysconf), and the web remote's threads at their normal priority (`system::lower_priority`). oos-ui turns it on for
+# its tests only (its dev-dependency); the program for the scope is built without.
 [features]
 testkit = []
 
