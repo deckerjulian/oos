@@ -418,6 +418,35 @@ mod tests {
         }
     }
 
+    // Break it catches: an executor that waits on the wall clock, or a ring wait that counts frames by anything but
+    // the time that passed
+    #[test]
+    fn the_ring_fills_on_the_virtual_clock() {
+        let s = Settings { tdiv: 10e-9, frames: 10, window: None, ..Settings::default() };
+        let (mut st, p) = configured(&s);
+        // a trigger every 5 ms: the poll waits for the first, then the ring gets one more every 5 ms of the 12 ms wait
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, Some(5_000 * US), None));
+        let mut dma = DmaBuf::new();
+        let n = seq::acquire_batch_on(
+            &mut st,
+            &s,
+            &p,
+            &mut bar,
+            &mut c2h,
+            &mut dma,
+            &mut clock,
+            false,
+            12,
+            |_| {},
+            || false,
+            || false,
+        )
+        .unwrap();
+        assert_eq!(n, 3, "frames at 5, 10 and 15 ms; the wait ends at about 17 ms");
+        assert!(u.borrow().now_us() > 17_000 && u.borrow().now_us() < 18_000, "{} us", u.borrow().now_us());
+        assert_eq!(dma.data().len(), 3 * seq::frame_bytes(&s, &p));
+    }
+
     // Break it catches: a done flag or a status without a trigger, a clock that does not run on the accesses, polls that
     // fill the trace line by line
     #[test]

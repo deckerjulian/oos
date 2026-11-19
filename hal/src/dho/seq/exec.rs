@@ -5,9 +5,11 @@
 //! (`execute_bus*`, also the host model of the tests), and the batch loop of the live display on top of it (arm, wait
 //! for the frame ring, play and read). How a step kind is carried out goes into `plain_step` (or `execute_into_until`
 //! for the AFE steps); which steps a sequence has is decided in seq.rs, not here. The registers it polls and reads are
-//! described in docs/protocols/.
+//! described in docs/protocols/. Every wait and every sleep goes through a `boot::Clock` (ADR 0053): the functions
+//! ending in `_on` take one, so a host run waits in virtual time; the others are those with the system clock.
 
 use super::{frames, read_len, unpad_in, wait_steps, Settings, State, Step};
+use crate::dho::boot::{Clock, SysClock};
 use crate::dho::hz;
 #[cfg(target_os = "linux")]
 use crate::dho::{afe, la};
@@ -61,23 +63,42 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(
     dma: &mut crate::dho::bus::DmaBuf,
     armed: bool,
     wait_ms: u64,
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+    idle: impl FnMut() -> bool,
+) -> Result<u32, String> {
+    let mut clock = SysClock::default();
+    acquire_batch_on(st, s, p, bar, c2h, dma, &mut clock, armed, wait_ms, log, stop, idle)
+}
+
+/// `acquire_batch_idle` on `clock`: the wait for the first frame, the wait while the ring fills and their sleeps.
+pub fn acquire_batch_on<B: crate::dho::bus::Bus, R: std::io::Read, C: Clock>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    clock: &mut C,
+    armed: bool,
+    wait_ms: u64,
     mut log: impl FnMut(String),
     stop: impl Fn() -> bool,
     mut idle: impl FnMut() -> bool,
 ) -> Result<u32, String> {
     let nf = frames(s, p);
     let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
-    execute_bus_until(&arm, bar, c2h, dma, &mut log, &stop)?;
-    let t = std::time::Instant::now();
+    execute_bus_on(&arm, bar, c2h, dma, clock, &mut log, &stop)?;
+    let t = clock.now_us();
     let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
-    while count < nf && t.elapsed().as_millis() < wait_ms as u128 {
+    while count < nf && clock.now_us() - t < wait_ms * 1000 {
         if !idle() {
-            std::thread::sleep(std::time::Duration::from_micros(200));
+            clock.sleep_us(200);
         }
         count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
     }
-    log(format!("{} of {} frames after {:.1} ms", count, nf, t.elapsed().as_secs_f64() * 1e3));
-    execute_bus(&st.read_steps(s, p, count), bar, c2h, dma, &mut log)?;
+    log(format!("{} of {} frames after {:.1} ms", count, nf, (clock.now_us() - t) as f64 * 1e-3));
+    execute_bus_on(&st.read_steps(s, p, count), bar, c2h, dma, clock, &mut log, &|| false)?;
     Ok(count)
 }
 
@@ -176,18 +197,32 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
 ) -> Result<(), String> {
+    execute_bus_on(steps, bar, c2h, dma, &mut SysClock::default(), log, stop)
+}
+
+/// `execute_bus_until` on `clock`: the polls and the sleeps of the steps.
+pub fn execute_bus_on<B: crate::dho::bus::Bus, R: std::io::Read, C: Clock>(
+    steps: &[Step],
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    clock: &mut C,
+    log: &mut impl FnMut(String),
+    stop: &impl Fn() -> bool,
+) -> Result<(), String> {
     for s in steps {
-        plain_step(s, bar, c2h, dma, log, stop)?;
+        plain_step(s, bar, c2h, dma, clock, log, stop)?;
     }
     Ok(())
 }
 
 /// One step of `execute_bus` / `execute_into_until` other than the AFE steps.
-fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
+fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read, C: Clock>(
     s: &Step,
     bar: &mut B,
     c2h: &mut R,
     dma: &mut crate::dho::bus::DmaBuf,
+    clock: &mut C,
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
 ) -> Result<(), String> {
@@ -195,15 +230,16 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
         Step::Wr((off, v)) => bar.wr(*off, *v),
         Step::Afe(_) => return Err("AFE step without AFE bus".into()),
         Step::Poll { reg, bit, ms, what } => {
-            let t = std::time::Instant::now();
+            let t = clock.now_us();
+            let ms_since = |clock: &mut C| (clock.now_us() - t) as f64 * 1e-3;
             let mut last = bar.rd(*reg);
             let mut k = 0u32;
-            while last & bit == 0 && t.elapsed().as_millis() < *ms as u128 {
-                std::thread::sleep(std::time::Duration::from_micros(500));
+            while last & bit == 0 && clock.now_us() - t < *ms * 1000 {
+                clock.sleep_us(500);
                 last = bar.rd(*reg);
                 k += 1;
                 if k.is_multiple_of(20) && last & bit == 0 && stop() {
-                    log(format!("{} {} ({:.1} ms)", what, NEW_SETTINGS, t.elapsed().as_secs_f64() * 1e3));
+                    log(format!("{} {} ({:.1} ms)", what, NEW_SETTINGS, ms_since(clock)));
                     return Err(NEW_SETTINGS.into());
                 }
             }
@@ -214,7 +250,7 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
                 if ok { "ok" } else { "TIMEOUT" },
                 reg,
                 last,
-                t.elapsed().as_secs_f64() * 1e3
+                ms_since(clock)
             ));
             if !ok && *reg == 0x4080 {
                 // 0x4030 bit 20 = mask/zone read-back started, [3:0] = FSM state (5 = waiting for the column window)
@@ -238,7 +274,7 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
         Step::Peek(regs) => {
             log(regs.iter().map(|r| format!("{:#06x} = {:#010x}", r, bar.rd(*r))).collect::<Vec<_>>().join(", "))
         }
-        Step::Sleep { us } => std::thread::sleep(std::time::Duration::from_micros(*us as u64)),
+        Step::Sleep { us } => clock.sleep_us(*us as u64),
         Step::Note(n) => log(n.clone()),
     }
     Ok(())
@@ -290,6 +326,7 @@ pub fn execute_into_until(
 ) -> Result<(), String> {
     use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
+    let mut clock = SysClock::default();
     for s in steps {
         match s {
             Step::Afe(afe::Op::Afe { ch, reg, val }) => {
@@ -298,11 +335,11 @@ pub fn execute_into_until(
             }
             Step::Afe(afe::Op::Gear { ch, gear }) => afe::set_gear(*ch, *gear).map_err(|e| format!("gear: {}", e))?,
             Step::Afe(afe::Op::Adc(w)) => {
-                std::thread::sleep(std::time::Duration::from_micros(100));
+                clock.sleep_us(100);
                 bar.wr(0x1034, *w);
-                std::thread::sleep(std::time::Duration::from_micros(100));
+                clock.sleep_us(100);
             }
-            _ => plain_step(s, bar, c2h, dma, &mut log, &stop)?,
+            _ => plain_step(s, bar, c2h, dma, &mut clock, &mut log, &stop)?,
         }
     }
     Ok(())

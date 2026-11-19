@@ -8,10 +8,9 @@
 //! timed (ADR 0020).
 
 use oos_hal::dho::bus::DmaBuf;
-use oos_hal::dho::seq::{acquire_batch_until, Settings, State, NEW_SETTINGS};
-use oos_hal::dho::sim::{engine, Engine};
+use oos_hal::dho::seq::{acquire_batch_on, acquire_batch_until, Settings, State, NEW_SETTINGS};
+use oos_hal::dho::sim::{engine, unit, Engine, Scene, View};
 use std::cell::Cell;
-use std::time::{Duration, Instant};
 
 #[test]
 fn the_trigger_wait_ends_for_new_settings() {
@@ -35,14 +34,29 @@ fn the_trigger_wait_ends_for_new_settings() {
 
 #[test]
 fn without_new_settings_the_wait_runs_to_its_end() {
-    // the same set-up never stopped: the full 2 s wait ends in the time-out error, not NEW_SETTINGS
+    // the same set-up never stopped: the full 2 s wait ends in the time-out error, not NEW_SETTINGS. It runs on the
+    // simulated unit's virtual clock (ADR 0053), so the 2 s pass without a wall clock and without a wait
     let s = Settings { tdiv: 1e-6, frames: 10, window: None, ..Settings::default() };
     let mut st = State::handover(1, None);
     let p = st.configure(&s, None, None).unwrap().1;
-    let (_eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000_000, 0, p.ratio));
+    let view = View { cal: [(1.0, 0.0); 4], dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+    let scene = Scene { volts: Box::new(|_, _| 0.0), first_fs: 0, period_fs: None, auto_fs: None, view };
+    let (u, mut bar, mut c2h, mut clock) = unit(scene);
     let mut dma = DmaBuf::new();
-    let t = Instant::now();
-    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || false);
+    let r = acquire_batch_on(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        &mut clock,
+        false,
+        25,
+        |_| {},
+        || false,
+        || false,
+    );
     assert!(matches!(&r, Err(e) if e != NEW_SETTINGS), "{:?}", r);
-    assert!(t.elapsed() >= Duration::from_millis(2000), "{:?}", t.elapsed());
+    assert!(u.borrow().now_us() >= 2_000_000, "the wait ran its 2 s: {} us", u.borrow().now_us());
 }
