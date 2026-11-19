@@ -48,10 +48,13 @@ enum Act {
     Set(fn(&mut Model)),
     /// STOP
     Hold,
+    /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
+    Rearm,
 }
 
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
-/// the scene (None: it never triggers), the passes of the loop, and what the screen does at which pass.
+/// the scene (None: it never triggers; roll and scan do not wait for it), the passes of the loop, and what the screen
+/// does at which pass.
 struct Case {
     name: &'static str,
     model: fn(&mut Model),
@@ -148,7 +151,47 @@ const CASES: &[Case] = &[
         passes: 30,
         script: &[(12, Act::Hold)],
     },
+    Case {
+        name: "roll-ch1-200ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = true).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        passes: 40,
+        script: &[],
+    },
+    Case {
+        name: "roll-ch1234-200ms",
+        model: |m| (ch(m, &[0, 1, 2, 3]), tdiv(m, 0.2), m.auto_roll = true).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        passes: 40,
+        script: &[],
+    },
+    Case {
+        name: "scan-run-ch1-200ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = false).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        passes: SCAN_PASSES,
+        script: &[],
+    },
+    Case {
+        name: "scan-single-ch1-200ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 0.2), m.auto_roll = false, m.trig_mode = TrigMode::Single).0,
+        freq_hz: 1e3,
+        square: false,
+        period_us: None,
+        passes: SCAN_PASSES,
+        script: &[(SCAN_PASSES / 2, Act::Rearm)],
+    },
 ];
+
+/// Passes of a scan case: a sweep of 2 s at 200 ms/div (a read and an empty poll of 9 ms per 4 to 5 chunks of 2 ms),
+/// the pause or the halt after it, and the start of the next sweep.
+const SCAN_PASSES: u32 = 600;
 
 /// The scene's signal on every channel: a 0.5 V sine of `f` Hz, or the square of its sign, rising through 0 at every
 /// trigger instant (they are whole periods apart).
@@ -196,24 +239,39 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
     let hw = Hw { bar, c2h, afe: None, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let mask = want.mask;
-    out.lock().unwrap().want = Some(want);
-    let mut pass = 0;
+    {
+        let mut g = out.lock().unwrap();
+        g.want = Some(want);
+        g.slow = super::slow_mode(&m);
+    }
+    let (mut pass, mut rearm_due) = (0, false);
+    // roll and scan replace the picture in the queue: every one published is taken here, as the screen takes it
+    let mut slow_frames: Vec<Frame> = Vec::new();
     let shared = out.clone();
     super::run(hw, super::settings(&m, false).mask, false, "/nonexistent".into(), out.clone(), || {
         pass += 1;
+        let mut g = shared.lock().unwrap();
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
-            let mut g = shared.lock().unwrap();
             match act {
                 Act::Set(f) => {
                     f(&mut m);
                     g.want = Some(super::settings(&m, false));
+                    g.slow = super::slow_mode(&m);
                 }
                 Act::Hold => g.hold = true,
+                Act::Rearm => rearm_due = true,
             }
+        }
+        if rearm_due && g.halted {
+            (g.rearm, rearm_due) = (true, false);
+        }
+        if (g.frame.roll || g.frame.scan) && slow_frames.last().is_none_or(|f| f.seq != g.frame.seq) {
+            slow_frames.push(g.frame.clone());
         }
         pass <= case.passes
     });
-    let frames: Vec<Frame> = out.lock().unwrap().queue.iter().cloned().collect();
+    let queued = out.lock().unwrap().queue.iter().filter(|f| !f.roll && !f.scan).cloned().collect::<Vec<_>>();
+    let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).collect();
     let trace = u.borrow().trace_text();
     (trace, frames, mask)
 }
@@ -240,7 +298,33 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         }
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
-        if case.period_us.is_some() {
+        // roll or scan from the case's settings, not from what came out: a slow case that delivers nothing fails
+        let slow = {
+            let mut m = Model::default();
+            (case.model)(&mut m);
+            super::slow_mode(&m) != crate::board::Slow::Off
+        };
+        if slow {
+            assert!(!frames.is_empty(), "{}: no picture published", case.name);
+            // roll and scan: pictures of the scene's signal on the channels of the settings, in roll the newest point
+            // at the right edge; in scan a whole sweep and the start of the next (RUN: after the pause; SINGLE:
+            // after the next press)
+            assert!(count("Chunks") > 0, "{}: no chunk was streamed", case.name);
+            for f in &frames {
+                assert!(f.roll || f.scan, "{}: a triggered frame {} among the slow ones", case.name, f.seq);
+                let on = (0..4).filter(|&c| !f.ch[c].is_empty()).fold(0, |m, c| m | 1 << c);
+                assert_eq!(on, mask, "{}: picture {} has the channels {:#x}", case.name, f.seq, on);
+                for v in f.ch.iter().filter(|v| !v.is_empty()) {
+                    let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+                    assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "{}: {} to {} V", case.name, lo, hi);
+                }
+            }
+            if frames[0].scan {
+                assert!(frames.iter().any(|f| !f.partial), "{}: no sweep completed", case.name);
+                let sweeps = trace.lines().filter(|l| l.contains("counter: 1,")).count();
+                assert!(sweeps >= 2, "{}: {} sweeps started", case.name, sweeps);
+            }
+        } else if case.period_us.is_some() {
             assert!(played > 0 && !frames.is_empty(), "{}: played {}, {} frames", case.name, played, frames.len());
             let volts = signal(case.freq_hz, case.square);
             for f in &frames {
