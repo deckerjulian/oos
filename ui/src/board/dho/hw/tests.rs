@@ -1215,7 +1215,8 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let view = View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
     // a 1 MHz sine, triggering every 50 us
     let volts = Box::new(|_c: usize, t: f64| 0.5 * (2.0 * std::f64::consts::PI * 1e6 * t).sin());
-    let scene = Scene { volts, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
+    let scene =
+        Scene { volts, la: None, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
     let (u, bar, c2h, clock) = unit(scene);
     let lines = oos_hal::dho::lines::Recorded::default();
     let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };

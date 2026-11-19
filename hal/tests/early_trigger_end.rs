@@ -40,7 +40,7 @@ fn without_new_settings_the_wait_runs_to_its_end() {
     let mut st = State::handover(1, None);
     let p = st.configure(&s, None, None).unwrap().1;
     let view = View { cal: [(1.0, 0.0); 4], dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
-    let scene = Scene { volts: Box::new(|_, _| 0.0), first_fs: 0, period_fs: None, auto_fs: None, view };
+    let scene = Scene { volts: Box::new(|_, _| 0.0), la: None, first_fs: 0, period_fs: None, auto_fs: None, view };
     let (u, mut bar, mut c2h, mut clock) = unit(scene);
     let mut dma = DmaBuf::new();
     let r = acquire_batch_on(
