@@ -24,54 +24,7 @@ impl Ui {
     /// A ref is stored memory, so a switched-off channel does not blank it.
     pub(super) fn off_sources(&self, menu: MenuId) -> Vec<usize> {
         let m = &self.m;
-        let ch = WaveId::Ch;
-        let want: Vec<WaveId> = match menu {
-            MenuId::Power if matches!(m.pw_mode, PowerMode::Ripple | PowerMode::Rail) => vec![m.pw_v],
-            MenuId::Power => vec![m.pw_v, m.pw_i],
-            MenuId::Spectrum => vec![m.spec_src],
-            MenuId::Eye => vec![m.eye_src],
-            MenuId::Bode if m.bode_gen == bode::FREE => {
-                [Some(m.bode_out), m.bode_sw_in.checked_sub(1).map(ch), Some(ch(m.bode_sync))]
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            }
-            MenuId::Bode => vec![m.bode_in, m.bode_out],
-            MenuId::Magnetic => vec![m.mag_v, m.mag_i],
-            MenuId::Inverter if m.inv_page == InvPage::Dq0 => {
-                let mut v = vec![m.inv_a, m.inv_b, m.inv_c];
-                if m.inv_ang == InvAngle::Analog {
-                    v.push(m.inv_an);
-                }
-                v
-            }
-            MenuId::Inverter => {
-                let mut v = match m.inv_ang {
-                    InvAngle::Analog => vec![m.inv_an],
-                    InvAngle::Quad | InvAngle::Hall | InvAngle::Off => Vec::new(),
-                    InvAngle::Phase => vec![m.inv_a, m.inv_b, m.inv_c],
-                };
-                v.extend(m.inv_tq);
-                v.extend(m.inv_ev);
-                v.extend(m.inv_ei);
-                v
-            }
-            MenuId::Dpt => {
-                let mut v = vec![m.dpt_v, m.dpt_i, m.dpt_g];
-                if m.dpt_4th != DptFourth::Off {
-                    v.push(m.dpt_4ch);
-                }
-                v
-            }
-            MenuId::BwTest => vec![ch(m.bw_src)],
-            MenuId::Mask => vec![ch(m.mask_src)],
-            MenuId::Dvm if self.offline => Vec::new(),
-            MenuId::Dvm => {
-                [m.dvm_on.then_some(ch(m.dvm_src)), m.cnt_on.then_some(ch(m.cnt_src))].into_iter().flatten().collect()
-            }
-            MenuId::Decode if !m.dec_on_la() => decode_wave(m.dec_src).into_iter().collect(),
-            _ => Vec::new(),
-        };
+        let want: Vec<WaveId> = pages::page(menu).and_then(|p| p.sources).map_or(Vec::new(), |f| f(self));
         let mut v: Vec<usize> = want
             .into_iter()
             .filter_map(|id| match id {
@@ -85,65 +38,23 @@ impl Ui {
 
     /// The rows of `menu`; a menu of more than one line has its own helper below, in this order.
     fn menu_items(&self, menu: MenuId) -> Vec<Item> {
+        if let Some(p) = pages::page(menu) {
+            return (p.items)(self, menu);
+        }
         match menu {
-            MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
-            MenuId::Channel(c) => self.channel_items(c),
-            MenuId::ChMore(c) => self.ch_more_items(c),
-            MenuId::Horizontal => self.horizontal_items(),
-            MenuId::Trigger => self.trigger_items(),
             // the Horizontal Menu key opens Acquire; time base and zoom one level down
-            MenuId::Acquire => self.acquire_items(),
-            MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
-            MenuId::Dvm => self.dvm_items(),
             // in the order of the groups of `measure_layout`
-            MenuId::Measure => self.measure_items(),
-            MenuId::MeasHold => vec![Item::AddMeas],
-            MenuId::Decode => self.decode_items(),
-            MenuId::Bus => self.bus_items(),
-            MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
-            MenuId::Ref => self.ref_items(),
-            MenuId::MeasAdd => Vec::new(),
-            MenuId::MeasSelected => self.measurement_catalog(),
-            MenuId::Cursor => self.cursor_items(),
-            MenuId::Display => self.display_items(),
-            MenuId::Storage => self.storage_items(),
-            MenuId::Spectrum => self.spectrum_items(),
-            MenuId::Eye => self.eye_items(),
-            MenuId::Power => self.power_items(),
-            MenuId::Identify => self.identify_items(),
-            MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => self.network_items(),
-            MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
-            MenuId::Remote => self.remote_items(),
-            MenuId::Ssh => self.ssh_items(),
-            MenuId::Bluetooth => self.bt_items(),
-            MenuId::Time => self.time_items(),
-            MenuId::Bode => self.bode_items(),
-            MenuId::Sim => self.sim_items(),
-            MenuId::SimAdvanced => self.sim_advanced_items(),
-            MenuId::Magnetic => self.magnetic_items(),
-            MenuId::Inverter => self.inverter_items(),
-            MenuId::Dpt => self.dpt_items(),
-            MenuId::Afg => self.afg_items(),
-            MenuId::BwTest => self.bw_items(),
-            MenuId::ViewMore => self.view_more_items(),
-            MenuId::La => self.la_items(),
-            MenuId::LaLines => self.la_line_items(),
-            MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
-            MenuId::Windows => self.win_items(),
-            MenuId::Zone => self.zone_items(),
-            MenuId::Mask => self.mask_items(),
-            MenuId::Utility => self.utility_items(),
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
             }
-            MenuId::Math => self.math_items(),
+            // the pages of `PAGES`, answered above
+            _ => Vec::new(),
         }
     }
 
     /// The channel menu of channel `c`.
-    fn channel_items(&self, c: usize) -> Vec<Item> {
+    pub(super) fn channel_items(&self, c: usize) -> Vec<Item> {
         vec![
             Item::ChOn(c),
             Item::ChScale(c),
@@ -159,12 +70,12 @@ impl Ui {
     }
 
     /// The second level of the channel menu of channel `c`.
-    fn ch_more_items(&self, c: usize) -> Vec<Item> {
+    pub(super) fn ch_more_items(&self, c: usize) -> Vec<Item> {
         vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::AutoDeskew, Item::ChExpand]
     }
 
     /// The time base menu, with the zoom rows while zoomed.
-    fn horizontal_items(&self) -> Vec<Item> {
+    pub(super) fn horizontal_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::HScale,
             Item::HFine,
@@ -183,7 +94,7 @@ impl Ui {
     }
 
     /// The acquire menu: mode, average, depth, segments, cores, alias.
-    fn acquire_items(&self) -> Vec<Item> {
+    pub(super) fn acquire_items(&self) -> Vec<Item> {
         let mut v = vec![Item::AcqMode];
         if self.m.acq == AcqMode::Average {
             v.push(Item::AcqAvg);
@@ -208,7 +119,7 @@ impl Ui {
     }
 
     /// The voltmeter and counter menu.
-    fn dvm_items(&self) -> Vec<Item> {
+    pub(super) fn dvm_items(&self) -> Vec<Item> {
         vec![
             Item::DvmOn,
             Item::DvmSrc,
@@ -222,7 +133,7 @@ impl Ui {
     }
 
     /// The measurement menu.
-    fn measure_items(&self) -> Vec<Item> {
+    pub(super) fn measure_items(&self) -> Vec<Item> {
         vec![
             Item::MeasSrc,
             Item::MeasSrcB,
@@ -245,7 +156,7 @@ impl Ui {
     }
 
     /// The reference menu; Load only with its feature on.
-    fn ref_items(&self) -> Vec<Item> {
+    pub(super) fn ref_items(&self) -> Vec<Item> {
         vec![
             Item::RefSrc,
             Item::RefSave,
@@ -266,7 +177,7 @@ impl Ui {
     }
 
     /// The cursor menu, with the rows of the cursor mode.
-    fn cursor_items(&self) -> Vec<Item> {
+    pub(super) fn cursor_items(&self) -> Vec<Item> {
         if self.m.cursor == CursorMode::Off {
             vec![Item::CurMode]
         } else if self.m.cursor == CursorMode::Xy {
@@ -279,7 +190,7 @@ impl Ui {
     }
 
     /// The display menu; the trend selectors while the trend pane is shown.
-    fn display_items(&self) -> Vec<Item> {
+    pub(super) fn display_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::Open(MenuId::Windows),
             Item::Views,
@@ -307,7 +218,7 @@ impl Ui {
     }
 
     /// The storage menu.
-    fn storage_items(&self) -> Vec<Item> {
+    pub(super) fn storage_items(&self) -> Vec<Item> {
         vec![
             Item::StoreDest,
             Item::StoreSlot,
@@ -322,7 +233,7 @@ impl Ui {
     }
 
     /// The spectrum menu.
-    fn spectrum_items(&self) -> Vec<Item> {
+    pub(super) fn spectrum_items(&self) -> Vec<Item> {
         vec![
             Item::SpecOn,
             Item::SpecSrc,
@@ -345,7 +256,7 @@ impl Ui {
     }
 
     /// The eye diagram menu.
-    fn eye_items(&self) -> Vec<Item> {
+    pub(super) fn eye_items(&self) -> Vec<Item> {
         vec![
             Item::EyeAct,
             Item::EyeOn,
@@ -365,7 +276,7 @@ impl Ui {
     }
 
     /// The power analysis menu, with the rows of its mode.
-    fn power_items(&self) -> Vec<Item> {
+    pub(super) fn power_items(&self) -> Vec<Item> {
         let mut v = vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode];
         match self.m.pw_mode {
             PowerMode::Ripple => v.extend([Item::PowFline, Item::PowFsw, Item::PowVin]),
@@ -376,7 +287,7 @@ impl Ui {
     }
 
     /// The network menu.
-    fn network_items(&self) -> Vec<Item> {
+    pub(super) fn network_items(&self) -> Vec<Item> {
         vec![
             Item::NetEth,
             Item::NetRetry10,
@@ -392,7 +303,7 @@ impl Ui {
     }
 
     /// The zone trigger menu.
-    fn zone_items(&self) -> Vec<Item> {
+    pub(super) fn zone_items(&self) -> Vec<Item> {
         vec![
             Item::ZoneSel,
             Item::ZoneOn,
@@ -405,7 +316,7 @@ impl Ui {
     }
 
     /// The mask test menu.
-    fn mask_items(&self) -> Vec<Item> {
+    pub(super) fn mask_items(&self) -> Vec<Item> {
         vec![
             Item::MaskOn,
             Item::MaskSrc,
@@ -423,7 +334,7 @@ impl Ui {
     }
 
     /// The utility menu; Overclock only when it is switched on.
-    fn utility_items(&self) -> Vec<Item> {
+    pub(super) fn utility_items(&self) -> Vec<Item> {
         let mut v = vec![
             Item::Offline,
             Item::QuickAct,
@@ -451,7 +362,7 @@ impl Ui {
     }
 
     /// The math menu, with the rows of the operation.
-    fn math_items(&self) -> Vec<Item> {
+    pub(super) fn math_items(&self) -> Vec<Item> {
         if self.m.math == MathOp::Off {
             vec![Item::MathSel, Item::MathFam, Item::MathOpI]
         } else if self.m.math == MathOp::Expr {

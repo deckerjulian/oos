@@ -52,6 +52,10 @@ pub(super) struct Link {
 
 #[derive(Default)]
 pub(super) struct BtUi {
+    /// a Bluetooth stick is plugged in (`hci0`), read every 2 s for the top bar (`usb_poll`), with the page open or not
+    pub stick: bool,
+    /// how many devices are connected through it as inputs (`inputs_connected`), for the dot of its box
+    pub inputs: usize,
     pub link: Link,
     /// a scan or pairing is running (the text is for the toasts)
     pub busy: Option<&'static str>,
@@ -471,8 +475,8 @@ impl Ui {
             }),
             devices,
         };
-        self.bt_stick = true;
-        self.bt_inputs = 2;
+        self.bt.stick = true;
+        self.bt.inputs = 2;
         self.bt_report(Report::Scanned);
     }
 }
@@ -612,9 +616,9 @@ mod tests {
     #[test]
     fn the_top_bar_box_opens_the_page() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
-        (u.bt_stick, u.wlan_stick) = (true, true);
-        let b = u.bt_box();
-        assert!(b.right() < u.wlan_box().x && u.top_right() == b.x);
+        (u.bt.stick, u.wlan_stick) = (true, true);
+        let b = u.status_box("BT").unwrap();
+        assert!(b.right() < u.status_box("WLAN").unwrap().x && u.top_right() == b.x);
         u.tap(b.x + 5, b.y + 5);
         assert!(u.menu_open && u.menu == MenuId::Bluetooth);
         let at = |u: &mut Ui| {
@@ -623,7 +627,7 @@ mod tests {
             cv.px[((b.y + 15) * u.scr.w + b.x + 9) as usize] & 0xffffff
         };
         let grey = at(&mut u);
-        u.bt_inputs = 1;
+        u.bt.inputs = 1;
         assert_eq!(at(&mut u), GREEN & 0xffffff, "green with a device connected (not {grey:06x})");
     }
 

@@ -61,7 +61,7 @@ pub const MODE: [Setting; 4] = [
     Setting {
         key: "avg_count",
         scpi: Scpi::Cmd("AVERages"),
-        ty: Ty::Steps(&crate::ui::AVERAGES),
+        ty: Ty::Steps(&crate::model::AVERAGES),
         label: "Averages",
         #[cfg(test)]
         doc: "How many records the Average mode averages.",
@@ -105,7 +105,7 @@ const ACQ_MODES: [AcqMode; 4] = [AcqMode::Normal, AcqMode::Peak, AcqMode::Averag
 /// A switch in a setup; over SCPI any word that starts with `MATC` or `RAW`, or `ON`, `OFF`, `1`, `0`, in any case.
 const CORES_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
-    load: |t| crate::store::p_bool(t).map(Val::Bool),
+    load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| if v.index() != 0 { "MATC" } else { "RAW" }.to_string(),
     take: |a| {
         let a = a.trim().to_ascii_uppercase();

@@ -9,12 +9,13 @@ Every merge of an upstream release into `dho804`. Nothing here touches the unit.
    else of the unit build lives in `boot/unit-hook.sh`, `boot/unit-hook-image.sh` and `boot/unit-hook-dtb.sh`. If
    upstream renamed the `rootfs/out:/wlan` mount, move the staging path in the hook.
 3. SSH instead of telnet (docs/network.md 7): keep the fork's side. rcS step 3 starts `oos-ssh`, never `telnetd`;
-   `ui/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`, `ui/src/sysconf.rs` and the
-   `remote_now` block of `ui/src/main.rs` the telnet item, key and call become the SSH ones. A new upstream use of
-   `remote_telnet` or `remote::telnet` means upstream changed telnet: port the change to SSH or drop it. Upstream's
-   `remote::hostname` lives in the fork's `ui/src/hostname.rs` (`hostname::set`). The mDNS services in
-   `Ui::mdns_config` (ui/remote.rs) announce `_ssh._tcp` while `ssh::listens()`, never telnet. The SSH page
-   itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
+   `ui/system/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`,
+   `ui/system/src/sysconf.rs` and the `remote_now` block of `ui/src/main.rs` the telnet item, key and call become the
+   SSH ones. A new upstream use of `remote_telnet` or `remote::telnet` means upstream changed telnet: port the change to
+   SSH or drop it. Upstream's `remote::hostname` lives in the fork's `ui/system/src/hostname.rs` (`hostname::set`). The
+   mDNS services in `Ui::mdns_config` (ui/remote.rs) announce `_ssh._tcp` while `ssh::listens()`, never telnet. The SSH
+   page itself (`ui/src/ui/ssh.rs`, `ui/system/src/ssh.rs`, `oos-ssh`) is fork-only. Check:
+   `grep -rn telnetd rootfs ui/src ui/system/src` finds nothing.
 4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
 5. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`; `tools/ssh-sim.sh`; `tools/fw-sim.sh`.

@@ -186,7 +186,7 @@ impl State {
         cal_adc: Option<&adc::CalAdc>,
         st: &mut Vec<Step>,
     ) -> Result<(), String> {
-        let mode = adc::mode_of_mask(s.mask).unwrap();
+        let mode = adc::mode_of_mask(s.mask).ok_or("no ADC mode for an empty channel mask")?;
         if mode != self.mode {
             let c = cal_adc.ok_or("a channel set different from the current ADC mode needs cal_adc.hex")?;
             st.push(Step::Note(format!("ADC mode {} -> {}", self.mode, mode)));

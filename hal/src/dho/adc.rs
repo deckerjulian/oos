@@ -111,7 +111,7 @@ impl CalAdc {
         i16::from_le_bytes([self.p[o], self.p[o + 1]]) as i32
     }
     fn i32(&self, o: usize) -> i32 {
-        i32::from_le_bytes(self.p[o..o + 4].try_into().unwrap())
+        i32::from_le_bytes(crate::bytes_at(&self.p, o))
     }
     fn gain_src(&self, mode: usize, core: usize) -> usize {
         let ch = if mode <= 3 {

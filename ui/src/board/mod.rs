@@ -246,7 +246,7 @@ pub struct Frame {
     pub basic: [BasicStats; NCH],
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
-    pub la: Option<crate::ui::la::LaRec>,
+    pub la: Option<crate::logic::LaRec>,
     /// a frame read again from the stored record in STOP (another part or zoom of it): the trigger is at this
     /// (fractional) sample, which may lie outside the frame, and no software trigger moves it
     pub fixed_ti: Option<f64>,

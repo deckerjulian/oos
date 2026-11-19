@@ -54,81 +54,21 @@ impl Ui {
     }
 
     pub(super) fn menu_title(&self, menu: MenuId) -> String {
+        if let Some(p) = pages::page(menu) {
+            return (p.title)(self, menu);
+        }
         match menu {
-            // where the files go now; /tmp is in RAM: say so
-            MenuId::Storage if self.save_dir() == std::path::Path::new(crate::store::USB_DIR) => {
-                "Storage \u{b7} USB stick".into()
-            }
-            MenuId::Storage if self.save_dir().starts_with("/tmp") => {
-                format!("Storage \u{b7} {} (lost at power-off)", self.save_dir().display())
-            }
-            MenuId::Storage => format!("Storage \u{b7} {}", self.save_dir().display()),
-            MenuId::Mask => "Mask test".into(),
-            MenuId::Zone => "Zone trigger".into(),
-            MenuId::Spectrum => "Spectrum analyser".into(),
-            MenuId::Eye => "Eye diagram / jitter".into(),
-            MenuId::Power => "Power analysis".into(),
-            MenuId::Identify => "Identify: tap to apply".into(),
-            MenuId::SelfCal => "Self-calibration".into(),
-            MenuId::Network => "Network".into(),
-            MenuId::Features => "Features".into(),
-            MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
-            MenuId::Remote => "Remote services".into(),
-            MenuId::Ssh => "SSH".into(),
-            MenuId::Bluetooth => "Bluetooth".into(),
-            MenuId::Time => "Date and time".into(),
-            MenuId::Bode => "Bode plot".into(),
-            MenuId::Sim => "SIM".into(),
-            MenuId::SimAdvanced => "SIM advanced".into(),
-            MenuId::Magnetic => "Magnetic".into(),
-            MenuId::Inverter => "Inverter".into(),
-            MenuId::Dpt => "Double pulse".into(),
-            MenuId::Afg => "Generator (GI/GO)".into(),
-            MenuId::BwTest => "Bandwidth test (step response)".into(),
-            MenuId::ViewMore => self.view_name().into(),
-            MenuId::La => self.la_title(),
-            MenuId::LaLines => "Logic analyser \u{b7} lines shown".into(),
-            MenuId::LaPat => "Pattern \u{b7} D0-D15".into(),
-            MenuId::Main => "Menu".into(),
-            MenuId::Channel(c) => format!("CH{}", c + 1),
-            MenuId::Horizontal => "Horizontal".into(),
-            MenuId::ChMore(c) => format!("CH{} more", c + 1),
-            MenuId::Trigger => "Trigger".into(),
-            MenuId::Acquire => "Acquire".into(),
-            MenuId::Measure => "Measure settings".into(),
-            MenuId::MeasAdd => "Add measurement".into(),
-            MenuId::MeasSelected => format!("Selected measurements ({})", self.measurement_count()),
-            MenuId::MeasHold => "Add".into(),
-            MenuId::MeasPair => format!(
-                "Pairs {} to {}",
-                self.pair_source_caption(self.meas_src),
-                self.pair_source_caption(self.meas_src_b)
-            ),
-            MenuId::Dvm => "DVM and counter".into(),
-            MenuId::Logger => "Data logger".into(),
-            MenuId::Cursor => format!(
-                "Cursor · {}",
-                self.selected_workspace_source().map_or("No source".into(), |id| self.wave_name(id))
-            ),
-            MenuId::Display => "Display".into(),
-            MenuId::Windows => "Windows".into(),
-            MenuId::Utility => "System".into(),
-            MenuId::Math => "Math".into(),
-            MenuId::Ref => {
-                self.refs[self.ref_sel].as_ref().map_or(format!("Reference R{} · empty", self.ref_sel + 1), |r| {
-                    format!("Reference R{}{}{}", self.ref_sel + 1, if r.label.is_empty() { "" } else { " · " }, r.label)
-                })
-            }
-            MenuId::Decode => "Decode".into(),
-            MenuId::Bus => "Bus · I2C".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
+                Some(p) if p.it == Item::NumEntry => self.numpad_title(),
                 Some(p) if p.it == Item::AfgFreqEntry => {
                     format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz"))
                 }
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
+            // the pages of `PAGES`, answered above
+            _ => String::new(),
         }
     }
 

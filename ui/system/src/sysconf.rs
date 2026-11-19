@@ -446,7 +446,7 @@ impl Flag {
     }
 
     /// The switch for an environment variable's value and the text of the files (`flag_of`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn of(&self, env: Option<&str>, conf: &str) -> bool {
         flag_of(env, conf, self.key, self.on)
     }
@@ -454,7 +454,7 @@ impl Flag {
     /// Holds the rule of every switch: the image defaults alone apply, the settings file wins over them (also with
     /// another value), without a line the switch is not at its `on` value, and the environment variable overrides
     /// both.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn check_both_files(&self) {
         let image = format!("# unit image\n{} = {}\n", self.key, self.on);
         assert!(self.of(None, &fork_text_of("", &image)), "{}: the image default", self.key);
@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn saved_and_loaded() {
-        let dir = crate::ui::testkit::Scratch::new("sysconf");
+        let dir = crate::testkit::Scratch::new("sysconf");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("system.conf");
         let _ = std::fs::remove_file(&p);

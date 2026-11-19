@@ -171,12 +171,12 @@ impl Cal {
         Cal::from_file_bytes(&b)
     }
     fn n(&self, r: usize) -> usize {
-        i32::from_le_bytes(self.p[0x18 + r * REC..0x18 + r * REC + 4].try_into().unwrap()).clamp(0, 100) as usize
+        i32::from_le_bytes(crate::bytes_at(&self.p, 0x18 + r * REC)).clamp(0, 100) as usize
     }
     fn seg(&self, r: usize, i: usize) -> (i64, i64, f32, f32) {
         let b = 0x18 + r * REC;
-        let i64_at = |o: usize| i64::from_le_bytes(self.p[o..o + 8].try_into().unwrap());
-        let f32_at = |o: usize| f32::from_le_bytes(self.p[o..o + 4].try_into().unwrap());
+        let i64_at = |o: usize| i64::from_le_bytes(crate::bytes_at(&self.p, o));
+        let f32_at = |o: usize| f32::from_le_bytes(crate::bytes_at(&self.p, o));
         (i64_at(b + 8 + 8 * i), i64_at(b + 0x328 + 8 * i), f32_at(b + 0x648 + 4 * i), f32_at(b + 0x7d8 + 4 * i))
     }
     /// First segment of record `r` that contains `x` (lo <= x <= hi; flatness records below 100 kHz store hi first).
@@ -279,6 +279,12 @@ pub const TABLE_LEN: usize = 8192;
 /// The arbitrary table (id, samples): the UI sets it, the acquisition thread uploads it.
 static ARB: std::sync::Mutex<(u32, Vec<i16>)> = std::sync::Mutex::new((0, Vec::new()));
 
+/// The arbitrary wave. Each change of it is one assignment, so it stays whole when a holder of the lock panics, and
+/// a poisoned lock is read like a good one.
+fn arb() -> std::sync::MutexGuard<'static, (u32, Vec<i16>)> {
+    ARB.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// One period of `v` as the waveform RAM holds it: linear resampling to 8192 points, scaled so that the lowest sample
 /// is -32767 and the highest +32767 (the Amplitude setting is then the peak-to-peak output). None without at least two
 /// finite samples; a flat wave gives 0.
@@ -308,14 +314,14 @@ pub fn arb_table(v: &[f32]) -> Option<Vec<i16>> {
 /// Makes `v` the arbitrary wave; returns its id for `Wave::Arb`, None if `v` is too short.
 pub fn arb_set(v: &[f32]) -> Option<u32> {
     let t = arb_table(v)?;
-    let mut a = ARB.lock().unwrap();
+    let mut a = arb();
     *a = (a.0.wrapping_add(1).max(1), t);
     Some(a.0)
 }
 
 /// The arbitrary wave at phase 0..1, -1..1 (demo source).
 pub fn arb_at(ph: f64) -> f64 {
-    let a = ARB.lock().unwrap();
+    let a = arb();
     a.1.get((ph * a.1.len() as f64) as usize).map_or(0.0, |&v| v as f64 / 32767.0)
 }
 
@@ -409,7 +415,7 @@ impl Wave {
             }
             Wave::Dc => vec![0; N],
             Wave::Arb { .. } => {
-                let a = ARB.lock().unwrap();
+                let a = arb();
                 if a.1.len() == N {
                     a.1.clone()
                 } else {

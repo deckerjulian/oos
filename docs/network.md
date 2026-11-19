@@ -119,12 +119,12 @@ eth0's string, else wlan0's, only when it is a valid zone (ASCII, at most 60 cha
 a minute, and logs a change. Option 101 (a tz database name such as `Europe/Amsterdam`) is not asked for: the image has
 no zoneinfo to turn a name into rules. Other on the keyboard starts from the fallback.
 
-**How a sync works.** oos-ui has its own SNTP client (`ui/src/sntp.rs`, RFC 4330: version 4, client mode, one request and
-one answer, the originate time checked, kiss-o'-death and unsynchronised servers refused); the busybox of the image has
-no `ntpd`. A worker thread does the exchange, so the screen never waits on the network. The clock is stepped
-(`clock_settime`) when it is off by 50 ms or more. When a link comes up (Ethernet with a cable and an address, or WLAN
-with an address), the first request goes out 3 s later, after DHCP set the route and the name server. A failure is
-tried again after 15 s, 30 s, 1 min and so on up to every 15 min; a success again after an hour. The log
+**How a sync works.** oos-ui has its own SNTP client (`ui/system/src/sntp.rs`, RFC 4330: version 4, client mode, one
+request and one answer, the originate time checked, kiss-o'-death and unsynchronised servers refused); the busybox of
+the image has no `ntpd`. A worker thread does the exchange, so the screen never waits on the network. The clock is
+stepped (`clock_settime`) when it is off by 50 ms or more. When a link comes up (Ethernet with a cable and an address,
+or WLAN with an address), the first request goes out 3 s later, after DHCP set the route and the name server. A failure
+is tried again after 15 s, 30 s, 1 min and so on up to every 15 min; a success again after an hour. The log
 `/tmp/oos-ui.log` has a line per sync with the server's address, its stratum, the offset and the delay.
 
 **Time zone.** A POSIX `TZ` string: `std offset [dst [offset] [,start[/time],end[/time]]]`, the offset counted west of
@@ -186,10 +186,11 @@ client sends it (`udhcpc -x hostname:`), so a router lists the scope by it. A ne
 router from the next lease (the next start, or the next WLAN connection). Without `net.name` (the very first start)
 rcS uses `oos`. An SD card moved to another scope keeps its name: choose the one from model and serial in the picker.
 
-**What it answers.** oos-ui has its own responder (`ui/src/mdns.rs`, RFC 6762 and RFC 6763), in a thread of its own
-that sleeps in `poll` between packets; there is no avahi on the image. It listens on UDP port 5353 at 224.0.0.251 and,
-where the kernel has IPv6, at ff02::fb, on every interface that is up, has an address and takes multicast (eth0, wlan0),
-and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the link-local address, a WLAN stick.
+**What it answers.** oos-ui has its own responder (`ui/system/src/mdns.rs`, RFC 6762 and RFC 6763), in a thread of its
+own that sleeps in `poll` between packets; there is no avahi on the image. It listens on UDP port 5353 at 224.0.0.251
+and, where the kernel has IPv6, at ff02::fb, on every interface that is up, has an address and takes multicast (eth0,
+wlan0), and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the link-local address, a WLAN
+stick.
 
 | name | type | data |
 |---|---|---|

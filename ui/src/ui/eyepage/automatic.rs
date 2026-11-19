@@ -3,6 +3,7 @@
 //! Selected-source Eye setup and bounded immutable-reference analysis.
 use super::*;
 use crate::ui::worker::Worker;
+use oos_dsp::eye::{infer, Summary};
 
 const BACKGROUND_POINTS: usize = 262_144;
 const PROBE_POINTS: usize = 131_072;
@@ -11,16 +12,6 @@ const PROBE_POINTS: usize = 131_072;
 const DENSITY_WIDTH: usize = 256;
 const DENSITY_HEIGHT: usize = 192;
 const CURVE_COLUMNS: usize = 256;
-
-#[derive(Clone, Debug)]
-pub(in crate::ui) struct Summary {
-    pub rate: f64,
-    pub threshold: f32,
-    pub hysteresis: f32,
-    pub samples_per_ui: f64,
-    pub recovery: &'static str,
-    pub warning: String,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Key(Vec<u64>);
@@ -120,61 +111,6 @@ impl State {
             format!("{}{}", capture_label(&self.completed_captures), if self.updating { " updating" } else { "" })
         })
     }
-}
-
-pub(in crate::ui) fn infer(
-    v: &[f32],
-    dt: f64,
-    requested: Option<f64>,
-    explicit_clock: bool,
-) -> Result<(Summary, eye::Clock), String> {
-    if v.len() < 8 || !dt.is_finite() || dt <= 0.0 {
-        return Err("Need at least 8 samples with a valid interval".into());
-    }
-    let st = stats(v, dt);
-    let span = st.vmax - st.vmin;
-    if !span.is_finite() || span <= 1e-9 {
-        return Err("Flat source: no transitions to recover a clock".into());
-    }
-    let amplitude = if st.valid { (st.top - st.base).max(span * 0.25) } else { span };
-    let threshold = if st.valid && !explicit_clock { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
-    // Voltage thresholds follow the data, never the waveform's display zoom.
-    let hysteresis = amplitude * if explicit_clock { 0.2 } else { 0.1 };
-    let mean_clock = eye::recover_clock(v, dt, threshold, hysteresis, requested)
-        .ok_or_else(|| "Need at least 3 usable transitions; set a rate or explicit clock".to_string())?;
-    let samples_per_ui = mean_clock.period / dt;
-    if !samples_per_ui.is_finite() || samples_per_ui < 2.0 {
-        return Err("Recovered UI is below 2 samples: set a known rate/clock or use a faster record".into());
-    }
-    let clock = if explicit_clock {
-        mean_clock
-    } else {
-        eye::recover_clock_pll(v, dt, threshold, hysteresis, Some(mean_clock.rate()), 0.0, true).unwrap_or(mean_clock)
-    };
-    let warning = if samples_per_ui < 10.0 {
-        format!("Limited sampling: {:.1} samples/UI", samples_per_ui)
-    } else if span < 0.05 {
-        "Low amplitude: check signal/noise before interpreting jitter".into()
-    } else {
-        String::new()
-    };
-    Ok((
-        Summary {
-            rate: clock.rate(),
-            threshold,
-            hysteresis,
-            samples_per_ui,
-            recovery: if explicit_clock {
-                "Explicit clock"
-            } else if requested.is_some() {
-                "NRZ PLL near set rate"
-            } else {
-                "Auto NRZ PLL"
-            },
-            warning,
-        },
-        clock,
-    ))
 }
 
 pub(super) fn probe_rate(v: &[f32], dt: f64) -> Option<f64> {

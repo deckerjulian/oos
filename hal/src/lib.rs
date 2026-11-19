@@ -27,6 +27,12 @@ pub mod wlan;
 
 pub mod dho;
 
+/// The `N` bytes of `b` from offset `o` on, for `from_le_bytes`. Panics past the end of `b` like indexing does: for
+/// records whose length was checked when they were read in.
+pub(crate) fn bytes_at<const N: usize>(b: &[u8], o: usize) -> [u8; N] {
+    std::array::from_fn(|k| b[o + k])
+}
+
 /// zlib / IEEE 802.3 CRC32.
 pub fn crc32(d: &[u8]) -> u32 {
     let mut c = !0u32;

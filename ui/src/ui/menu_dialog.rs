@@ -227,6 +227,7 @@ impl Ui {
             | Item::I2cAddrBits
             | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
+            Item::NumEntry => return self.numpad_keys(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
             Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
@@ -369,27 +370,15 @@ impl Ui {
     /// x centre of what opened the menu, and whether that is in the top bar (the dialog hangs below it) or a card
     /// (the dialog sits above it).
     fn menu_anchor(&self) -> (i32, bool) {
-        let (chs, tr, trg) = self.cards();
-        match self.menu_root() {
-            MenuId::Channel(c) | MenuId::ChMore(c) => (chs[c].x + chs[c].w / 2, false),
-            MenuId::Horizontal => (tr.x + tr.w / 2, false),
-            MenuId::Trigger => (trg.x + trg.w / 2, false),
-            MenuId::Main => (self.menu_btn().x, false),
-            MenuId::Network | MenuId::Remote | MenuId::Ssh | MenuId::Bluetooth => {
-                (self.net_box().x + self.net_box().w / 2, true)
-            }
-            MenuId::ViewMore => (self.scr.w, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => {
-                self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
-            }
-            MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
-            // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self
-                .top_buttons()
-                .iter()
-                .find(|t| t.0 == TopBtn::Menu(m))
-                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+        if let Some(a) = pages::page(self.menu_root()).and_then(|p| p.anchor) {
+            return a(self, self.menu_root());
         }
+        // under its top-bar button, if it has one; else centred above the cards
+        let m = self.menu_root();
+        self.top_buttons()
+            .iter()
+            .find(|t| t.0 == TopBtn::Menu(m))
+            .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true))
     }
 
     pub(super) fn dlg_layout(&self) -> Option<Dlg> {
@@ -411,9 +400,7 @@ impl Ui {
         let items = self.items(self.menu);
         let n = items.len() as i32;
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
-        let wide = self.pick.is_some_and(|p| {
-            matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey) || Self::bt_is_pick(p.it)
-        });
+        let wide = self.pick.is_some_and(|p| Self::wide_pick(p.it));
         let l = self.lay();
         let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold {
             (1, 220 + l.grid_col - 150, DLG_ROW, 16)
@@ -797,6 +784,9 @@ impl Ui {
                         self.adjust(row.it, -1);
                     } else if pl.contains(x, y) {
                         self.adjust(row.it, 1);
+                    } else if matches!(row.ctl, Ctl::Value) && self.numpad_unit(row.it).is_some() {
+                        // the number itself: type it (issue #22)
+                        self.open_numpad(row.it);
                     } else if let Ctl::Pick = row.ctl {
                         self.open_picker(row.it);
                     }

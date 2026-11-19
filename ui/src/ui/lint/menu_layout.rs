@@ -126,54 +126,23 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u
     };
     use MenuId::*;
-    for m in [
-        Main,
-        Channel(0),
-        Channel(3),
-        Horizontal,
-        Acquire,
-        Measure,
-        MeasAdd,
-        MeasHold,
-        MeasPair,
-        Dvm,
-        Cursor,
-        Display,
-        Windows,
-        Utility,
-        Math,
-        Ref,
-        Storage,
-        Mask,
-        Zone,
-        Spectrum,
-        Eye,
-        Power,
-        Identify,
-        SelfCal,
-        Bode,
-        Afg,
-        BwTest,
-        La,
-        LaLines,
-        LaPat,
-        Network,
-        Bluetooth,
-        Remote,
-        Time,
-        Magnetic,
-        Inverter,
-        Dpt,
-    ] {
+    // the channel pages of the other channels (`PAGES` opens them with channel 1)
+    for m in [Channel(1), Channel(3)] {
         walk(&|| open(m, &|_| {}), &format!("{:?}", m), &mut out);
         walk(&|| open(m, &|u| u.m.la.on = true), &format!("{:?} LA", m), &mut out);
     }
-    walk(&|| open(Bluetooth, &|u| u.bt_crowded_for_tests()), "Bluetooth crowded", &mut out);
-    // its pickers open from actions, which walk leaves out
-    for it in [Item::BtFound, Item::BtPairedPick, Item::BtForgetPick] {
-        let mut u = open(Bluetooth, &|u| u.bt_crowded_for_tests());
-        u.open_picker(it);
-        check(&u, &format!("Bluetooth crowded > picker {:?}", it), &mut out);
+    // every page of `PAGES` (ADR 0060), and the states its module names, with the pickers that open from actions
+    for p in &pages::PAGES {
+        walk(&|| open(p.id, &|_| {}), &format!("{:?}", p.id), &mut out);
+        walk(&|| open(p.id, &|u| u.m.la.on = true), &format!("{:?} LA", p.id), &mut out);
+    }
+    for &(m, name, set, pickers) in pages::LAYOUTS {
+        walk(&|| open(m, &set), &format!("{:?} {}", m, name), &mut out);
+        for &it in pickers {
+            let mut u = open(m, &set);
+            u.open_picker(it);
+            check(&u, &format!("{:?} {} > picker {:?}", m, name, it), &mut out);
+        }
     }
     walk(&|| open(Inverter, &|u| u.m.inv_page = InvPage::Mech), "Inverter mechanical", &mut out);
     walk(
@@ -247,77 +216,6 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
             })
         },
         "Bode UNI-T USB",
-        &mut out,
-    );
-    // the clock page in its longest states: a failure after a sync, a zone of its own, a long server name
-    let ntp_failed = |u: &mut Ui| {
-        u.sys.ntp = true;
-        u.sys.ntp_server = "a-rather-long-ntp-server-name.example.org".into();
-        u.sys.tz = "<+0545>-5:45<+0645>,M3.5.0/2:30:30,M10.5.0/3".into();
-        u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: 0.5, stratum: 1 }));
-        u.ntp_report(Err("Address family not supported (os error 97)".into()));
-    };
-    walk(&|| open(Time, &ntp_failed), "Time failed", &mut out);
-    // NTP server = DHCP: the longest failure with the fallback server named
-    let dhcp_failed = |u: &mut Ui| {
-        u.sys.ntp = true;
-        u.ntp_report(Err("Address family not supported (os error 97)".into()));
-        u.ntp_dhcp_asked_for_tests("pool.ntp.org", crate::sysconf::NtpOrigin::NoDhcp);
-    };
-    walk(&|| open(Time, &dhcp_failed), "Time DHCP failed", &mut out);
-    walk(
-        &|| {
-            open(Time, &|u| {
-                u.sys.ntp = true;
-                u.ntp_dhcp_asked_for_tests("255.255.255.255", crate::sysconf::NtpOrigin::Dhcp("wlan0"));
-                u.ntp_report(Err("Address family not supported (os error 97)".into()))
-            })
-        },
-        "Time DHCP failed lease",
-        &mut out,
-    );
-    walk(
-        &|| {
-            open(Time, &|u| {
-                u.sys.ntp = true;
-                u.ntp_report(Ok(time::Synced { at: 0.0, server: "x".into(), offset: -12.25, stratum: 1 }))
-            })
-        },
-        "Time synced",
-        &mut out,
-    );
-    walk(
-        &|| {
-            open(Network, &|u| {
-                u.eth_link = true;
-                u.eth.speed = Some(100);
-                u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())]
-            })
-        },
-        "Network 100M",
-        &mut out,
-    );
-    // the longest name on the network, and the longest default (DHO924S with six digits)
-    walk(
-        &|| {
-            open(Remote, &|u| {
-                u.sys.net_name = "x".repeat(63);
-                u.net = "192.168.177.164".into()
-            })
-        },
-        "Remote long name",
-        &mut out,
-    );
-    walk(&|| open(Remote, &|u| u.sys.net_name = "dho924s-123456".into()), "Remote default name", &mut out);
-    // the longest address list, the network beside it, and a change waiting for the next start
-    walk(
-        &|| {
-            open(Remote, &|u| {
-                u.sys.set_net_allow(Some(&"2001:db8:aaaa:bbbb::/64 ".repeat(6)));
-                u.remote.lans = vec!["192.168.177.0/24".into(), "10.20.0.0/24".into()]
-            })
-        },
-        "Remote long allow list",
         &mut out,
     );
     walk(

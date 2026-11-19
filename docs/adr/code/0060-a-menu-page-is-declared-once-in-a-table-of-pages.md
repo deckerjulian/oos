@@ -36,10 +36,14 @@ answers for what a picked line does (`pick` below).
 | `id` | the kind of `MenuId` it answers for | |
 | `title` | the title of the dialog | `menu_text.rs` |
 | `items` | its rows, in order | `menu_items.rs` |
-| `parent` | the menu Back leads to, and the root the top bar lights | `menu_items.rs`, `bars.rs::menu_root` |
-| `anchor` | where the dialog stands (beside a top-bar box, a card, the start menu) | `menu_dialog.rs` |
-| `pick` | what a picked line of one of its pickers does, and whether the picker is wide | `menu_actions.rs`, `menu_dialog.rs` |
-| `layouts` | the states the layout lint opens it in, beyond the default one | `lint/menu_layout.rs` |
+| `anchor` | where the dialog stands (below a top-bar box; none: as before) | `menu_dialog.rs` |
+| `picks`, `pick` | the pickers it answers for, and what a picked line of one does | `menu_actions.rs` |
+| `wide` | which of its pickers are one wide column | `menu_dialog.rs` |
+| `sources` | the signals it reads; a channel among them that is off gets the button to switch it on | `menu_items.rs::off_sources` |
+
+Back follows the menus the user came through (`menu_history`), not a field of the page; the menu a top-bar entry
+lights for stays `menu_root`. The states the layout lint opens a page in, beyond the default one, are lines of
+`LAYOUTS` beside `PAGES`, built for the tests only.
 
 The shared code asks `PAGES` and keeps no arm for a single page. A page that needs something the table has no field
 for gets the field, for every page, in a pull request of its own.
@@ -49,8 +53,8 @@ for gets the field, for every page, in a pull request of its own.
 - **The check.** `pages.rs::every_page_is_complete` walks one `MenuId` of every kind but `Pick` (a list in the test;
   an exhaustive `match` on `MenuId` beside it fails to compile when a new variant is not in it) and names each one
   without an entry, without a title or without rows. The
-  layout lint opens every page of `PAGES` with every state of its `layouts` and every picker of its rows, so a page
-  cannot be left out of it. The recipe goes into the table of AGENTS.md ("Adding something") and CONTRIBUTING.md.
+  layout lint opens every page of `PAGES`, and every state of `LAYOUTS` with the pickers it names, so a page cannot
+  be left out of it. The recipe goes into the table of AGENTS.md ("Adding something") and CONTRIBUTING.md.
 - **A number that only goes down** (ADR 0037): the pull request that adds `PAGES` adds a count of the lines that name
   a `MenuId` in the shared menu files to `tools/code-metrics.py` (`ui-menu-arms` in `tools/code-metrics.txt`). The
   pages move into the table one group per pull request, each a refactoring that keeps every pixel (ADR 0014), and the

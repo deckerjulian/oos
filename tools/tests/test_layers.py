@@ -385,7 +385,7 @@ class ThisTree(unittest.TestCase):
     def test_every_row_is_a_module_of_this_tree(self):
         texts = lay.dup.read_tree(str(ROOT))
         modules = lay.ui_modules({rel: list(lay.dup.tokens(texts[rel])) for rel in texts if rel.startswith(lay.UI)})
-        there = {"::".join(module) for module in modules.values()}
+        there = {"::".join(module) for module in modules.values()} | lay.crate_modules(texts)
         self.assertEqual(sorted(module for module in lay.PLACE if module not in there), [],
                          "a row of UI_LAYERS for a module that is gone")
 

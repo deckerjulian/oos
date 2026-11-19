@@ -83,6 +83,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0061](code/0061-a-service-of-the-screen-has-one-shape-and-the-frame-loop-polls-one-list.md) | code | A service of the screen has one shape, and the frame loop polls the parts from one list | proposed |
 | [0062](code/0062-the-state-of-the-screen-belongs-to-its-parts.md) | code | The state of the screen belongs to its parts; the fields of `Ui` itself only get fewer | proposed |
 | [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries (amends ADR 0007) | proposed |
+| [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | `ui/` is a workspace; a layer of `oos-ui` whose count is 0 leaves it as a crate of its own, the system services (`oos-system`) first, the transports (`oos-remote`) next (amends ADR 0001 and ADR 0049) | proposed |
 
 ## Reading order for agents
 

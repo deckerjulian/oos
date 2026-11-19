@@ -193,27 +193,12 @@ pub struct Scpi {
     opc_events: Vec<crate::ui::Operations>,
 }
 
-/// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
-pub(crate) fn kw(tok: &str, long: &str) -> bool {
-    let t = tok.to_ascii_uppercase();
-    let short: String = long.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect();
-    t == long.to_ascii_uppercase() || t == short
-}
+pub(crate) use crate::words::{e, kw, nearest_index, num, parse_bool};
 
 /// Splits a keyword with a numeric suffix: "CHAN2" -> ("CHAN", 2).
 fn suffix(tok: &str) -> (&str, Option<usize>) {
     let i = tok.find(|c: char| c.is_ascii_digit()).unwrap_or(tok.len());
     (&tok[..i], tok[i..].parse().ok())
-}
-
-/// The index of the entry of `list` nearest to `v` by difference (`nearest` compares ratios), the first of two as
-/// near; 0 for an empty list.
-pub(crate) fn nearest_index(list: &[f64], v: f64) -> usize {
-    list.iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| (*a - v).abs().partial_cmp(&(*b - v).abs()).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i)
-        .unwrap_or(0)
 }
 
 fn parse_ch(s: &str) -> Option<usize> {
@@ -264,43 +249,7 @@ fn parse_slot(s: &str) -> Option<usize> {
     s.parse::<usize>().ok().filter(|&n| (1..=NREF).contains(&n)).map(|n| n - 1)
 }
 
-pub(crate) fn parse_bool(s: &str) -> Option<bool> {
-    match s.trim().to_ascii_uppercase().as_str() {
-        "1" | "ON" => Some(true),
-        "0" | "OFF" => Some(false),
-        _ => None,
-    }
-}
-
-/// A finite number ("nan", "inf" and overflows are refused: they would end up in the model and in saved setups).
-pub(crate) fn num(s: &str) -> Option<f32> {
-    s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
-}
-
-fn nearest(ladder: &[f32], v: f32) -> usize {
-    let mut best = 0;
-    for (i, &x) in ladder.iter().enumerate() {
-        if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
-            best = i;
-        }
-    }
-    best
-}
-
-/// Rigol number format: 7 significant digits, two-digit exponent ("2.000000E-04").
-pub(crate) fn e(v: f64) -> String {
-    if !v.is_finite() {
-        return "9.9E37".into();
-    }
-    let s = format!("{:.6E}", v);
-    match s.split_once('E') {
-        Some((m, x)) => {
-            let n: i32 = x.parse().unwrap_or(0);
-            format!("{}E{}{:02}", m, if n < 0 { '-' } else { '+' }, n.abs())
-        }
-        None => s,
-    }
-}
+use crate::model::nearest_step as nearest;
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {

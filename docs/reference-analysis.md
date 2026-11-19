@@ -151,7 +151,9 @@ record stays fixed on pan. Long reference/acquired gates run in a bounded worker
 The six basic full-frame quantities can use summaries prepared during acquisition.
 Reference files retain their own interval and are not limited by ADC bandwidth.
 
-AC-coupled analog trigger sources hide the absolute voltage-level marker. Moving
+A channel on AC coupling keeps its trigger level marker: the scope couples ahead of
+the ADC, and the trigger and the trace read the same samples (assumed, trigger.md 2.4).
+Only the demo hides it, because it triggers on its signals before taking the mean out. Moving
 a DC trigger level shows a thin horizontal guide; loaded references retain a
 meaningful absolute level regardless of an unrelated channel's AC setting.
 

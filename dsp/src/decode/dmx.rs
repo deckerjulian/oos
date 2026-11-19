@@ -17,6 +17,12 @@ pub const DMX_BAUD: f64 = 250e3;
 /// RDM start code (ANSI E1.20).
 pub const RDM_SC: u8 = 0xcc;
 
+/// RDM checksum (ANSI E1.20): the sum of the bytes from the start code to the end of the parameter data, modulo 2^16;
+/// sent high byte first.
+pub fn rdm_checksum(bytes: impl IntoIterator<Item = u8>) -> u16 {
+    bytes.into_iter().fold(0u16, |a, b| a.wrapping_add(b as u16))
+}
+
 /// DMX512 on an RS-485 pair.
 pub static DMX512: ModuleInfo = ModuleInfo::new("Dmx512", "DMX512", "dmx")
     .differential()
@@ -105,6 +111,19 @@ fn rdm(s: &[Byte], out: &mut Vec<Packet>) {
         return trunc(out);
     }
     let rx = (b(cs_at) << 8 | b(cs_at + 1)) as u32;
-    let sum = s[..cs_at].iter().map(|x| x.0 as u32).sum::<u32>() & 0xffff;
-    out.push(Packet::new(Kind::Crc, s[cs_at].1, s[cs_at + 1].2, rx, rx == sum && s[cs_at].3 && s[cs_at + 1].3));
+    let ok = rx == rdm_checksum(s[..cs_at].iter().map(|x| x.0)) as u32 && s[cs_at].3 && s[cs_at + 1].3;
+    out.push(Packet::new(Kind::Crc, s[cs_at].1, s[cs_at + 1].2, rx, ok));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rdm_checksum_is_the_byte_sum_modulo_2_16() {
+        assert_eq!(rdm_checksum([]), 0);
+        assert_eq!(rdm_checksum([RDM_SC, 0x01, 0x18]), 0xe5);
+        // 300 * 0xff = 76500 = 0x1_2ad4: the carry out of 16 bits is dropped
+        assert_eq!(rdm_checksum([0xff; 300]), 0x2ad4);
+    }
 }

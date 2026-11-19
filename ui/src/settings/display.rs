@@ -149,7 +149,7 @@ const PERSIST_LABELS: [&str; PERSIST.len()] = {
 /// ladder.
 const PERSIST_IO: CustomIo = CustomIo {
     store: |v| v.index().to_string(),
-    load: |t| crate::store::p_idx(t, PERSIST.len()).map(Val::Index),
+    load: |t| crate::words::p_idx(t, PERSIST.len()).map(Val::Index),
     query: |v| persist_token(v.index()),
     take: |a| persist_index(a).map(Val::Index),
     labels: &PERSIST_LABELS,
@@ -161,12 +161,12 @@ const PERSIST_IO: CustomIo = CustomIo {
 /// A switch in a setup and in the menu; over SCPI the stock words of the drawing type.
 const DOTS_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
-    load: |t| crate::store::p_bool(t).map(Val::Bool),
+    load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| if v.index() != 0 { "DOTS" } else { "VECT" }.to_string(),
     take: |a| {
-        if crate::scpi::kw(a, "VECTors") {
+        if crate::words::kw(a, "VECTors") {
             Some(Val::Bool(false))
-        } else if crate::scpi::kw(a, "DOTS") {
+        } else if crate::words::kw(a, "DOTS") {
             Some(Val::Bool(true))
         } else {
             None
@@ -179,16 +179,16 @@ const DOTS_IO: CustomIo = CustomIo {
 
 fn persist_index(arg: &str) -> Option<usize> {
     let a = arg.trim();
-    if crate::scpi::kw(a, "MIN") {
+    if crate::words::kw(a, "MIN") {
         return Some(0);
     }
-    if crate::scpi::kw(a, "INFinite") {
+    if crate::words::kw(a, "INFinite") {
         return Some(PERSIST.len() - 1);
     }
     let v = a.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
     // the f32 seconds of PERSIST in f64 as written (whole milliseconds), so a time half-way picks as before
     let times: Vec<f64> = PERSIST.iter().filter(|p| p.1 >= 0.0).map(|p| (p.1 as f64 * 1e3).round() / 1e3).collect();
-    Some(crate::scpi::nearest_index(&times, v))
+    Some(crate::words::nearest_index(&times, v))
 }
 
 /// The answer to `:DISPlay:GRADing:TIME?` for entry `i` of `PERSIST`.

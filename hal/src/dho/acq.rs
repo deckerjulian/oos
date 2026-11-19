@@ -68,7 +68,6 @@ pub const SA_DELAY_FS: i64 = 800_000;
 /// `configure` with the LA on when `la_deskew` is given (0x128c): the LA enable and the deskew go in before
 /// the pre-processing reset.
 /// `skew`: per-channel deskew in fs.
-#[allow(clippy::too_many_arguments)]
 pub fn configure_la(
     sh: &mut Shadows,
     p: &Params,

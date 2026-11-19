@@ -10,6 +10,7 @@
 
 mod clock;
 mod diagram;
+mod infer;
 mod jitter;
 mod periodic;
 mod psij;
@@ -20,6 +21,7 @@ pub use clock::{
     center_strobe, clock_from_edges, gate_around_clock, recover_clock, recover_clock_pll, unit_interval, Clock,
 };
 pub use diagram::{Eye, EyeMeas};
+pub use infer::{infer, Summary};
 pub use jitter::{
     bathtub, eye_width_at, jitter, q_tail, tie, tie_spectrum, tie_trend, tj_at, Bathtub, EdgeMeans, Jitter, JitterFit,
     BATHTUB_FLOOR, BER_J2, BER_J9, MIN_EDGES, Q_BER_1E12, RUN_MIN, TAIL_EDGES,

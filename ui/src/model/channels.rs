@@ -265,7 +265,7 @@ impl Model {
             changed = true;
         }
         // models without the LA port: no logic analyser
-        if self.la.on && !crate::ui::la::available() {
+        if self.la.on && !crate::model::la::available() {
             self.la.on = false;
             changed = true;
         }

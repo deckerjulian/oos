@@ -427,7 +427,6 @@ pub fn edge(
 /// `edge` with a coupling (trigger.md 2.5, 6.1 "Other choices"): AC, LF and HF reject set the bypass (write 9, bit12)
 /// and the filter 0x208c after the mode, and AC and LF reject leave the channel offset out of the level. 0x208c is written when the
 /// code changes (back to DC too), so DC on a DC unit writes exactly the list of 6.1. LA lines stay DC.
-#[allow(clippy::too_many_arguments)]
 pub fn edge_coupled(
     sh: &mut Shadows,
     ch: u32,

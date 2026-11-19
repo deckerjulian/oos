@@ -743,7 +743,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             scan_gap(&mut ch, cursor, keep / 50);
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
-                        let la = la_t.map(|_| crate::ui::la::LaRec {
+                        let la = la_t.map(|_| crate::logic::LaRec {
                             words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()),
                             t0: 0.0,
                             dt: la_dt,
@@ -769,7 +769,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
                         let pre = (len as f64 - 1.0 - 5.0 * s.tdiv / dt).max(0.0) as usize;
                         // the newest LA word next to the newest analog point, at the right edge
-                        let la = la_t.map(|_| crate::ui::la::LaRec {
+                        let la = la_t.map(|_| crate::logic::LaRec {
                             t0: roll_la_t0(len, pre, dt, ring_la.len(), la_dt),
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
