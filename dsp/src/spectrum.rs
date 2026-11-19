@@ -686,17 +686,18 @@ fn cos_sum(a: &[f64], i: usize, m: usize) -> f64 {
 /// harmonics are excluded from the noise; the noise of the excluded bins is replaced by the mean noise per bin.
 /// Harmonics are searched at their aliased frequency. The window follows the number of periods in the record (`BH7`):
 /// with the widest one on a record of five periods the lobe of the fundamental held the third harmonic, and a 10 kHz
-/// square read 16.2 kHz (seen on a DHO924S). Returns `None` for records shorter than 64 samples or without a
+/// square read 16.2 kHz (verified on the unit, a DHO924S). Returns `None` for records shorter than 64 samples or without a
 /// fundamental. A record needs four periods or more: below that the fundamental lies in the bins left to DC.
 pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize) -> Option<Distortion> {
     let x: Vec<f64> = v.iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
     if x.len() < 64 || !(dt > 0.0) {
         return None;
     }
-    // the periods in the record: from the frequency given, else from a first look through the narrowest window
+    // the periods in the record: from the frequency given when it lies below Nyquist (where `distortion_with` uses
+    // it), else from a first look through the narrowest window
     let span = x.len() as f64 * dt;
     let periods = match fundamental {
-        Some(f) if f > 0.0 => f * span,
+        Some(f) if f > 0.0 && f < 0.5 / dt => f * span,
         _ => distortion_with(&x, dt, None, 1, HANN)?.f1 * span,
     };
     let window = if periods >= 20.0 {

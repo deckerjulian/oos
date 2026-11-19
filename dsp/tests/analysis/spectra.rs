@@ -174,7 +174,7 @@ fn distortion_thd_of_known_harmonics() {
 }
 
 // Break it catches: with five periods in the record the lobe of the fundamental held the third harmonic, and the
-// fundamental of a 10 kHz square was read as 16.2 kHz, of a ramp as 12.3 kHz (seen on a DHO924S).
+// fundamental of a 10 kHz square was read as 16.2 kHz, of a ramp as 12.3 kHz (verified on the unit, a DHO924S).
 #[test]
 fn distortion_finds_the_fundamental_of_a_square_with_few_periods() {
     let (n, f) = (3600usize, 10_000.0f64);
