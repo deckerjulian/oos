@@ -2,15 +2,114 @@
 
 ## Measurements
 
-A default set-up shows six measurements in the strip under the plot. The **Measure** menu adds others and turns on
-statistics. In **Measure > Add item** a tap adds a measurement of the source channel, and from 0.1.6 a second tap
-removes it again. **Measure > Dock** moves the strip to the left, the right, or above the trace.
+A measurement is a number the scope reads from a waveform: the peak-to-peak voltage, the frequency, the rise time, the
+delay from one channel to another. The pictures on this page come from a host run of OOS with its demo signals
+(CH1 a 1 kHz square wave, CH2 a sine), not from a scope; the scope runs the same program.
+
+### The strip
+
+The values stand in the strip under the plot, one line per source, with the source's name in its colour. A default
+set-up shows six measurements of CH1: Pk-pk, Freq, Mean, RMS, Rise and +Duty. They are measured again on every record.
+
+![Measurement strip](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-strip.png)
 
 A value with an SI unit takes its prefix (`2.00 mV`). A count reads as a whole number (`12`), a ratio without unit as a
 plain decimal (`0.498`), and `ppm`, `rpm` and `rpm/s` take no prefix (`1500 rpm`). Over SCPI (`:MEAS:STRIP?`)
 the values come in exponent form.
 
-**Labels on trace** in the Measure menu draws what each measurement means, with level lines and arrows:
+### Adding a measurement
+
+1. Tap **Measure** in the top bar (or Menu > Measure; on a USB keyboard the key M). The measurement page opens.
+2. On the left pick the category: **Basic**, **Two sources**, **Serial & PAM**, **Jitter & eye**, **Power**,
+   **Motor drive**, **Power rails** or **Double pulse**.
+3. At the top pick the **Source**: a channel or a reference. Categories that compare signals have two to four sources
+   (Source A and B, Voltage and Current source, Phase A to C, ...).
+4. Tap a group's title (AMPLITUDE, TIMING, EDGES & COUNTS, ...) to open it, then tap a tile. The measurement is in the
+   strip at once, the tile turns white and a message says so (`Fall Time CH1 added`).
+
+A second tap on a white tile removes the measurement again. The box at the bottom shows the tile tapped last: a drawing
+of what it measures, one sentence about it, and whether it is on. **Selected (n)** at the bottom left counts the
+measurements that are on.
+
+![Measurement page](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-page.png)
+
+The same measurement on another source is another line: pick CH2 as the source and tap the tile again. **Copy meas.
+to** in the Measure settings (below) copies every measurement of Source A to another channel in one go.
+
+**Two sources** measures from Source A to Source B: delay, phase and skew between the edges of the two (rising to
+rising, falling to falling, and the mixed ones), and setup and hold time, with A the data and B the clock. Choose
+both sources first, then the tile. In the strip such a measurement names both, `Delay rise-rise 1-2`.
+
+![Two sources](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-two-sources.png)
+
+### Settings of one measurement
+
+A white tile has a **Set** button. It opens the settings of that one measurement: its **Source**, and its
+**Reference** levels (10/90 or 20/80 % of the amplitude, for the edges and the times between them). Some measurements
+have more: **Idle** for burst width, **Outside** for the time outside a level, **N periods** and **Edges** for the
+duration of N periods. Rise and fall time show under **Edges used** how many of the edges in the record qualified
+(`12 / 12 qualified`). What is set here holds for this measurement only; the others keep the values of the Measure
+settings.
+
+![Settings of one measurement](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-set.png)
+
+### Removing measurements
+
+**Selected (n)** opens the list of the measurements that are on, with their sources. A tap on a row removes it, **Set**
+beside it opens its settings as above, **Clear all** removes every measurement. **Back** returns to the tiles.
+
+![Selected measurements](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-selected.png)
+
+### Measure settings
+
+**Settings** at the top of the measurement page holds what applies to all measurements:
+
+![Measure settings](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-settings.png)
+
+| Setting | What it does |
+|---|---|
+| **Source A**, **Source B** | The sources a new measurement takes; B for the measurements with two sources. |
+| **Copy meas. to** | Copies every measurement of Source A to the channel tapped. |
+| **Gate** | **Screen** measures what the screen shows, so zoom and delay choose the part; **Full record** the whole record, also what is outside the screen. Also at the top of the measurement page. |
+| **Refs** | The reference levels for edges: 10/90 or 20/80 % of the amplitude. |
+| **Statistics** | The statistics card over the plot (below). |
+| **Labels on trace** | Draws on the trace what each measurement measures (below). |
+| **Dock** | Where the strip stands: **Under** the plot, **Left**, **Right** or **Above** it. |
+| **Idle** | For Burst Width: the gap that ends a burst; `period` takes it from the signal. |
+| **Tsetup**, **Thold** | For Setup+Hold: the setup and hold time the clock edges are checked against. |
+| **Outside** | For Time Outside Level: above the high level, below the low level, or both. |
+| **N periods**, **Edges** | For Duration N-Periods: how many periods, counted on clock or on data edges. |
+| **Channel pair** | Delay, phase, skew, setup and hold between two channels, as a list of buttons. |
+| **DVM / counter** | The voltmeter and the frequency counter (below). |
+| **Clear all** | Removes every measurement. |
+
+### Statistics
+
+With **Statistics On** a card over the plot shows each measurement with its current value in the colour of its source
+and under it the mean (`μ`) and the standard deviation (`σ`) of all values since the statistics began. `n` at the top
+counts the values taken into the statistics: quick measurements can take one per drawn frame, those that need the whole
+record one per record, so the count can differ from one measurement to the next (the Count column of the Results pane
+shows each); `Screen` or `Full record` is the gate. With more measurements than fit, **Prev** and **Next** page
+through them (`1-8 / 9`). A tap on the title folds the card to one line and opens it again.
+
+![Statistics](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-stats.png)
+
+The statistics begin again when a measurement is added or removed, the gate changes, a setting of the scope changes
+(time base, scale, trigger, most settings in a menu, Statistics itself; **Dock** not), or the display is cleared with
+**Clear**. So set up first, then let the statistics run.
+
+Minimum, maximum and count stand in the **Results** pane, a table with one row per measurement:
+
+![Results pane](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/pane-results.png)
+
+Open it with **Display > Windows**: **Density** Split, **Lower** Results. **Lower** Trend draws two measurements over
+time instead (more under [Panes](#panes)). Over SCPI, `:MEASure:STATistic:ITEM? AVERages,VPP,CHAN1` reads the mean
+(also `MAXimum`, `MINimum`, `CURRent`, `DEViation`, `CNT`), `:MEASure:STATistic:RESet` starts the statistics again;
+see [[SCPI and VXI-11]].
+
+### Labels on trace
+
+**Labels on trace** in the Measure settings draws what each measurement means, with level lines and arrows:
 
 ![Labels](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/labels.png)
 
@@ -20,15 +119,14 @@ the values come in exponent form.
 
 ## Panes
 
-**Display > Pane** puts a second view under the waveform. Tap the pane's title for its settings. The x closes it.
+**Display > Windows** with **Density** Split puts a second view under the waveform; **Lower** chooses which. Tap the pane's title for its settings. The x closes it.
 
 **Spectrum:** the spectrum with numbered peaks and a peak list. The span follows the signal. Tap the title for its settings, the button above the list to sort by frequency or level.
 
 ![Spectrum pane](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/pane-spectrum.png)
 
-**Results:** every measurement with mean, min, max, sigma and count, with cursors and peaks beside it.
-
-![Results pane](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/pane-results.png)
+**Results:** every measurement with mean, min, max, sigma and count, with cursors and peaks beside it (picture under
+[Statistics](#statistics)).
 
 **Trend:** two measurements over time. Tap a chart to change its measurement.
 

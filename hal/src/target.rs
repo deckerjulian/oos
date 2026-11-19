@@ -102,6 +102,11 @@ pub const ACTIVE: Target = crate::dho::target::DHO;
 /// to the folders of `rootfs/board/`, and the tests below compare each family's `etc/oos-board` with its `Target`.
 pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
 
+/// The memory depths of the Acquire menu of the board this build is for (name, points per channel; 0 = Auto first).
+/// Setups store the position. Chosen together with `ACTIVE` (hal test `the_depths_come_from_the_active_family`); not
+/// a field of `Target`, which would change the layout of `Target` in every program.
+pub const DEPTHS: &[(&str, u64)] = &crate::dho::target::DEPTHS;
+
 #[cfg(test)]
 mod tests {
     use super::*;

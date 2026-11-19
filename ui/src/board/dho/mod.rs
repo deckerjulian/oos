@@ -47,22 +47,6 @@ pub fn modulation(g: &GenCh) -> afg::Mod {
     }
 }
 
-/// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`hw::batch_plan`). New
-/// entries go to the end: setups store the position.
-const DEPTHS: [(&str, u64); 11] = [
-    ("Auto", 0),
-    ("1k", 1_000),
-    ("10k", 10_000),
-    ("100k", 100_000),
-    ("1M", 1_000_000),
-    ("10M", 10_000_000),
-    ("25M", 25_000_000),
-    ("50M", 50_000_000),
-    ("62.5M", 62_500_000),
-    ("100M", 100_000_000),
-    ("125M", 125_000_000),
-];
-
 impl Board for Dho {
     const MAX_CHANNELS: usize = 4;
     const MAX_GENERATORS: usize = 1;
@@ -164,10 +148,6 @@ impl Board for Dho {
 
     fn avg_hw(&self, m: &Model) -> bool {
         hw::avg_hw_ok(m)
-    }
-
-    fn depths(&self) -> &'static [(&'static str, u64)] {
-        &DEPTHS
     }
 
     fn vscale_steps_nv(&self) -> Vec<i64> {

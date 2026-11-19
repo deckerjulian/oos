@@ -175,7 +175,7 @@ with `adc.overclock = on` in /oos/system.conf (ADR 0010), or while limits.conf a
 back to 1.25 GHz stays; every step above 1.25 GHz is marked "(test)".
 A start with `adc.clock_hz` that does not reach its end sets the file aside at the next start (`limits.conf.failed`, rcS).
 
-Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the
+Memory depths above 125 M need more entries in the depth list (`DEPTHS` in hal/src/dho/target.rs) and a check of the
 segment cap (`hal::dho::hz::MEM_BURSTS`).
 
 ### 4.2 Unit defaults: `/etc/oos/limits.conf`

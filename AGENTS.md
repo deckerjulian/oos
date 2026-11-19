@@ -90,7 +90,8 @@ work on its own (ADR 0039). Everything above holds for it, and:
 - A change in the hardware paths (`hal/src/dho/`, `hal/src/update/`, `ui/src/board/`, `fpgad/`, `boot/`, `kernel/`,
   `rootfs/`) is tried on the scope on the bench when the maintainer has said in the session that it may use it:
   deploy to RAM, `tools/device-test.py`, restore what was installed. Then it sets `unit-tested` and says in the pull
-  request what ran on the unit. Without that the pull request waits, unless CI's job `scope` finds the programs
+  request what ran on the unit. The label holds for the commits it was set for: a commit pushed after it (not a merge
+  of main) takes it away again (ADR 0069). Without that the pull request waits, unless CI's job `scope` finds the programs
   for the scope byte-identical to the base's, panic places and symbol names left out (`tools/scope-binaries.sh`,
   ADR 0041, ADR 0068), or it is a refactoring of code that builds register sequences, which the comparison proves
   (title `Lints:` or `Refactor:`, `Behaviour: unchanged`; not the start, the update, `ui/src/board/` or the live paths
