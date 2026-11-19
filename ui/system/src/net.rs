@@ -67,6 +67,22 @@ pub struct Outbox {
     /// when the reply now going out was started, and when it last moved a byte
     started: Option<Instant>,
     moved: Option<Instant>,
+    limits: Limits,
+}
+
+/// When an `Outbox` gives its client up: no byte taken for `stall`, or a reply not out after `total`. The servers use
+/// the default (`SEND_STALL`, `SEND_LIMIT`); a test that keeps a client from reading on purpose sets them far out, so
+/// the time a loaded computer takes does not decide it (ADR 0020).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub stall: Duration,
+    pub total: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits { stall: SEND_STALL, total: SEND_LIMIT }
+    }
 }
 
 /// What `Outbox::flush` did.
@@ -76,11 +92,16 @@ pub enum Sent {
     Done,
     /// some is left for a later pass
     Later,
-    /// the client is given up: an error, or no byte for `SEND_STALL`, or not out after `SEND_LIMIT`
+    /// the client is given up: an error, or no byte for `Limits::stall`, or not out after `Limits::total`
     Gone,
 }
 
 impl Outbox {
+    /// An empty outbox that gives its client up at `limits`.
+    pub fn with(limits: Limits) -> Outbox {
+        Outbox { limits, ..Outbox::default() }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.at >= self.data.len()
     }
@@ -115,7 +136,7 @@ impl Outbox {
                     self.moved = Some(now);
                     if self.is_empty() {
                         // a long reply does not keep its memory
-                        *self = Outbox::default();
+                        *self = Outbox::with(self.limits);
                         return Sent::Done;
                     }
                 }
@@ -125,7 +146,7 @@ impl Outbox {
             }
         }
         let moved = *self.moved.get_or_insert(now);
-        if now.duration_since(moved) >= SEND_STALL || now.duration_since(started) >= SEND_LIMIT {
+        if now.duration_since(moved) >= self.limits.stall || now.duration_since(started) >= self.limits.total {
             Sent::Gone
         } else {
             Sent::Later
