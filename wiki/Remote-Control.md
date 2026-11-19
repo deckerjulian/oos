@@ -57,7 +57,7 @@ joined a home network with a password and worked over it for days.
 
 ## SSH
 
-SSH is the only shell on the network. **After 0.1.13** there is no telnet any more: nothing listens on port 23, and
+SSH is the only shell on the network. **From 0.1.14** there is no telnet any more: nothing listens on port 23, and
 the telnet switch is gone from Remote services (an old setting of it is ignored). The serial console keeps its shell.
 
 SSH is off until you switch it on, and it listens only to the addresses you allow. The first login:

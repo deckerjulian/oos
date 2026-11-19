@@ -44,7 +44,7 @@ The stock system's own update (**Storage > Upgrade**) installs OOS onto the card
   come out, so **the scope has to be opened after all.** Read
   [docs/install-usb.md](https://github.com/dekajoule/oos/blob/main/docs/install-usb.md) first.
 - **Models.** The install goes ahead by itself on the models whose hardware OOS has run on: DHO804, DHO814, DHO824 (a
-  DHO804 runs OOS), DHO802, DHO812 (a DHO802 runs OOS; from the release after 0.1.13) and DHO914S, DHO924S (from 0.1.6;
+  DHO804 runs OOS), DHO802, DHO812 (a DHO802 runs OOS; from 0.1.14) and DHO914S, DHO924S (from 0.1.6;
   up to 0.1.5 only the DHO924S). On any other model it stops, writes nothing, and `oos-install.log` says so: put an
   empty file `oos-any-model.txt` next to the `.GEL` file to go on anyway.
 - **What it writes.** `recovery`, the first 32 MiB of `backup` and, as its very last step, the 4 bytes of `boot` that
@@ -145,10 +145,10 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
    Put the second card into the scope, close the instrument and start it once. The stock system must work as before,
    with its calibration and licences. Then unplug the scope and take the card out again.
 3. **Install OOS on the second card.** Put it in the reader. Unmount it, then do a dry run, which only checks the card
-   and prints the plan. `img` is the file you downloaded, here 0.1.13, or `boot/out/oos-dev.img` of your own build:
+   and prints the plan. `img` is the file you downloaded, here 0.1.14, or `boot/out/oos-dev.img` of your own build:
 
    ```sh
-   img=oos-0.1.13.img
+   img=oos-0.1.14.img
    diskutil unmountDisk /dev/diskM
    sudo python3 boot/card-install.py install /dev/rdiskM --image "$img" --fallback-stock
    ```
