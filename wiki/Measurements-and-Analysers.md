@@ -4,7 +4,7 @@
 
 A measurement is a number the scope reads from a waveform: the peak-to-peak voltage, the frequency, the rise time, the
 delay from one channel to another. The pictures on this page come from a host run of OOS with its demo signals
-(CH1 a 1 kHz square wave, CH2 a sine); the scope runs the same program and draws the same screens.
+(CH1 a 1 kHz square wave, CH2 a sine), not from a scope; the scope runs the same program.
 
 ### The strip
 
@@ -87,14 +87,16 @@ beside it opens its settings as above, **Clear all** removes every measurement. 
 
 With **Statistics On** a card over the plot shows each measurement with its current value in the colour of its source
 and under it the mean (`μ`) and the standard deviation (`σ`) of all values since the statistics began. `n` at the top
-is the number of records counted; `Screen` or `Full record` is the gate. With more measurements than fit, **Prev** and
-**Next** page through them (`1-8 / 9`). A tap on the title folds the card to one line and opens it again.
+counts the values taken into the statistics: quick measurements can take one per drawn frame, those that need the whole
+record one per record, so the count can differ from one measurement to the next (the Count column of the Results pane
+shows each); `Screen` or `Full record` is the gate. With more measurements than fit, **Prev** and **Next** page
+through them (`1-8 / 9`). A tap on the title folds the card to one line and opens it again.
 
 ![Statistics](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-stats.png)
 
 The statistics begin again when a measurement is added or removed, the gate changes, a setting of the scope changes
-(time base, scale, trigger, a setting in a menu, Statistics itself), or the display is cleared with **Clear**. So
-set up first, then let the statistics run.
+(time base, scale, trigger, most settings in a menu, Statistics itself; **Dock** not), or the display is cleared with
+**Clear**. So set up first, then let the statistics run.
 
 Minimum, maximum and count stand in the **Results** pane, a table with one row per measurement:
 
