@@ -154,9 +154,9 @@ impl Outbox {
     }
 }
 
-/// The answers of the web remote above `SEND_INLINE` of http.rs, and its live pictures, go out on threads of their own:
-/// over WLAN a picture takes long enough to stall the frame loop.
-/// At most this many at once; more are answered 503, and the page tries again.
+/// The answers of the web remote above `SEND_INLINE` of oos-remote's http.rs, and its live pictures, go out on threads
+/// of their own: over WLAN a picture takes long enough to stall the frame loop. At most this many at once; more are
+/// answered 503, and the page tries again.
 pub const MAX_SENDERS: usize = 2;
 pub const SEND_TIMEOUT_S: u64 = 30;
 pub static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

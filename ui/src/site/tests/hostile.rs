@@ -11,7 +11,7 @@ use crate::gfx::Canvas;
 /// connection. What came back, or why the answer did not end: a server that keeps the connection open fails after
 /// 10 s instead of holding the test.
 fn exchange(
-    h: &mut Http,
+    h: &mut Web,
     ui: &mut Ui,
     cv: &Canvas,
     scpi: &mut crate::scpi::Scpi,
@@ -41,13 +41,13 @@ fn sandboxed(req: &[u8]) -> bool {
     [":BODE", ":SIM", ":CAL", "LOAD", ":IMP", "MAP", "LANE"].iter().any(|w| text.contains(w))
 }
 
-/// `Http::poll` and `Http::answer` (the web remote on TCP 8080: the page's requests, `/cmd`, the uploads to
+/// `Web::poll` and `Web::answer` (the web remote on TCP 8080: the page's requests, `/cmd`, the uploads to
 /// `/waveform` and `/update`, MCP): return for any bytes; a request whose head and body are whole is answered; an
 /// answer is a status line the server knows, a head, and a body as long as its Content-Length says.
 #[test]
 fn hostile_requests() {
     let _one_at_a_time = sends();
-    let mut h = Http::open(0);
+    let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let post = |path: &str, body: &[u8]| {
         let head = format!("POST {path} HTTP/1.1\r\nHost: 192.0.2.10:8080\r\nContent-Length: {}\r\n\r\n", body.len());

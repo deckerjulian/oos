@@ -1,13 +1,14 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! oos-remote: the remote transports of oos-ui (ADR 0064): VXI-11 on the scope, HiSLIP on a computer, and their
-//! announcement by mDNS / DNS-SD and LXI (ADR 0024). A transport only frames messages (ADR 0022): it takes a program
+//! oos-remote: the remote transports of oos-ui (ADR 0064): VXI-11 on the scope, HiSLIP on a computer, the web server,
+//! and their announcement by mDNS / DNS-SD and LXI (ADR 0024). A transport only frames messages (ADR 0022): it takes a program
 //! message from its client, hands it to the one SCPI interpreter of oos-ui as a `Program`, and sends back what the
 //! interpreter answered. It names nothing of oos-ui; the compiler keeps it that way.
 
 pub mod announce;
 pub mod hislip;
+pub mod http;
 pub mod vxi11;
 
 /// One program message of a client, as a transport hands it to the interpreter and keeps it while the interpreter is
