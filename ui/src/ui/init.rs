@@ -17,12 +17,7 @@ impl Ui {
             m.ch[0].offset = -1.25;
         }
         let mut ui = Ui {
-            cat_tab: 0,
-            cat_sel: 1,
-            cat_open: [1; crate::measures::CATEGORIES.len()],
-            cat_scroll: 0,
-            cat_c: WaveId::Ch(2),
-            cat_d: WaveId::Ch(3),
+            cat: meascatalog::Catalog::default(),
             meas_page: 0,
             meas_catalog_page: 0,
             workflow_hold: None,

@@ -108,7 +108,7 @@ impl Ui {
         let Some((bar, _)) = self.scroll_bar(l) else { return };
         let p = pos.clamp(0, bar.max());
         match l {
-            List::Catalog => self.cat_scroll = p,
+            List::Catalog => self.cat.scroll = p,
             List::Results => self.pn.top = p as usize,
             List::Table => self.table_top = p as usize,
             List::Pick => self.pick_scroll_to(bar, p),
@@ -223,7 +223,7 @@ mod tests {
             ui.tap(g.x + 20, g.y + g.h / 2);
             let _ = y;
         }
-        assert_eq!(ui.cat_open[0], 0, "folded again");
+        assert_eq!(ui.cat.open[0], 0, "folded again");
         let view = ui.catalog_view();
         let first = ui.catalog_group_rect(0).unwrap();
         assert!(
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn a_finger_scrolls_the_page_and_a_press_still_taps() {
         let mut ui = page();
-        ui.cat_open[0] = 0b11111;
+        ui.cat.open[0] = 0b11111;
         let (bar, view) = ui.catalog_bar().unwrap();
         assert!(bar.needed());
         let (x, y) = (view.x + 60, view.y + view.h - 30);

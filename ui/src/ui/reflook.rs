@@ -877,7 +877,7 @@ mod tests {
                     break;
                 }
             }
-            let next = u.cat_scroll + 80;
+            let next = u.cat.scroll + 80;
             u.scroll_to(super::scroll::List::Catalog, next);
         }
         let g = u.cfg_geom().expect("Burst has a settings dialog");
