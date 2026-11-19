@@ -66,6 +66,7 @@ enum Act {
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
 /// the scene (None: it never triggers; roll and scan do not wait for it), the passes of the loop, and what the screen
 /// does at which pass.
+#[derive(Clone, Copy)]
 struct Case {
     name: &'static str,
     model: fn(&mut Model),
@@ -551,6 +552,33 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             assert_eq!(g.final_ack, g.final_req, "{}: the final frame request answered", case.name);
             let last = frames.last().expect("frames before the STOP");
             assert!(!last.envelope, "{}: the newest frame read raw at STOP", case.name);
+        }
+        // live compression: the batches before the STOP came through it (frames of min/max pairs)
+        if case.compress && !case.script.iter().any(|(_, a)| matches!(a, Act::DeepRaw)) {
+            let before = &frames[..frames.len().saturating_sub(1)];
+            assert!(before.iter().any(|f| f.envelope), "{}: no frame through the live compression", case.name);
+        }
+        // the deep measurements: the record read compressed, then its screen window raw, every sample of more than
+        // the deepest compressed record
+        if asked(|a| matches!(a, Act::DeepRaw)) > 0 {
+            let raw = frames.iter().filter(|f| !f.envelope && f.ch[0].len() > crate::compress::MAX_DEPTH as usize);
+            assert!(raw.count() > 0, "{}: no raw screen window of the deep record", case.name);
+            let mut plays: Vec<&str> = trace
+                .lines()
+                .filter(|l| l.starts_with("Played"))
+                .filter_map(|l| l.find("bytes").map(|i| &l[i..]))
+                .collect();
+            plays.sort_unstable();
+            plays.dedup();
+            assert!(plays.len() >= 2, "{}: the compressed read and the raw window: {:?}", case.name, plays);
+        }
+        // the calibration reaches the configuration: the same case without it writes other values
+        if case.cal {
+            let (plain, _, _, _) = run_case(&Case { cal: false, ..*case });
+            let writes = |t: &str| -> Vec<String> {
+                t.lines().filter(|l| l.starts_with("Write")).map(|l| l[l.find("off").unwrap()..].to_string()).collect()
+            };
+            assert_ne!(writes(&trace), writes(&plain), "{}: the same writes as without the calibration", case.name);
         }
         // roll or scan from the case's settings, not from what came out: a slow case that delivers nothing fails
         let slow = {
