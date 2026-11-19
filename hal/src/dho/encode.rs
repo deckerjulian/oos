@@ -121,7 +121,10 @@ mod tests {
     fn read_out_bytes_decoded_and_encoded_again_are_the_same_bytes() {
         for mask in 1u32..16 {
             let ratio = hz::ratio(mask) as usize;
-            let mut w = words(ratio * 517, mask);
+            // every one of the 65536 codes in every word of a group, each slot from another start
+            let mut w: Vec<u16> = (0..65536u32 * ratio as u32)
+                .map(|i| ((i / ratio as u32) + (i % ratio as u32) * 0x3c3d) as u16)
+                .collect();
             if ratio == 4 && mask.count_ones() == 3 {
                 // the slot of the channel that is off carries the middle code
                 let off = (0..4).find(|c| mask & (1 << c) == 0).unwrap();

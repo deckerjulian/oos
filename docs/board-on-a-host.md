@@ -169,9 +169,10 @@ the code under test in one more respect.
 
 The bytes are made by the inverse of the decode, in hal beside it (`hal/src/dho/encode.rs`, since stage 0a): volts
 to a code, channels to interleaved words, the padding, the header, a chunk. It is built for the tests only, so the
-scope's programs stay the same programs; the stage that lets a test of oos-ui use it gives hal a feature for it. Round-trip tests hold the two together for what the decode keeps whole (raw words, padding, header,
-roll chunk): bytes, decoded and encoded again, are the same bytes for every code and every channel set; volts, encoded
-and decoded, come back within half a code. Compressed frames have no inverse, since a block keeps only its extremes:
+scope's programs stay the same programs; the stage that lets a test of oos-ui use it gives hal a feature for it.
+Round-trip tests hold the two together for what the decode keeps whole (raw words, padding, header, roll chunk):
+bytes, decoded and encoded again, are the same bytes for every channel set, with each of the 65536 codes in every
+word of a group; volts, encoded and decoded, come back within half a code. Compressed frames have no inverse, since a block keeps only its extremes:
 the model makes them with `pairs::model` from the scene's samples, and a test checks that their decode gives the
 extremes of each block of the scene, in the order they occur.
 
