@@ -50,6 +50,9 @@ enum Act {
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
     Rearm,
+    /// hardware segments: RUN starts a recording (`HwSeg::run`), a segment asked to be shown
+    SegRun,
+    SegShow(u32),
 }
 
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
@@ -221,7 +224,34 @@ const CASES: &[Case] = &[
         passes: SCAN_PASSES,
         script: &[],
     },
+    Case {
+        name: "segments-20-then-show-one",
+        model: |m| segments(m, 20),
+        freq_hz: 1e6,
+        square: false,
+        period_us: Some(50),
+        la: false,
+        passes: 60,
+        script: &[(1, Act::SegRun), (40, Act::SegShow(7))],
+    },
+    Case {
+        name: "segments-10-1ms-apart",
+        model: |m| (segments(m, 10), m.seg_ivl = 1e-3).0,
+        freq_hz: 1e6,
+        square: false,
+        period_us: Some(50),
+        la: false,
+        passes: 60,
+        script: &[(1, Act::SegRun)],
+    },
 ];
+
+/// The model with hardware segments: `n` of them, CH1 at 1 us/div.
+fn segments(m: &mut Model, n: usize) {
+    ch(m, &[0]);
+    tdiv(m, 1e-6);
+    (m.seg_hw, m.segments) = (true, n);
+}
 
 /// The step of the count on the logic analyser's lines: longer than the spacing of its words in every case, so two
 /// words next to each other differ by 0 or 1, and a chunk lost or out of order (100 words) shows as a larger step.
@@ -270,8 +300,9 @@ fn frame_line(f: &Frame) -> String {
     s
 }
 
-/// Runs `case` and returns the unit's trace, the frames delivered and the channels of the settings.
-fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
+/// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings and what the loop left
+/// in the shared state.
+fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let mut m = Model::default();
     (case.model)(&mut m);
     let want = super::settings(&m, false);
@@ -315,6 +346,8 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
                 }
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
+                Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
+                Act::SegShow(k) => g.seg.want = Some(*k),
             }
         }
         if rearm_due && g.halted {
@@ -328,7 +361,22 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32) {
     let queued = out.lock().unwrap().queue.iter().filter(|f| !f.roll && !f.scan).cloned().collect::<Vec<_>>();
     let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).collect();
     let trace = u.borrow().trace_text();
-    (trace, frames, mask)
+    (trace, frames, mask, out)
+}
+
+/// The line of a segmented recording: segments asked for, recorded, read back, the time of each and the one shown.
+fn seg_line(g: &Shared) -> String {
+    let times: Vec<String> =
+        g.seg.times.iter().map(|t| t.map_or("-".to_string(), |t| format!("{:.3}", t * 1e6))).collect();
+    let shown = g.seg.shown.as_ref().map_or("none".to_string(), |(k, f)| format!("{}: {}", k, frame_line(f)));
+    format!(
+        "segments total {} recorded {} read {} times_us [{}] shown {}\n",
+        g.seg.total,
+        g.seg.recorded,
+        g.seg.read,
+        times.join(" "),
+        shown
+    )
 }
 
 // Stage 2 of ADR 0053: the loop against the simulated unit for every case of the matrix. Break it catches: a case
@@ -341,13 +389,17 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         std::fs::create_dir_all(d).expect("OOS_LIVE_OUT is a folder");
     }
     for case in CASES {
-        let (trace, frames, mask) = run_case(case);
+        let (trace, frames, mask, out) = run_case(case);
+        let g = out.lock().unwrap();
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
             text += &trace;
             for f in &frames {
                 text += &frame_line(f);
                 text.push('\n');
+            }
+            if g.seg.total > 0 {
+                text += &seg_line(&g);
             }
             std::fs::write(d.join(format!("{}.txt", case.name)), text).expect("write the case's file");
         }
@@ -393,7 +445,55 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                 assert!(sweeps >= 2, "{}: {} sweeps started", case.name, sweeps);
             }
         } else if case.period_us.is_some() {
-            assert!(played > 0 && !frames.is_empty(), "{}: played {}, {} frames", case.name, played, frames.len());
+            // hardware segments: every segment recorded is read back with its time, a trigger period after the one
+            // before it; delivered to the screen when the recording ended by itself, not after STOP
+            let stopped = g.seg.total > 0 && g.seg.recorded < g.seg.total;
+            if g.seg.total > 0 {
+                assert!(g.seg.recorded > 0 && g.seg.read == g.seg.recorded, "{}: {}", case.name, seg_line(&g));
+                // a segment is a trigger of the scene, and the next is the first trigger after the record before it
+                // and the interval: back to back without one, a whole number of trigger periods apart, never less
+                // than the interval
+                let period = case.period_us.unwrap() as f64 * 1e-6;
+                let mut m = Model::default();
+                (case.model)(&mut m);
+                let ivl = m.seg_ivl as f64;
+                let times: Vec<f64> = g
+                    .seg
+                    .times
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| t.unwrap_or_else(|| panic!("{}: segment {} without a stamp", case.name, k)))
+                    .collect();
+                for (k, w) in times.windows(2).enumerate() {
+                    let periods = (w[1] - w[0]) / period;
+                    assert!((periods - periods.round()).abs() < 1e-6, "{}: segment {} at {} s", case.name, k + 1, w[1]);
+                    let want = if ivl == 0.0 { periods.round() == 1.0 } else { w[1] - w[0] >= ivl };
+                    assert!(want, "{}: segment {} {} s after the one before", case.name, k + 1, w[1] - w[0]);
+                }
+                let delivered = if stopped { 0 } else { g.seg.recorded as usize };
+                assert_eq!(frames.len(), delivered, "{}: frames delivered", case.name);
+                if let Some(k) =
+                    case.script.iter().find_map(|(_, a)| if let Act::SegShow(k) = a { Some(*k) } else { None })
+                {
+                    assert_eq!(g.seg.shown.as_ref().map(|s| s.0), Some(k), "{}: the segment shown", case.name);
+                    let v = &g.seg.shown.as_ref().unwrap().1.ch[0];
+                    let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+                    assert!(
+                        (hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01,
+                        "{}: shown {} to {} V",
+                        case.name,
+                        lo,
+                        hi
+                    );
+                }
+            }
+            assert!(
+                played > 0 && (stopped || !frames.is_empty()),
+                "{}: played {}, {} frames",
+                case.name,
+                played,
+                frames.len()
+            );
             let volts = signal(case.freq_hz, case.square);
             for f in &frames {
                 let on = (0..4).filter(|&c| !f.ch[c].is_empty()).fold(0, |m, c| m | 1 << c);

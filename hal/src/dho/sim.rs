@@ -18,14 +18,16 @@
 //! triggers and how the front ends scale it is the test's `Scene`; the writes of the front ends, the ADC, the trigger
 //! and the time base are recorded, not interpreted (3.2). Every access leaves a line in the trace. The roll stream and
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. Not
-//! modelled yet: the segmented record (stage 3), the hardware average (`Engine` has it).
+//! modelled yet: the hardware average (`Engine` has it). The stamps of a segmented record are those of the head of
+//! `seg`: the latch holds the trigger of the last frame played, the first-trigger stamp that of the first frame recorded
+//! since its clear, both in ticks of 0.8 ns.
 
 pub use crate::dho::seg::sim::{engine, Engine, SimBus, SimC2h};
 
 use crate::dho::boot::Clock;
 use crate::dho::bus::{Bus, FPGA_VERSION};
 use crate::dho::roll::{CHUNK_BYTES, CHUNK_WORDS};
-use crate::dho::seg::HEADER_TICK_FS;
+use crate::dho::seg::{HEADER_TICK_FS, LATCH_TICK_FS};
 use crate::dho::{encode, pairs, readout, scu};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
@@ -43,6 +45,8 @@ pub const STREAM_BYTE_FS: i128 = 10_000_000;
 pub const SWEEP_CHUNKS: u64 = 1000;
 /// Chunks of a sweep still to come when 0x40d0 reports it done (roll-mode.md 9.1: 3 to 4 on the unit).
 pub const DONE_EARLY: u64 = 4;
+/// One tick of the interval of a segmented record, 0x4068 (acquisition-start.md, `record_seq`: interval / 6.4e6).
+const INTERVAL_TICK_FS: i128 = 6_400_000;
 /// What 0x11e8 counts for a whole chunk waiting (roll-mode.md 2.2 and 8).
 const FILL_PER_CHUNK: u32 = 27;
 
@@ -169,6 +173,11 @@ pub struct Unit {
     roll: Option<Roll>,
     /// scan: 0x40d0 (the sweep is complete), until the next start
     sweep_done: bool,
+    /// the stamps: the last frame played, the latched trigger time (0x40b0/0x40b4, ticks), the trigger of the first
+    /// frame recorded since the first-trigger stamp was cleared (0x40c0/0x40c4, fs)
+    last_played: Option<u32>,
+    latched: u64,
+    first_trigger_fs: Option<i128>,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -188,6 +197,9 @@ impl Unit {
             prev_4004: 0,
             roll: None,
             sweep_done: false,
+            last_played: None,
+            latched: 0,
+            first_trigger_fs: None,
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -215,19 +227,22 @@ impl Unit {
     /// Records the frames whose trigger has come by now. The first takes the first trigger once its pre-trigger points
     /// are filled after the arm (record-play.md: a record takes the pre-trigger fill, then the wait for the next edge);
     /// a trigger inside the fill is not taken. Each later frame takes the first trigger after the pre- and post-trigger
-    /// points of the frame before it. The record stops by itself after its last frame.
+    /// points of the frame before it and the wait of 0x4068 (the interval of a segmented record, `scu::record_arm`; that
+    /// the FPGA waits it after each frame is assumed). The record stops by itself after its last frame.
     fn advance(&mut self) {
         self.stream_chunks();
+        let wait = self.reg(0x4068) as i128 * INTERVAL_TICK_FS;
         let Some(r) = self.rec.as_mut() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
         loop {
             let from = match r.n {
                 0 => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
-                _ => self.ring[&(r.first + r.n - 1)] + span,
+                _ => self.ring[&(r.first + r.n - 1)] + span + wait,
             };
             let Some(at) = self.scene.next_trigger(from).filter(|&at| at <= self.t_fs) else { break };
             let k = r.first + r.n;
             self.ring.insert(k, at);
+            self.first_trigger_fs.get_or_insert(at);
             r.n += 1;
             self.trace.push(Event::Recorded { us: self.t_fs / US, frame: k, trigger_us: at / US });
             if r.first + r.n > r.last {
@@ -339,6 +354,7 @@ impl Unit {
             self.stream.extend(encode::interleave([&ch[0], &ch[1], &ch[2], &ch[3]], mask));
         }
         let bytes = self.stream.len() - at;
+        self.last_played = Some(last);
         self.trace.push(Event::Played { us: self.t_fs / US, first, last, bytes });
     }
 
@@ -346,7 +362,16 @@ impl Unit {
         self.t_fs += WRITE_FS;
         self.advance();
         self.trace.push(Event::Write { us: self.t_fs / US, off, v });
-        self.regs.insert(off, v);
+        let before = self.regs.insert(off, v).unwrap_or(0);
+        if off == scu::stamp::CTRL {
+            if v & scu::stamp::FIRST_CLEAR != 0 {
+                self.first_trigger_fs = None;
+            }
+            if v & scu::stamp::LATCH != 0 && before & scu::stamp::LATCH == 0 {
+                let at = self.last_played.and_then(|k| self.ring.get(&k)).copied().unwrap_or(0);
+                self.latched = (at / LATCH_TICK_FS) as u64;
+            }
+        }
         if off != 0x4004 {
             return;
         }
@@ -412,6 +437,20 @@ impl Unit {
                 None => self.reg(0x4014) + self.recorded.max(1) - 1,
             },
             0x11e8 => (self.stream.len() / CHUNK_BYTES) as u32 * FILL_PER_CHUNK,
+            scu::stamp::CTRL => {
+                self.reg(off) & !scu::stamp::FIRST_VALID
+                    | if self.first_trigger_fs.is_some() { scu::stamp::FIRST_VALID } else { 0 }
+            }
+            0x40b0 => self.latched as u32,
+            0x40b4 => (self.latched >> 32) as u32,
+            0x40c0 | 0x40c4 => {
+                let t = (self.first_trigger_fs.unwrap_or(0) / LATCH_TICK_FS) as u64;
+                if off == 0x40c0 {
+                    t as u32
+                } else {
+                    (t >> 32) as u32
+                }
+            }
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
                 Some(r) if r.scan && !self.sweep_done && r.made >= SWEEP_CHUNKS / 2 && self.reg(0x4058) == 0 => {
@@ -906,5 +945,42 @@ mod tests {
             let want = lines((start + i as i128 * roll::la_spacing_fs(&rp) as i128) as f64 * 1e-15);
             assert!(x.abs_diff(want) <= 1, "LA word {}: {:#x}, not {:#x}", i, x, want);
         }
+    }
+
+    // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
+    // last, a frame's header that of the frame before it, the first-trigger stamp that of the first frame since its
+    // clear), or a segmented record that does not record on the clock
+    #[test]
+    fn a_segmented_record_runs_on_the_unit_with_its_stamps() {
+        use crate::dho::seg;
+        let segments = Some(seq::Segments { n: 20, interval: 0.0 });
+        let s = Settings { tdiv: 100e-9, depth: 1000, window: None, segments, ..Settings::default() };
+        let (mut st, p) = configured(&s);
+        let ms = 1000 * US;
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, Some(ms), None));
+        let n = seg::start(&mut st, &s, &p, &mut bar, &mut c2h).unwrap();
+        assert_eq!(n, 20);
+        clock.sleep_us(5_500);
+        let x = seg::status(&mut bar, n);
+        assert!(x.recorded > 0 && !x.complete(n), "a part after 5.5 ms: {}", x.recorded);
+        clock.sleep_us(20_000);
+        assert!(seg::status(&mut bar, n).complete(n), "all 20 after 25.5 ms");
+        let first = *u.borrow().ring.values().next().unwrap();
+        let tag = seg::first_trigger(&mut bar);
+        assert_eq!(tag, Some((first / LATCH_TICK_FS) as u64), "the first trigger since the clear");
+        seg::stop(&mut st, &mut bar, &mut c2h).unwrap();
+        let sts = seg::stamps(&mut st, &s, &p, &mut bar, &mut c2h, 0, n).unwrap();
+        let mut tl = seg::Timeline::new(tag);
+        for (k, x) in sts.iter().enumerate() {
+            let t = tl.push(*x).unwrap();
+            assert!((t - k as f64 * 1e-3).abs() < 1e-12, "segment {}: {} s", k, t);
+            if k > 0 {
+                assert_eq!(x.header, sts[k - 1].latch, "segment {}: the header holds the trigger before it", k);
+            }
+        }
+        let rs = seg::read_settings(&s, n);
+        let mut dma = DmaBuf::new();
+        seg::read(&mut st, &rs, &p, &mut bar, &mut c2h, &mut dma, 0, n).unwrap();
+        assert_eq!(dma.data().len(), n as usize * seq::frame_bytes(&rs, &p));
     }
 }
