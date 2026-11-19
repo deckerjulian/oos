@@ -235,7 +235,12 @@ mod tests {
         let mut out = Outbox::default();
         out.push(&vec![0u8; 16 << 20]);
         let t0 = Instant::now();
-        assert_eq!(out.flush_at(&s, t0), Sent::Later);
+        // the socket takes what its buffers hold (on Linux several MB), then nothing
+        let mut left = usize::MAX;
+        while out.data.len() - out.at < left {
+            left = out.data.len() - out.at;
+            assert_eq!(out.flush_at(&s, t0), Sent::Later);
+        }
         assert_eq!(out.flush_at(&s, t0 + SEND_STALL / 2), Sent::Later);
         assert_eq!(out.flush_at(&s, t0 + SEND_STALL), Sent::Gone);
         let mut empty = Outbox::default();

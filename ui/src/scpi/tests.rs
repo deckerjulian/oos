@@ -797,15 +797,17 @@ fn additional_action_queries_never_start_calibration_bode_or_force() {
 }
 
 /// #192: a client that asks for much and reads nothing costs the frame loop a write that does not wait, not the
-/// screen (every `poll` returns while it reads nothing). Its replies wait in its outbox, its next lines wait until they are out, another client is answered at once,
-/// and when it reads at last every reply arrives, whole and in order.
+/// screen (every `poll` returns while it reads nothing). Its replies wait in its outbox, its next lines wait until
+/// they are out, another client is answered at once, and when it reads at last every reply arrives, whole and in order.
 #[test]
 fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
     let (mut s, mut ui, cv) = reference_session();
     let port = s.port().unwrap();
+    // a waveform as text is about 50 kB: 40 lines of 20 queries ask for 40 MB, far more than the socket buffers hold
+    // (Linux lets those of the loopback grow to several MB)
+    line(&mut s, &mut ui, &cv, ":WAV:SOUR R1;:WAV:FORM ASC");
     let mut slow = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    // 40 lines of 1000 queries: far more answer than the socket buffers hold
-    let line_of = |k: usize| format!("{}*ESR?;:SYST:ERR?\n", "*IDN?;".repeat(998 - k % 2));
+    let line_of = |k: usize| format!("{}*ESR?\n", ":WAV:DATA?;".repeat(19 - k % 2));
     for k in 0..40 {
         slow.write_all(line_of(k).as_bytes()).unwrap();
     }
@@ -851,6 +853,6 @@ fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
     let lines: Vec<&[u8]> = got.split(|&c| c == b'\n').filter(|l| !l.is_empty()).collect();
     assert_eq!(lines.len(), 40);
     for (k, l) in lines.iter().enumerate() {
-        assert_eq!(l.iter().filter(|&&c| c == b';').count(), 999 - k % 2, "reply {} has its own answers", k);
+        assert_eq!(l.iter().filter(|&&c| c == b';').count(), 19 - k % 2, "reply {} has its own answers", k);
     }
 }
