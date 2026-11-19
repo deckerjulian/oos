@@ -41,6 +41,9 @@ equal, as in ADR 0041.**
 - Left out is only data the programs never act on. A panic place is printed when the program panics, and the scope
   builds with `panic = "abort"`, so it is printed and the program ends. A symbol name is read by a debugger. Every
   instruction, constant, table and string the programs use is still compared.
+- Rust lets a program read a panic place too (`Location::caller()`, `#[track_caller]`, a panic hook). No code of the
+  tree does, and `tools/tests/test_scope_binaries.py` fails when code does: such code needs this record looked at
+  again before it comes in.
 - `-Zlocation-detail` is an unstable flag. `RUSTC_BOOTSTRAP=1` lets the pinned release take it, for these two builds
   only. They are compared and thrown away. The image is built as before, without the flag.
 - What else needs a unit is unchanged: the paths of the image (`boot/`, `kernel/`, `rootfs/`) are not compared, and
@@ -62,11 +65,13 @@ equal, as in ADR 0041.**
   without a scope when the programs are otherwise equal. The run on a unit is kept for changes that do change them.
 - The panic messages of a change are not compared. A change that only rewords a panic message (`panic!("...")`) still
   differs: the text is a string in the program.
-- The flag belongs to the compiler release. The weekly run with the newest Rust (ADR 0045) shows when a release drops
-  or renames it: then the job `scope` fails ("the comparison could not be made"), `unit` stays pending, and this
-  record needs a second look.
+- The flag belongs to the compiler release. A newer Rust comes in through a pull request that changes the pin (ADR
+  0045). The weekly run with the newest Rust does not run this comparison. If a release drops or renames the flag, the
+  next pull request whose job `scope` runs fails it ("the comparison could not be made"). Then `unit` stays pending,
+  never passes, and this record needs a second look.
 - ADR 0041 stays in force. This record changes what its comparison leaves out.
 
 ## References
 
-ADR 0032, ADR 0041, ADR 0042, ADR 0045, ADR 0053, `tools/scope-binaries.sh`, `tools/pr-gate.sh`, #302.
+ADR 0032, ADR 0041, ADR 0042, ADR 0045, ADR 0053, `tools/scope-binaries.sh`, `tools/tests/test_scope_binaries.py`,
+`tools/pr-gate.sh`, #302.
