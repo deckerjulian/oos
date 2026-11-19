@@ -20,6 +20,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oos-remote"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "oos-hal",
+ "oos-system",
+]
+
+[[package]]
 name = "oos-system"
 version = "0.0.0"
 dependencies = [
@@ -34,5 +43,6 @@ dependencies = [
  "libc",
  "oos-dsp",
  "oos-hal",
+ "oos-remote",
  "oos-system",
 ]

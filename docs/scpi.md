@@ -501,7 +501,7 @@ Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. 
 
 A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, big-endian WORD assumptions, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
 
-The canonical implementation is [scpi.rs](../ui/src/scpi.rs) and its folder [scpi/](../ui/src/scpi/), one file per subsystem, with transport details in [hislip.rs](../ui/src/hislip.rs) and [vxi11.rs](../ui/src/vxi11.rs). This manual records the supported subset rather than treating a matching vendor header as proof of equivalent behavior.
+The canonical implementation is [scpi.rs](../ui/src/scpi.rs) and its folder [scpi/](../ui/src/scpi/), one file per subsystem, with transport details in [hislip.rs](../ui/remote/src/hislip.rs) and [vxi11.rs](../ui/remote/src/vxi11.rs) (the crate `oos-remote`). This manual records the supported subset rather than treating a matching vendor header as proof of equivalent behavior.
 
 ## Scalar identifiers
 
