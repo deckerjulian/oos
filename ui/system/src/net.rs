@@ -286,6 +286,54 @@ mod tests {
         }
     }
 
+    /// `read_some` (the reads of SCPI, VXI-11 and HiSLIP): nothing there returns at once with no end; the data come in
+    /// calls of at most the budget, in pieces; the end after the data; a piece that would take the buffer over its cap
+    /// closes the connection and is not kept.
+    #[test]
+    fn read_some_stops_at_its_budget_the_end_and_the_cap() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        let mut buf = Vec::new();
+        assert_eq!(read_some(&s, &mut buf, 1000, 10, 30), ReadEnd::default());
+        assert!(buf.is_empty());
+        c.write_all(&[7u8; 100]).unwrap();
+        let t = Instant::now();
+        let mut calls = 0;
+        while buf.len() < 100 && t.elapsed().as_secs() < 2 {
+            let before = buf.len();
+            assert_eq!(read_some(&s, &mut buf, 1000, 10, 30), ReadEnd::default());
+            assert!(buf.len() - before <= 30, "one call read {} of a budget of 30", buf.len() - before);
+            calls += (buf.len() > before) as usize;
+        }
+        assert_eq!(buf, vec![7u8; 100]);
+        assert!(calls >= 4, "100 bytes in calls of at most 30: {} calls", calls);
+        drop(c);
+        let t = Instant::now();
+        let end = loop {
+            let e = read_some(&s, &mut buf, 1000, 10, 30);
+            if e != ReadEnd::default() || t.elapsed().as_secs() >= 2 {
+                break e;
+            }
+        };
+        assert_eq!(end, ReadEnd { eof: true, closed: false });
+        assert_eq!(buf.len(), 100);
+        // 40 bytes already there, a cap of 45: the first piece of 10 would go over it
+        let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (s, _) = l.accept().unwrap();
+        c.write_all(&[1u8; 64]).unwrap();
+        let mut buf = vec![0u8; 40];
+        let t = Instant::now();
+        let end = loop {
+            let e = read_some(&s, &mut buf, 45, 10, 30);
+            if e != ReadEnd::default() || t.elapsed().as_secs() >= 2 {
+                break e;
+            }
+        };
+        assert_eq!(end, ReadEnd { eof: false, closed: true });
+        assert_eq!(buf, vec![0u8; 40], "the piece over the cap is not kept");
+    }
+
     /// A client that reads nothing: the first flush returns at once with most of a long reply left, the reply goes out
     /// as the client reads, and a client that stops taking data is given up after `SEND_STALL`, not waited for.
     #[test]
