@@ -21,16 +21,17 @@ What it does on the scope:
   is as before). --no-scpi leaves the settings alone and skips those checks.
 
 With --map it runs no checks but maps the front ends and the sample path: it steps through the vertical settings of
-the four channels (scale, offset, coupling, bandwidth limit; with --fifty also 50 ohm on CH1), the time base and the
+the four channels (scale, offset, coupling, bandwidth limit; with --fifty also 50 ohm), the time base and the
 trigger level over SCPI, and after each step records what changed in the FPGA's configuration registers (only those
 the stock system writes itself, read back), in the GPIO lines (/sys/kernel/debug/gpio: the front ends' select
 lines), in the ADC bridge word, and in the kernel log. It writes mho-map-<model>-<date>.txt. Nothing may be connected
 to the inputs; the settings are set back at the end as above.
 
-With --afe it records, for the same steps and more (offset and AC coupling at several scales, CH2 to CH4), the words
-the stock system sends to the front ends and the clock chip over their GPIO buses. It switches on the kernel's trace
-event gpio_value for those lines only (tracefs, in memory), decodes the levels on the PC and switches the event off
-again, with the trace settings as they were; nothing else is touched. It writes mho-afe-<model>-<date>.txt.
+With --afe it records, for the same steps and more (offset and AC coupling at several scales, every scale of CH2 to
+CH4), the words the stock system sends to the front ends and the clock chip over their GPIO buses, decoded as front-end
+register and data. It switches on the kernel's trace event gpio_value for those lines only (tracefs, in memory),
+decodes the levels on the PC and switches the event off again, with the trace settings as they were; nothing else is
+touched. It writes mho-afe-<model>-<date>.txt.
 
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
@@ -43,7 +44,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "3"
+VERSION = "4"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -577,9 +578,10 @@ MAP_REGS = [
     (0x1414, "probe offset DAC CH4"),
     (0x1418, "AFE offset CH1"), (0x141c, "AFE offset CH2"), (0x1420, "AFE offset CH3"), (0x1424, "AFE offset CH4"),
     (0x1428, "DAC polling"), (0x142c, "probe power"),
-    (0x14c8, "analog gain CH1"), (0x14d0, "analog offset CH1"), (0x14d4, "analog gain CH2"),
-    (0x14dc, "analog offset CH2"), (0x14e0, "analog gain CH3"), (0x14e8, "analog offset CH3"),
-    (0x14ec, "analog gain CH4"), (0x14f4, "analog offset CH4"),
+    # one gain and offset per ADC lane, not per channel: CH1 alone has its values on all four (MHO98, MHO934)
+    (0x14c8, "analog gain lane 1"), (0x14d0, "analog offset lane 1"), (0x14d4, "analog gain lane 2"),
+    (0x14dc, "analog offset lane 2"), (0x14e0, "analog gain lane 3"), (0x14e8, "analog offset lane 3"),
+    (0x14ec, "analog gain lane 4"), (0x14f4, "analog offset lane 4"),
     (0x155c, "gain after the ADC A"), (0x1560, "offset 1 after the ADC A"), (0x1564, "offset 2 after the ADC A"),
     (0x1568, "gain after the ADC B"), (0x156c, "offset 1 after the ADC B"), (0x1570, "offset 2 after the ADC B"),
     (0x1574, "offset bypass and mode"),
@@ -597,6 +599,10 @@ ADC_SPI_WORD = 0x3000
 MAC_RE = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
 
 
+# The scales of the front panel, 500 uV/div to 10 V/div.
+SCALES = ("0.0005", "0.001", "0.002", "0.005", "0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10")
+
+
 def map_steps(fifty=False):
     """[(label, [SCPI commands])]: the steps of --map, in order. Every step starts from the state the one before left;
     the first sets the base: CH1 alone, DC, 1 MOhm, no bandwidth limit, no offset, 1 V/div, 1 us/div, edge trigger
@@ -606,7 +612,7 @@ def map_steps(fifty=False):
             ":TIMebase:MAIN:SCALe 1e-6", ":TRIGger:MODE EDGE", ":TRIGger:EDGE:SOURce CHANnel1",
             ":TRIGger:EDGE:LEVel 0", ":RUN"]
     steps = [("base", base)]
-    for v in ("0.0005", "0.001", "0.002", "0.005", "0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10"):
+    for v in SCALES:
         steps.append((f"CH1 {v} V/div", [f":CHANnel1:SCALe {v}"]))
     steps.append(("CH1 0.1 V/div", [":CHANnel1:SCALe 0.1"]))
     for o in ("-0.3", "0.3", "0"):
@@ -615,22 +621,31 @@ def map_steps(fifty=False):
         steps.append((f"CH1 coupling {c}", [f":CHANnel1:COUPling {c}"]))
     for b in ("20M", "OFF"):
         steps.append((f"CH1 bandwidth limit {b}", [f":CHANnel1:BWLimit {b}"]))
-    if fifty:
-        for v in ("0.01", "0.1", "1"):
-            steps.append((f"CH1 50 ohm {v} V/div", [":CHANnel1:IMPedance FIFTy", f":CHANnel1:SCALe {v}"]))
-        steps.append(("CH1 1 MOhm", [":CHANnel1:IMPedance OMEG", ":CHANnel1:SCALe 0.1"]))
+    steps += fifty_steps(1) if fifty else []
     for n in (2, 3, 4):
         steps.append((f"CH{n} on, 1 V/div", [f":CHANnel{n}:DISPlay ON", f":CHANnel{n}:SCALe 1"]))
         steps.append((f"CH{n} 0.01 V/div", [f":CHANnel{n}:SCALe 0.01"]))
+        steps += fifty_steps(n) if fifty else []
         steps.append((f"CH{n} off", [f":CHANnel{n}:DISPlay OFF"]))
     for t in ("2e-9", "1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"):
         steps.append((f"time base {t} s/div", [f":TIMebase:MAIN:SCALe {t}"]))
     steps.append(("time base 1e-6 s/div, CH1+2", [":TIMebase:MAIN:SCALe 1e-6", ":CHANnel2:DISPlay ON"]))
     steps.append(("CH1 to CH4", [":CHANnel3:DISPlay ON", ":CHANnel4:DISPlay ON"]))
+    # with four channels each ADC lane carries one: which bits of 0x1004 and 0x1014 belong to which channel
+    for n in (1, 2, 3, 4):
+        steps += [(f"CH{n} bandwidth limit 20M, CH1 to CH4 on", [f":CHANnel{n}:BWLimit 20M"]),
+                  (f"CH{n} bandwidth limit OFF, CH1 to CH4 on", [f":CHANnel{n}:BWLimit OFF"])]
     steps.append(("CH1 alone", [":CHANnel2:DISPlay OFF", ":CHANnel3:DISPlay OFF", ":CHANnel4:DISPlay OFF"]))
     for lv in ("-0.2", "0.2", "0"):
         steps.append((f"trigger level {lv} V at 0.1 V/div", [f":TRIGger:EDGE:LEVel {lv}"]))
     return steps
+
+
+def fifty_steps(n):
+    """Channel n at 50 ohm at three scales, then back at 1 MOhm and 0.1 V/div (--fifty; the input unconnected)."""
+    steps = [(f"CH{n} 50 ohm {v} V/div", [f":CHANnel{n}:IMPedance FIFTy", f":CHANnel{n}:SCALe {v}"])
+             for v in ("0.01", "0.1", "1")]
+    return steps + [(f"CH{n} 1 MOhm", [f":CHANnel{n}:IMPedance OMEG", f":CHANnel{n}:SCALe 0.1"])]
 
 
 def map_restore_list(fifty=False):
@@ -640,7 +655,7 @@ def map_restore_list(fifty=False):
     out = []
     for n in range(1, 5):
         out.append((f":CHANnel{n}:DISPlay", "ON"))
-        out += [f":CHANnel{n}:IMPedance"] if fifty and n == 1 else []
+        out += [f":CHANnel{n}:IMPedance"] if fifty else []
         out += [f":CHANnel{n}:COUPling", f":CHANnel{n}:BWLimit", f":CHANnel{n}:SCALe", f":CHANnel{n}:OFFSet",
                 f":CHANnel{n}:DISPlay"]
     return out + [":TIMebase:MAIN:SCALe", ":TRIGger:MODE", ":TRIGger:EDGE:SOURce", ":TRIGger:EDGE:LEVel"]
@@ -745,7 +760,7 @@ def map_main(a, adb):
     if not a.yes:
         ans = input("--map changes the vertical settings of CH1 to CH4, the time base and the trigger level over SCPI "
                     "for about 3 minutes and sets them back. Nothing may be connected to the inputs"
-                    + (", and CH1 goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
+                    + (", and each channel goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
         if ans.strip().lower() not in ("y", "yes", "j", "ja"):
             return "declined; nothing done"
     scpi = Scpi(a.host, a.scpi_port)
@@ -774,6 +789,10 @@ def map_main(a, adb):
 TRACEFS = "/sys/kernel/debug/tracing"
 AFE_BUS = {"name": "AFE", "sclk": 75, "mosi": 74, "miso": 73, "cs": {76: "AFE cs0", 66: "AFE cs1", 69: "AFE cs2",
                                                                       68: "AFE cs3"}}
+# The channel behind each chip select, and the frame: 24 bits MSB first, valid at the rising clock edge (the driver sets
+# the data line, then the clock low and high), register address in bits 23:16, data in bits 15:0 (MHO934 --afe).
+AFE_CHANNEL = {"AFE cs3": "CH1", "AFE cs2": "CH2", "AFE cs1": "CH3", "AFE cs0": "CH4"}
+AFE_FRAME_BITS = 24
 # The clock chip's 3-wire bus (/dev/spi_3wires): one data line for both directions.
 PLL_BUS = {"name": "PLL", "sclk": 49, "mosi": 51, "miso": 51, "cs": {50: "PLL cs"}}
 # Select lines `a`, `b`, `c` in four groups (assumed: one group per channel), and the clock chip's other lines.
@@ -834,6 +853,14 @@ def decode_bus(events, bus, levels=None):
             for f in frames]
 
 
+def afe_register(cs, n, rise):
+    """(channel, register, data) of a front-end frame, None for a frame of another length or bus."""
+    if cs not in AFE_CHANNEL or n != AFE_FRAME_BITS or rise == "-":
+        return None
+    w = int(rise, 16)
+    return AFE_CHANNEL[cs], w >> 16, w & 0xFFFF
+
+
 def select_changes(events, levels):
     """[(time, line name, old, new)] for the select lines whose level the driver changed."""
     out, lv = [], dict(levels)
@@ -846,7 +873,7 @@ def select_changes(events, levels):
 
 def afe_steps(fifty=False):
     """The steps of --map, then what --map could not see: the offset of CH1 at two more scales, AC coupling at two
-    scales, and coupling, offset and scale of CH2 to CH4 (each switched on, CH1 stays on)."""
+    scales, and every scale, offset, coupling and bandwidth limit of CH2 to CH4 (each switched on, CH1 stays on)."""
     steps = [("idle (nothing changed: what the stock system writes by itself)", [])] + map_steps(fifty)
     for v, o in (("0.01", "0.05"), ("1", "2")):
         steps += [(f"CH1 {v} V/div", [f":CHANnel1:SCALe {v}"]),
@@ -856,16 +883,17 @@ def afe_steps(fifty=False):
                   (f"CH1 coupling DC at {v} V/div", [":CHANnel1:COUPling DC"])]
     steps.append(("CH1 0.1 V/div", [":CHANnel1:SCALe 0.1"]))
     for n in (2, 3, 4):
-        steps += [(f"CH{n} on, 0.1 V/div", [f":CHANnel{n}:DISPlay ON", f":CHANnel{n}:SCALe 0.1"]),
-                  (f"CH{n} 1 V/div", [f":CHANnel{n}:SCALe 1"]),
-                  (f"CH{n} 0.1 V/div", [f":CHANnel{n}:SCALe 0.1"]),
+        steps.append((f"CH{n} on, 1 V/div", [f":CHANnel{n}:DISPlay ON", f":CHANnel{n}:SCALe 1"]))
+        steps += [(f"CH{n} {v} V/div", [f":CHANnel{n}:SCALe {v}"]) for v in SCALES]
+        steps += [(f"CH{n} 0.1 V/div", [f":CHANnel{n}:SCALe 0.1"]),
                   (f"CH{n} offset 0.3 V", [f":CHANnel{n}:OFFSet 0.3"]),
                   (f"CH{n} offset 0 V", [f":CHANnel{n}:OFFSet 0"]),
                   (f"CH{n} coupling AC", [f":CHANnel{n}:COUPling AC"]),
                   (f"CH{n} coupling DC", [f":CHANnel{n}:COUPling DC"]),
                   (f"CH{n} bandwidth limit 20M", [f":CHANnel{n}:BWLimit 20M"]),
-                  (f"CH{n} bandwidth limit OFF", [f":CHANnel{n}:BWLimit OFF"]),
-                  (f"CH{n} off", [f":CHANnel{n}:DISPlay OFF"])]
+                  (f"CH{n} bandwidth limit OFF", [f":CHANnel{n}:BWLimit OFF"])]
+        steps += fifty_steps(n) if fifty else []
+        steps.append((f"CH{n} off", [f":CHANnel{n}:DISPlay OFF"]))
     return steps
 
 
@@ -939,6 +967,7 @@ def run_afe(adb, scpi, out, fifty):
             + ", ".join(f"{g} {levels.get(g, '?')}" for g in traced_lines())]
     rep = Report()
     raw = []
+    regs, table = {}, []
     tracer.start()
     try:
         scpi.errors()
@@ -954,15 +983,27 @@ def run_afe(adb, scpi, out, fifty):
                     f"events: {len(ev)}"]
             if err:
                 out.append("SCPI errors: " + "; ".join(err))
+            before = dict(regs)
             for bus in (AFE_BUS, PLL_BUS):
                 for t, cs, n, rise, fall, miso in decode_bus(ev, bus, levels):
-                    out.append(f"{cs}: +{(t - ev[0][0]) * 1e3:8.3f} ms  {n:2} clocks  rise {rise}  fall {fall}"
-                               + (f"  read {miso}" if miso != "-" else ""))
+                    at = f"{cs}: +{(t - ev[0][0]) * 1e3:8.3f} ms  {n:2} clocks"
+                    reg = afe_register(cs, n, rise)
+                    if reg:
+                        regs[reg[:2]] = reg[2]
+                        out.append(f"{at}  {reg[0]} reg 0x{reg[1]:02x} = 0x{reg[2]:04x}"
+                                   + (f"  read {miso}" if miso != "-" else ""))
+                    else:
+                        out.append(f"{at}  rise {rise}  fall {fall}" + (f"  read {miso}" if miso != "-" else ""))
+            changed = [f"{c} 0x{r:02x} " + (f"{before[(c, r)]:04x}" if (c, r) in before else "-") + f" -> {d:04x}"
+                       for (c, r), d in sorted(regs.items()) if before.get((c, r)) != d]
+            if changed:
+                out.append("front-end registers changed: " + ", ".join(changed))
             out += [f"line {name}: {old} -> {new} at +{(t - ev[0][0]) * 1e3:.3f} ms"
                     for t, name, old, new in select_changes(ev, levels)]
             for _, g, op, v in ev:
                 if op == "set":
                     levels[g] = v
+            table.append((i, label, dict(regs)))
             raw += ["", f"## raw, step {i}: {label} ({len(ev)} events"
                     + (f", the first {RAW_PER_STEP}" if len(ev) > RAW_PER_STEP else "") + ")"]
             raw += [f"{(t - ev[0][0]) * 1e6:10.1f} us {g:3} {op} {v}" for t, g, op, v in ev[:RAW_PER_STEP]]
@@ -973,7 +1014,17 @@ def run_afe(adb, scpi, out, fifty):
         out.append("trace settings: " + ("as before" if not left else "NOT ALL SET BACK: " + "; ".join(left)))
         if left:
             print("trace settings not all set back (a restart of the scope sets them back): " + "; ".join(left))
-    out += raw
+    out += afe_table(table) + raw
+
+
+def afe_table(rows):
+    """The front-end registers after each step as a table, one column per channel and register ever written."""
+    cols = sorted({k for _, _, r in rows for k in r})
+    if not cols:
+        return []
+    out = ["", "## front-end registers per step (hex, - not written yet)",
+           "step;label;" + ";".join(f"{c} 0x{r:02x}" for c, r in cols)]
+    return out + [f"{i};{label};" + ";".join(f"{r[k]:04x}" if k in r else "-" for k in cols) for i, label, r in rows]
 
 
 def afe_main(a, adb):
@@ -981,9 +1032,9 @@ def afe_main(a, adb):
         return "--afe needs adb root (the kernel's trace event); nothing done"
     if not a.yes:
         ans = input("--afe records the front ends' GPIO buses with the kernel's trace event while it changes the "
-                    "vertical settings of CH1 to CH4, the time base and the trigger level over SCPI (about 5 minutes) "
+                    "vertical settings of CH1 to CH4, the time base and the trigger level over SCPI (about 7 minutes) "
                     "and sets them back. Nothing may be connected to the inputs"
-                    + (", and CH1 goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
+                    + (", and each channel goes to 50 ohm" if a.fifty else "") + ". Go on? [y/N] ")
         if ans.strip().lower() not in ("y", "yes", "j", "ja"):
             return "declined; nothing done"
     scpi = Scpi(a.host, a.scpi_port)
@@ -991,9 +1042,10 @@ def afe_main(a, adb):
     code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
     out = [f"mho-check {VERSION} --afe (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
            f"instrument: {idn}", f"hardware code: {code}", f"kernel: {adb.sh('uname -r').strip()}",
-           "Each step lists the frames on the front ends' bus (AFE cs0 to cs3) and the clock chip's bus (PLL), with "
-           "the data line at the rising and at the falling clock edges, and the select lines that changed. The raw "
-           "events follow at the end.", ""]
+           "Each step lists the frames on the front ends' bus (AFE cs3 to cs0: CH1 to CH4) decoded as register and "
+           "data, the frames on the clock chip's bus (PLL) with the data line at the rising and at the falling clock "
+           "edges, the select lines that changed and the front-end registers that changed. A table of the front-end "
+           "registers per step and the raw events follow at the end.", ""]
     print("steps:")
     run_afe(adb, scpi, out, a.fifty)
     model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
@@ -1016,9 +1068,9 @@ def main():
                          "what the stock system sets for each (about 3 minutes; nothing connected to the inputs)")
     ap.add_argument("--afe", action="store_true",
                     help="instead of the checks: record the words on the front ends' GPIO bus for each vertical "
-                         "setting, with the kernel's gpio_value trace event (about 5 minutes; nothing connected)")
+                         "setting, with the kernel's gpio_value trace event (about 7 minutes; nothing connected)")
     ap.add_argument("--fifty", action="store_true",
-                    help="with --map or --afe: CH1 at 50 ohm too (CH1 must be unconnected)")
+                    help="with --map or --afe: each channel at 50 ohm too (the inputs must be unconnected)")
     a = ap.parse_args()
 
     adb = Adb(f"{a.host}:{a.adb_port}")

@@ -11,7 +11,7 @@ generator, no front panel. The decision is
 it rests on is the platform probe of one MHO954 (firmware 00.01.00, hardware 3, GitHub issue #4), compared with the
 stock survey of a DHO924S. The probe of one MHO98 (the same firmware and hardware code) shows the same board: its device
 tree, I2C devices, GPIO use, partitions and drivers are the MHO954's; only the licence files under `/rigol/data`
-differ.
+differ. The probe of one MHO934 (GitHub issue #248) shows the same again.
 
 ## What the MHO900 shares with the DHO800/DHO900
 

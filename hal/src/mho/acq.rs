@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The MHO900's acquisition board as far as it is described (docs/protocols/mho-acquisition.md): the devices, the
-//! register blocks, the ADC's SPI bridge, the FPGA image per hardware code and the read-out format.
+//! register blocks, the ADC's SPI bridge, the front ends' bus, the FPGA image per hardware code and the read-out
+//! format.
 //!
 //! **Not yet verified on hardware.** Everything here is known from how the stock MHO900 system (00.01.00.00.26) starts
 //! the board and uses its FPGA, compared with the DHO800/DHO900. Nothing in OOS calls it on a unit: the board has
@@ -114,6 +115,42 @@ pub const POWER_LINES: [(u32, &str, Option<u8>); 4] = [
     (120, "GPIO3_D0 LA probe detect", None),
 ];
 
+/// The front ends' bus (driver `spi2afe_gpio`): the processor drives it bit by bit on GPIOs, one chip select per
+/// channel. **Verified on the unit**, read under the stock system with the kernel's `gpio_value` trace (`mho-check.py
+/// --afe` on an MHO934, GitHub issue #248): the lines, the frame and the registers and bits named here. What the other
+/// registers and bits do is not known yet (docs/protocols/mho-acquisition.md, section 8).
+pub mod afe {
+    /// Clock, data out and data in.
+    pub const SCLK: u32 = 75;
+    pub const MOSI: u32 = 74;
+    pub const MISO: u32 = 73;
+    /// The chip select of each channel's front end, CH1 first (the driver's cs3, cs2, cs1 and cs0).
+    pub const CS: [u32; 4] = [68, 69, 66, 76];
+    /// The select line `c` of each channel, CH1 first: high at 0.1 and 0.2 V/div (at 1 MOhm).
+    pub const SELECT_C: [u32; 4] = [153, 131, 127, 124];
+    /// The select line `a` of CH1: high at 5 and 10 V/div (at 1 MOhm), and at 1 V/div at 50 ohm (MHO98 `--map`).
+    pub const SELECT_A_CH1: u32 = 149;
+    /// Bits of a frame, sent MSB first: the driver sets the data line, then the clock low and high, so a bit is
+    /// valid at the rising edge.
+    pub const FRAME_BITS: u32 = 24;
+    /// Coupling and input stage: bit 15 DC (0 AC), bit 14 set from 500 uV/div to 50 mV/div. GND coupling sends no
+    /// word: the FPGA sets the lane's gain to 0.
+    pub const COUPLING: u8 = 0x07;
+    pub const COUPLING_DC: u16 = 1 << 15;
+    pub const COUPLING_HIGH_GAIN: u16 = 1 << 14;
+    /// The offset DAC: about 0x8000 at 0 V (a calibrated value per scale and channel), 471 codes per 0.3 V at
+    /// 0.1 V/div on every channel; it rises with the offset at 0.1 and 1 V/div and falls with it at 10 mV/div.
+    pub const OFFSET: u8 = 0x28;
+    /// Filter: the 20 MHz bandwidth limit changes bits 10, 7, 6, 3 and 2 (0x1dc9 to 0x1905 on all four channels).
+    pub const FILTER: u8 = 0x2e;
+    pub const FILTER_20M_BITS: u16 = 0x04cc;
+
+    /// The 24-bit frame of one register write: the address in bits 23:16, the data in bits 15:0.
+    pub fn frame(reg: u8, data: u16) -> u32 {
+        (reg as u32) << 16 | data as u32
+    }
+}
+
 /// Read-out words: 16 bits little endian, 7500 codes per division around 32768, the same as on the DHO800/DHO900. The
 /// channels of a read-out share the words as there: one channel alone, two on even and odd words, three or four in
 /// groups of four (horizontal-config.md 2.2).
@@ -159,6 +196,21 @@ mod tests {
         assert!((8..=11).all(|c| fpga_image(c) == Some("sparrow3_K160T_LR.bit")));
         assert_eq!(fpga_image(0), None);
         assert_eq!(fpga_image(12), None);
+    }
+
+    #[test]
+    fn a_front_end_frame_is_address_then_data() {
+        // MHO934 --afe: CH1's offset at -0.3 V and DC coupling at 1 V/div, as sent on the bus
+        assert_eq!(afe::frame(afe::OFFSET, 0x7e11), 0x28_7e11);
+        assert_eq!(afe::frame(afe::COUPLING, 0x8440), 0x07_8440);
+        assert!(afe::frame(0xff, 0xffff) < 1 << afe::FRAME_BITS);
+        assert_eq!(0x1dc9 ^ 0x1905, afe::FILTER_20M_BITS);
+        let mut lines: Vec<u32> = afe::CS.iter().chain(&afe::SELECT_C).copied().collect();
+        lines.extend([afe::SCLK, afe::MOSI, afe::MISO, afe::SELECT_A_CH1]);
+        let n = lines.len();
+        lines.sort_unstable();
+        lines.dedup();
+        assert_eq!(lines.len(), n, "every line once");
     }
 
     #[test]

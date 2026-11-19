@@ -136,6 +136,12 @@ New:
   `--afe` records the words the stock system sends to the front ends and the clock chip over their GPIO buses (the
   kernel's `gpio_value` trace event on those lines only, switched off again afterwards), which `--map` cannot see. A
   channel is switched on before its settings are written back: a channel that is off did not take its scale (MHO98).
+  From the reports of an MHO934 (GitHub issue #248): `--afe` shows the front-end frames as channel, register and data
+  (24 bits, valid at the rising clock edge, CH1 on cs3 to CH4 on cs0), lists per step the front-end registers that
+  changed and ends with them as a table; it goes through every scale of CH2 to CH4 too. `--map` sets the bandwidth
+  limit of each channel with all four on, `--fifty` puts every channel at 50 ohm, and the lane registers are named as
+  lanes. The front-end bus and its registers are described in docs/protocols/mho-acquisition.md and
+  `hal/src/mho/acq.rs` (`afe`).
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,

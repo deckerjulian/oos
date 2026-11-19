@@ -24,7 +24,7 @@ depend on it. Code 1 is an early board; codes 2 and up are later ones.
 | 7 | FPGA supply | GPIO1_A0 (gpio 32) = 1 |
 | 8 | FPGA image | a Kintex-7 in slave serial mode: PROGRAM_B, INIT_B and DONE on GPIOs (`/dev/spi2k7_ctl`: GPIO1_B5, GPIO2_C7, GPIO2_C4 from the platform probe), the bitstream streamed over SPI (`/dev/spidev1.0` or `/dev/spidev5.0`: on code 3 the stock device tree enables only spi5 with its spidev, and `/dev/spidev1.0` is not there (platform probes of an MHO954 and an MHO98); `/dev/spidev5.0` on code 1); then 5 s |
 | 9 | PCIe | `pcie-rockchip`, then `xdma`; when no `/dev/xdma0_*` appears, both are unloaded and loaded again, up to 10 times |
-| 10 | front-end bus, generator | the AFE bus on GPIOs (`/dev/spi_simulate`); the generator board on `ttyS4` (codes 2 and up) |
+| 10 | front-end bus, generator | the AFE bus on GPIOs (`/dev/spi_simulate`, one chip select per channel, 24-bit frames: section 8); the generator board on `ttyS4` (codes 2 and up) |
 | 11 | others | DAC range driver, LA probe detect GPIO3_D0 (gpio 120, input), front-end overload inputs (`afe_rms`) |
 | 12 | application | per channel the front-end init, the SCU init, then the JESD204 link (section 4) |
 
@@ -204,12 +204,13 @@ them alone and skips R5 to R15. Not covered: the read-out stream itself, the int
 bridge's writes in full (they would need the application stopped or writes to the hardware).
 
 `tools/mho-check.py <scope-ip> --map` runs none of the checks but maps what section 8 leaves open about the front ends
-and the sample path. It steps through about 50 settings with nothing connected to the inputs: the scale of CH1 from
+and the sample path. It steps through about 55 settings with nothing connected to the inputs: the scale of CH1 from
 500 uV/div to 10 V/div, its offset, coupling and bandwidth limit, each other channel on at two scales, the time base
-from 2 ns/div to 1 ms/div with one, two and four channels, and the trigger level (`--fifty` adds CH1 at 50 ohm).
-After each step it records what changed against the step before:
+from 2 ns/div to 1 ms/div with one, two and four channels, the bandwidth limit of each channel with all four on (one
+channel per ADC lane), and the trigger level (`--fifty` adds each channel at 50 ohm at three scales). After each step
+it records what changed against the step before:
 
-- the FPGA's configuration registers that the stock system writes itself (analog gain and offset per channel, the
+- the FPGA's configuration registers that the stock system writes itself (analog gain and offset per ADC lane, the
   gain and offsets after the ADC, the AFE and probe offset DACs, sample rate, interpolation, delays, trigger levels,
   the PWM outputs), read back with `pcie2dev`;
 - the GPIO lines of `/sys/kernel/debug/gpio`, among them the front ends' select lines;
@@ -227,16 +228,24 @@ ends (driver `spi2afe_gpio`: chip selects gpio 76, 66, 69, 68 for cs0 to cs3, cl
 to the clock chip (3-wire bus: chip select 50, clock 49, data 51), and the select lines `a`, `b`, `c`. It switches on
 the kernel's trace event `gpio_value`, filtered to these lines, records it around each setting, and switches it off
 again with the trace settings as they were; tracefs lives in memory, nothing else is written. The words are decoded on
-the PC: one frame per chip-select low, the data line at the rising and at the falling clock edge (the clock phase is
-not known yet), and what the driver reads. The steps are those of `--map`, an idle step first (what the stock system
-writes by itself), then the offset and AC coupling of CH1 at 10 mV/div and 1 V/div, and scale, offset, coupling and
-bandwidth limit of CH2 to CH4. It needs the event in the kernel (4.4 has it when tracing is built in; the stock
-kernel mounts tracefs) and adb root. The report is `mho-afe-<model>-<date>.txt`, with the raw events at its end.
+the PC: one frame per chip-select low, and what the driver reads. A front-end frame of 24 clocks is shown as channel,
+register and data (the format of section 8); other frames show the data line at the rising and at the falling clock
+edge. The steps are those of `--map`, an idle step first (what the stock system writes by itself), then the offset and
+AC coupling of CH1 at 10 mV/div and 1 V/div, and every scale, the offset, coupling and bandwidth limit of CH2 to CH4
+(`--fifty`: each channel at 50 ohm). Each step lists the front-end registers that changed. It needs the event in the
+kernel (4.4 has it when tracing is built in; the stock kernel mounts tracefs) and adb root. The report is
+`mho-afe-<model>-<date>.txt`; it ends with the front-end registers per step as a table and the raw events.
 
 ## 8. Seen on units (stock system 00.01.00, hardware code 3)
 
-From `mho-check.py` on an MHO954 and an MHO98 and `--map` on the MHO98 (issue #4); **verified on the unit** means
-read on these units under the stock system, nothing of it driven by OOS:
+From `mho-check.py` on an MHO954 and an MHO98 and `--map` on the MHO98 (issue #4), and `mho-check.py`, `--map` and
+`--afe` on an MHO934 (issue #248); **verified on the unit** means read on these units under the stock system, nothing
+of it driven by OOS:
+
+- The MHO934 is the same board: its platform probe is the MHO954's but for the licence files, all 25 checks as
+  assumed (with `/dev/spidev2.0` and `/dev/spidev5.0`, and the mask block as on the MHO954), and its `--map` changes
+  the same registers at the same steps as the MHO98's. Only calibrated values differ (lane gain and offset, 0x1058,
+  the trigger level words) and bits that also change at steps that do not touch them (0x4008, bit 4 of 0x1004).
 
 - All 25 checks of the MHO954 as assumed, with the spidevs `/dev/spidev2.0` and `/dev/spidev5.0`. The MHO98's three
   differences were the check's own (S6, S11) or are explained by the mask block below (R14).
@@ -246,10 +255,10 @@ read on these units under the stock system, nothing of it driven by OOS:
   alone all four hold CH1's values, with two channels lanes 1 and 3 hold CH1's and lanes 2 and 4 the other's, with four
   channels each its own (verified on the unit). With GND coupling the lane's gain is 0 and its offset 0x8000.
 - AC coupling changes nothing `--map` reads; the offset changes no register but the trigger level words, and moves
-  the data line of the front ends' bus (verified on the unit). Assumed: both are set over that bus; `--afe` is to show
-  the words.
-- Bandwidth limit 20 MHz on CH1: bits 23:20 of 0x1004 and 0x1014 go to 0xf (verified on the unit; which bit is which
-  channel not yet).
+  the data line of the front ends' bus (verified on the unit). Both are set over that bus: one word each, in
+  registers 0x07 and 0x28 of the channel's front end (verified on the unit, MHO934 `--afe`, below).
+- Bandwidth limit 20 MHz on CH1: bits 23:20 of 0x1004 and 0x1014 go to 0xf (verified on the unit, MHO98 and MHO934).
+  CH1 alone is on all four lanes, so assumed: one bit per lane; `--map` now sets it per channel with all four on.
 - Select lines: gpio 153 (`c`) is high at 0.1 and 0.2 V/div of CH1, gpio 149 (`a`) at 5 and 10 V/div, both low
   between; at 50 ohm 153 stays low and 149 is high at 1 V/div (verified on the unit). Assumed: the group 149, 152,
   153 belongs to CH1.
@@ -257,6 +266,38 @@ read on these units under the stock system, nothing of it driven by OOS:
   0x1168), 1 GSa/s at 1 us/div; 0x10d0 is 0x8001, 0x8002, 0x8004 or 0x8008 at the higher rates and 0 below them,
   where 0x10d8 divides 250 MSa/s (5, 25, 250 give 50, 10, 1 MSa/s). The segment size 0x10e0 is 0x200, 0x400 and
   0x800 with one, two and three or four channels (verified on the unit).
+- The front ends' bus (`--afe`, MHO934):
+  - A frame is 24 bits, MSB first: the driver sets the data line, then the clock low and high, so a bit is valid at
+    the rising edge. Register address in bits 23:16, data in bits 15:0. The driver reads nothing back.
+  - Chip select per channel: CH1 cs3 (gpio 68), CH2 cs2 (gpio 69), CH3 cs1 (gpio 66), CH4 cs0 (gpio 76).
+  - A scale change sends 28 frames in a fixed order (some registers two or three times), the offset one frame
+    (0x28), AC or DC coupling one (0x07), the bandwidth limit the scale's 28 frames with 0x2e and 0x28 changed. A
+    channel switched on for the first time gets its whole set (53 frames). GND coupling, the time base, the trigger
+    level and switching a channel off or on again send nothing, and nothing is sent while the scope runs untouched.
+    No frame went over the clock chip's bus in any step.
+  - Select lines: `c` of CH2, CH3 and CH4 (gpio 131, 127, 124) is high at 0.1 V/div and low at 1 V/div, as gpio 153
+    for CH1. So the groups 149/152/153, 129/130/131, 125/126/127 and 122/123/124 belong to CH1 to CH4 (the `c` line
+    of each verified, `a` and `b` assumed from the names).
+
+  The registers and what changed them (CH1's values; the other channels change the same registers at the same
+  steps):
+
+  | register | changes with | seen |
+  |---|---|---|
+  | 0x07 | coupling, scale | bit 15 DC (cleared for AC); bit 14 set from 500 uV/div to 50 mV/div: 0xc440 there, 0x8440 from 0.1 V/div |
+  | 0x28 | offset, scale, bandwidth limit | the offset DAC, about 0x8000 at 0 V with another zero per scale and channel; +0.3 V at 0.1 V/div is +471 codes on all four channels, +2 V at 1 V/div +2062, +0.05 V at 10 mV/div -981 |
+  | 0x29 | scale | bits 9:8 the range: 0 from 500 uV to 5 mV/div, 1 from 10 to 50 mV/div, 2 from 0.1 V/div; bits 7:6 are 10 at 0.5, 1 and 10 mV/div, 0.1 and 0.5 V/div, 01 at the others; bits 15:10 differ per channel |
+  | 0x2a | scale | bits 15:12: 0 at 0.5 to 2 mV/div and 10 to 20 mV/div, 1 at 5 and 50 mV/div, 3 from 0.1 to 1 V/div and at 10 V/div, 0xb at 2 V/div, 2 at 5 V/div |
+  | 0x2e | scale, bandwidth limit | 0x1dc9 at full bandwidth; bit 14 set at 0.5 to 2 mV/div, 10 and 20 mV/div, 2 and 10 V/div; bit 11 cleared at 5 V/div; 20 MHz limit 0x1905 on every channel |
+  | 0x20, 0x21 | scale, with the select lines | 0xa038/0x03f3 at 0.1 and 0.2 V/div (`c` high), 0xa04c/0x0073 from 0.5 to 2 V/div, 0xa07e/0x06f3 at 5 and 10 V/div (`a` high); bits 11:7 of 0x21 differ per channel |
+  | 0x23 | scale | bits 15:8 0x2c up to 50 mV/div, 0x14 from 0.1 V/div; the low byte differs per channel |
+  | 0x06, 0x27 | scale | one value per range and channel (0x06 of CH1: 0x1e, 0x2e, 0x0c) |
+  | 0x22, 0x24 to 0x26, 0x2b to 0x2d, 0x2f, 0x35 | nothing in these steps | 0x22 0, 0x2b 0x4c5f, 0x2c 0xcc0c, 0x2d 0xc000 on every channel; the others differ per channel |
+
+  So the front end has three ranges, switched at 10 mV/div and 0.1 V/div, and the select lines switch at 0.1 and
+  0.5 V/div (`c`) and at 5 V/div (`a`). 500 uV/div and 1 mV/div send the same words and set the same lane gain
+  (`--map`): assumed, the step below 1 mV/div is digital. Assumed: the values that differ per channel are the unit's
+  calibration; where the stock system takes them from is not known.
 - 0x4008 changes between two values while nothing is changed (0x08805181 and 0xc880b1a1 at 1 us/div): it holds state
   bits besides the channel mask, so `--map` lists it at steps that do not touch it.
 
@@ -264,7 +305,8 @@ read on these units under the stock system, nothing of it driven by OOS:
 
 - the LMK04821 settings and the ADC register set and masks (sections 1 and 4);
 - the JESD204 link values and how to see that it is up;
-- the front ends: the words on their bus per setting (`--afe`), the select lines of CH2 to CH4, the 50 ohm path and
-  their calibration files;
+- the front ends: what the registers of section 8 mean bit by bit, where the per-channel values come from (the
+  calibration files), the 50 ohm path of every channel (`--afe --fifty`), which bit of 0x1004 and 0x1014 limits
+  which lane (`--map`), and whether another unit or a model of other bandwidth sends other words (a second `--afe`);
 - whether the run and read-out sequences of acquisition-start.md work unchanged with the new words of section 3 left
   at their power-on values.

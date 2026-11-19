@@ -112,10 +112,18 @@ class Judging(unittest.TestCase):
             order = mc.map_restore_list(fifty)
             self.assertLess(order.index(":CHANnel1:SCALe"), order.index(":CHANnel1:OFFSet"))
             self.assertLess(order.index(":CHANnel1:SCALe"), order.index(":TRIGger:EDGE:LEVel"))
-        self.assertNotIn(":CHANnel1:IMPedance", mc.map_restore_list(False))
-        self.assertLess(mc.map_restore_list(True).index(":CHANnel1:IMPedance"),
-                        mc.map_restore_list(True).index(":CHANnel1:SCALe"))
-        self.assertFalse(any("IMPedance" in c for _, cs in mc.map_steps(False) for c in cs), "50 ohm only on request")
+        for n in range(1, 5):
+            self.assertNotIn(f":CHANnel{n}:IMPedance", mc.map_restore_list(False))
+            self.assertLess(mc.map_restore_list(True).index(f":CHANnel{n}:IMPedance"),
+                            mc.map_restore_list(True).index(f":CHANnel{n}:SCALe"))
+        for steps in (mc.map_steps, mc.afe_steps):
+            self.assertFalse(any("IMPedance" in c for _, cs in steps(False) for c in cs), "50 ohm only on request")
+            # every channel that goes to 50 ohm comes back to 1 MOhm before it is switched off
+            fifty = [c for _, cs in steps(True) for c in cs if "IMPedance" in c]
+            self.assertEqual(sorted({c.split(":")[1] for c in fifty}), [f"CHANnel{n}" for n in range(1, 5)])
+            for n in range(1, 5):
+                mine = [c for c in fifty if c.startswith(f":CHANnel{n}:")]
+                self.assertEqual(mine[-1], f":CHANnel{n}:IMPedance OMEG")
         for fifty in (False, True):
             back = set(mc.map_restore_list(fifty))
             for label, commands in mc.afe_steps(fifty):
@@ -198,6 +206,29 @@ class AfeTrace(unittest.TestCase):
               (0, 51, "get", 0), (0, 49, "set", 1), (0, 49, "set", 0), (0, 50, "set", 1)]
         (_, cs, n, rise, _, read), = mc.decode_bus(ev, mc.PLL_BUS)
         self.assertEqual((cs, n, rise, read), ("PLL cs", 2, "0x3", "0x0"))
+
+    def test_a_front_end_frame_is_register_and_data_per_channel(self):
+        # MHO934: CH1's offset word on cs3, 24 bits, address in bits 23:16
+        ev = self.frame(68, 0x287E11, 24) + self.frame(76, 0x078440, 24) + self.frame(66, 0x3, 2)
+        regs = [mc.afe_register(cs, n, rise) for _, cs, n, rise, _, _ in mc.decode_bus(ev, mc.AFE_BUS)]
+        self.assertEqual(regs, [("CH1", 0x28, 0x7E11), ("CH4", 0x07, 0x8440), None])
+        self.assertEqual(sorted(mc.AFE_CHANNEL.values()), ["CH1", "CH2", "CH3", "CH4"])
+        self.assertEqual(set(mc.AFE_CHANNEL), set(mc.AFE_BUS["cs"].values()))
+        self.assertIsNone(mc.afe_register("PLL cs", 24, "0x287e11"))
+
+    def test_the_front_end_table_has_a_column_per_channel_and_register(self):
+        rows = [(0, "a", {}), (1, "b", {("CH1", 0x28): 0x7FE9}),
+                (2, "c", {("CH1", 0x28): 0x7E11, ("CH2", 0x07): 0x8440})]
+        self.assertEqual(mc.afe_table(rows)[2:], ["step;label;CH1 0x28;CH2 0x07", "0;a;-;-", "1;b;7fe9;-",
+                                                  "2;c;7e11;8440"])
+        self.assertEqual(mc.afe_table([(0, "a", {})]), [])
+
+    def test_the_bandwidth_limit_is_mapped_per_channel_with_all_four_on(self):
+        labels = [label for label, _ in mc.map_steps()]
+        four = labels.index("CH1 to CH4")
+        for n in range(1, 5):
+            self.assertGreater(labels.index(f"CH{n} bandwidth limit 20M, CH1 to CH4 on"), four)
+        self.assertLess(labels.index("CH4 bandwidth limit OFF, CH1 to CH4 on"), labels.index("CH1 alone"))
 
     def test_select_lines_report_only_changes(self):
         ev = [(1.0, 153, "set", 1), (1.1, 153, "set", 1), (1.2, 149, "set", 0), (1.3, 74, "set", 1)]
