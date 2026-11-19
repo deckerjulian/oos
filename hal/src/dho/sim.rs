@@ -805,6 +805,22 @@ mod tests {
         }
     }
 
+    // Break it catches: a stop that leaves the chunks not read in the stream or in the fill level, so that the next
+    // read after a change of settings gets old chunks
+    #[test]
+    fn a_stop_drops_the_chunks_not_read() {
+        use crate::dho::roll;
+        let s = Settings { mask: 1, tdiv: 0.2, window: None, ..Settings::default() };
+        let (mut st, _, _u, mut bar, mut c2h, mut clock) = rolling(&s, false);
+        clock.sleep_us(20_000);
+        assert!(roll::chunks(bar.rd(0x11e8)) > 0, "chunks wait");
+        bar.apply(&roll::stop(&mut st.sh));
+        assert_eq!(bar.rd(0x11e8), 0, "none after the stop");
+        clock.sleep_us(20_000);
+        assert_eq!(bar.rd(0x11e8), 0, "and none made after it");
+        assert!(c2h.read(&mut [0u8; 1]).is_err(), "nothing left to read");
+    }
+
     // Break it catches: a sweep that does not end after its 1000 chunks, a done flag that is not early, a trigger
     // reported away from the centre, a counter that does not start again with the next sweep
     #[test]

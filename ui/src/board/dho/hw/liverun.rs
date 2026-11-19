@@ -298,8 +298,14 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         }
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
-        let slow = frames.iter().any(|f| f.roll || f.scan);
+        // roll or scan from the case's settings, not from what came out: a slow case that delivers nothing fails
+        let slow = {
+            let mut m = Model::default();
+            (case.model)(&mut m);
+            super::slow_mode(&m) != crate::board::Slow::Off
+        };
         if slow {
+            assert!(!frames.is_empty(), "{}: no picture published", case.name);
             // roll and scan: pictures of the scene's signal on the channels of the settings, in roll the newest point
             // at the right edge; in scan a whole sweep and the start of the next (RUN: after the pause; SINGLE:
             // after the next press)
