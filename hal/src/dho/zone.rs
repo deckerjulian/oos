@@ -91,7 +91,6 @@ pub struct Zone {
 /// `mask` at `scale`/`offset`/`gain`, in the columns and codes of `map` (shared with the mask unit, `mask::Map`).
 /// Column c covers samples c n .. (c + 1) n (n = the layout's samples per column), at times (k - pre) / rate; columns
 /// outside `map.range` are not in the zone.
-#[allow(clippy::too_many_arguments)]
 pub fn table(
     z: &Zone,
     points: u32,
