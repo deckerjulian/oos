@@ -86,6 +86,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0063](ui-ux/0063-the-status-boxes-of-the-top-bar-come-from-one-list.md) | ui-ux | The status boxes of the top bar come from one list, right of the four entries | proposed |
 | [0064](code/0064-a-layer-of-oos-ui-without-crossings-becomes-a-crate-of-its-own.md) | code | A layer of `oos-ui` without crossings becomes a crate in the workspace `ui/`, the system services first | accepted |
 | [0065](process/0065-lists-every-change-adds-to-are-written-by-a-tool-or-kept-as-a-file-per-entry.md) | process | Lists that every change adds to are written by a tool or kept as a file per entry | accepted |
+| [0066](code/0066-the-network-services-stay-in-the-frame-loop-and-never-wait-for-a-client.md) | code | The network services stay in the frame loop, and they never wait for a client | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents
