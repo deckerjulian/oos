@@ -166,7 +166,7 @@ with the source files named under them.
 
 ```sh
 tools/check.sh                # every enforced host check, as CI runs them (ADR 0020)
-tools/check.sh test           # one layer: fmt text syntax test target decoders clippy ratchet (tools/check.sh list)
+tools/check.sh test           # one layer: fmt text syntax test target clippy ratchet (tools/check.sh list)
 (cd ui && cargo run -- --serve)   # no display, no hardware: demo signals behind SCPI :5555 and the web page :8080
 ```
 
