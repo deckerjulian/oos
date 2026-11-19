@@ -1258,4 +1258,10 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let recorded = u.trace.iter().filter(|e| matches!(e, Event::Recorded { .. })).count();
     assert!(recorded > 0 && played > 0, "recorded {} played {}: {}", recorded, played, g.status);
     assert!(!g.queue.is_empty() || g.frame.ch.iter().any(|c| !c.is_empty()), "no frame delivered: {}", g.status);
+    // the loop's waits went through the unit's clock: a wait on the wall clock would leave `slept_us` at 0
+    assert!(u.slept_us > 0 && u.now_us() as u64 > u.slept_us, "slept {} us of {} us", u.slept_us, u.now_us());
+    // what reached the screen's side is the scene: the 0.5 V sine, its crest and trough within 2 %
+    let f = g.queue.back().unwrap_or(&g.frame);
+    let (lo, hi) = f.ch[0].iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "CH1 from {} to {} V", lo, hi);
 }

@@ -110,6 +110,8 @@ pub struct Unit {
     stream: VecDeque<u8>,
     prev_4004: u32,
     pub trace: Vec<Event>,
+    /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
+    pub slept_us: u64,
 }
 
 impl Unit {
@@ -125,6 +127,7 @@ impl Unit {
             stream: VecDeque::new(),
             prev_4004: 0,
             trace: Vec::new(),
+            slept_us: 0,
         }
     }
 
@@ -327,6 +330,7 @@ impl Clock for Time {
     fn sleep_us(&mut self, us: u64) {
         let mut u = self.0.borrow_mut();
         u.t_fs += us as i128 * US;
+        u.slept_us += us;
         u.advance();
     }
     fn now_us(&mut self) -> u64 {
