@@ -95,9 +95,10 @@ pub struct Packet {
     pub t1: f64,
     pub kind: Kind,
     pub value: u32,
-    /// second value (SPI MISO)
+    /// second value (SPI MISO). I2C: [`I2C_NAK_END`] on the byte a controller ends a read with
     pub value2: Option<u32>,
-    /// UART: stop bit and parity ok; I2C: acknowledged
+    /// UART: stop bit and parity ok; I2C: acknowledged, or not acknowledged where that is the rule (the byte a
+    /// controller ends a read with)
     pub ok: bool,
 }
 
