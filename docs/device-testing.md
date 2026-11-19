@@ -44,6 +44,25 @@ kernel, an update. A change there needs the image installed and the scope starte
 the unit, before the label `unit-tested` is set (ADR 0052). `tools/pr-gate.sh` names the classes: `$proven`
 (the comparison proves a refactoring), `$live` (a run from RAM or more).
 
+## Power at the bench
+
+With a switchable outlet at the bench (ADR 0070, proposed), the start from power off needs nobody there.
+`tools/bench-power.sh` switches it: `status`, `on`, `off`, and `cycle`, which turns it off for 30 s and on again. The
+outlet goes into `local/bench.conf` as `OOS_POWER=shelly:HOST`, `tasmota:HOST` or `cmd:PROGRAM`. The scope to ask is
+`OOS_SCOPE`, with the same SSH key and port as `tools/device-deploy.sh`. Before it cuts the power, the tool asks the
+scope whether an `oos-update` runs. It refuses when one runs, and when the scope does not answer. An install started
+by kexec has no SSH and must not lose power. The tool is not yet verified on hardware.
+
+A run of the boot class with it:
+
+1. Dry run: `oos-update install FILE`.
+2. Install: `oos-update install FILE --execute`.
+3. Cold start: `tools/bench-power.sh cycle`.
+4. Wait until the start-up watcher confirms the start (`oos-update status`).
+5. Check: `tools/device-test.py --tier a0`.
+
+The pull request says which commit ran, and that it ran from power off.
+
 ## Only what the change can affect
 
 `--changed BASE` takes the files the tree changes against `BASE`:
