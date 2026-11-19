@@ -440,7 +440,7 @@ only to a program that listens for it, and the image has none; on a network with
 
 **Services.** The web remote (8080), SCPI (5555) and VXI-11 (111, 9009) listen on `[::]`, which takes IPv4 too
 (`net6.rs`; an IPv4 peer appears as `::ffff:a.b.c.d`, which `net.allow` maps back). Dropbear (22) listens on both
-anyway. mDNS publishes an AAAA record for each IPv6 address of the interface asked on, link-local included, and
+too (`oos-ssh`). mDNS publishes an AAAA record for each IPv6 address of the interface asked on, link-local included, and
 answers questions over IPv6 as before. Without `net.ipv6` it publishes none (a computer tries IPv6 first). The web
 remote's guard against DNS rebinding takes an IPv6 literal, `http://[2001:db8::5]:8080`.
 
