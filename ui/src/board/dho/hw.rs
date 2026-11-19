@@ -1208,7 +1208,7 @@ fn run<P: port::Port>(
                                 let f1_fed = f1_off && avail > 2;
                                 skip = (f0_left || f1_off) as usize + f1_fed as usize;
                                 if f1_fed {
-                                    frame1_left_out();
+                                    frame1_left_out(frame1_left_out_unseen(avail, true));
                                 }
                                 pipe.feed_codes(
                                     Box::new(full),
@@ -1226,7 +1226,7 @@ fn run<P: port::Port>(
                         }
                         // two frames: the newest is frame 1
                         if avail == 2 && f1_off {
-                            frame1_left_out();
+                            frame1_left_out(false);
                             skip += 1;
                             Vec::new()
                         } else {
@@ -1267,7 +1267,7 @@ fn run<P: port::Port>(
                         let off = |f: &Frame| frame1_left_out_unseen(avail, f0_drop) || frame1_off_trigger(f, &b);
                         if let Some(i) = at1.filter(|&i| all.get(i).is_some_and(off)) {
                             all.remove(i);
-                            frame1_left_out();
+                            frame1_left_out(frame1_left_out_unseen(avail, f0_drop));
                             skip += 1;
                         }
                         if let (Some(r), Some(last)) = (raw_frame.filter(|_| !all.is_empty()), all.last_mut()) {

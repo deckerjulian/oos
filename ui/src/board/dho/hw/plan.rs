@@ -142,16 +142,16 @@ const FRAME1_SPAN: usize = 32;
 /// searched for its edge by the fast path anyway.
 pub(super) const FRAME1_CHECK_MAX: u32 = 100_000;
 
-/// Counts a frame 1 left out (`frame1_off_trigger`) and logs the count at 1, 2, 4, 8, ...
+/// Counts a frame 1 left out and logs the count at 1, 2, 4, 8, ...: one count for those the edge check found off the
+/// trigger point (`frame1_off_trigger`), one for those of a long batch left out unseen (`frame1_left_out_unseen`).
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn frame1_left_out() {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+pub(super) fn frame1_left_out(unseen: bool) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    let n = N[unseen as usize].fetch_add(1, Ordering::Relaxed) + 1;
     if n.is_power_of_two() {
-        eprintln!(
-            "oos-ui hw: frame 1 of a batch without its edge at the trigger point, left out (issue #5): {} so far",
-            n
-        );
+        let what = if unseen { "of a long batch, unseen" } else { "of a batch without its edge at the trigger point" };
+        eprintln!("oos-ui hw: frame 1 {}, left out (issue #5): {} so far", what, n);
     }
 }
 

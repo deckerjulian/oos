@@ -358,6 +358,7 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
   - So in a batch of more than `FRAME0_CHECK_MAX_FRAMES` frames, oos-ui leaves frame 1 out unseen
     (`hw::plan::frame1_left_out_unseen`). That costs one frame of a long batch. A small batch keeps the edge check, so
     slow time bases keep their records (issue #220).
+    The log line `frame 1 of a long batch, unseen, left out` counts these apart from the edge check's.
   - Verified on the unit with that rule: two runs of 60 s of infinite persistence showed no trace off the square.
 
 ## Reading a stored frame again (STOP)
