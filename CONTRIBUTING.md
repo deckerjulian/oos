@@ -144,8 +144,8 @@ when a user notices it.
   (`ui/src/ui/item.rs`), the row that opens it on its parent page, its longest states in `LAYOUTS` (`pages.rs`), and
   its page in the wiki.
 - **Generate** nothing.
-- **The check:** `ui/src/ui/pages.rs::every_page_is_complete` fails on a kind of `MenuId` that is neither in `PAGES`
-  nor in `NOT_YET_IN_PAGES`, on one in both, and on a page without a title or rows;
+- **The check:** `ui/src/ui/pages.rs::every_page_is_complete` fails on a kind of `MenuId` that is not in `PAGES` or
+  is there twice, and on a page without a title or rows (but Add measurement, a layout of its own);
   `ui/src/ui/pages.rs::a_picker_has_one_page` on a picker two pages answer for;
   `ui/src/ui/lint/menu_layout.rs::every_menu_fits` on a page or a state of `LAYOUTS` that does not fit a screen.
   `tools/code-metrics.py` counts the lines of the shared menu files that still name a page (`menu-arms`, layer

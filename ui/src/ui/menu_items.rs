@@ -42,19 +42,8 @@ impl Ui {
             return (p.items)(self, menu);
         }
         match menu {
-            MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
             // the Horizontal Menu key opens Acquire; time base and zoom one level down
             // in the order of the groups of `measure_layout`
-            MenuId::Measure => self.measure_items(),
-            MenuId::MeasHold => vec![Item::AddMeas],
-            MenuId::MeasAdd => Vec::new(),
-            MenuId::MeasSelected => self.measurement_catalog(),
-            MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
-            MenuId::Afg => self.afg_items(),
-            MenuId::ViewMore => self.view_more_items(),
-            MenuId::La => self.la_items(),
-            MenuId::LaLines => self.la_line_items(),
-            MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
@@ -144,7 +133,7 @@ impl Ui {
     }
 
     /// The measurement menu.
-    fn measure_items(&self) -> Vec<Item> {
+    pub(super) fn measure_items(&self) -> Vec<Item> {
         vec![
             Item::MeasSrc,
             Item::MeasSrcB,
