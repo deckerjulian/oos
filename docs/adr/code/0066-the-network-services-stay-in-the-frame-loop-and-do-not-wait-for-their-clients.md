@@ -1,4 +1,4 @@
-# ADR 0066: The network services stay in the frame loop, and they never wait for a client
+# ADR 0066: The network services stay in the frame loop, and they do not wait for their clients
 
 - Status: proposed
 - Date: 2026-11-19
@@ -19,9 +19,10 @@ were measurements. A contributor offered to compare an async runtime with thread
 
 ## Decision
 
-**The network services stay in the frame loop, and no read or write there waits for a client. What a client has not
-taken yet waits in its connection, a client that takes nothing is given up, and the work that takes long runs on a
-thread of its own.**
+**The network services stay in the frame loop, and their reads and writes there do not wait for a client. What a
+client has not taken yet waits in its connection, a client that takes nothing is given up, and the work that takes
+long runs on a thread of its own. Where a server still waits (the web server's short answers, below), that is a gap
+to close the same way, not a second rule.**
 
 - Reads take what has arrived (`net::read_now`), writes what the socket takes now (`net::write_now`). Neither waits.
 - Each connection of SCPI, VXI-11 and HiSLIP keeps an `Outbox` of what is still to be written. One pass writes at
@@ -33,6 +34,9 @@ thread of its own.**
   thread, and encodes screenshots on a thread of its own (`ui/src/http.rs`). The commands themselves run in the frame
   loop, on the state of the screen, as before.
 - Every server has a limit of connections (8 each; VXI-11 also 16 links).
+- **Not yet:** the web server writes its short answers on the frame loop at once, with a write timeout of 1 or 2 s:
+  pages and data up to 48 KiB, the refusals 403 and 413, "busy", and the result of a waveform upload. A client that
+  takes none of it holds the loop for up to that time per answer. These go to an `Outbox` per connection as well.
 
 ## Alternatives
 
@@ -48,8 +52,8 @@ thread of its own.**
 
 - A slow or stuck client costs a pass a few system calls, not a frame. A client that reads a large reply slowly gets
   it at the speed it reads, as long as it takes a byte every 2 s.
-- A server never blocks the loop by a write; a new server follows the same pattern (`Outbox`, `read_now`). The
-  transports of `oos-remote` (ADR 0064) and SCPI already do.
+- SCPI, VXI-11 and HiSLIP never block the loop by a write; a new server follows the same pattern (`Outbox`,
+  `read_now`). The web server reads that way and still writes its short answers with a timeout (above).
 - A client that reads nothing for 2 s while a reply waits loses its connection. The old blocking write gave it up to
   30 s per write.
 - Not yet measured on a unit: the frame rate with clients that read slowly. The tests check states, not times (ADR
