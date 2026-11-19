@@ -25,7 +25,8 @@ use self::decode::{decode_with, la_record, POOL};
 #[cfg(any(target_os = "linux", test))]
 use self::plan::{
     batch_plan, deep_raw_settings, disarm, edge_check, final_replay, frame0_check_wanted, frame0_drop, frame0_left_out,
-    frame1_left_out, frame1_off_trigger, prearm_keeps_replay, prearm_on, stop_plan, FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
+    frame1_left_out, frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, prearm_on, stop_plan,
+    FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
 };
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
@@ -1179,9 +1180,10 @@ fn run<P: port::Port>(
                             && match avail {
                                 2 => frame1_off_trigger(&newest, &b),
                                 a => {
-                                    a > 2
-                                        && p.memsel <= FRAME1_CHECK_MAX
-                                        && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b)
+                                    frame1_left_out_unseen(a, true)
+                                        || (a > 2
+                                            && p.memsel <= FRAME1_CHECK_MAX
+                                            && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b))
                                 }
                             };
                         let next =
@@ -1206,7 +1208,7 @@ fn run<P: port::Port>(
                                 let f1_fed = f1_off && avail > 2;
                                 skip = (f0_left || f1_off) as usize + f1_fed as usize;
                                 if f1_fed {
-                                    frame1_left_out();
+                                    frame1_left_out(frame1_left_out_unseen(avail, true));
                                 }
                                 pipe.feed_codes(
                                     Box::new(full),
@@ -1224,7 +1226,7 @@ fn run<P: port::Port>(
                         }
                         // two frames: the newest is frame 1
                         if avail == 2 && f1_off {
-                            frame1_left_out();
+                            frame1_left_out(false);
                             skip += 1;
                             Vec::new()
                         } else {
@@ -1262,9 +1264,10 @@ fn run<P: port::Port>(
                         // frame 1 without its edge at the trigger point: left out too, whether frame 0 before it was
                         // left out or kept by its edge check (`all` starts at frame `skip`)
                         let at1 = (f0_drop && avail > 1 && skip <= 1).then(|| 1 - skip);
-                        if let Some(i) = at1.filter(|&i| all.get(i).is_some_and(|f| frame1_off_trigger(f, &b))) {
+                        let off = |f: &Frame| frame1_left_out_unseen(avail, f0_drop) || frame1_off_trigger(f, &b);
+                        if let Some(i) = at1.filter(|&i| all.get(i).is_some_and(off)) {
                             all.remove(i);
-                            frame1_left_out();
+                            frame1_left_out(frame1_left_out_unseen(avail, f0_drop));
                             skip += 1;
                         }
                         if let (Some(r), Some(last)) = (raw_frame.filter(|_| !all.is_empty()), all.last_mut()) {

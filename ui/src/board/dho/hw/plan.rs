@@ -108,6 +108,17 @@ pub(super) fn frame0_left_out(avail: usize, drop: bool, edge: Option<Edge>) -> b
     drop && avail > 1 && !(avail <= FRAME0_CHECK_MAX_FRAMES && edge == Some(Edge::At))
 }
 
+/// Whether frame 1 of a batch of `avail` frames is left out without its edge check: with the rule of #5 on (`drop`)
+/// in a batch longer than `FRAME0_CHECK_MAX_FRAMES`. Its edge can be at the trigger point while its pre-trigger part
+/// still holds older memory, a full-swing step before the trigger the edge check does not see (unit 2026-11-19: 1
+/// kpts, 10 us/div, batches of 26 to 32 frames, stray steps at -38 us within a minute of infinite persistence; two
+/// reporters counted none in 4,000 and 134,174 batches without frame 1). It costs one frame of a long batch; a short
+/// batch (slow time bases, issue #220) keeps the edge check.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn frame1_left_out_unseen(avail: usize, drop: bool) -> bool {
+    drop && avail > FRAME0_CHECK_MAX_FRAMES
+}
+
 /// What the edge check of a frame found (`edge_check`).
 #[cfg(any(target_os = "linux", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,16 +142,16 @@ const FRAME1_SPAN: usize = 32;
 /// searched for its edge by the fast path anyway.
 pub(super) const FRAME1_CHECK_MAX: u32 = 100_000;
 
-/// Counts a frame 1 left out (`frame1_off_trigger`) and logs the count at 1, 2, 4, 8, ...
+/// Counts a frame 1 left out and logs the count at 1, 2, 4, 8, ...: one count for those the edge check found off the
+/// trigger point (`frame1_off_trigger`), one for those of a long batch left out unseen (`frame1_left_out_unseen`).
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn frame1_left_out() {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+pub(super) fn frame1_left_out(unseen: bool) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    let n = N[unseen as usize].fetch_add(1, Ordering::Relaxed) + 1;
     if n.is_power_of_two() {
-        eprintln!(
-            "oos-ui hw: frame 1 of a batch without its edge at the trigger point, left out (issue #5): {} so far",
-            n
-        );
+        let what = if unseen { "of a long batch, unseen" } else { "of a batch without its edge at the trigger point" };
+        eprintln!("oos-ui hw: frame 1 {}, left out (issue #5): {} so far", what, n);
     }
 }
 
