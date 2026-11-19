@@ -75,7 +75,7 @@ run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp |
 stop oos-ui.new /tmp/oos-ui.off2
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
-send "$here/tools/plan-matrix.sh" plan-matrix.sh
+send "$here/tools/board/${OOS_BOARD:-dho}/plan-matrix.sh" plan-matrix.sh
 stop oos-ui /tmp/oos-ui.off
 run "rm -f /tmp/oos-ui.off2" >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2
