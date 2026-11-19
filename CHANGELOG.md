@@ -1,9 +1,13 @@
 # Changes
 
-## Unreleased
+## 0.1.14
 
-Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
-it also ran on a DHO924S (2026-11-16).
+Released on 2026-11-19. Fixes from the review of 0.1.13 and from the forum's and the issues' reports, Bluetooth and a
+WLAN stick with its driver, mice and keyboards, a number pad for values, and the DHO802/DHO812 verified by a user's
+install. Telnet, the native Windows build and the frames draw path are gone. The code of oos-ui is split into crates and
+tables of pages and services without a change of what the scope does. All of it is tested on the host; marked "(unit)"
+where it also ran on a DHO924S. The release build itself ran on a DHO924S from its kexec start (the device tests of tier
+a0); its first start from power-on, which confirms an update, was not tried before the release.
 
 Added:
 
