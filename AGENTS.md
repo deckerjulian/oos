@@ -133,7 +133,7 @@ missing part, when one is forgotten (ADR 0046). The steps, with the commands for
 | analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
 | HTTP route or MCP tool | an arm of `Http::answer` in `ui/src/http.rs`, or of `site::answer` in `ui/src/site.rs` when the screen answers it (an MCP tool: `site::mcp`) | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
-| register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, `tools/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
+| register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, its line in the board's matrix `tools/board/dho/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |
 | board family (ADR 0067) | a `Target` in `hal/src/<name>/target.rs`, listed in `FAMILIES` (`hal/src/target.rs`) | `ui/src/board/<name>/`, `rootfs/board/<name>/` (`etc/oos-board`, `bin/oos-board`), its row in `docs/porting.md`, its device tree | `hal/tests/board_families.rs::every_board_family_is_complete` |
 
 `tools/link-check.py` (layer `text`) keeps this table and the recipes true: every file and every test they name

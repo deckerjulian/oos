@@ -70,12 +70,19 @@ if [ "${2:-}" = --restore ]; then
 fi
 
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
+# the matrix of the board family (ADR 0067), checked before anything is uploaded
+board=${OOS_BOARD:-dho}
+case $board in
+*[!a-z0-9_-]* | -* | "") echo "error: OOS_BOARD='$board' is no name of a board family" >&2; exit 1 ;;
+esac
+matrix="$here/tools/board/$board/plan-matrix.sh"
+[ -f "$matrix" ] || { echo "error: no matrix for the board family '$board' ($matrix)" >&2; exit 1; }
 run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1"
 # a build from an earlier deploy still runs from /tmp: "text file busy" for the upload otherwise
 stop oos-ui.new /tmp/oos-ui.off2
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
-send "$here/tools/board/${OOS_BOARD:-dho}/plan-matrix.sh" plan-matrix.sh
+send "$matrix" plan-matrix.sh
 stop oos-ui /tmp/oos-ui.off
 run "rm -f /tmp/oos-ui.off2" >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2
