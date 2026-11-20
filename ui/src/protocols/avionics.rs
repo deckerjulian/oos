@@ -28,10 +28,6 @@ impl Protocol for Arinc429 {
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         matches!(p.kind, Kind::Id { .. }).then(|| format!("L {:03o}", p.value))
     }
-    /// A word starts with a pulse of either sign.
-    fn start_edge(&self) -> Slope {
-        Slope::Either
-    }
     /// One line against ground (+-5 V): HI / LO at +-2.5 V.
     fn setup(&self) -> Setup {
         Setup { thr: 2.5, ..Setup::default() }
@@ -59,10 +55,6 @@ impl Protocol for Mil1553 {
     fn info(&self) -> &'static ModuleInfo {
         &oos_dsp::decode::MIL1553
     }
-    /// The sync of a word goes either way.
-    fn start_edge(&self) -> Slope {
-        Slope::Either
-    }
     /// A bipolar bus: threshold at 0 V; the trigger on the first rising edge after 3 us of quiet bus (the command sync).
     fn setup(&self) -> Setup {
         Setup {
@@ -81,6 +73,8 @@ impl Protocol for Mil1553 {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocols::Decoder;
+
     // Break it catches: a setup written while ARINC 429 and 1553 were built in losing its protocol or its bit rate
     #[test]
     fn old_setups_keep_protocol_and_rate() {

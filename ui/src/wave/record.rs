@@ -6,6 +6,7 @@
 
 use crate::board::Frame;
 use crate::model::*;
+use crate::platform::Platform;
 use std::sync::Arc;
 
 /// The level the software trigger looks for on the samples of the source: the set level, and with AC or LF-reject
@@ -50,7 +51,7 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
     // the hardware trigger already put the event near `pre`: look a tenth of a screen around it, plus the time the
     // trigger condition needs before its decision (pulse widths, timeouts, Nth-edge idle time)
     let near = (screen / 10).max(2000);
-    let span = (m.trig_span() / f.dt).ceil().max(0.0) as usize;
+    let span = (crate::trig::span(m) / f.dt).ceil().max(0.0) as usize;
     let (lo, hi) = if m.trig_type == TrigType::Video {
         (0, len)
     } else {

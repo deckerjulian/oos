@@ -10,10 +10,13 @@
 use super::{Kind, Packet};
 use crate::edges::{edges, states};
 use crate::protocols::{BusWhat, ModuleInfo, OPTS};
+use crate::trigger::Slope;
 
 /// MIL-STD-1553 on one line.
 pub static MIL1553: ModuleInfo = ModuleInfo::new("Mil1553", "1553", "avionics")
     .starts_on(BusWhat::Id, 0x0c23)
+    // the sync of a word goes either way
+    .starts_with(0, Slope::Either)
     .bit(|_, _| 1e-6)
     .decoder(|l| Ok(mil1553(l.main(), l.dt, l.thr, l.hy)));
 
@@ -91,6 +94,8 @@ pub static ARINC429: ModuleInfo = ModuleInfo::new("Arinc429", "ARINC 429", "avio
     .differential()
     .trigger(arinc429_trigger)
     .starts_on(BusWhat::Id, 0o310)
+    // a word starts with a pulse of either sign
+    .starts_with(0, Slope::Either)
     // auto: high speed (the finer sampling), with room for a low-speed word
     .bit(|opt, _| 1.0 / arinc_rate(opt).unwrap_or(ARINC_RATES[2]))
     .span(|opt, _| arinc_rate(opt).is_none().then(|| 200.0 / ARINC_RATES[1]))

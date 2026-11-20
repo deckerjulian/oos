@@ -20,6 +20,8 @@ impl Protocol for I3c {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocols::Decoder;
+
     // Break it catches: a setup written while I3C was built in losing its protocol
     #[test]
     fn old_setups_keep_protocol() {

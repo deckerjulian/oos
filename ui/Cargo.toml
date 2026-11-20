@@ -19,6 +19,8 @@ oos-remote = { path = "remote" }
 [dev-dependencies]
 # the simulated unit, for the host run of the acquisition loop (ADR 0053); the program is built without it
 oos-hal = { path = "../hal", features = ["sim"] }
+# the decoder of the example protocol module (ui/src/protocols/example.rs), which only the tests register
+oos-dsp = { path = "../dsp", features = ["example"] }
 oos-system = { path = "system", features = ["testkit"] }
 oos-remote = { path = "remote", features = ["testkit"] }
 

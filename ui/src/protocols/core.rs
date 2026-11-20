@@ -75,10 +75,6 @@ impl Protocol for Spi {
     fn shared(&self) -> &'static [Row] {
         &[Row::SpiMode, Row::Bits]
     }
-    /// A frame starts with the chip select.
-    fn start_role(&self) -> usize {
-        2
-    }
     /// MOSI on CH3, clock on CH4, CS on CH2 (LA: D11, D10, D9); mode 0, 8 bits; the trigger on CS falling.
     fn setup(&self) -> Setup {
         Setup {

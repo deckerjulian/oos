@@ -13,6 +13,7 @@
 
 use crate::board::Frame;
 use crate::model::*;
+use crate::platform::Platform;
 use crate::wave::sw_trig_level;
 use crate::wave::Phosphor;
 use std::cell::RefCell;

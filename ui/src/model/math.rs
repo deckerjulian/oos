@@ -1,23 +1,11 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Math channels: their colours, the FFT scale, and the methods that read and select the math channel the menu
-//! edits. A new math setting goes here.
+//! Math channels: the FFT scale, and the methods that read and select the math channel the menu edits (their colours
+//! are the screen's, `ui.rs`). A new math setting goes here.
 
 use super::*;
 
-pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
-/// Trace colours of M1..M8 (M1 = the classic math colour).
-pub const MATH_COLORS: [Rgb; 8] = [
-    MATH_COLOR,
-    rgb(0xff, 0x8b, 0xd0),
-    rgb(0x8b, 0xe9, 0xff),
-    rgb(0xff, 0xc8, 0x6b),
-    rgb(0x9b, 0xff, 0x8b),
-    rgb(0xff, 0x9b, 0x8b),
-    rgb(0xd8, 0xd8, 0xd8),
-    rgb(0x8b, 0xa8, 0xff),
-];
 /// FFT vertical scale in dB/div.
 pub const FFT_DB: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
 

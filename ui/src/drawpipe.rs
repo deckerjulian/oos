@@ -26,6 +26,7 @@ use crate::board::pipe::{counters, CodeLayout, CodesInto, Counters, DecodeInto, 
 use crate::board::Frame;
 use crate::fastdraw::EdgeSeek;
 use crate::model::*;
+use crate::platform::Platform;
 use crate::wave::Phosphor;
 use std::any::Any;
 use std::ops::Range;
