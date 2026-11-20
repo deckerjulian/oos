@@ -1517,3 +1517,43 @@ fn opc_after_stop_waits_for_the_record_of_the_stop() {
     assert_eq!(fence.state(&ui), OperationState::Cancelled);
     crate::deepmeas::force(None);
 }
+
+// Break it catches: the Default key (`*RST`) set the hardware session's stamp back to 0. The next SINGLE counted it up
+// to a stamp the acquisition thread had already finished a SINGLE with, so it armed nothing and the SINGLE never ended
+// (unit 2026-11-20, the second `*RST` in one oos-ui process)
+#[test]
+fn default_keeps_the_stamps_of_the_hardware_session() {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    let (n, dt) = (12_500usize, 0.8e-9);
+    // the stamps of the SINGLEs the thread finished: it arms nothing for a SINGLE whose stamp is one of them
+    // (`single_wants_more` in board/dho/hw/settings.rs), so such a SINGLE gets no frame and never ends
+    let mut done: Vec<u64> = Vec::new();
+    let mut single = |ui: &mut Ui| {
+        ui.m.trig_mode = TrigMode::Single;
+        ui.m.run = RunState::Run;
+        ui.step(0.05);
+        let stamp = ui.m.hw_stamp;
+        if !done.contains(&stamp) {
+            let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
+            let f =
+                crate::board::Frame { seq: stamp, stamp, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() };
+            shared.lock().unwrap().queue.push_back(f);
+            done.push(stamp);
+        }
+        ui.step(0.05);
+        ui.step(0.05);
+        let seq = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
+        let ended = ui.m.run == RunState::Stop && seq == Some(stamp);
+        ui.m.trig_mode = TrigMode::Auto;
+        ui.m.run = RunState::Stop;
+        ui.step(0.05);
+        ended
+    };
+    assert!(single(&mut ui) && single(&mut ui), "SINGLE with its own frame");
+    let clear = ui.m.hw_avg_clear;
+    ui.key(crate::ui::key::DEFAULT);
+    assert!(ui.m.hw_avg_clear >= clear, "the average count went back");
+    assert!(single(&mut ui), "the SINGLE after Default never ended");
+}

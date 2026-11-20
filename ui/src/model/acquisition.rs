@@ -29,6 +29,15 @@ pub enum AcqMode {
 }
 
 impl Model {
+    /// A set-up that replaces this one (Default, a recall, the end of a session, an undone auto set-up) takes over the
+    /// counters of the hardware session, which only count up: `hw_stamp` and `hw_avg_clear`. The acquisition thread
+    /// compares them with what it has seen; a stamp that went back made the next SINGLE one already done, and it never
+    /// ended (`*RST` before every run of the device test: unit 2026-11-20).
+    pub fn keep_session(&mut self, old: &Model) {
+        self.hw_stamp = self.hw_stamp.max(old.hw_stamp);
+        self.hw_avg_clear = self.hw_avg_clear.max(old.hw_avg_clear);
+    }
+
     pub fn time_per_div(&self) -> f32 {
         tscales()[self.tscale] * self.tfine
     }

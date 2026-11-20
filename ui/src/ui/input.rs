@@ -300,7 +300,9 @@ impl Ui {
         let meas = Self::default_meas();
         // the Quick key action is a preference, not part of the set-up that Default resets
         let (quick, text_size) = (m.quick, m.text_size);
-        self.m = Model::default();
+        let mut fresh = Model::default();
+        fresh.keep_session(&self.m);
+        self.m = fresh;
         self.m.meas = meas;
         (self.m.quick, self.m.text_size) = (quick, text_size);
         self.bus_auto = None;

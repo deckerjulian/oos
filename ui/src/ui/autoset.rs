@@ -527,9 +527,9 @@ impl Ui {
         found.extend((0..n_ch()).filter(|&c| a.want[c] && a.period[c].is_none()).map(|c| (c, stats(c), f64::NAN)));
         if found.is_empty() {
             // the stamp only counts up: records of the run must not pass as taken with the set-up restored
-            let stamp = self.m.hw_stamp;
-            self.m = *a.back;
-            self.m.hw_stamp = stamp;
+            let mut back = *a.back;
+            back.keep_session(&self.m);
+            self.m = back;
             self.toast("Auto set-up: no signal found");
         } else {
             // the others as they were: on, with their scale
