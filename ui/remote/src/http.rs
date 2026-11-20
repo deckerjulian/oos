@@ -452,19 +452,14 @@ impl<U: Send + 'static> Http<U> {
                 }
                 too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
             });
+            // a HEAD gets no body here either
+            let head_only = req.starts_with(b"HEAD ");
             if let Some(status) = early {
                 let msg = if status.starts_with("403") { "refused" } else { "busy, try again" };
-                let head = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
-                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}",
-                    msg.len()
-                );
-                last = Some(head.into_bytes());
+                last = Some(early_answer(status, msg, head_only));
                 dead = true;
             } else if too_big {
-                let msg = "request too large";
-                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len());
-                last = Some(head.into_bytes());
+                last = Some(early_answer("413 Payload Too Large", "request too large", head_only));
                 dead = true;
             } else if complete {
                 if !self.answer(i, hdr_end, site, &mut cmds) {
@@ -544,6 +539,10 @@ impl<U: Send + 'static> Http<U> {
         let (route, query) = path.split_once('?').unwrap_or((&path, ""));
         let req_body = &req[hdr_end.unwrap_or(req.len())..];
         let post = text.starts_with("POST ");
+        let method = text.split_whitespace().next().unwrap_or("");
+        // HEAD: the head GET would have, without its body (#205)
+        let head_only = method == "HEAD";
+        let allow = methods_of(route);
         // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
         let peer_ok = self.acl.permits_peer(s.peer_addr());
         // each answer with its status, chosen where the answer is made (#205: not read back from the body's text)
@@ -553,6 +552,10 @@ impl<U: Send + 'static> Http<U> {
         let (status, ctype, body): (&str, &str, Vec<u8>) = match route {
             _ if foreign(&text, route, post) => refused(),
             "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => refused(),
+            // a route asked with a method it does not take: 405 with the ones it takes (#205)
+            _ if allow.is_some_and(|a| !a.split(", ").any(|m| m == method)) => {
+                ("405 Method Not Allowed", "text/plain", b"method not allowed".to_vec())
+            }
             "/" => (OK, "text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
             "/style.css" => (OK, "text/css", STYLE.as_bytes().to_vec()),
             "/waveform" if post => {
@@ -600,7 +603,16 @@ impl<U: Send + 'static> Http<U> {
                 None => ("404 Not Found", "text/plain", b"not found".to_vec()),
             },
         };
-        let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
+        let length = format!("Content-Length: {}\r\n", body.len());
+        let allowed = match allow {
+            Some(a) if status.starts_with("405") => format!("Allow: {}\r\n", a),
+            _ => String::new(),
+        };
+        let head = format!(
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+            status, ctype, length, allowed
+        );
+        let body = if head_only { Vec::new() } else { body };
         if body.len() > SEND_INLINE {
             if !oos_system::net::send_in_background(s, head, body) {
                 oos_system::net::busy_answer(s);
@@ -669,6 +681,27 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
         }
     }
     dead
+}
+
+/// The methods a route takes, as its `Allow` header names them; None for a path that is no route (404 whatever the
+/// method). A HEAD is taken where a GET is, except on `/cmd`, whose GET does something, and on the live pictures,
+/// whose status, type and length are known only once the program answers one, after this.
+fn methods_of(route: &str) -> Option<&'static str> {
+    match route {
+        "/waveform" | "/mcp" => Some("POST"),
+        "/update" => Some("GET, HEAD, POST"),
+        "/cmd" | "/screen.png" | "/screen.jpg" => Some("GET"),
+        "/"
+        | "/style.css"
+        | "/screen.bmp"
+        | "/wave.csv"
+        | "/wave.bin"
+        | "/la.csv"
+        | "/ui-state"
+        | "/stamp"
+        | "/lxi/identification" => Some("GET, HEAD"),
+        _ => None,
+    }
 }
 
 /// GET /cmd: the commands `c=` of the query go to `cmds` when a remote may give every one of them; false and none of
@@ -781,3 +814,14 @@ impl<U> Http<U> {
 
 #[cfg(test)]
 mod tests;
+
+/// An answer of `poll` before the request is read whole (403, 413, 503): the text `msg`, or only its head after a HEAD.
+fn early_answer(status: &str, msg: &str, head_only: bool) -> Vec<u8> {
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nCache-Control: no-store\r\n\
+        Connection: close\r\n\r\n",
+        msg.len()
+    );
+    let body = if head_only { "" } else { msg };
+    format!("{head}{body}").into_bytes()
+}
