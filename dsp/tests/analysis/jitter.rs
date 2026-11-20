@@ -527,3 +527,30 @@ fn phase_noise_window_matches_the_direct_sum() {
         }
     }
 }
+
+/// A bit rate from a fast time base, kept at a slow one, is no clock of the slow record: its bit is far below a
+/// sample. Recovered with it, the clock had hundreds of millions of bits between two edges and the eye page took
+/// 3.7 GB on a unit (the program was killed). The clock is refused, and a trend has a bound of its own.
+#[test]
+fn a_bit_rate_above_the_sample_rate_is_no_clock_of_the_record() {
+    // 1 kSa/s, an edge every 100 samples: 5 bit/s as it stands
+    let (dt, n) = (1e-3, 20_000);
+    let v: Vec<f32> = (0..n).map(|i| if (i / 100) % 2 == 0 { 0.0 } else { 1.0 }).collect();
+    let fitted = eye::recover_clock(&v, dt, 0.5, 0.1, None).expect("a clock from the edges");
+    assert!((fitted.period / 0.1 - 1.0).abs() < 0.01, "{}", fitted.period);
+    assert!(eye::recover_clock(&v, dt, 0.5, 0.1, Some(10.0)).is_some(), "a rate the record can hold");
+    // 2 Mbit/s on that record: 2000 bits a sample, 40 million between the first edge and the last
+    assert!(eye::recover_clock(&v, dt, 0.5, 0.1, Some(2e6)).is_none());
+    assert!(eye::recover_clock_pll(&v, dt, 0.5, 0.1, Some(2e6), 0.0, true).is_none());
+    // the same from the signal alone: spikes that only just pass the comparator rise and fall within a small part of
+    // a sample, the shortest spacings are taken for the bit, and the record would hold half a billion of them
+    let spikes: Vec<f32> = (0..n).map(|i| if i % 50 == 25 { 2e-5 } else { -1.0 }).collect();
+    assert!(eye::recover_clock(&spikes, dt, 0.0, 1e-5, None).is_none_or(|clock| clock.period >= 0.5 * dt));
+    let times: Vec<f64> = oos_dsp::edges::edges(&spikes, 0.0, 1e-5).iter().map(|edge| edge.t * dt).collect();
+    let fit = eye::clock_from_edges(times, None);
+    assert!(fit.is_some_and(|clock| clock.period < dt / 1000.0), "the fit the bound is for");
+    // a clock from edge times alone, with a bit of 1 ns and edges a second apart: no trend, not a billion values
+    let clock = eye::clock_from_edges(vec![0.0, 1.0, 2.0, 3.0], Some(1e9)).expect("a clock");
+    let tie = eye::tie(&clock.edges, &clock);
+    assert!(eye::tie_trend(&clock.edges, &tie, &clock).is_empty());
+}

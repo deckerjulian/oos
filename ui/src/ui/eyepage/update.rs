@@ -197,7 +197,27 @@ impl Ui {
         // A strobe idles near one rail between bursts; histogram top/base sit on that rail and the
         // comparator chatters. Peak-to-peak with a wide hysteresis keeps the burst edges.
         let (thr, hyst) = self.eye_threshold(&st, clk_id, clk_vpd);
-        let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
+        let mut rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
+        // the rate is of the record it was set or found on. At a slower time base its bit is shorter than two
+        // samples: a rate found from a record is found again from this one, a rate that was set is said to need
+        // a faster record (as `automatic::infer` says it). Recovered with it, the clock had a bit far below a
+        // sample, and the page took the memory of the scope (seen on a unit)
+        if rate.is_some_and(|r| 1.0 / r < 2.0 * dt) {
+            if self.m.eye_from_record {
+                self.m.eye_rate = 0.0;
+                rate = None;
+            } else {
+                // the eye of the faster time base goes, and the page says why (the old eye stayed, with nothing said)
+                self.azr.eye = None;
+                self.azr.eye_res = None;
+                self.azr.page = Page::default();
+                self.azr.page.status = [
+                    format!("{} needs a faster time base", si_short(self.m.eye_rate, "b/s")),
+                    "Under 2 samples a bit in this record".into(),
+                ];
+                return;
+            }
+        }
         // An idle live bus keeps its accumulated eye. A replacement reference
         // without edges must not display the previous reference's results.
         let recovered = if self.azr.eye_auto.enabled && clk_id.is_none() {
