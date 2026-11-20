@@ -8,21 +8,41 @@
 
 use super::*;
 
+/// The mask test in software as the screen keeps it (ADR 0062); the mask unit in the FPGA is `hwmask::Unit`.
+#[derive(Default)]
+pub(super) struct MaskTest {
+    /// the reference waveform (volts, screen time) the mask is built from
+    pub reference: Option<Vec<f32>>,
+    /// the mask built from it with the tolerances of the menu (`build_mask`)
+    pub mask: Option<oos_dsp::mask::Mask>,
+    /// acquisitions that passed and failed (`mask_test`)
+    pub pass: u64,
+    pub fail: u64,
+}
+
+impl MaskTest {
+    /// Drops the mask and its reference: a new source channel, a default set-up or Clear needs a new one.
+    pub fn forget(&mut self) {
+        self.mask = None;
+        self.reference = None;
+    }
+}
+
 impl Ui {
     /// Mask test of one acquisition (live records only): counts passed / failed, stops on a failure if set.
     pub(super) fn mask_test(&mut self, rec: &Record) {
         if !self.m.mask_on {
             return;
         }
-        let Some(mask) = &self.mask else { return };
+        let Some(mask) = &self.mask_sw.mask else { return };
         let v = &rec.ch[self.m.mask_src];
         if v.is_empty() {
             return;
         }
         if mask.test(v).pass {
-            self.mask_pass += 1;
+            self.mask_sw.pass += 1;
         } else {
-            self.mask_fail += 1;
+            self.mask_sw.fail += 1;
             // with the hardware test the counters decide (hwmask.rs)
             if self.m.mask_stop && self.m.run == RunState::Run && !self.mask_hw_active() {
                 self.m.run = RunState::Stop;
@@ -34,12 +54,12 @@ impl Ui {
     /// (Re)builds the mask from the reference waveform with the tolerances of the menu (X in divisions of the 10-div
     /// window, Y in divisions of the source channel's current V/div).
     pub(super) fn build_mask(&mut self) {
-        let Some(r) = &self.mask_ref else { return };
+        let Some(r) = &self.mask_sw.reference else { return };
         let tol_x = (self.m.mask_x / HDIV * r.len() as f32).round() as usize;
         let tol_y = self.m.mask_y * self.m.ch[self.m.mask_src].volts_per_div();
         let mut mask = oos_dsp::mask::build(r, tol_x, tol_y);
         mask.invert = self.m.mask_inv;
-        self.mask = Some(mask);
+        self.mask_sw.mask = Some(mask);
         self.mask_cols_update();
     }
 
@@ -49,7 +69,7 @@ impl Ui {
         let Some(v) = self.last[0].as_ref().map(|r| r.ch[c].clone()).filter(|v| !v.is_empty()) else {
             return self.toast(&format!("CH{} has no data", c + 1));
         };
-        self.mask_ref = Some(v);
+        self.mask_sw.reference = Some(v);
         self.build_mask();
         self.m.mask_on = true;
         self.mask_counts_reset();
@@ -61,12 +81,12 @@ impl Ui {
         let Some(r) = self.refs[self.ref_sel].as_ref().filter(|r| r.v.len() >= 2) else {
             return self.toast(&format!("R{} is empty", self.ref_sel + 1));
         };
-        self.mask_ref = Some(r.v.as_ref().clone());
+        self.mask_sw.reference = Some(r.v.as_ref().clone());
         self.m.mask_src = r.src.min(NCH - 1);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_sw.pass = 0;
+        self.mask_sw.fail = 0;
         self.toast(&format!("Mask created from R{}", self.ref_sel + 1));
     }
 
@@ -116,7 +136,7 @@ impl Ui {
 
     /// Forbidden region of the mask (outside the envelope) tinted red, the envelope edges a little stronger.
     pub(super) fn draw_mask(&self, cv: &mut Canvas) {
-        let (Some(mask), true, false) = (&self.mask, self.m.mask_on, self.xy) else { return };
+        let (Some(mask), true, false) = (&self.mask_sw.mask, self.m.mask_on, self.xy) else { return };
         if !self.shows(self.m.mask_src) {
             return;
         }
@@ -153,7 +173,7 @@ impl Ui {
 
     /// "Mask CH1 · Passed n · Failed m" pill at the top left of the plot, under the status line.
     pub(super) fn draw_mask_pill(&self, cv: &mut Canvas) {
-        if !self.m.mask_on || self.mask.is_none() || !self.shows(self.m.mask_src) {
+        if !self.m.mask_on || self.mask_sw.mask.is_none() || !self.shows(self.m.mask_src) {
             return;
         }
         let f = self.fonts();

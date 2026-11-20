@@ -154,13 +154,12 @@ fn a_mask_comes_back_from_its_file() {
     let mut u = with_two_channels();
     u.store_dir = dir.clone();
     u.activate(Item::MaskCreate);
-    let a = u.mask_ref.clone().unwrap();
+    let a = u.mask_sw.reference.clone().unwrap();
     u.activate(Item::MaskSave);
-    u.mask = None;
-    u.mask_ref = None;
+    u.mask_sw.forget();
     u.activate(Item::MaskLoad);
-    assert_eq!(u.mask_ref.as_ref().unwrap().len(), a.len());
-    assert!(u.mask.is_some() && u.m.mask_on);
+    assert_eq!(u.mask_sw.reference.as_ref().unwrap().len(), a.len());
+    assert!(u.mask_sw.mask.is_some() && u.m.mask_on);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

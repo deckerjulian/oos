@@ -29,7 +29,7 @@ impl Ui {
         board().mask_hw()
             && self.src.is_hw()
             && self.m.mask_on
-            && self.mask.is_some()
+            && self.mask_sw.mask.is_some()
             && self.mask_unit.cols.is_some()
             && self.m.ch[self.m.mask_src].on
             && self.mask_unit.blocked.is_none()
@@ -46,7 +46,7 @@ impl Ui {
 
     /// The table columns of the mask (`Mask::columns`), after every new mask.
     pub(super) fn mask_cols_update(&mut self) {
-        self.mask_unit.cols = self.mask.as_ref().map(|m| m.columns(crate::board::MASK_COLUMNS));
+        self.mask_unit.cols = self.mask_sw.mask.as_ref().map(|m| m.columns(crate::board::MASK_COLUMNS));
     }
 
     /// Hands the mask test to the acquisition thread and takes its latest counters; a new failure stops the
@@ -77,14 +77,14 @@ impl Ui {
     pub(crate) fn mask_counts(&self) -> (u64, u64) {
         match self.mask_unit.read.filter(|r| r.ch == self.m.mask_src && self.mask_hw_active()) {
             Some(r) => (r.frames.saturating_sub(r.fails), r.fails),
-            None => (self.mask_pass, self.mask_fail),
+            None => (self.mask_sw.pass, self.mask_sw.fail),
         }
     }
 
     /// Clears the mask statistics, the hardware counters with them.
     pub(crate) fn mask_counts_reset(&mut self) {
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        self.mask_sw.pass = 0;
+        self.mask_sw.fail = 0;
         self.mask_unit.clear += 1;
     }
 
@@ -94,7 +94,7 @@ impl Ui {
         let (acq, used, _) = crate::board::pipe::counters().read();
         let sw = format!(
             "sw_pass={},sw_fail={},acquired={},used={},records={}",
-            self.mask_pass, self.mask_fail, acq, used, self.records
+            self.mask_sw.pass, self.mask_sw.fail, acq, used, self.records
         );
         let Some(r) = self.mask_unit.read else {
             return format!(
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn hardware_counts_while_the_hardware_tests() {
         let mut ui = crate::ui::testkit::demo_ui();
-        (ui.mask_pass, ui.mask_fail) = (7, 2);
+        (ui.mask_sw.pass, ui.mask_sw.fail) = (7, 2);
         ui.mask_unit.read = rd(0, 4, 3);
         // the demo source is no hardware: the software counts
         assert!(!ui.mask_hw_active());

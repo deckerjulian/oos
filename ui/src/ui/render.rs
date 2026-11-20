@@ -339,7 +339,7 @@ impl Ui {
             let offset = base_offset - center * base_vpd;
             let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
-            if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
+            if self.m.mask_on && self.mask_sw.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
             let bands = (0..DECODERS)

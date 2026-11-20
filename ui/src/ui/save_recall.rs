@@ -169,8 +169,7 @@ impl Ui {
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;
                 if m.mask_src != self.m.mask_src {
-                    self.mask = None;
-                    self.mask_ref = None;
+                    self.mask_sw.forget();
                 }
                 m.keep_session(&self.m);
                 self.m = m;
@@ -181,7 +180,7 @@ impl Ui {
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
-                if self.mask.is_none() {
+                if self.mask_sw.mask.is_none() {
                     self.m.mask_on = false;
                 }
                 self.build_mask();

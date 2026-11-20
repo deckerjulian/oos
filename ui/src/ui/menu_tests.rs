@@ -196,7 +196,7 @@ fn clear_empties_the_display_in_stop() {
     ui.step(0.033);
     ui.key(key::RUNSTOP);
     ui.step(0.033);
-    assert!(lit(&ui) > 500 && ui.mask_pass > 0 && !ui.mstat.is_empty());
+    assert!(lit(&ui) > 500 && ui.mask_sw.pass > 0 && !ui.mstat.is_empty());
     ui.key(key::CLEAR);
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     for _ in 0..5 {
@@ -204,7 +204,7 @@ fn clear_empties_the_display_in_stop() {
         ui.render(&mut cv);
     }
     assert_eq!(lit(&ui), 0);
-    assert!(ui.last[0].is_none() && ui.mstat.is_empty() && (ui.mask_pass, ui.mask_fail) == (0, 0));
+    assert!(ui.last[0].is_none() && ui.mstat.is_empty() && (ui.mask_sw.pass, ui.mask_sw.fail) == (0, 0));
     assert!(ui.meas(0, Meas::Freq).is_nan());
     assert_eq!(ui.toast.as_ref().unwrap().0, "Display cleared");
     assert_eq!(ui.m.run, RunState::Stop);

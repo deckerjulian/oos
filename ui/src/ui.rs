@@ -884,11 +884,8 @@ pub struct Ui {
     usb_check: f64,
     /// setup slot n = file setup<n>.txt
     store_slot: u32,
-    /// mask test: reference waveform (volts, screen time), the mask built from it, counts
-    mask_ref: Option<Vec<f32>>,
-    mask: Option<oos_dsp::mask::Mask>,
-    mask_pass: u64,
-    mask_fail: u64,
+    /// the mask test in software: the reference waveform, the mask built from it, its counts (render_derived.rs)
+    mask_sw: render_derived::MaskTest,
     /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why
     /// the acquisition thread dropped the unit (hwmask.rs)
     mask_unit: hwmask::Unit,

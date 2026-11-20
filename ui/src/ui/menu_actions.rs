@@ -761,8 +761,7 @@ impl Ui {
             Item::MaskSrc => {
                 // a mask belongs to its channel: the new source needs a new one
                 self.m.mask_src = src_step(self.m.mask_src, NCH, d);
-                self.mask = None;
-                self.mask_ref = None;
+                self.mask_sw.forget();
                 self.m.mask_on = false;
             }
             Item::MaskX => {
@@ -1121,8 +1120,7 @@ impl Ui {
             Item::MaskCreate => self.create_mask(),
             Item::MaskFromRef => self.create_mask_from_ref(),
             Item::MaskClear => {
-                self.mask = None;
-                self.mask_ref = None;
+                self.mask_sw.forget();
                 self.m.mask_on = false;
                 self.mask_counts_reset();
                 self.toast("Mask cleared");
