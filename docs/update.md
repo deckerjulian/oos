@@ -88,7 +88,10 @@ them anew in every tree) or to a node the new tree does not have refuses the kex
 `--new-dt`. Left out on purpose: the running kernel's ramdisk (`linux,initrd-*` in `/chosen` and its reservation):
 kexec-tools names the new one, and the kernel drops a ramdisk that lies in reserved memory (seen on the unit: the
 55 MB of the kexec start fell into the 13 MB the loader had reserved for its own, and the kernel found no root; the
-power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over.
+power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over. A
+seed for the kernel's address randomisation (`kaslr-seed` in `/chosen`) is carried over as 0: kexec-tools refuses a
+tree whose seed is not 0 and puts a fresh one into it (issue #193, found in a fork on a DHO924S whose loader wrote a
+seed; the developer's unit writes none, verified on the unit 2026-11-18: its running tree has no `kaslr-seed`).
 
 Where the segments go: above 1 GiB (`kexec --mem-min`), and above every GIC table the running kernel's log names. The
 GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); the started kernel takes them over and
