@@ -355,7 +355,7 @@ impl Ui {
             Item::Stock,
         ];
         // overclocking loses samples at the full rate: only with `adc.overclock = on` (overclock.rs)
-        if !overclock::shown(overclock::switch_on(), self.clock_next) {
+        if !overclock::shown(overclock::switch_on(), self.overclock.hz) {
             v.retain(|&i| i != Item::Overclock);
         }
         v

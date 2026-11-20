@@ -849,8 +849,7 @@ pub struct Ui {
     /// the number pad of a value row (ui/numpad.rs)
     numpad: numpad::NumPad,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
-    pub limits_path: String,
-    clock_next: f64,
+    pub overclock: overclock::Next,
     /// settings of the scope itself (sysconf.rs); written to `sys_path` (none in tests: nothing written)
     pub sys: crate::sysconf::SysConf,
     pub sys_path: Option<std::path::PathBuf>,
