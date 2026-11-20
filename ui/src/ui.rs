@@ -827,10 +827,8 @@ pub struct Ui {
     ref_files: Vec<std::path::PathBuf>,
     xy: bool,
     pub now: f64,
-    /// the trigger level last seen and when it changed: the level line shows for `LEVEL_LINE_S` after a change (knob,
-    /// touch, remote), so the level can be followed while it moves
-    level_seen: (f32, f32),
-    level_changed: f64,
+    /// what the step saw last: the trigger level and its change, the last record and the usual interval (acquire.rs)
+    seen: acquire::Seen,
     pub frames: u64,
     /// records taken in, for the state line
     pub records: u64,
@@ -912,10 +910,6 @@ pub struct Ui {
     /// power dialog open (power key)
     pub power_dlg: bool,
     pub power_action: Option<PowerAction>,
-    /// time of the last record (UI clock), for the WAIT status
-    last_rec_t: f64,
-    /// smoothed time between two records (deep hardware records arrive about once per second)
-    rec_iv: f64,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)

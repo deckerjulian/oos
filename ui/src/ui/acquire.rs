@@ -67,6 +67,25 @@ impl Default for FastPath {
     }
 }
 
+/// What the step saw last (ADR 0062).
+pub(super) struct Seen {
+    /// the trigger level last seen and when it changed: the level line shows for `LEVEL_LINE_S` after a change (knob,
+    /// touch, remote), so the level can be followed while it moves
+    pub level: (f32, f32),
+    pub level_changed: f64,
+    /// time of the last record (UI clock), for the WAIT status
+    pub rec_t: f64,
+    /// smoothed time between two records (deep hardware records arrive about once per second)
+    pub rec_iv: f64,
+}
+
+impl Default for Seen {
+    fn default() -> Self {
+        // NaN: the first look at the level (start-up) is no change
+        Seen { level: (f32::NAN, f32::NAN), level_changed: 0.0, rec_t: 0.0, rec_iv: 0.0 }
+    }
+}
+
 /// A STOP of the hardware (docs/fork/stop-exact.md): the request for its final frame and the wait for it, and the
 /// records shown after it (`stop_replay`). ADR 0062.
 #[derive(Default)]
@@ -209,12 +228,12 @@ impl Ui {
 
     /// Trigger level changes, SINGLE arming, the channels of the platform and the sources that point at them.
     fn step_guards(&mut self) {
-        if (self.m.trig_level, self.m.trig_level2) != self.level_seen {
+        if (self.m.trig_level, self.m.trig_level2) != self.seen.level {
             // the first look (start-up) is no change
-            if !self.level_seen.0.is_nan() {
-                self.level_changed = self.now;
+            if !self.seen.level.0.is_nan() {
+                self.seen.level_changed = self.now;
             }
-            self.level_seen = (self.m.trig_level, self.m.trig_level2);
+            self.seen.level = (self.m.trig_level, self.m.trig_level2);
         }
         self.src.publish_afg(&self.m);
         // SINGLE armed: from here on only what comes after the press counts
@@ -558,7 +577,7 @@ impl Ui {
         // at large depths the hardware delivers fewer records than frames: WAIT only after 0.5 s without one, or
         // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
         // record intervals (a 125 M record takes ~1 s to read)
-        let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
+        let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.seen.rec_iv);
         // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
         // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
         if take.got > 0 {
@@ -573,10 +592,10 @@ impl Ui {
             self.grade.frames = take.got as u32;
         }
         if take.got > 0 {
-            let iv = (self.now - self.last_rec_t).min(2.0);
-            self.rec_iv += 0.3 * (iv - self.rec_iv);
-            self.last_rec_t = self.now;
-        } else if self.m.run == RunState::Run && self.now - self.last_rec_t > wait_after {
+            let iv = (self.now - self.seen.rec_t).min(2.0);
+            self.seen.rec_iv += 0.3 * (iv - self.seen.rec_iv);
+            self.seen.rec_t = self.now;
+        } else if self.m.run == RunState::Run && self.now - self.seen.rec_t > wait_after {
             self.m.status = TrigStatus::Wait;
         }
         self.times.acq += 0.05 * (take.ta - self.times.acq);
