@@ -144,6 +144,8 @@ struct Rec {
     armed_fs: i128,
     /// frames recorded so far
     n: u32,
+    /// the zone trigger did not take a trigger: the next is looked for from here (`MaskUnit`)
+    rearm_fs: Option<i128>,
 }
 
 /// The roll or scan stream (roll-mode.md 2, 5 and 9): started by the FSM run (0x4004 bit 0) while 0x4008 bit 17
@@ -348,6 +350,29 @@ struct Dvm {
     sums: (u64, u64),
 }
 
+/// The mask unit's comparator and the zone logic on its sample path (docs/fork/hwmask.md, hwzone.md). The table
+/// (0x1194) and the two zone tables (0x11d8, 0x11dc) take a column's word while its write bit is set. A frame recorded
+/// while the mask test is on (0x4020 bit 15) counts as tested and, when a sample of the slot's channel (0x1190 bits
+/// 23:20, `mask::slot`) lies outside the limits of its column, as failed; with the zone trigger armed (0x4020 bit 1)
+/// a trigger is recorded only when the frame qualifies (each zone on in 0x11d0 touched, or not, as its mode says) and
+/// then counts. The samples are the read-out codes >> 8, column `i / n` for sample `i` and the strobe count `n` of
+/// 0x1184 bits 9:0. 0x1190 bit 29 and 30 clear the counters, its rising bit 28 latches them. Verified on the unit: the
+/// scale, the slots and the columns at 10k points (hwmask.md, "On the DHO924S"), the qualification (hwzone.md).
+/// Assumed: that a rejected trigger costs a whole record before the next is taken, the latch, the counters' clear.
+/// Not modelled: stop on fail, the stall of a strobe count the record does not hold, the zone's flags in 0x4030 and
+/// 0x4038 (they read what was written).
+#[derive(Default)]
+struct MaskUnit {
+    /// per column: the lower and upper limit and whether each is on
+    table: BTreeMap<u32, (u8, u8, bool, bool)>,
+    /// per zone and column in it: the lower and upper limit
+    zones: [BTreeMap<u32, (u8, u8)>; 2],
+    /// frames tested (with the zone trigger: qualified) and failed since their clear, and the two latched
+    frames: u64,
+    fails: u64,
+    latched: (u64, u64),
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -373,6 +398,7 @@ pub struct Unit {
     gen: GenRegs,
     counter: Counter,
     dvm: Dvm,
+    mask: MaskUnit,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -399,6 +425,7 @@ impl Unit {
             gen: GenRegs::default(),
             counter: Counter::default(),
             dvm: Dvm::default(),
+            mask: MaskUnit::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -480,6 +507,89 @@ impl Unit {
         self.dvm.sums = (sum << (exp - points), sq << (exp - points));
     }
 
+    /// The channel the mask unit compares (its slot, `mask::slot`) and the strobe count; None without a slot or with
+    /// its channel not acquired (`MaskUnit`).
+    fn unit_source(&self) -> Option<(usize, usize)> {
+        let mask = self.reg(0x4008) & 0xf;
+        let slot = (self.reg(crate::dho::mask::CTRL) & crate::dho::mask::ctrl::SLOT_MASK) >> 20;
+        let slot = (slot != 0).then(|| slot.trailing_zeros())?;
+        let c = (0..4).find(|&c| crate::dho::mask::slot(mask, c) == Some(slot))?;
+        Some((c, (self.reg(crate::dho::mask::COMPRESS) & 0x3ff).max(1) as usize))
+    }
+
+    /// The 8-bit codes the mask unit compares of channel `c` in the frame triggered at `at`, from sample `from` on.
+    fn unit_codes(&self, c: usize, at: i128, from: usize, n: usize) -> Vec<u8> {
+        self.words(c, at, from as u32, n).iter().map(|&w| (w >> 8) as u8).collect()
+    }
+
+    /// Whether the zone trigger takes the trigger at `at`: each zone on touched (a sample of one of its columns within
+    /// its limits, or the trace crossing them from the sample before) when its mode asks for it, not touched else
+    /// (`MaskUnit`). True while it is not armed.
+    fn zone_takes(&self, at: i128) -> bool {
+        use crate::dho::zone::ctrl;
+        let w = self.reg(crate::dho::zone::CTRL);
+        if self.reg(0x4020) & crate::dho::zone::SCU_ENABLE == 0 || w >> ctrl::ON_SHIFT & 3 == 0 {
+            return true;
+        }
+        let Some((c, n)) = self.unit_source() else { return true };
+        let len = (self.view.pre + self.view.post) as usize;
+        (0..2).filter(|k| w >> (ctrl::ON_SHIFT + k) & 1 != 0).all(|k| {
+            let touched = self.mask.zones[k as usize].iter().any(|(&col, &(lo, hi))| {
+                let first = (col as usize * n).min(len);
+                let from = first.saturating_sub(1);
+                let codes = self.unit_codes(c, at, from, ((col as usize + 1) * n).min(len) - from);
+                let inside = codes[first - from..].iter().any(|x| (lo..=hi).contains(x));
+                inside || codes.windows(2).any(|p| (p[0] < lo && p[1] > hi) || (p[0] > hi && p[1] < lo))
+            });
+            touched == (w >> (ctrl::MODE_SHIFT + k) & 1 != 0)
+        })
+    }
+
+    /// The frame triggered at `at` through the mask test while it is on: tested, and failed when a sample lies beyond
+    /// its column's limits; else counted while the zone trigger, which took it, is armed (`MaskUnit`).
+    fn mask_test(&mut self, at: i128) {
+        if self.reg(0x4020) & crate::dho::mask::scu::ENABLE == 0 {
+            self.mask.frames += (self.reg(0x4020) & crate::dho::zone::SCU_ENABLE != 0) as u64;
+            return;
+        }
+        let Some((c, n)) = self.unit_source() else { return };
+        let codes = self.unit_codes(c, at, 0, (self.view.pre + self.view.post) as usize);
+        let fail = codes.iter().enumerate().any(|(i, &x)| {
+            self.mask.table.get(&((i / n) as u32)).is_some_and(|&(lo, hi, le, he)| (le && x < lo) || (he && x > hi))
+        });
+        self.mask.frames += 1;
+        self.mask.fails += fail as u64;
+    }
+
+    /// A write to one of the mask unit's registers (`MaskUnit`).
+    fn mask_write(&mut self, off: u32, v: u32, before: u32) {
+        use crate::dho::mask::{ctrl, table, CTRL, TABLE};
+        use crate::dho::zone::{table as ztable, TABLES};
+        if off == TABLE && v & table::WRITE != 0 {
+            let lim = (v as u8, (v >> table::HI_SHIFT) as u8, v & table::LO_EN != 0, v & table::HI_EN != 0);
+            self.mask.table.insert(v >> table::COL_SHIFT & 0x3ff, lim);
+        }
+        if let Some(k) = TABLES.iter().position(|&r| r == off).filter(|_| v & ztable::WRITE != 0) {
+            let col = v >> ztable::COL_SHIFT & 0x3ff;
+            if v & ztable::IN_ZONE != 0 {
+                self.mask.zones[k].insert(col, (v as u8, (v >> ztable::HI_SHIFT) as u8));
+            } else {
+                self.mask.zones[k].remove(&col);
+            }
+        }
+        if off == CTRL {
+            if v & ctrl::CLEAR_FAILS != 0 {
+                self.mask.fails = 0;
+            }
+            if v & ctrl::CLEAR_FRAMES != 0 {
+                self.mask.frames = 0;
+            }
+            if v & ctrl::LATCH != 0 && before & ctrl::LATCH == 0 {
+                self.mask.latched = (self.mask.frames, self.mask.fails);
+            }
+        }
+    }
+
     /// The trace as text, one event a line (for a comparison of two runs).
     pub fn trace_text(&self) -> String {
         self.trace.iter().map(|e| format!("{:?}\n", e)).collect()
@@ -497,15 +607,21 @@ impl Unit {
     fn advance(&mut self) {
         self.stream_chunks();
         let wait = self.reg(0x4068) as i128 * INTERVAL_TICK_FS;
-        let Some(r) = self.rec.as_mut() else { return };
+        let Some(mut r) = self.rec.take() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
         let mut new = Vec::new();
         loop {
-            let from = match r.n {
-                0 => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
+            let from = match (r.rearm_fs, r.n) {
+                (Some(t), _) => t,
+                (None, 0) => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
                 _ => self.ring[&(r.first + r.n - 1)] + span + wait,
             };
             let Some(at) = self.scene.next_trigger(from).filter(|&at| at <= self.t_fs) else { break };
+            // a trigger the zone trigger does not take: the FSM arms again and fills a whole record (assumed)
+            r.rearm_fs = (!self.zone_takes(at)).then_some(at + span);
+            if r.rearm_fs.is_some() {
+                continue;
+            }
             let k = r.first + r.n;
             self.ring.insert(k, at);
             self.first_trigger_fs.get_or_insert(at);
@@ -514,12 +630,15 @@ impl Unit {
             new.push((k, at));
             if r.first + r.n > r.last {
                 self.recorded = r.n;
-                self.rec = None;
                 break;
             }
         }
+        if r.first + r.n <= r.last {
+            self.rec = Some(r);
+        }
         for (k, at) in new {
             self.average(k, at);
+            self.mask_test(at);
         }
     }
 
@@ -683,6 +802,7 @@ impl Unit {
         if off == crate::dho::dvm::LATCH && v & 1 != 0 && before & 1 == 0 {
             self.dvm_latch();
         }
+        self.mask_write(off, v, before);
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -723,7 +843,7 @@ impl Unit {
         } else if rise & 1 != 0 && c & 0x2200_0000 == 0x2200_0000 {
             // a new view takes effect at the arm
             self.view = self.scene.view;
-            self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0 });
+            self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0, rearm_fs: None });
             self.recorded = 0;
         } else if rise & 4 != 0 {
             // play-last: the newest frame of the ring
@@ -774,6 +894,10 @@ impl Unit {
             crate::dho::dvm::SUM_HI => ((self.dvm.sums.0 >> 32) as u32) << 16,
             crate::dho::dvm::SQ_LO => self.dvm.sums.1 as u32,
             crate::dho::dvm::SQ_HI => (self.dvm.sums.1 >> 32) as u32,
+            crate::dho::mask::FRAMES_LO => self.mask.latched.0 as u32,
+            crate::dho::mask::FRAMES_HI => (self.mask.latched.0 >> 32) as u32,
+            crate::dho::mask::FAILS_LO => self.mask.latched.1 as u32,
+            crate::dho::mask::FAILS_HI => (self.mask.latched.1 >> 32) as u32,
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
                 Some(r) if r.scan && !self.sweep_done && r.made >= SWEEP_CHUNKS / 2 && self.reg(0x4058) == 0 => {
@@ -1471,6 +1595,57 @@ mod tests {
         clock.sleep_us(20_000);
         let r = dvm::read(&mut bar);
         assert_eq!((r.sum(), r.sq()), (0, 0), "stopped: nothing summed");
+    }
+
+    // Break it catches: a mask test that compares another channel, column or scale than the table written, counters not
+    // latched or not cleared, a zone trigger that takes a trigger whose frame does not qualify (or of the other mode),
+    // or none that does
+    #[test]
+    fn the_mask_unit_tests_and_the_zone_trigger_qualifies_the_frames_recorded() {
+        use crate::dho::seq::{HwMask, HwZone};
+        use crate::dho::{mask, zone};
+        let mut base = Settings { tdiv: 100e-9, depth: 1000, frames: 10, window: None, ..Settings::default() };
+        // the tables at the scale and offset the scene's view has
+        (base.ch[0].scale, base.ch[0].offset) = CAL[0];
+        // CH1's sine (0.3 V, 1 MHz) at each column's time over the screen, `shift` s later, +-0.05 V
+        let band = |shift: f64, clear: u64| {
+            let at = |j: usize| sine(0, base.delay + (j as f64 + 0.5 - 500.0) * base.tdiv / 100.0 - shift) as f32;
+            let lo = (0..mask::COLUMNS).map(|j| at(j) - 0.05).collect();
+            let hi = (0..mask::COLUMNS).map(|j| at(j) + 0.05).collect();
+            HwMask { ch: 0, lo, hi, stop_on_fail: false, clear, map: mask::Map::default() }
+        };
+        // a box over the sine's crest (0.25 us, 0.3 V) or above it, the trace to touch it or not
+        let zone = |v: (f64, f64), inside: bool| HwZone {
+            ch: 0,
+            zones: vec![zone::Zone { poly: vec![(0.2e-6, v.0), (0.3e-6, v.1)], inside }],
+            clear: 0,
+            map: mask::Map::default(),
+        };
+        let mut st = State::handover(base.mask, None);
+        let p = st.configure(&base, None, None).unwrap().1;
+        // a trigger every 20 us from 1 us: at the sine's rising zero crossing
+        let (_, bar, c2h, clock) = unit(scene(&p, Some(20 * US), None));
+        let mut sides = (bar, c2h, clock);
+        let batch = |st: &mut State, s: &Settings, sides: &mut (Bar, Stream, Time)| {
+            let (bar, c2h, clock) = sides;
+            let (cfg, p) = st.configure(s, None, None).unwrap();
+            seq::execute_bus_on(&cfg, bar, c2h, &mut DmaBuf::new(), clock, &mut |_| {}, &|| false).unwrap();
+            let mut dma = DmaBuf::new();
+            let got =
+                seq::acquire_batch_on(st, s, &p, bar, c2h, &mut dma, clock, false, 12, |_| {}, || false, || false);
+            let ctrl = st.mask_ctrl().or(st.zone_ctrl()).unwrap();
+            (got, mask::read(bar, ctrl))
+        };
+        let (got, r) = batch(&mut st, &Settings { hwmask: Some(band(0.0, 0)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 0), "the band around the signal");
+        let (got, r) = batch(&mut st, &Settings { hwmask: Some(band(0.25e-6, 1)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 10), "the band a quarter period late, cleared");
+        let (got, r) = batch(&mut st, &Settings { hwzone: Some(zone((0.25, 0.35), true)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 0), "the crest touched");
+        let (got, r) = batch(&mut st, &Settings { hwzone: Some(zone((0.35, 0.5), false)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames()), (Ok(10), 20), "the box above the crest not touched");
+        let (got, _) = batch(&mut st, &Settings { hwzone: Some(zone((0.35, 0.5), true)), ..base.clone() }, &mut sides);
+        assert!(got.is_err_and(|e| e.contains("no acquisition")), "the box above the crest is never touched");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
