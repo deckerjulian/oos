@@ -34,239 +34,15 @@ impl Scpi {
         let up = head.to_ascii_uppercase();
         let t = |s: &str| Some(s.as_bytes().to_vec());
         // common commands
-        match up.as_str() {
-            "*IDN" => {
-                let p = oos_hal::model::platform();
-                return t(&format!(
-                    "OOS,{},{},oos-ui {}",
-                    p.caps.name,
-                    p.serial.as_deref().unwrap_or("0"),
-                    env!("CARGO_PKG_VERSION")
-                ));
-            }
-            "*OPC" if !query => {
-                self.poll_events(ui);
-                if self.opc_events.len() < 64 {
-                    self.opc_events.push(ui.scpi_operations());
-                } else {
-                    self.push_err("-350,\"Too many pending OPC events\"".into());
-                }
-                self.poll_events(ui);
-                return None;
-            }
-            "*ESR" if query => {
-                self.poll_events(ui);
-                let status = std::mem::take(&mut self.event_status);
-                return t(&status.to_string());
-            }
-            "*CLS" if !query => {
-                self.err.clear();
-                self.event_status = 0;
-                self.opc_events.clear();
-                return None;
-            }
-            "*RST" if !query => {
-                self.event_status = 0;
-                self.opc_events.clear();
-                ui.key(crate::ui::key::DEFAULT);
-                return None;
-            }
-            _ => {}
+        if let Some(r) = self.common_cmd(ui, &up, query) {
+            return r;
         }
         let nodes: Vec<&str> = head.trim_start_matches(':').split(':').collect();
-        if !query && nodes.len() == 1 {
-            let command = if kw(nodes[0], "STOP") {
-                Some(0)
-            } else if kw(nodes[0], "RUN") {
-                Some(1)
-            } else if kw(nodes[0], "SINGle") {
-                Some(2)
-            } else {
-                None
-            };
-            if command.is_some_and(|command| ui.mixed_bus_command(command)) {
-                return None;
-            }
+        if let Some(r) = self.run_state_cmd(ui, &nodes, query, arg) {
+            return r;
         }
-        // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
-        // session that is the replay flag (`force_trigger`); on the live hardware it pulses the FPGA force bit.
-        if !query
-            && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
-                || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe")))
-        {
-            ui.force_trigger();
-            return None;
-        }
-        if nodes.len() == 3
-            && kw(nodes[0], "DECode")
-            && kw(nodes[1], "CPHY")
-            && (kw(nodes[2], "RATE") || kw(nodes[2], "SRATe"))
-        {
-            return self.decode_cphy_rate_cmd(ui, query, arg);
-        }
-        if nodes.len() == 2 && kw(nodes[0], "DECode") {
-            return self.decode_cmd(ui, nodes[1], query, arg);
-        }
-        if nodes.len() >= 2 && kw(nodes[0], "LA") {
-            return self.la_cmd(ui, &nodes[1..], query, arg);
-        }
-        // fork debug: raw measure-unit slots (the slot map of the auto set-up's levels)
-        if nodes.len() == 2 && kw(nodes[0], "DEBug") && kw(nodes[1], "SLOTs") && query {
-            return t(&ui.debug_slots());
-        }
-        if nodes.len() == 1 && kw(nodes[0], "AUToscale") && query {
-            return t(if ui.auto_running() { "1" } else { "0" });
-        }
-        if nodes.len() == 1 && kw(nodes[0], "AUToscale") {
-            ui.key(crate::ui::key::AUTO);
-            return None;
-        }
-        if !query && nodes.len() == 1 && kw(nodes[0], "CLEar") {
-            ui.key(crate::ui::key::CLEAR);
-            return None;
-        }
-        if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {
-            let _ = ui.sim_play_set(false);
-            ui.mark_changed();
-            return None;
-        }
-        // A reference capture uses the same acquisition state as the screen.
-        // RUN and STOP are assignments, so repeating either must not toggle it.
-        // Call the shared record handler directly: an open UI dialog must not
-        // consume a remote acquisition command as a dialog-dismissal key.
-        if !query
-            && nodes.len() == 1
-            && ui.record_mode()
-            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command))
-        {
-            let key = crate::ui::key::RUNSTOP;
-            if kw(nodes[0], "RUN") {
-                if ui.m.trig_mode == TrigMode::Single {
-                    ui.m.trig_mode = TrigMode::Normal;
-                }
-                if ui.m.run != RunState::Run {
-                    ui.record_key(key);
-                }
-            } else if kw(nodes[0], "STOP") {
-                if ui.m.run == RunState::Run {
-                    ui.record_key(key);
-                } else {
-                    let _ = ui.sim_play_set(false);
-                }
-            } else {
-                ui.record_key(crate::ui::key::SINGLE);
-            }
-            ui.mark_changed();
-            return None;
-        }
-        // Reference trigger identities belong to the UI acquisition router, not
-        // a silent physical-channel alias inside Model::trigger().
-        if nodes.first().is_some_and(|node| kw(node, "TRIGger")) {
-            let last = nodes.last().copied().unwrap_or("");
-            let (leaf, source_number) = suffix(last);
-            if (nodes.len() == 2 || nodes.len() == 3) && kw(leaf, "SOURce") {
-                let secondary = source_number == Some(2);
-                if query {
-                    if !secondary && ui.m.trig_ref.is_none() {
-                        if let Some(line) = ui.m.trig_line() {
-                            return t(&format!("D{line}"));
-                        }
-                    }
-                    let id = if secondary { ui.m.trigger_wave2() } else { ui.m.trigger_wave() };
-                    return t(&match id {
-                        WaveId::Ref(i) => format!("R{}", i + 1),
-                        WaveId::Ch(c) => format!("CHAN{}", c + 1),
-                    });
-                }
-                if let Some(id) = parse_wave(arg) {
-                    if !ui.set_trigger_source(id, secondary) {
-                        self.push_err("-224,\"Trigger source is unavailable\"".into());
-                    }
-                    ui.mark_changed();
-                    return None;
-                }
-                // Leave D0..D15 to the existing LA source handler.
-                if !arg.trim().to_ascii_uppercase().starts_with('D') {
-                    self.push_err("-224,\"Invalid trigger source\"".into());
-                    return None;
-                }
-            }
-            if nodes.len() == 2 && (kw(last, "TYPe") || kw(last, "MODE")) {
-                if query {
-                    return t(if kw(last, "MODE") {
-                        match ui.m.trig_type {
-                            TrigType::Edge => "EDGE",
-                            TrigType::Pulse => "PULS",
-                            TrigType::Slope => "SLOP",
-                            TrigType::Video => "VID",
-                            TrigType::Pattern => "PATT",
-                            TrigType::Duration => "DUR",
-                            TrigType::Timeout => "TIM",
-                            TrigType::Runt => "RUNT",
-                            TrigType::Window => "WIND",
-                            TrigType::Delay => "DEL",
-                            TrigType::SetupHold => "SET",
-                            TrigType::NthEdge => "NEDG",
-                            TrigType::Bus => "BUS",
-                        }
-                    } else {
-                        ui.m.trig_type.name()
-                    });
-                }
-                let name = arg.trim().to_ascii_uppercase();
-                let kind = match name.as_str() {
-                    "EDGE" => Some(TrigType::Edge),
-                    "PULSE" | "PULS" => Some(TrigType::Pulse),
-                    "SLOPE" | "SLOP" => Some(TrigType::Slope),
-                    "VIDEO" | "VID" => Some(TrigType::Video),
-                    "PATTERN" | "PATT" => Some(TrigType::Pattern),
-                    "DURATION" | "DUR" => Some(TrigType::Duration),
-                    "TIMEOUT" | "TIM" => Some(TrigType::Timeout),
-                    "RUNT" => Some(TrigType::Runt),
-                    "WINDOW" | "WIND" => Some(TrigType::Window),
-                    "DELAY" | "DEL" => Some(TrigType::Delay),
-                    "SETUPHOLD" | "SETUP" | "SET" => Some(TrigType::SetupHold),
-                    "NTHEDGE" | "NTH" | "NEDGE" | "NEDG" => Some(TrigType::NthEdge),
-                    "BUS" => Some(TrigType::Bus),
-                    _ => None,
-                };
-                if let Some(kind) = kind {
-                    ui.trigger_type_set(kind);
-                    ui.mark_changed();
-                } else {
-                    self.push_err("-224,\"Invalid trigger type\"".into());
-                }
-                return None;
-            }
-            if nodes.len() == 3 && kw(nodes[1], "RUNT") {
-                let upper = kw(last, "UPPer") || kw(last, "ALEVel");
-                let (lower, higher) = (ui.m.trig_level2, ui.m.trig_level);
-                let value = if upper {
-                    Some(&mut ui.m.trig_level)
-                } else if kw(last, "LOWer") || kw(last, "BLEVel") {
-                    Some(&mut ui.m.trig_level2)
-                } else {
-                    None
-                };
-                if let Some(value) = value {
-                    if query {
-                        return t(&e(*value as f64));
-                    }
-                    // the pair stays in order, as :MEASure:SETup:MAX|MIN: a threshold past the other is refused
-                    match num(arg) {
-                        Some(number) if (upper && number < lower) || (!upper && number > higher) => {
-                            let other = if upper { "below the lower" } else { "above the upper" };
-                            self.push_err(format!("-224,\"Illegal parameter value\" {other} threshold"));
-                        }
-                        Some(number) => {
-                            *value = number;
-                            ui.mark_changed();
-                        }
-                        None => self.push_err("-224,\"Invalid runt threshold\"".into()),
-                    }
-                    return None;
-                }
-            }
+        if let Some(r) = self.trigger_source_cmd(ui, &nodes, query, arg) {
+            return r;
         }
         if !query
             && (nodes.len() == 1 && kw(nodes[0], "SINGle")
@@ -293,273 +69,14 @@ impl Scpi {
         if kw(n0, "MEASure") {
             return self.measure_cmd(ui, &nodes, query, arg, cmd);
         }
-        if kw(n0, "EYE") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            return self.eye_item(ui, arg);
+        if let Some(r) = self.analyser_item_cmd(ui, &nodes, query, arg) {
+            return r;
         }
-        if kw(n0, "POWer") && nodes.len() == 2 && query {
-            if kw(nodes[1], "HARMonics") {
-                let src = match self.waves(arg) {
-                    Ok(v) => v,
-                    Err(s) => {
-                        self.push_err(s);
-                        return t("9.9E37");
-                    }
-                };
-                return match ui.fact_harmonics(&src) {
-                    Ok(h) if h.is_empty() => t("9.9E37"),
-                    Ok(h) => t(&h.iter().map(|(n, a)| format!("{},{}", n, e(*a))).collect::<Vec<_>>().join(";")),
-                    Err(()) => {
-                        self.push_err("-224,\"Illegal parameter value\"".into());
-                        t("9.9E37")
-                    }
-                };
-            }
-            if kw(nodes[1], "ITEM") {
-                return self.sourced(ui, arg, |ui, item, src| ui.fact_power(item, src));
-            }
+        if let Some(r) = self.waveform_cmd(ui, &nodes, query, arg) {
+            return r;
         }
-        if kw(n0, "SPECtrum") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            return self.sourced(ui, arg, |ui, item, src| ui.fact_spectrum(item, src));
-        }
-        if kw(n0, "MAGnetic") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            return self.sourced(ui, arg, |ui, item, src| ui.fact_magnetic(item, src));
-        }
-        if kw(n0, "INVerter") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            let src = match self.waves(arg_rest(arg)) {
-                Ok(v) => v,
-                Err(s) => {
-                    self.push_err(s);
-                    return t("9.9E37");
-                }
-            };
-            return match ui.fact_inverter(&arg_item(arg), &src) {
-                Ok(crate::ui::facts::Fact::Word(w)) => t(w),
-                Ok(crate::ui::facts::Fact::Num(v)) => t(&e(v)),
-                Err(()) => {
-                    self.push_err("-224,\"Illegal parameter value\"".into());
-                    t("9.9E37")
-                }
-            };
-        }
-        if kw(n0, "DPT") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            return self.sourced(ui, arg, |ui, item, src| ui.fact_dpt(item, src));
-        }
-        if kw(n0, "BANDwidth") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            return self.sourced(ui, arg, |ui, item, src| ui.fact_bandwidth(item, src));
-        }
-        if kw(n0, "WAVeform") && nodes.len() == 2 {
-            let n1 = nodes[1];
-            if kw(n1, "SOURce") {
-                if query {
-                    return t(&self.wav_source_text());
-                }
-                if let Some(id) = parse_wave(arg) {
-                    self.wav_src = id;
-                } else if !arg.is_empty() {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                }
-                return None;
-            }
-            if kw(n1, "MODE") {
-                if query {
-                    return t(["NORM", "MAX", "RAW"][self.wav_mode.min(2) as usize]);
-                }
-                let a = arg.trim();
-                self.wav_mode = if kw(a, "RAW") {
-                    2
-                } else if kw(a, "MAXimum") {
-                    1
-                } else if kw(a, "NORMal") {
-                    0
-                } else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    return None;
-                };
-                return None;
-            }
-            if kw(n1, "FORMat") {
-                if query {
-                    return t(["BYTE", "WORD", "ASC"][self.wav_fmt as usize]);
-                }
-                let format = if kw(arg.trim(), "BYTE") {
-                    Some(0)
-                } else if kw(arg.trim(), "WORD") {
-                    Some(1)
-                } else if kw(arg.trim(), "ASCii") {
-                    Some(2)
-                } else {
-                    None
-                };
-                if let Some(format) = format {
-                    self.wav_fmt = format;
-                } else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                }
-                return None;
-            }
-            if kw(n1, "STARt") || kw(n1, "STOP") {
-                let stop = kw(n1, "STOP");
-                if query {
-                    let n = self.wave_len(ui);
-                    let v = if stop {
-                        if self.wav_stop == 0 {
-                            n
-                        } else {
-                            self.wav_stop
-                        }
-                    } else {
-                        self.wav_start
-                    };
-                    return t(&v.to_string());
-                }
-                let Some(p) = arg.trim().parse::<u64>().ok().filter(|&p| p >= 1) else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    return None;
-                };
-                if stop {
-                    self.wav_stop = p;
-                    if p < self.wav_start {
-                        self.wav_start = p;
-                    }
-                } else {
-                    self.wav_start = p;
-                    if self.wav_stop != 0 && self.wav_stop < p {
-                        self.wav_stop = p;
-                    }
-                }
-                return None;
-            }
-            if kw(n1, "POINts") {
-                if query {
-                    return t(&self.page_count(ui).to_string());
-                }
-                // Rigol: the count to read, starting at STARt. stop 0 still means "the rest" until this sets it.
-                let Some(n) = arg.trim().parse::<u64>().ok().filter(|&n| n >= 1) else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    return None;
-                };
-                self.wav_stop = self.wav_start.saturating_add(n - 1);
-                return None;
-            }
-            if kw(n1, "PREamble") && query {
-                return t(&self.wave_preamble(ui));
-            }
-            if kw(n1, "DATA") && query {
-                return self.wave_data(ui);
-            }
-        }
-        if kw(n0, "REFerence") {
-            return self.ref_cmd(ui, &nodes[1..], query, arg);
-        }
-        if kw(n0, "SIM") {
-            return self.sim_cmd(ui, &nodes[1..], query, arg);
-        }
-        if kw(n0, "DISPlay")
-            && !(nodes.len() == 2 && kw(nodes[1], "DATA"))
-            && !(nodes.len() >= 2 && kw(nodes[1], "VIEW"))
-        {
-            return self.display_cmd(ui, &nodes[1..], query, arg);
-        }
-        if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
-            let kind = arg.split_whitespace().next().unwrap_or("").trim();
-            let up = kind.to_ascii_uppercase();
-            if up.starts_with("PNG") {
-                return Some(block(&crate::store::png_of(cv)));
-            }
-            if up.is_empty() || up.starts_with("BMP") {
-                return Some(block(&bmp(cv)));
-            }
-            self.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
-            return None;
-        }
-        // Display > Views (ui/views.rs): :DISPlay:VIEW <n> shows view n, :DISPlay:VIEW:COUNt <1..4> how many there are
-        if kw(n0, "DISPlay") && nodes.len() >= 2 && kw(nodes[1], "VIEW") {
-            let count = nodes.len() == 3 && kw(nodes[2], "COUNt");
-            // Display > Monitor view (ui/monitor.rs): the view an HDMI monitor in Layout shows, 0 the panel's
-            if nodes.len() == 3 && kw(nodes[2], "MONitor") {
-                if query {
-                    return t(&ui.m.hdmi_view.to_string());
-                }
-                match arg.trim().parse::<usize>().ok() {
-                    Some(n) if n <= ui.m.views && (n == 0 || ui.m.views >= 2) => ui.m.hdmi_view = n,
-                    _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
-            }
-            if nodes.len() > 3 || (nodes.len() == 3 && !count) {
-                self.push_err("-113,\"Undefined header\"".into());
-                return None;
-            }
-            if query {
-                return t(&(if count { ui.m.views } else { ui.m.view_cur + 1 }).to_string());
-            }
-            let n = arg.trim().parse::<usize>().ok();
-            match n {
-                Some(n) if count && (1..=crate::ui::VIEWS_MAX).contains(&n) => ui.views_set(n),
-                Some(n) if !count && (1..=ui.m.views).contains(&n) => ui.view_go(n - 1),
-                _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-            }
-            return None;
-        }
-        // OOS extensions: analyser view, Identify, self-calibration, Bode
-        if kw(n0, "VIEW") && nodes.len() == 1 {
-            let views = crate::ui::scpi_views();
-            if query {
-                return t(&format!("{:?}", ui.m.view).to_ascii_uppercase());
-            }
-            match views.iter().find(|(k, _)| kw(arg, k)) {
-                Some((_, v)) => ui.set_analysis_view(*v),
-                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-            }
-            return None;
-        }
-        if kw(n0, "IDENtify") && query {
-            return t(&ui.identify_text());
-        }
-        if kw(n0, "CALibrate") && nodes.len() == 2 {
-            if kw(nodes[1], "STATus") && query {
-                return t(&ui.cal_status_text());
-            }
-            // :CALibrate:STARt 0..4[,ZERO]   (0 = all channels; the inputs must be disconnected)
-            if kw(nodes[1], "STARt") && !query {
-                let mut it = arg.split(',');
-                let ch = it.next().unwrap_or("0").trim();
-                ui.selfcal_remote(ch, it.next().is_some_and(|z| kw(z.trim(), "ZERO")));
-                return None;
-            }
-            if kw(nodes[1], "CANCel") && !query {
-                ui.selfcal_remote("cancel", false);
-                return None;
-            }
-        }
-        if kw(n0, "BODE") && nodes.len() == 2 {
-            if kw(nodes[1], "RUN") && !query {
-                ui.bode_run(parse_bool(arg).unwrap_or(true));
-                return None;
-            }
-            if kw(nodes[1], "DATA") && query {
-                return t(&ui.bode_text());
-            }
-            // the mode of the settings table (settings/bode.rs)
-            if let Some(row) = crate::settings::command(&crate::settings::bode::SLICES, &nodes[1..]) {
-                return self.setting_cmd(ui, row, query, arg);
-            }
-            if kw(nodes[1], "GENerator") {
-                // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)
-                if query {
-                    return t(if ui.m.bode_usb { "usb" } else { ui.m.bode_addr.as_str() });
-                }
-                // one word, like the setup file keeps it
-                let a = arg.trim().trim_matches('"');
-                if a.contains(char::is_whitespace) {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                } else if a.eq_ignore_ascii_case("usb") {
-                    ui.m.bode_usb = true;
-                } else {
-                    (ui.m.bode_addr, ui.m.bode_usb) = (a.to_string(), false);
-                }
-                return None;
-            }
+        if let Some(r) = self.view_cmd(ui, cv, &nodes, query, arg) {
+            return r;
         }
         if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n))
             && kw(suffix(n0).0, "SOURce")
@@ -600,6 +117,560 @@ impl Scpi {
             return self.counter_cmd(ui, &nodes[1..], query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
+        None
+    }
+
+    /// The IEEE 488.2 common commands (`*IDN?`, `*OPC`, `*ESR?`, `*CLS`, `*RST` and the others), by the header in
+    /// capitals `up`. None when `up` is none of them (`exec_cmd` goes on), else the answer.
+    fn common_cmd(&mut self, ui: &mut Ui, up: &str, query: bool) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        match up {
+            "*IDN" => {
+                let p = oos_hal::model::platform();
+                return Some(t(&format!(
+                    "OOS,{},{},oos-ui {}",
+                    p.caps.name,
+                    p.serial.as_deref().unwrap_or("0"),
+                    env!("CARGO_PKG_VERSION")
+                )));
+            }
+            "*OPC" if !query => {
+                self.poll_events(ui);
+                if self.opc_events.len() < 64 {
+                    self.opc_events.push(ui.scpi_operations());
+                } else {
+                    self.push_err("-350,\"Too many pending OPC events\"".into());
+                }
+                self.poll_events(ui);
+                return Some(None);
+            }
+            "*ESR" if query => {
+                self.poll_events(ui);
+                let status = std::mem::take(&mut self.event_status);
+                return Some(t(&status.to_string()));
+            }
+            "*CLS" if !query => {
+                self.err.clear();
+                self.event_status = 0;
+                self.opc_events.clear();
+                return Some(None);
+            }
+            "*RST" if !query => {
+                self.event_status = 0;
+                self.opc_events.clear();
+                ui.key(crate::ui::key::DEFAULT);
+                return Some(None);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// The commands of a run: `:RUN`, `:STOP`, `:SINGle`, `:TFORce`, `:AUToscale`, `:CLEar` and the ones that go to the
+    /// acquisition router, the decoder's and the LA's. None when no branch takes the nodes (`exec_cmd` goes on), else
+    /// the answer.
+    fn run_state_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        if !query && nodes.len() == 1 {
+            let command = if kw(nodes[0], "STOP") {
+                Some(0)
+            } else if kw(nodes[0], "RUN") {
+                Some(1)
+            } else if kw(nodes[0], "SINGle") {
+                Some(2)
+            } else {
+                None
+            };
+            if command.is_some_and(|command| ui.mixed_bus_command(command)) {
+                return Some(None);
+            }
+        }
+        // Rigol: a forced trigger releases Normal or Single when the level never crosses. On a reference or SIM
+        // session that is the replay flag (`force_trigger`); on the live hardware it pulses the FPGA force bit.
+        if !query
+            && ((nodes.len() == 1 && kw(nodes[0], "TFORce"))
+                || (nodes.len() == 2 && kw(nodes[0], "TRIGger") && kw(nodes[1], "FORCe")))
+        {
+            ui.force_trigger();
+            return Some(None);
+        }
+        if nodes.len() == 3
+            && kw(nodes[0], "DECode")
+            && kw(nodes[1], "CPHY")
+            && (kw(nodes[2], "RATE") || kw(nodes[2], "SRATe"))
+        {
+            return Some(self.decode_cphy_rate_cmd(ui, query, arg));
+        }
+        if nodes.len() == 2 && kw(nodes[0], "DECode") {
+            return Some(self.decode_cmd(ui, nodes[1], query, arg));
+        }
+        if nodes.len() >= 2 && kw(nodes[0], "LA") {
+            return Some(self.la_cmd(ui, &nodes[1..], query, arg));
+        }
+        // fork debug: raw measure-unit slots (the slot map of the auto set-up's levels)
+        if nodes.len() == 2 && kw(nodes[0], "DEBug") && kw(nodes[1], "SLOTs") && query {
+            return Some(t(&ui.debug_slots()));
+        }
+        if nodes.len() == 1 && kw(nodes[0], "AUToscale") && query {
+            return Some(t(if ui.auto_running() { "1" } else { "0" }));
+        }
+        if nodes.len() == 1 && kw(nodes[0], "AUToscale") {
+            ui.key(crate::ui::key::AUTO);
+            return Some(None);
+        }
+        if !query && nodes.len() == 1 && kw(nodes[0], "CLEar") {
+            ui.key(crate::ui::key::CLEAR);
+            return Some(None);
+        }
+        if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {
+            let _ = ui.sim_play_set(false);
+            ui.mark_changed();
+            return Some(None);
+        }
+        // A reference capture uses the same acquisition state as the screen.
+        // RUN and STOP are assignments, so repeating either must not toggle it.
+        // Call the shared record handler directly: an open UI dialog must not
+        // consume a remote acquisition command as a dialog-dismissal key.
+        if !query
+            && nodes.len() == 1
+            && ui.record_mode()
+            && ["RUN", "STOP", "SINGle"].iter().any(|command| kw(nodes[0], command))
+        {
+            let key = crate::ui::key::RUNSTOP;
+            if kw(nodes[0], "RUN") {
+                if ui.m.trig_mode == TrigMode::Single {
+                    ui.m.trig_mode = TrigMode::Normal;
+                }
+                if ui.m.run != RunState::Run {
+                    ui.record_key(key);
+                }
+            } else if kw(nodes[0], "STOP") {
+                if ui.m.run == RunState::Run {
+                    ui.record_key(key);
+                } else {
+                    let _ = ui.sim_play_set(false);
+                }
+            } else {
+                ui.record_key(crate::ui::key::SINGLE);
+            }
+            ui.mark_changed();
+            return Some(None);
+        }
+        None
+    }
+
+    /// The trigger source (an LA line, a reference) and the thresholds, through the acquisition router. None when no
+    /// branch takes the nodes (`exec_cmd` goes on), else the answer.
+    fn trigger_source_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        // Reference trigger identities belong to the UI acquisition router, not
+        // a silent physical-channel alias inside Model::trigger().
+        if nodes.first().is_some_and(|node| kw(node, "TRIGger")) {
+            let last = nodes.last().copied().unwrap_or("");
+            let (leaf, source_number) = suffix(last);
+            if (nodes.len() == 2 || nodes.len() == 3) && kw(leaf, "SOURce") {
+                let secondary = source_number == Some(2);
+                if query {
+                    if !secondary && ui.m.trig_ref.is_none() {
+                        if let Some(line) = ui.m.trig_line() {
+                            return Some(t(&format!("D{line}")));
+                        }
+                    }
+                    let id = if secondary { ui.m.trigger_wave2() } else { ui.m.trigger_wave() };
+                    return Some(t(&match id {
+                        WaveId::Ref(i) => format!("R{}", i + 1),
+                        WaveId::Ch(c) => format!("CHAN{}", c + 1),
+                    }));
+                }
+                if let Some(id) = parse_wave(arg) {
+                    if !ui.set_trigger_source(id, secondary) {
+                        self.push_err("-224,\"Trigger source is unavailable\"".into());
+                    }
+                    ui.mark_changed();
+                    return Some(None);
+                }
+                // Leave D0..D15 to the existing LA source handler.
+                if !arg.trim().to_ascii_uppercase().starts_with('D') {
+                    self.push_err("-224,\"Invalid trigger source\"".into());
+                    return Some(None);
+                }
+            }
+            if nodes.len() == 2 && (kw(last, "TYPe") || kw(last, "MODE")) {
+                if query {
+                    return Some(t(if kw(last, "MODE") {
+                        match ui.m.trig_type {
+                            TrigType::Edge => "EDGE",
+                            TrigType::Pulse => "PULS",
+                            TrigType::Slope => "SLOP",
+                            TrigType::Video => "VID",
+                            TrigType::Pattern => "PATT",
+                            TrigType::Duration => "DUR",
+                            TrigType::Timeout => "TIM",
+                            TrigType::Runt => "RUNT",
+                            TrigType::Window => "WIND",
+                            TrigType::Delay => "DEL",
+                            TrigType::SetupHold => "SET",
+                            TrigType::NthEdge => "NEDG",
+                            TrigType::Bus => "BUS",
+                        }
+                    } else {
+                        ui.m.trig_type.name()
+                    }));
+                }
+                let name = arg.trim().to_ascii_uppercase();
+                let kind = match name.as_str() {
+                    "EDGE" => Some(TrigType::Edge),
+                    "PULSE" | "PULS" => Some(TrigType::Pulse),
+                    "SLOPE" | "SLOP" => Some(TrigType::Slope),
+                    "VIDEO" | "VID" => Some(TrigType::Video),
+                    "PATTERN" | "PATT" => Some(TrigType::Pattern),
+                    "DURATION" | "DUR" => Some(TrigType::Duration),
+                    "TIMEOUT" | "TIM" => Some(TrigType::Timeout),
+                    "RUNT" => Some(TrigType::Runt),
+                    "WINDOW" | "WIND" => Some(TrigType::Window),
+                    "DELAY" | "DEL" => Some(TrigType::Delay),
+                    "SETUPHOLD" | "SETUP" | "SET" => Some(TrigType::SetupHold),
+                    "NTHEDGE" | "NTH" | "NEDGE" | "NEDG" => Some(TrigType::NthEdge),
+                    "BUS" => Some(TrigType::Bus),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    ui.trigger_type_set(kind);
+                    ui.mark_changed();
+                } else {
+                    self.push_err("-224,\"Invalid trigger type\"".into());
+                }
+                return Some(None);
+            }
+            if nodes.len() == 3 && kw(nodes[1], "RUNT") {
+                let upper = kw(last, "UPPer") || kw(last, "ALEVel");
+                let (lower, higher) = (ui.m.trig_level2, ui.m.trig_level);
+                let value = if upper {
+                    Some(&mut ui.m.trig_level)
+                } else if kw(last, "LOWer") || kw(last, "BLEVel") {
+                    Some(&mut ui.m.trig_level2)
+                } else {
+                    None
+                };
+                if let Some(value) = value {
+                    if query {
+                        return Some(t(&e(*value as f64)));
+                    }
+                    // the pair stays in order, as :MEASure:SETup:MAX|MIN: a threshold past the other is refused
+                    match num(arg) {
+                        Some(number) if (upper && number < lower) || (!upper && number > higher) => {
+                            let other = if upper { "below the lower" } else { "above the upper" };
+                            self.push_err(format!("-224,\"Illegal parameter value\" {other} threshold"));
+                        }
+                        Some(number) => {
+                            *value = number;
+                            ui.mark_changed();
+                        }
+                        None => self.push_err("-224,\"Invalid runt threshold\"".into()),
+                    }
+                    return Some(None);
+                }
+            }
+        }
+        None
+    }
+
+    /// The analyser pages' queries: `:EYE:ITEM?`, `:POWer:*?`, `:SPECtrum:ITEM?` and the others. None when no branch
+    /// takes the nodes (`exec_cmd` goes on), else the answer.
+    fn analyser_item_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "EYE") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return Some(self.eye_item(ui, arg));
+        }
+        if kw(n0, "POWer") && nodes.len() == 2 && query {
+            if kw(nodes[1], "HARMonics") {
+                let src = match self.waves(arg) {
+                    Ok(v) => v,
+                    Err(s) => {
+                        self.push_err(s);
+                        return Some(t("9.9E37"));
+                    }
+                };
+                return Some(match ui.fact_harmonics(&src) {
+                    Ok(h) if h.is_empty() => t("9.9E37"),
+                    Ok(h) => t(&h.iter().map(|(n, a)| format!("{},{}", n, e(*a))).collect::<Vec<_>>().join(";")),
+                    Err(()) => {
+                        self.push_err("-224,\"Illegal parameter value\"".into());
+                        t("9.9E37")
+                    }
+                });
+            }
+            if kw(nodes[1], "ITEM") {
+                return Some(self.sourced(ui, arg, |ui, item, src| ui.fact_power(item, src)));
+            }
+        }
+        if kw(n0, "SPECtrum") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return Some(self.sourced(ui, arg, |ui, item, src| ui.fact_spectrum(item, src)));
+        }
+        if kw(n0, "MAGnetic") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return Some(self.sourced(ui, arg, |ui, item, src| ui.fact_magnetic(item, src)));
+        }
+        if kw(n0, "INVerter") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            let src = match self.waves(arg_rest(arg)) {
+                Ok(v) => v,
+                Err(s) => {
+                    self.push_err(s);
+                    return Some(t("9.9E37"));
+                }
+            };
+            return Some(match ui.fact_inverter(&arg_item(arg), &src) {
+                Ok(crate::ui::facts::Fact::Word(w)) => t(w),
+                Ok(crate::ui::facts::Fact::Num(v)) => t(&e(v)),
+                Err(()) => {
+                    self.push_err("-224,\"Illegal parameter value\"".into());
+                    t("9.9E37")
+                }
+            });
+        }
+        if kw(n0, "DPT") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return Some(self.sourced(ui, arg, |ui, item, src| ui.fact_dpt(item, src)));
+        }
+        if kw(n0, "BANDwidth") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
+            return Some(self.sourced(ui, arg, |ui, item, src| ui.fact_bandwidth(item, src)));
+        }
+        None
+    }
+
+    /// `:WAVeform:*`: the source, the mode, the format, the page, the preamble and the data. None when no branch takes
+    /// the nodes (`exec_cmd` goes on), else the answer.
+    fn waveform_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "WAVeform") && nodes.len() == 2 {
+            let n1 = nodes[1];
+            if kw(n1, "SOURce") {
+                if query {
+                    return Some(t(&self.wav_source_text()));
+                }
+                if let Some(id) = parse_wave(arg) {
+                    self.wav_src = id;
+                } else if !arg.is_empty() {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
+                return Some(None);
+            }
+            if kw(n1, "MODE") {
+                if query {
+                    return Some(t(["NORM", "MAX", "RAW"][self.wav_mode.min(2) as usize]));
+                }
+                let a = arg.trim();
+                self.wav_mode = if kw(a, "RAW") {
+                    2
+                } else if kw(a, "MAXimum") {
+                    1
+                } else if kw(a, "NORMal") {
+                    0
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                return Some(None);
+            }
+            if kw(n1, "FORMat") {
+                if query {
+                    return Some(t(["BYTE", "WORD", "ASC"][self.wav_fmt as usize]));
+                }
+                let format = if kw(arg.trim(), "BYTE") {
+                    Some(0)
+                } else if kw(arg.trim(), "WORD") {
+                    Some(1)
+                } else if kw(arg.trim(), "ASCii") {
+                    Some(2)
+                } else {
+                    None
+                };
+                if let Some(format) = format {
+                    self.wav_fmt = format;
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
+                return Some(None);
+            }
+            if kw(n1, "STARt") || kw(n1, "STOP") {
+                let stop = kw(n1, "STOP");
+                if query {
+                    let n = self.wave_len(ui);
+                    let v = if stop {
+                        if self.wav_stop == 0 {
+                            n
+                        } else {
+                            self.wav_stop
+                        }
+                    } else {
+                        self.wav_start
+                    };
+                    return Some(t(&v.to_string()));
+                }
+                let Some(p) = arg.trim().parse::<u64>().ok().filter(|&p| p >= 1) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                if stop {
+                    self.wav_stop = p;
+                    if p < self.wav_start {
+                        self.wav_start = p;
+                    }
+                } else {
+                    self.wav_start = p;
+                    if self.wav_stop != 0 && self.wav_stop < p {
+                        self.wav_stop = p;
+                    }
+                }
+                return Some(None);
+            }
+            if kw(n1, "POINts") {
+                if query {
+                    return Some(t(&self.page_count(ui).to_string()));
+                }
+                // Rigol: the count to read, starting at STARt. stop 0 still means "the rest" until this sets it.
+                let Some(n) = arg.trim().parse::<u64>().ok().filter(|&n| n >= 1) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                self.wav_stop = self.wav_start.saturating_add(n - 1);
+                return Some(None);
+            }
+            if kw(n1, "PREamble") && query {
+                return Some(t(&self.wave_preamble(ui)));
+            }
+            if kw(n1, "DATA") && query {
+                return Some(self.wave_data(ui));
+            }
+        }
+        None
+    }
+
+    /// `:REFerence`, `:SIM`, `:DISPlay`, `:VIEW`, `:IDENtify?`, `:CALibrate` and `:BODE`. None when no branch takes the
+    /// nodes (`exec_cmd` goes on), else the answer.
+    fn view_cmd(
+        &mut self,
+        ui: &mut Ui,
+        cv: &Canvas,
+        nodes: &[&str],
+        query: bool,
+        arg: &str,
+    ) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "REFerence") {
+            return Some(self.ref_cmd(ui, &nodes[1..], query, arg));
+        }
+        if kw(n0, "SIM") {
+            return Some(self.sim_cmd(ui, &nodes[1..], query, arg));
+        }
+        if kw(n0, "DISPlay")
+            && !(nodes.len() == 2 && kw(nodes[1], "DATA"))
+            && !(nodes.len() >= 2 && kw(nodes[1], "VIEW"))
+        {
+            return Some(self.display_cmd(ui, &nodes[1..], query, arg));
+        }
+        if kw(n0, "DISPlay") && nodes.len() == 2 && kw(nodes[1], "DATA") && query {
+            let kind = arg.split_whitespace().next().unwrap_or("").trim();
+            let up = kind.to_ascii_uppercase();
+            if up.starts_with("PNG") {
+                return Some(Some(block(&crate::store::png_of(cv))));
+            }
+            if up.is_empty() || up.starts_with("BMP") {
+                return Some(Some(block(&bmp(cv))));
+            }
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
+            return Some(None);
+        }
+        // Display > Views (ui/views.rs): :DISPlay:VIEW <n> shows view n, :DISPlay:VIEW:COUNt <1..4> how many there are
+        if kw(n0, "DISPlay") && nodes.len() >= 2 && kw(nodes[1], "VIEW") {
+            let count = nodes.len() == 3 && kw(nodes[2], "COUNt");
+            // Display > Monitor view (ui/monitor.rs): the view an HDMI monitor in Layout shows, 0 the panel's
+            if nodes.len() == 3 && kw(nodes[2], "MONitor") {
+                if query {
+                    return Some(t(&ui.m.hdmi_view.to_string()));
+                }
+                match arg.trim().parse::<usize>().ok() {
+                    Some(n) if n <= ui.m.views && (n == 0 || ui.m.views >= 2) => ui.m.hdmi_view = n,
+                    _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return Some(None);
+            }
+            if nodes.len() > 3 || (nodes.len() == 3 && !count) {
+                self.push_err("-113,\"Undefined header\"".into());
+                return Some(None);
+            }
+            if query {
+                return Some(t(&(if count { ui.m.views } else { ui.m.view_cur + 1 }).to_string()));
+            }
+            let n = arg.trim().parse::<usize>().ok();
+            match n {
+                Some(n) if count && (1..=crate::ui::VIEWS_MAX).contains(&n) => ui.views_set(n),
+                Some(n) if !count && (1..=ui.m.views).contains(&n) => ui.view_go(n - 1),
+                _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        // OOS extensions: analyser view, Identify, self-calibration, Bode
+        if kw(n0, "VIEW") && nodes.len() == 1 {
+            let views = crate::ui::scpi_views();
+            if query {
+                return Some(t(&format!("{:?}", ui.m.view).to_ascii_uppercase()));
+            }
+            match views.iter().find(|(k, _)| kw(arg, k)) {
+                Some((_, v)) => ui.set_analysis_view(*v),
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        if kw(n0, "IDENtify") && query {
+            return Some(t(&ui.identify_text()));
+        }
+        if kw(n0, "CALibrate") && nodes.len() == 2 {
+            if kw(nodes[1], "STATus") && query {
+                return Some(t(&ui.cal_status_text()));
+            }
+            // :CALibrate:STARt 0..4[,ZERO]   (0 = all channels; the inputs must be disconnected)
+            if kw(nodes[1], "STARt") && !query {
+                let mut it = arg.split(',');
+                let ch = it.next().unwrap_or("0").trim();
+                ui.selfcal_remote(ch, it.next().is_some_and(|z| kw(z.trim(), "ZERO")));
+                return Some(None);
+            }
+            if kw(nodes[1], "CANCel") && !query {
+                ui.selfcal_remote("cancel", false);
+                return Some(None);
+            }
+        }
+        if kw(n0, "BODE") && nodes.len() == 2 {
+            if kw(nodes[1], "RUN") && !query {
+                ui.bode_run(parse_bool(arg).unwrap_or(true));
+                return Some(None);
+            }
+            if kw(nodes[1], "DATA") && query {
+                return Some(t(&ui.bode_text()));
+            }
+            // the mode of the settings table (settings/bode.rs)
+            if let Some(row) = crate::settings::command(&crate::settings::bode::SLICES, &nodes[1..]) {
+                return Some(self.setting_cmd(ui, row, query, arg));
+            }
+            if kw(nodes[1], "GENerator") {
+                // "usb": the generator on the USB-A port; anything else is its LAN address (kept while on USB)
+                if query {
+                    return Some(t(if ui.m.bode_usb { "usb" } else { ui.m.bode_addr.as_str() }));
+                }
+                // one word, like the setup file keeps it
+                let a = arg.trim().trim_matches('"');
+                if a.contains(char::is_whitespace) {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                } else if a.eq_ignore_ascii_case("usb") {
+                    ui.m.bode_usb = true;
+                } else {
+                    (ui.m.bode_addr, ui.m.bode_usb) = (a.to_string(), false);
+                }
+                return Some(None);
+            }
+        }
         None
     }
 
