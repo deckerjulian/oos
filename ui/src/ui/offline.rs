@@ -86,7 +86,7 @@ impl Ui {
         if let Some((t0, dt, n)) = spec {
             let t0 = self.source_time_origin(WaveId::Ref(slot), t0);
             self.apply_record_timebase(t0, dt, n);
-            self.m.zoom = n > 8192 && !self.zoom_user_closed;
+            self.m.zoom = n > 8192 && !self.zoom_view.user_closed;
             if self.m.zoom {
                 let detail = dt * 8192.0 / HDIV as f64;
                 self.m.zscale = tscales().iter().rposition(|&t| t as f64 <= detail).unwrap_or(0);

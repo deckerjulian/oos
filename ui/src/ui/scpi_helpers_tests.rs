@@ -134,8 +134,8 @@ fn selected_reference_cursors_match_stacked_zoom_readouts_and_touch_keeps_xy_axe
     assert_eq!(ui.wave_at(7e-9), None);
     ui.workspace.stacked = true;
     ui.m.zoom = true;
-    ui.zoom_vfactor = 4.0;
-    ui.zoom_vcenter = 0.5;
+    ui.zoom_view.vfactor = 4.0;
+    ui.zoom_view.vcenter = 0.5;
     ui.m.cursor = CursorMode::Xy;
     (ui.m.cur_a, ui.m.cur_b, ui.m.cur_c, ui.m.cur_d) = (0.2, 0.8, 0.3, 0.7);
     ui.key(key::SINGLE);

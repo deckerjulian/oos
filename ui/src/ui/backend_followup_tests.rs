@@ -218,13 +218,13 @@ fn full_eye_owns_plot_input_and_keeps_close_clear_of_the_corner_button() {
     ui.m.view = AView::Eye;
     ui.m.eye_place = EyePlace::Full;
     ui.relayout();
-    let before = (ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay, ui.zoom_vfactor, ui.m.zoom);
+    let before = (ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay, ui.zoom_view.vfactor, ui.m.zoom);
     let a = ui.eye_page_rect();
     assert!(!ui.pointer_wheel(a.x + a.w / 2, a.y + a.h / 2, 1, false));
     assert!(!ui.pointer_wheel(a.x + a.w / 2, a.y + a.h / 2, 1, true));
     let hidden = ui.zoom_controls().iter().find(|(_, name)| *name == "H+").unwrap().0;
     ui.tap(hidden.x + 2, hidden.y + 2);
-    assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay, ui.zoom_vfactor, ui.m.zoom), before);
+    assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay, ui.zoom_view.vfactor, ui.m.zoom), before);
     let close = ui.eye_pane_close();
     assert!(!overlaps(close, ui.full_btn().1));
     ui.tap(close.x + 4, close.y + 4);
