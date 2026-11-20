@@ -1360,26 +1360,11 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
 /// The address to show in the top bar, and all of them, as (interface, address).
 #[cfg(target_os = "linux")]
 fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
-    let mut found = Vec::new();
-    unsafe {
-        let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifa) != 0 {
-            return ((String::new(), String::new()), Vec::new());
-        }
-        let mut p = ifa;
-        while !p.is_null() {
-            let a = &*p;
-            let up = a.ifa_flags & (libc::IFF_UP as u32) != 0 && a.ifa_flags & (libc::IFF_LOOPBACK as u32) == 0;
-            if up && !a.ifa_addr.is_null() && (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
-                let link = a.ifa_flags & (libc::IFF_RUNNING as u32) != 0;
-                let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
-                let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-                found.push((name, std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
-            }
-            p = a.ifa_next;
-        }
-        libc::freeifaddrs(ifa);
-    }
+    let found = oos_system::ifaddrs::list()
+        .into_iter()
+        .filter(|e| e.has(libc::IFF_UP) && !e.has(libc::IFF_LOOPBACK))
+        .filter_map(|e| e.v4().map(|a| (e.name.clone(), a, e.has(libc::IFF_RUNNING))))
+        .collect();
     pick_addresses(found)
 }
 

@@ -10,6 +10,7 @@ pub mod base64;
 pub mod clock;
 pub mod ethlink;
 pub mod hostname;
+pub mod ifaddrs;
 pub mod json;
 pub mod mdns;
 pub mod net;
