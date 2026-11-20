@@ -38,6 +38,16 @@ pub fn tcp(port: u16) -> Option<TcpListener> {
     bind_any(enabled(), port, TcpListener::bind)
 }
 
+/// `tcp` for a service of oos-ui, not blocking, and where it listens said on stderr; none when the port is taken
+/// (then nothing is said: the caller says it, or tries again later).
+pub fn tcp_service(port: u16, what: &str) -> Option<TcpListener> {
+    let l = tcp(port)?;
+    let _ = l.set_nonblocking(true);
+    let both = if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" };
+    eprintln!("oos-ui: {what} on port {port}{both}");
+    Some(l)
+}
+
 pub fn udp(port: u16) -> Option<UdpSocket> {
     bind_any(enabled(), port, UdpSocket::bind)
 }
