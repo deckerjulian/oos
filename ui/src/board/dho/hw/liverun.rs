@@ -453,6 +453,15 @@ const CASES: &[Case] = &[
         ..BASE
     },
     Case {
+        name: "la-record-ch1-1ms",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-3), depth(m, "1k"), m.la.on = true).0,
+        freq_hz: 1e3,
+        period_us: Some(1_000),
+        la: true,
+        passes: 20,
+        ..BASE
+    },
+    Case {
         name: "dvm-ch2-then-ch1-then-off",
         model: |m| (ch(m, &[0, 1]), tdiv(m, 1e-3), depth(m, "1k"), m.ch[1].offset = DVM_OFFSET).0,
         freq_hz: 1e3,
@@ -569,6 +578,34 @@ fn zone_checks(case: &Case, trace: &str, seen: &[Seen]) {
         let after = seen[until - 1].decoded - seen[from + b].decoded;
         assert!(after > 0, "{}: no frames after the zone was dropped", case.name);
         assert_eq!(last_4020_bit(trace, 1 << 1), Some(false), "{}: the zone left armed", case.name);
+    }
+}
+
+/// The checks of the LA words read with the records of a triggered case with the LA on: the newest frame of every
+/// batch carries them, as many over as long a time as its analog record (n_la = memsel x m / 2 at m / 2 LA samples
+/// per analog sample, la.md 3.3), from the same start before the trigger, and they are the scene's count of
+/// `LA_TICK_S` steps: two words next to each other differ by 0 or 1, and the count advances by the record's time.
+/// Break it catches: an LA read not made or not delivered, a window of another length or start, a time base of the
+/// LA record other than its words', words out of order.
+fn la_record_checks(case: &Case, frames: &[Frame]) {
+    let with: Vec<&Frame> = frames.iter().filter(|f| f.la.is_some()).collect();
+    assert!(with.len() >= 3, "{}: {} frames with their LA words", case.name, with.len());
+    for f in with {
+        let Some(la) = &f.la else { continue };
+        let (n, span) = (la.words.len(), f.ch[0].len() as f64 * f.dt);
+        assert!(
+            (n as f64 * la.dt - span).abs() <= la.dt,
+            "{}: {} LA words of {} s for {} s",
+            case.name,
+            n,
+            la.dt,
+            span
+        );
+        assert!((la.t0 + f.pre as f64 * f.dt).abs() <= la.dt, "{}: the LA from {} s", case.name, la.t0);
+        let steps = la.words.windows(2).all(|p| p[1].wrapping_sub(p[0]) <= 1);
+        let advance = la.words[n - 1].wrapping_sub(la.words[0]) as f64;
+        let want = (n - 1) as f64 * la.dt / LA_TICK_S;
+        assert!(steps && (advance - want).abs() <= 1.0, "{}: the LA count {} for {}", case.name, advance, want);
     }
 }
 
@@ -1056,6 +1093,9 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             (case.model)(&mut m);
             super::slow_mode(&m) != crate::board::Slow::Off
         };
+        if case.la && !slow {
+            la_record_checks(case, &frames);
+        }
         if let Some(m) = averaged(case) {
             average_checks(case, &m, &trace, &frames);
         } else if slow {

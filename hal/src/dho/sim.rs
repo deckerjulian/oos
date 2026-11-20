@@ -765,6 +765,26 @@ impl Unit {
         self.trace.push(Event::Played { us: self.t_fs / US, first, last, bytes });
     }
 
+    /// The raw LA window of frame `f`, triggered at `at` (la.md 4.2): N = 0x1100 / 10 words from LA sample 0x1108 of
+    /// its record, the read rounded up to 4 words, no header. The record has n_la = memsel x m / 2 LA samples at m / 2
+    /// per analog sample, the trigger at LA sample pre x m / 2 (la.md 3.3, m = `la::sample_mode`); word k is the
+    /// scene's lines at its time, 0 without lines and past the record (stale memory on the unit). The trigger index and
+    /// the unit of 0x1108 are assumed there (test T1), and so are they here.
+    fn play_la(&mut self, f: u32, at: i128) {
+        let m = crate::dho::la::sample_mode(self.reg(0x4008)) as i128;
+        let (n, start) = (self.reg(0x1100) / 10, self.reg(0x1108) as i128);
+        let dot = self.view.dot_fs * 2 / m;
+        let (pre, len) = (self.view.pre as i128 * m / 2, (self.view.pre + self.view.post) as i128 * m / 2);
+        let bytes = crate::dho::la::read_bytes(n);
+        let at_word = |k: i128| match &self.scene.la {
+            Some(la) if start + k < len => la((at + (start + k - pre) * dot) as f64 * 1e-15),
+            _ => 0,
+        };
+        let words: Vec<u16> = (0..bytes as i128 / 2).map(at_word).collect();
+        self.stream.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+        self.trace.push(Event::Played { us: self.t_fs / US, first: f, last: f, bytes });
+    }
+
     fn write(&mut self, off: u32, v: u32) {
         self.t_fs += WRITE_FS;
         self.advance();
@@ -824,6 +844,9 @@ impl Unit {
         let c = self.reg(0x400c);
         let (first, last) = (self.reg(0x4010), self.reg(0x4018));
         let r4008 = self.reg(0x4008);
+        // the stream is the LA's alone (la.md 4.2): its words come with the play-last pulse, the FSM run after it plays
+        // no analog frame (assumed: the unit sent the LA words alone)
+        let la_only = r4008 & (1 << 24 | 1 << 23) == 1 << 24;
         if rise & 1 != 0 && r4008 & (1 << 17 | 1 << 22) != 0 {
             let r1170 = self.reg(0x1170) & 0x0fff_ffff;
             let frac = if self.reg(0x1154) & 1 == 0 { self.reg(0x115c) as i128 + 1 } else { 1 << 32 };
@@ -838,7 +861,7 @@ impl Unit {
                 made: 0,
             });
             self.sweep_done = false;
-        } else if rise & 1 != 0 && c & 0x4000_0000 != 0 {
+        } else if rise & 1 != 0 && c & 0x4000_0000 != 0 && !la_only {
             self.play(first, last);
         } else if rise & 1 != 0 && c & 0x2200_0000 == 0x2200_0000 {
             // a new view takes effect at the arm
@@ -846,9 +869,13 @@ impl Unit {
             self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0, rearm_fs: None });
             self.recorded = 0;
         } else if rise & 4 != 0 {
-            // play-last: the newest frame of the ring
-            if let Some((&f, _)) = self.ring.iter().next_back() {
-                self.play(f, f);
+            // play-last: the newest frame of the ring, its LA words while the stream is the LA's (0x4008 bit 24)
+            if let Some((&f, &at)) = self.ring.iter().next_back() {
+                if la_only {
+                    self.play_la(f, at);
+                } else {
+                    self.play(f, f);
+                }
             }
         }
     }
@@ -1646,6 +1673,41 @@ mod tests {
         assert_eq!((got, r.frames()), (Ok(10), 20), "the box above the crest not touched");
         let (got, _) = batch(&mut st, &Settings { hwzone: Some(zone((0.35, 0.5), true)), ..base.clone() }, &mut sides);
         assert!(got.is_err_and(|e| e.contains("no acquisition")), "the box above the crest is never touched");
+    }
+
+    // Break it catches: LA words of another frame, start, spacing or length than the record's (la.md 3.3, 4.2), an
+    // analog frame played into the LA read, or bytes left in the stream for the next batch
+    #[test]
+    fn the_la_read_of_a_record_is_the_scenes_lines_from_its_start() {
+        let s = Settings { tdiv: 100e-9, depth: 1000, frames: 3, window: None, ..Settings::default() };
+        let (mut st, p) = configured(&s);
+        let view = View { cal: CAL, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+        // the lines count steps of 10 ns (m = 1: an LA word every two analog samples)
+        let la = |t: f64| (t / 1e-8) as u64 as u16;
+        let first_fs = US;
+        let scene = Scene {
+            volts: Box::new(sine),
+            la: Some(Box::new(la)),
+            first_fs,
+            period_fs: Some(20 * US),
+            auto_fs: None,
+            view,
+        };
+        let (u, mut bar, mut c2h, mut clock) = unit(scene);
+        let mut dma = DmaBuf::new();
+        let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream| {
+            seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, &mut clock, false, 12, |_| {}, || false, || false)
+        };
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3));
+        let w = seq::acquire_la(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).expect("the LA read");
+        let at = u.borrow().trigger_fs(2).expect("the newest frame");
+        let (pre, dot) = (p.pre as i128 / 2, 2 * p.dot_fs as i128);
+        assert_eq!(w.len(), p.memsel as usize / 2, "n_la = memsel x m / 2 words");
+        for (k, &x) in w.iter().enumerate() {
+            assert_eq!(x, la((at + (k as i128 - pre) * dot) as f64 * 1e-15), "word {}", k);
+        }
+        assert!(u.borrow().stream.is_empty(), "bytes left after the LA read");
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "the next batch after the LA read");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
