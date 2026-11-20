@@ -46,6 +46,28 @@ fn mil1553_command_and_data_words_with_noise() {
     assert_eq!(got, vec![(true, 0x0c21, true), (false, 0xbeef, true), (false, 0, true), (false, 0xffff, true)]);
 }
 
+/// A bus a few percent off its rate is read: the decoder follows the edge in the middle of every bit. On the 1 us
+/// grid of the edge in the sync the last bits of such a word were read in the wrong half.
+#[test]
+fn mil1553_follows_a_bus_off_its_rate() {
+    let words = [(true, 0x8bf2u16), (false, 0x0008), (true, 0x9001), (false, 0x0005), (true, 0x8842), (false, 0xffff)];
+    let l = mil1553_wave(&words, 2.3, 9.0);
+    let dt = 1e-6 / 50.0;
+    let mut v = sample(|t| l.v(t), 0.0, dt, 50 * 180);
+    add_noise(&mut v, 0.1, 5);
+    let want: Vec<(bool, u32, bool)> = words.iter().map(|&(cmd, w)| (cmd, w as u32, true)).collect();
+    // the same samples with a sample interval 4 and 5 % shorter and longer: a bus that much slow and fast
+    for off in [1.0, 0.96, 1.04, 0.95, 1.05] {
+        let p = mil1553(&v, dt * off, 0.0, 0.3);
+        let word = |x: &oos_dsp::decode::Packet| match x.kind {
+            Kind::Word { cmd } => Some((cmd, x.value, x.ok)),
+            _ => None,
+        };
+        let got: Vec<(bool, u32, bool)> = p.iter().filter_map(word).collect();
+        assert_eq!(got, want, "sample interval times {off}");
+    }
+}
+
 #[test]
 fn mil1553_bad_parity_is_flagged() {
     let l = mil1553_wave(&[(false, 0x1234)], 7.0, 4.0);

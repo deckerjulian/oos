@@ -20,6 +20,11 @@ pub static MIL1553: ModuleInfo = ModuleInfo::new("Mil1553", "1553", "avionics")
 /// MIL-STD-1553: Manchester II at 1 Mbit/s on a bipolar bus signal (threshold normally 0 V). A word = 3 us sync
 /// (command/status: 1.5 us positive then 1.5 us negative; data: the inverse), 16 data bits MSB first (1 = positive
 /// then negative half), odd parity. `ok` = halves complementary and parity odd.
+///
+/// Every bit has an edge in its middle, and the decoder follows those edges from bit to bit: the place of the next
+/// one is the last one found plus the bit time seen so far. The bits were sampled on a 1 us grid from the edge in
+/// the sync alone, which a bus a few percent off its rate leaves before the word ends (seen on a capture of a real
+/// bus: words of 20.8 us, of which the later bits were read in the wrong half).
 pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
     let us = 1e-6 / dt; // samples per microsecond
     let mut out = Vec::new();
@@ -46,30 +51,55 @@ pub fn mil1553(v: &[f32], dt: f64, thr: f32, hyst: f32) -> Vec<Packet> {
         if !held(mid - 1.3 * us, mid - 0.15 * us, first_pos) || !held(mid + 0.15 * us, mid + 1.3 * us, !first_pos) {
             continue;
         }
-        let start = mid + 1.5 * us; // first data bit
+        // the edge nearest to `t`, when it is within 0.3 bit times of it: the one in the middle of a bit, not one of
+        // the edges between two bits, which lie half a bit away
+        let edge_at = |t: f64, bit: f64| -> Option<(f64, bool)> {
+            let k = e.partition_point(|x| x.t < t);
+            let near = [k.checked_sub(1), Some(k)].into_iter().flatten().filter_map(|i| e.get(i));
+            let off = |x: &(f64, bool)| (x.0 - t).abs();
+            near.map(|x| (x.t, x.rising)).filter(|x| off(x) <= 0.3 * bit).min_by(|a, b| off(a).total_cmp(&off(b)))
+        };
         let mut val = 0u32;
         let mut ones = 0;
         let mut ok = true;
         let mut complete = true;
+        // the middle of the bit before (of the sync: its edge, 2 bit times before the middle of the first bit)
+        let (mut last, mut bit, mut step) = (mid, us, 2.0);
         for i in 0..17 {
-            let t = start + i as f64 * us;
-            match (level(t + 0.25 * us), level(t + 0.75 * us)) {
-                (Some(h1), Some(h2)) => {
-                    ok &= h1 != h2;
-                    if i < 16 {
-                        val = val << 1 | h1 as u32;
-                    }
-                    ones += h1 as u32;
+            let want = last + step * bit;
+            let one = match edge_at(want, bit) {
+                // a one is positive, then negative: its edge falls
+                Some((t, rising)) => {
+                    bit = 0.5 * bit + 0.5 * (t - last) / step;
+                    last = t;
+                    !rising
                 }
-                _ => complete = false,
+                // no edge where a bit has its middle: the halves as they are read on the grid, and an error
+                None => match (level(want - 0.25 * bit), level(want + 0.25 * bit)) {
+                    (Some(h1), Some(h2)) => {
+                        ok &= h1 != h2;
+                        last = want;
+                        h1
+                    }
+                    _ => {
+                        complete = false;
+                        break;
+                    }
+                },
+            };
+            step = 1.0;
+            if i < 16 {
+                val = val << 1 | one as u32;
             }
+            ones += one as u32;
         }
         if !complete {
             continue;
         }
         ok &= ones % 2 == 1;
-        out.push(Packet::new(Kind::Word { cmd: first_pos }, mid - 1.5 * us, start + 17.0 * us, val, ok));
-        busy_until = start + 17.0 * us - 0.5 * us;
+        let end = last + 0.5 * bit;
+        out.push(Packet::new(Kind::Word { cmd: first_pos }, mid - 1.5 * us, end, val, ok));
+        busy_until = end - 0.5 * us;
     }
     out
 }
