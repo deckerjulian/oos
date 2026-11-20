@@ -901,8 +901,8 @@ pub struct Ui {
     view_pass: bool,
     /// the USB stick: whether one is mounted, and when the sticks are looked for next (save_recall.rs)
     stick: save_recall::Stick,
-    /// LA probe detect: None = not known (no hardware, not read yet)
-    la_probe: Option<bool>,
+    /// the logic analyser: the probe as last read, the pixel columns of the last LA record drawn (la.rs)
+    la: la::Lanes,
     /// setup slot n = file setup<n>.txt
     store_slot: u32,
     /// the mask test in software: the reference waveform, the mask built from it, its counts (render_derived.rs)
@@ -918,10 +918,8 @@ pub struct Ui {
     pub power: input::Power,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
-    /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
-    la_cols: std::cell::RefCell<la::Cache>,
-    /// decoded LA lines of the record shown: (key of record and settings, packets with times in s)
-    dec_cache: std::cell::RefCell<Vec<(u64, Vec<oos_dsp::decode::Packet>)>>,
+    /// the decoded lines of the records shown, analog and LA, with times in s (render_derived.rs)
+    decoded: render_derived::Decoded,
     /// the table window over the plot: what it shows and its first row shown (tables.rs)
     table: tables::Window,
 }
