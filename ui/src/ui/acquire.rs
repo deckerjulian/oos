@@ -67,6 +67,24 @@ impl Default for FastPath {
     }
 }
 
+/// A STOP of the hardware (docs/fork/stop-exact.md): the request for its final frame and the wait for it, and the
+/// records shown after it (`stop_replay`). ADR 0062.
+#[derive(Default)]
+pub(super) struct Stop {
+    /// the request number of the final frame, counted at every RUN (`OperationToken::Stop`)
+    pub final_req: u64,
+    /// waiting for the final frame: until when (`STOP_FINAL_WAIT`)
+    pub final_until: Option<f64>,
+    /// the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
+    /// records read again
+    pub ti_off: Option<f64>,
+    /// the raw record shown at the stop (the final frame of a deep or live-compressed record), and the min/max pair
+    /// record the thread read again for the view when that came as pairs. The pairs are drawn; the raw record stays
+    /// `last[0]`, the record measured and read out
+    pub raw: Option<Record>,
+    pub pic: Option<Record>,
+}
+
 /// What a part runs on each frame to take what its thread or its probe has for it.
 type Poll = fn(&mut Ui);
 
@@ -132,7 +150,9 @@ impl Ui {
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
         if !self.record_mode()
             && live
-            && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared))
+            && (self.m.run == RunState::Run
+                || self.stop.final_until.is_some()
+                || (self.last[0].is_none() && !self.cleared))
         {
             self.step_live(dt_wall, persist, hw_seg);
         } else if !self.record_mode() {
@@ -148,12 +168,12 @@ impl Ui {
         }
         self.step_meas_rows();
         // the final frame was taken (or did not come in time): stopped
-        if self.stop_final.is_some_and(|t| final_done || self.now > t) {
-            self.stop_final = None;
+        if self.stop.final_until.is_some_and(|t| final_done || self.now > t) {
+            self.stop.final_until = None;
             // only an answered request is a STOP in place: after the time limit a `*OPC?` waiting for it is cancelled
             // (-410), not told `1` about a record the thread did not confirm
             if self.m.run == RunState::Stop && final_done {
-                self.scpi_finish_operation(OperationToken::Stop(self.final_req));
+                self.scpi_finish_operation(OperationToken::Stop(self.stop.final_req));
             }
         }
         if self.m.run == RunState::Stop {
@@ -238,7 +258,7 @@ impl Ui {
             self.hw_avg_restart();
             // the final-frame request of the next STOP, counted here so that a `*OPC?` taken with the STOP, before
             // this step sees it, waits for it (`OperationToken::Stop`)
-            self.final_req += 1;
+            self.stop.final_req += 1;
         }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg_n = 0;
@@ -254,14 +274,14 @@ impl Ui {
         // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
         if !running && self.was_running {
             if self.stop_wants_final() {
-                self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+                self.stop.final_until = Some(self.now + STOP_FINAL_WAIT);
             } else {
-                self.scpi_finish_operation(OperationToken::Stop(self.final_req));
+                self.scpi_finish_operation(OperationToken::Stop(self.stop.final_req));
             }
         }
         // held while stopped, unless the screen still waits for a first record (a source started in STOP, as the
         // record path below takes it); a Clear in STOP leaves the screen empty, not the thread free to arm
-        let final_done = self.src.hw_hold(!running && (self.last[0].is_some() || self.cleared), self.final_req);
+        let final_done = self.src.hw_hold(!running && (self.last[0].is_some() || self.cleared), self.stop.final_req);
         // the protocol watch and XY read every record: no live compression for them (compress.rs)
         self.src.hw_needs_raw(self.needs_raw());
         self.was_running = running;
@@ -294,8 +314,8 @@ impl Ui {
     /// The records of this step: the fast path, the record loop, the rates and the measurement of the newest.
     fn step_live(&mut self, dt_wall: f64, persist: f32, hw_seg: bool) {
         if self.m.run == RunState::Run {
-            self.stop_ti_off = None;
-            (self.stop_raw, self.stop_pic) = (None, None);
+            self.stop.ti_off = None;
+            (self.stop.raw, self.stop.pic) = (None, None);
         }
         // a changed setting while running: the picture is replaced when the next record is drawn, not at once. A step
         // without a record (a slow time base, a Normal sweep waiting for its trigger) kept an empty screen, and every
@@ -432,7 +452,7 @@ impl Ui {
                 }
                 None => {}
             }
-            if self.m.run == RunState::Stop && self.stop_final.is_none() {
+            if self.m.run == RunState::Stop && self.stop.final_until.is_none() {
                 break;
             }
         }
@@ -763,16 +783,16 @@ impl Ui {
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some());
         if !ok {
             self.src.hw_stop(None);
-            self.stop_ti_off = None;
-            (self.stop_raw, self.stop_pic) = (None, None);
+            self.stop.ti_off = None;
+            (self.stop.raw, self.stop.pic) = (None, None);
             return;
         }
         // the software trigger of the record shown at the stop, as a time from the hardware trigger point
-        if self.stop_ti_off.is_none() {
+        if self.stop.ti_off.is_none() {
             // and that record itself when it is of samples: measured while the views come as pairs
-            self.stop_raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
-            self.stop_pic = None;
-            self.stop_ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
+            self.stop.raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
+            self.stop.pic = None;
+            self.stop.ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
                 let f = &raw.frame;
                 let ti = raw.i0 as f64 - raw.t0 / f.dt;
                 (ti - f.fixed_ti.unwrap_or(f.pre as f64)) * f.dt
@@ -782,7 +802,7 @@ impl Ui {
         // the raw record of the STOP holds the whole acquisition: it stays the record shown, measured and read out,
         // drawn for every view from its own samples. Read again by the thread, the view was a record of its own (another
         // length and origin) that replaced it some 90 ms after the STOP, between two queries of a client (#24)
-        let covered = self.stop_raw.as_ref().filter(|r| raw_whole(r));
+        let covered = self.stop.raw.as_ref().filter(|r| raw_whole(r));
         if let Some(rec) = covered.and_then(|r| self.captured_record_view(r, (view.0 as f32, view.1 as f32))) {
             // nothing to read: the thread stays held (and drops a view asked for before)
             self.src.hw_stop(None);
@@ -792,13 +812,13 @@ impl Ui {
                 .map(|r| (std::sync::Arc::as_ptr(&r.frame), r.i0, r.i1))
                 != rec.raw.as_ref().map(|r| (std::sync::Arc::as_ptr(&r.frame), r.i0, r.i1))
             {
-                (self.last[0], self.stop_pic) = (Some(rec.as_ref().clone()), None);
+                (self.last[0], self.stop.pic) = (Some(rec.as_ref().clone()), None);
                 self.measure_last();
             }
             return;
         }
         let Some(mut f) = self.src.hw_stop(Some(view)) else { return };
-        if let (Some(t), Some(off)) = (f.fixed_ti, self.stop_ti_off) {
+        if let (Some(t), Some(off)) = (f.fixed_ti, self.stop.ti_off) {
             f.fixed_ti = Some(t + off / f.dt);
         }
         let window = view.0 * HDIV as f64;
@@ -807,20 +827,20 @@ impl Ui {
         // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
         // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
         // zoomed in) is the record shown and measured, as before
-        match self.stop_raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
-            Some(raw) => (self.last[0], self.stop_pic) = (Some(raw.clone()), Some(rec)),
-            None => (self.last[0], self.stop_pic) = (Some(rec), None),
+        match self.stop.raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
+            Some(raw) => (self.last[0], self.stop.pic) = (Some(raw.clone()), Some(rec)),
+            None => (self.last[0], self.stop.pic) = (Some(rec), None),
         }
         // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
         // and the catalog (as `refresh_stopped_measurements`)
         self.measure_last();
     }
 
-    /// STOP: the pair record to draw for the view (`stop_pic`) while the raw record of the stop is the record shown.
+    /// STOP: the pair record to draw for the view (`Stop::pic`) while the raw record of the stop is the record shown.
     pub(super) fn stop_picture(&self) -> Option<&Record> {
         let frame = |r: Option<&Record>| r.and_then(|r| r.raw.as_ref()).map(|r| std::sync::Arc::as_ptr(&r.frame));
-        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop_raw.as_ref()));
-        self.stop_pic.as_ref().filter(|_| same)
+        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop.raw.as_ref()));
+        self.stop.pic.as_ref().filter(|_| same)
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record

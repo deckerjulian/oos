@@ -224,8 +224,8 @@ const DLG_CTRL: i32 = 40;
 const HISTORY: usize = 200;
 /// Seconds the trigger level line stays after the level changed.
 const LEVEL_LINE_S: f64 = 1.5;
-/// Longest wait of a STOP for the hardware's final frame (`Ui::stop_final`): a batch in progress, its read and the raw
-/// read of the newest frame.
+/// Longest wait of a STOP for the hardware's final frame (`Stop::final_until`): a batch in progress, its read and the
+/// raw read of the newest frame.
 const STOP_FINAL_WAIT: f64 = 3.0;
 /// LA words a history entry keeps: above this only the newest record has its LA (200 x 1 M words = 400 MB at most).
 const HISTORY_LA_WORDS: usize = 1_000_000;
@@ -774,9 +774,8 @@ pub struct Ui {
     /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
     /// Bus switches exactly those off again, what the user had on stays
     bus_auto: Option<([bool; NCH], bool)>,
-    /// STOP waiting for the hardware's final frame (docs/fork/stop-exact.md): the request number and until when
-    final_req: u64,
-    stop_final: Option<f64>,
+    /// STOP: the request for the hardware's final frame, and the records shown at the stop (docs/fork/stop-exact.md)
+    stop: acquire::Stop,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
@@ -801,14 +800,6 @@ pub struct Ui {
     zone_hw_clear: u64,
     /// the fast path for the queued hardware frames: its trigger statistics, its share of a screen and its times
     pub(crate) fast: acquire::FastPath,
-    /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
-    /// records read again (`stop_replay`)
-    stop_ti_off: Option<f64>,
-    /// STOP: the raw record shown at the stop (the final frame of a deep or live-compressed record), and the min/max
-    /// pair record the thread read again for the view when that came as pairs. The pairs are drawn; the raw record
-    /// stays `last[0]`, the record measured and read out (`stop_replay`, docs/fork/stop-exact.md)
-    stop_raw: Option<Record>,
-    stop_pic: Option<Record>,
     /// segmented recording: records since the acquisition started, and whether it ran in the last frame
     seg_n: usize,
     /// hardware segments: recording number told to the thread, its state, the segment shown (browsing), the trigger
