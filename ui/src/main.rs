@@ -1232,7 +1232,7 @@ impl Device {
         for c in self.ui.panel_tx.drain(..) {
             self.inp.send(&board::board().panel_cmd(c));
         }
-        if let Some(a) = self.ui.power_action.take() {
+        if let Some(a) = self.ui.power.action.take() {
             power(&mut self.inp, a);
         }
         self.save_setup();

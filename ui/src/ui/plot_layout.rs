@@ -579,7 +579,7 @@ impl Ui {
         if self.load_slot_ask
             || self.menu_open
             || self.dialog.is_some()
-            || self.power_dlg
+            || self.power.open
             || self.m.touch_lock
             || self.view_on()
             || !self.grid.contains(x, y)

@@ -539,7 +539,7 @@ fn start_menu_and_keys_reach_everything() {
     // power: the dialog, without the MCU frame of a key press
     let (x, y) = mid(row_of(&ui, Item::PowerAct).ctrl);
     ui.tap(x, y);
-    assert!(ui.power_dlg && ui.panel_tx.is_empty() && !ui.menu_open);
+    assert!(ui.power.open && ui.panel_tx.is_empty() && !ui.menu_open);
     ui.tap(5, 300);
     // touch lock from the start menu: touches do nothing, except the Menu button, which unlocks
     ui.open_menu(MenuId::Main);

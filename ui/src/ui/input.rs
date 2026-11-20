@@ -7,6 +7,15 @@
 
 use super::*;
 
+/// The power dialog as the screen keeps it (ADR 0062): the power key opens and closes it, a key or a tap closes it.
+#[derive(Default)]
+pub struct Power {
+    /// the dialog is open; it is drawn over everything and takes the next tap
+    pub open: bool,
+    /// what the dialog asked for, taken by the main loop (main.rs)
+    pub action: Option<PowerAction>,
+}
+
 /// What the input keeps between two events (ADR 0062).
 pub(super) struct State {
     /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
@@ -207,8 +216,8 @@ impl Ui {
             self.power_key();
             return;
         }
-        if self.power_dlg {
-            self.power_dlg = false;
+        if self.power.open {
+            self.power.open = false;
             return;
         }
         if self.wlan.osk.is_some() {
@@ -299,8 +308,8 @@ impl Ui {
         // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
         // likely cuts power by itself otherwise (board.md section 4)
         self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
-        self.power_dlg = !self.power_dlg;
-        if self.power_dlg {
+        self.power.open = !self.power.open;
+        if self.power.open {
             self.dialog = None;
             self.close_menu();
         }
@@ -525,7 +534,7 @@ impl Ui {
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
         let modal =
-            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
+            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some();
         let p = &mut self.input.pinch;
         if id == 1 {
             match ph {
@@ -655,7 +664,7 @@ impl Ui {
         let grip = if ph == Phase::Down
             && !self.m.touch_lock
             && self.dialog.is_none()
-            && !self.power_dlg
+            && !self.power.open
             && self.wlan.osk.is_none()
         {
             self.scroll_grip(x, y)
@@ -689,7 +698,7 @@ impl Ui {
             start_cur: 0.0,
             win: self.cur_win,
         };
-        if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.m.touch_lock || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             return;
         }
         if let Some((l, g)) = grip {
@@ -1210,7 +1219,7 @@ impl Ui {
         if !self.full_on() && self.m.bar_compact && self.workspace_footer_tap(x, y) {
             return;
         }
-        if self.power_dlg {
+        if self.power.open {
             self.power_tap(x, y);
             return;
         }
@@ -1297,16 +1306,16 @@ impl Ui {
 
     /// A tap while the power dialog is open: it closes; Power off or Restart is taken unless an update runs.
     fn power_tap(&mut self, x: i32, y: i32) {
-        self.power_dlg = false;
+        self.power.open = false;
         let (_, [off, restart, _]) = self.pwr_layout();
         if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
             // a cut now leaves recovery half-written (docs/update.md)
             self.toast("Update running: wait until it is done");
         } else if off.contains(x, y) {
-            self.power_action = Some(PowerAction::Off);
+            self.power.action = Some(PowerAction::Off);
             self.toast("Powering off ...");
         } else if restart.contains(x, y) {
-            self.power_action = Some(PowerAction::Restart);
+            self.power.action = Some(PowerAction::Restart);
             self.toast("Restarting ...");
         }
     }

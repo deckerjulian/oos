@@ -856,7 +856,7 @@ impl Ui {
                 // the dialog of the POWER key, without the MCU answer that belongs to a key press
                 self.close_menu();
                 self.dialog = None;
-                self.power_dlg = true;
+                self.power.open = true;
             }
             Item::HZero => {
                 self.m.delay = 0.0;

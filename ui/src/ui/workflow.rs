@@ -715,7 +715,7 @@ impl Ui {
         self.open_wave_request = false;
         self.load_destination = None;
         self.load_slot_ask = true;
-        self.power_dlg = false;
+        self.power.open = false;
         self.dialog = None;
         self.cancel_pointer();
     }

@@ -343,7 +343,7 @@ mod tests {
             let position = ui.workspace.measure_float;
             match modal {
                 0 => ui.dialog = Some(vec!["Modal information".into()]),
-                1 => ui.power_dlg = true,
+                1 => ui.power.open = true,
                 _ => ui.wlan.osk = Some(wlan::Osk::for_ref(0, "Reference label")),
             }
             let (x, y) = (header.x + 24, header.y + 12);
@@ -358,7 +358,7 @@ mod tests {
                 assert!(ui.dialog.is_none(), "the modal receives the dismiss tap");
             }
             if modal == 1 {
-                assert!(!ui.power_dlg, "the power dialog receives its cancel tap");
+                assert!(!ui.power.open, "the power dialog receives its cancel tap");
             }
             if modal == 2 {
                 assert!(ui.wlan.osk.is_some(), "an outside keyboard tap must not reach the panel");
@@ -1199,7 +1199,7 @@ impl Ui {
         if gesture.moved || gesture.held || self.now - gesture.at < HOLD {
             return;
         }
-        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock {
+        if self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() || self.m.touch_lock {
             return;
         }
         gesture.held = true;
@@ -1209,7 +1209,7 @@ impl Ui {
     pub(super) fn workspace_touch(&mut self, phase: Phase, x: i32, y: i32) -> bool {
         // Menus and dialogs own the pointer before anything behind them can
         // fold, drag or open a context menu on a panel header.
-        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             self.workspace.gesture = None;
             return false;
         }
