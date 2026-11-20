@@ -543,8 +543,8 @@ impl Ui {
                         p.ref_dy = (p.p1.1 - p.p0.1).abs();
                         // cancel the one-finger drag
                         self.touch.drag = Drag::None;
-                        self.zoom_path.clear();
-                        self.zoom_map = None;
+                        self.zoom_box.path.clear();
+                        self.zoom_box.map = None;
                     }
                 }
                 Phase::Move => p.p1 = (x, y),
@@ -652,7 +652,7 @@ impl Ui {
             && ((self.zoom_btn().1.contains(x, y) && !self.view_on())
                 || (self.m.zoom && self.zoom_readout().contains(x, y))
                 || (self.view_on() && self.view_btn().contains(x, y)));
-        let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
+        let zmap = if self.zoom_box.arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
         let grip = if ph == Phase::Down
             && !self.m.touch_lock
@@ -710,8 +710,8 @@ impl Ui {
             t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
             if let Some(map) = zmap {
                 t.drag = Drag::ZoomBox;
-                self.zoom_path = vec![(x, y), (x, y)];
-                self.zoom_map = Some(map);
+                self.zoom_box.path = vec![(x, y), (x, y)];
+                self.zoom_box.map = Some(map);
             } else if let Some((k, _)) = self.zone_arm {
                 t.drag = Drag::Zone(k);
                 self.input.zone_path = vec![(x, y)];
@@ -980,7 +980,7 @@ impl Ui {
                 }
             }
             Drag::ZoomBox => {
-                if let Some(p) = self.zoom_path.last_mut() {
+                if let Some(p) = self.zoom_box.path.last_mut() {
                     *p = (x, y);
                 }
             }
@@ -1054,8 +1054,8 @@ impl Ui {
 
     /// A box magnifies both axes without changing source scales or acquisition.
     fn finish_zoom_box(&mut self) {
-        let path = std::mem::take(&mut self.zoom_path);
-        let map = self.zoom_map.take();
+        let path = std::mem::take(&mut self.zoom_box.path);
+        let map = self.zoom_box.map.take();
         if path.len() != 2 {
             return;
         }
@@ -1063,7 +1063,7 @@ impl Ui {
         // A plain tap ends box drawing; valid boxes can be drawn repeatedly.
         if (x1 - x0).abs() < 12 || (y1 - y0).abs() < 12 {
             if (x1 - x0).abs() < 12 && (y1 - y0).abs() < 12 {
-                self.zoom_arm = false;
+                self.zoom_box.arm = false;
             }
             return;
         }
@@ -1103,7 +1103,7 @@ impl Ui {
         self.zoom_vfactor = next_factor;
         self.zoom_vcenter = next_center;
         self.clamp_zoom();
-        self.zoom_arm = true;
+        self.zoom_box.arm = true;
         self.dirty_map = true;
         if !on {
             self.relayout();
@@ -1200,7 +1200,7 @@ impl Ui {
         let box_button =
             self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
         if !box_button {
-            self.zoom_arm = false;
+            self.zoom_box.arm = false;
         }
         if self.workspace_popup_tap(x, y) {
             return;
