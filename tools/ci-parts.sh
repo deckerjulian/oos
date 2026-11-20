@@ -11,6 +11,10 @@
 #                                                only proven on a unit inside a crate, and nothing of the image
 #                                                (boot/, kernel/, rootfs/), so equal programs can stand for a run on
 #                                                a unit (tools/scope-binaries.sh, ADR 0041)
+#   families=NAME ...                            the board families the job `check` builds for (OOS_FAMILIES of
+#                                                tools/check.sh, ADR 0067): those whose own folders the change
+#                                                touches when it touches nothing else that is built, else every
+#                                                family of rootfs/board/
 #
 #   git diff --name-only BASE...HEAD | tools/ci-parts.sh
 #   tools/ci-parts.sh --all                      every part (a push to main, the weekly run)
@@ -21,6 +25,8 @@
 # host checks (documents, tools that have their own tests in the job `files`, the image).
 # In doubt: everything. Touches no scope and no network.
 set -eu
+. "$(dirname "$0")/lib/board.sh"
+every=$(oos_families "$(dirname "$0")/..")
 all=0
 case ${1:-} in
 --all) all=1 ;;
@@ -28,9 +34,21 @@ case ${1:-} in
 *) echo "usage: $0 [--all] < changed-file-names" >&2; exit 2 ;;
 esac
 hal=0 haltests=0 dsp=0 ui=0 fpgad=0 rust=0 compare=0 unitpath=0 image=0
-[ $all = 0 ] || { hal=1 dsp=1 ui=1 fpgad=1; }
+# the families named by the folders of one family the change touches; neutral=1 for any other file that is built
+own= neutral=0
+[ $all = 0 ] || { hal=1 dsp=1 ui=1 fpgad=1 neutral=1; }
 if [ $all = 0 ]; then
 	while IFS= read -r f; do
+		mine=
+		for b in $every; do
+			case $f in
+			hal/src/"$b"/* | ui/src/board/"$b"/* | fpgad/src/"$b"/* | rootfs/board/"$b"/* | tools/board/"$b"/*) mine=$b ;;
+			esac
+		done
+		case $f in
+		'') ;;
+		*) if [ -n "$mine" ]; then own="$own $mine"; else neutral=1; fi ;;
+		esac
 		case $f in
 		'') ;;
 		# the paths of tools/pr-gate.sh that only a unit proves: inside a crate, or in the image
@@ -74,5 +92,15 @@ if [ $rust = 1 ]; then
 	add clippy clippy clippy
 fi
 echo "matrix=[$entries]"
+# every family when something neutral changed or no family was named; else the named ones, in the order of $every
+families=
+for b in $every; do
+	if [ $neutral = 1 ] || [ -z "$own" ]; then
+		families="$families $b"
+	else
+		case " $own " in *" $b "*) families="$families $b" ;; esac
+	fi
+done
+echo "families=${families# }"
 [ $compare = 1 ] && echo compare=true || echo compare=false
 [ $unitpath = 1 ] && [ $image = 0 ] && echo scope=true || echo scope=false

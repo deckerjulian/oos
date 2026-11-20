@@ -34,6 +34,7 @@ jobs:
       matrix: ${{ steps.what.outputs.matrix }}
       compare: ${{ steps.what.outputs.compare }}
       scope: ${{ steps.what.outputs.scope }}
+      families: ${{ steps.what.outputs.families }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,6 +134,8 @@ jobs:
       - name: tools/check.sh ${{ matrix.layers }}
         env:
           LAYERS: ${{ matrix.layers }}
+          # the board families the change reaches (ADR 0067): each is built and tested on its own
+          OOS_FAMILIES: ${{ needs.parts.outputs.families }}
           # line numbers in a failing test's backtrace are enough here, and build a sixth faster than full debug
           # information (measured on 2026-11-17)
           CARGO_PROFILE_TEST_DEBUG: line-tables-only

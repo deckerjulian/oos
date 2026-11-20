@@ -3,16 +3,17 @@
 Host tools of the tree. The second column says whether a tool touches a scope; one that writes to a scope is only run
 when its owner asked for it in the session (AGENTS.md, ADR 0018).
 
-A tool that works for one board family takes it from `OOS_BOARD`, the switch the build reads, and works for `dho` when
-it is not set (ADR 0067): `plan-matrix.sh`, `compare-base.sh`, `device-deploy.sh`, and the image build
-(`../boot/build-dev-image.sh`). A name that is no folder of `rootfs/board/` is refused before anything is built.
+The checks build for every board family (`check.sh` below). A tool that works for one board family takes it from
+`OOS_BOARD`, the switch the build reads, and works for `dho` when it is not set (ADR 0067): `plan-matrix.sh`,
+`compare-base.sh`, `device-deploy.sh`, and the image build (`../boot/build-dev-image.sh`). A name that is no folder of
+`rootfs/board/` is refused before anything is built.
 
 ## Checks and tests on this computer
 
 | Tool | Touches a scope? | Purpose |
 |---|---|---|
-| `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, ratchet); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
-| `ci-parts.sh [--all]` | no | reads changed file names and prints the parts of `check.sh` CI runs for them, and whether the comparison runs (ADR 0040) |
+| `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, ratchet); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)); clippy, test and target build hal, ui and fpgad for each board family of `OOS_FAMILIES`, else for every family of `rootfs/board/` (ADR 0067), another family than `dho` in `target/board-<name>`; `check.sh families` names them |
+| `ci-parts.sh [--all]` | no | reads changed file names and prints the parts of `check.sh` CI runs for them, whether the comparison runs (ADR 0040), and the board families they reach (`OOS_FAMILIES`: only the families whose own folders are all that changed, else every family) |
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); the matrix of the board family `OOS_BOARD` (default `dho`) is `board/<family>/plan-matrix.sh` (ADR 0067); needs calibration files: those of a unit (`OOS_CAL_DIR=local/cal`) or a made-up set (`oos-fpgad made-up-cal DIR`, invented values, [self-cal.md 16](../docs/protocols/self-cal.md)) |
 | `compare-base.sh [--base-sums DIR] [BASE]`, `compare-base.sh --record-sums DIR` | no | the pictures, stored files and answers to remote commands (`ui/tools/layout-check.sh`) the register sequences (`plan-matrix.sh`) and the live run (the acquisition loop against the simulated unit, ADR 0053: `board::<family>::hw::liverun` writes the unit's trace and the frames delivered for each case of its matrix) of the working tree against those of a commit before the change, built in a tree of its own; the proof that a change leaves behaviour as it was (ADR 0014, ADR 0032); without `OOS_CAL_DIR` and `local/cal` the register sequences are printed with the made-up calibration set; CI runs it for every pull request that changes a crate (ADR 0040); with `--base-sums` the base is not built when this tree's pictures have the sums `--record-sums` kept of it (CI: a cache filled by the push to main), and a difference falls back to building it; `--record-sums` keeps the live run's files too, and a base without them runs its live run in its tree, a base from before the live run is reported as not compared; both sides for the family `OOS_BOARD`, and kept sums only for the family they were kept for |
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |

@@ -83,6 +83,16 @@ class Tools(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn("OOS_BOARD='nope'", r.stderr)
 
+    def test_check_builds_for_the_families(self):
+        # the layers clippy, test and target build for OOS_FAMILIES, else every family; a wrong name stops the run
+        def check(families):
+            return tool(["sh", str(ROOT / "tools/check.sh"), "families"], "", OOS_FAMILIES=families)
+        self.assertEqual(check("").stdout, "dho\n")
+        self.assertEqual(check("dho").stdout, "dho\n")
+        r = check("dho nope")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("check.sh: OOS_FAMILIES: nope", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
