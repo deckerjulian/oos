@@ -1008,27 +1008,13 @@ impl Ui {
                 let rec = self.last[0].clone();
                 let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                     let (v, dt) = self.meas_wave(r, c);
-                    let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
-                    RefWave {
-                        src: c,
-                        color: 0,
-                        label: String::new(),
-                        t0,
-                        dt,
-                        v: v.into(),
-                        vpd: self.m.ch[c].volts_per_div(),
-                        offset: self.m.ch[c].offset,
-                        on: true,
-                    }
+                    self.ref_of_channel(r, c, v, dt)
                 });
                 match saved {
                     Some(w) => {
                         let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
-                        self.m.deskew_ref[slot] = self.m.deskew_ch[c];
-                        self.refs[slot] = Some(w);
                         self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
-                        self.measure_refs();
-                        self.analyzer_update();
+                        self.ref_put(slot, w);
                     }
                     None => self.toast("Source channel has no data"),
                 }
