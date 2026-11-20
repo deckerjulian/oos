@@ -646,7 +646,7 @@ impl Ui {
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.overclock.hz),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),
-            Item::RefSrc => format!("CH{}", self.ref_src + 1),
+            Item::RefSrc => format!("CH{}", self.ref_page.src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
                 Some(r) => {

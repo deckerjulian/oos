@@ -228,7 +228,7 @@ impl Ui {
             Item::NumEntry => return self.numpad_keys(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
-            Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
+            Item::RefImport => return self.ref_page.files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],

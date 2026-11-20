@@ -853,9 +853,8 @@ pub struct Ui {
     meas_src_b: WaveId,
     /// the reference the Slot rows work on
     ref_sel: usize,
-    ref_src: usize,
-    /// files the Import slot picker is showing
-    ref_files: Vec<std::path::PathBuf>,
+    /// the Reference page: the channel Save copies, the files the Import picker shows (tools/refs.rs)
+    ref_page: tools::RefPage,
     xy: bool,
     pub now: f64,
     /// what the step saw last: the trigger level and its change, the last record and the usual interval (acquire.rs)
