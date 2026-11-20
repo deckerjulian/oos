@@ -18,8 +18,7 @@ impl Ui {
         }
         let mut ui = Ui {
             cat: meascatalog::Catalog::default(),
-            meas_page: 0,
-            meas_catalog_page: 0,
+            meas_pages: Default::default(),
             workflow_hold: None,
             session_is_sim: false,
             replay: workflow::Replay::default(),

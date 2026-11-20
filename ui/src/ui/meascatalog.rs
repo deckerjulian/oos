@@ -493,7 +493,7 @@ impl Ui {
             return true;
         }
         if lay.selected.contains(x, y) {
-            self.meas_catalog_page = 0;
+            self.meas_pages.selected = 0;
             self.open_submenu(MenuId::MeasSelected);
             return true;
         }
@@ -792,7 +792,7 @@ mod integration_tests {
         assert_eq!(ui.menu, MenuId::MeasSelected);
         let mut found = HashSet::new();
         for page in 0..76usize.div_ceil(16) {
-            ui.meas_catalog_page = page;
+            ui.meas_pages.selected = page;
             let dialog = ui.dlg_layout().unwrap();
             for row in dialog.rows {
                 assert!(row.ctrl.x >= dialog.r.x && row.ctrl.x + row.ctrl.w <= dialog.r.x + dialog.r.w);
@@ -804,7 +804,7 @@ mod integration_tests {
         }
         assert_eq!(found, (0..76).collect());
         assert!(ui.selected_measurement_label(73).contains("R1-R2 Power Quality"));
-        ui.meas_catalog_page = 73 / 16;
+        ui.meas_pages.selected = 73 / 16;
         let remove = ui.dlg_layout().unwrap().rows.into_iter().find(|row| row.it == Item::MeasRemove(73)).unwrap().ctrl;
         tap(&mut ui, remove);
         assert_eq!(ui.m.cat.len(), 2);
@@ -1063,7 +1063,7 @@ mod tests {
         }
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(0))).collect();
         ui.m.meas2 = (0..17).map(|kind| (kind, WaveId::Ref(0), WaveId::Ref(1))).collect();
-        ui.meas_catalog_page = 0;
+        ui.meas_pages.selected = 0;
         ui.open_submenu(MenuId::MeasSelected);
         ui.render(&mut cv);
         std::fs::write(format!("{dir}/catalog-selected.png"), crate::store::png_of(&cv)).unwrap();

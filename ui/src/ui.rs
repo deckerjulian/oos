@@ -685,8 +685,8 @@ impl MeasWorker {
 /// which only goes down).
 pub struct Ui {
     cat: meascatalog::Catalog,
-    meas_page: usize,
-    meas_catalog_page: usize,
+    /// the page of the measurement readouts shown and of Measure > Selected (measurement_nav.rs)
+    meas_pages: measurement_nav::Pages,
     workflow_hold: Option<workflow::LiveSession>,
     session_is_sim: bool,
     replay: workflow::Replay,
