@@ -74,6 +74,11 @@ pub fn encode(typ: u8, control: u8, param: u32, data: &[u8]) -> Vec<u8> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BadHeader;
 
+/// The big-endian number in `b` (at most 8 bytes: the fields of a HiSLIP header).
+fn be(b: &[u8]) -> u64 {
+    b.iter().fold(0, |n, &x| n << 8 | u64::from(x))
+}
+
 /// Takes one message from `buf`. `Err` is a header that cannot be a message (the connection should close).
 pub fn take_message(buf: &mut Vec<u8>) -> Result<Option<Message>, BadHeader> {
     if buf.len() < HEADER {
@@ -82,19 +87,15 @@ pub fn take_message(buf: &mut Vec<u8>) -> Result<Option<Message>, BadHeader> {
     if &buf[..2] != b"HS" {
         return Err(BadHeader);
     }
-    let n = u64::from_be_bytes(buf[8..16].try_into().unwrap()) as usize;
+    let n = be(&buf[8..16]) as usize;
     if n > MAX_PAYLOAD {
         return Err(BadHeader);
     }
     if buf.len() < HEADER + n {
         return Ok(None);
     }
-    let msg = Message {
-        typ: buf[2],
-        control: buf[3],
-        param: u32::from_be_bytes(buf[4..8].try_into().unwrap()),
-        data: buf[HEADER..HEADER + n].to_vec(),
-    };
+    let msg =
+        Message { typ: buf[2], control: buf[3], param: be(&buf[4..8]) as u32, data: buf[HEADER..HEADER + n].to_vec() };
     buf.drain(..HEADER + n);
     Ok(Some(msg))
 }
@@ -232,7 +233,7 @@ fn on_program_message<P: crate::Program>(
             Out { msgs: Vec::new(), reply: Some(reply), close: false }
         }
         ASYNC_MAXIMUM_MESSAGE_SIZE if peer.role != Role::New => {
-            let n = msg.data.get(..8).map(|b| u64::from_be_bytes(b.try_into().unwrap())).unwrap_or(0);
+            let n = msg.data.get(..8).map_or(0, be);
             // the size covers the header; an empty value keeps the default, a small one gives MIN_PAYLOAD
             let payload = match n.checked_sub(HEADER as u64) {
                 Some(p) if p > 0 => (p.min(MAX_PAYLOAD as u64) as usize).max(MIN_PAYLOAD),

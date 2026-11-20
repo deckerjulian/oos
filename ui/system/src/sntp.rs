@@ -48,7 +48,7 @@ pub struct Reply {
 }
 
 fn ts(b: &[u8], at: usize) -> u64 {
-    u64::from_be_bytes(b[at..at + 8].try_into().unwrap())
+    b[at..at + 8].iter().fold(0, |n, &x| n << 8 | u64::from(x))
 }
 
 /// Checks an answer to the request that carried `t1`.
@@ -93,7 +93,11 @@ pub struct Sample {
 }
 
 fn ask(addr: SocketAddr) -> Result<Sample, String> {
-    let any: SocketAddr = if addr.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
+    let any = if addr.is_ipv4() {
+        SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))
+    } else {
+        SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
+    };
     let s = UdpSocket::bind(any).map_err(|e| e.to_string())?;
     s.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
     s.connect(addr).map_err(|e| e.to_string())?;

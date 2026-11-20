@@ -241,11 +241,13 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
                 2.5 * h * (-(ph - 0.5) / tau).exp()
             }
         }
-        1 if cfg.video.is_some() => oos_dsp::sim::video(cfg.video.unwrap(), t),
-        1 => {
-            let w = 2.0 * PI * 10e3 * t;
-            1.0 * w.sin() + 0.08 * (3.0 * w).sin()
-        }
+        1 => match cfg.video {
+            Some(v) => oos_dsp::sim::video(v, t),
+            None => {
+                let w = 2.0 * PI * 10e3 * t;
+                1.0 * w.sin() + 0.08 * (3.0 * w).sin()
+            }
+        },
         2 => {
             // UART 115200 8N1, 0 / 3.3 V, idle high, sending "OOS 0.1 " in a loop with one idle byte between strings
             const MSG: &[u8] = b"OOS 0.1 ";
