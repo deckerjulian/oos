@@ -3,6 +3,10 @@
 Host tools of the tree. The second column says whether a tool touches a scope; one that writes to a scope is only run
 when its owner asked for it in the session (AGENTS.md, ADR 0018).
 
+A tool that works for one board family takes it from `OOS_BOARD`, the switch the build reads, and works for `dho` when
+it is not set (ADR 0067): `plan-matrix.sh`, `compare-base.sh`, `device-deploy.sh`, and the image build
+(`../boot/build-dev-image.sh`). A name that is no folder of `rootfs/board/` is refused before anything is built.
+
 ## Checks and tests on this computer
 
 | Tool | Touches a scope? | Purpose |
@@ -10,7 +14,7 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 | `check.sh [layer ...]` | no | every host check CI runs, layer by layer (fmt, clippy, text, syntax, test, target, ratchet); `check.sh list` names them ([ADR 0020](../docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md)) |
 | `ci-parts.sh [--all]` | no | reads changed file names and prints the parts of `check.sh` CI runs for them, and whether the comparison runs (ADR 0040) |
 | `plan-matrix.sh [oos-fpgad]` | no; read-only on a scope | the register sequences of a fixed set of acquisitions (`oos-fpgad plan` only prints), to compare two builds (ADR 0014); the matrix of the board family `OOS_BOARD` (default `dho`) is `board/<family>/plan-matrix.sh` (ADR 0067); needs calibration files: those of a unit (`OOS_CAL_DIR=local/cal`) or a made-up set (`oos-fpgad made-up-cal DIR`, invented values, [self-cal.md 16](../docs/protocols/self-cal.md)) |
-| `compare-base.sh [--base-sums DIR] [BASE]`, `compare-base.sh --record-sums DIR` | no | the pictures, stored files and answers to remote commands (`ui/tools/layout-check.sh`) the register sequences (`plan-matrix.sh`) and the live run (the acquisition loop against the simulated unit, ADR 0053: `board::dho::hw::liverun` writes the unit's trace and the frames delivered for each case of its matrix) of the working tree against those of a commit before the change, built in a tree of its own; the proof that a change leaves behaviour as it was (ADR 0014, ADR 0032); without `OOS_CAL_DIR` and `local/cal` the register sequences are printed with the made-up calibration set; CI runs it for every pull request that changes a crate (ADR 0040); with `--base-sums` the base is not built when this tree's pictures have the sums `--record-sums` kept of it (CI: a cache filled by the push to main), and a difference falls back to building it; `--record-sums` keeps the live run's files too, and a base without them runs its live run in its tree, a base from before the live run is reported as not compared |
+| `compare-base.sh [--base-sums DIR] [BASE]`, `compare-base.sh --record-sums DIR` | no | the pictures, stored files and answers to remote commands (`ui/tools/layout-check.sh`) the register sequences (`plan-matrix.sh`) and the live run (the acquisition loop against the simulated unit, ADR 0053: `board::<family>::hw::liverun` writes the unit's trace and the frames delivered for each case of its matrix) of the working tree against those of a commit before the change, built in a tree of its own; the proof that a change leaves behaviour as it was (ADR 0014, ADR 0032); without `OOS_CAL_DIR` and `local/cal` the register sequences are printed with the made-up calibration set; CI runs it for every pull request that changes a crate (ADR 0040); with `--base-sums` the base is not built when this tree's pictures have the sums `--record-sums` kept of it (CI: a cache filled by the push to main), and a difference falls back to building it; `--record-sums` keeps the live run's files too, and a base without them runs its live run in its tree, a base from before the live run is reported as not compared; both sides for the family `OOS_BOARD`, and kept sums only for the family they were kept for |
 | `perf-guard.sh` | no | the ratio guards of the fast paths in a release build (layer `speed` of ADR 0020); needs a quiet computer |
 | `pr-labels.sh NUMBER` | no; GitHub only (labels) | sets the labels a pull request gets by itself: areas by path, type by title, `agent`, `risk/hardware`; takes `unit-tested` away when a commit came after it (ADR 0069); `--dry` only prints |
 | `ratchet.sh [--lower]` | no | the numbers that only go down (`tools/ratchet.txt`: lines of the files over 2000 lines, switched-off lints, `unsafe`) against the tree; layer `ratchet` of `check.sh` (ADR 0037) |
@@ -68,7 +72,7 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 |---|---|---|
 | `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope, its read-only shell commands over SSH as `device-deploy.sh`; `--changed BASE` runs only what a change reaches, a failure runs again (`--retries`), one that main has too is known (`--known`); `--sim` runs it against `oos-ui --serve` on this computer ([device-testing.md](../docs/device-testing.md)) |
 | `device_select.py` | no (a library) | which device tests a change needs, and how `device-test.py` judges retries, known failures and the register sequences |
-| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS over SSH with a trusted key (`OOS_SSH_IDENTITY`, `OOS_SSH_PORT`; [SSH on a bench unit](../docs/device-testing.md#ssh-on-a-bench-unit)); each file checked with SHA-256 |
+| `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS over SSH with a trusted key, with the matrix of the family `OOS_BOARD` (`OOS_SSH_IDENTITY`, `OOS_SSH_PORT`; [SSH on a bench unit](../docs/device-testing.md#ssh-on-a-bench-unit)); each file checked with SHA-256 |
 | `bench-power.sh status / on / off / cycle` | switches the outlet the bench unit hangs on: a power cut, never a write; refuses while an `oos-update` runs or the scope does not answer | the start from power off without a person at the bench (ADR 0070); the outlet from `OOS_POWER` or `local/bench.conf`; not yet verified on hardware |
 | `device-survey.sh [ip] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |
 | `platform-probe.sh IP` | read-only over adb, removes its files again | description of another Rigol model (MHO900, DHO1000, ...) for a port, ready to share: device tree, buses, display, partition table, `/rigol` by name; serial number and MAC addresses replaced ([docs/porting.md](../docs/porting.md)); `platform-probe/probe.sh` is its part on the scope |
@@ -81,7 +85,8 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 
 `lib/` holds what several scripts source: `adb.sh` (connect to a stock system as root), `sim.sh` (the image's busybox
 and the virtual machine of the sims), `docker.sh` (the base images with their digests, the arm64 check, and the build
-images tagged with a hash of their Dockerfile, so an edit is built again). `check.sh sim` runs every sim and
+images tagged with a hash of their Dockerfile, so an edit is built again), `board.sh` (the board family of `OOS_BOARD`,
+checked, and the families of the tree, `dho` first). `check.sh sim` runs every sim and
 `../gpu/test-host.sh`.
 
 `device-test.py` also has the tiers `la` (`--pico <port>`: D0-D2 on GP2-GP4 of a Pico with the openSciLab firmware) and `rf`

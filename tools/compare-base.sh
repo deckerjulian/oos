@@ -21,9 +21,13 @@
 # builds it, records its pictures, stored files and remote answers (ui/tools/layout-check.sh) and its register
 # sequences (tools/plan-matrix.sh), does the same with the working tree as it is, uncommitted changes included, and
 # compares. Then it runs the acquisition loop against the simulated unit on both sides (the live run, ADR 0053:
-# `board::dho::hw::liverun`, a test of oos-ui that writes one file per case of its matrix: the unit's trace and the
-# frames delivered) and compares those files. A base from before the live run has none: that part is then left out and
-# the summary says so.
+# `board::<family>::hw::liverun`, a test of oos-ui that writes one file per case of its matrix: the unit's trace and
+# the frames delivered) and compares those files. A base from before the live run has none: that part is then left out
+# and the summary says so.
+#
+# Both sides are built and compared for the board family OOS_BOARD, `dho` when it is not set (ADR 0067,
+# tools/lib/board.sh): its programs, its matrix of register sequences and its live run. What --record-sums keeps is of
+# one family; --base-sums takes it only for the same family.
 #
 # The register sequences are printed with the calibration files in OOS_CAL_DIR, else in local/cal of this tree, else
 # with a made-up calibration set: `oos-fpgad made-up-cal` of this tree writes it once into the work folder, and both
@@ -46,13 +50,16 @@ stop() {
 	exit 2
 }
 
+. tools/lib/board.sh
+board=$(oos_board "$root") || stop "no board family to compare"
+
 # The live run of tree $1 into folder $2 (made new). Returns 1 when that tree has no live run.
 live_run() {
-	[ -f "$1/ui/src/board/dho/hw/liverun.rs" ] || return 1
+	[ -f "$1/ui/src/board/$board/hw/liverun.rs" ] || return 1
 	rm -rf "$2" && mkdir -p "$2" || stop "cannot make $2"
 	# absolute: the test runs in $1/ui
 	set -- "$1" "$(cd "$2" && pwd)"
-	(cd "$1/ui" && OOS_LIVE_OUT=$2 cargo test --locked --quiet --bin oos-ui -- board::dho::hw::liverun) \
+	(cd "$1/ui" && OOS_LIVE_OUT=$2 cargo test --locked --quiet --bin oos-ui -- "board::$board::hw::liverun") \
 		>"$2.log" 2>&1 || stop "the live run fails in $1: $(tail -n 3 "$2.log")"
 	ls "$2"/*.txt >/dev/null 2>&1 || stop "the live run of $1 wrote no file"
 }
@@ -67,9 +74,9 @@ case ${1:-} in
 	(cd ui && tools/layout-check.sh record target/layout-sums) || stop "this tree does not render"
 	(cd fpgad && cargo build --release --locked --quiet) || stop "oos-fpgad does not build"
 	cp ui/target/layout-sums.sums "$dir/layout-base.sums" && cp fpgad/target/release/oos-fpgad "$dir/oos-fpgad" &&
-		git rev-parse HEAD >"$dir/commit" || stop "cannot write $dir"
+		git rev-parse HEAD >"$dir/commit" && echo "$board" >"$dir/family" || stop "cannot write $dir"
 	live_run "$root" "$dir/live" || rm -rf "$dir/live"
-	echo "kept the sums of $(git log -1 --format='%h %s') in $dir"
+	echo "kept the sums of $(git log -1 --format='%h %s') for the board family $board in $dir"
 	exit 0
 	;;
 --base-sums)
@@ -102,11 +109,12 @@ else
 	cal=
 fi
 
-echo "== base $(git log -1 --format='%h %s' "$base")"
-# what --record-sums kept of the base, if it is of this base and complete
+echo "== base $(git log -1 --format='%h %s' "$base"), board family $board"
+# what --record-sums kept of the base, if it is of this base and family and complete (a set kept before the family
+# was written with it is of dho)
 cached=0
 if [ -n "$sums" ] && [ "$(cat "$sums/commit" 2>/dev/null)" = "$base" ] && [ -s "$sums/layout-base.sums" ] &&
-	[ -x "$sums/oos-fpgad" ]; then
+	[ -x "$sums/oos-fpgad" ] && [ "$(cat "$sums/family" 2>/dev/null || echo dho)" = "$board" ]; then
 	cached=1
 fi
 pictures=
@@ -209,7 +217,7 @@ fi
 echo "$live_line"
 
 {
-	echo "### Against $(git log -1 --format='%h' "$base")"
+	echo "### Against $(git log -1 --format='%h' "$base"), board family $board"
 	echo
 	echo "- Pictures, stored files, remote answers: $(tail -n 1 "$work/pictures.txt")"
 	echo "- Register sequences: $registers_line"
