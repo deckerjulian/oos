@@ -19,7 +19,8 @@
 //! and the time base are recorded, not interpreted (3.2). Every access leaves a line in the trace. The roll stream and
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
 //! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The generator's
-//! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The stamps of a
+//! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The frequency counter
+//! (counter.md) counts the scene's trigger instants over its gates (`Counter`). The stamps of a
 //! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
 //! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
 
@@ -303,6 +304,27 @@ impl GenRegs {
     }
 }
 
+/// One tick of the frequency counter's results, and of its gate register (counter.md 1).
+const COUNT_TICK_FS: i128 = 800_000;
+const GATE_TICK_FS: i128 = 6_400_000;
+
+/// The frequency counter (counter.md): started by the rising edge of the run bit of 0x2210 (gates of 0x2214 ticks back
+/// to back from then), cleared by its clear bit, stopped by 0x2210 = 0. A write of 1 to 0x2218 latches the results of
+/// the last whole gate into 0x221c..0x2240: the ticks from the gate's start to its first edge and from its last edge to
+/// its end, the edges in it with the frequency flag when there is one, the last whole period before the gate's end
+/// with its flag, and the edges since the start or the clear. Its edges are the scene's trigger instants: what the
+/// comparator fires on is not known (0x2200 / 0x2204, counter.md 4), so it is assumed to fire where the trigger does,
+/// and the scene's triggers are its signal's edges. Without a whole gate the results latched are 0 (assumed).
+#[derive(Default)]
+struct Counter {
+    /// the start of the first gate while it runs
+    run_fs: Option<i128>,
+    /// the start of the total: the run or the last clear
+    total_fs: i128,
+    /// the results latched, as the ten words read
+    words: [u32; 10],
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -326,6 +348,7 @@ pub struct Unit {
     first_trigger_fs: Option<i128>,
     avg: Avg,
     gen: GenRegs,
+    counter: Counter,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -350,6 +373,7 @@ impl Unit {
             first_trigger_fs: None,
             avg: Avg::default(),
             gen: GenRegs::default(),
+            counter: Counter::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -368,6 +392,44 @@ impl Unit {
     /// What the generator was told so far.
     pub fn generator(&self) -> GenState {
         self.gen.state()
+    }
+
+    /// The scene's trigger instants in `[a, b)`: how many, the first and the last (the AUTO frames are none).
+    fn edges(&self, a: i128, b: i128) -> (u64, Option<i128>, Option<i128>) {
+        let (f, Some(p)) = (self.scene.first_fs, self.scene.period_fs.filter(|&p| p > 0)) else {
+            return (0, None, None);
+        };
+        let k0 = if a <= f { 0 } else { (a - f + p - 1) / p };
+        let k1 = if b <= f { 0 } else { (b - f + p - 1) / p };
+        let n = (k1 - k0).max(0);
+        let at = |k: i128| (n > 0).then_some(f + k * p);
+        (n as u64, at(k0), at(k1 - 1))
+    }
+
+    /// The counter's results of the last whole gate, latched (`Counter`).
+    fn count_latch(&mut self) {
+        let gate = self.reg(crate::dho::counter::GATE) as i128 * GATE_TICK_FS;
+        let Some(run) = self.counter.run_fs.filter(|_| gate > 0) else {
+            self.counter.words = [0; 10];
+            return;
+        };
+        let whole = (self.t_fs - run) / gate;
+        if whole == 0 {
+            self.counter.words = [0; 10];
+            return;
+        }
+        let (g0, g1) = (run + (whole - 1) * gate, run + whole * gate);
+        let (n, first, last) = self.edges(g0, g1);
+        let ticks = |fs: i128| (fs / COUNT_TICK_FS) as u64;
+        let start = first.map_or(0, |e| ticks(e - g0));
+        let end = last.map_or(0, |e| ticks(g1 - e));
+        // the last whole period before the gate's end: the two edges before it
+        let (m, _, before) = self.edges(run, g1);
+        let period = before.filter(|_| m >= 2).zip(self.scene.period_fs).map(|(_, p)| ticks(p));
+        let total = self.edges(self.counter.total_fs, self.t_fs).0;
+        let flag = |on: bool| if on { 1u64 << 63 } else { 0 };
+        let w = [start | flag(n > 0), end, n, period.unwrap_or(0) | flag(period.is_some()), total];
+        self.counter.words = std::array::from_fn(|i| (w[i / 2] >> (32 * (i % 2))) as u32);
     }
 
     /// The trace as text, one event a line (for a comparison of two runs).
@@ -553,6 +615,19 @@ impl Unit {
         if (0x3000..=0x3ffc).contains(&off) {
             self.gen.write(off, v);
         }
+        if off == crate::dho::counter::CTRL {
+            if v & 4 != 0 {
+                self.counter.total_fs = self.t_fs;
+            }
+            match (v & 1 != 0, before & 1 != 0) {
+                (true, false) => self.counter.run_fs = Some(self.t_fs),
+                (false, _) => self.counter.run_fs = None,
+                _ => {}
+            }
+        }
+        if off == crate::dho::counter::LATCH && v & 1 != 0 {
+            self.count_latch();
+        }
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -638,6 +713,7 @@ impl Unit {
             acq::AVG_COUNT if self.reg(0x1004) & 1 << 3 != 0 => {
                 (self.avg.triggers.min(self.reg(off) as u64 + 1).saturating_sub(1)) as u32
             }
+            0x221c..=0x2240 => self.counter.words[(off - crate::dho::counter::RESULTS) as usize / 4],
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
                 Some(r) if r.scan && !self.sweep_done && r.made >= SWEEP_CHUNKS / 2 && self.reg(0x4058) == 0 => {
@@ -1273,6 +1349,34 @@ mod tests {
         assert!(!o.output && !o.power, "{:?}", o);
         let traced = u.borrow().trace.iter().filter(|e| matches!(e, Event::GenLines { .. })).count();
         assert!(traced >= 3, "the lines in the trace: {}", traced);
+    }
+
+    // Break it catches: a counter that counts other edges than the scene's triggers, results of a gate not yet whole or
+    // of another gate than the last, a total not counted from the clear, a counter that runs on after its stop
+    #[test]
+    fn the_counter_counts_the_triggers_over_its_gates() {
+        use crate::dho::counter::{self, Config, Mode};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        // a trigger every 1 ms from 1 us; gates of 0.25 s (3 digits)
+        let (_, mut bar, _, mut clock) = unit(scene(&p, Some(1000 * US), None));
+        bar.apply(&counter::start(&Config { ch: 0, mode: Mode::Frequency, digits: 3 }));
+        clock.sleep_us(200_000);
+        assert_eq!(counter::period(&counter::read(&mut bar), 0.25), None, "no whole gate yet");
+        clock.sleep_us(160_000);
+        let r = counter::read(&mut bar);
+        assert_eq!((r.edges, r.freq_valid, r.period_valid), (250, true, true), "{:?}", r);
+        let t = counter::period(&r, 0.25).unwrap();
+        assert!((t - 1e-3).abs() < 1e-12, "{} s", t);
+        assert_eq!(r.period, 1_250_000, "the single period in 0.8 ns ticks");
+        assert!((359..=361).contains(&r.total), "edges since the start: {}", r.total);
+        // totalize from a clear; then stopped
+        bar.apply(&counter::start(&Config { ch: 0, mode: Mode::Totalize, digits: 3 }));
+        clock.sleep_us(300_000);
+        assert!((299..=301).contains(&counter::read(&mut bar).total));
+        bar.apply(&counter::stop());
+        clock.sleep_us(300_000);
+        assert_eq!(counter::read(&mut bar), counter::Raw::default(), "stopped: nothing latched");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played

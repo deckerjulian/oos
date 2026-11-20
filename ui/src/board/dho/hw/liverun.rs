@@ -10,7 +10,7 @@
 //! it.
 
 use super::port::{Hw, Port};
-use crate::board::{lock, Frame, HwShared, Shared};
+use crate::board::{lock, CounterRead, CounterWant, Frame, HwShared, Shared};
 use crate::model::*;
 use oos_hal::dho::afg::{Mod, ModShape, Wave};
 use oos_hal::dho::sim::{unit, GenState, Scene, Unit, View};
@@ -48,6 +48,8 @@ enum Act {
     AvgClear,
     /// a request of the generator (`Shared::afg`): on, Hz, Vpp, V offset, wave, modulation
     Gen(crate::board::Gen),
+    /// a request of the frequency counter (`Shared::counter_want`), None to stop it
+    Counter(Option<CounterWant>),
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -400,19 +402,74 @@ const CASES: &[Case] = &[
         ],
         ..BASE
     },
+    Case {
+        name: "counter-ch1-frequency-then-totalize",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-3), depth(m, "1k")).0,
+        freq_hz: 1e3,
+        square: true,
+        period_us: Some(1_000),
+        passes: 70,
+        script: &[
+            (2, Act::Counter(Some(CounterWant { ch: 0, mode: 0, digits: 3, clear: 0 }))),
+            (25, Act::Counter(Some(CounterWant { ch: 0, mode: 2, digits: 3, clear: 0 }))),
+            (55, Act::Counter(None)),
+        ],
+        ..BASE
+    },
 ];
 
+/// What the screen's side sees of the unit after each pass: what the generator was told and the counter's reading.
+/// `seen[k]` is taken when the loop asks before pass k + 1, so it is the state after pass k, the pass that applied a
+/// request of the script at k.
+#[derive(Clone, Copy)]
+struct Seen {
+    gen: GenState,
+    counter: Option<CounterRead>,
+}
+
+/// The checks of the counter's requests in a case's script against the readings after each pass (`seen[k]`: after k
+/// passes) until the next request: in frequency mode readings of the scene's trigger period (its signal's period), in
+/// totalize mode a total that grows, after the stop none and 0x2210 written 0. Break it catches: a counter not started
+/// or not read, read before its gate, a period other than the signal's, a total that does not count, a counter left
+/// running.
+fn counter_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    let asked: Vec<(u32, Option<CounterWant>)> =
+        case.script.iter().filter_map(|(at, a)| if let Act::Counter(w) = a { Some((*at, *w)) } else { None }).collect();
+    for (i, &(at, want)) in asked.iter().enumerate() {
+        // after the pass that applied it, up to the pass before the one that applies the next
+        let until = asked.get(i + 1).map_or(seen.len(), |n| n.0 as usize);
+        let mut reads: Vec<CounterRead> = seen[at as usize..until].iter().filter_map(|s| s.counter).collect();
+        reads.dedup_by_key(|r| r.n);
+        let Some(w) = want else {
+            assert!(reads.is_empty(), "{}: readings after the stop: {:?}", case.name, reads);
+            assert!(trace.contains("off: 8720, v: 0 }"), "{}: the counter not stopped (0x2210 = 0)", case.name);
+            continue;
+        };
+        assert!(reads.len() >= 2, "{}: {} readings of the request at pass {}", case.name, reads.len(), at);
+        let period = case.period_us.map(|p| p as f64 * 1e-6);
+        for r in &reads {
+            if w.mode == 2 {
+                assert!(r.total > 0, "{}: no edges totalized: {:?}", case.name, r);
+            } else {
+                let ok = r.period.zip(period).is_some_and(|(x, p)| (x - p).abs() < p * 1e-9);
+                assert!(ok, "{}: period {:?}, not {:?}", case.name, r.period, period);
+            }
+        }
+        assert!(reads.windows(2).all(|p| p[1].total > p[0].total), "{}: the total does not grow", case.name);
+    }
+}
+
 /// The checks of the generator's requests in a case's script against what the unit's generator was told by the pass
-/// of each (`gens[k]`: after k passes): the output and its supply on as asked, the frequency of the phase increment,
+/// of each (`seen[k]`: after k passes): the output and its supply on as asked, the frequency of the phase increment,
 /// the amplitude and offset of the DAC codes and the modulation; a new frequency of the same wave, level and no
 /// modulation retuned without a new table (`afg::retune`), any other change of a running output with one. Break it
 /// catches: a request not applied, applied to another bank, at another frequency or level, an output left on, a
 /// retune that starts over or a start that keeps the old table.
-fn generator_checks(case: &Case, gens: &[GenState]) {
+fn generator_checks(case: &Case, seen: &[Seen]) {
     let mut before: Option<(crate::board::Gen, GenState)> = None;
     for (at, want) in case.script.iter().filter_map(|(at, a)| if let Act::Gen(w) = a { Some((*at, *w)) } else { None })
     {
-        let g = gens[at as usize];
+        let g = seen[at as usize].gen;
         let (on, f, a, o, wave, md) = want;
         assert_eq!((g.output, g.power), (on, on), "{}: the generator after pass {}: {:?}", case.name, at, g);
         let modulation = match md {
@@ -601,8 +658,8 @@ fn view_of(m: &Model) -> View {
 }
 
 /// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings, what the loop left
-/// in the shared state and what the generator was told after each pass.
-fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
+/// in the shared state and what the screen's side saw after each pass.
+fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     let mut m = Model::default();
     (case.model)(&mut m);
     // the switches of this thread, put back when the case ends (a failing one too)
@@ -625,8 +682,8 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
     };
     let (u, bar, c2h, clock) = unit(scene);
     let sim = u.clone();
-    // what the generator was told after each pass
-    let mut gens = Vec::new();
+    // what the screen's side saw after each pass
+    let mut seen = Vec::new();
     // with the calibration the front ends are programmed too, through a stub that answers them
     let afe = case.cal.then_some(oos_hal::dho::boot::sim::AfeStub { writes: 0, reads: 0 });
     let port = SimPort(Some(u.clone()));
@@ -659,8 +716,9 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
     let _out = crate::drawpipe::keep_out();
     super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
-        gens.push(sim.borrow().generator());
         let mut g = lock(&shared);
+        // the state after the pass before this one (`Seen`)
+        seen.push(Seen { gen: sim.borrow().generator(), counter: g.counter });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
                 Act::Set(f) => {
@@ -675,6 +733,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
                 }
                 Act::AvgClear => g.avg_clear += 1,
                 Act::Gen(w) => g.afg[0] = Some(*w),
+                Act::Counter(w) => g.counter_want = *w,
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
@@ -704,7 +763,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
     }
     let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).chain(replays).collect();
     let trace = u.borrow().trace_text();
-    (trace, frames, mask, out, gens)
+    (trace, frames, mask, out, seen)
 }
 
 /// The line of a segmented recording: segments asked for, recorded, read back, the time of each and the one shown.
@@ -732,8 +791,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         std::fs::create_dir_all(d).expect("OOS_LIVE_OUT is a folder");
     }
     for case in CASES {
-        let (trace, frames, mask, out, gens) = run_case(case);
-        generator_checks(case, &gens);
+        let (trace, frames, mask, out, seen) = run_case(case);
         let g = lock(&out);
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
@@ -747,6 +805,8 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             }
             std::fs::write(d.join(format!("{}.txt", case.name)), text).expect("write the case's file");
         }
+        generator_checks(case, &seen);
+        counter_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
         // what the screen asked for in the script was done
