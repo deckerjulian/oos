@@ -47,7 +47,8 @@ in the README. How to use it: the guides listed on [[Home]].
 - Four decoders at once, with an event table you can export and that jumps to an event; DCC lists one command per row
   ("Loco 5  Fwd 50/128")
 - Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
-- Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
+- Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553. LIN takes the bit rate of each
+  frame from its sync field, so a bus at a rate that Baud does not list is read
 - Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
 - Other: USB low/full speed, USB PD, parallel, C-PHY, Manchester, MLT-3
 - Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
