@@ -19,7 +19,7 @@ switch off at the mains and on again, and the old build starts). Install it from
 in 0.1.13) with `--no-kexec`, which writes the image directly:
 
 ```sh
-oos-update install /mnt/usb/oos-0.1.14.oosupd                        # dry run: checks the package
+oos-update install /mnt/usb/oos-0.1.14.oosupd --no-kexec             # dry run: checks it, writes nothing
 oos-update install /mnt/usb/oos-0.1.14.oosupd --no-kexec --execute   # writes it
 ```
 
