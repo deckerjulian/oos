@@ -15,6 +15,7 @@ use super::settings::{
     live_compress, raw_for_ui, raw_newest, screen_margin, seg_max, seg_read_plan, settings, single_wants_more,
     slow_mode, LIVE_DEPTH, ROLL_TDIV, SCAN_TDIV,
 };
+use super::slow::{scan_gap, scan_la_pos, scan_write};
 use super::trim::{overlay_in_use, TrimPending, CORE_OFFSET, TRIM_HOLD};
 use super::units::{
     dvm_step, hw_merge, mask_map_from, unit_key, DvmKey, DvmStep, UnitGuard, DVM_HW, HW_STATUS_OFF, MASK_HW, ZONE_HW,

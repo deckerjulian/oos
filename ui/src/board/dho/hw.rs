@@ -13,6 +13,8 @@ mod port;
 mod seg;
 mod serial;
 mod settings;
+#[cfg(any(target_os = "linux", test))]
+mod slow;
 #[cfg(test)]
 mod tests;
 mod trim;
@@ -31,11 +33,13 @@ use self::plan::{
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
 pub use self::serial::serial_debug;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 pub use self::settings::roll_la_t0;
 pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, ROLL_TDIV};
 #[cfg(any(target_os = "linux", test))]
 use self::settings::{avg_kind, raw_for_ui, raw_newest, single_wants_more};
+#[cfg(any(target_os = "linux", test))]
+use self::slow::SlowRun;
 #[cfg(any(target_os = "linux", test))]
 use self::trim::{core_offset_tight, core_trim, load_overlay, overlay_in_use, TrimPending, TRIM_TRIES};
 #[cfg(any(target_os = "linux", test))]
@@ -50,11 +54,10 @@ use crate::board::Shared;
 use crate::board::{Frame, Slow};
 #[cfg(any(target_os = "linux", test))]
 use crate::board::{HwShared, QUEUE_MAX, QUEUE_SAMPLES};
-use crate::model::*;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 #[cfg(any(target_os = "linux", test))]
-use oos_hal::dho::{afe, hz, roll};
+use oos_hal::dho::{afe, hz};
 #[cfg(any(target_os = "linux", test))]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
@@ -189,20 +192,8 @@ fn run<P: port::Port>(
         let mut state = seq::State::handover(app_mask, cal_adc.as_ref());
         let mut current: Option<(Settings, hz::Params)> = None;
         let mut n = 0u64;
-        // roll/scan mode: streaming state (parameters, ring of volts per channel, last publish)
-        let mut rolling: Option<roll::Params> = None;
-        let mut ring: [std::collections::VecDeque<f32>; NCH] = Default::default();
-        // the same for the LA words: ring, sweep picture (as f32 for `scan_write`; a word is exact in it)
-        let mut ring_la: std::collections::VecDeque<u16> = Default::default();
-        let mut sweep_la: Vec<f32> = Vec::new();
-        let mut published = clock.now_us();
-        // scan: the sweep picture per channel (one screen), write position, last 0x1204, SINGLE sweep complete
-        let mut sweep: [Vec<f32>; NCH] = Default::default();
-        let mut cursor = 0usize;
-        let mut last_info = roll::ScanInfo::default();
-        let mut halted = false;
-        // 0x40d0 reported done; the last chunks of the sweep are read once more before the stop
-        let mut done_seen: Option<u64> = None;
+        // roll and scan: the stream between passes
+        let mut slow = SlowRun::new(clock.now_us());
         let mut mode = Slow::Off;
         let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
         let mut afg_io: Option<P::Gen> = None;
@@ -281,9 +272,7 @@ fn run<P: port::Port>(
             if let Some((chans, zero, adc_cores)) = req {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
-                if rolling.take().is_some() {
-                    bar.apply(&roll::stop(&mut state.sh));
-                }
+                slow.stop(&mut state, &mut bar);
                 let res = match (afe_bus.as_mut(), cal.as_ref()) {
                     (Some(afe), Some(c)) => {
                         let cancel_out = out.clone();
@@ -520,9 +509,7 @@ fn run<P: port::Port>(
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                 mode = want_mode;
                 last_batch = None;
-                if rolling.take().is_some() {
-                    bar.apply(&roll::stop(&mut state.sh));
-                }
+                slow.stop(&mut state, &mut bar);
                 match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
                         if let Err(e) =
@@ -634,247 +621,19 @@ fn run<P: port::Port>(
             }
             if mode != Slow::Off {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                // roll and scan (roll-mode.md): stream chunks; roll keeps 10 divisions and puts the newest point at the
-                // right edge, scan writes the screen from left to right; publish ~30 pictures per second
-                let tdiv_fs = seq::tdiv_fs(s.tdiv);
-                let scan = match mode {
-                    Slow::Scan { delay, single } => Some(((delay * 1e15) as i128, single)),
-                    _ => None,
+                let io = slow::Io {
+                    state: &mut state,
+                    bar: &mut bar,
+                    c2h: &mut c2h,
+                    clock: &mut clock,
+                    out: &out,
+                    n: &mut n,
+                    stamp,
                 };
-                // LA on: its words come in chunks of their own in the same stream (la.md 4.4)
-                let la_t = s.la.is_some().then(|| oos_hal::dho::la::timing(&p, s.mask));
-                let sweep_start = |state: &mut seq::State, bar: &mut P::Bus, rp: &roll::Params| {
-                    match scan {
-                        Some((delay_fs, _)) => {
-                            let pos = roll::scan_trig_pos(delay_fs, tdiv_fs, p.dot_fs);
-                            bar.apply(&roll::config_scan(&mut state.sh, rp, p.memsel, pos));
-                        }
-                        None => bar.apply(&roll::config(&mut state.sh, rp, p.memsel)),
-                    }
-                    if let Some(t) = &la_t {
-                        bar.apply(&roll::la_config(rp, t));
-                    }
-                    bar.apply(&roll::start(&mut state.sh, s.mask));
-                };
-                let rp = match rolling {
-                    Some(rp) => rp,
-                    None => {
-                        let rp = roll::params(s.mask, tdiv_fs, s.depth, &p);
-                        sweep_start(&mut state, &mut bar, &rp);
-                        ring.iter_mut().for_each(|r| r.clear());
-                        sweep.iter_mut().for_each(|v| v.clear());
-                        ring_la.clear();
-                        sweep_la.clear();
-                        (cursor, halted, done_seen, last_info) = (0, false, None, Default::default());
-                        let name = if scan.is_some() { "scan" } else { "roll" };
-                        status(format!(
-                            "{}: {:.1} us per point, chunk {:.2} ms",
-                            name,
-                            rp.spacing_fs as f64 / 1e9,
-                            rp.spacing_fs as f64 * 100.0 / rp.ratio as f64 / 1e12
-                        ));
-                        rolling = Some(rp);
-                        // roll and scan stream raw points: no batch, so the state line's factor is set here
-                        crate::compress::note_batch_k(1);
-                        rp
-                    }
-                };
-                if halted {
-                    // SINGLE scan complete: wait for the next SINGLE press
-                    let go = std::mem::take(&mut out.lock().unwrap().rearm);
-                    if !go {
-                        clock.sleep_us(20000);
-                        continue;
-                    }
-                    sweep_start(&mut state, &mut bar, &rp);
-                    (cursor, halted) = (0, false);
-                }
-                let dt = rp.spacing_fs as f64 / 1e15;
-                let keep = ((10.0 * s.tdiv / dt).round() as usize).max(2);
-                let la_dt = if la_t.is_some() { roll::la_spacing_fs(&rp) as f64 / 1e15 } else { dt };
-                let keep_la = ((10.0 * s.tdiv / la_dt).round() as usize).max(2);
-                bar.apply(&roll::fill_pulse(&state.sh));
-                let c = roll::chunks(bar.rd(0x11e8));
-                let c = if la_t.is_some() { roll::la_chunks(c) } else { c };
-                if c == 0 {
-                    clock.sleep_us(9000);
-                } else {
-                    let buf = match oos_hal::dho::bus::read_dma(&mut c2h, c * roll::CHUNK_BYTES, |_, _| {}) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            status(format!(
-                                "{} read of {} chunks: {}",
-                                if scan.is_some() { "scan" } else { "roll" },
-                                c,
-                                e
-                            ));
-                            rolling = None;
-                            current = None;
-                            continue;
-                        }
-                    };
-                    let (w, lw) = if la_t.is_some() {
-                        roll::split_la(&buf, s.mask)
-                    } else {
-                        (roll::split(&buf, s.mask), Vec::new())
-                    };
-                    if scan.is_some() {
-                        // the chunk counter restarts with every sweep: its column is the write position of the first
-                        // analog chunk
-                        let per = roll::points_per_chunk(s.mask);
-                        let chunks = buf.as_chunks::<{ roll::CHUNK_BYTES }>().0;
-                        let first = chunks.iter().map(|c| &c[..]).find(|c| !roll::is_la_chunk(c));
-                        let first = first.unwrap_or(&buf[..roll::CHUNK_BYTES]);
-                        let col = roll::scan_column(roll::counter(first), la_t.is_some());
-                        cursor = (col * per) % keep;
-                        if !lw.is_empty() {
-                            let v: Vec<f32> = lw.iter().map(|&x| x as f32).collect();
-                            scan_write(&mut sweep_la, keep_la, scan_la_pos(cursor, keep, keep_la), &v);
-                        }
-                        let fresh = w.iter().map(|v| v.len()).max().unwrap_or(0);
-                        for ch in 0..NCH {
-                            if w[ch].is_empty() {
-                                sweep[ch].clear();
-                                continue;
-                            }
-                            scan_write(
-                                &mut sweep[ch],
-                                keep,
-                                cursor,
-                                &seq::volts(&w[ch], s.ch[ch].scale, s.ch[ch].offset),
-                            );
-                        }
-                        cursor = (cursor + fresh) % keep;
-                    } else {
-                        ring_la.extend(lw.iter().copied());
-                        while ring_la.len() > keep_la {
-                            ring_la.pop_front();
-                        }
-                        for ch in 0..NCH {
-                            if w[ch].is_empty() {
-                                ring[ch].clear();
-                                continue;
-                            }
-                            ring[ch].extend(seq::volts(&w[ch], s.ch[ch].scale, s.ch[ch].offset));
-                            while ring[ch].len() > keep {
-                                ring[ch].pop_front();
-                            }
-                        }
-                    }
-                }
-                // scan: after every read, also an empty one
-                let mut done = false;
-                if let Some((_, single)) = scan {
-                    if done_seen.is_none() {
-                        let r = roll::SCAN_INFO_REGS.map(|a| bar.rd(a));
-                        let info = roll::scan_info(r[0], r[1]);
-                        if info.triggered != last_info.triggered || info.done {
-                            status(format!(
-                                "scan: 0x1204 = {:#010x}, 0x40d0 = {:#x}, cursor {} of {}",
-                                r[0], r[1], cursor, keep
-                            ));
-                        }
-                        last_info = info;
-                        // done arrives a few chunks before the end of the sweep (unit: 4 chunks): read on until the
-                        // last column is in (cursor back at 0) or 100 ms passed
-                        if info.done {
-                            done_seen = Some(clock.now_us());
-                        }
-                    }
-                    let now = clock.now_us();
-                    if done_seen.is_some_and(|t| cursor == 0 || since(now, t).as_millis() >= 100) {
-                        status(format!(
-                            "scan: sweep complete {} ms after done, cursor {} of {}",
-                            since(now, done_seen.unwrap()).as_millis(),
-                            cursor,
-                            keep
-                        ));
-                        done_seen = None;
-                        done = true;
-                        // stock state 8 (RUN): stop, clear the average, configure again, next sweep after 500 ms; state 9
-                        // (SINGLE): stop
-                        bar.apply(&roll::scan_done(&mut state.sh));
-                        halted = single;
-                    }
-                }
-                let now = clock.now_us();
-                if done || since(now, published).as_millis() >= 33 {
-                    published = now;
-                    n += 1;
-                    let f = if scan.is_some() {
-                        let mut ch = sweep.clone();
-                        if !done {
-                            // a short gap ahead of the write position shows where the sweep is
-                            scan_gap(&mut ch, cursor, keep / 50);
-                        }
-                        // word 0 at the left edge like analog point 0; only what the sweeps have written so far
-                        let la = la_t.map(|_| crate::logic::LaRec {
-                            words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()),
-                            t0: 0.0,
-                            dt: la_dt,
-                        });
-                        Frame {
-                            seq: n,
-                            dt,
-                            pre: 0,
-                            ch,
-                            roll: false,
-                            envelope: true,
-                            scan: true,
-                            partial: !done,
-                            acq: (0.0, 0),
-                            stamp,
-                            la,
-                            fixed_ti: None,
-                            hw_avg: false,
-                            basic: Default::default(),
-                        }
-                    } else {
-                        let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
-                        // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
-                        let pre = (len as f64 - 1.0 - 5.0 * s.tdiv / dt).max(0.0) as usize;
-                        // the newest LA word next to the newest analog point, at the right edge
-                        let la = la_t.map(|_| crate::logic::LaRec {
-                            t0: roll_la_t0(len, pre, dt, ring_la.len(), la_dt),
-                            words: Arc::new(ring_la.iter().copied().collect()),
-                            dt: la_dt,
-                        });
-                        Frame {
-                            seq: n,
-                            dt,
-                            pre,
-                            ch: ring.clone().map(|r| r.into_iter().collect()),
-                            roll: true,
-                            envelope: true,
-                            scan: false,
-                            partial: len < keep,
-                            acq: (0.0, 0),
-                            stamp,
-                            la,
-                            fixed_ti: None,
-                            hw_avg: false,
-                            basic: Default::default(),
-                        }
-                    };
-                    let mut g = out.lock().unwrap();
-                    // a complete sweep must not be dropped by the next partial picture
-                    if g.queue.back().is_none_or(|b| b.partial) {
-                        g.queue.clear();
-                    }
-                    g.queue.push_back(f.clone());
-                    g.frame = f;
-                    g.halted = halted;
-                }
-                if done && !halted {
-                    clock.sleep_us(500000);
-                    sweep_start(&mut state, &mut bar, &rp);
-                    cursor = 0;
-                }
+                slow.step(mode, &s, &p, io, &mut current, &status);
                 continue;
             }
-            if rolling.take().is_some() {
-                bar.apply(&roll::stop(&mut state.sh));
-            }
+            slow.stop(&mut state, &mut bar);
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 if let Err(e) = seg_step(
@@ -1365,31 +1124,6 @@ fn run<P: port::Port>(
                     clock.sleep_us(200000);
                 }
             }
-        }
-    }
-}
-
-/// Writes the scan points `v` into the sweep picture (`width` points) from `at`, wrapping at the right edge.
-fn scan_write(pic: &mut Vec<f32>, width: usize, at: usize, v: &[f32]) {
-    if pic.len() != width {
-        *pic = vec![f32::NAN; width];
-    }
-    for (i, &y) in v.iter().enumerate() {
-        pic[(at + i) % width] = y;
-    }
-}
-
-/// Where the LA words of a chunk go in the sweep picture: the same place on the screen as the analog point `cursor`.
-fn scan_la_pos(cursor: usize, keep: usize, keep_la: usize) -> usize {
-    ((cursor as f64 * keep_la as f64 / keep.max(1) as f64).round() as usize) % keep_la.max(1)
-}
-
-/// Blanks `gap` points from the write position (the old sweep right of it stays visible).
-fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
-    for v in pic.iter_mut().filter(|v| !v.is_empty()) {
-        let w = v.len();
-        for i in 0..gap.min(w) {
-            v[(at + i) % w] = f32::NAN;
         }
     }
 }
