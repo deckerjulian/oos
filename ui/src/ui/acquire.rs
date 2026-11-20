@@ -67,8 +67,6 @@ impl Default for FastPath {
     }
 }
 
-/// A STOP of the hardware (docs/fork/stop-exact.md): the request for its final frame and the wait for it, and the
-/// records shown after it (`stop_replay`). ADR 0062.
 /// What the step saw last (ADR 0062).
 pub(super) struct Seen {
     /// the trigger level last seen and when it changed: the level line shows for `LEVEL_LINE_S` after a change (knob,
@@ -88,6 +86,8 @@ impl Default for Seen {
     }
 }
 
+/// A STOP of the hardware (docs/fork/stop-exact.md): the request for its final frame and the wait for it, and the
+/// records shown after it (`stop_replay`). ADR 0062.
 #[derive(Default)]
 pub(super) struct Stop {
     /// the request number of the final frame, counted at every RUN (`OperationToken::Stop`)
