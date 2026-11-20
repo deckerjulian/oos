@@ -114,7 +114,9 @@ impl Ui {
         // the final frame was taken (or did not come in time): stopped
         if self.stop_final.is_some_and(|t| final_done || self.now > t) {
             self.stop_final = None;
-            if self.m.run == RunState::Stop {
+            // only an answered request is a STOP in place: after the time limit a `*OPC?` waiting for it is cancelled
+            // (-410), not told `1` about a record the thread did not confirm
+            if self.m.run == RunState::Stop && final_done {
                 self.scpi_finish_operation(OperationToken::Stop(self.final_req));
             }
         }

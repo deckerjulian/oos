@@ -1505,5 +1505,15 @@ fn opc_after_stop_waits_for_the_record_of_the_stop() {
     ui.m.run = RunState::Run;
     ui.step(0.05);
     assert_eq!(fence.state(&ui), OperationState::Cancelled);
+    // the thread never answers: after the time limit the STOP stands, but a waiting `*OPC?` is cancelled, not told 1
+    shared.lock().unwrap().queue.push_back(frame(4));
+    ui.step(0.05);
+    ui.m.run = RunState::Stop;
+    let fence = ui.scpi_operations();
+    for _ in 0..(STOP_FINAL_WAIT / 0.05) as usize + 2 {
+        ui.step(0.05);
+    }
+    assert!(ui.stop_final.is_none());
+    assert_eq!(fence.state(&ui), OperationState::Cancelled);
     crate::deepmeas::force(None);
 }
