@@ -56,32 +56,58 @@ fn held_state() -> String {
 
 /// GET /update: the state comes from a program that takes a while (`oos-update status --quick`); `poll`, which runs
 /// in the frame loop, hands the request on and returns while that program still runs, and the page follows (#205).
+/// While both senders hold such a request, the next one is 503 at once.
 #[test]
 fn the_update_page_is_made_off_the_frame_loop() {
     use std::sync::atomic::Ordering::SeqCst;
     let mut h = Http::<()>::open(0);
     HOLD_STATE.store(true, SeqCst);
-    let mut c = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
-    c.write_all(b"GET /update HTTP/1.1\r\n\r\n").unwrap();
-    // until a sender thread has the request (it holds one of the senders while the state is held)
     let until = std::time::Instant::now() + Duration::from_secs(60);
-    while oos_system::net::SENDERS.load(SeqCst) == 0 && std::time::Instant::now() < until {
+    let ask = || {
+        let mut c = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
+        c.write_all(b"GET /update HTTP/1.1\r\n\r\n").unwrap();
+        c
+    };
+    let (mut first, mut second) = (ask(), ask());
+    // until a sender thread has each request (it holds one of the senders while the state is held)
+    while oos_system::net::SENDERS.load(SeqCst) < oos_system::net::MAX_SENDERS && std::time::Instant::now() < until {
         h.poll(&mut Nothing);
         assert!(!STATE_GIVEN.load(SeqCst), "poll waited for the state of the update");
     }
-    assert!(h.pending.is_empty(), "the request was handed on");
-    c.set_nonblocking(true).unwrap();
+    assert!(h.pending.is_empty(), "the requests were handed on");
+    for c in [&mut first, &mut second] {
+        c.set_nonblocking(true).unwrap();
+        let mut got = Vec::new();
+        assert!(c.read_to_end(&mut got).is_err() && got.is_empty(), "an answer before the state: {got:?}");
+        c.set_nonblocking(false).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+    }
+    // both senders busy: the third is answered 503 in poll, and its state is not asked for
+    let mut third = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
+    third.write_all(b"GET /update HTTP/1.1\r\n\r\n").unwrap();
+    third.set_nonblocking(true).unwrap();
     let mut got = Vec::new();
-    assert!(c.read_to_end(&mut got).is_err() && got.is_empty(), "an answer before the state: {got:?}");
-    HOLD_STATE.store(false, SeqCst);
-    c.set_nonblocking(false).unwrap();
-    c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-    c.read_to_end(&mut got).unwrap();
+    while std::time::Instant::now() < until {
+        h.poll(&mut Nothing);
+        match third.read_to_end(&mut got) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e) => panic!("{e}"),
+        }
+    }
     let r = String::from_utf8_lossy(&got);
-    assert!(r.starts_with("HTTP/1.1 200 OK\r\n") && r.contains("Content-Type: text/html"), "{r}");
-    assert!(r.contains("<pre>state of the update</pre>") && r.contains("last &lt;upload>"), "{r}");
-    let (head, body) = r.split_once("\r\n\r\n").unwrap();
-    assert!(head.contains(&format!("Content-Length: {}\r\n", body.len())), "{head}");
+    assert!(r.starts_with("HTTP/1.1 503 Service Unavailable\r\n"), "{r}");
+    assert!(!STATE_GIVEN.load(SeqCst), "the state was given before it was let go");
+    HOLD_STATE.store(false, SeqCst);
+    for mut c in [first, second] {
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).unwrap();
+        let r = String::from_utf8_lossy(&got);
+        assert!(r.starts_with("HTTP/1.1 200 OK\r\n") && r.contains("Content-Type: text/html"), "{r}");
+        assert!(r.contains("<pre>state of the update</pre>") && r.contains("last &lt;upload>"), "{r}");
+        let (head, body) = r.split_once("\r\n\r\n").unwrap();
+        assert!(head.contains(&format!("Content-Length: {}\r\n", body.len())), "{head}");
+    }
 }
 
 #[test]
