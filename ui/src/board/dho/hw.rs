@@ -56,12 +56,12 @@ use self::trim::TrimRun;
 use self::units::{counter_tick, unit_key, UnitGuard, UnitJobs};
 pub use self::units::{dvm_hw_on, mask_hw_on, mask_map, mask_map_set, zone_hw_on};
 use super::cores;
-#[cfg(any(target_os = "linux", test))]
-use crate::board::HwShared;
 #[cfg(target_os = "linux")]
 use crate::board::Shared;
 #[cfg(any(target_os = "linux", test))]
 use crate::board::Slow;
+#[cfg(any(target_os = "linux", test))]
+use crate::board::{lock, HwShared};
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 #[cfg(any(target_os = "linux", test))]
@@ -90,7 +90,7 @@ fn execute<P: port::Port>(
 #[cfg(any(target_os = "linux", test))]
 fn report(out: &HwShared, s: String) {
     eprintln!("oos-ui hw: {}", s);
-    out.lock().unwrap().status = s;
+    lock(out).status = s;
 }
 
 /// The time from `t` to `now`, both microseconds of the loop's clock.
@@ -130,7 +130,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             Err(e) => return status(format!("/dev/xdma0_bypass: {}", e)),
         };
         let v = bar.rd(0x4000);
-        out.lock().unwrap().fpga_version = v;
+        lock(&out).fpga_version = v;
         if v != FPGA_VERSION {
             return status(format!("unexpected FPGA version {:#x}, not touching it", v));
         }
@@ -317,24 +317,24 @@ impl<P: port::Port> Loop<P> {
         if self.xadc_at.is_none_or(|t| since(now, t) >= std::time::Duration::from_secs(1)) {
             self.xadc_at = Some(now);
             let x = oos_hal::dho::board::read_xadc(&mut self.bar);
-            self.out.lock().unwrap().xadc = x;
+            lock(&self.out).xadc = x;
             // LA probe detect, also with the LA off: without a probe it cannot be switched on
             if oos_hal::model::platform().caps.la {
                 let p = self.lines.la_probe().ok();
-                self.out.lock().unwrap().la_probe = p;
+                lock(&self.out).la_probe = p;
             }
         }
         // self-calibration (selfcal.rs): owns the FPGA and the AFEs until it is done; the result goes to /oos/cal
         // (the request is taken in its own statement: a lock in the `if let` scrutinee would be held for the whole
         // run, and the cancel check and the UI would wait on it forever)
-        let req = self.out.lock().unwrap().cal_req.take();
+        let req = lock(&self.out).cal_req.take();
         if let Some((chans, zero, adc_cores)) = req {
             self.calibrate(&chans, zero, adc_cores);
             return;
         }
         // built-in generator (`afg.rs`): a changed request applied
         let (afg_want, stamp_now) = {
-            let g = self.out.lock().unwrap();
+            let g = lock(&self.out);
             (g.afg[0], g.stamp)
         };
         self.afg.apply(afg_want, &mut self.unit, io!(self, stamp_now), &mut self.armed, &mut self.segrun);
@@ -348,7 +348,7 @@ impl<P: port::Port> Loop<P> {
         // STOP (`stop.rs`): the hold, once, with the newest frame read raw where it is wanted; then the views
         // read again from the stored record (normal acquisitions only)
         let (hold, final_req, deep_want) = {
-            let g = self.out.lock().unwrap();
+            let g = lock(&self.out);
             (g.hold, g.final_req, g.deep_raw)
         };
         if hold && !self.stop.paused {
@@ -361,7 +361,7 @@ impl<P: port::Port> Loop<P> {
                 (final_req, deep_want),
             );
         }
-        let stop_view = self.out.lock().unwrap().stop_view;
+        let stop_view = lock(&self.out).stop_view;
         match stop_view {
             Some(v) if self.config.mode == Slow::Off && req.mode == Slow::Off => {
                 self.stop.view::<P>(v, io!(self, stamp), &mut self.lines, &mut self.cores);
@@ -372,7 +372,10 @@ impl<P: port::Port> Loop<P> {
         if !self.configure(&req) {
             return;
         }
-        let (s, p) = self.config.current.clone().unwrap();
+        // `configure` returns true only with a configuration in `current`: the one it kept or the one it applied
+        let Some((s, p)) = self.config.current.clone() else {
+            unreachable!("configure() returned true without a configuration")
+        };
         let mode = self.config.mode;
         let status = |s: String| report(&self.out, s);
         // a hardware segment recording in the FPGA: the measure unit (DVM, levels, slots) and the ADC core offsets
@@ -393,19 +396,7 @@ impl<P: port::Port> Loop<P> {
         self.slow.stop(&mut self.state, &mut self.bar);
         if s.segments.is_some() {
             disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
-            if let Err(e) = seg_step(
-                &mut self.segrun,
-                &s,
-                &p,
-                &mut self.state,
-                &mut self.bar,
-                &mut self.clock,
-                &mut self.c2h,
-                &mut self.batch.dma,
-                &self.out,
-                &mut self.n,
-                stamp,
-            ) {
+            if let Err(e) = seg_step(&mut self.segrun, (&s, &p), &mut self.batch.dma, io!(self, stamp)) {
                 status(format!("segments: {}", e));
                 seg_abort(&mut self.segrun, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock, &self.out);
                 self.clock.sleep_us(200000);
@@ -427,7 +418,7 @@ impl<P: port::Port> Loop<P> {
         let res = match (self.afe_bus.as_mut(), self.cal.as_ref()) {
             (Some(afe), Some(c)) => {
                 let cancel_out = self.out.clone();
-                let cancel = move || cancel_out.lock().unwrap().cal_cancel;
+                let cancel = move || lock(&cancel_out).cal_cancel;
                 let mut unit = oos_hal::dho::selfcal::Unit {
                     bar: &mut self.bar,
                     afe,
@@ -461,7 +452,7 @@ impl<P: port::Port> Loop<P> {
             self.trim.recalibrated(self.cal_adc.as_mut());
         }
         self.config.current = None;
-        let mut g = self.out.lock().unwrap();
+        let mut g = lock(&self.out);
         (g.cal_progress, g.cal_result, g.cal_cancel) = (None, Some(res), false);
     }
 
@@ -475,13 +466,13 @@ impl<P: port::Port> Loop<P> {
         let ((s, p), (hold, final_req), avg_clear) = (sp, stop, req.avg_clear);
         // STOP, after the hold above: no arming until RUN or SINGLE (the UI's final-frame request is answered there)
         if hold {
-            self.out.lock().unwrap().final_ack = final_req;
+            lock(&self.out).final_ack = final_req;
             self.clock.sleep_us(5000);
             return;
         }
         if std::mem::take(&mut self.stop.paused) {
             // RUN or SINGLE: the frames of the batch before the STOP are not new
-            self.out.lock().unwrap().queue.clear();
+            lock(&self.out).queue.clear();
         }
         let b = batch_plan(s, p);
         if !single_wants_more(&b, self.batch.single_done, stamp) {
@@ -517,7 +508,7 @@ impl<P: port::Port> Loop<P> {
         // without a trigger that wait was the whole `STOP_FINAL_WAIT`
         let asked = &req.asked;
         let changed = || {
-            let g = self.out.lock().unwrap();
+            let g = lock(&self.out);
             (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.stop_view.is_some() || g.hold
         };
         // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
@@ -601,7 +592,7 @@ fn self_cal(
     let (chans, zero) = req;
     let prog_out = out.clone();
     let r = oos_hal::dho::selfcal::run_all_with(unit, c, adc_base, chans, zero, &mut |d, t, s| {
-        prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
+        lock(&prog_out).cal_progress = Some((d, t, s.to_string()));
     });
     match r {
         Ok(r) => oos_hal::dho::selfcal::save(&r, cal_dir).map(|files| {

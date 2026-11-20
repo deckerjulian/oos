@@ -7,12 +7,10 @@
 use crate::board::{board, Board};
 use crate::model::*;
 
-/// The state shared with the acquisition thread (`HwShared`, `LiveShared`), locked: the one `unwrap` for every reader
-/// and writer of it on the screen's side. A lock fails only when another holder panicked while it held it, and the
-/// state may then be half written; this panics then, as each of these lines did before.
-pub(crate) fn hw<T>(shared: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    shared.lock().unwrap()
-}
+/// A state shared with a thread of the board (`HwShared` of the acquisition thread, `LiveShared` of the read-out of
+/// `--fpga-live`), locked: the board's one lock helper (`board::lock`), which panics when another holder panicked
+/// while it held the lock.
+pub(crate) use crate::board::lock as hw;
 
 mod levels;
 mod record;

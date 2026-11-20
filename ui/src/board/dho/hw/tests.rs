@@ -20,7 +20,7 @@ use super::trim::{overlay_in_use, TrimPending, CORE_OFFSET, TRIM_HOLD};
 use super::units::{
     dvm_step, hw_merge, mask_map_from, unit_key, DvmKey, DvmStep, UnitGuard, DVM_HW, HW_STATUS_OFF, MASK_HW, ZONE_HW,
 };
-use crate::board::{Frame, Slow};
+use crate::board::{lock, Frame, Slow};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Segments, Settings, Trig};
 use oos_hal::dho::{auxout, hz, uarttrig};
@@ -1239,13 +1239,13 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let lines = oos_hal::dho::lines::Recorded::default();
     let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
-    out.lock().unwrap().want = Some(want.clone());
+    lock(&out).want = Some(want.clone());
     let mut passes = 0;
     super::run(hw, want.mask, false, "/nonexistent".into(), out.clone(), || {
         passes += 1;
         passes <= 40
     });
-    let g = out.lock().unwrap();
+    let g = lock(&out);
     assert!(g.status.starts_with("configured") || !g.queue.is_empty(), "status: {}", g.status);
     let u = u.borrow();
     let played = u.trace.iter().filter(|e| matches!(e, Event::Played { .. })).count();

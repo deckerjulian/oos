@@ -11,7 +11,7 @@ use super::seg::seg_abort;
 use super::settings::{avg_kind, raw_for_ui};
 use super::units::{hw_merge, mask_map, unit_key, UnitGuard};
 use super::{execute, port, report, Loop};
-use crate::board::{HwShared, Slow};
+use crate::board::{lock, HwShared, Slow};
 use oos_hal::dho::hz;
 use oos_hal::dho::seq::Settings;
 
@@ -48,7 +48,7 @@ impl Request {
         program_afe: bool,
     ) -> Option<Request> {
         let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw) = {
-            let g = out.lock().unwrap();
+            let g = lock(out);
             (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw)
         };
         let mut want = want?;
@@ -64,7 +64,7 @@ impl Request {
             hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), map);
         }
         {
-            let mut g = out.lock().unwrap();
+            let mut g = lock(out);
             let why = guard.blocks(&key).then(|| {
                 "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string()
             });

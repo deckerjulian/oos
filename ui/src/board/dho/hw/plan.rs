@@ -280,7 +280,6 @@ pub(super) fn prearm_keeps_replay(
 /// before, when that frame was read as pairs and not already raw and nothing was armed ahead (`ahead`: the ring is
 /// being written again): the whole frame for the live compression, the screen window for a deep record when the deep
 /// measurements want samples.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn final_replay(
     b: &Settings,
     p: &hz::Params,
@@ -301,7 +300,6 @@ pub(super) fn final_replay(
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
 /// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
 /// `screen_window` with the record's edge allowed, at most `policy::deep::MAX_BYTES`. Settings for `seq::read_raw_again`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
     if b.compress < 2
         || b.window.is_some()

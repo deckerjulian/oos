@@ -6,7 +6,7 @@
 //! left to right, sweep by sweep. A change of how the slow time bases stream or are shown goes here.
 
 use super::settings::roll_la_t0;
-use crate::board::{Frame, HwShared, Slow};
+use crate::board::{lock, Frame, HwShared, Slow};
 use crate::model::*;
 use oos_hal::dho::boot::Clock;
 use oos_hal::dho::bus::Bus;
@@ -128,7 +128,7 @@ impl SlowRun {
         };
         if self.halted {
             // SINGLE scan complete: wait for the next SINGLE press
-            let go = std::mem::take(&mut out.lock().unwrap().rearm);
+            let go = std::mem::take(&mut lock(out).rearm);
             if !go {
                 clock.sleep_us(20000);
                 return;
@@ -177,10 +177,11 @@ impl SlowRun {
                 }
             }
             let now = clock.now_us();
-            if self.done_seen.is_some_and(|t| self.cursor == 0 || super::since(now, t).as_millis() >= 100) {
+            let complete = self.done_seen.filter(|&t| self.cursor == 0 || super::since(now, t).as_millis() >= 100);
+            if let Some(seen) = complete {
                 status(format!(
                     "scan: sweep complete {} ms after done, cursor {} of {}",
-                    super::since(now, self.done_seen.unwrap()).as_millis(),
+                    super::since(now, seen).as_millis(),
                     self.cursor,
                     keep
                 ));
@@ -197,7 +198,7 @@ impl SlowRun {
             self.published = now;
             *n += 1;
             let f = self.frame(s, scan.map(|_| done), la_t.is_some(), (dt, la_dt, keep), *n, stamp);
-            let mut g = out.lock().unwrap();
+            let mut g = lock(out);
             // a complete sweep must not be dropped by the next partial picture
             if g.queue.back().is_none_or(|b| b.partial) {
                 g.queue.clear();
