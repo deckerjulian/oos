@@ -827,12 +827,14 @@ fn live_compression_plan_by_time_base() {
     assert_eq!(plan(100e-9, false).0, 1);
     for (tdiv, two) in [(1e-6, false), (2e-6, false), (10e-6, false), (100e-6, false), (10e-6, true), (1e-3, false)] {
         let (k, fb, frames, raw_frames, p) = plan(tdiv, two);
-        let per_column = p.rate as f64 * tdiv * 10.0 / crate::compress::SCREEN_COLUMNS;
-        assert!(k >= crate::compress::K_MIN, "{} s/div: k {}", tdiv, k);
+        let per_column = p.rate as f64 * tdiv * 10.0 / crate::board::policy::compress::SCREEN_COLUMNS;
+        assert!(k >= crate::board::policy::compress::K_MIN, "{} s/div: k {}", tdiv, k);
         // at least POINTS_PER_COLUMN points per column, less than twice that
         let points = per_column / k as f64;
         assert!(
-            (crate::compress::POINTS_PER_COLUMN..2.0 * crate::compress::POINTS_PER_COLUMN).contains(&points),
+            (crate::board::policy::compress::POINTS_PER_COLUMN
+                ..2.0 * crate::board::policy::compress::POINTS_PER_COLUMN)
+                .contains(&points),
             "{} s/div: {} points per column",
             tdiv,
             points
@@ -958,7 +960,7 @@ fn final_replay_at_stop() {
     let s = settings(&m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
     let b = batch_plan(&s, &p);
-    let w = Some(crate::deepmeas::Want { every: false });
+    let w = Some(crate::board::policy::deep::Want { every: false });
     assert_eq!(final_replay(&b, &p, 3, false, false, w), deep_raw_settings(&b, &p));
     assert!(final_replay(&b, &p, 3, false, false, w).is_some());
     assert!(final_replay(&b, &p, 3, true, false, w).is_none(), "newest frame already raw");
@@ -1023,7 +1025,7 @@ fn deep_raw_window_for_the_measurements() {
     );
     assert!(start < p.pre && start + n > p.pre);
     let bytes = oos_hal::dho::seq::frame_bytes(&d, &p);
-    assert!(bytes <= crate::deepmeas::MAX_BYTES, "{} bytes", bytes);
+    assert!(bytes <= crate::board::policy::deep::MAX_BYTES, "{} bytes", bytes);
     // the decoded frame is raw and knows its trigger point
     let f = decode(&vec![0u8; bytes], &d, &p, 1);
     assert!(!f.envelope && f.ch[0].len() == n as usize && f.pre == (p.pre - start) as usize);

@@ -122,7 +122,7 @@ impl SlowRun {
                 ));
                 self.rolling = Some(rp);
                 // roll and scan stream raw points: no batch, so the state line's factor is set here
-                crate::compress::note_batch_k(1);
+                crate::board::policy::compress::note_batch_k(1);
                 rp
             }
         };

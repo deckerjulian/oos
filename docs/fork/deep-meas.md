@@ -18,9 +18,9 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
   before the next arm, as the live compression's raw newest frame does. Window: `screen_window`'s rule (screen and a
   quarter screen each side, at least 4096 points, the trigger point inside), or the whole record when that reaches
-  past its end; at most `deepmeas::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The C2H path
-  splits it into reads of at most 4 MiB.
-- Rate: once per `deepmeas::PERIOD` = 1 s while running; every batch in Single.
+  past its end; at most `board::policy::deep::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The
+  C2H path splits it into reads of at most 4 MiB.
+- Rate: once per `board::policy::deep::PERIOD` = 1 s while running; every batch in Single.
 - The raw frame replaces the newest frame of its batch, so its record is an ordinary raw record: measurements,
   cursors, FFT, decode and history get samples. The picture of that record goes through the record path like the
   pair records (same style).
@@ -115,7 +115,7 @@ Record the results here.
   - While the worker measured a raw window (more than 262 k points) the row showed "not available" for that time,
     once a raw read: the last value now stays until the new one is there.
 - Rate: a raw read costs about 3 % of the records per MiB read once a second. The period grows with the window
-  (`deepmeas::period`: 1 s per 2 MiB), so the cost stays near 5 %:
+  (`board::policy::deep::period`: 1 s per 2 MiB), so the cost stays near 5 %:
 
   | channels | depth, time base | records/s off / on | fps off / on |
   |---|---|---|---|

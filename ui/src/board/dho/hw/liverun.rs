@@ -79,7 +79,7 @@ struct Case {
     la: bool,
     /// the loop starts with the made-up calibration set in its folder (else with none)
     cal: bool,
-    /// the live compression on (`compress::enabled`, a switch of the unit that is off by default)
+    /// the live compression on (`policy::compress::enabled`, a switch of the unit that is off by default)
     compress: bool,
     passes: u32,
     script: &'static [(u32, Act)],
@@ -433,13 +433,13 @@ fn frame_line(f: &Frame) -> String {
     s
 }
 
-/// The switches a case sets for the test's thread (`compress::force`, `deepmeas::force`): back to the build's when
+/// The switches a case sets for the test's thread (`policy::compress::force`, `deepmeas::force`): back to the build's when
 /// dropped.
 struct Switches;
 
 impl Drop for Switches {
     fn drop(&mut self) {
-        crate::compress::force(None);
+        crate::board::policy::compress::force(None);
         crate::deepmeas::force(None);
     }
 }
@@ -451,7 +451,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     (case.model)(&mut m);
     // the switches of this thread, put back when the case ends (a failing one too)
     let _switches = Switches;
-    crate::compress::force(Some(case.compress));
+    crate::board::policy::compress::force(Some(case.compress));
     let want = super::settings(&m, false);
     let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
     let p = st.configure(&want, None, None).expect("settings the unit takes").1;
@@ -513,7 +513,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
                 Act::FinalRaw => g.final_req += 1,
                 Act::StopView(t, d) => g.stop_view = Some((*t, *d)),
                 Act::Force => g.force = true,
-                Act::DeepRaw => g.deep_raw = Some(crate::deepmeas::Want { every: true }),
+                Act::DeepRaw => g.deep_raw = Some(crate::board::policy::deep::Want { every: true }),
             }
         }
         if rearm_due && g.halted {
@@ -599,7 +599,9 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         // the deep measurements: the record read compressed, then its screen window raw, every sample of more than
         // the deepest compressed record
         if asked(|a| matches!(a, Act::DeepRaw)) > 0 {
-            let raw = frames.iter().filter(|f| !f.envelope && f.ch[0].len() > crate::compress::MAX_DEPTH as usize);
+            let raw = frames
+                .iter()
+                .filter(|f| !f.envelope && f.ch[0].len() > crate::board::policy::compress::MAX_DEPTH as usize);
             assert!(raw.count() > 0, "{}: no raw screen window of the deep record", case.name);
             let mut plays: Vec<&str> = trace
                 .lines()

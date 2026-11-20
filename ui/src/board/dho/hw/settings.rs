@@ -218,17 +218,17 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
-    if crate::compress::enabled() {
+    if crate::board::policy::compress::enabled() {
         live_compress(m, &mut s);
     }
     s
 }
 
-/// The live compression for the model (compress.rs): the factor of `compress::k_for` for the record of `s` where the
+/// The live compression for the model (compress.rs): the factor of `policy::compress::k_for` for the record of `s` where the
 /// model allows it (not in roll or scan), else none.
 pub(super) fn live_compress(m: &Model, s: &mut Settings) {
     if slow_mode(m) != Slow::Off
-        || !crate::compress::allowed(m)
+        || !crate::board::policy::compress::allowed(m)
         || s.la.is_some()
         || s.segments.is_some()
         || !matches!(s.mode, oos_hal::dho::acq::Mode::Normal)
@@ -236,7 +236,7 @@ pub(super) fn live_compress(m: &Model, s: &mut Settings) {
         return;
     }
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    s.compress = crate::compress::k_for(p.rate, s.tdiv, p.memsel);
+    s.compress = crate::board::policy::compress::k_for(p.rate, s.tdiv, p.memsel);
 }
 
 /// A reader of every frame in the UI that the model does not show (protocol watch, XY: `Shared::needs_raw`) switches
@@ -251,7 +251,7 @@ pub(super) fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
 /// (`seq::read_raw_again`) for the record the UI keeps.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn raw_newest(b: &Settings, p: &hz::Params) -> bool {
-    b.compress > 1 && p.memsel <= crate::compress::MAX_DEPTH
+    b.compress > 1 && p.memsel <= crate::board::policy::compress::MAX_DEPTH
 }
 
 /// The AUX OUT set-up of the menu choice. Pass/fail takes the default pulse of `auxout::PassFail` (docs/fork/auxout.md).

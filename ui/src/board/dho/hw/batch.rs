@@ -88,7 +88,7 @@ impl BatchRun {
         let Held { armed, avg, cores, last_batch, guard } = held;
         let (b, p, count, batch_ms) = (batch.0, *batch.1, batch.2, batch.3);
         guard.batch(false, false, unit_key(b, mask_map()));
-        crate::compress::note_batch_k(if raw_newest(b, &p) { b.compress } else { 1 });
+        crate::board::policy::compress::note_batch_k(if raw_newest(b, &p) { b.compress } else { 1 });
         let (la_words, raw_frame, deep_want) = self.reads((state, bar, c2h), clock, out, (b, &p, count), cores);
         unit_readings(state, bar, out, (b, &p), count, batch_ms);
         // hardware average: one frame, shown or not, the average cleared after a complete hold average
@@ -255,10 +255,10 @@ impl BatchRun {
             _ => None,
         };
         // live compression: the newest frame once more, raw, before anything arms the FPGA again; at most
-        // once per compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
+        // once per policy::compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
         let raw_frame = if raw_newest(b, &p)
             && count > 0
-            && self.comp_last.is_none_or(|t| since(clock.now_us(), t) >= crate::compress::RAW_PERIOD)
+            && self.comp_last.is_none_or(|t| since(clock.now_us(), t) >= crate::board::policy::compress::RAW_PERIOD)
         {
             self.comp_last = Some(clock.now_us());
             // the flag first: a guard taken in the argument would be held for the whole decode
@@ -276,12 +276,12 @@ impl BatchRun {
             None
         };
         // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
-        // once per deepmeas::PERIOD while running (deepmeas.rs)
+        // once per policy::deep::PERIOD while running (deepmeas.rs)
         let deep_want = out.lock().unwrap().deep_raw;
         let now_deep = clock.now_us();
         let deep = deep_want.filter(|_| count > 0).and_then(|w| {
             deep_raw_settings(b, &p)
-                .filter(|ds| crate::deepmeas::due(w, self.deep_last, now_deep, seq::frame_bytes(ds, &p)))
+                .filter(|ds| crate::board::policy::deep::due(w, self.deep_last, now_deep, seq::frame_bytes(ds, &p)))
         });
         let raw_frame = match deep {
             Some(ds) if raw_frame.is_none() => {

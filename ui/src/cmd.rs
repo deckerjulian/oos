@@ -159,7 +159,7 @@ pub fn stat_text(ui: &Ui) -> String {
         used,
         dropped,
         measured,
-        crate::compress::last_k()
+        crate::board::policy::compress::last_k()
     );
     // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
     let hdmi = ui.hdmi.out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));

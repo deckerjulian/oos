@@ -26,16 +26,16 @@ Host, release, one core: decode + draw of one 10 us/div frame 117 us raw, 12.9 u
 
 ## When it is on
 
-All of these (`compress::allowed`, `hw::live_compress`):
+All of these (`board::policy::compress::allowed`, `hw::live_compress`):
 
 - `acq.compress = on`;
 - not roll or scan (`hw::slow_mode`);
 - plain edge trigger, Normal acquisition, not Single, no segments, no mask, no zones, no zoom, no Z input, no LA, every
   shown channel DC (or DC 50 ohm) without the 20 MHz limit: the conditions of the dense fast path (`Ui::fast_ok`) plus
   Single, segments and LA;
-- nothing else reads the record on screen (`compress::raw_consumers_off`): no protocol decoder, no math channel or
-  FFT, the scope view (not spectrum, eye, power, Bode or step), DC trigger coupling (AC, LF and HF reject take the
-  software trigger level from the frame's samples);
+- nothing else reads the record on screen (`board::policy::compress::raw_consumers_off`): no protocol decoder, no math
+  channel or FFT, the scope view (not spectrum, eye, power, Bode or step), DC trigger coupling (AC, LF and HF reject
+  take the software trigger level from the frame's samples);
 - the UI's own readers are off: protocol watch and XY publish `Shared::needs_raw`, which the acquisition thread
   honours (`hw::raw_for_ui`);
 - at least `K_MIN` = 2 (8 samples per column), record at most `MAX_DEPTH` = 1 M points. Deeper records keep the
@@ -48,12 +48,12 @@ raw final frame (docs/fork/stop-exact.md).
 
 ## What stays raw
 
-Every record the UI measures is raw. At most once per `compress::RAW_PERIOD` (200 ms) the acquisition thread plays
-the newest frame of a compressed batch once more without compression (`seq::read_raw_again`, before the next arm and
-before prearm), and that frame takes the newest frame's place in the queue. `acquire` makes the record from it:
-measurements, cursors, FFT, decode, history, autoset. If the second read fails, the compressed frame is used and the
-status line says so. A raw read after every batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab
-round 2); once per 200 ms it is a few reads a second.
+Every record the UI measures is raw. At most once per `board::policy::compress::RAW_PERIOD` (200 ms) the acquisition
+thread plays the newest frame of a compressed batch once more without compression (`seq::read_raw_again`, before the
+next arm and before prearm), and that frame takes the newest frame's place in the queue. `acquire` makes the record from
+it: measurements, cursors, FFT, decode, history, autoset. If the second read fails, the compressed frame is used and the
+status line says so. A raw read after every batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round
+2); once per 200 ms it is a few reads a second.
 
 Between two raw records the newest record is of pairs. While running the UI does not measure those
 (`compress::hold`): the measurement shown stays that of the last raw record, so every value belongs to one record and
