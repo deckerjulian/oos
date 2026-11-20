@@ -795,9 +795,8 @@ pub struct Ui {
     offline_hold: Option<offline::LiveHold>,
     /// the external display: whether one is attached, its size, and the waveform copied for it (windows.rs)
     pub hdmi: windows::Hdmi,
-    /// start-up screen (startup.rs) and the last start-up's result (About)
-    pub start_up: Option<startup::StartScreen>,
-    start_up_last: Option<oos_hal::bootstatus::View>,
+    /// the start-up screen and the last start-up's result for About (startup.rs)
+    start_up: startup::StartUp,
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
