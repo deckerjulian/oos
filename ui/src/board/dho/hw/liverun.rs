@@ -10,7 +10,9 @@
 //! it.
 
 use super::port::{Hw, Port};
-use crate::board::{lock, CounterRead, CounterWant, DvmRead, DvmWant, Frame, HwShared, Shared};
+use crate::board::{
+    lock, CounterRead, CounterWant, DvmRead, DvmWant, Frame, HwShared, MaskRead, MaskWant, Shared, ZoneRead, ZoneWant,
+};
 use crate::model::*;
 use oos_hal::dho::afg::{Mod, ModShape, Wave};
 use oos_hal::dho::sim::{unit, GenState, Scene, Unit, View};
@@ -38,6 +40,9 @@ impl Port for SimPort {
 /// Femtoseconds of a microsecond.
 const US: i128 = 1_000_000_000;
 
+/// A box of the zone trigger: from (s, V) to (s, V), and whether the trace must touch it.
+type ZoneBox = ((f64, f64), (f64, f64), bool);
+
 /// What the screen does at a pass of the loop.
 enum Act {
     /// new settings: the model changed as the function says
@@ -52,6 +57,12 @@ enum Act {
     Counter(Option<CounterWant>),
     /// a request of the DVM block (`Shared::dvm_want`), None to stop it
     Dvm(Option<DvmWant>),
+    /// a request of the mask unit on CH1 (`Shared::mask_want`): a band of `MASK_TOL` around the scene's signal shifted
+    /// by this many seconds, the clear number; None to stop it
+    Mask(Option<(f64, u64)>),
+    /// a request of the zone trigger on CH1 (`Shared::zone_want`): a box from (s, V) to (s, V) the trace must touch
+    /// (true) or must not; None to stop it
+    Zone(Option<ZoneBox>),
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -419,6 +430,29 @@ const CASES: &[Case] = &[
         ..BASE
     },
     Case {
+        name: "mask-ch1-pass-then-fail-then-off",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-3), depth(m, "1k")).0,
+        freq_hz: 1e3,
+        period_us: Some(1_000),
+        passes: UNIT_PASSES,
+        script: &[(2, Act::Mask(Some((0.0, 0)))), (12, Act::Mask(Some((2.5e-4, 1)))), (22, Act::Mask(None))],
+        ..BASE
+    },
+    Case {
+        name: "zone-ch1-touched-untouched-then-stalled",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-3), depth(m, "1k")).0,
+        freq_hz: 1e3,
+        period_us: Some(1_000),
+        passes: UNIT_PASSES,
+        script: &[
+            // the sine's crest at 0.25 ms; nothing above 0.5 V
+            (2, Act::Zone(Some(((2e-4, 0.4), (3e-4, 0.6), true)))),
+            (12, Act::Zone(Some(((2e-4, 0.6), (3e-4, 0.7), false)))),
+            (22, Act::Zone(Some(((2e-4, 0.6), (3e-4, 0.7), true)))),
+        ],
+        ..BASE
+    },
+    Case {
         name: "dvm-ch2-then-ch1-then-off",
         model: |m| (ch(m, &[0, 1]), tdiv(m, 1e-3), depth(m, "1k"), m.ch[1].offset = DVM_OFFSET).0,
         freq_hz: 1e3,
@@ -432,6 +466,9 @@ const CASES: &[Case] = &[
         ..BASE
     },
 ];
+
+/// Passes of the mask and zone cases: three requests of ten passes each, the last one stalled twice and dropped.
+const UNIT_PASSES: u32 = 40;
 
 /// Passes of the DVM case: two requests of at least three readings each (a window of 2^28 samples is 1.7 s on the
 /// virtual clock, read every 0.5 s), then the stop.
@@ -452,6 +489,87 @@ struct Seen {
     gen: GenState,
     counter: Option<CounterRead>,
     dvm: Option<DvmRead>,
+    mask: Option<MaskRead>,
+    zone: Option<ZoneRead>,
+    /// frames decoded so far, and the mask or zone unit dropped for the settings (`Shared::unit_blocked`)
+    decoded: u64,
+    blocked: bool,
+}
+
+/// The volts a mask band keeps around the scene's signal (`Act::Mask`).
+const MASK_TOL: f32 = 0.1;
+
+/// The mask test of `Act::Mask` for the case's model `m`: CH1, each of the `MASK_COLUMNS` columns over the screen
+/// the scene's signal at its time less `shift` s, +-`MASK_TOL`.
+fn mask_want(case: &Case, m: &Model, (shift, clear): (f64, u64)) -> MaskWant {
+    let volts = signal(case.freq_hz, case.square);
+    let w = 10.0 * m.hw_time_per_div() as f64;
+    let n = crate::board::MASK_COLUMNS;
+    let at = |j: usize| volts(0, m.delay as f64 - w / 2.0 + (j as f64 + 0.5) / n as f64 * w - shift) as f32;
+    let lo = (0..n).map(|j| at(j) - MASK_TOL).collect();
+    let hi = (0..n).map(|j| at(j) + MASK_TOL).collect();
+    MaskWant { ch: 0, lo, hi, stop: false, clear }
+}
+
+/// Where a 0x4020 bit was last written: set or not, None when 0x4020 was not written.
+fn last_4020_bit(trace: &str, bit: u32) -> Option<bool> {
+    let v = trace.lines().rfind(|l| l.starts_with("Write") && l.contains("off: 16416,"))?;
+    v.rsplit("v: ").next()?.trim_end_matches(" }").parse::<u32>().ok().map(|v| v & bit != 0)
+}
+
+/// The passes from each request of `pick` in the script to the next one: (from, until, the request).
+fn spans<T: Copy>(case: &Case, seen: &[Seen], pick: fn(&Act) -> Option<T>) -> Vec<(usize, usize, T)> {
+    let asked: Vec<(usize, T)> = case.script.iter().filter_map(|(at, a)| Some((*at as usize, pick(a)?))).collect();
+    asked.iter().enumerate().map(|(i, &(at, w))| (at, asked.get(i + 1).map_or(seen.len(), |n| n.0), w)).collect()
+}
+
+/// The checks of the mask unit's requests against its readings after each pass until the next request: the band
+/// around the signal passes every frame, the shifted one (counters cleared) fails every one, the counts grow; after
+/// the stop no reading and the test off in 0x4020. Break it catches: a table not loaded or on another slot, column or
+/// scale, counters not latched or not cleared, a test left on.
+fn mask_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    for (from, until, want) in spans(case, seen, |a| if let Act::Mask(w) = a { Some(*w) } else { None }) {
+        let mut reads: Vec<MaskRead> = seen[from..until].iter().filter_map(|s| s.mask).collect();
+        reads.dedup_by_key(|r| r.frames);
+        let Some((shift, _)) = want else {
+            assert!(
+                seen[from + 1..until].iter().all(|s| s.mask.is_none()),
+                "{}: mask readings after its stop",
+                case.name
+            );
+            assert_eq!(last_4020_bit(trace, 1 << 15), Some(false), "{}: the mask test left on", case.name);
+            continue;
+        };
+        assert!(reads.len() >= 3, "{}: {} mask readings from pass {}", case.name, reads.len(), from);
+        for r in &reads {
+            let fails = if shift == 0.0 { 0 } else { r.frames };
+            assert_eq!((r.ch, r.slot, r.fails), (0, 0, fails), "{}: {:?}", case.name, r);
+        }
+    }
+}
+
+/// The checks of the zone trigger's requests: frames while it qualifies them (the crest touched, the box above it
+/// not), with its readings counting them; a box above the signal it must touch stalls the arms, and after two the
+/// guard drops the unit for these settings (`Shared::unit_blocked`), switches it off and the frames come again,
+/// filtered in software. Break it catches: a zone not loaded, of the wrong mode or column, a stall not counted or not
+/// dropped, frames that stop for good.
+fn zone_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    let all = spans(case, seen, |a| if let Act::Zone(w) = a { Some(*w) } else { None });
+    for &(from, until, want) in &all {
+        let reached = seen[from..until].iter().filter_map(|s| s.zone).map(|z| z.frames).max();
+        let decoded = seen[until - 1].decoded - seen[from].decoded;
+        let stalls = want.is_some_and(|((_, v), _, inside)| inside && v > 0.5);
+        let blocked = seen[from..until].iter().position(|s| s.blocked);
+        if !stalls {
+            assert!(blocked.is_none() && decoded > 0, "{}: from pass {}: {} frames", case.name, from, decoded);
+            assert!(reached.is_some_and(|n| n > 1), "{}: the zone's frames from pass {}", case.name, from);
+            continue;
+        }
+        let Some(b) = blocked else { panic!("{}: the stalled zone not dropped", case.name) };
+        let after = seen[until - 1].decoded - seen[from + b].decoded;
+        assert!(after > 0, "{}: no frames after the zone was dropped", case.name);
+        assert_eq!(last_4020_bit(trace, 1 << 1), Some(false), "{}: the zone left armed", case.name);
+    }
 }
 
 /// The checks of the DVM block's requests in a case's script against the readings after each pass until the next
@@ -782,7 +900,15 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
         pass += 1;
         let mut g = lock(&shared);
         // the state after the pass before this one (`Seen`)
-        seen.push(Seen { gen: sim.borrow().generator(), counter: g.counter, dvm: g.dvm });
+        seen.push(Seen {
+            gen: sim.borrow().generator(),
+            counter: g.counter,
+            dvm: g.dvm,
+            mask: g.mask,
+            zone: g.zone,
+            decoded: g.decoded,
+            blocked: g.unit_blocked.is_some(),
+        });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
                 Act::Set(f) => {
@@ -799,6 +925,11 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
                 Act::Gen(w) => g.afg[0] = Some(*w),
                 Act::Counter(w) => g.counter_want = *w,
                 Act::Dvm(w) => g.dvm_want = *w,
+                Act::Mask(w) => g.mask_want = w.map(|w| mask_want(case, &m, w)),
+                Act::Zone(w) => {
+                    g.zone_want =
+                        w.map(|(a, b, inside)| ZoneWant { ch: 0, zones: vec![(vec![a, b], inside)], clear: 0 })
+                }
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
@@ -873,6 +1004,8 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         generator_checks(case, &seen);
         counter_checks(case, &trace, &seen);
         dvm_checks(case, &trace, &seen);
+        mask_checks(case, &trace, &seen);
+        zone_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
         // what the screen asked for in the script was done
