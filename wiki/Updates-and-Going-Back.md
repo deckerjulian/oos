@@ -13,6 +13,21 @@ From 0.1.1 on, the scope first restarts into the new build by itself (kexec), an
 
 **From 0.1.6 or older, install 0.1.7 first** (its file is in the [0.1.7 release](https://github.com/dekajoule/oos/releases/tag/v0.1.7)), then the latest. From 0.1.8 on the image brings another device tree (the GPU and the video encoder on). 0.1.7 and later start such an image by kexec with its own tree before they install it; 0.1.6 cannot and refuses it. The USB stick ([[Installation]]) writes any version directly.
 
+**From 0.1.13 or older to 0.1.14 or later, not over the web page:** the package (47 MB) is larger than the restart into
+a new build of 0.1.13 and older can carry, and the web page's install ends in a kernel panic (nothing is written;
+switch off at the mains and on again, and the old build starts). Install it from a shell on the scope (SSH, or telnet
+in 0.1.13) with `--no-kexec`, which writes the image directly:
+
+```sh
+oos-update install /mnt/usb/oos-0.1.14.oosupd --no-kexec --execute
+```
+
+The package can stay on a USB stick in the front port, which OOS mounts at `/mnt/usb`; copying it to `/tmp` first
+needs SCP or SFTP on the computer. Then switch off at the mains, wait 30 seconds and switch on: that start is the
+trial. This way has not been tried from 0.1.13 on a unit yet; it is the path 0.1.13 already has for packages without
+a kexec trial. Or use the USB stick install of the stock system ([[Installation]]). From 0.1.14 on, updates over the web page
+carry packages of this size again.
+
 The new build runs on trial. If it crashes in a loop or never becomes stable, the previous image is written back.
 **System > Update** shows the state, **System > Roll back update** (or `oos-update rollback --execute` in a shell)
 returns to the previous image.
