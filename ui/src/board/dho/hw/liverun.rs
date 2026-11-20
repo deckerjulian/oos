@@ -581,17 +581,16 @@ fn zone_checks(case: &Case, trace: &str, seen: &[Seen]) {
     }
 }
 
-/// The checks of the LA words read with the records of a triggered case with the LA on: the newest frame of every
-/// batch carries them, as many over as long a time as its analog record (n_la = memsel x m / 2 at m / 2 LA samples
+/// The checks of the LA words read with the records of a triggered case with the LA on: every frame carries them (a
+/// batch is one frame while the LA is on, `seq::frames`, la.md 10: only the newest frame of a batch has its LA), as many over as long a time as its analog record (n_la = memsel x m / 2 at m / 2 LA samples
 /// per analog sample, la.md 3.3), from the same start before the trigger, and they are the scene's count of
 /// `LA_TICK_S` steps: two words next to each other differ by 0 or 1, and the count advances by the record's time.
 /// Break it catches: an LA read not made or not delivered, a window of another length or start, a time base of the
 /// LA record other than its words', words out of order.
 fn la_record_checks(case: &Case, frames: &[Frame]) {
-    let with: Vec<&Frame> = frames.iter().filter(|f| f.la.is_some()).collect();
-    assert!(with.len() >= 3, "{}: {} frames with their LA words", case.name, with.len());
-    for f in with {
-        let Some(la) = &f.la else { continue };
+    assert!(frames.len() >= 3, "{}: {} frames", case.name, frames.len());
+    for f in frames {
+        let Some(la) = &f.la else { panic!("{}: frame {} without its LA words", case.name, f.seq) };
         let (n, span) = (la.words.len(), f.ch[0].len() as f64 * f.dt);
         assert!(
             (n as f64 * la.dt - span).abs() <= la.dt,

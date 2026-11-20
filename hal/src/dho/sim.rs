@@ -1679,35 +1679,34 @@ mod tests {
     // analog frame played into the LA read, or bytes left in the stream for the next batch
     #[test]
     fn the_la_read_of_a_record_is_the_scenes_lines_from_its_start() {
-        let s = Settings { tdiv: 100e-9, depth: 1000, frames: 3, window: None, ..Settings::default() };
-        let (mut st, p) = configured(&s);
-        let view = View { cal: CAL, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
-        // the lines count steps of 10 ns (m = 1: an LA word every two analog samples)
-        let la = |t: f64| (t / 1e-8) as u64 as u16;
-        let first_fs = US;
-        let scene = Scene {
-            volts: Box::new(sine),
-            la: Some(Box::new(la)),
-            first_fs,
-            period_fs: Some(20 * US),
-            auto_fs: None,
-            view,
-        };
-        let (u, mut bar, mut c2h, mut clock) = unit(scene);
-        let mut dma = DmaBuf::new();
-        let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream| {
-            seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, &mut clock, false, 12, |_| {}, || false, || false)
-        };
-        assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3));
-        let w = seq::acquire_la(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).expect("the LA read");
-        let at = u.borrow().trigger_fs(2).expect("the newest frame");
-        let (pre, dot) = (p.pre as i128 / 2, 2 * p.dot_fs as i128);
-        assert_eq!(w.len(), p.memsel as usize / 2, "n_la = memsel x m / 2 words");
-        for (k, &x) in w.iter().enumerate() {
-            assert_eq!(x, la((at + (k as i128 - pre) * dot) as f64 * 1e-15), "word {}", k);
+        // one, two and four channels: m = 1, 2 and 4 LA samples per two analog samples (la.md 3.1)
+        for mask in [0b0001u32, 0b0011, 0b1111] {
+            let m = crate::dho::la::sample_mode(mask) as i128;
+            let s = Settings { tdiv: 100e-9, depth: 1000, frames: 3, window: None, mask, ..Settings::default() };
+            let (mut st, p) = configured(&s);
+            let view = View { cal: CAL, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+            // the lines count steps of 10 ns
+            let la = |t: f64| (t / 1e-8) as u64 as u16;
+            let period_fs = Some(20 * US);
+            let scene =
+                Scene { volts: Box::new(sine), la: Some(Box::new(la)), first_fs: US, period_fs, auto_fs: None, view };
+            let (u, mut bar, mut c2h, mut clock) = unit(scene);
+            let mut dma = DmaBuf::new();
+            let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream| {
+                seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, &mut clock, false, 12, |_| {}, || false, || false)
+            };
+            assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "mask {:#x}", mask);
+            let w = seq::acquire_la(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).expect("the LA read");
+            let at = u.borrow().trigger_fs(2).expect("the newest frame");
+            let (pre, dot) = (p.pre as i128 * m / 2, 2 * p.dot_fs as i128 / m);
+            assert_eq!(w.len() as i128, p.memsel as i128 * m / 2, "mask {:#x}: n_la = memsel x m / 2 words", mask);
+            for (k, &x) in w.iter().enumerate() {
+                let want = la((at + (k as i128 - pre) * dot) as f64 * 1e-15);
+                assert_eq!(x, want, "mask {:#x}: word {}", mask, k);
+            }
+            assert!(u.borrow().stream.is_empty(), "mask {:#x}: bytes left after the LA read", mask);
+            assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "mask {:#x}: the next batch", mask);
         }
-        assert!(u.borrow().stream.is_empty(), "bytes left after the LA read");
-        assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "the next batch after the LA read");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
