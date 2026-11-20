@@ -8,7 +8,7 @@
 
 use super::{block, e, kw, nearest_index, num, parse_bool, parse_wave, suffix, t, Scpi};
 use crate::model::*;
-use crate::protocols::PROTOS;
+use crate::protocols::{Decoder, PROTOS};
 use crate::ui::Ui;
 
 pub(super) fn bus_index(tok: &str) -> Option<usize> {

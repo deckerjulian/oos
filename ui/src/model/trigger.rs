@@ -61,6 +61,17 @@ pub enum Slope {
     Either,
 }
 
+impl Slope {
+    /// The slope of an edge as oos-dsp names it.
+    pub fn of(s: oos_dsp::trigger::Slope) -> Slope {
+        match s {
+            oos_dsp::trigger::Slope::Rising => Slope::Rise,
+            oos_dsp::trigger::Slope::Falling => Slope::Fall,
+            oos_dsp::trigger::Slope::Either => Slope::Either,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TrigMode {
     Auto,
@@ -480,45 +491,6 @@ impl Model {
             _ => u[self.trig_src] = true,
         }
         u
-    }
-
-    /// Time scale of the trigger condition (s): the search resolution must resolve it.
-    pub fn trig_feature(&self) -> f64 {
-        let t = |x: f32| x as f64;
-        match self.trig_type {
-            TrigType::Edge | TrigType::Pattern => f64::INFINITY,
-            TrigType::Bus => self.bus_bit() / 20.0,
-            TrigType::Video => 0.25e-6,
-            TrigType::SetupHold => t(self.setup.min(self.hold)) / 4.0,
-            TrigType::Timeout => t(self.trig_t1) / 20.0,
-            TrigType::NthEdge => t(self.nth_idle) / 20.0,
-            TrigType::Runt if self.trig_when == WhenKind::Off => f64::INFINITY,
-            TrigType::Window if self.win_mode != WinMode::Inside => f64::INFINITY,
-            _ => {
-                t(self.trig_t1.min(if matches!(self.trig_when, WhenKind::In | WhenKind::Out) {
-                    self.trig_t2
-                } else {
-                    f32::MAX
-                })) / 20.0
-            }
-        }
-    }
-
-    /// Record length the trigger needs to decide (s).
-    pub fn trig_span(&self) -> f64 {
-        let t = |x: f32| x as f64;
-        match self.trig_type {
-            TrigType::Video => match self.video_sync {
-                VSync::AllLines => 4.0 * self.video_std.line(),
-                _ => 1.1 * self.video_std.lines() as f64 * self.video_std.line(),
-            },
-            TrigType::Timeout | TrigType::Duration => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 6e-3,
-            TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
-            // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
-            TrigType::Bus => self.bus_frame_span(),
-            TrigType::Edge | TrigType::Pattern => 0.0,
-            _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
-        }
     }
 
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and

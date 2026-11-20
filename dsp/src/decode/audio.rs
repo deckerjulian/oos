@@ -10,11 +10,14 @@
 use super::{edge_times, Kind, Packet};
 use crate::edges::{edges, states};
 use crate::protocols::{BusWhat, ModuleInfo};
+use crate::trigger::Slope;
 
 /// I2S: data, bit clock and word select.
 pub static I2S: ModuleInfo = ModuleInfo::new("I2s", "I2S", "audio")
     .roles([Some("SD"), Some("SCK"), Some("WS"), None])
     .starts_on(BusWhat::Data, 0x7fff)
+    // a frame starts at a change of WS, either way
+    .starts_with(2, Slope::Either)
     .bit(|_, _| 0.6e-6)
     .decoder(|l| Ok(i2s(l.need(1, "source channel off")?, l.lines[2], l.main(), l.sh.bits, l.thr, l.hy)));
 

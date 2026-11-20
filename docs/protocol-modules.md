@@ -21,7 +21,7 @@ demo traffic, a view), with one line that registers it:
 | protocol trigger | Trigger > Bus: what "Frame", "ID/Addr", "Data", "Error" mean | `info`: `trigger`, the protocol's own rule (none: `ModuleInfo::trigger_match` uses the generic rule of `dsp/src/protocols.rs`) |
 | trigger start value | what Trigger > Bus looks for when it is switched on | `info`: `trigger_default` (Frame) |
 | trigger timing | sampling (a twentieth of a bit) and the search window | `info`: `bit` (required), `span` (200 bits) |
-| hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `start_edge` (falling), `start_role` (the main line) |
+| hardware edge | the edge the hardware trigger arms on in front of the protocol trigger, and on which role's line | `info`: `start` (`starts_with`: the main line, falling) |
 | first settings | channels, LA lines, threshold, shared-row values and the demo's trigger when the protocol is chosen | `setup` (CH3 / CH4, 1.65 V) |
 | old setups | how a setup saved before the protocol was a module maps onto its options | `legacy` (none) |
 | demo traffic | the host build's simulated signals, on the channels of `setup` | `demo` (none) |

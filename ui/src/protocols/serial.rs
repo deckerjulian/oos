@@ -101,6 +101,8 @@ impl Protocol for ModbusAscii {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocols::Decoder;
+
     // Break it catches: a setup written while these were built in losing its protocol, baud rate, parity or word size
     #[test]
     fn old_setups_keep_protocol_and_options() {

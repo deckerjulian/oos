@@ -11,6 +11,7 @@
 use crate::cphy::CPHY;
 use crate::decode::*;
 use crate::linecode::{MANCHESTER, MLT3};
+use crate::trigger::Slope;
 
 /// What the protocol trigger looks for in the decoded packets ([`ModuleInfo::trigger_match`]); the trigger point is
 /// the end of the matching field.
@@ -118,6 +119,9 @@ pub struct ModuleInfo {
     pub trigger: TriggerRule,
     /// What the protocol trigger looks for when it is switched on: a value the demo traffic contains.
     pub trigger_default: (BusWhat, u32),
+    /// Where a frame starts, for the hardware trigger in front of the protocol trigger: the role whose line it arms
+    /// on (an index of `roles`), and the edge.
+    pub start: (usize, Slope),
     /// The call of the decoder with the module's options and shared rows ([`ModuleInfo::decode`]).
     pub decoder: Decoder,
     /// The bit time ([`ModuleInfo::bit_time`]); a decoder without one has 0.
@@ -137,6 +141,7 @@ impl ModuleInfo {
             diff_ok: false,
             trigger: |_, _, _| None,
             trigger_default: (BusWhat::Frame, 0x40),
+            start: (0, Slope::Falling),
             decoder: |_| Err(NO_DECODER),
             bit: |_, _| 0.0,
             span: |_, _| None,
@@ -161,6 +166,12 @@ impl ModuleInfo {
     /// The decoder with the protocol trigger starting on "`what` = `value`".
     pub const fn starts_on(self, what: BusWhat, value: u32) -> ModuleInfo {
         ModuleInfo { trigger_default: (what, value), ..self }
+    }
+
+    /// The decoder whose frames start on the line of role `role` with `edge`, instead of a falling edge of the main
+    /// line (start bit, SOF, break, I2C start).
+    pub const fn starts_with(self, role: usize, edge: Slope) -> ModuleInfo {
+        ModuleInfo { start: (role, edge), ..self }
     }
 
     /// The module with this call of its decoder.
@@ -231,8 +242,9 @@ fn generic_match(what: BusWhat, v: u32, p: &Packet) -> bool {
 }
 
 /// Every decoder, in the order setups and SCPI count them: the seven core protocols first, at fixed places, then
-/// the others in the order they were added. A new one goes to the end; a key is never reused.
-pub static MODULES: [&ModuleInfo; 29] = [
+/// the others in the order they were added. A new one goes to the end; a key is never reused. The tests of oos-ui add
+/// the example module at the end (the feature `example`).
+pub static MODULES: &[&ModuleInfo] = &[
     &UART,
     &I2C,
     &SPI,
@@ -262,7 +274,12 @@ pub static MODULES: [&ModuleInfo; 29] = [
     &MIL1553,
     &I2S,
     &USB,
+    #[cfg(feature = "example")]
+    &example::EXAMPLE,
 ];
+
+#[cfg(feature = "example")]
+pub mod example;
 
 #[cfg(test)]
 mod tests {
@@ -388,6 +405,8 @@ mod tests {
     fn every_declared_module_is_registered() {
         let mut keys = Vec::new();
         declared(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut keys);
+        // the example module of oos-ui's tests is registered with its feature only
+        keys.retain(|k| cfg!(feature = "example") || k != "Example");
         assert!(keys.len() >= MODULES.len(), "{:?}", keys);
         for k in keys {
             assert!(MODULES.iter().any(|m| m.key == k), "{}: its ModuleInfo is not in oos_dsp::protocols::MODULES", k);

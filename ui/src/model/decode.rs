@@ -21,6 +21,42 @@ impl Proto {
     pub const LIN: Proto = Proto::Module(4);
     pub const PARALLEL: Proto = Proto::Module(5);
     pub const CPHY: Proto = Proto::Module(6);
+
+    /// What oos-dsp says of the protocol's decoder: its `ModuleInfo`, at the same place in
+    /// `oos_dsp::protocols::MODULES` as the module in `protocols::MODULES` (`protocols::every_decoder_is_complete`).
+    /// What the scope shows of it (menu rows, labels, demo traffic) is the module's, `Proto::module`.
+    fn info(self) -> &'static oos_dsp::protocols::ModuleInfo {
+        let Proto::Module(i) = self;
+        oos_dsp::protocols::MODULES[i as usize]
+    }
+
+    /// Name in saved setups: the module's key.
+    pub fn key(self) -> String {
+        self.info().key.to_string()
+    }
+
+    pub fn from_key(k: &str) -> Option<Proto> {
+        (0..oos_dsp::protocols::MODULES.len()).map(|i| Proto::Module(i as u8)).find(|p| p.key() == k)
+    }
+
+    pub fn name(self) -> &'static str {
+        self.info().name
+    }
+
+    /// The role whose line frames start on, where the hardware trigger in front of the protocol trigger looks.
+    pub fn start_role(self) -> usize {
+        self.info().start.0
+    }
+
+    /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
+    pub fn roles(self) -> [Option<&'static str>; 4] {
+        self.info().roles
+    }
+
+    /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
+    pub fn diff_ok(self) -> bool {
+        self.info().diff_ok
+    }
 }
 
 /// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
