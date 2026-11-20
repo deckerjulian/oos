@@ -10,7 +10,7 @@
 //! it.
 
 use super::port::{Hw, Port};
-use crate::board::{lock, CounterRead, CounterWant, Frame, HwShared, Shared};
+use crate::board::{lock, CounterRead, CounterWant, DvmRead, DvmWant, Frame, HwShared, Shared};
 use crate::model::*;
 use oos_hal::dho::afg::{Mod, ModShape, Wave};
 use oos_hal::dho::sim::{unit, GenState, Scene, Unit, View};
@@ -50,6 +50,8 @@ enum Act {
     Gen(crate::board::Gen),
     /// a request of the frequency counter (`Shared::counter_want`), None to stop it
     Counter(Option<CounterWant>),
+    /// a request of the DVM block (`Shared::dvm_want`), None to stop it
+    Dvm(Option<DvmWant>),
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -416,7 +418,31 @@ const CASES: &[Case] = &[
         ],
         ..BASE
     },
+    Case {
+        name: "dvm-ch2-then-ch1-then-off",
+        model: |m| (ch(m, &[0, 1]), tdiv(m, 1e-3), depth(m, "1k"), m.ch[1].offset = DVM_OFFSET).0,
+        freq_hz: 1e3,
+        period_us: Some(1_000),
+        passes: DVM_PASSES,
+        script: &[
+            (2, Act::Dvm(Some(DvmWant { ch: 1, lane: None }))),
+            (DVM_PASSES / 2, Act::Dvm(Some(DvmWant { ch: 0, lane: None }))),
+            (DVM_PASSES - 10, Act::Dvm(None)),
+        ],
+        ..BASE
+    },
 ];
+
+/// Passes of the DVM case: two requests of at least three readings each (a window of 2^28 samples is 1.7 s on the
+/// virtual clock, read every 0.5 s), then the stop.
+const DVM_PASSES: u32 = 240;
+
+/// Readings of the DVM block after a start before its first whole window: 2^28 samples at 156.25 MSa/s take 1.7 s, it
+/// is read every 0.5 s (and a pass of the case's loop).
+const DVM_EARLY: usize = 3;
+
+/// The vertical offset of CH2 in the DVM case: its codes are not those of CH1, and the volts take it out again.
+const DVM_OFFSET: f32 = 0.3;
 
 /// What the screen's side sees of the unit after each pass: what the generator was told and the counter's reading.
 /// `seen[k]` is taken when the loop asks before pass k + 1, so it is the state after pass k, the pass that applied a
@@ -425,6 +451,44 @@ const CASES: &[Case] = &[
 struct Seen {
     gen: GenState,
     counter: Option<CounterRead>,
+    dvm: Option<DvmRead>,
+}
+
+/// The checks of the DVM block's requests in a case's script against the readings after each pass until the next
+/// request (as `counter_checks`): readings of the channel asked for on its lane (`dvm::lane`), the first `DVM_EARLY`
+/// (before the first whole window) none valid and all after them valid, at least two of them, each the scene's sine:
+/// DC 0 V, AC and AC+DC rms its amplitude over the root of 2; after the stop none and 0x2244 written 0. Break it
+/// catches: a block not started, not read or not restarted for another channel, a result before a whole window, a lane
+/// or channel mixed up, the offset or scale of the volts wrong, a block left running.
+fn dvm_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    let asked: Vec<(u32, Option<DvmWant>)> =
+        case.script.iter().filter_map(|(at, a)| if let Act::Dvm(w) = a { Some((*at, *w)) } else { None }).collect();
+    let mut m = Model::default();
+    (case.model)(&mut m);
+    let mask = super::settings(&m, false).mask;
+    let rms = 0.5 / 2f64.sqrt();
+    for (i, &(at, want)) in asked.iter().enumerate() {
+        let until = asked.get(i + 1).map_or(seen.len(), |n| n.0 as usize);
+        let mut reads: Vec<DvmRead> = seen[at as usize..until].iter().filter_map(|s| s.dvm).collect();
+        reads.dedup_by_key(|r| r.n);
+        let Some(w) = want else {
+            assert!(reads.is_empty(), "{}: readings after the stop: {:?}", case.name, reads);
+            let last = trace.lines().rfind(|l| l.starts_with("Write") && l.contains("off: 8772,"));
+            assert!(last.is_some_and(|l| l.ends_with("v: 0 }")), "{}: the DVM block not stopped", case.name);
+            continue;
+        };
+        let lane = oos_hal::dho::dvm::lane(mask, w.ch);
+        assert!(reads.iter().all(|r| (r.ch, Some(r.lane)) == (w.ch, lane)), "{}: {:?}", case.name, reads);
+        // a window of 2^28 samples is 1.7 s, the readings 0.5 s apart: the first three see no whole window
+        let early = reads.iter().take(DVM_EARLY).filter(|r| r.volts.is_some()).count();
+        assert!(reads.len() > DVM_EARLY && early == 0, "{}: valid before the first window: {:?}", case.name, reads);
+        let valid: Vec<[f64; 3]> = reads[DVM_EARLY..].iter().map(|r| r.volts.unwrap_or_default()).collect();
+        assert!(valid.len() >= 2, "{}: {} valid readings of the request at pass {}", case.name, valid.len(), at);
+        for v in valid {
+            let ok = v[0].abs() < 5e-3 && v[1..].iter().all(|x| (x - rms).abs() < rms * 2e-2);
+            assert!(ok, "{}: CH{}: {:?} V, not 0 V and {} V rms", case.name, w.ch + 1, v, rms);
+        }
+    }
 }
 
 /// The checks of the counter's requests in a case's script against the readings after each pass (`seen[k]`: after k
@@ -718,7 +782,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
         pass += 1;
         let mut g = lock(&shared);
         // the state after the pass before this one (`Seen`)
-        seen.push(Seen { gen: sim.borrow().generator(), counter: g.counter });
+        seen.push(Seen { gen: sim.borrow().generator(), counter: g.counter, dvm: g.dvm });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
                 Act::Set(f) => {
@@ -734,6 +798,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
                 Act::AvgClear => g.avg_clear += 1,
                 Act::Gen(w) => g.afg[0] = Some(*w),
                 Act::Counter(w) => g.counter_want = *w,
+                Act::Dvm(w) => g.dvm_want = *w,
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
@@ -807,6 +872,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         }
         generator_checks(case, &seen);
         counter_checks(case, &trace, &seen);
+        dvm_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
         // what the screen asked for in the script was done
