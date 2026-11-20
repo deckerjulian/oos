@@ -43,7 +43,7 @@ fn sandboxed(req: &[u8]) -> bool {
 
 /// `Web::poll` and `Web::answer` (the web remote on TCP 8080: the page's requests, `/cmd`, the uploads to
 /// `/waveform` and `/update`, MCP): return for any bytes; a request whose head and body are whole is answered; an
-/// answer is a status line the server knows, a head, and a body as long as its Content-Length says.
+/// answer is a status line the server knows, a head, and a body as long as its Content-Length says (none after a HEAD).
 #[test]
 fn hostile_requests() {
     let _one_at_a_time = sends();
@@ -62,6 +62,8 @@ fn hostile_requests() {
           \r\n"
         .to_vec(),
         b"GET /ui-state HTTP/1.1\r\n\r\n".to_vec(),
+        b"HEAD /wave.csv HTTP/1.1\r\n\r\n".to_vec(),
+        b"PUT /cmd?c=key+run HTTP/1.1\r\n\r\n".to_vec(),
         b"GET /lxi/identification HTTP/1.1\r\nHost: [2001:db8::7]:8080\r\n\r\n".to_vec(),
         b"GET /nothing/here?a=b HTTP/1.1\r\nHost: x\r\nIf-None-Match: \"0\"\r\n\r\n".to_vec(),
         post("/waveform?slot=2&name=..%2Fclock%0A.csv", b"0,1\n1e-6,2\n2e-6,3\n"),
@@ -88,13 +90,14 @@ fn hostile_requests() {
         if answer.is_empty() {
             return if whole { Err("a whole request without an answer".into()) } else { Ok(()) };
         }
-        const STATUS: [&str; 9] = [
+        const STATUS: [&str; 10] = [
             "200 OK",
             "202 Accepted",
             "304 Not Modified",
             "400 Bad Request",
             "403 Forbidden",
             "404 Not Found",
+            "405 Method Not Allowed",
             "409 Conflict",
             "413 Payload Too Large",
             "503 Service Unavailable",
@@ -107,6 +110,12 @@ fn hostile_requests() {
         let length = String::from_utf8_lossy(&answer[..end])
             .lines()
             .find_map(|l| l.strip_prefix("Content-Length: ").and_then(|v| v.parse::<usize>().ok()));
+        // a HEAD gets the head of the GET, with its Content-Length, and no body
+        // (the method as the server reads it: the first word of the request)
+        let head_request = String::from_utf8_lossy(b).split_whitespace().next() == Some("HEAD");
+        if whole && head_request {
+            return if answer.len() == end + 4 { Ok(()) } else { Err("a body after the head of a HEAD".into()) };
+        }
         // an answer to a request with bytes left unread can be cut short by the reset of the connection
         if whole && length.is_some_and(|n| n != answer.len() - end - 4) {
             return Err(format!("Content-Length {:?} before a body of {} bytes", length, answer.len() - end - 4));

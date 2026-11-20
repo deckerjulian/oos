@@ -22,8 +22,11 @@ has no mark, or when an entry names a route the code does not answer.
 
 - HTTP/1.1, one request per connection: every answer says `Connection: close`. A body is read by its
   `Content-Length` (none: no body); chunked bodies are not read.
-- Only `POST` is told apart. Every other method (`GET`, `HEAD`, `PUT`, ...) is taken as `GET`, and a `HEAD` gets the
-  body too. A route without a method of its own below answers every method alike, `POST` included.
+- Each route takes the methods in its heading below (`methods_of`): a `GET` route takes `HEAD` too, except `/cmd`,
+  whose `GET` does something; `/update` takes `GET` and `POST`. A `HEAD` gets the head of the `GET` with its
+  `Content-Length` and no body (the live pictures: no `Content-Length`, since their length is known only when one is
+  made). Another method gets 405 with an `Allow` header naming the ones the route takes. Before 0.1.15 only `POST`
+  was told apart, every other method was taken as `GET` and a `HEAD` got the body too.
 - The route is the path before `?`, as sent (no percent-decoding). Of the query parameters, `name` of
   `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
   refused.
@@ -53,7 +56,8 @@ Every route can answer these; the body is `text/plain`.
 |---|---|---|
 | 403 | `refused` | a request another site made through a browser (`foreign`, below), on every route |
 | 403 | `refused` | `POST /update` and `/mcp` from a peer outside `net.allow`, when the head is in (body not read) |
-| 404 | `not found` | a path that is no route, and a route asked with a method it does not take |
+| 404 | `not found` | a path that is no route, whatever the method |
+| 405 | `method not allowed` | a route asked with a method it does not take; `Allow` names the ones it takes |
 | 413 | `request too large` | a body above its limit (announced or sent) |
 | 503 | `busy, try again` | a 2nd body above 1 MiB or waveform upload, a 3rd answer above 48 KiB, a 9th picture asked |
 
@@ -200,7 +204,7 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
 - Request: one JSON-RPC 2.0 message (no batch), Model Context Protocol over streamable HTTP with plain JSON answers:
   no session, no event stream. Methods: `initialize` (answers the `protocolVersion` asked, `2025-06-18` without one,
   capability `tools`, `serverInfo` `oos-ui` and its version), `ping`, `tools/list`, `tools/call` with the tools below.
-  Any method of HTTP is taken alike; a `GET` has no body and gets the parse error.
+  `POST` only: another method gets 405 (before 0.1.15 any method was taken alike, and a `GET` got the parse error).
 - Answer: 200 `application/json`, the JSON-RPC answer; errors as JSON-RPC errors with status 200: -32700 parse error,
   -32601 method not found, -32602 unknown tool. A message without `id` (a notification) gets 202 with no body
   and an empty `Content-Type`.

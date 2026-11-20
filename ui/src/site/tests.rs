@@ -1022,3 +1022,45 @@ fn a_port_taken_at_the_start_is_taken_once_it_is_free() {
         assert!(!again(&mut h, &mut scpi), "web {web}: listening already, nothing to do");
     }
 }
+
+// Break it catches (#205): every method but POST taken as GET, a HEAD answered with the body, a POST to a GET route
+// answered as the GET (POST /wave.csv gave the CSV) and a GET of a POST route as a route that is none.
+#[test]
+fn each_route_takes_its_methods_and_a_head_gets_no_body() {
+    let mut h = Web::open(0);
+    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+    let mut ask = |line: &str, ui: &mut Ui, scpi: &mut crate::scpi::Scpi| {
+        request(&mut h, ui, &cv, scpi, format!("{line} HTTP/1.1\r\nContent-Length: 0\r\n\r\n").into_bytes())
+    };
+    let parts = |r: &str| {
+        let (head, body) = r.split_once("\r\n\r\n").unwrap_or((r, ""));
+        (head.to_string(), body.to_string())
+    };
+    // a HEAD: the head of the GET, its length, no body
+    let (get_head, get_body) = parts(&ask("GET /ui-state", &mut ui, &mut scpi));
+    let (head, body) = parts(&ask("HEAD /ui-state", &mut ui, &mut scpi));
+    assert!(get_head.starts_with("HTTP/1.1 200") && !get_body.is_empty(), "{get_head}");
+    assert!(head.starts_with("HTTP/1.1 200") && body.is_empty(), "{head} / {body}");
+    assert!(head.contains(&format!("Content-Length: {}", get_body.len())), "{head}");
+    // a method a route does not take: 405, with the ones it takes
+    for (line, allow) in [
+        ("POST /wave.csv", "GET, HEAD"),
+        ("PUT /ui-state", "GET, HEAD"),
+        ("GET /mcp", "POST"),
+        ("GET /waveform?slot=1", "POST"),
+        ("DELETE /update", "GET, HEAD, POST"),
+        ("HEAD /cmd?c=key%20runstop", "GET"),
+    ] {
+        let (head, body) = parts(&ask(line, &mut ui, &mut scpi));
+        assert!(head.starts_with("HTTP/1.1 405"), "{line}: {head}");
+        assert!(
+            head.contains(&format!("Allow: {allow}\r\n")) || head.ends_with(&format!("Allow: {allow}")),
+            "{line}: {head}"
+        );
+        assert_eq!(body, if line.starts_with("HEAD") { "" } else { "method not allowed" }, "{line}");
+    }
+    // a path that is no route: 404 whatever the method
+    for line in ["GET /nothing", "PUT /nothing"] {
+        assert!(ask(line, &mut ui, &mut scpi).starts_with("HTTP/1.1 404"), "{line}");
+    }
+}
