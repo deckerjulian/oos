@@ -370,6 +370,9 @@ pub struct MaskRead {
     pub chans: u32,
 }
 
+/// What the UI wants of raw reads of deep records for the measurements (`Shared::deep_raw`; None: off).
+pub type DeepWant = Option<crate::deepmeas::Want>;
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -434,7 +437,7 @@ pub struct Shared {
     /// the UI reads records the model does not tell the board about (protocol watch, XY): no live compression
     pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
-    pub deep_raw: Option<crate::deepmeas::Want>,
+    pub deep_raw: DeepWant,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,

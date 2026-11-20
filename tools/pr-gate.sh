@@ -49,7 +49,7 @@ live="${live}hal/src/dho/(bus|gpio|lines|panel|board|selfcal|coretrim|levels)\.r
 # (docs/board-on-a-host.md 7) the live run reaches, so a change of what they do to the unit or deliver shows in its
 # trace and frames. A class of its own, before $live and $proven (it takes these files out of `ui/src/board/`); a file
 # joins only when the live run reaches all of its paths
-looped='^(ui/src/board/dho/hw/(seg|slow)\.rs$|hal/src/dho/(roll|seg)\.rs$)'
+looped='^(ui/src/board/dho/hw/(seg|slow|stop)\.rs$|hal/src/dho/(roll|seg)\.rs$)'
 # what the comparison does prove of the hardware paths: the code that builds register sequences, and what only builds
 # oos-fpgad. Every file of the hardware paths is in $live or here (tools/tests/test_pr_scripts.py fails on one that is
 # in neither or in both), and one that is in neither counts as live: a new or a split file needs a unit until it is
