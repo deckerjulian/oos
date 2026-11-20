@@ -901,8 +901,12 @@ impl Unit {
         } else if rise & 1 != 0 && c & 0x4000_0000 != 0 && !la_only {
             self.play(first, last);
         } else if rise & 1 != 0 && c & 0x2200_0000 == 0x2200_0000 {
-            // a new view takes effect at the arm
+            // a new view takes effect at the arm. The arm overwrites the ring from frame `first` on
+            // (acquisition-start.md, "Reading a stored frame again"): its pre-trigger fill takes that frame at once, so
+            // the record stored there is gone even when a stop comes before the trigger (assumed, as the loop's batch
+            // path has it); the later frames are overwritten as they are recorded
             self.view = self.scene.view;
+            self.ring.remove(&first);
             self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0, rearm_fs: None });
             self.recorded = 0;
         } else if rise & 4 != 0 {
@@ -1225,6 +1229,53 @@ mod tests {
         assert!(afe.writes > 1, "the front end was written: {}", afe.writes);
         assert_eq!(lines.gears.first(), Some(&(2, 1)));
         assert!(lines.gears.iter().skip(1).any(|&(ch, _)| ch == 1), "configure set the gear of CH2: {:?}", lines.gears);
+    }
+
+    /// The arms in the trace of `u`: the writes of 0x400c that set record-seq mode (bits 29 and 25) without play.
+    fn arms(u: &Unit) -> usize {
+        let arm = |e: &&Event| matches!(e, Event::Write { off: 0x400c, v, .. } if v & 0x6200_0000 == 0x2200_0000);
+        u.trace.iter().filter(arm).count()
+    }
+
+    // Break it catches: a batch armed ahead whose wait arms again or that records nothing while the batch before is
+    // decoded, an arm that leaves the record stored in its first frame, a disarm that does not stop the FSM
+    #[test]
+    fn a_batch_armed_ahead_records_while_the_one_before_is_decoded_and_a_disarm_stops_it() {
+        let s = Settings { tdiv: 10e-9, frames: 3, window: None, ..Settings::default() };
+        let (mut st, p) = configured(&s);
+        // a trigger every 100 us from 1 us
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, Some(100 * US), None));
+        let mut dma = DmaBuf::new();
+        let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream, clock: &mut Time, ahead: bool| {
+            seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, clock, ahead, 1, |_| {}, || false, || false)
+        };
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, false), Ok(3));
+        // armed ahead, then 1 ms of decoding: the ring records meanwhile, and the wait finds the batch complete
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
+        let armed_us = u.borrow().now_us();
+        clock.sleep_us(1000);
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, true), Ok(3));
+        let read_us = u.borrow().now_us();
+        assert_eq!(arms(&u.borrow()), 2, "the batch armed ahead was armed again");
+        for k in 0..3 {
+            let at = u.borrow().trigger_fs(k).expect("recorded") / US;
+            assert!(at > armed_us && at < armed_us + 1000, "frame {} at {} us: not during the decode", k, at);
+        }
+        let v = seq::decode_volts(&dma.data()[..seq::frame_bytes(&s, &p)], 1, CAL);
+        let t0 = (u.borrow().trigger_fs(0).unwrap() - p.pre as i128 * p.dot_fs as i128) as f64 * 1e-15;
+        assert!((v[0][0] as f64 - sine(0, t0)).abs() < 1e-3, "frame 0 is the record armed ahead");
+        // armed ahead and stopped before its first trigger: the record of frame 0 is gone, frames 1 and 2 keep theirs
+        let kept = u.borrow().trigger_fs(1);
+        u.borrow_mut().scene.period_fs = None;
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
+        seq::disarm(&mut st, &mut bar, &mut c2h, |_| {}).unwrap();
+        assert_eq!(bar.rd(0x4034), scu::status::STOPPED, "the FSM stopped");
+        u.borrow_mut().scene.period_fs = Some(100 * US);
+        clock.sleep_us(1000);
+        let u = u.borrow();
+        assert_eq!((u.trigger_fs(0), u.trigger_fs(1)), (None, kept), "the ring after the disarm");
+        let late = u.trace.iter().any(|e| matches!(e, Event::Recorded { us, .. } if *us > read_us));
+        assert!(!late, "recorded after the stop");
     }
 
     // Break it catches: an executor that waits on the wall clock, or a ring wait that counts frames by anything but

@@ -85,6 +85,13 @@ enum Act {
     DeepRaw,
 }
 
+/// A switch of system.conf that the board reads itself and a case turns on for the test's thread.
+#[derive(Clone, Copy, PartialEq)]
+enum Switch {
+    /// arming ahead, `acq.prearm = on` (`plan::prearm_on`)
+    Prearm,
+}
+
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
 /// the scene (None: it never triggers; roll and scan do not wait for it), the passes of the loop, and what the screen
 /// does at which pass.
@@ -102,6 +109,8 @@ struct Case {
     cal: bool,
     /// the live compression on (`policy::compress::enabled`, a switch of the unit that is off by default)
     compress: bool,
+    /// the switches of system.conf on for this case (all others off, as by default)
+    switches: &'static [Switch],
     passes: u32,
     script: &'static [(u32, Act)],
 }
@@ -116,6 +125,7 @@ const BASE: Case = Case {
     la: false,
     cal: false,
     compress: false,
+    switches: &[],
     passes: 30,
     script: &[],
 };
@@ -147,6 +157,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 30,
         script: &[],
     },
@@ -159,6 +170,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 30,
         script: &[],
     },
@@ -171,6 +183,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 30,
         script: &[],
     },
@@ -183,6 +196,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 20,
         script: &[],
     },
@@ -195,6 +209,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 6,
         script: &[],
     },
@@ -207,6 +222,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 8,
         script: &[(3, Act::Set(|m| tdiv(m, 2e-6)))],
     },
@@ -219,6 +235,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 20,
         script: &[],
     },
@@ -231,6 +248,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 30,
         script: &[(12, Act::Hold)],
     },
@@ -243,6 +261,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 40,
         script: &[],
     },
@@ -255,6 +274,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 40,
         script: &[],
     },
@@ -267,6 +287,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -279,6 +300,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: SCAN_PASSES,
         script: &[(SCAN_PASSES / 2, Act::Rearm)],
     },
@@ -299,6 +321,7 @@ const CASES: &[Case] = &[
         la: true,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 40,
         script: &[],
     },
@@ -311,6 +334,7 @@ const CASES: &[Case] = &[
         la: true,
         cal: false,
         compress: false,
+        switches: &[],
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -323,6 +347,7 @@ const CASES: &[Case] = &[
         la: false,
         cal: false,
         compress: false,
+        switches: &[],
         passes: 60,
         script: &[(1, Act::SegRun), (40, Act::SegShow(7))],
     },
@@ -364,6 +389,14 @@ const CASES: &[Case] = &[
         name: "auto-then-stop-two-views",
         model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
         script: &[(12, Act::Hold), (14, Act::StopView(1e-6, 0.0)), (17, Act::StopView(5e-7, 1e-6))],
+        ..BASE
+    },
+    Case {
+        name: "prearm-ch1-1us-new-settings-then-stop",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        switches: &[Switch::Prearm],
+        passes: 22,
+        script: &[(8, Act::SetView(|m| tdiv(m, 2e-6))), (16, Act::Hold), (18, Act::StopView(1e-6, 0.0))],
         ..BASE
     },
     Case {
@@ -514,6 +547,8 @@ struct Seen {
     /// frames decoded so far, and the mask or zone unit dropped for the settings (`Shared::unit_blocked`)
     decoded: u64,
     blocked: bool,
+    /// events in the unit's trace so far: pass k's are those from `seen[k - 1]` to `seen[k]`
+    events: usize,
 }
 
 /// The volts a mask band keeps around the scene's signal (`Act::Mask`).
@@ -541,6 +576,65 @@ fn last_4020_bit(trace: &str, bit: u32) -> Option<bool> {
 fn spans<T: Copy>(case: &Case, seen: &[Seen], pick: fn(&Act) -> Option<T>) -> Vec<(usize, usize, T)> {
     let asked: Vec<(usize, T)> = case.script.iter().filter_map(|(at, a)| Some((*at as usize, pick(a)?))).collect();
     asked.iter().enumerate().map(|(i, &(at, w))| (at, asked.get(i + 1).map_or(seen.len(), |n| n.0), w)).collect()
+}
+
+/// A line of the trace as an access: (true for a write, offset, value); None for other events.
+fn access(line: &str) -> Option<(bool, u32, u32)> {
+    let num = |key: &str| line.split(key).nth(1)?.split([',', ' ']).next()?.parse::<u32>().ok();
+    let write = line.starts_with("Write");
+    (write || line.starts_with("Read")).then_some(())?;
+    Some((write, num("off: ")?, num("v: ")?))
+}
+
+/// An arm in the trace: the write of 0x400c that sets record-seq mode (bits 29 and 25) without play (bit 30).
+fn is_arm(line: &str) -> bool {
+    access(line).is_some_and(|(w, off, v)| w && off == 0x400c && v & 0x6200_0000 == 0x2200_0000)
+}
+
+/// The checks of arming ahead (`Switch::Prearm`), on the unit's trace pass by pass: every pass that reads a batch
+/// while running arms the next before it ends and waits for nothing after that arm; the pass after it waits without
+/// arming again. New settings and the STOP disarm first: the pass that takes them starts with the disarm (its poll of
+/// 0x4034, then the stop sequence in 0x4004), and nothing is recorded after its stop (bit 31) until the next arm;
+/// after the STOP nothing is recorded or played at all. Break it catches: no arming ahead, a batch armed ahead and
+/// armed again, a configuration or a STOP while the FSM records, a view in STOP read from the ring the arm wrote.
+fn prearm_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    if !case.switches.contains(&Switch::Prearm) {
+        return;
+    }
+    let lines: Vec<&str> = trace.lines().collect();
+    let pass = |k: usize| &lines[seen[k - 1].events..seen[k].events];
+    let at = |f: fn(&Act) -> bool| case.script.iter().find(|(_, a)| f(a)).map(|(k, _)| *k as usize);
+    let (set, hold) = (at(|a| matches!(a, Act::SetView(_))), at(|a| matches!(a, Act::Hold)));
+    let hold = hold.expect("a STOP in the case");
+    let poll = |l: &&str| access(l).is_some_and(|(w, off, _)| !w && off == 0x4080);
+    let mut ahead = 0;
+    for k in 1..hold {
+        let p = pass(k);
+        let Some(read) = p.iter().rposition(|l| l.starts_with("Played")) else { continue };
+        let arm = p.iter().rposition(|l| is_arm(l)).filter(|&a| a > read && !p[a..].iter().any(poll));
+        assert!(arm.is_some(), "{}: pass {} read a batch and did not arm the next ahead", case.name, k);
+        ahead += 1;
+        let next = pass(k + 1);
+        if Some(k + 1) != set && k + 1 < hold {
+            let wait = next.iter().position(poll).unwrap_or(next.len());
+            assert!(!next[..wait].iter().any(|l| is_arm(l)), "{}: pass {} armed again", case.name, k + 1);
+        }
+    }
+    assert!(ahead >= 10, "{}: {} batches armed ahead", case.name, ahead);
+    for k in set.into_iter().chain([hold]) {
+        let p = pass(k);
+        let first = p.iter().position(|l| l.starts_with("Write"));
+        let first = first.unwrap_or_else(|| panic!("{}: pass {} wrote nothing: no disarm", case.name, k));
+        let stop = access(p[first]).is_some_and(|(_, off, _)| off == 0x4004);
+        let polled = p[..first].iter().any(|l| access(l).is_some_and(|(w, off, _)| !w && off == 0x4034));
+        assert!(stop && polled, "{}: pass {} did not start with the disarm: {}", case.name, k, p[first]);
+        let halt = |l: &&str| access(l).is_some_and(|(w, off, v)| w && off == 0x4004 && v & 1 << 31 != 0);
+        let halt = p.iter().position(halt).unwrap_or_else(|| panic!("{}: pass {} did not stop the FSM", case.name, k));
+        let rest = &lines[seen[k - 1].events + halt..];
+        let until = if k == hold { rest.len() } else { rest.iter().position(|l| is_arm(l)).unwrap_or(rest.len()) };
+        let late = rest[..until].iter().find(|l| l.starts_with("Recorded") || (k == hold && l.starts_with("Played")));
+        assert!(late.is_none(), "{}: after the disarm of pass {}: {:?}", case.name, k, late);
+    }
 }
 
 /// The checks of the mask unit's requests against its readings after each pass until the next request: the band
@@ -901,6 +995,7 @@ impl Drop for Switches {
     fn drop(&mut self) {
         crate::board::policy::compress::force(None);
         crate::deepmeas::force(None);
+        super::plan::force_prearm(None);
     }
 }
 
@@ -922,6 +1017,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     // the switches of this thread, put back when the case ends (a failing one too)
     let _switches = Switches;
     crate::board::policy::compress::force(Some(case.compress));
+    super::plan::force_prearm(Some(case.switches.contains(&Switch::Prearm)));
     let want = super::settings(&m, false);
     let volts = signal(case.freq_hz, case.square);
     // in Average mode an offset that differs from trigger to trigger, which the average takes out
@@ -983,6 +1079,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
             zone: g.zone,
             decoded: g.decoded,
             blocked: g.unit_blocked.is_some(),
+            events: sim.borrow().trace.len(),
         });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
@@ -1084,6 +1181,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         measure_checks(case, &g);
         mask_checks(case, &trace, &seen);
         zone_checks(case, &trace, &seen);
+        prearm_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
         // what the screen asked for in the script was done
@@ -1091,9 +1189,11 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         if asked(|a| matches!(a, Act::Force)) > 0 {
             assert!(trace.contains("off: 8284, v: 32 }") && !g.force, "{}: no force pulse (0x205c bit 5)", case.name);
         }
+        // every view in STOP read again from the stored record; none after a batch armed ahead, which wrote the ring
         let views = asked(|a| matches!(a, Act::StopView(..)));
         let replayed = frames.iter().filter(|f| f.fixed_ti.is_some()).count();
-        assert_eq!(replayed, views, "{}: every view in STOP read again from the stored record", case.name);
+        let ahead = case.switches.contains(&Switch::Prearm);
+        assert_eq!(replayed, if ahead { 0 } else { views }, "{}: views in STOP read again", case.name);
         if asked(|a| matches!(a, Act::FinalRaw)) > 0 {
             assert_eq!(g.final_ack, g.final_req, "{}: the final frame request answered", case.name);
             let last = frames.last().expect("frames before the STOP");
