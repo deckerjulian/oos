@@ -221,7 +221,7 @@ impl Ui {
         m.tfine = 1.0;
         m.delay = 0.0;
         m.run = RunState::Run;
-        self.operation_serial = self.operation_serial.wrapping_add(1);
+        let id = self.ops.next();
         m.hw_stamp += 1;
         let stamp = m.hw_stamp;
         // any channel set: the slots per channel follow the core table (`levels::slots`); a channel whose slots
@@ -229,7 +229,7 @@ impl Ui {
         let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some())
             .then_some(Unit { id: stamp, tries: 1, since: self.now });
         self.auto = Some(AutoRun {
-            id: self.operation_serial,
+            id,
             back,
             stamp,
             unit,

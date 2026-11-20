@@ -555,7 +555,7 @@ fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry
     before.assert_held(&ui);
     assert!(!ui.sim_generating(), "the worker request itself is finished");
     assert!(
-        ui.scpi_completed.contains(&completed_generation),
+        ui.ops.completed.contains(&completed_generation),
         "no-hit generation is a completed operation, not an accepted capture"
     );
     assert_eq!((ui.m.run, ui.m.status), (RunState::Run, TrigStatus::Wait));

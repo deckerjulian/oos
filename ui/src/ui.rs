@@ -836,9 +836,8 @@ pub struct Ui {
     pub records: u64,
     /// auto set-up under way on the hardware (autoset.rs)
     auto: Option<autoset::AutoRun>,
-    operation_serial: u64,
-    scpi_completed: std::collections::VecDeque<OperationToken>,
-    single_operation: u64,
+    /// the jobs a remote command can wait for: their numbers and the receipts of the finished ones (scpi_operations.rs)
+    ops: scpi_operations::Ledger,
     /// when the bar of views after an auto set-up came up (ui/autoset.rs)
     auto_bar: Option<f64>,
     /// request number of the last `:DEBug:SLOTs?`
