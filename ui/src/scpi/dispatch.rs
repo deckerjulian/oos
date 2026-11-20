@@ -281,272 +281,7 @@ impl Scpi {
         if nodes.first().is_some_and(|n| kw(n, "TIMebase")) {
             return self.timebase_cmd(ui, &nodes, query, arg);
         }
-        let m = &mut ui.m;
-        let src = &ui.src;
-        let r: Option<Option<Vec<u8>>> = (|| {
-            let n0 = nodes.first().copied().unwrap_or("");
-            let (k0, sfx) = suffix(n0);
-            if !query && nodes.len() == 1 {
-                if kw(n0, "RUN") {
-                    m.run = RunState::Run;
-                    m.run_sweep();
-                    return Some(None);
-                }
-                if kw(n0, "STOP") {
-                    m.run = RunState::Stop;
-                    return Some(None);
-                }
-                if kw(n0, "SINGle") {
-                    m.set_sweep(TrigMode::Single);
-                    m.run = RunState::Run;
-                    return Some(None);
-                }
-            }
-            if kw(k0, "CHANnel") && (nodes.len() == 2 || nodes.len() == 3) {
-                let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
-                // the channel settings of the table (settings/channel.rs), of channel c; a value a row does not take
-                // is refused with -224 or falls through to the later branches (-113), each as before the table
-                if let Some(row) = crate::settings::command(&crate::settings::channel::SLICES, &nodes[1..]) {
-                    if query {
-                        return Some(t(&row.query(m, c)));
-                    }
-                    if !row.take(m, c, arg) {
-                        if !crate::settings::channel::REFUSES.contains(&row.key) {
-                            return None;
-                        }
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    }
-                    return Some(None);
-                }
-                let n1 = nodes[1];
-                if nodes.len() == 3 && kw(nodes[1], "LABel") && kw(nodes[2], "CONTent") {
-                    if query {
-                        return Some(t(&m.ch_label[c]));
-                    }
-                    let text = arg.trim().trim_matches('"').chars().take(10).collect::<String>();
-                    m.ch_label[c] = text;
-                    return Some(None);
-                }
-                if nodes.len() == 3 && kw(nodes[1], "LABel") && kw(nodes[2], "SHOW") {
-                    if query {
-                        return Some(t(if m.ch_label[c].is_empty() { "0" } else { "1" }));
-                    }
-                    return match parse_bool(arg) {
-                        Some(false) => {
-                            m.ch_label[c].clear();
-                            Some(None)
-                        }
-                        Some(true) => {
-                            if m.ch_label[c].is_empty() {
-                                m.ch_label[c] = format!("CH{}", c + 1);
-                            }
-                            Some(None)
-                        }
-                        None => {
-                            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                            Some(None)
-                        }
-                    };
-                }
-                if nodes.len() != 2 {
-                    return None;
-                }
-                let expand_gnd = m.v_expand_gnd;
-                let slow_deskew = m.time_per_div() > 10e-6;
-                let fine = m.fine_v;
-                let ch = &mut m.ch[c];
-                if kw(n1, "SCALe") {
-                    if query {
-                        return Some(t(&e(ch.volts_per_div() as f64)));
-                    }
-                    let old = ch.volts_per_div();
-                    let want = num(arg).filter(|&v| v > 0.0)? / ch.probe;
-                    (ch.vscale, ch.vfine) = Ui::vscale_for(want, fine);
-                    if expand_gnd && old > 0.0 {
-                        ch.offset *= ch.volts_per_div() / old;
-                    }
-                } else if kw(n1, "OFFSet") || kw(n1, "POSition") {
-                    if query {
-                        return Some(t(&e(ch.offset as f64)));
-                    }
-                    ch.offset = num(arg)?;
-                } else if kw(n1, "COUPling") {
-                    if query {
-                        return Some(t(ch.coupling.name()));
-                    }
-                    ch.coupling = match arg.to_ascii_uppercase().as_str() {
-                        "DC" => Coupling::Dc,
-                        "AC" => Coupling::Ac,
-                        "GND" => Coupling::Gnd,
-                        "DC50" if board().couplings().contains(&Coupling::Dc50) => Coupling::Dc50,
-                        _ => return None,
-                    };
-                } else if kw(n1, "PROBe") {
-                    if query {
-                        return Some(t(&e(ch.probe as f64)));
-                    }
-                    ch.probe = num(arg).filter(|&p| p > 0.0)?;
-                } else if kw(n1, "BIAS") {
-                    // The screen's zero correction, subtracted from the channel reading.
-                    // The DHO programmer manual has no header for it.
-                    if query {
-                        return Some(t(&e(ch.bias as f64)));
-                    }
-                    let Some(v) = num(arg) else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return Some(None);
-                    };
-                    ch.bias = v;
-                } else if kw(n1, "TCALibrate") {
-                    if query {
-                        return Some(t(&e(ch.skew as f64)));
-                    }
-                    // The manual refuses a deskew change on a slow time base.
-                    if slow_deskew {
-                        self.push_err("-224,\"Illegal parameter value\" timebase".into());
-                        return Some(None);
-                    }
-                    let Some(v) = num(arg).filter(|v| v.abs() <= SKEW_MAX) else {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                        return Some(None);
-                    };
-                    ch.skew = v;
-                } else {
-                    return None;
-                }
-                return Some(None);
-            }
-            if kw(n0, "TRIGger") && nodes.len() == 3 && ["RS232", "SPI", "IIC"].iter().any(|b| kw(nodes[1], b)) {
-                return ser::trig(m, nodes[1], nodes[2], arg, query);
-            }
-            if kw(n0, "TRIGger") {
-                let last = *nodes.last()?;
-                if nodes.len() == 2 && kw(last, "STATus") {
-                    let s = match (m.run, m.status) {
-                        (RunState::Stop, _) => "STOP",
-                        (_, TrigStatus::Triggered) => "TD",
-                        (_, TrigStatus::Auto) => "AUTO",
-                        (_, TrigStatus::Wait) => "WAIT",
-                        _ => "STOP",
-                    };
-                    return Some(t(s));
-                }
-                // the trigger values of the settings table (settings/trigger.rs); a value a row does not take falls
-                // through to the later branches, which answer -113, as before the table
-                if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {
-                    if query {
-                        return Some(t(&row.query(m, 0)));
-                    }
-                    return row.take(m, 0, arg).then_some(None);
-                }
-                if nodes.len() == 3 && kw(nodes[1], "EDGE") {
-                    if kw(last, "SOURce") {
-                        if query {
-                            return Some(t(&m
-                                .trig_line()
-                                .map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
-                        }
-                        // D0..D15 like Rigol's source names, with the LA on
-                        match arg
-                            .trim()
-                            .to_ascii_uppercase()
-                            .strip_prefix('D')
-                            .and_then(|n| n.parse::<u8>().ok())
-                            .filter(|&n| n < 16 && m.trig_la_ok())
-                        {
-                            Some(n) => m.trig_la = Some(n),
-                            None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
-                        }
-                    } else if kw(last, "LEVel") {
-                        if query {
-                            return Some(t(&e(m.trig_level as f64)));
-                        }
-                        m.trig_level = num(arg)?;
-                    } else {
-                        return None;
-                    }
-                    return Some(None);
-                }
-                return None;
-            }
-            if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "ULTRa") && kw(nodes[2], "MAXFrame") {
-                if query {
-                    return Some(t(&m.segments.to_string()));
-                }
-                let Some(n) = arg.trim().parse::<usize>().ok() else {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    return Some(None);
-                };
-                let steps = crate::ui::SEGMENTS;
-                m.segments = *steps.iter().min_by_key(|s| s.abs_diff(n)).unwrap_or(&0);
-                return Some(None);
-            }
-            if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
-                // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
-                let a = arg.trim().to_ascii_uppercase();
-                let want = if a.starts_with("AUTO") {
-                    0
-                } else {
-                    let (v, mul) = match a.chars().last() {
-                        Some('K') => (&a[..a.len() - 1], 1e3),
-                        Some('M') => (&a[..a.len() - 1], 1e6),
-                        _ => (&a[..], 1.0),
-                    };
-                    (v.parse::<f64>().ok()? * mul).round() as u64
-                };
-                m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
-                return Some(None);
-            }
-            // the acquisition settings of the table (settings/acquisition.rs), where :CORes was, before :SEGMents,
-            // :AVERages:HARDware, :TYPE and :AVERages; a value a row does not take is refused with -224 or falls
-            // through to the later branches (-113), each as before the table
-            if kw(n0, "ACQuire") {
-                if let Some(row) = crate::settings::command(&crate::settings::acquisition::SLICES, &nodes[1..]) {
-                    if query {
-                        return Some(t(&row.query(m, 0)));
-                    }
-                    if !row.take(m, 0, arg) {
-                        if !crate::settings::acquisition::REFUSES.contains(&row.key) {
-                            return None;
-                        }
-                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    }
-                    return Some(None);
-                }
-            }
-            // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:INTerval <s> (:HARDware is a row)
-            if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
-                match (nodes.get(2).copied(), query) {
-                    (None, true) => return Some(t(&m.segments.to_string())),
-                    (None, false) => {
-                        m.segments = if parse_bool(arg) == Some(false) {
-                            0
-                        } else {
-                            (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX)
-                        }
-                    }
-                    (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
-                    (Some(x), false) if kw(x, "INTerval") => m.seg_ivl = num(arg)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
-                    _ => return None,
-                }
-                return Some(None);
-            }
-            if kw(n0, "ACQuire") && nodes.len() == 2 {
-                let n1 = nodes[1];
-                if query {
-                    // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
-                    let (sr, depth) = src.rate_depth(m);
-                    if kw(n1, "SRATe") {
-                        return Some(t(&e(sr)));
-                    }
-                    if kw(n1, "MDEPth") {
-                        return Some(t(&e(depth as f64)));
-                    }
-                }
-                return None;
-            }
-            None
-        })();
+        let r = self.model_cmd(&mut ui.m, &ui.src, &nodes, query, arg);
         if let Some(resp) = r {
             if !query {
                 ui.mark_changed();
@@ -830,165 +565,8 @@ impl Scpi {
             && kw(suffix(n0).0, "SOURce")
             && nodes.len() >= 2
         {
-            if !oos_hal::model::platform().caps.has_gen() {
-                self.push_err(format!(
-                    "-241,\"Hardware missing\" no generator on the {}",
-                    oos_hal::model::platform().caps.name
-                ));
-                return None;
-            }
-            // :SOURce<n> talks to generator n, whichever one the page shows
-            let g = suffix(n0).1.unwrap_or(1) - 1;
-            if g != ui.m.gen_sel {
-                let shown = ui.m.gen_sel;
-                ui.m.gen_select(g);
-                let r = self.exec_cmd(ui, cv, cmd);
-                ui.m.gen_select(shown);
-                return r;
-            }
-            let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
-            let m = &ui.m;
-            let x = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite());
-            if has("OUTPut") {
-                if query {
-                    return t(if m.afg_on { "1" } else { "0" });
-                }
-                match parse_bool(arg) {
-                    Some(on) => ui.afg_set(Some(on), None, None, None),
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
-            }
-            // modulation (Rigol DG style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>, :MOD:FM:DEViation <Hz>,
-            // :MOD:PM:DEViation <deg>, :MOD:<type>:INTernal:FREQuency <Hz>, :MOD:<type>:INTernal:FUNCtion <shape>
-            if has("MOD") {
-                const SHAPES: [&str; 6] = ["SINusoid", "SQUare", "TRIangle", "RAMP", "NRAMp", "NOISe"];
-                let a = arg.trim();
-                if has("INTernal") && has("FUNCtion") {
-                    if query {
-                        return t(&SHAPES[m.afg_mod_shape.min(5)]
-                            .chars()
-                            .filter(|c| c.is_ascii_uppercase())
-                            .collect::<String>());
-                    }
-                    match SHAPES.iter().position(|s| kw(a, s)) {
-                        Some(i) => ui.m.afg_mod_shape = i,
-                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                    }
-                    return None;
-                }
-                let (cur, key): (f64, u8) = if has("INTernal") && has("FREQuency") {
-                    (m.afg_mod_rate, 0)
-                } else if has("DEPTh") {
-                    (m.afg_mod_depth, 1)
-                } else if has("DEViation") && has("PM") {
-                    (m.afg_pm_dev, 3)
-                } else if has("DEViation") {
-                    (m.afg_fm_dev, 2)
-                } else if has("TYPe") {
-                    if query {
-                        return t(["NONE", "AM", "FM", "PM"][m.afg_mod.min(3)]);
-                    }
-                    match ["AM", "FM", "PM"].iter().position(|k| kw(a, k)) {
-                        Some(i) => ui.m.afg_mod = i + 1,
-                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                    }
-                    ui.afg_set(None, None, None, None);
-                    return None;
-                } else {
-                    // :MOD[:STATe]
-                    if query {
-                        return t(if m.afg_mod > 0 { "1" } else { "0" });
-                    }
-                    match parse_bool(arg) {
-                        Some(on) => ui.m.afg_mod = if on { ui.m.afg_mod.max(1) } else { 0 },
-                        None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                    }
-                    return None;
-                };
-                if query {
-                    return t(&e(cur));
-                }
-                match x {
-                    Some(v) => {
-                        let mm = &mut ui.m;
-                        match key {
-                            0 => mm.afg_mod_rate = v.clamp(0.002, 1e6),
-                            1 => mm.afg_mod_depth = v.clamp(0.0, 120.0),
-                            2 => mm.afg_fm_dev = v.max(0.01),
-                            _ => mm.afg_pm_dev = v.clamp(0.0, 360.0),
-                        }
-                        ui.afg_set(None, None, None, None);
-                    }
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
-            }
-            // :FUNCtion:SQUare:DUTY / :FUNCtion:PULSe:DUTY and :FUNCtion:RAMP:SYMMetry in %
-            // arbitrary wave: :ARB:DATA <v>,<v>,... (one period, any scale), :ARB:CAPTure CHAN<n> (the screen of a channel)
-            if has("ARB") {
-                if has("DATA") && !query {
-                    let v: Vec<f32> = arg.split(',').filter_map(num).collect();
-                    if !ui.afg_arb_load(&v) {
-                        self.push_err(format!("-224,\"Illegal parameter value\" {} samples", v.len()));
-                    }
-                } else if has("CAPTure") && !query {
-                    match parse_ch(arg).ok_or("no channel".to_string()).and_then(|c| ui.afg_arb_capture(c)) {
-                        Ok(_) => {}
-                        Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
-                    }
-                } else {
-                    self.push_err("-113,\"Undefined header\" :SOURce:ARB".into());
-                }
-                return None;
-            }
-            if has("FUNCtion") && (has("DUTY") || has("SYMMetry")) {
-                let duty = has("DUTY");
-                if query {
-                    return t(&e(if duty { m.afg_duty } else { m.afg_symmetry }));
-                }
-                match x {
-                    Some(v) if duty => ui.m.afg_duty = v.clamp(5.0, 95.0),
-                    Some(v) => ui.m.afg_symmetry = v.clamp(0.0, 100.0),
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
-            }
-            if has("FUNCtion") {
-                const SHORT: [&str; 7] = ["SIN", "SQU", "RAMP", "PULS", "NOIS", "DC", "ARB"];
-                const LONG: [&str; 7] = ["SINusoid", "SQUare", "RAMP", "PULSe", "NOISe", "DC", "ARB"];
-                if query {
-                    return t(SHORT[m.afg_wave.min(6)]);
-                }
-                match LONG.iter().position(|l| kw(arg.trim(), l)) {
-                    Some(i) => {
-                        ui.m.afg_wave = i;
-                        ui.afg_set(None, None, None, None);
-                    }
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
-            }
-            let (want, cur): (u8, f64) = if has("FREQuency") {
-                (0, m.afg_freq)
-            } else if has("VOLTage") && has("OFFSet") {
-                (2, m.afg_offset)
-            } else if has("VOLTage") {
-                (1, m.afg_ampl)
-            } else {
-                (9, 0.0)
-            };
-            if want < 9 {
-                if query {
-                    return t(&e(cur));
-                }
-                match x {
-                    Some(v) => {
-                        ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v))
-                    }
-                    None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
-                }
-                return None;
+            if let Some(resp) = self.source_cmd(ui, cv, &nodes, query, arg, cmd) {
+                return resp;
             }
         }
         if kw(n0, "SYSTem") {
@@ -1023,6 +601,480 @@ impl Scpi {
         }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
         None
+    }
+
+    /// The commands that set or read the model alone: `:RUN`, `:STOP`, `:SINGle`, the channels, the trigger and the
+    /// acquisition. None when `nodes` is none of them (the next branch of `exec_cmd` gets it), else its answer.
+    fn model_cmd(
+        &mut self,
+        m: &mut Model,
+        src: &crate::wave::Source,
+        nodes: &[&str],
+        query: bool,
+        arg: &str,
+    ) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        let (k0, sfx) = suffix(n0);
+        if !query && nodes.len() == 1 {
+            if kw(n0, "RUN") {
+                m.run = RunState::Run;
+                m.run_sweep();
+                return Some(None);
+            }
+            if kw(n0, "STOP") {
+                m.run = RunState::Stop;
+                return Some(None);
+            }
+            if kw(n0, "SINGle") {
+                m.set_sweep(TrigMode::Single);
+                m.run = RunState::Run;
+                return Some(None);
+            }
+        }
+        if kw(k0, "CHANnel") && (nodes.len() == 2 || nodes.len() == 3) {
+            let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
+            // the channel settings of the table (settings/channel.rs), of channel c; a value a row does not take
+            // is refused with -224 or falls through to the later branches (-113), each as before the table
+            if let Some(row) = crate::settings::command(&crate::settings::channel::SLICES, &nodes[1..]) {
+                if query {
+                    return Some(t(&row.query(m, c)));
+                }
+                if !row.take(m, c, arg) {
+                    if !crate::settings::channel::REFUSES.contains(&row.key) {
+                        return None;
+                    }
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
+                return Some(None);
+            }
+            let n1 = nodes[1];
+            if nodes.len() == 3 && kw(nodes[1], "LABel") && kw(nodes[2], "CONTent") {
+                if query {
+                    return Some(t(&m.ch_label[c]));
+                }
+                let text = arg.trim().trim_matches('"').chars().take(10).collect::<String>();
+                m.ch_label[c] = text;
+                return Some(None);
+            }
+            if nodes.len() == 3 && kw(nodes[1], "LABel") && kw(nodes[2], "SHOW") {
+                if query {
+                    return Some(t(if m.ch_label[c].is_empty() { "0" } else { "1" }));
+                }
+                return match parse_bool(arg) {
+                    Some(false) => {
+                        m.ch_label[c].clear();
+                        Some(None)
+                    }
+                    Some(true) => {
+                        if m.ch_label[c].is_empty() {
+                            m.ch_label[c] = format!("CH{}", c + 1);
+                        }
+                        Some(None)
+                    }
+                    None => {
+                        self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                        Some(None)
+                    }
+                };
+            }
+            if nodes.len() != 2 {
+                return None;
+            }
+            let expand_gnd = m.v_expand_gnd;
+            let slow_deskew = m.time_per_div() > 10e-6;
+            let fine = m.fine_v;
+            let ch = &mut m.ch[c];
+            if kw(n1, "SCALe") {
+                if query {
+                    return Some(t(&e(ch.volts_per_div() as f64)));
+                }
+                let old = ch.volts_per_div();
+                let want = num(arg).filter(|&v| v > 0.0)? / ch.probe;
+                (ch.vscale, ch.vfine) = Ui::vscale_for(want, fine);
+                if expand_gnd && old > 0.0 {
+                    ch.offset *= ch.volts_per_div() / old;
+                }
+            } else if kw(n1, "OFFSet") || kw(n1, "POSition") {
+                if query {
+                    return Some(t(&e(ch.offset as f64)));
+                }
+                ch.offset = num(arg)?;
+            } else if kw(n1, "COUPling") {
+                if query {
+                    return Some(t(ch.coupling.name()));
+                }
+                ch.coupling = match arg.to_ascii_uppercase().as_str() {
+                    "DC" => Coupling::Dc,
+                    "AC" => Coupling::Ac,
+                    "GND" => Coupling::Gnd,
+                    "DC50" if board().couplings().contains(&Coupling::Dc50) => Coupling::Dc50,
+                    _ => return None,
+                };
+            } else if kw(n1, "PROBe") {
+                if query {
+                    return Some(t(&e(ch.probe as f64)));
+                }
+                ch.probe = num(arg).filter(|&p| p > 0.0)?;
+            } else if kw(n1, "BIAS") {
+                // The screen's zero correction, subtracted from the channel reading.
+                // The DHO programmer manual has no header for it.
+                if query {
+                    return Some(t(&e(ch.bias as f64)));
+                }
+                let Some(v) = num(arg) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                ch.bias = v;
+            } else if kw(n1, "TCALibrate") {
+                if query {
+                    return Some(t(&e(ch.skew as f64)));
+                }
+                // The manual refuses a deskew change on a slow time base.
+                if slow_deskew {
+                    self.push_err("-224,\"Illegal parameter value\" timebase".into());
+                    return Some(None);
+                }
+                let Some(v) = num(arg).filter(|v| v.abs() <= SKEW_MAX) else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                    return Some(None);
+                };
+                ch.skew = v;
+            } else {
+                return None;
+            }
+            return Some(None);
+        }
+        self.trigger_acquire_cmd(m, src, nodes, query, arg)
+    }
+
+    /// `model_cmd` of the trigger and the acquisition: None when `nodes` is neither, else its answer.
+    fn trigger_acquire_cmd(
+        &mut self,
+        m: &mut Model,
+        src: &crate::wave::Source,
+        nodes: &[&str],
+        query: bool,
+        arg: &str,
+    ) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        if kw(n0, "TRIGger") && nodes.len() == 3 && ["RS232", "SPI", "IIC"].iter().any(|b| kw(nodes[1], b)) {
+            return ser::trig(m, nodes[1], nodes[2], arg, query);
+        }
+        if kw(n0, "TRIGger") {
+            let last = *nodes.last()?;
+            if nodes.len() == 2 && kw(last, "STATus") {
+                let s = match (m.run, m.status) {
+                    (RunState::Stop, _) => "STOP",
+                    (_, TrigStatus::Triggered) => "TD",
+                    (_, TrigStatus::Auto) => "AUTO",
+                    (_, TrigStatus::Wait) => "WAIT",
+                    _ => "STOP",
+                };
+                return Some(t(s));
+            }
+            // the trigger values of the settings table (settings/trigger.rs); a value a row does not take falls
+            // through to the later branches, which answer -113, as before the table
+            if let Some(row) = crate::settings::command(&crate::settings::trigger::SLICES, &nodes[1..]) {
+                if query {
+                    return Some(t(&row.query(m, 0)));
+                }
+                return row.take(m, 0, arg).then_some(None);
+            }
+            if nodes.len() == 3 && kw(nodes[1], "EDGE") {
+                if kw(last, "SOURce") {
+                    if query {
+                        return Some(t(&m
+                            .trig_line()
+                            .map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
+                    }
+                    // D0..D15 like Rigol's source names, with the LA on
+                    match arg
+                        .trim()
+                        .to_ascii_uppercase()
+                        .strip_prefix('D')
+                        .and_then(|n| n.parse::<u8>().ok())
+                        .filter(|&n| n < 16 && m.trig_la_ok())
+                    {
+                        Some(n) => m.trig_la = Some(n),
+                        None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
+                    }
+                } else if kw(last, "LEVel") {
+                    if query {
+                        return Some(t(&e(m.trig_level as f64)));
+                    }
+                    m.trig_level = num(arg)?;
+                } else {
+                    return None;
+                }
+                return Some(None);
+            }
+            return None;
+        }
+        if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "ULTRa") && kw(nodes[2], "MAXFrame") {
+            if query {
+                return Some(t(&m.segments.to_string()));
+            }
+            let Some(n) = arg.trim().parse::<usize>().ok() else {
+                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                return Some(None);
+            };
+            let steps = crate::ui::SEGMENTS;
+            m.segments = *steps.iter().min_by_key(|s| s.abs_diff(n)).unwrap_or(&0);
+            return Some(None);
+        }
+        if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
+            // AUTO or one of the depths of the Acquire menu (`mdepths`), e.g. 1000000 or 1M
+            let a = arg.trim().to_ascii_uppercase();
+            let want = if a.starts_with("AUTO") {
+                0
+            } else {
+                let (v, mul) = match a.chars().last() {
+                    Some('K') => (&a[..a.len() - 1], 1e3),
+                    Some('M') => (&a[..a.len() - 1], 1e6),
+                    _ => (&a[..], 1.0),
+                };
+                (v.parse::<f64>().ok()? * mul).round() as u64
+            };
+            m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
+            return Some(None);
+        }
+        // the acquisition settings of the table (settings/acquisition.rs), where :CORes was, before :SEGMents,
+        // :AVERages:HARDware, :TYPE and :AVERages; a value a row does not take is refused with -224 or falls
+        // through to the later branches (-113), each as before the table
+        if kw(n0, "ACQuire") {
+            if let Some(row) = crate::settings::command(&crate::settings::acquisition::SLICES, &nodes[1..]) {
+                if query {
+                    return Some(t(&row.query(m, 0)));
+                }
+                if !row.take(m, 0, arg) {
+                    if !crate::settings::acquisition::REFUSES.contains(&row.key) {
+                        return None;
+                    }
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
+                return Some(None);
+            }
+        }
+        // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:INTerval <s> (:HARDware is a row)
+        if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
+            match (nodes.get(2).copied(), query) {
+                (None, true) => return Some(t(&m.segments.to_string())),
+                (None, false) => {
+                    m.segments = if parse_bool(arg) == Some(false) {
+                        0
+                    } else {
+                        (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX)
+                    }
+                }
+                (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
+                (Some(x), false) if kw(x, "INTerval") => m.seg_ivl = num(arg)?.clamp(0.0, crate::ui::SEG_IVL_MAX),
+                _ => return None,
+            }
+            return Some(None);
+        }
+        if kw(n0, "ACQuire") && nodes.len() == 2 {
+            let n1 = nodes[1];
+            if query {
+                // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
+                let (sr, depth) = src.rate_depth(m);
+                if kw(n1, "SRATe") {
+                    return Some(t(&e(sr)));
+                }
+                if kw(n1, "MDEPth") {
+                    return Some(t(&e(depth as f64)));
+                }
+            }
+            return None;
+        }
+        None
+    }
+
+    /// `:SOURce<n>`: generator n, on a model that has one. None when no branch takes the nodes (the next branch of
+    /// `exec_cmd` gets them), else the answer.
+    fn source_cmd(
+        &mut self,
+        ui: &mut Ui,
+        cv: &Canvas,
+        nodes: &[&str],
+        query: bool,
+        arg: &str,
+        cmd: &str,
+    ) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let n0 = nodes.first().copied().unwrap_or("");
+        if !oos_hal::model::platform().caps.has_gen() {
+            self.push_err(format!(
+                "-241,\"Hardware missing\" no generator on the {}",
+                oos_hal::model::platform().caps.name
+            ));
+            return Some(None);
+        }
+        // :SOURce<n> talks to generator n, whichever one the page shows
+        let g = suffix(n0).1.unwrap_or(1) - 1;
+        if g != ui.m.gen_sel {
+            let shown = ui.m.gen_sel;
+            ui.m.gen_select(g);
+            let r = self.exec_cmd(ui, cv, cmd);
+            ui.m.gen_select(shown);
+            return Some(r);
+        }
+        let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
+        let m = &ui.m;
+        let x = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        if has("OUTPut") {
+            if query {
+                return Some(t(if m.afg_on { "1" } else { "0" }));
+            }
+            match parse_bool(arg) {
+                Some(on) => ui.afg_set(Some(on), None, None, None),
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        if has("MOD") {
+            return self.source_mod_cmd(ui, nodes, query, arg);
+        }
+        // :FUNCtion:SQUare:DUTY / :FUNCtion:PULSe:DUTY and :FUNCtion:RAMP:SYMMetry in %
+        // arbitrary wave: :ARB:DATA <v>,<v>,... (one period, any scale), :ARB:CAPTure CHAN<n> (the screen of a channel)
+        if has("ARB") {
+            if has("DATA") && !query {
+                let v: Vec<f32> = arg.split(',').filter_map(num).collect();
+                if !ui.afg_arb_load(&v) {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {} samples", v.len()));
+                }
+            } else if has("CAPTure") && !query {
+                match parse_ch(arg).ok_or("no channel".to_string()).and_then(|c| ui.afg_arb_capture(c)) {
+                    Ok(_) => {}
+                    Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
+                }
+            } else {
+                self.push_err("-113,\"Undefined header\" :SOURce:ARB".into());
+            }
+            return Some(None);
+        }
+        if has("FUNCtion") && (has("DUTY") || has("SYMMetry")) {
+            let duty = has("DUTY");
+            if query {
+                return Some(t(&e(if duty { m.afg_duty } else { m.afg_symmetry })));
+            }
+            match x {
+                Some(v) if duty => ui.m.afg_duty = v.clamp(5.0, 95.0),
+                Some(v) => ui.m.afg_symmetry = v.clamp(0.0, 100.0),
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        if has("FUNCtion") {
+            const SHORT: [&str; 7] = ["SIN", "SQU", "RAMP", "PULS", "NOIS", "DC", "ARB"];
+            const LONG: [&str; 7] = ["SINusoid", "SQUare", "RAMP", "PULSe", "NOISe", "DC", "ARB"];
+            if query {
+                return Some(t(SHORT[m.afg_wave.min(6)]));
+            }
+            match LONG.iter().position(|l| kw(arg.trim(), l)) {
+                Some(i) => {
+                    ui.m.afg_wave = i;
+                    ui.afg_set(None, None, None, None);
+                }
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        let (want, cur): (u8, f64) = if has("FREQuency") {
+            (0, m.afg_freq)
+        } else if has("VOLTage") && has("OFFSet") {
+            (2, m.afg_offset)
+        } else if has("VOLTage") {
+            (1, m.afg_ampl)
+        } else {
+            (9, 0.0)
+        };
+        if want < 9 {
+            if query {
+                return Some(t(&e(cur)));
+            }
+            match x {
+                Some(v) => {
+                    ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v))
+                }
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        None
+    }
+
+    /// `source_cmd` of the modulation (Rigol DG style): :MOD[:STATe] ON|OFF, :MOD:TYPe AM|FM|PM, :MOD:AM:DEPTh <%>,
+    /// :MOD:FM:DEViation <Hz>, :MOD:PM:DEViation <deg>, :MOD:<type>:INTernal:FREQuency <Hz> and
+    /// :MOD:<type>:INTernal:FUNCtion <shape>.
+    fn source_mod_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
+        let m = &ui.m;
+        let x = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        const SHAPES: [&str; 6] = ["SINusoid", "SQUare", "TRIangle", "RAMP", "NRAMp", "NOISe"];
+        let a = arg.trim();
+        if has("INTernal") && has("FUNCtion") {
+            if query {
+                return Some(t(&SHAPES[m.afg_mod_shape.min(5)]
+                    .chars()
+                    .filter(|c| c.is_ascii_uppercase())
+                    .collect::<String>()));
+            }
+            match SHAPES.iter().position(|s| kw(a, s)) {
+                Some(i) => ui.m.afg_mod_shape = i,
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        }
+        let (cur, key): (f64, u8) = if has("INTernal") && has("FREQuency") {
+            (m.afg_mod_rate, 0)
+        } else if has("DEPTh") {
+            (m.afg_mod_depth, 1)
+        } else if has("DEViation") && has("PM") {
+            (m.afg_pm_dev, 3)
+        } else if has("DEViation") {
+            (m.afg_fm_dev, 2)
+        } else if has("TYPe") {
+            if query {
+                return Some(t(["NONE", "AM", "FM", "PM"][m.afg_mod.min(3)]));
+            }
+            match ["AM", "FM", "PM"].iter().position(|k| kw(a, k)) {
+                Some(i) => ui.m.afg_mod = i + 1,
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            ui.afg_set(None, None, None, None);
+            return Some(None);
+        } else {
+            // :MOD[:STATe]
+            if query {
+                return Some(t(if m.afg_mod > 0 { "1" } else { "0" }));
+            }
+            match parse_bool(arg) {
+                Some(on) => ui.m.afg_mod = if on { ui.m.afg_mod.max(1) } else { 0 },
+                None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+            }
+            return Some(None);
+        };
+        if query {
+            return Some(t(&e(cur)));
+        }
+        match x {
+            Some(v) => {
+                let mm = &mut ui.m;
+                match key {
+                    0 => mm.afg_mod_rate = v.clamp(0.002, 1e6),
+                    1 => mm.afg_mod_depth = v.clamp(0.0, 120.0),
+                    2 => mm.afg_fm_dev = v.max(0.01),
+                    _ => mm.afg_pm_dev = v.clamp(0.0, 360.0),
+                }
+                ui.afg_set(None, None, None, None);
+            }
+            None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+        }
+        Some(None)
     }
 }
 
