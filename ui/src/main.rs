@@ -1169,9 +1169,9 @@ impl Device {
             match size {
                 Some(s) => {
                     if self.hdmi_cv.as_ref().is_none_or(|c| (c.w, c.h) != (s.w, s.h)) {
-                        self.hdmi_cv = Some(Canvas::new(s.w, s.h));
+                        self.hdmi_cv = None;
                     }
-                    let hc = self.hdmi_cv.as_mut().unwrap();
+                    let hc = self.hdmi_cv.get_or_insert_with(|| Canvas::new(s.w, s.h));
                     if self.ui.m.hdmi == model::HdmiMode::Layout {
                         self.ui.render_view(hc);
                     } else {

@@ -400,7 +400,8 @@ impl Scpi {
                     let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                     self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
                 }
-                let mut program = self.clients[i].program.take().unwrap();
+                // there is one: kept from before, or made from the line just taken
+                let Some(mut program) = self.clients[i].program.take() else { break };
                 let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
                     // after the end of the input a program that would have to wait is dropped, and no later line runs
                     if eof {

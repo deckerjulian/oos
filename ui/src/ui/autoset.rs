@@ -581,13 +581,9 @@ impl Ui {
             return;
         }
         // Borrow the records: four 20M files must not create four extra 80MB vectors.
-        let waves: Vec<(&[f32], f64)> = shown
-            .iter()
-            .map(|&i| {
-                let r = self.refs[i].as_ref().unwrap();
-                (r.v.as_slice(), r.dt)
-            })
-            .collect();
+        // `shown` holds slots with a reference only
+        let waves: Vec<(&[f32], f64)> =
+            shown.iter().filter_map(|&i| self.refs[i].as_ref().map(|r| (r.v.as_slice(), r.dt))).collect();
         let views = autoset_shown(&mut self.m, &waves);
         let mut any = false;
         let mut fitted = Vec::new();
