@@ -952,6 +952,25 @@ impl super::analysers::Analyser for BodePage {
 mod tests {
     use super::*;
 
+    // Break it catches: a Slot back on `lock().unwrap()`. A generator thread that panicked while it held the lock
+    // poisoned it, and the frame loop panicked on the next take.
+    #[test]
+    fn a_slot_poisoned_by_a_panicking_holder_still_gives_and_takes() {
+        let slot = Slot::default();
+        slot.put(Some("before".into()));
+        let holder = slot.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = holder.0.lock();
+            panic!("the holder panics with the lock held");
+        })
+        .join();
+        assert!(slot.0.is_poisoned());
+        assert_eq!(slot.take().as_deref(), Some("before"));
+        assert_eq!(slot.take(), None);
+        slot.put(Some("after".into()));
+        assert_eq!(slot.take().as_deref(), Some("after"));
+    }
+
     /// A gain of NaN among the points: the point nearest -3 dB was chosen with `partial_cmp(..).unwrap()`, which
     /// panicked; a NaN distance is now the largest.
     #[test]
