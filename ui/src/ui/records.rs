@@ -528,7 +528,7 @@ impl Ui {
 
     /// The level line is on: shortly after the trigger level changed (`LEVEL_LINE_S`).
     pub(super) fn level_line_on(&self) -> bool {
-        self.level_changed > 0.0 && self.now - self.level_changed < LEVEL_LINE_S
+        self.seen.level_changed > 0.0 && self.now - self.seen.level_changed < LEVEL_LINE_S
     }
 
     /// Level shown at the trigger marker: the pattern level of the source for pattern/duration, else the level.
