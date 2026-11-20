@@ -93,7 +93,9 @@ jobs:
         run: boot/build-dev-image.sh
       - name: Manifest
         run: |
-          python3 -I tools/image-manifest.py kernel/out/base/Image boot/out/oos-dho900.dtb boot/out/initramfs.cpio.gz > manifest.txt
+          # the DTB is named after the board family's image (OOS_IMAGE_NAME), as boot/build-dev-image.sh names it
+          . "rootfs/board/${OOS_BOARD:-dho}/etc/oos-board"
+          python3 -I tools/image-manifest.py kernel/out/base/Image "boot/out/$OOS_IMAGE_NAME.dtb" boot/out/initramfs.cpio.gz > manifest.txt
           {
             echo '```'
             cat kernel/out/base/kernel.release boot/out/busybox.version boot/out/oos-dev.img.sha256
