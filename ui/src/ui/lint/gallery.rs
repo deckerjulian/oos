@@ -184,7 +184,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.m.dec_src = 2;
             u.set_dec_proto(Proto::SPI);
             u.m.dec_select(0);
-            u.table = Some(tables::TableKind::Decode);
+            u.table.kind = Some(tables::TableKind::Decode);
         }),
         ("s-track", |u| {
             u.m.cursor = CursorMode::Track;

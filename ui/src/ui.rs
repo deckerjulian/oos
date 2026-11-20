@@ -916,9 +916,8 @@ pub struct Ui {
     la_cols: std::cell::RefCell<la::Cache>,
     /// decoded LA lines of the record shown: (key of record and settings, packets with times in s)
     dec_cache: std::cell::RefCell<Vec<(u64, Vec<oos_dsp::decode::Packet>)>>,
-    /// table window over the plot, first row shown
-    table: Option<tables::TableKind>,
-    table_top: usize,
+    /// the table window over the plot: what it shows and its first row shown (tables.rs)
+    table: tables::Window,
 }
 
 /// One line of the measurement strip when it is docked on the left or the right.

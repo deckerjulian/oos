@@ -279,7 +279,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
         u.step(0.04);
     }
     u.activate(Item::DecTable);
-    assert_eq!(u.table, Some(tables::TableKind::Decode));
+    assert_eq!(u.table.kind, Some(tables::TableKind::Decode));
     let n = u.table_rows(tables::TableKind::Decode).len();
     assert!(n > 3);
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -302,7 +302,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
     // the close button
     let close = u.area.x + 30 + 420 - 46 + 10;
     u.tap(close, u.area.y + 20);
-    assert!(u.table.is_none());
+    assert!(u.table.kind.is_none());
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn search_list_shows_the_marks() {
     u.search_on = true;
     assert!(u.trigger_items().contains(&Item::SearchTable));
     u.activate(Item::SearchTable);
-    assert_eq!(u.table, Some(tables::TableKind::Search));
+    assert_eq!(u.table.kind, Some(tables::TableKind::Search));
     assert_eq!(u.table_rows(tables::TableKind::Search).len(), u.search_events().len());
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);

@@ -15,6 +15,13 @@ pub(super) enum TableKind {
     Segments,
 }
 
+/// The table window over the plot (ADR 0062): what it shows (None: no window) and the first row shown.
+#[derive(Default)]
+pub(super) struct Window {
+    pub kind: Option<TableKind>,
+    pub top: usize,
+}
+
 #[cfg(test)]
 mod reference_search_navigation_tests {
     use super::*;
@@ -38,7 +45,7 @@ mod reference_search_navigation_tests {
         ui.mstat = vec![MStat { n: 7, sum: 14.0, ..MStat::default() }];
         ui.adjust(Item::SearchOn, 1);
         ui.activate(Item::SearchTable);
-        assert_eq!(ui.table, Some(TableKind::Search));
+        assert_eq!(ui.table.kind, Some(TableKind::Search));
         let events = ui.search_events();
         assert_eq!(events.len(), 100);
         let (rect, _) = ui.table_rect(events.len());
@@ -128,16 +135,16 @@ impl Ui {
 
     /// Whether the decoder event table is open.
     pub(crate) fn decode_table_on(&self) -> bool {
-        self.table == Some(TableKind::Decode)
+        self.table.kind == Some(TableKind::Decode)
     }
 
     /// Opens or closes the decoder event table. A search table stays up until this opens the decoder one.
     pub(crate) fn set_decode_table(&mut self, on: bool) {
         if on {
-            self.table = Some(TableKind::Decode);
-            self.table_top = 0;
-        } else if self.table == Some(TableKind::Decode) {
-            self.table = None;
+            self.table.kind = Some(TableKind::Decode);
+            self.table.top = 0;
+        } else if self.table.kind == Some(TableKind::Decode) {
+            self.table.kind = None;
         }
     }
 
@@ -182,8 +189,8 @@ impl Ui {
     }
 
     pub(super) fn table_toggle(&mut self, k: TableKind) {
-        self.table = if self.table == Some(k) { None } else { Some(k) };
-        self.table_top = 0;
+        self.table.kind = if self.table.kind == Some(k) { None } else { Some(k) };
+        self.table.top = 0;
         self.close_menu();
     }
 
@@ -203,16 +210,16 @@ impl Ui {
 
     /// The scroll bar of the open table and its rows.
     pub(super) fn table_bar(&self) -> Option<(scroll::Bar, Rect)> {
-        let k = self.table?;
+        let k = self.table.kind?;
         let total = self.table_total(k);
         let (r, fit) = self.table_rect(total);
         let rows = Rect::new(r.x, r.y + HEAD_H, r.w, fit as i32 * ROW_H);
         let track = Rect::new(r.x + r.w - scroll::BAR_W - 2, rows.y, scroll::BAR_W, rows.h);
-        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table_top as i32 }, rows))
+        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table.top as i32 }, rows))
     }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
-        let Some(k) = self.table else { return };
+        let Some(k) = self.table.kind else { return };
         let f = self.fonts();
         let (total, mut rows) = if k == TableKind::Search {
             (self.search_events().len(), Vec::new())
@@ -221,7 +228,7 @@ impl Ui {
             (rows.len(), rows)
         };
         let (r, fit) = self.table_rect(total);
-        let top = self.table_top.min(total.saturating_sub(fit));
+        let top = self.table.top.min(total.saturating_sub(fit));
         if k == TableKind::Search {
             rows = self
                 .search_events()
@@ -288,7 +295,7 @@ impl Ui {
 
     /// A tap while the table is open; true when it was on the table.
     pub(super) fn table_tap(&mut self, x: i32, y: i32) -> bool {
-        let Some(k) = self.table else { return false };
+        let Some(k) = self.table.kind else { return false };
         let events = (k == TableKind::Search).then(|| self.search_events());
         let rows = if events.is_none() { self.table_rows(k) } else { Vec::new() };
         let total = events.as_ref().map_or(rows.len(), |events| events.len());
@@ -297,14 +304,14 @@ impl Ui {
             return false;
         }
         let last = total.saturating_sub(fit);
-        self.table_top = self.table_top.min(last);
+        self.table.top = self.table.top.min(last);
         let on_bar = total > fit && x >= r.x + r.w - scroll::BAR_W - 2;
         if Self::table_close(r).contains(x, y) {
-            self.table = None;
+            self.table.kind = None;
         } else if on_bar {
             // the scroll bar (moved by the finger, see ui/scroll.rs)
         } else if y >= r.y + HEAD_H {
-            let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
+            let i = self.table.top + ((y - r.y - HEAD_H) / ROW_H) as usize;
             if k == TableKind::Segments && i < rows.len() {
                 self.seg_show(i);
             } else if let Some(t) =
