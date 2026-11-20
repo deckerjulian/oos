@@ -844,7 +844,7 @@ fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
     ui.m.trig_level = 10.0;
     let cv = crate::gfx::Canvas::new(crate::ui::W, crate::ui::H);
     let mut scpi = crate::scpi::Scpi::open(0);
-    let reply=crate::site::mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut Ctx::new(&mut ui,&cv,&mut scpi)).unwrap();
+    let reply=crate::site::mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":SINGLE;*OPC?;:RUN"}}}"#,&mut Ctx::new(&mut ui,&cv,&mut scpi)).unwrap().text();
     let reply = crate::json::parse(&reply).unwrap();
     assert_eq!(reply.get("result").unwrap().get("isError"), Some(&crate::json::J::Bool(true)));
     assert_eq!(
@@ -858,14 +858,14 @@ fn mcp_pending_opc_is_an_explicit_tool_error_not_success() {
 fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let empty = crate::site::mcp(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR;:MEAS:STRIP?"}}}"#,
-            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap().text();
     assert!(empty.contains("\"text\":\"\""), "{empty}");
     assert!(!empty.contains("\"text\":\"ok\""));
     let write = crate::site::mcp(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:CLEAR"}}}"#,
-            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap().text();
     assert!(write.contains("\"text\":\"ok\""), "{write}");
     let compound = crate::site::mcp(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scpi","arguments":{"command":":MEAS:STRIP?;*OPC?"}}}"#,
-            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap();
+            &mut Ctx::new(&mut ui, &cv, &mut scpi)).unwrap().text();
     assert!(compound.contains("\"text\":\";1\""), "{compound}");
 }
 
@@ -881,7 +881,8 @@ fn mcp_session() {
     assert!(r.contains("Content-Length: 0\r\n") && !r.contains("Content-Type"), "{r}");
     use crate::json::{parse, J};
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
-    let mut call = |b: &str| crate::site::mcp(b, &mut Ctx::new(&mut ui, &cv, &mut scpi)).map(|r| parse(&r).unwrap());
+    let mut call =
+        |b: &str| crate::site::mcp(b, &mut Ctx::new(&mut ui, &cv, &mut scpi)).map(|r| parse(&r.text()).unwrap());
     let r =
         call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap();
     assert_eq!(r.get("result").and_then(|x| x.get("protocolVersion")).and_then(J::str), Some("2025-06-18"));
