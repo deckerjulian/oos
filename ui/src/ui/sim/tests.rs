@@ -688,7 +688,7 @@ fn external_reference_scan_holds_one_candidate_without_exposing_it_and_keeps_its
         u.sim_finish(request, generated);
         assert_eq!(u.refs[0].as_ref().unwrap().v.as_ptr(), pointer);
         assert_eq!(u.replay.captures, captures);
-        assert!(u.sim_generation.as_ref().unwrap().pending.is_some());
+        assert!(u.sim_gen.worker.as_ref().unwrap().pending.is_some());
         u.wait_sim_generation();
         assert_eq!(u.replay.captures, captures + 1);
         assert_eq!(u.m.run, RunState::Stop);
