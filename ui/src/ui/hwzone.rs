@@ -57,7 +57,8 @@ impl Ui {
     /// counters of the pipeline (docs/fork/hwzone.md).
     pub fn zone_debug_text(&self) -> String {
         let (acq, used, _) = crate::board::pipe::counters().read();
-        let sw = format!("sw_drops={},acquired={},used={},records={}", self.zone_trig.drops, acq, used, self.records);
+        let sw =
+            format!("sw_drops={},acquired={},used={},records={}", self.zone_trig.drops, acq, used, self.counts.records);
         let Some(r) = self.zone_trig.unit else {
             return format!("off,enabled={},active={},{}", board().zone_hw() as u8, self.zone_hw_active() as u8, sw);
         };

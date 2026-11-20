@@ -1251,7 +1251,7 @@ impl Device {
         }
         self.fps_n += 1;
         if self.fps_t.elapsed().as_secs_f64() >= 1.0 {
-            self.ui.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
+            self.ui.counts.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
             self.fps_n = 0;
             self.fps_t = Instant::now();
         }

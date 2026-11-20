@@ -174,7 +174,7 @@ impl Ui {
         value: f64,
         capture: u64,
     ) {
-        if capture == 0 || capture != self.wfm_total || self.record_mode() || !value.is_finite() {
+        if capture == 0 || capture != self.counts.wfm_total || self.record_mode() || !value.is_finite() {
             return;
         }
         let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };

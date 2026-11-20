@@ -160,7 +160,7 @@ impl Ui {
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.draw_pointer(cv);
-        self.frames += 1;
+        self.counts.frames += 1;
     }
 
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
@@ -223,14 +223,14 @@ impl Ui {
             std::mem::take(&mut self.wins),
             self.area,
             self.cur_win,
-            self.frames,
+            self.counts.frames,
             self.hdmi.snap_want,
         );
         self.scr = Screen { w: l.under.w, h: l.under.h };
         (self.view_pass, self.hdmi.snap_want) = (true, false);
         self.render_layers(l);
         self.view_pass = false;
-        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi.snap_want) = keep;
+        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.counts.frames, self.hdmi.snap_want) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid

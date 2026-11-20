@@ -293,7 +293,7 @@ mod tests {
         for _ in 0..4 {
             u.step(0.04);
         }
-        assert_eq!(u.wfm_total, 0);
+        assert_eq!(u.counts.wfm_total, 0);
         assert!(u.last[0].is_none());
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(u.ph.map.iter().all(|m| m.iter().all(|&h| h == 0)));

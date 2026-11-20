@@ -353,7 +353,7 @@ impl Ui {
             return Vec::new();
         };
         let acquisition = if matches!(self.m.bus.clk, WaveId::Ch(_)) || matches!(self.m.bus.data, WaveId::Ch(_)) {
-            self.wfm_total
+            self.counts.wfm_total
         } else {
             0
         };

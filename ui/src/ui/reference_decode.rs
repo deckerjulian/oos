@@ -239,7 +239,7 @@ impl Ui {
                 candidate
                     .or(self.last[0].as_ref())
                     .and_then(|rec| rec.raw.as_ref())
-                    .map_or(self.wfm_total, |raw| raw.frame.seq)
+                    .map_or(self.counts.wfm_total, |raw| raw.frame.seq)
             } else if self.session_is_sim && id == DEC_REF_BASE + self.m.sim_slot {
                 self.replay.sim_attempt
             } else {

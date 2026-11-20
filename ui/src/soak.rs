@@ -270,9 +270,9 @@ impl Rig {
 
     /// `CYCLE` once; the storage folder is emptied, so the next cycle writes the same names.
     fn cycle(&mut self) {
-        let records = self.ui.records;
+        let records = self.ui.counts.records;
         CYCLE.lines().filter(|line| !line.is_empty() && !line.starts_with('#')).for_each(|line| self.line(line));
-        assert!(self.ui.records > records, "the cycle acquired nothing");
+        assert!(self.ui.counts.records > records, "the cycle acquired nothing");
         let stored: Vec<_> = std::fs::read_dir(&self.ui.store_dir).expect("storage folder").flatten().collect();
         assert_eq!(stored.len(), 3, "a set-up, a CSV and a PNG: {:?}", stored);
         for file in stored {

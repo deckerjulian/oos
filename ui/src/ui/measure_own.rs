@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(ui.meas_rows()[0].v, time);
         assert_eq!(ui.set_cell(Meas::TVmax, 0), time);
         assert!(!ui.meas_rows()[0].computing);
-        assert_eq!((ui.records, ui.wfm_total), (0, 0));
+        assert_eq!((ui.counts.records, ui.counts.wfm_total), (0, 0));
     }
 
     #[test]
@@ -358,7 +358,7 @@ mod tests {
         }
         assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, submitted);
         assert_eq!(ui.azr.own_measure.borrow().cached.len(), 2);
-        assert_eq!((ui.m.run, ui.records, ui.wfm_total), (RunState::Stop, 0, 0));
+        assert_eq!((ui.m.run, ui.counts.records, ui.counts.wfm_total), (RunState::Stop, 0, 0));
     }
 
     #[test]
