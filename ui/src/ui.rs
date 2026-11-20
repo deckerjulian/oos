@@ -877,11 +877,10 @@ pub struct Ui {
     pub scr: Screen,
     /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
     view_pass: bool,
-    /// a USB stick is mounted
-    usb: bool,
+    /// the USB stick: whether one is mounted, and when the sticks are looked for next (save_recall.rs)
+    stick: save_recall::Stick,
     /// LA probe detect: None = not known (no hardware, not read yet)
     la_probe: Option<bool>,
-    usb_check: f64,
     /// setup slot n = file setup<n>.txt
     store_slot: u32,
     /// the mask test in software: the reference waveform, the mask built from it, its counts (render_derived.rs)

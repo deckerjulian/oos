@@ -853,7 +853,7 @@ mod performance_and_timing_tests {
         for (_, _, button) in buttons {
             assert!(button.w >= 40 && ui.top_hit(button).h >= 40);
         }
-        ui.usb = true;
+        ui.stick.mounted = true;
         ui.net.wlan_stick = true;
         let room = ui.top_buttons()[0].2.x - 12 - 166;
         let caption = ui.top_acq_caption(room).0;

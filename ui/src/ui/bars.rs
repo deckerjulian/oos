@@ -764,7 +764,7 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
     },
     StatusBox {
         label: "USB",
-        shown: |u| u.usb,
+        shown: |u| u.stick.mounted,
         width: |_| 46,
         chip: true,
         draw: |u, cv, r, label| u.draw_chip(cv, r, label, true),
