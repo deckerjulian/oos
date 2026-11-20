@@ -81,7 +81,8 @@ impl oos_remote::http::Site for Ctx<'_> {
             "/wave.bin" => file("application/octet-stream", ui.web_wave_bin()),
             "/update" if post => match ui.update_upload(body) {
                 Ok(m) => ok("text/plain", m.into_bytes()),
-                Err(e) => ok("text/plain", format!("REFUSED: {}", e).into_bytes()),
+                // refused: the body says why (409, #205)
+                Err(e) => Some(("text/plain", format!("REFUSED: {}", e).into_bytes(), true)),
             },
             "/screen.bmp" => ok("image/bmp", crate::scpi::bmp(self.cv)),
             "/mcp" => match mcp(&String::from_utf8_lossy(body), self) {

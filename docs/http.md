@@ -69,9 +69,9 @@ at it; the firewall of the scope applies to every port.
 
 ## Routes
 
-The status of an answer is chosen in `Http::answer`: 409 where the route says so (`Site::answer` says it with the
-body), 404 and 403 for the bodies `not
-found` and `refused`, 202 for an MCP notification, else 200.
+The status of an answer is chosen in `Http::answer`, by the route that makes it (before 0.1.15 it was read back from the
+body's text): 400 for a request that is wrong in itself, 403 `refused`, 404 `not found`, 409 where the route says
+the body is why it failed (`Site::answer`), 202 for an MCP notification, else 200.
 
 ### `GET /`
 
@@ -148,9 +148,9 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Request: query `slot`, 1 to 10, the reference R1 to R10; `name`, the file's name for the display (its last path
   part, without control characters, at most 128 characters; `waveform.csv` without one). Body: the file as it is, any
   `Content-Type`; the formats `store::parse_wave` recognises by their header (`ui/src/store/import.rs`).
-- Answer: `text/plain; charset=utf-8`. 200 `Loaded <name> into R<n>. ...` with a hint for the next step. 409 without
-  a slot from 1 to 10, for a file that is refused, or when the session changed during the parse; the slot chosen
-  before stays. 503 while another upload is parsed. The file is parsed on a thread of its own and the answer comes when
+- Answer: `text/plain; charset=utf-8`. 200 `Loaded <name> into R<n>. ...` with a hint for the next step. 400 without
+  a slot from 1 to 10 (409 before 0.1.15); 409 for a file that is refused, or when the session changed during the
+  parse; the slot chosen before stays either way. 503 while another upload is parsed. The file is parsed on a thread of its own and the answer comes when
   the frame loop has taken the traces (seconds for a large file). Nothing is written to storage.
 - Limits: 128 MiB.
 - net.allow: no.
@@ -237,8 +237,8 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Request: body: a signed package (`.oosupd`, [update.md](update.md)) as it is, for example `curl --data-binary
   @oos-dev.oosupd http://<scope>:8080/update`.
 - Answer: 200 `text/plain` that says what happens (`signature ok, installing build ...`, or the start by kexec), or
-  `REFUSED: <reason>`, also with status 200, when a job runs, the signature or the image hash does not hold, or the
-  package cannot be written or `oos-update` started (`Ui::update_upload`). The signature is checked before anything
-  is written.
+  409 `REFUSED: <reason>` (status 200 before 0.1.15) when a job runs, the signature or the image hash does not hold,
+  or the package cannot be written or `oos-update` started (`Ui::update_upload`). The signature is checked before
+  anything is written.
 - Limits: 70 MiB.
 - net.allow: yes, as soon as the head is in.

@@ -88,10 +88,11 @@ fn hostile_requests() {
         if answer.is_empty() {
             return if whole { Err("a whole request without an answer".into()) } else { Ok(()) };
         }
-        const STATUS: [&str; 8] = [
+        const STATUS: [&str; 9] = [
             "200 OK",
             "202 Accepted",
             "304 Not Modified",
+            "400 Bad Request",
             "403 Forbidden",
             "404 Not Found",
             "409 Conflict",
