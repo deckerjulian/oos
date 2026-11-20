@@ -7,11 +7,23 @@
 
 use super::*;
 
+/// A record as the waveform files of OOS hold it: the samples of each channel in volts, sample k at time t0 + k*dt
+/// relative to the trigger. oos-ui's `wave::Record` is one; the store reads and writes these three and nothing else
+/// of it.
+pub trait Samples: Sized {
+    fn t0(&self) -> f64;
+    fn dt(&self) -> f64;
+    fn ch(&self) -> &[Vec<f32>; NCH];
+    /// A complete, triggered record of these samples, as a file gives it.
+    fn from_file(t0: f64, dt: f64, ch: [Vec<f32>; NCH]) -> Self;
+}
+
 /// CSV of the enabled channels of a record: `Time (s),CH1 (V),...`, one row per sample, time relative to the
 /// trigger; samples without data (NaN) are empty fields.
-pub fn wave_csv(rec: &Record, m: &Model) -> String {
-    let chans: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on && !rec.ch[c].is_empty()).collect();
-    let n = chans.iter().map(|&c| rec.ch[c].len()).max().unwrap_or(0);
+pub fn wave_csv(rec: &impl Samples, m: &Model) -> String {
+    let ch = rec.ch();
+    let chans: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on && !ch[c].is_empty()).collect();
+    let n = chans.iter().map(|&c| ch[c].len()).max().unwrap_or(0);
     let mut s = String::with_capacity(n * (16 + 12 * chans.len()) + 64);
     s.push_str("Time (s)");
     for &c in &chans {
@@ -19,10 +31,10 @@ pub fn wave_csv(rec: &Record, m: &Model) -> String {
     }
     s.push('\n');
     for k in 0..n {
-        s.push_str(&format!("{:.9e}", rec.t0 + k as f64 * rec.dt));
+        s.push_str(&format!("{:.9e}", rec.t0() + k as f64 * rec.dt()));
         for &c in &chans {
             s.push(',');
-            if let Some(v) = rec.ch[c].get(k).filter(|v| v.is_finite()) {
+            if let Some(v) = ch[c].get(k).filter(|v| v.is_finite()) {
                 s.push_str(&v.to_string());
             }
         }
@@ -64,20 +76,21 @@ pub fn la_csv(la: &crate::logic::LaRec, lines: &[usize]) -> String {
 /// The record in a plain binary form of OOS, little endian:
 /// "OOSW", u32 version 1, u32 number of channels, u64 samples per channel, f64 dt, f64 t0, then per channel its number
 /// (u32, 1..4) and the samples as f32 volts.
-pub fn wave_bin(rec: &Record, m: &Model) -> Vec<u8> {
-    let chans: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on && !rec.ch[c].is_empty()).collect();
-    let n = chans.iter().map(|&c| rec.ch[c].len()).max().unwrap_or(0);
+pub fn wave_bin(rec: &impl Samples, m: &Model) -> Vec<u8> {
+    let ch = rec.ch();
+    let chans: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on && !ch[c].is_empty()).collect();
+    let n = chans.iter().map(|&c| ch[c].len()).max().unwrap_or(0);
     let mut b = Vec::with_capacity(36 + chans.len() * (4 + 4 * n));
     b.extend_from_slice(b"OOSW");
     b.extend_from_slice(&1u32.to_le_bytes());
     b.extend_from_slice(&(chans.len() as u32).to_le_bytes());
     b.extend_from_slice(&(n as u64).to_le_bytes());
-    b.extend_from_slice(&rec.dt.to_le_bytes());
-    b.extend_from_slice(&rec.t0.to_le_bytes());
+    b.extend_from_slice(&rec.dt().to_le_bytes());
+    b.extend_from_slice(&rec.t0().to_le_bytes());
     for &c in &chans {
         b.extend_from_slice(&(c as u32 + 1).to_le_bytes());
         for i in 0..n {
-            b.extend_from_slice(&rec.ch[c].get(i).copied().unwrap_or(f32::NAN).to_le_bytes());
+            b.extend_from_slice(&ch[c].get(i).copied().unwrap_or(f32::NAN).to_le_bytes());
         }
     }
     b
@@ -140,7 +153,7 @@ pub(super) fn oosw_timing_ok(n: usize, dt: f64, t0: f64) -> bool {
 }
 
 /// One OOSW blob: the record and the number of bytes consumed.
-pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
+pub fn parse_wave_bin<R: Samples>(b: &[u8]) -> Result<(R, usize), String> {
     if b.len() < 36 || &b[..4] != b"OOSW" {
         return Err("not an OOS waveform file".into());
     }
@@ -162,8 +175,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         return Err("waveform exceeds the 32-million-sample import limit".into());
     }
     let mut off = 36;
-    let mut rec =
-        Record { t0, dt, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
+    let mut ch: [Vec<f32>; NCH] = Default::default();
     for _ in 0..nch {
         let c = f.u32(off)? as usize;
         off += 4;
@@ -177,14 +189,14 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         for i in 0..n {
             v[i] = f.f32(off + 4 * i).unwrap_or(f32::NAN);
         }
-        rec.ch[c - 1] = v;
+        ch[c - 1] = v;
         off += 4 * n;
     }
-    Ok((rec, off))
+    Ok((R::from_file(t0, dt, ch), off))
 }
 
 /// Fast-frame file: "OOSF", u32 version 1, u32 frame count, then that many OOSW blobs.
-pub fn ff_bin(recs: &[Record], m: &Model) -> Vec<u8> {
+pub fn ff_bin(recs: &[impl Samples], m: &Model) -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(b"OOSF");
     b.extend_from_slice(&1u32.to_le_bytes());
@@ -195,7 +207,7 @@ pub fn ff_bin(recs: &[Record], m: &Model) -> Vec<u8> {
     b
 }
 
-pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
+pub fn parse_ff<R: Samples>(b: &[u8]) -> Result<Vec<R>, String> {
     if b.len() >= 4 && &b[..4] == b"OOSW" {
         return parse_wave_bin(b).map(|(r, _)| vec![r]);
     }

@@ -6,6 +6,7 @@
 //! into `header_import_tests.rs`.
 
 use super::*;
+use crate::wave::Record;
 
 // Break it catches: an importer that indexes past the end of a damaged file and panics (the UI thread with it)
 // instead of refusing it. Random bodies behind each recognised header, some with small numbers where counts and

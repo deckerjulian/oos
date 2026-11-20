@@ -6,17 +6,21 @@
 //! re-exported here so that callers say `store::<item>`: the setup reader in `setup_read.rs`, where files go and how
 //! they are written in `paths.rs`, CSV, OOS's waveform and mask files in `waveform.rs`, waveform files of other
 //! instruments in `import.rs`; PNG screenshots and PPM pictures come from `gfx::png` (base), re-exported here too.
+//! What the readers ask of oos-ui above the store (the registries of the measurements and the decoders, the record of
+//! the screen) is in `modules.rs`, which passes it in: `store::set`, `store::parse_setup_lenient` and the other
+//! readers there take the place of the ones of the parts.
 
 use crate::math::{MATH_OPS, WINDOWS};
 use crate::model::*;
-use crate::wave::Record;
 use oos_dsp::decode::Parity;
+use oos_dsp::protocols::OPTS;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 mod header_import_tests;
 mod import;
+mod modules;
 mod paths;
 #[cfg(test)]
 mod settings_snapshot;
@@ -29,6 +33,10 @@ pub use import::*;
 pub use paths::*;
 // the picture files (PNG, PPM) are base (gfx::png); a setup or a screenshot saved by store writes them
 pub use crate::gfx::png::*;
+// in place of the readers of setup_read.rs and waveform.rs that take what modules.rs passes in
+pub use modules::{parse_ff, parse_setup_lenient, set};
+#[cfg(test)]
+pub use modules::{parse_setup, parse_wave_bin};
 pub use setup_read::*;
 pub use waveform::*;
 

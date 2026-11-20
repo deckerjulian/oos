@@ -543,7 +543,9 @@ fn set_keys() -> Vec<String> {
     let src = include_str!("../setup_read.rs");
     let start = src.find("\npub fn set(").expect("setup_read.rs has no `pub fn set(`: update this scan");
     let end = start
-        + src[start..].find("\npub fn parse_setup(").expect("setup_read.rs has no `pub fn parse_setup(` after set");
+        + src[start..]
+            .find("\npub fn parse_setup_lenient(")
+            .expect("setup_read.rs has no `pub fn parse_setup_lenient(` after set");
     let mut keys = Vec::new();
     // the prefix of the current block, and the indentation of its arms once its match is seen
     let (mut prefix, mut arms): (Option<&str>, Option<usize>) = (None, None);
