@@ -507,14 +507,14 @@ impl Ui {
             // hardware segments end when the thread has read them all back (`seg_poll`)
             if !hw_seg && self.seg.n >= self.seg_count() {
                 if self.m.trig_mode == TrigMode::Single {
-                    self.scpi_finish_operation(OperationToken::Single(self.single_operation));
+                    self.scpi_finish_operation(OperationToken::Single(self.ops.single));
                 }
                 self.m.run = RunState::Stop;
                 self.toast(&format!("{} segments recorded", self.seg.n));
                 return true;
             }
         } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {
-            self.scpi_finish_operation(OperationToken::Single(self.single_operation));
+            self.scpi_finish_operation(OperationToken::Single(self.ops.single));
             self.m.run = RunState::Stop;
             return true;
         }

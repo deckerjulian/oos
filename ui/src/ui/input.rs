@@ -239,8 +239,7 @@ impl Ui {
                 }
             }
             key::SINGLE => {
-                self.operation_serial = self.operation_serial.wrapping_add(1);
-                self.single_operation = self.operation_serial;
+                self.ops.arm_single();
                 m.set_sweep(TrigMode::Single);
                 m.run = RunState::Run;
                 self.single_armed = false;

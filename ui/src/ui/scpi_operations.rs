@@ -21,6 +21,30 @@ pub(crate) enum OperationToken {
     Single(u64),
     Stop(u64),
 }
+/// The numbers of the jobs and the receipts of the finished ones (ADR 0062).
+#[derive(Default)]
+pub(super) struct Ledger {
+    /// the last number given to a job (an autoset or a SINGLE)
+    pub serial: u64,
+    /// the number of the SINGLE capture armed last
+    pub single: u64,
+    /// the receipts of the finished jobs, the latest 128
+    pub completed: std::collections::VecDeque<OperationToken>,
+}
+
+impl Ledger {
+    /// The next job's number.
+    pub fn next(&mut self) -> u64 {
+        self.serial = self.serial.wrapping_add(1);
+        self.serial
+    }
+
+    /// A SINGLE capture is armed: it gets the next number.
+    pub fn arm_single(&mut self) {
+        self.single = self.next();
+    }
+}
+
 /// Exact finite jobs at the barrier. Later captures never complete a cancelled job.
 #[derive(Clone, Debug)]
 pub(crate) struct Operations {
@@ -48,7 +72,7 @@ impl Operations {
             (self.stop.map(OperationToken::Stop), self.stop.is_some() && self.stop == now.stop),
         ] {
             if let Some(token) = token {
-                if !ui.scpi_completed.contains(&token) {
+                if !ui.ops.completed.contains(&token) {
                     if active {
                         pending = true;
                     } else {
@@ -68,16 +92,16 @@ impl Ui {
     pub(super) fn scpi_finish_operation(&mut self, token: OperationToken) {
         // Receipts are metadata only, bounded independently of waveform history.
         // An expired fence is interrupted rather than falsely completed.
-        if self.scpi_completed.back() != Some(&token) {
-            if self.scpi_completed.len() == 128 {
-                self.scpi_completed.pop_front();
+        let done = &mut self.ops.completed;
+        if done.back() != Some(&token) {
+            if done.len() == 128 {
+                done.pop_front();
             }
-            self.scpi_completed.push_back(token);
+            done.push_back(token);
         }
     }
     pub(crate) fn scpi_arm_operation(&mut self) {
-        self.operation_serial = self.operation_serial.wrapping_add(1);
-        self.single_operation = self.operation_serial;
+        self.ops.arm_single();
     }
     pub(crate) fn scpi_operations(&self) -> Operations {
         Operations {
@@ -85,7 +109,7 @@ impl Ui {
             auto: self.auto_operation(),
             sim: self.sim_operation(),
             single: (self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run)
-                .then(|| (self.single_operation, self.record_mode())),
+                .then(|| (self.ops.single, self.record_mode())),
             // a STOP of the hardware not yet taken by the step, or waiting for its last record (`Stop::final_until`)
             stop: (self.src.is_hw()
                 && self.m.run == RunState::Stop
@@ -101,9 +125,9 @@ impl Ui {
     /// soak test compares the memory in use from one cycle to the next, `soak.rs`).
     pub(crate) fn scpi_receipts_fill(&mut self) {
         for n in 0.. {
-            let before = self.scpi_completed.len();
+            let before = self.ops.completed.len();
             self.scpi_finish_operation(OperationToken::Single(u64::MAX - n));
-            if self.scpi_completed.len() == before {
+            if self.ops.completed.len() == before {
                 break;
             }
         }
