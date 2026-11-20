@@ -138,7 +138,7 @@ impl Ui {
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar => self.dirty_map = true,
             // a switched-on test without a mask builds one from the source
-            Item::MaskOn if self.m.mask_on && self.mask.is_none() => self.create_mask(),
+            Item::MaskOn if self.m.mask_on && self.mask_sw.mask.is_none() => self.create_mask(),
             Item::MaskInvert => self.build_mask(),
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,

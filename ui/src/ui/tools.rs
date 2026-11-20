@@ -1018,7 +1018,7 @@ impl Ui {
             }
             self.m.mask_y = v;
         }
-        if self.mask_ref.is_some() {
+        if self.mask_sw.reference.is_some() {
             self.build_mask();
         }
         true
@@ -1030,7 +1030,7 @@ impl Ui {
     }
 
     pub(super) fn mask_save(&mut self) {
-        let Some(r) = &self.mask_ref else { return self.toast("No mask yet: Create mask first") };
+        let Some(r) = &self.mask_sw.reference else { return self.toast("No mask yet: Create mask first") };
         let t = crate::store::mask_text(self.m.mask_src, self.m.mask_x, self.m.mask_y, self.m.mask_inv, r);
         let slot = self.mask_path();
         if let Err(e) = crate::store::write(&slot, t.as_bytes()) {
@@ -1070,7 +1070,7 @@ impl Ui {
         if let Some(inv) = mf.inv {
             self.m.mask_inv = inv;
         }
-        self.mask_ref = Some(mf.v);
+        self.mask_sw.reference = Some(mf.v);
         self.build_mask();
         self.m.mask_on = true;
         self.mask_counts_reset();

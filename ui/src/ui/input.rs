@@ -357,8 +357,7 @@ impl Ui {
         self.ensure_meas_own();
         self.stats_on = false;
         self.xy = false;
-        self.mask = None;
-        self.mask_ref = None;
+        self.mask_sw.forget();
         self.close_menu();
         self.dirty_map = true;
         self.toast("Default set-up");

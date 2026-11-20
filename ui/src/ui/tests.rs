@@ -923,14 +923,14 @@ fn mask_test_counts_and_stops() {
     let mut ui = crate::ui::testkit::demo_ui();
     ui.step(0.033);
     ui.create_mask();
-    assert!(ui.m.mask_on && ui.mask.is_some());
+    assert!(ui.m.mask_on && ui.mask_sw.mask.is_some());
     for _ in 0..10 {
         ui.step(0.033);
     }
-    assert!(ui.mask_pass >= 30 && ui.mask_fail == 0, "pass {} fail {}", ui.mask_pass, ui.mask_fail);
+    assert!(ui.mask_sw.pass >= 30 && ui.mask_sw.fail == 0, "pass {} fail {}", ui.mask_sw.pass, ui.mask_sw.fail);
     ui.m.ch[3].on = true;
     ui.adjust(Item::MaskSrc, 3);
-    assert!(ui.mask.is_none() && !ui.m.mask_on);
+    assert!(ui.mask_sw.mask.is_none() && !ui.m.mask_on);
     ui.step(0.033);
     ui.m.mask_x = 0.04;
     ui.create_mask();
@@ -942,7 +942,7 @@ fn mask_test_counts_and_stops() {
         }
     }
     assert_eq!(ui.m.run, RunState::Stop);
-    assert_eq!(ui.mask_fail, 1);
+    assert_eq!(ui.mask_sw.fail, 1);
 }
 
 #[test]
@@ -972,19 +972,19 @@ fn mask_from_ref_invert_save_and_load() {
     let rec = ui.last[0].as_ref().unwrap();
     ui.refs[0] = Some(RefWave { label: "R1".into(), ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
     ui.activate(Item::MaskFromRef);
-    assert!(ui.m.mask_on && ui.mask.is_some());
+    assert!(ui.m.mask_on && ui.mask_sw.mask.is_some());
     ui.adjust(Item::MaskInvert, 1);
-    assert!(ui.m.mask_inv && ui.mask.as_ref().unwrap().invert);
+    assert!(ui.m.mask_inv && ui.mask_sw.mask.as_ref().unwrap().invert);
     ui.activate(Item::MaskSave);
     assert!(dir.join("mask-001.txt").is_file());
     assert!(dir.join("mask1.txt").is_file());
     let t = std::fs::read_to_string(dir.join("mask-001.txt")).unwrap();
     assert!(t.starts_with("# OOS mask\n") && t.contains("inv=1"));
     ui.activate(Item::MaskClear);
-    assert!(ui.mask.is_none() && !ui.m.mask_on);
+    assert!(ui.mask_sw.mask.is_none() && !ui.m.mask_on);
     ui.m.mask_inv = false;
     ui.activate(Item::MaskLoad);
-    assert!(ui.m.mask_on && ui.m.mask_inv && ui.mask_ref.as_ref().unwrap().len() > 2);
+    assert!(ui.m.mask_on && ui.m.mask_inv && ui.mask_sw.reference.as_ref().unwrap().len() > 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
