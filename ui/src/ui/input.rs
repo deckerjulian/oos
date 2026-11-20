@@ -354,7 +354,9 @@ impl Ui {
                 }
                 0x90 => {
                     if push {
-                        self.refs[self.ref_sel].as_mut().unwrap().offset = 0.0;
+                        if let Some(r) = self.refs[self.ref_sel].as_mut() {
+                            r.offset = 0.0;
+                        }
                         self.settings_changed();
                     } else {
                         self.adjust(Item::RefOffset, dir * acc);
@@ -483,9 +485,10 @@ impl Ui {
         if id == 1 {
             match ph {
                 Phase::Down => {
-                    if !modal && self.touch.down && map.is_some_and(|(area, _, _)| area.contains(x, y)) {
+                    let on_plot = map.filter(|(area, _, _)| area.contains(x, y));
+                    if let Some((area, _, _)) = on_plot.filter(|_| !modal && self.touch.down) {
                         p.active = true;
-                        p.area = map.unwrap().0;
+                        p.area = area;
                         p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.grid).1.y;
                         p.p0 = (self.touch.x, self.touch.y);
                         p.p1 = (x, y);
@@ -772,8 +775,8 @@ impl Ui {
             }
         } else if m.zoom && dy.abs() > dx.abs() {
             Drag::ZoomVertical
-        } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
-            Drag::RefOffset(self.drag_reference().unwrap())
+        } else if let Some(r) = self.drag_reference().filter(|_| dy.abs() > dx.abs()) {
+            Drag::RefOffset(r)
         } else if dy.abs() > dx.abs() {
             // nearest enabled channel marker when starting at the left edge, else the active channel (in a
             // split plot: of this window)
