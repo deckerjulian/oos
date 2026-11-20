@@ -579,7 +579,9 @@ impl<U: Send + 'static> Http<U> {
                 let (status, last) = site.update_state();
                 update_page(&status, &last).into_bytes()
             }),
-            "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
+            "/lxi/identification" => {
+                ("text/xml", lxi_identification(&self.offer, &oos_hal::model::platform().caps.name).into_bytes())
+            }
             // what the screen answers: its state, the last record, an update package, MCP
             "/cmd" => remote_cmds(query, cmds, site),
             _ => match site.answer(route, post, req_body) {
@@ -691,7 +693,9 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-pub fn lxi_identification(o: &Offer) -> String {
+/// The LXI identification of `model` (the unit's, as `*IDN?` and the mDNS announcement name it) with the
+/// instrument addresses of `o`. The serial number stays 0 (#205).
+pub fn lxi_identification(o: &Offer, model: &str) -> String {
     let mut addrs = String::new();
     if o.vxi11 {
         addrs.push_str("<InstrumentAddressString>TCPIP::INSTR</InstrumentAddressString>\n");
@@ -706,7 +710,7 @@ pub fn lxi_identification(o: &Offer) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <LXIDevice xmlns="http://www.lxistandard.org/InstrumentIdentification/1.0">
-<Manufacturer>OOS</Manufacturer><Model>DHO924S</Model><SerialNumber>0</SerialNumber>
+<Manufacturer>OOS</Manufacturer><Model>{}</Model><SerialNumber>0</SerialNumber>
 <FirmwareRevision>oos-ui {}</FirmwareRevision><ManufacturerDescription>OOS oscilloscope</ManufacturerDescription>
 <HomepageURL>/</HomepageURL><DriverURLs/>
 <UserDescription>OOS</UserDescription>
@@ -716,8 +720,14 @@ pub fn lxi_identification(o: &Offer) -> String {
 <LXIVersion>1.5</LXIVersion>
 </LXIDevice>
 "#,
+        xml_text(model),
         env!("CARGO_PKG_VERSION")
     )
+}
+
+/// `s` with the five characters XML gives a meaning escaped.
+fn xml_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
 }
 
 /// A request a web page on another site made through the browser of the bench PC, not the page of the scope or a tool:
