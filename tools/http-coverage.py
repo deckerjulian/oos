@@ -45,10 +45,6 @@ GUARDS = {
         {"/update", "/mcp"},
         "the 403 of POST /update and /mcp outside net.allow (docs/http.md, Common answers)",
     ),
-    "head_only": (
-        {"/screen.png", "/screen.jpg"},
-        "a HEAD of a live picture: its head without a length (docs/http.md, Requests)",
-    ),
 }
 
 ENTRY = re.compile(r"^### `(GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS) (/[^`\s]*)`\s*$")

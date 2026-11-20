@@ -452,19 +452,14 @@ impl<U: Send + 'static> Http<U> {
                 }
                 too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
             });
+            // a HEAD gets no body here either
+            let head_only = req.starts_with(b"HEAD ");
             if let Some(status) = early {
                 let msg = if status.starts_with("403") { "refused" } else { "busy, try again" };
-                let head = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
-                    Cache-Control: no-store\r\nConnection: close\r\n\r\n{msg}",
-                    msg.len()
-                );
-                last = Some(head.into_bytes());
+                last = Some(early_answer(status, msg, head_only));
                 dead = true;
             } else if too_big {
-                let msg = "request too large";
-                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len());
-                last = Some(head.into_bytes());
+                last = Some(early_answer("413 Payload Too Large", "request too large", head_only));
                 dead = true;
             } else if complete {
                 if !self.answer(i, hdr_end, site, &mut cmds) {
@@ -581,10 +576,6 @@ impl<U: Send + 'static> Http<U> {
                     }
                 }
             }
-            // the live picture's length is known only when it is made, on the program's side: a HEAD has none
-            "/screen.png" | "/screen.jpg" if head_only => {
-                (OK, if route == "/screen.jpg" { "image/jpeg" } else { "image/png" }, Vec::new())
-            }
             "/screen.png" | "/screen.jpg" => {
                 let have = header(&text, "if-none-match").map(str::to_string);
                 site.picture(s, have, route == "/screen.jpg");
@@ -612,8 +603,7 @@ impl<U: Send + 'static> Http<U> {
                 None => ("404 Not Found", "text/plain", b"not found".to_vec()),
             },
         };
-        let picture = matches!(route, "/screen.png" | "/screen.jpg") && status == OK;
-        let length = if picture && head_only { String::new() } else { format!("Content-Length: {}\r\n", body.len()) };
+        let length = format!("Content-Length: {}\r\n", body.len());
         let allowed = match allow {
             Some(a) if status.starts_with("405") => format!("Allow: {}\r\n", a),
             _ => String::new(),
@@ -694,16 +684,15 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
 }
 
 /// The methods a route takes, as its `Allow` header names them; None for a path that is no route (404 whatever the
-/// method). A HEAD is taken where a GET is, except on `/cmd`, whose GET does something.
+/// method). A HEAD is taken where a GET is, except on `/cmd`, whose GET does something, and on the live pictures,
+/// whose status, type and length are known only once the program answers one, after this.
 fn methods_of(route: &str) -> Option<&'static str> {
     match route {
         "/waveform" | "/mcp" => Some("POST"),
         "/update" => Some("GET, HEAD, POST"),
-        "/cmd" => Some("GET"),
+        "/cmd" | "/screen.png" | "/screen.jpg" => Some("GET"),
         "/"
         | "/style.css"
-        | "/screen.png"
-        | "/screen.jpg"
         | "/screen.bmp"
         | "/wave.csv"
         | "/wave.bin"
@@ -825,3 +814,14 @@ impl<U> Http<U> {
 
 #[cfg(test)]
 mod tests;
+
+/// An answer of `poll` before the request is read whole (403, 413, 503): the text `msg`, or only its head after a HEAD.
+fn early_answer(status: &str, msg: &str, head_only: bool) -> Vec<u8> {
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nCache-Control: no-store\r\n\
+        Connection: close\r\n\r\n",
+        msg.len()
+    );
+    let body = if head_only { "" } else { msg };
+    format!("{head}{body}").into_bytes()
+}
