@@ -1120,7 +1120,16 @@ impl Ui {
         }
         let s = self.stats[self.m.trig_src];
         if s.valid {
-            self.m.trig_level = crate::wave::mid_level(&s);
+            // with AC or LF-reject coupling the trigger compares the source without its mean, and its level counts from
+            // there: halfway through the signal is the middle less the mean. The middle itself sat above the whole
+            // swing of a signal that does not cross 0 V (0 to 3.3 V: 1.65 V over a mean of 1.65 V), and the trigger
+            // did not fire (#279)
+            let src = self.m.trig_src.min(NCH - 1);
+            let mean = self.last[0].as_ref().map_or(0.0, |r| match r.raw.as_ref() {
+                Some(raw) => crate::board::trig_mean(&self.m, &raw.frame.ch[src]),
+                None => crate::board::trig_mean(&self.m, &r.ch[src]),
+            });
+            self.m.trig_level = crate::wave::mid_level(&s) - mean;
             self.settings_changed();
         }
     }
