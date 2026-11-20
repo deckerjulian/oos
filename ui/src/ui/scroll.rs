@@ -110,7 +110,7 @@ impl Ui {
         match l {
             List::Catalog => self.cat.scroll = p,
             List::Results => self.pn.top = p as usize,
-            List::Table => self.table_top = p as usize,
+            List::Table => self.table.top = p as usize,
             List::Pick => self.pick_scroll_to(bar, p),
         }
     }
@@ -258,9 +258,9 @@ mod tests {
         let (bar, rows) = ui.table_bar().expect("table open");
         let th = bar.thumb();
         press(&mut ui, th.x + 20, th.y + 5, (th.x + 20, bar.track.y + bar.track.h + 50));
-        assert_eq!(ui.table_top as i32, bar.max());
+        assert_eq!(ui.table.top as i32, bar.max());
         press(&mut ui, rows.x + 100, rows.y + rows.h - 10, (rows.x + 100, rows.y + rows.h - 10 + 3 * tables::ROW_H));
-        assert_eq!(ui.table_top as i32, bar.max() - 3, "three rows back by a finger");
+        assert_eq!(ui.table.top as i32, bar.max() - 3, "three rows back by a finger");
         ui.m.run = RunState::Stop;
         let d0 = ui.m.delay;
         press(&mut ui, rows.x + 100, rows.y + 10, (rows.x + 101, rows.y + 12));
