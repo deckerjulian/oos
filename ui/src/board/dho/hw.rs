@@ -688,9 +688,12 @@ fn run<P: port::Port>(
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
             }
             armed = None;
+            // new settings, a view read in STOP, or the STOP itself (`hold`): a wait for a trigger ends at once. The
+            // UI waits for the thread to hold before it takes the record of the STOP as its last (#24); in Normal
+            // without a trigger that wait was the whole `STOP_FINAL_WAIT`
             let changed = || {
                 let g = out.lock().unwrap();
-                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.stop_view.is_some()
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.stop_view.is_some() || g.hold
             };
             // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
             // the frame count, so the read waits at most one frame longer

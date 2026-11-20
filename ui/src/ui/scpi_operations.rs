@@ -1,8 +1,8 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The finite jobs a remote command can wait for with `*OPC?`, `*OPC` and `*WAI`: an autoset, a SIM generation and a
-//! SINGLE capture. Each gets a token when it starts; a fence taken at the command stays pending until those jobs end,
+//! The finite jobs a remote command can wait for with `*OPC?`, `*OPC` and `*WAI`: an autoset, a SIM generation, a
+//! SINGLE capture and a STOP until its record is in place (#24). Each gets a token when it starts; a fence taken at the command stays pending until those jobs end,
 //! and counts as cancelled when the workflow starts over. A new kind of job that a command waits for gets its token
 //! here.
 
@@ -19,6 +19,7 @@ pub(crate) enum OperationToken {
     Auto(u64),
     Sim(u64, u64),
     Single(u64),
+    Stop(u64),
 }
 /// Exact finite jobs at the barrier. Later captures never complete a cancelled job.
 #[derive(Clone, Debug)]
@@ -27,6 +28,7 @@ pub(crate) struct Operations {
     auto: Option<u64>,
     sim: Option<(u64, u64)>,
     single: Option<(u64, bool)>,
+    stop: Option<u64>,
 }
 impl Operations {
     pub(crate) fn state(&self, ui: &Ui) -> OperationState {
@@ -43,6 +45,7 @@ impl Operations {
                 self.single.map(|(arm, _)| OperationToken::Single(arm)),
                 self.single.is_some() && self.single == now.single,
             ),
+            (self.stop.map(OperationToken::Stop), self.stop.is_some() && self.stop == now.stop),
         ] {
             if let Some(token) = token {
                 if !ui.scpi_completed.contains(&token) {
@@ -83,6 +86,9 @@ impl Ui {
             sim: self.sim_operation(),
             single: (self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run)
                 .then(|| (self.single_operation, self.record_mode())),
+            // a STOP of the hardware not yet taken by the step, or waiting for its last record (`stop_final`)
+            stop: (self.src.is_hw() && self.m.run == RunState::Stop && (self.was_running || self.stop_final.is_some()))
+                .then_some(self.final_req),
         }
     }
 }

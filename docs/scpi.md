@@ -51,7 +51,7 @@ Stored Run searches successive qualifying windows through the immutable record a
 
 ### Operation completion
 
-`*OPC?` fences the finite operation current at the barrier: Autoset, a submitted SIM generation, and an armed Single. Continuous Run and background measurement/Math/decode/Eye calculations are not drained by OPC. Use their readiness/value interfaces separately. Operation completion is not a statement that a result is valid; inspect the error queue and trigger status.
+`*OPC?` fences the finite operation current at the barrier: Autoset, a submitted SIM generation, an armed Single, and a STOP of the hardware until its record is in place (the thread holds and its last record is taken; at most 3 s). After `:STOP` and `*OPC?` the preamble and the data describe the same record (#24). Continuous Run and background measurement/Math/decode/Eye calculations are not drained by OPC. Use their readiness/value interfaces separately. Operation completion is not a statement that a result is valid; inspect the error queue and trigger status.
 
 Raw TCP and HiSLIP retain a bounded per-client continuation while waiting, allowing UI progress and other clients. Commands after the barrier execute after it completes; earlier writes are not repeated. A Single with no matching event can wait indefinitely, so choose a client timeout appropriate to the test. Cancellation/rearming invalidates the old operation rather than silently waiting on a newer arm. See the interpreter's cancellation errors in `:SYST:ERR?`.
 

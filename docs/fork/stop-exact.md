@@ -20,20 +20,26 @@ Single scan only).
   `final_ack` and sleeps 5 ms per pass. Roll, scan, segments, self-cal, the auto set-up levels, counter and DVM keep
   their own paths, as before. RUN or SINGLE clear `hold`; the frames queued before are dropped then, by the UI as it
   releases the hold (`Source::hw_hold`: it takes frames in the same step) and by the thread on its next pass.
-- A batch already armed when STOP comes is finished (its wait is not cut short) and read.
-- Final frame (`Ui::stop_wants_final`): a plain STOP (not the end of Single or segments, not a mask stop, not a
-  history view) while the deep measurements want samples and the record shown is of min/max pairs. The UI raises
-  `final_req` and keeps taking records (status STOP) until `final_ack` answers it and the queue is empty, at most
-  `STOP_FINAL_WAIT` = 3 s. The thread reads the newest frame of the batch it read last once more, raw
-  (`final_replay`: deep window, `seq::read_raw_again`), queues it, then answers. That frame is the record on screen;
-  its measurements are made from its samples.
+- A batch already armed when STOP comes is finished and read; a wait for its trigger ends at the STOP (`hold` cuts it as
+  new settings do), so a STOP in Normal without a trigger does not wait the whole `STOP_FINAL_WAIT`.
+- Final frame (`Ui::stop_wants_final`): every plain STOP of a normal acquisition on the hardware (not the end of
+  Single or segments, not a mask stop, not a history view, not roll or scan). The request (`final_req`, counted at every RUN, so that a
+  `*OPC?` taken with the STOP knows it) is the thread's to answer; the UI keeps taking records (status STOP) until `final_ack` answers it and the queue is empty, at most `STOP_FINAL_WAIT` = 3 s.
+  So the record of the STOP is the newest frame the thread read, the one it reads again for the views (#24: before,
+  only deep records waited, and a batch finished after the STOP was read again for the views, another acquisition
+  than the one shown). While the deep measurements want samples and that frame is of min/max pairs, the thread reads
+  it once more, raw (`final_replay`: deep window, `seq::read_raw_again`), and queues it before it answers; its
+  measurements are made from its samples. `*OPC?` waits for this (`OperationToken::Stop`, docs/scpi.md).
 - Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches the deep measurements may replay
   (`prearm_keeps_replay`: a compressed deep record with deep measurements on), so the ring of the last batch stays for
   the replay. Prearm's gain is at short time bases; at deep records the read takes most of the batch anyway.
 - No replay when the newest frame was already raw (rate-limited deep read, live compression), when the next batch was
   armed ahead anyway, or when anything else ran on the FPGA since the read (the read is only remembered for one
   pass). Then the record shown is the newest one already queued, measured as it is.
-- Views after the STOP (`Ui::stop_replay`): the thread reads the stored record again for every view (`stop_plan`),
+- Views after the STOP (`Ui::stop_replay`): a record of the STOP that holds the whole acquisition raw (every point of
+  the memory, `Frame::acq`) is drawn and measured for every view from its own samples, and stays the record read out
+  (#24: read again, the view was a record of another length and origin that replaced it some 90 ms after the STOP).
+  Otherwise the thread reads the stored record again for every view (`stop_plan`),
   the first time right after the STOP. Zoomed out on a record above `LIVE_READ` (625 k points: 10 M at 1 ms/div) that
   read is the whole record through the compression, min/max pairs. Those pairs are drawn (`stop_pic`), but the raw
   record of the STOP (`stop_raw`: the final frame, or a raw record already shown) stays `last[0]`, the record measured

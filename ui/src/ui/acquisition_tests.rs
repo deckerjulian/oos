@@ -334,14 +334,21 @@ fn stop_shows_the_final_raw_frame_of_a_deep_record() {
     assert!(ui.stop_final.is_some());
     steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
     assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
-    // a shallow record: STOP holds the thread at once, without a final frame
+    // a shallow record: STOP holds the thread at once and waits for its last record as well (#24), which the thread
+    // answers without a raw read
     ui.m.run = RunState::Run;
     steps(&mut ui, 1);
     shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
     steps(&mut ui, 2);
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
-    assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
+    assert!(ui.stop_final.is_some() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 3);
+    {
+        let mut g = shared.lock().unwrap();
+        g.final_ack = g.final_req;
+    }
+    steps(&mut ui, 1);
+    assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
     crate::deepmeas::force(None);
 }
 
@@ -477,25 +484,33 @@ fn stop_reads_the_record_again_without_counting_it() {
         let ch = [v, Vec::new(), Vec::new(), Vec::new()];
         crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
     };
-    // what the thread answers for the view shown in STOP: the stored record read again
-    let replay = |seq: u64, top: f32| crate::board::Frame { fixed_ti: Some((n / 2) as f64), ..frame(seq, top) };
     shared.lock().unwrap().queue.push_back(frame(1, 1.0));
     ui.step(0.05);
     assert_eq!(ui.mstat[0].n, 1);
+    let seq = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
     ui.m.run = RunState::Stop;
     ui.step(0.05);
-    assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
-    shared.lock().unwrap().replay = Some(replay(2, 1.0));
+    // the STOP waits for the thread's last record (#24); the thread holds and answers
+    {
+        let mut g = shared.lock().unwrap();
+        g.final_ack = g.final_req;
+    }
     ui.step(0.05);
+    ui.step(0.05);
+    // the record of the STOP holds the whole acquisition: nothing is read again, it stays as it is (#24: read again,
+    // the view was a record of another length and origin, which replaced it between two queries of a client)
+    assert!(shared.lock().unwrap().stop_view.is_none(), "the whole record of the STOP read again");
+    assert_eq!(seq(&ui), Some(1));
     assert_eq!(ui.mstat[0].n, 1, "the record of the STOP counted again");
-    // a new view: the statistics start over, the record read again for it is shown and measured, not counted
-    for (k, top) in [(1, 1.5), (-1, 2.0)] {
+    // a new view: the statistics start over, the record of the STOP is drawn and measured for it from its own
+    // samples, not counted
+    for k in [1, -1] {
         ui.adjust(Item::HScale, k);
         ui.step(0.05);
-        shared.lock().unwrap().replay = Some(replay(3, top));
         ui.step(0.05);
-        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
-        assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
+        assert!(shared.lock().unwrap().stop_view.is_none(), "the whole record of the STOP read again for a view");
+        assert_eq!(seq(&ui), Some(1));
+        assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
         assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
     }
     crate::deepmeas::force(None);
@@ -561,17 +576,27 @@ fn run_after_stop_takes_no_frame_from_before() {
     ui.m.run = RunState::Stop;
     ui.step(0.05);
     assert!(shared.lock().unwrap().hold);
-    // the batch in progress at the STOP is read and queued; the UI takes nothing in STOP
+    // the batch in progress at the STOP is read and queued: until the thread holds it is taken, the record of the
+    // STOP, the one the thread reads again for the views (#24)
     shared.lock().unwrap().queue.push_back(frame(2));
     ui.step(0.05);
-    assert_eq!(seq(&ui), Some(1));
-    ui.m.run = RunState::Run;
+    assert_eq!(seq(&ui), Some(2));
+    {
+        let mut g = shared.lock().unwrap();
+        g.final_ack = g.final_req;
+    }
     ui.step(0.05);
-    assert_eq!(seq(&ui), Some(1), "a frame acquired before the RUN became the first record of the run");
-    // what the thread acquires after the RUN is taken
+    // held: a frame queued after that is no record of the STOP
     shared.lock().unwrap().queue.push_back(frame(3));
     ui.step(0.05);
-    assert_eq!(seq(&ui), Some(3));
+    assert_eq!(seq(&ui), Some(2));
+    ui.m.run = RunState::Run;
+    ui.step(0.05);
+    assert_eq!(seq(&ui), Some(2), "a frame acquired before the RUN became the first record of the run");
+    // what the thread acquires after the RUN is taken
+    shared.lock().unwrap().queue.push_back(frame(4));
+    ui.step(0.05);
+    assert_eq!(seq(&ui), Some(4));
     crate::deepmeas::force(None);
 }
 
@@ -1428,4 +1453,57 @@ fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
         assert!(next.iter().any(|&c| c != 0), "persistence {persist}: the new record is drawn");
         assert!(next != picture, "persistence {persist}: the new record is the picture");
     }
+}
+
+// Break it catches (#24): `*OPC?` after `:STOP` answered before the record of the STOP was in place, so a client's
+// next queries read the last running record and then the record of the STOP; a RUN while it waits completing it
+#[test]
+fn opc_after_stop_waits_for_the_record_of_the_stop() {
+    use super::scpi_operations::OperationState;
+    use super::*;
+    crate::deepmeas::force(Some(false));
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    let (n, dt) = (12_500usize, 0.8e-9);
+    let frame = |seq: u64| {
+        let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
+        crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
+    };
+    let ack = || {
+        let mut g = shared.lock().unwrap();
+        g.final_ack = g.final_req;
+    };
+    shared.lock().unwrap().queue.push_back(frame(1));
+    ui.step(0.05);
+    assert_eq!(ui.scpi_operations().state(&ui), OperationState::Complete, "nothing to wait for while running");
+    // `:STOP;*OPC?` in one line: the fence is taken before the step has seen the STOP
+    ui.m.run = RunState::Stop;
+    let fence = ui.scpi_operations();
+    assert_eq!(fence.state(&ui), OperationState::Pending);
+    ui.step(0.05);
+    shared.lock().unwrap().queue.push_back(frame(2));
+    ui.step(0.05);
+    assert_eq!(fence.state(&ui), OperationState::Pending, "answered before the thread held");
+    ack();
+    ui.step(0.05);
+    assert_eq!(fence.state(&ui), OperationState::Complete);
+    assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(2));
+    // a STOP already settled: nothing to wait for
+    assert_eq!(ui.scpi_operations().state(&ui), OperationState::Complete);
+    // RUN while a STOP waits: the fence is cancelled, not completed
+    ui.m.run = RunState::Run;
+    ui.step(0.05);
+    shared.lock().unwrap().queue.push_back(frame(3));
+    ui.step(0.05);
+    ui.m.run = RunState::Stop;
+    let fence = ui.scpi_operations();
+    ui.step(0.05);
+    ui.m.run = RunState::Run;
+    ui.step(0.05);
+    assert_eq!(fence.state(&ui), OperationState::Cancelled);
+    crate::deepmeas::force(None);
 }
