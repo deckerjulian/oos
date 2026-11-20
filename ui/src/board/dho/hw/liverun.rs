@@ -90,6 +90,8 @@ enum Act {
 enum Switch {
     /// arming ahead, `acq.prearm = on` (`plan::prearm_on`)
     Prearm,
+    /// the core trim, `cal.core_offset = tight` (`trim::core_offset_tight`)
+    CoreTrim,
 }
 
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
@@ -400,6 +402,17 @@ const CASES: &[Case] = &[
         ..BASE
     },
     Case {
+        name: "core-trim-ch1-quiet",
+        // a quiet input at mid-scale
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6), m.trig_mode = TrigMode::Normal, m.ch[0].offset = 0.0).0,
+        freq_hz: 0.0,
+        period_us: None,
+        cal: true,
+        switches: &[Switch::CoreTrim],
+        passes: 4,
+        ..BASE
+    },
+    Case {
         name: "auto-ch1-deep-10m-screen-window",
         compress: true,
         model: |m| (ch(m, &[0]), tdiv(m, 5e-3), depth(m, "10M")).0,
@@ -549,6 +562,9 @@ struct Seen {
     blocked: bool,
     /// events in the unit's trace so far: pass k's are those from `seen[k - 1]` to `seen[k]`
     events: usize,
+    /// each ADC core's offset register against the core's own offset, in register steps, where the case gives them
+    /// (`Unit::cores`)
+    cores: Option<[i32; 8]>,
 }
 
 /// The volts a mask band keeps around the scene's signal (`Act::Mask`).
@@ -635,6 +651,57 @@ fn prearm_checks(case: &Case, trace: &str, seen: &[Seen]) {
         let late = rest[..until].iter().find(|l| l.starts_with("Recorded") || (k == hold && l.starts_with("Played")));
         assert!(late.is_none(), "{}: after the disarm of pass {}: {:?}", case.name, k, late);
     }
+}
+
+/// How far the stored offsets of the made-up set leave each ADC core from its own offset in the core trim's case, in
+/// register steps: core 5 three high, core 7 two low. Within `coretrim::SAVE_MIN_STEPS`, so the trim keeps its result
+/// for the session and writes no file.
+const CORE_ERROR: [i32; 8] = [0, 0, 0, 0, 0, 3, 0, -2];
+
+/// The cores' own offsets of the core trim's case (`Unit::cores`): the stored ones of the made-up set in `dir` for the
+/// ADC mode of the model's settings, less `CORE_ERROR`; None without the set.
+fn own_offsets(m: &Model, dir: &str) -> Option<[i32; 8]> {
+    let want = super::settings(m, false);
+    let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
+    st.configure(&want, None, None).ok()?;
+    let stored = oos_hal::dho::adc::CalAdc::load(dir).ok()?.offsets(st.mode);
+    Some(std::array::from_fn(|n| stored[n] - CORE_ERROR[n]))
+}
+
+/// The core offset written by a line of the trace, (core, offset): an ADC word (0x1034, bit 24) to the offset
+/// register 0x14 + 8n (adc-mode.md 2.2, 11 bits signed).
+fn core_offset_write(line: &str) -> Option<(usize, i32)> {
+    let (w, off, v) = access(line)?;
+    let reg = v >> 16 & 0x7f;
+    (w && off == 0x1034 && v & 1 << 24 != 0 && (0x14..0x54).contains(&reg) && reg % 8 == 4)
+        .then(|| ((reg as usize - 0x14) / 8, ((v & 0x7ff) << 21) as i32 >> 21))
+}
+
+/// The checks of the core trim (`Switch::CoreTrim`) on a quiet input: the trim runs the measure unit no earlier than
+/// 2 s (`TRIM_HOLD`) after the start (the configuration), starts from the stored offsets (each core `CORE_ERROR` off its
+/// own), and at the end every core sits at its own offset. Break it catches: a trim that does not wait for the
+/// configuration to stand, offsets not written or written to other cores, a trim that does not converge or keeps
+/// nothing.
+fn trim_checks(case: &Case, trace: &str, seen: &[Seen]) {
+    if !case.switches.contains(&Switch::CoreTrim) {
+        return;
+    }
+    let run = |l: &&str| access(l).is_some_and(|(w, off, v)| w && off == 0x1040 && v & 1 << 31 != 0);
+    let first = trace.lines().find(run).unwrap_or_else(|| panic!("{}: no measure run", case.name));
+    let us: u64 = first.split("us: ").nth(1).and_then(|x| x.split(',').next()?.parse().ok()).unwrap_or(0);
+    // the 2 s of docs/fork/core-offset.md (round 15), not the code's constant
+    let hold = 2_000_000;
+    assert!(us >= hold, "{}: the trim ran {} us after the start, before the configuration stood", case.name, us);
+    let last = seen[seen.len() - 1].cores.unwrap_or_else(|| panic!("{}: the cores' own offsets", case.name));
+    assert!(last.iter().all(|&e| e == last[0]), "{}: the cores after the trim: {:?}", case.name, last);
+    // the first and the last offset of each core: the first was CORE_ERROR off its own, the last is `last[0]` off
+    let (mut start, mut end) = ([None; 8], [0; 8]);
+    for (n, o) in trace.lines().filter_map(core_offset_write) {
+        start[n].get_or_insert(o);
+        end[n] = o;
+    }
+    let from: [Option<i32>; 8] = std::array::from_fn(|n| start[n].map(|s| s - end[n] + last[0]));
+    assert_eq!(from, CORE_ERROR.map(Some), "{}: the cores before the trim", case.name);
 }
 
 /// The checks of the mask unit's requests against its readings after each pass until the next request: the band
@@ -996,6 +1063,7 @@ impl Drop for Switches {
         crate::board::policy::compress::force(None);
         crate::deepmeas::force(None);
         super::plan::force_prearm(None);
+        super::trim::force_core_offset(None);
     }
 }
 
@@ -1018,6 +1086,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     let _switches = Switches;
     crate::board::policy::compress::force(Some(case.compress));
     super::plan::force_prearm(Some(case.switches.contains(&Switch::Prearm)));
+    super::trim::force_core_offset(Some(case.switches.contains(&Switch::CoreTrim)));
     let want = super::settings(&m, false);
     let volts = signal(case.freq_hz, case.square);
     // in Average mode an offset that differs from trigger to trigger, which the average takes out
@@ -1062,6 +1131,10 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     } else {
         "/nonexistent".to_string()
     };
+    // the core trim's case: the cores' own offsets against the stored ones of the made-up set
+    if case.switches.contains(&Switch::CoreTrim) {
+        u.borrow_mut().cores = own_offsets(&m, &cal_dir);
+    }
     // the deep measurements' raw window is a switch of the build; on for this thread, as on the scope
     crate::deepmeas::force(Some(true));
     // the drawing workers are another test's when its screen switched them on: this loop keeps out of them (their
@@ -1080,6 +1153,10 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
             decoded: g.decoded,
             blocked: g.unit_blocked.is_some(),
             events: sim.borrow().trace.len(),
+            cores: sim.borrow().cores.map(|own| {
+                let o = sim.borrow().core_offsets();
+                std::array::from_fn(|n| o[n] - own[n])
+            }),
         });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
@@ -1182,6 +1259,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         mask_checks(case, &trace, &seen);
         zone_checks(case, &trace, &seen);
         prearm_checks(case, &trace, &seen);
+        trim_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();
         let (played, streamed) = (count("Played"), count("Stream"));
         // what the screen asked for in the script was done
