@@ -168,8 +168,10 @@ Install on a running OOS:
   to /tmp (SCP or SFTP, for example `/tmp/oos-dev.oosupd`), or on a USB stick in the front port, which OOS mounts at
   `/mnt/usb` (for example `/mnt/usb/oos-dev.oosupd`).
 - From 0.1.13 or older to a package larger than its kexec restart carries (0.1.14: 47 MB), the web page's install
-  ends in a kernel panic, with nothing written (#327). There: `oos-update install FILE --no-kexec --execute`, a direct
-  install without the safety net of the kexec start (below)
+  ends in a kernel panic, with nothing written (#327). There: `oos-update install FILE --no-kexec` (dry run, which
+  names the direct write it would do), then `oos-update install FILE --no-kexec --execute`, a direct install without
+  the safety net of the kexec start (below). A dry run without `--execute` never starts the kexec restart, with or
+  without `--no-kexec` (`kexec_stage` returns before it)
 
 The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the
 result. Then power-cycle: that start is its trial. If the screen stays dark after the restart, power-cycle too: the
