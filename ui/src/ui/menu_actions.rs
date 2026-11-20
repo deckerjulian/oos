@@ -588,7 +588,7 @@ impl Ui {
                 m.quick = QUICKS[cycle(i, QUICKS.len(), d)];
             }
             Item::MathOpI => {
-                let fam = self.math_fam;
+                let fam = self.math.family;
                 let mut ops = vec![MathOp::Off];
                 ops.extend_from_slice(fam.ops());
                 let i = ops.iter().position(|&x| x == m.math).unwrap_or(0);
@@ -597,10 +597,10 @@ impl Ui {
                 self.math_autoscale();
             }
             Item::MathFam => {
-                let i = MathFamily::ALL.iter().position(|&f| f == self.math_fam).unwrap_or(0);
-                self.math_fam = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
-                if m.math != MathOp::Off && m.math.family() != self.math_fam {
-                    m.math = self.math_fam.ops()[0];
+                let i = MathFamily::ALL.iter().position(|&f| f == self.math.family).unwrap_or(0);
+                self.math.family = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
+                if m.math != MathOp::Off && m.math.family() != self.math.family {
+                    m.math = self.math.family.ops()[0];
                     m.math_offset = 0.0;
                     self.math_autoscale();
                 }
@@ -612,7 +612,7 @@ impl Ui {
                 let k = cycle(m.math_sel, NMATH, d);
                 m.math_select(k);
                 if m.math != MathOp::Off {
-                    self.math_fam = m.math.family();
+                    self.math.family = m.math.family();
                 }
             }
             Item::MathScale => {
