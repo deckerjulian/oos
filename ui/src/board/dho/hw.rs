@@ -280,7 +280,7 @@ fn run<P: port::Port>(
             let req = out.lock().unwrap().cal_req.take();
             if let Some((chans, zero, adc_cores)) = req {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                 if rolling.take().is_some() {
                     bar.apply(&roll::stop(&mut state.sh));
                 }
@@ -357,7 +357,7 @@ fn run<P: port::Port>(
             };
             if afg_want != afg_done {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                 // models without the generator (non-S): its GPIO lines and FPGA block are never touched
                 if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
                     if afg_io.is_none() {
@@ -517,7 +517,7 @@ fn run<P: port::Port>(
             }
             if current.as_ref().is_none_or(|c| c.0 != want) || mode != want_mode {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                 mode = want_mode;
                 last_batch = None;
                 if rolling.take().is_some() {
@@ -891,7 +891,7 @@ fn run<P: port::Port>(
                     stamp,
                 ) {
                     status(format!("segments: {}", e));
-                    seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                    seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                     clock.sleep_us(200000);
                 }
                 continue;
