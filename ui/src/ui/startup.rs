@@ -15,6 +15,14 @@ const HOLD_WARN: f64 = 5.0;
 /// Without a new line for this long (a hung mount or driver load) a tap leaves the screen.
 const STALL_S: f64 = 60.0;
 
+/// The start-up as the screen shows it (ADR 0062): the start-up screen while it is up, and the last start-up's result
+/// (System > About).
+#[derive(Default)]
+pub(super) struct StartUp {
+    pub screen: Option<StartScreen>,
+    pub last: Option<View>,
+}
+
 pub struct StartScreen {
     pub view: View,
     /// uptime at the last update (the running stage's clock)
@@ -41,7 +49,7 @@ impl Ui {
     /// Shows the start-up screen until the file says the start-up is complete.
     pub fn start_up_begin(&mut self, splash: Option<Vec<u32>>) {
         let version = version_line(std::fs::read_to_string("/etc/oos-build").ok().as_deref());
-        self.start_up =
+        self.start_up.screen =
             Some(StartScreen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
     }
 
@@ -49,7 +57,7 @@ impl Ui {
     /// later in the boot) shows no screen.
     pub fn start_up_update(&mut self, text: &str, uptime: f64) {
         let now = self.now;
-        let Some(s) = self.start_up.as_mut() else { return };
+        let Some(s) = self.start_up.screen.as_mut() else { return };
         let first = s.view == View::default() && s.uptime == 0.0;
         s.view = oos_hal::bootstatus::parse(text);
         s.uptime = uptime;
@@ -59,12 +67,12 @@ impl Ui {
                 s.dismissed = true;
             }
         }
-        self.start_up_last = Some(s.view.clone());
+        self.start_up.last = Some(s.view.clone());
     }
 
     /// The screen is up (the scope screen and its input wait).
     pub fn start_up_active(&self) -> bool {
-        let Some(s) = &self.start_up else { return false };
+        let Some(s) = &self.start_up.screen else { return false };
         if s.dismissed {
             return false;
         }
@@ -100,7 +108,9 @@ impl Ui {
             Ev::Wheel { .. } => false,
         };
         if pressed {
-            if let Some(s) = self.start_up.as_mut().filter(|s| s.view.finished.is_some() || Self::start_up_stalled(s)) {
+            if let Some(s) =
+                self.start_up.screen.as_mut().filter(|s| s.view.finished.is_some() || Self::start_up_stalled(s))
+            {
                 s.dismissed = true;
             }
         }
@@ -109,7 +119,7 @@ impl Ui {
 
     /// One line for About: how the last start-up went.
     pub(super) fn start_up_summary(&self) -> Option<String> {
-        let v = self.start_up_last.as_ref()?;
+        let v = self.start_up.last.as_ref()?;
         let warn: Vec<&str> = v.warnings().map(|s| s.label.as_str()).collect();
         Some(match &v.finished {
             None => format!("Start-up running ({:.1} s)", v.t),
@@ -122,7 +132,7 @@ impl Ui {
     }
 
     pub(super) fn draw_start_up(&self, cv: &mut Canvas) {
-        let Some(s) = &self.start_up else { return };
+        let Some(s) = &self.start_up.screen else { return };
         let f = self.fonts();
         let scr = self.scr.rect();
         // the picture is laid out on 600 px: a taller screen gets it in its middle
