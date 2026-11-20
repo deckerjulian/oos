@@ -44,7 +44,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "4"
+VERSION = "5"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -599,8 +599,8 @@ ADC_SPI_WORD = 0x3000
 MAC_RE = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
 
 
-# The scales of the front panel, 500 uV/div to 10 V/div.
-SCALES = ("0.0005", "0.001", "0.002", "0.005", "0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10")
+# The scales of the front panel, 1 mV/div to 10 V/div (the stock system takes 500 uV/div as 1 mV/div).
+SCALES = ("0.001", "0.002", "0.005", "0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10")
 
 
 def map_steps(fifty=False):

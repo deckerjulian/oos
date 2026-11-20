@@ -55,8 +55,9 @@ From the probe (reported by one unit, not checked on hardware by us):
   `--hw`.
 - **oos-ui**: `ui/src/board/mho` behind `Board`. It starts no acquisition thread, applies nothing, drives no generator
   and opens no front panel port (its protocol on the MHO900 is not known): touch is the input, and a USB mouse or
-  keyboard where the build has them. Scales 500 uV/div to 10 V/div, couplings DC, AC, GND and 50 ohm, depths to 100 M:
-  from the data sheet, **assumed**; they only shape the demo. A notice on the screen says that OOS does not acquire.
+  keyboard where the build has them. Scales 1 mV/div to 10 V/div (the stock system takes 500 uV/div as 1 mV/div:
+  verified on the unit), couplings DC, AC, GND and 50 ohm, depths to 100 M: from the data sheet, **assumed**; they only
+  shape the demo. A notice on the screen says that OOS does not acquire.
 - **oos-hal**: `hal/src/mho` describes the board for the neutral code (`Target`): the card layout (the DHO's), the
   models, `acquisition: false`. `Platform::drives_hardware` is false in this build, so `oos-fpgad` refuses every
   hardware command and oos-ui drops `--hw`, whatever the vendor file says.

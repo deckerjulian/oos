@@ -141,7 +141,12 @@ New:
   changed and ends with them as a table; it goes through every scale of CH2 to CH4 too. `--map` sets the bandwidth
   limit of each channel with all four on, `--fifty` puts every channel at 50 ohm, and the lane registers are named as
   lanes. The front-end bus and its registers are described in docs/protocols/mho-acquisition.md and
-  `hal/src/mho/acq.rs` (`afe`).
+  `hal/src/mho/acq.rs` (`afe`). From `--afe` runs of an MHO954, two MHO98 and a second run of the MHO934 (issues #4 and
+  #248): the front-end words repeat on a unit but differ from unit to unit, also between two MHO98 (the unit's
+  calibration); the 50 ohm path (bit 13 of 0x07, range 3, a status read polled while at 50 ohm), the `a` select line
+  of every channel, and the bandwidth-limit bit of each ADC lane (bit 20 + lane of 0x1004 and 0x1014) are described.
+  The MHO900 build's scales start at 1 mV/div: the stock system takes 500 uV/div as 1 mV/div. `mho-check.py` (version
+  5) no longer steps through 500 uV/div.
 - `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
   numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,

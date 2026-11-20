@@ -6,8 +6,10 @@
 
 use std::path::Path;
 
-/// The fine volts-per-division steps in nV: 1-2-5 with fine steps in between, 500 uV/div to 10 V/div (data sheet;
-/// **assumed**, the front ends are not driven).
+/// The fine volts-per-division steps in nV: 1-2-5 with fine steps in between, 1 mV/div to 10 V/div. The stock system
+/// takes 500 uV/div as 1 mV/div: the same front-end words and lane gain on four units, and the MHO934's menu ends at
+/// 1 mV/div (**verified on the unit**, `mho-check.py --afe`, GitHub issues #4 and #248). OOS does not drive the front
+/// ends yet, so the steps only shape the demo.
 pub fn scale_ladder() -> Vec<i64> {
     let mut v = Vec::with_capacity(701);
     for d in 0..5 {
@@ -17,7 +19,7 @@ pub fn scale_ladder() -> Vec<i64> {
         v.extend((0..50).map(|k| 5 * b + k * b / 10));
     }
     v.push(10_000_000_000);
-    v.retain(|&nv| nv >= 500_000);
+    v.retain(|&nv| nv >= 1_000_000);
     v
 }
 
@@ -44,12 +46,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_scales_run_from_half_a_millivolt_to_ten_volts() {
+    fn the_scales_run_from_a_millivolt_to_ten_volts() {
         let v = scale_ladder();
-        assert_eq!(v.first(), Some(&500_000));
+        assert_eq!(v.first(), Some(&1_000_000));
         assert_eq!(v.last(), Some(&10_000_000_000));
         assert!(v.windows(2).all(|w| w[0] < w[1]));
-        assert!(v.contains(&1_000_000) && v.contains(&2_000_000) && v.contains(&5_000_000));
+        assert!(v.contains(&2_000_000) && v.contains(&5_000_000));
     }
 
     #[test]

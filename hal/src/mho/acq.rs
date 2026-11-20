@@ -117,8 +117,9 @@ pub const POWER_LINES: [(u32, &str, Option<u8>); 4] = [
 
 /// The front ends' bus (driver `spi2afe_gpio`): the processor drives it bit by bit on GPIOs, one chip select per
 /// channel. **Verified on the unit**, read under the stock system with the kernel's `gpio_value` trace (`mho-check.py
-/// --afe` on an MHO934, GitHub issue #248): the lines, the frame and the registers and bits named here. What the other
-/// registers and bits do is not known yet (docs/protocols/mho-acquisition.md, section 8).
+/// --afe` on an MHO934 twice, an MHO954 and two MHO98, GitHub issues #4 and #248): the lines, the frames and the
+/// registers and bits named here. What the other registers and bits do is not known yet, and most of their values are
+/// the unit's own (docs/protocols/mho-acquisition.md, section 8).
 pub mod afe {
     /// Clock, data out and data in.
     pub const SCLK: u32 = 75;
@@ -126,29 +127,64 @@ pub mod afe {
     pub const MISO: u32 = 73;
     /// The chip select of each channel's front end, CH1 first (the driver's cs3, cs2, cs1 and cs0).
     pub const CS: [u32; 4] = [68, 69, 66, 76];
-    /// The select line `c` of each channel, CH1 first: high at 0.1 and 0.2 V/div (at 1 MOhm).
+    /// The select line `a` of each channel, CH1 first: high at 5 and 10 V/div at 1 MOhm, and at 1 V/div at 50 ohm.
+    pub const SELECT_A: [u32; 4] = [149, 129, 125, 122];
+    /// The select line `b` of each channel, CH1 first (named so by the stock driver; it changed in no step).
+    pub const SELECT_B: [u32; 4] = [152, 130, 126, 123];
+    /// The select line `c` of each channel, CH1 first: high at 0.1 and 0.2 V/div at 1 MOhm, low at 50 ohm.
     pub const SELECT_C: [u32; 4] = [153, 131, 127, 124];
-    /// The select line `a` of CH1: high at 5 and 10 V/div (at 1 MOhm), and at 1 V/div at 50 ohm (MHO98 `--map`).
-    pub const SELECT_A_CH1: u32 = 149;
-    /// Bits of a frame, sent MSB first: the driver sets the data line, then the clock low and high, so a bit is
+    /// Bits of a write frame, sent MSB first: the driver sets the data line, then the clock low and high, so a bit is
     /// valid at the rising edge.
     pub const FRAME_BITS: u32 = 24;
-    /// Coupling and input stage: bit 15 DC (0 AC), bit 14 set from 500 uV/div to 50 mV/div. GND coupling sends no
-    /// word: the FPGA sets the lane's gain to 0.
+    /// Coupling and input stage: bit 15 DC (0 AC), bit 14 set from 1 mV/div to 50 mV/div, bit 13 50 ohm. GND
+    /// coupling sends no word: the FPGA sets the lane's gain to 0.
     pub const COUPLING: u8 = 0x07;
     pub const COUPLING_DC: u16 = 1 << 15;
     pub const COUPLING_HIGH_GAIN: u16 = 1 << 14;
-    /// The offset DAC: about 0x8000 at 0 V (a calibrated value per scale and channel), 471 codes per 0.3 V at
-    /// 0.1 V/div on every channel; it rises with the offset at 0.1 and 1 V/div and falls with it at 10 mV/div.
+    pub const COUPLING_FIFTY: u16 = 1 << 13;
+    /// The offset DAC: about 0x8000 at 0 V (the unit's own zero per scale and channel, which moves by up to a dozen
+    /// codes between two runs), 471 codes per 0.3 V at 0.1 V/div on every channel; it rises with the offset at 0.1
+    /// and 1 V/div and falls with it at 10 mV/div.
     pub const OFFSET: u8 = 0x28;
-    /// Filter: the 20 MHz bandwidth limit changes bits 10, 7, 6, 3 and 2 (0x1dc9 to 0x1905 on all four channels).
+    /// Filter. The 20 MHz bandwidth limit writes 0x1905 on every channel of every unit. At full bandwidth bits 13:0
+    /// are 0x1fcb (0x17cb at 5 V/div) on the MHO954, both MHO98 and the MHO934 after a change of its licences, and
+    /// were 0x1dc9 on the MHO934 before (assumed: bits 9 and 1 follow the licensed bandwidth). Bits 15:14 change with
+    /// the scale, differently per unit.
     pub const FILTER: u8 = 0x2e;
-    pub const FILTER_20M_BITS: u16 = 0x04cc;
+    pub const FILTER_20M: u16 = 0x1905;
+    /// The bits of `FILTER` that differed on the MHO934 before and after the licence change.
+    pub const FILTER_LICENCE_BITS: u16 = 0x0202;
+    /// A read: 32 clocks, the first byte 0x80 (bit 7 read, register 0), then 24 bits come back on `MISO`. The stock
+    /// system reads it twice, 2 ms apart, every few hundred ms while the channel is at 50 ohm, and once when it goes
+    /// back to 1 MOhm. It read 0x0c40ff at 50 ohm and 0x0440ff after (assumed: bit 19 a state of the 50 ohm path).
+    pub const READ_FRAME_BITS: u32 = 32;
+    pub const STATUS_READ: u32 = 0x8000_0000;
+    pub const STATUS_FIFTY: u32 = 1 << 19;
 
     /// The 24-bit frame of one register write: the address in bits 23:16, the data in bits 15:0.
     pub fn frame(reg: u8, data: u16) -> u32 {
         (reg as u32) << 16 | data as u32
     }
+
+    /// The range field of register 0x29, bits 9:8: 0 from 1 to 5 mV/div, 1 from 10 to 50 mV/div, 2 from 0.1 V/div, 3
+    /// at 50 ohm. Bits 15:10 of the register are the unit's own.
+    pub const RANGE: u8 = 0x29;
+    pub fn range(scale_uv: u32, fifty: bool) -> u16 {
+        match (fifty, scale_uv) {
+            (true, _) => 3,
+            (false, 0..=9_999) => 0,
+            (false, 10_000..=99_999) => 1,
+            (false, _) => 2,
+        }
+    }
+}
+
+/// The 20 MHz bandwidth limit after the ADC: one bit per ADC lane in each of the two SPU words, bit 20 + lane (lane 0
+/// first). With four channels lane k carries CH k+1; CH1 alone sets all four. **Verified on the unit** (MHO934
+/// `--map`, each channel's limit with all four on; MHO98 and MHO934 with CH1 alone).
+pub const BW_LIMIT_REGS: [u32; 2] = [0x1004, 0x1014];
+pub fn bw_limit_bit(lane: u32) -> Option<u32> {
+    (lane < 4).then(|| 1 << (20 + lane))
 }
 
 /// Read-out words: 16 bits little endian, 7500 codes per division around 32768, the same as on the DHO800/DHO900. The
@@ -204,13 +240,40 @@ mod tests {
         assert_eq!(afe::frame(afe::OFFSET, 0x7e11), 0x28_7e11);
         assert_eq!(afe::frame(afe::COUPLING, 0x8440), 0x07_8440);
         assert!(afe::frame(0xff, 0xffff) < 1 << afe::FRAME_BITS);
-        assert_eq!(0x1dc9 ^ 0x1905, afe::FILTER_20M_BITS);
-        let mut lines: Vec<u32> = afe::CS.iter().chain(&afe::SELECT_C).copied().collect();
-        lines.extend([afe::SCLK, afe::MOSI, afe::MISO, afe::SELECT_A_CH1]);
+        assert_eq!(0x1fcb ^ 0x1dc9, afe::FILTER_LICENCE_BITS);
+        assert_eq!(afe::frame(afe::FILTER, afe::FILTER_20M), 0x2e_1905);
+        // the coupling word of CH1 at 10 mV/div, DC, 50 ohm (MHO934 --fifty)
+        assert_eq!(0x8440 | afe::COUPLING_HIGH_GAIN | afe::COUPLING_FIFTY, 0xe440);
+        assert_eq!(afe::STATUS_READ >> 24, 0x80);
+        assert_eq!((0x0c40ff & afe::STATUS_FIFTY, 0x0440ff & afe::STATUS_FIFTY), (afe::STATUS_FIFTY, 0));
+        let mut lines: Vec<u32> =
+            afe::CS.iter().chain(&afe::SELECT_A).chain(&afe::SELECT_B).chain(&afe::SELECT_C).copied().collect();
+        lines.extend([afe::SCLK, afe::MOSI, afe::MISO]);
         let n = lines.len();
         lines.sort_unstable();
         lines.dedup();
         assert_eq!(lines.len(), n, "every line once");
+    }
+
+    #[test]
+    fn the_range_field_switches_at_ten_millivolts_and_a_tenth_of_a_volt() {
+        // 0x29 of CH1 on the MHO934: 0x7c42 at 2 mV/div, 0x7d42 at 20 mV/div, 0x7e42 at 1 V/div, 0x7f82 at 50 ohm
+        for (uv, fifty, word) in
+            [(2_000, false, 0x7c42u16), (20_000, false, 0x7d42), (1_000_000, false, 0x7e42), (10_000, true, 0x7f82)]
+        {
+            assert_eq!(afe::range(uv, fifty), word >> 8 & 3);
+        }
+        assert_eq!(afe::range(9_999, false), 0);
+        assert_eq!(afe::range(100_000, false), 2);
+    }
+
+    #[test]
+    fn the_bandwidth_limit_has_one_bit_per_lane() {
+        // MHO934 --map: 0x1004 0x4004a50 with no limit, 0x4104a50 with CH1's, 0x4804a50 with CH4's (all four on)
+        assert_eq!(0x0400_4a50 | bw_limit_bit(0).unwrap(), 0x0410_4a50);
+        assert_eq!(0x0400_4a50 | bw_limit_bit(3).unwrap(), 0x0480_4a50);
+        assert_eq!((0..4).map(|l| bw_limit_bit(l).unwrap()).sum::<u32>(), 0xf << 20);
+        assert_eq!(bw_limit_bit(4), None);
     }
 
     #[test]
