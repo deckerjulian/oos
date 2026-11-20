@@ -2,7 +2,7 @@
 
 //! Sparse frames on the fast display path (fork, docs/fork/perf-plan.md item 4): fewer than two samples per screen
 //! column, the short time bases where the waveform rate peaks. The fast path made a full screen record of each such
-//! frame (`board::to_record`: a copy of the frame, every channel, the raw window and the LA record) only to draw its
+//! frame (`wave::to_record`: a copy of the frame, every channel, the raw window and the LA record) only to draw its
 //! points. `draw` computes the same points of the channels that are on, with the same expressions, into reused
 //! buffers and draws them. It answers only in the plain case (edge trigger found on a channel, interpolated points);
 //! everything else returns None and takes `to_record` as before.
@@ -11,8 +11,9 @@
 //! cheaper (short time bases), within half a pixel of the exact points and one pixel on the screen (guarded); `exact`
 //! stays the default until a screenshot comparison on the unit.
 
-use crate::board::{sw_trig_level, Frame};
+use crate::board::Frame;
 use crate::model::*;
+use crate::wave::sw_trig_level;
 use crate::wave::Phosphor;
 use std::cell::RefCell;
 
@@ -222,7 +223,7 @@ mod tests {
     fn reference(ph: &mut Phosphor, m: &Model, f: &Frame) -> bool {
         let fr = Arc::new(f.clone());
         let window = m.time_per_div() as f64 * HDIV as f64;
-        let rec = crate::board::to_record(&fr, m, POINTS, window, m.delay as f64 - window / 2.0);
+        let rec = crate::wave::to_record(&fr, m, POINTS, window, m.delay as f64 - window / 2.0);
         for c in 0..NCH {
             if m.ch[c].on && !rec.ch[c].is_empty() {
                 ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);

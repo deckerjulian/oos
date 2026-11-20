@@ -15,8 +15,11 @@ pub(crate) fn hw<T>(shared: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T
 }
 
 mod levels;
+mod record;
 
 pub use levels::*;
+pub use record::resample as resample_record;
+pub use record::{sw_trig_level, to_record, trig_mean, trigger_point};
 
 pub struct Rng(u64);
 impl Rng {
@@ -344,7 +347,7 @@ fn demo_la(t: f64) -> u16 {
 /// The record `Source::acquire` makes of a hardware frame: 3600 points across the screen.
 pub fn hw_record(m: &Model, f: crate::board::Frame) -> Record {
     let window = m.time_per_div() as f64 * HDIV as f64;
-    crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)
+    to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)
 }
 
 impl Source {
@@ -609,7 +612,7 @@ impl Source {
         let Source::Hw { shared, .. } = self else { return None };
         let (k, f) = hw(shared).seg.shown.take()?;
         let window = m.time_per_div() as f64 * HDIV as f64;
-        Some((k, crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
+        Some((k, to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
     }
 
     /// Hardware source in STOP: the view shown (time per div, delay; None: none to read for), and the frame the

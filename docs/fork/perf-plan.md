@@ -329,7 +329,7 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   exact / 60 us fast at 5 ns/div, A53 about 200 / 120 us. Default stays exact until a screenshot comparison.
   Measurement statistics over every frame (`framestats.rs`): Max, Min, Pk-pk, Mean, RMS, Std dev / AC RMS of the
   Measure page are made by the workers for every frame, on the samples the record path measures (the record's
-  trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
+  trigger point via `wave::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
   than 3600 samples) and folded into the page's statistics (`Ui::mstat_fold`); other measurements keep counting the
   measured records. Frames whose record is measured on interpolated points (short time bases) are not counted.
   Sums split over 8 lanes (the data is 12 bit; bit identity of f64 sums has no physical meaning). Guard: per-frame

@@ -197,7 +197,7 @@ fn record_trigger_origin_matches_full_oracle_for_admissible_near_edges() {
             1,
         );
         let expected = smooth_oracle(&frame.ch[0], pre, seek, fits).0;
-        let record = crate::board::to_record(&frame, &model, 3600, window, first);
+        let record = crate::wave::to_record(&frame, &model, 3600, window, first);
         assert!(record.triggered);
         let Raw { t0, i0, .. } = record.raw.unwrap();
         // With edges present but none leaving a complete screen in the near

@@ -442,7 +442,7 @@ fn fit_record_exposes_native_capture_extent_without_copying_or_reconfiguring_the
         ch: [vec![0.1; 100_000], Vec::new(), Vec::new(), Vec::new()],
         ..Default::default()
     });
-    let mut record = crate::board::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6);
+    let mut record = crate::wave::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6);
     let raw = record.raw.as_mut().unwrap();
     raw.t0 = 0.001 + raw.i0 as f64 * frame.dt;
     ui.last[0] = Some(record);

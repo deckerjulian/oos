@@ -189,9 +189,10 @@ menu, System > Features, the view bar, SCPI `:VIEW`, setups, the record and the 
 
 Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
 acquisition thread is to apply, the generator, the front-end steps, the front panel, the board readings. The UI speaks
-in the model's terms and gets frames in volts back (`board::Frame`, `board::to_record`). `board::dho` implements it
-for the DHO800/DHO900 and is the only part of the UI that uses `oos_hal::dho`; a lint test
-(`board::boundary`) keeps it that way. The board is chosen when OOS is built (`board::Active`).
+in the model's terms and gets frames in volts back (`board::Frame`; `wave::to_record` makes a screen record of one, in
+the signal layer). `board::dho` implements it for the DHO800/DHO900 and is the only part of the UI that uses
+`oos_hal::dho`; a lint test (`board::boundary`) keeps it that way. The board is chosen when OOS is built
+(`board::Active`).
 
 Threads:
 
@@ -326,7 +327,7 @@ The steps, in order. A later step waits for the earlier ones it names.
 
 | # | Step | Waits for | Record | Issue, measure |
 |---|---|---|---|---|
-| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (39 paths where the board code, mostly the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name) | | ADR 0049 | `tools/layers.txt` |
+| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (the paths where the board code, the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name: 39 at the start of this step, today the number in `tools/layers.txt`; the record of a frame and its software trigger went to the signal layer as `wave::to_record`) | | ADR 0049 | `tools/layers.txt` |
 | 2 | The state of the screen in its parts: the loose fields of `Ui` | | ADR 0060–0063 | ui-fields in `tools/code-metrics.txt` |
 | 3 | HTTP moves to `oos-remote`; the screenshot encoder stays in `oos-ui` | 1 (transport-skip 0) | ADR 0064 | |
 | 4 | `oos-model`, then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
