@@ -230,8 +230,16 @@ impl Ui {
         if v.len() < 2 || !(dt > 0.0) {
             return Err("source channel has no data".into());
         }
+        let w = self.ref_of_channel(r, c, v, dt);
+        self.ref_put(self.ref_sel, w);
+        Ok(())
+    }
+
+    /// The reference of channel `c` of record `r`: its samples `v` at interval `dt` (`meas_wave`), starting where the
+    /// record or, for a raw read longer than the screen's, the raw record starts; the channel's scale and offset.
+    pub(in crate::ui) fn ref_of_channel(&self, r: &Record, c: usize, v: Vec<f32>, dt: f64) -> RefWave {
         let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
-        self.refs[self.ref_sel] = Some(RefWave {
+        RefWave {
             src: c,
             color: 0,
             label: String::new(),
@@ -241,11 +249,15 @@ impl Ui {
             vpd: self.m.ch[c].volts_per_div(),
             offset: self.m.ch[c].offset,
             on: true,
-        });
-        self.m.deskew_ref[self.ref_sel] = self.m.deskew_ch[c];
+        }
+    }
+
+    /// `w` into reference slot `slot`, with the deskew of its channel; the measurements and analysers follow.
+    pub(in crate::ui) fn ref_put(&mut self, slot: usize, w: RefWave) {
+        self.m.deskew_ref[slot] = self.m.deskew_ch[w.src];
+        self.refs[slot] = Some(w);
         self.measure_refs();
         self.analyzer_update();
-        Ok(())
     }
 
     /// `refN` beside the setups, in `WAVE_EXTS` order. The first file that is there is the one loaded.
