@@ -126,10 +126,8 @@ impl Ui {
                 let ch = &self.m.ch[c.min(NCH - 1)];
                 (ch.volts_per_div(), ch.offset)
             }
-            WaveId::Ref(i) => {
-                let r = self.refs[i].as_ref().unwrap();
-                (r.vpd, r.offset)
-            }
+            // an empty slot does not reach the page (`eye_source_ready`); any scale for one
+            WaveId::Ref(i) => self.refs[i].as_ref().map_or((1.0, 0.0), |r| (r.vpd, r.offset)),
         }
     }
 
@@ -183,7 +181,10 @@ impl Ui {
             };
             (v, Some(clock), dt, t0)
         } else {
-            let s = self.eye_samples(rec, id).unwrap();
+            let Some(s) = self.eye_samples(rec, id) else {
+                self.azr.page.status = [missing_wave(id), "Switch the source on".into()];
+                return;
+            };
             (s.v, None, s.dt, s.t0)
         };
         let recov = clk_v.as_deref().unwrap_or(&v);
@@ -212,12 +213,17 @@ impl Ui {
             return;
         };
         self.eye_restart(&v, dt, key, reference_changed, pw, ph);
+        // made or kept by eye_restart
+        let Some(range) = self.azr.eye.as_ref().map(|e| (e.v_min, e.v_max)) else { return };
         let last = self.azr.page.ui.mean();
         if last.is_finite() && (clk.period / last - 1.0).abs() > UI_CHANGE {
-            self.azr.eye.as_mut().unwrap().clear();
+            if let Some(eye) = self.azr.eye.as_mut() {
+                eye.clear();
+            }
             self.azr.page = Page { vstep: self.azr.page.vstep, ..Page::default() };
         }
-        let (fold, data) = if clk_id.is_some() { self.eye_strobe_fold(&v, dt, &clk) } else { (clk.clone(), v.clone()) };
+        let (fold, data) =
+            if clk_id.is_some() { Self::eye_strobe_fold(&v, dt, &clk, range) } else { (clk.clone(), v.clone()) };
         if sim_capture && self.azr.eye_sim_revision == Some((self.m.sim_slot, self.replay.sim_revision)) {
             let tie = eye::tie(&clk.edges, &clk);
             self.azr.eye_ref = fp;
@@ -227,7 +233,9 @@ impl Ui {
         if sim_capture {
             self.azr.eye_sim_revision = Some((self.m.sim_slot, self.replay.sim_revision));
         }
-        self.azr.eye.as_mut().unwrap().accumulate(&data, dt, &fold);
+        if let Some(eye) = self.azr.eye.as_mut() {
+            eye.accumulate(&data, dt, &fold);
+        }
         self.azr.eye_ref = fp;
         let tie = eye::tie(&clk.edges, &clk);
         self.azr.page.add(&tie, &clk);
@@ -293,11 +301,11 @@ impl Ui {
 
     /// With a strobe: the record gated around its edges, folded on the strobe or on it shifted by half a period,
     /// whichever gives the higher eye.
-    fn eye_strobe_fold(&self, v: &[f32], dt: f64, clk: &eye::Clock) -> (eye::Clock, Vec<f32>) {
+    /// `range`: the voltage range of the page's eye (`Eye::v_min`, `v_max`).
+    fn eye_strobe_fold(v: &[f32], dt: f64, clk: &eye::Clock, range: (f32, f32)) -> (eye::Clock, Vec<f32>) {
         let gated = eye::gate_around_clock(v, dt, clk, 1.5);
-        let e = self.azr.eye.as_ref().unwrap();
         let height = |c: &eye::Clock| {
-            let mut t = eye::Eye::new(48, 48, 2, e.v_min, e.v_max);
+            let mut t = eye::Eye::new(48, 48, 2, range.0, range.1);
             t.accumulate(&gated, dt, c);
             let h = t.measure(c.period).height;
             if h.is_finite() {
