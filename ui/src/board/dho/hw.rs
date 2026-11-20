@@ -6,6 +6,8 @@
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
 #[cfg(any(target_os = "linux", test))]
+mod afg;
+#[cfg(any(target_os = "linux", test))]
 mod batch;
 mod decode;
 #[cfg(test)]
@@ -25,6 +27,8 @@ mod trim;
 mod units;
 
 #[cfg(any(target_os = "linux", test))]
+use self::afg::AfgRun;
+#[cfg(any(target_os = "linux", test))]
 use self::batch::BatchRun;
 #[cfg(test)]
 pub use self::decode::{codes_into, decode, decode_into};
@@ -43,11 +47,9 @@ use self::slow::SlowRun;
 #[cfg(any(target_os = "linux", test))]
 use self::stop::StopRun;
 #[cfg(any(target_os = "linux", test))]
-use self::trim::{core_offset_tight, core_trim, load_overlay, overlay_in_use, TrimPending, TRIM_TRIES};
+use self::trim::TrimRun;
 #[cfg(any(target_os = "linux", test))]
-use self::units::{
-    counter_tick, dvm_reading, dvm_step, hw_merge, levels_measure, unit_key, DvmKey, DvmStep, UnitGuard,
-};
+use self::units::{counter_tick, hw_merge, unit_key, UnitGuard, UnitJobs};
 pub use self::units::{dvm_hw_on, mask_hw_on, mask_map, mask_map_set, zone_hw_on};
 use super::cores;
 #[cfg(any(target_os = "linux", test))]
@@ -158,9 +160,7 @@ fn run<P: port::Port>(
     out: HwShared,
     mut keep_going: impl FnMut() -> bool,
 ) {
-    use oos_hal::dho::afg::GenLines;
     use oos_hal::dho::boot::Clock;
-    use oos_hal::dho::bus::Bus;
     use oos_hal::dho::lines::Lines;
     use oos_hal::dho::{adc, seq};
     {
@@ -177,11 +177,9 @@ fn run<P: port::Port>(
             Err(_) => None,
         };
         let mut cal_adc = adc::CalAdc::load(&cal_dir).ok();
-        // the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex above, unchanged)
-        let mut trim_overlay = overlay_in_use(core_offset_tight(), load_overlay);
-        if let Some(c) = cal_adc.as_mut() {
-            trim_overlay.apply(c);
-        }
+        // the core trim, with the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex
+        // above, unchanged; `trim.rs`)
+        let mut trim = TrimRun::new(cal_adc.as_mut());
         // LA pod zero codes (cal_la.hex, read only); without the file the middle of the DAC range (la.md 8.1)
         let la_cal = if oos_hal::model::platform().caps.la {
             oos_hal::dho::la::Cal::load(&cal_dir).unwrap_or_else(|| {
@@ -197,9 +195,8 @@ fn run<P: port::Port>(
         // roll and scan: the stream between passes
         let mut slow = SlowRun::new(clock.now_us());
         let mut mode = Slow::Off;
-        let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
-        let mut afg_io: Option<P::Gen> = None;
-        let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
+        // the built-in generator: its calibration, its lines, the request applied (`afg.rs`)
+        let mut afg = AfgRun::<P::Gen>::new(&cal_dir);
         let mut stamp;
         let mut xadc_at: Option<u64> = None;
         // STOP: the last batch, the view last read for, and whether arming is paused (`stop.rs`)
@@ -217,19 +214,26 @@ fn run<P: port::Port>(
         // the frequency counter: what runs since when, and the readings so far
         let mut counting: Option<(crate::board::CounterWant, u64)> = None;
         let mut count_n = 0u64;
-        // the DVM block: what it runs on since when, the readings so far, and the number of the configurations applied
-        let mut dvm_run: Option<(DvmKey, u64)> = None;
-        let mut dvm_n = 0u64;
+        // the number of the configurations applied (the DVM block restarts after each)
         let mut configs = 0u64;
         // the mask/zone unit's stall guard
         let mut guard = UnitGuard::default();
-        // the last request of the measure-unit levels answered
-        let mut levels_done: Option<u64> = None;
-        // `cal.core_offset = tight`: ADC modes whose core offsets were matched this session, and tries per mode
-        let mut trim_done = [false; 11];
-        let mut trim_tries = [0u8; 11];
-        let mut trim_pending: Option<TrimPending> = None;
-        let mut slots_done: Option<u64> = None;
+        // the measure unit's side jobs: the DVM block, the levels, the debug slots (`units.rs`)
+        let mut units = UnitJobs::default();
+        // the pass's handles for a part of the loop (`slow::Io`), with the stamp `$stamp`
+        macro_rules! io {
+            ($stamp:expr) => {
+                slow::Io {
+                    state: &mut state,
+                    bar: &mut bar,
+                    c2h: &mut c2h,
+                    clock: &mut clock,
+                    out: &out,
+                    n: &mut n,
+                    stamp: $stamp,
+                }
+            };
+        }
         // one pass per call of `keep_going`: always on the scope, a counted number in a host run
         while keep_going() {
             let last_read = batch.fresh.take();
@@ -270,29 +274,8 @@ fn run<P: port::Port>(
                             cancel: &cancel,
                             adc_new: None,
                         };
-                        let prog_out = out.clone();
                         let adc_base = if adc_cores { cal_adc.as_ref() } else { None };
-                        let r = oos_hal::dho::selfcal::run_all_with(
-                            &mut unit,
-                            c,
-                            adc_base,
-                            &chans,
-                            zero,
-                            &mut |d, t, s| {
-                                prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
-                            },
-                        );
-                        match r {
-                            Ok(r) => oos_hal::dho::selfcal::save(&r, &cal_dir).map(|files| {
-                                format!(
-                                    "{} configurations, largest change {:.2} %, saved {}",
-                                    r.measured,
-                                    r.worst * 100.0,
-                                    files.join(", ")
-                                )
-                            }),
-                            Err(e) => Err(e),
-                        }
+                        self_cal(&mut unit, c, adc_base, (&chans, zero), &cal_dir, &out)
                     }
                     _ => Err("self-cal needs the AFE bus (--afe) and the calibration files".into()),
                 };
@@ -309,69 +292,19 @@ fn run<P: port::Port>(
                     cal = afe::Cal::load(&cal_dir).ok();
                     cal_adc = adc::CalAdc::load(&cal_dir).ok();
                     // the matched offsets over the new trims; every mode is matched again from there
-                    if let Some(c) = cal_adc.as_mut() {
-                        trim_overlay.apply(c);
-                    }
-                    (trim_done, trim_tries) = ([false; 11], [0; 11]);
+                    trim.recalibrated(cal_adc.as_mut());
                 }
                 current = None;
                 let mut g = out.lock().unwrap();
                 (g.cal_progress, g.cal_result, g.cal_cancel) = (None, Some(res), false);
                 continue;
             }
-            // built-in generator (afg.rs): apply a changed request; the GPIO lines stay open from the first request on,
-            // which is "off" at start: an output left running (oos-fpgad afg, an earlier oos-ui) goes off as at power-on
+            // built-in generator (`afg.rs`): a changed request applied
             let (afg_want, stamp_now) = {
                 let g = out.lock().unwrap();
                 (g.afg[0], g.stamp)
             };
-            if afg_want != afg_done {
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
-                // models without the generator (non-S): its GPIO lines and FPGA block are never touched
-                if let Some((on, f, a, o, wave, md)) = afg_want.filter(|_| oos_hal::model::platform().caps.has_gen()) {
-                    if afg_io.is_none() {
-                        afg_io = unit.open_gen().map_err(|e| status(format!("generator GPIO: {}", e))).ok();
-                    }
-                    if let Some(io) = afg_io.as_mut() {
-                        // a running output keeps running when the change allows it
-                        let quick = afg_done
-                            .filter(|d| on && d.0 && d.4 == wave && d.5 == md && md == oos_hal::dho::afg::Mod::None)
-                            .and_then(|d| {
-                                oos_hal::dho::afg::retune(
-                                    afg_cal.as_ref(),
-                                    wave,
-                                    d.1 * 1e6,
-                                    f * 1e6,
-                                    a * 1e9,
-                                    o * 1e9,
-                                    io.relay_code(),
-                                )
-                            });
-                        let ops = if let Some(q) = quick {
-                            q
-                        } else if on {
-                            oos_hal::dho::afg::start_mod(
-                                afg_cal.as_ref(),
-                                wave,
-                                f * 1e6,
-                                a * 1e9,
-                                o * 1e9,
-                                io.relay_code(),
-                                md,
-                            )
-                        } else {
-                            oos_hal::dho::afg::idle(a * 1e9, o * 1e9, f * 1e6, io.relay_code())
-                        };
-                        oos_hal::dho::afg::run(&mut bar, io, &mut clock, &ops);
-                        status(format!(
-                            "generator: {}",
-                            if on { format!("{:?} {} Hz {} Vpp {} V {:?}", wave, f, a, o, md) } else { "off".into() }
-                        ));
-                    }
-                }
-                afg_done = afg_want;
-            }
+            afg.apply(afg_want, &mut unit, io!(stamp_now), &mut armed, &mut segrun);
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
             let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw) = {
@@ -413,30 +346,19 @@ fn run<P: port::Port>(
                 (g.hold, g.final_req, g.deep_raw)
             };
             if hold && !stop.paused {
-                let io = slow::Io {
-                    state: &mut state,
-                    bar: &mut bar,
-                    c2h: &mut c2h,
-                    clock: &mut clock,
-                    out: &out,
-                    n: &mut n,
-                    stamp,
-                };
-                stop.hold(io, &mut armed, last_read.as_ref(), &mut batch.raw_dma, &mut cores, (final_req, deep_want));
+                stop.hold(
+                    io!(stamp),
+                    &mut armed,
+                    last_read.as_ref(),
+                    &mut batch.raw_dma,
+                    &mut cores,
+                    (final_req, deep_want),
+                );
             }
             let stop_view = out.lock().unwrap().stop_view;
             match stop_view {
                 Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
-                    let io = slow::Io {
-                        state: &mut state,
-                        bar: &mut bar,
-                        c2h: &mut c2h,
-                        clock: &mut clock,
-                        out: &out,
-                        n: &mut n,
-                        stamp,
-                    };
-                    stop.view::<P>(v, io, &mut lines, &mut cores);
+                    stop.view::<P>(v, io!(stamp), &mut lines, &mut cores);
                     continue;
                 }
                 _ => stop.no_view(),
@@ -462,9 +384,7 @@ fn run<P: port::Port>(
                         configs += 1;
                         // core offsets of the ADC mode (opt-in): once this configuration has stood for TRIM_HOLD; a new
                         // configuration replaces the wait
-                        let m = state.mode.min(10);
-                        trim_pending = (core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES)
-                            .then(|| TrimPending { mode: m, mask: want.mask, since: clock.now_us() });
+                        trim.configured(state.mode, want.mask, &mut clock);
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
                             oos_hal::dho::acq::Mode::Average { count } => {
@@ -485,89 +405,15 @@ fn run<P: port::Port>(
             // wait until it has ended. `disarm` does not stop it, and a write in between would change the segments
             // still to come (H4 of the 0.1.13 review)
             let seg_recording = segrun.as_ref().is_some_and(|r| r.recording);
-            // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
-            if !seg_recording {
-                use oos_hal::dho::dvm;
-                let want = out.lock().unwrap().dvm_want;
-                let now = clock.now_us();
-                let elapsed = dvm_run.map_or(0.0, |r| since(now, r.1).as_secs_f64());
-                let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
-                match step {
-                    DvmStep::Start(lane) => {
-                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                        bar.apply(&dvm::start(lane, dvm::EXP));
-                        out.lock().unwrap().dvm = None;
-                    }
-                    DvmStep::Stop => {
-                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                        bar.apply(&dvm::stop());
-                        out.lock().unwrap().dvm = None;
-                    }
-                    DvmStep::Read => {
-                        let raw = dvm::read(&mut bar);
-                        dvm_n += 1;
-                        let r = key.map(|k| dvm_reading(&raw, k, &s, &state.gain, dvm_n));
-                        out.lock().unwrap().dvm = r;
-                    }
-                    DvmStep::Idle => {}
-                }
-                if step != DvmStep::Idle {
-                    let now = clock.now_us();
-                    dvm_run = key.map(|k| (k, now));
-                }
-            }
-            // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
-            // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
-            let lw = out.lock().unwrap().levels_want;
-            if let Some((id, _, runs)) =
-                lw.filter(|w| mode == Slow::Off && !seg_recording && stamp >= w.1 && levels_done != Some(w.0))
-            {
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let v = levels_measure(&mut bar, &mut clock, &s, &state.gain, runs);
-                out.lock().unwrap().levels = Some((id, v));
-                levels_done = Some(id);
-            }
-            // the core trim of the current configuration, with nothing armed
-            let now = clock.now_us();
-            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && !seg_recording && t.due(now)) {
-                trim_pending = None;
-                // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
-                let gen_on = afg_done.is_some_and(|d| d.0);
-                if !gen_on && t.mode == state.mode.min(10) {
-                    if let Some(c) = cal_adc.as_mut() {
-                        disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                        trim_tries[t.mode] += 1;
-                        trim_done[t.mode] = core_trim(&mut bar, &mut clock, &mut state, c, &mut trim_overlay, t.mask);
-                    }
-                }
-            }
-            // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
-            let sw = out.lock().unwrap().slots_want;
-            if let Some(id) = sw.filter(|&id| mode == Slow::Off && !seg_recording && slots_done != Some(id)) {
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let r = oos_hal::dho::levels::run(&mut bar, &mut |us| clock.sleep_us(us as u64));
-                out.lock().unwrap().slots =
-                    Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
-                slots_done = Some(id);
-            }
-            // :TFORce (from PR #8): a pulse of the force bit on the shadows now in force, then back. Not part of the
-            // set-up, so it does not reconfigure. Pulsed between batches: a batch already waiting for its trigger
-            // takes it at its next arm
-            if std::mem::take(&mut out.lock().unwrap().force) {
-                bar.apply(&oos_hal::dho::tpu::force(&state.ts));
-            }
+            // the measure unit's side jobs (`units.rs`) and the core trim (`trim.rs`), in this order: the DVM block,
+            // the levels for the auto set-up, the core trim of the current configuration, the debug slots and :TFORce
+            units.dvm(io!(stamp), &mut armed, &s, configs, seg_recording);
+            units.levels(io!(stamp), &mut armed, &s, mode, seg_recording);
+            trim.step(io!(stamp), &mut armed, cal_adc.as_mut(), mode, seg_recording, afg.on());
+            units.slots_and_force(io!(stamp), &mut armed, mode, seg_recording);
             if mode != Slow::Off {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let io = slow::Io {
-                    state: &mut state,
-                    bar: &mut bar,
-                    c2h: &mut c2h,
-                    clock: &mut clock,
-                    out: &out,
-                    n: &mut n,
-                    stamp,
-                };
-                slow.step(mode, &s, &p, io, &mut current, &status);
+                slow.step(mode, &s, &p, io!(stamp), &mut current, &status);
                 continue;
             }
             slow.stop(&mut state, &mut bar);
@@ -657,15 +503,6 @@ fn run<P: port::Port>(
             }
             match got {
                 Ok(count) => {
-                    let io = slow::Io {
-                        state: &mut state,
-                        bar: &mut bar,
-                        c2h: &mut c2h,
-                        clock: &mut clock,
-                        out: &out,
-                        n: &mut n,
-                        stamp,
-                    };
                     let held = batch::Held {
                         armed: &mut armed,
                         avg: &mut avg,
@@ -673,7 +510,7 @@ fn run<P: port::Port>(
                         last_batch: &mut stop.last_batch,
                         guard: &mut guard,
                     };
-                    batch.take::<P>(io, &mut lines, (&b, &p, count, batch_ms), held);
+                    batch.take::<P>(io!(stamp), &mut lines, (&b, &p, count, batch_ms), held);
                 }
                 // new settings (or STOP) while it waited for a trigger: at once to them. The arm has filled frame 0
                 // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record
@@ -705,5 +542,35 @@ fn run<P: port::Port>(
                 }
             }
         }
+    }
+}
+
+/// Self-calibration (selfcal.rs) on `unit` with the tables `c`, the ADC cores first from `adc_base` when given, for
+/// the channels and the AFE zero of `req`; the result saved to /oos/cal. The progress goes to `out`; the line for the
+/// status when it is done.
+#[cfg(any(target_os = "linux", test))]
+fn self_cal(
+    unit: &mut dyn oos_hal::dho::selfcal::CalHw,
+    c: &afe::Cal,
+    adc_base: Option<&oos_hal::dho::adc::CalAdc>,
+    req: (&[usize], bool),
+    cal_dir: &str,
+    out: &HwShared,
+) -> Result<String, String> {
+    let (chans, zero) = req;
+    let prog_out = out.clone();
+    let r = oos_hal::dho::selfcal::run_all_with(unit, c, adc_base, chans, zero, &mut |d, t, s| {
+        prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
+    });
+    match r {
+        Ok(r) => oos_hal::dho::selfcal::save(&r, cal_dir).map(|files| {
+            format!(
+                "{} configurations, largest change {:.2} %, saved {}",
+                r.measured,
+                r.worst * 100.0,
+                files.join(", ")
+            )
+        }),
+        Err(e) => Err(e),
     }
 }

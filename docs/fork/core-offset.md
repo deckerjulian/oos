@@ -168,9 +168,9 @@ reason; `cal.core_offset = tight` stays opt-in for now.
 
 ## What the change does
 
-`hal::dho::coretrim`, called from the acquisition thread once a configuration has stood for 2 s, with nothing
-armed and no hardware segment recording running (it waits for the recording's end, as the measure unit's DVM, levels
-and slots runs do), once per ADC mode and session:
+`hal::dho::coretrim`, called from the acquisition thread (`TrimRun` in `ui/src/board/dho/hw/trim.rs`) once a
+configuration has stood for 2 s, with nothing armed and no hardware segment recording running (it waits for the
+recording's end, as the measure unit's DVM, levels and slots runs do), once per ADC mode and session:
 
 1. `order`: nudges each core's offset by 64 register steps in turn and notes which measure slot moves. The
    slot-to-core mapping of the normal modes is not known otherwise. The nudged slot must move by at least 64 codes

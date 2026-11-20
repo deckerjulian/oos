@@ -160,3 +160,72 @@ pub(super) fn core_trim<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock>
         }
     }
 }
+
+/// The core trim between passes of the loop (`cal.core_offset = tight`): the matched offsets laid over cal_adc (the
+/// kept file's, none with the key off), the ADC modes matched this session and the tries per mode, and the trim waiting
+/// for its configuration to stand.
+#[cfg(any(target_os = "linux", test))]
+pub(super) struct TrimRun {
+    overlay: oos_hal::dho::coretrim::Overlay,
+    done: [bool; 11],
+    tries: [u8; 11],
+    pending: Option<TrimPending>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl TrimRun {
+    /// The kept offsets, laid over `cal_adc` (the cal_adc.hex loaded; unchanged with the key off).
+    pub(super) fn new(cal_adc: Option<&mut oos_hal::dho::adc::CalAdc>) -> TrimRun {
+        let overlay = overlay_in_use(core_offset_tight(), load_overlay);
+        if let Some(c) = cal_adc {
+            overlay.apply(c);
+        }
+        TrimRun { overlay, done: [false; 11], tries: [0; 11], pending: None }
+    }
+
+    /// A self-calibration saved new trims (`cal_adc` loaded again): the matched offsets over them; every mode is
+    /// matched again from there.
+    pub(super) fn recalibrated(&mut self, cal_adc: Option<&mut oos_hal::dho::adc::CalAdc>) {
+        if let Some(c) = cal_adc {
+            self.overlay.apply(c);
+        }
+        (self.done, self.tries) = ([false; 11], [0; 11]);
+    }
+
+    /// A configuration of ADC mode `mode` with channel set `mask` stands from now (opt-in): its core offsets once it
+    /// has stood for `TRIM_HOLD`; a new configuration replaces the wait.
+    pub(super) fn configured<C: oos_hal::dho::boot::Clock>(&mut self, mode: usize, mask: u32, clock: &mut C) {
+        let m = mode.min(10);
+        self.pending = (core_offset_tight() && !self.done[m] && self.tries[m] < TRIM_TRIES).then(|| TrimPending {
+            mode: m,
+            mask,
+            since: clock.now_us(),
+        });
+    }
+
+    /// The core trim of the current configuration, with nothing armed, once it is due; not while roll or scan runs
+    /// (`mode`), a hardware segment recording (`seg_recording`) or the generator (`gen_on`).
+    pub(super) fn step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
+        &mut self,
+        io: super::slow::Io<'_, B, R, C>,
+        armed: &mut Option<(oos_hal::dho::seq::Settings, u64)>,
+        cal_adc: Option<&mut oos_hal::dho::adc::CalAdc>,
+        mode: crate::board::Slow,
+        seg_recording: bool,
+        gen_on: bool,
+    ) {
+        let super::slow::Io { state, bar, c2h, clock, .. } = io;
+        let now = clock.now_us();
+        if let Some(t) = self.pending.filter(|t| mode == crate::board::Slow::Off && !seg_recording && t.due(now)) {
+            self.pending = None;
+            // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
+            if !gen_on && t.mode == state.mode.min(10) {
+                if let Some(c) = cal_adc {
+                    super::plan::disarm(armed, state, bar, c2h);
+                    self.tries[t.mode] += 1;
+                    self.done[t.mode] = core_trim(bar, clock, state, c, &mut self.overlay, t.mask);
+                }
+            }
+        }
+    }
+}
