@@ -6,8 +6,8 @@
 
 /// Least time between two raw deep reads while running, for a read of up to `PERIOD_BYTES`; a larger read waits
 /// longer in proportion (`period`). On the DHO924S a raw read cost about 3 % of the records per MiB read once a second
-/// (10 M at 1 ms/div, 20 MiB: a third of the records at once a second, unit 2026-11-15): so a read costs at most about
-/// 6 % of them and of the screen rate.
+/// (10 M at 1 ms/div, 20 MiB: a third of the records at once a second; verified on the unit 2026-11-15): so a read
+/// costs at most about 6 % of them and of the screen rate.
 pub const PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
 /// Raw bytes a read may have to be due every `PERIOD`.
 pub const PERIOD_BYTES: usize = 2 << 20;

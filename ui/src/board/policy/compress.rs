@@ -16,8 +16,9 @@ pub const K_MIN: u32 = 2;
 /// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; larger values wrap, assumed).
 pub const K_MAX: u32 = 16383;
 /// Least time between two raw reads of a compressed batch's newest frame (`seq::read_raw_again`). A read after every
-/// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round 2); between the raw records the UI
-/// keeps the measurement of the last one (`hold`), so measurements follow at up to 5 a second.
+/// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (verified on the unit, unitlab round 2); between the
+/// raw records the UI keeps the measurement of the last one (`compress::hold`), so measurements follow at up to 5 a
+/// second.
 pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
 /// Deepest record compressed this way. Deeper records keep the deep-memory read of `hw::batch_plan` (a screen window
 /// raw, or the whole record compressed to ~625 k points).
