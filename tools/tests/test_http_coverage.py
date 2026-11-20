@@ -217,6 +217,11 @@ class Coverage(unittest.TestCase):
             "ui/remote/src/http.rs: fn methods_of lets GET through to /update, its entries in docs/http.md name GET, "
             "POST",
             "ui/remote/src/http.rs: fn methods_of takes HEAD on /waveform without GET"])
+        # the methods are split as the server splits them: "GET,HEAD" is one method it knows of no request
+        self.write(HTTP_RS.replace('"/" | "/ui-state" | "/wave.csv" => Some("GET, HEAD")',
+                                   '"/" | "/ui-state" | "/wave.csv" => Some("GET,HEAD")'), HTTP_MD)
+        self.assertIn("ui/remote/src/http.rs: fn methods_of lets GET,HEAD through to /, its entries in docs/http.md "
+                      "name GET", self.findings())
         # without the function every route would take every method
         self.write(HTTP_RS.replace("fn methods_of(", "fn methods(", 1), HTTP_MD)
         self.assertEqual(self.findings(), ["ui/remote/src/http.rs: no arm found in fn methods_of"])

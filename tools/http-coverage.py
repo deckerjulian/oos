@@ -198,7 +198,8 @@ def methods_of(src):
     out = {}
     for pats, allow in re.findall(r'((?:"[^"]+"\s*\|?\s*)+)=>\s*Some\("([^"]+)"\)', text):
         for path in re.findall(r'"([^"]+)"', pats):
-            out.setdefault(path, set()).update(m.strip() for m in allow.split(","))
+            # split as the server does (`a.split(", ")` in fn answer): "GET,HEAD" is one method there, and so here
+            out.setdefault(path, set()).update(allow.split(", "))
     return out
 
 
