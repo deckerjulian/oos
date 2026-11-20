@@ -46,7 +46,7 @@ impl Ui {
                     }
                     self.select_workspace_source(WaveId::Ref(i));
                     if !self.session_is_sim {
-                        self.offline_ref = i;
+                        self.offline.slot = i;
                     }
                 }
                 _ => {}

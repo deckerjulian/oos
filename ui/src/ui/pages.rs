@@ -298,7 +298,7 @@ pub(super) const PAGES: [Page; 48] = [
         |u, _| u.dvm_items(),
         Some(|u| {
             let m = &u.m;
-            if u.offline {
+            if u.offline.on {
                 return Vec::new();
             }
             [m.dvm_on.then_some(WaveId::Ch(m.dvm_src)), m.cnt_on.then_some(WaveId::Ch(m.cnt_src))]

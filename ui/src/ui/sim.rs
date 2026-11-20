@@ -473,8 +473,8 @@ impl Ui {
             on: true,
         });
         self.invalidate_reference_eye();
-        if self.offline {
-            self.offline_ref = slot;
+        if self.offline.on {
+            self.offline.slot = slot;
         }
         // Required CH bus auxiliaries remain accepted immutable snapshots.
         let retained_channels = bus_decode.as_ref().map_or([false; NCH], |decoded| decoded.channels);

@@ -439,7 +439,7 @@ mod tests {
             })
             .collect();
         ui.refs[0] = Some(RefWave { label: "changing amplitude".into(), ..RefWave::test(samples, 1e-9, 0.0) });
-        ui.offline_ref = 0;
+        ui.offline.slot = 0;
         ui.m.zoom = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-12).unwrap();
         ui.m.tfine = 1.0;

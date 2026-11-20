@@ -8,6 +8,17 @@
 
 use super::*;
 
+/// Offline mode as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Mode {
+    /// Offline mode is on. Off, the live screen stays as it is.
+    pub on: bool,
+    /// the reference named on the card that replaces the trigger card, and read by the DVM and the counter
+    pub slot: usize,
+    /// the live settings put back when the mode is turned off
+    pub hold: Option<LiveHold>,
+}
+
 /// Live settings put back when the mode is turned off.
 pub(super) struct LiveHold {
     on: [bool; NCH],
@@ -21,11 +32,11 @@ pub(super) struct LiveHold {
 
 impl Ui {
     pub fn set_offline(&mut self, on: bool) {
-        if on == self.offline {
+        if on == self.offline.on {
             return;
         }
         if on {
-            self.offline_hold = Some(LiveHold {
+            self.offline.hold = Some(LiveHold {
                 on: std::array::from_fn(|c| self.m.ch[c].on),
                 ref_on: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)),
                 run: self.m.run,
@@ -34,7 +45,7 @@ impl Ui {
                 tfine: self.m.tfine,
                 delay: self.m.delay,
             });
-            self.offline = true;
+            self.offline.on = true;
             if self.look == reflook::RefLook::Live {
                 self.look = reflook::RefLook::TakeOver;
             }
@@ -42,10 +53,10 @@ impl Ui {
             self.ph.clear();
             self.phz.clear();
         } else {
-            self.offline = false;
+            self.offline.on = false;
             self.look = reflook::RefLook::Live;
             self.sim_play = false;
-            if let Some(h) = self.offline_hold.take() {
+            if let Some(h) = self.offline.hold.take() {
                 for (c, on) in h.on.into_iter().enumerate() {
                     self.m.ch[c].on = on && c < n_ch();
                 }
@@ -77,7 +88,7 @@ impl Ui {
     pub(super) fn present_record(&mut self, slot: usize) {
         let slot = slot.min(NREF - 1);
         self.idle_analog();
-        self.offline_ref = slot;
+        self.offline.slot = slot;
         self.sim_play = false;
         let spec = self.refs[slot].as_mut().map(|r| {
             r.on = true;
@@ -178,7 +189,7 @@ impl Ui {
     }
 
     pub(super) fn ref_card_lines(&self) -> (String, String) {
-        let i = self.offline_ref.min(NREF - 1);
+        let i = self.offline.slot.min(NREF - 1);
         match &self.refs[i] {
             Some(r) => {
                 let sub = if r.label.is_empty() { format!("{} pts", r.v.len()) } else { r.label.clone() };
@@ -209,7 +220,7 @@ impl Ui {
                 reflook::RefLook::TakeOver => "Take over".into(),
                 reflook::RefLook::Waves => "Offline".into(),
             }),
-            Item::DvmSrc | Item::CntSrc if self.offline => Some(format!("R{}", self.offline_ref.min(NREF - 1) + 1)),
+            Item::DvmSrc | Item::CntSrc if self.offline.on => Some(format!("R{}", self.offline.slot.min(NREF - 1) + 1)),
             _ => None,
         }
     }
@@ -217,7 +228,7 @@ impl Ui {
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
             Item::Offline => Some(vec!["With live".into(), "Take over".into(), "Offline".into()]),
-            Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
+            Item::DvmSrc | Item::CntSrc if self.offline.on => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }
     }
@@ -233,9 +244,9 @@ impl Ui {
                 }
                 true
             }
-            Item::DvmSrc | Item::CntSrc if self.offline => {
+            Item::DvmSrc | Item::CntSrc if self.offline.on => {
                 if d != 0 {
-                    self.offline_ref = (self.offline_ref as i32 + d).rem_euclid(NREF as i32) as usize;
+                    self.offline.slot = (self.offline.slot as i32 + d).rem_euclid(NREF as i32) as usize;
                     self.measure_refs();
                 }
                 true
@@ -256,7 +267,7 @@ mod tests {
     #[test]
     fn the_live_screen_is_unchanged_until_the_mode_is_on() {
         let mut u = ui();
-        assert!(!u.offline);
+        assert!(!u.offline.on);
         assert!(u.m.ch[0].on);
         assert_eq!(u.run_caption().0, "WAIT");
         assert!(u.acq_caption().1);
@@ -306,13 +317,13 @@ mod tests {
             (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
-        assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
+        assert!(live.m.ch[0].on && !live.offline.on, "a live import adds an overlay without taking over acquisition");
         assert_eq!(live.m.tscale, scale, "import cannot silently change the ADC timebase");
         assert!(live.cards().0.iter().any(|card| card.w > 0));
         assert!(live.refs[0].as_ref().unwrap().on);
         live.set_look(reflook::RefLook::TakeOver);
         assert!(
-            live.m.ch.iter().all(|channel| !channel.on) && live.offline,
+            live.m.ch.iter().all(|channel| !channel.on) && live.offline.on,
             "Take over explicitly enters a stored-waveform session"
         );
 
@@ -427,7 +438,7 @@ mod tests {
         }
         u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
         assert_eq!((u.m.tscale, u.m.tfine, u.m.delay), held);
-        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.m.ch[0].on && !u.offline.on);
         assert!(u.refs[0].is_some() && u.refs[1].as_ref().unwrap().on);
         u.set_look(reflook::RefLook::TakeOver);
         assert_timebase(&u, 0.0, 1e-9, 100);
@@ -446,11 +457,11 @@ mod tests {
         let (acq, live_mode) = u.acq_caption();
         assert!(live_mode, "{}", acq);
         assert_eq!(u.m.time_per_div(), live);
-        assert!(u.m.ch[0].on && !u.offline && !u.session_is_sim);
+        assert!(u.m.ch[0].on && !u.offline.on && !u.session_is_sim);
         let note = u.live_ref_note();
         assert!(note.contains("R1") && note.contains("Sa/s"), "{note}");
         assert!(u.fit_selected_record(), "Fit record is explicit and separate from ADC Autoset");
-        assert!(u.m.ch[0].on && !u.offline);
+        assert!(u.m.ch[0].on && !u.offline.on);
         assert!(u.m.time_per_div() < live);
         u.session_is_sim = true;
         assert!(u.acq_caption().0.starts_with("SIM"), "{}", u.acq_caption().0);
