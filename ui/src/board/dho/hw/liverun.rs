@@ -403,11 +403,11 @@ const CASES: &[Case] = &[
 ];
 
 /// The checks of the generator's requests in a case's script against what the unit's generator was told by the pass
-/// of each (`gens[k]`: after k passes): the output and its supply on as asked, the frequency of the phase increment and
-/// the modulation; a new frequency of the same wave, level and no modulation retuned without a new table
-/// (`afg::retune`), any other change of a running output with one. Break it catches: a request not applied, applied
-/// to another bank, at another frequency, an output left on, a retune that starts over or a start that keeps the old
-/// table.
+/// of each (`gens[k]`: after k passes): the output and its supply on as asked, the frequency of the phase increment,
+/// the amplitude and offset of the DAC codes and the modulation; a new frequency of the same wave, level and no
+/// modulation retuned without a new table (`afg::retune`), any other change of a running output with one. Break it
+/// catches: a request not applied, applied to another bank, at another frequency or level, an output left on, a
+/// retune that starts over or a start that keeps the old table.
 fn generator_checks(case: &Case, gens: &[GenState]) {
     let mut before: Option<(crate::board::Gen, GenState)> = None;
     for (at, want) in case.script.iter().filter_map(|(at, a)| if let Act::Gen(w) = a { Some((*at, *w)) } else { None })
@@ -423,6 +423,17 @@ fn generator_checks(case: &Case, gens: &[GenState]) {
         };
         if on {
             assert!((g.hz - f).abs() < 1e-3, "{}: {} Hz, not {} Hz", case.name, g.hz, f);
+            // the levels of the DAC codes on the path of the relays: within a step of 0x3070 / 0x3078 at gains <= 1
+            let (da, doff) = (g.vpp - a, g.offset_v - o);
+            assert!(
+                da.abs() < 2e-4 && doff.abs() < 2e-4,
+                "{}: {} Vpp {} V, not {} {}",
+                case.name,
+                g.vpp,
+                g.offset_v,
+                a,
+                o
+            );
             assert_eq!(g.modulation, modulation, "{}: modulation after pass {}", case.name, at);
         }
         if let Some((w, b)) = before.filter(|(w, _)| w.0 && on) {

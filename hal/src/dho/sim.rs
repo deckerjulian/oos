@@ -242,6 +242,12 @@ pub struct GenState {
     /// the amplitude and offset DAC codes, bank A 0x3070 / 0x3078 (written as 0xffff - code)
     pub ampl: u32,
     pub offset: u32,
+    /// the amplitude (Vpp) and the offset (V) the codes give on the path the relays select, without the calibration
+    /// file (afg.md 5.2): A = ((code / 65535 x 5.29) - 2.75) x 1.158 x G, O = ((code / 65535 x 5.29) - 2.75) / (0.11
+    /// with the x10 stage, else 1.1). G from the relay bits as afg.md 4.2 decodes them (assumed there, consistent with
+    /// every row): bit 0 x0.316, bit 1 x0.1, bit 2 x10, bit 3 x0.1
+    pub vpp: f64,
+    pub offset_v: f64,
     /// bank M 0x3000: 0 none, 0x82 AM, 0x84 FM, 0x88 PM
     pub modulation: u32,
     /// samples written to the RAM port, bank B 0x3038, since the start
@@ -278,11 +284,17 @@ impl GenRegs {
         let r = |b: u32, off: u32| self.regs.get(&(b, off)).copied().unwrap_or(0) as u64;
         let inc = r(GEN_B, 0x3048) | r(GEN_B, 0x304c) << 16 | r(GEN_B, 0x3050) << 32 | (r(GEN_B, 0x3054) & 0xff) << 48;
         let code = |off: u32| self.regs.get(&(GEN_A, off)).map_or(0, |&v| 0xffff - (v & 0xffff));
+        let bits = [0.316_227_766, 0.1, 10.0, 0.1];
+        let gain: f64 = (0..4).filter(|b| self.relays & 1 << b != 0).map(|b| bits[b]).product();
+        let dac = |c: u32| c as f64 / 65535.0 * 5.29 - 2.75;
+        let (ampl, offset) = (code(0x3070), code(0x3078));
         GenState {
             output: r(GEN_B, 0x3000) & 1 != 0,
             hz: inc as f64 * DDS_HZ / DDS_CYCLE,
-            ampl: code(0x3070),
-            offset: code(0x3078),
+            ampl,
+            offset,
+            vpp: dac(ampl) * 1.158 * gain,
+            offset_v: dac(offset) / if self.relays & 4 != 0 { 0.11 } else { 1.1 },
             modulation: r(GEN_M, 0x3000) as u32,
             samples: self.samples,
             relays: self.relays,
@@ -1228,19 +1240,29 @@ mod tests {
         let (_, p) = configured(&s);
         let (u, mut bar, _, mut clock) = unit(scene(&p, None, None));
         let mut lines = Gen(u.clone());
-        assert_eq!(u.borrow().generator(), GenState::default(), "nothing told yet");
+        let g0 = u.borrow().generator();
+        assert!(!g0.output && !g0.power && g0.samples == 0 && g0.relays == 0, "nothing told yet: {:?}", g0);
         // 1 kHz, 1 Vpp, 0 V without the calibration file
         afg::run(&mut bar, &mut lines, &mut clock, &afg::start(None, Wave::Sine, 1e9, 1e9, 0.0, 0));
         let g = u.borrow().generator();
         assert!(g.output && g.power && g.modulation == 0, "{:?}", g);
         assert!((g.hz - 1e3).abs() < 1e-6, "{} Hz", g.hz);
-        assert_eq!((g.samples, g.relays), (8192, lines.relay_code()));
-        assert!(g.ampl > 0, "{:?}", g);
+        // 1 Vpp at 0 V: gear 7 (0x10, afg.md 4.2), the codes within one step of their levels (afg.md 5.2)
+        assert_eq!((g.samples, g.relays), (8192, 0x10));
+        let step = 5.29 / 65535.0;
+        assert!((g.vpp - 1.0).abs() <= step * 1.158 && (g.offset_v).abs() <= step / 1.1, "{:?}", g);
         // 2 kHz without a new table (`afg::retune`), the output on all along
         let quick = afg::retune(None, Wave::Sine, 1e9, 2e9, 1e9, 0.0, lines.relay_code()).expect("a retune");
         afg::run(&mut bar, &mut lines, &mut clock, &quick);
         let r = u.borrow().generator();
         assert!(r.output && (r.hz - 2e3).abs() < 1e-6 && r.samples == 8192, "{:?}", r);
+        // 4 Vpp at +0.5 V: gear 0 (0x15, x10 stage), its offset path
+        let high = afg::retune(None, Wave::Sine, 2e9, 2e9, 4e9, 0.5e9, lines.relay_code());
+        assert!(high.is_none(), "another gear: no retune");
+        afg::run(&mut bar, &mut lines, &mut clock, &afg::start(None, Wave::Sine, 2e9, 4e9, 0.5e9, 0x10));
+        let h = u.borrow().generator();
+        assert_eq!(h.relays, 0x15);
+        assert!((h.vpp - 4.0).abs() <= step * 1.158 * 3.17 && (h.offset_v - 0.5).abs() <= step / 0.11, "{:?}", h);
         // AM: the modulation's bank, not the DDS's 0x3000
         let am = Mod::Am { rate: 100.0, depth: 0.5, shape: ModShape::Sine };
         afg::run(&mut bar, &mut lines, &mut clock, &afg::start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0, am));
