@@ -419,6 +419,8 @@ const CASES: &[Case] = &[
 ];
 
 /// What the screen's side sees of the unit after each pass: what the generator was told and the counter's reading.
+/// `seen[k]` is taken when the loop asks before pass k + 1, so it is the state after pass k, the pass that applied a
+/// request of the script at k.
 #[derive(Clone, Copy)]
 struct Seen {
     gen: GenState,
@@ -434,8 +436,9 @@ fn counter_checks(case: &Case, trace: &str, seen: &[Seen]) {
     let asked: Vec<(u32, Option<CounterWant>)> =
         case.script.iter().filter_map(|(at, a)| if let Act::Counter(w) = a { Some((*at, *w)) } else { None }).collect();
     for (i, &(at, want)) in asked.iter().enumerate() {
-        let until = asked.get(i + 1).map_or(seen.len() - 1, |n| n.0 as usize);
-        let mut reads: Vec<CounterRead> = seen[at as usize..=until].iter().filter_map(|s| s.counter).collect();
+        // after the pass that applied it, up to the pass before the one that applies the next
+        let until = asked.get(i + 1).map_or(seen.len(), |n| n.0 as usize);
+        let mut reads: Vec<CounterRead> = seen[at as usize..until].iter().filter_map(|s| s.counter).collect();
         reads.dedup_by_key(|r| r.n);
         let Some(w) = want else {
             assert!(reads.is_empty(), "{}: readings after the stop: {:?}", case.name, reads);
@@ -714,6 +717,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
         let mut g = lock(&shared);
+        // the state after the pass before this one (`Seen`)
         seen.push(Seen { gen: sim.borrow().generator(), counter: g.counter });
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
