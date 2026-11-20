@@ -3,8 +3,8 @@
 
 //! Tests of the screen that are not about the acquisition or the menu dialog: measurements in the menus, decoders and
 //! the bus trigger, math, mask, histogram, analysers and views, Bode, storage, the trigger level line, SCPI of the
-//! acquisition and the axis labels. A test of acquisition goes into `acquisition_tests.rs`, one of the menus and keys
-//! into `menu_tests.rs`.
+//! acquisition and the axis labels. A test of acquisition goes into `acquisition_tests.rs` (of STOP and SINGLE into
+//! `stop_tests.rs`), one of the menus and keys into `menu_tests.rs`.
 
 use super::axis_label;
 
