@@ -122,6 +122,15 @@ impl Generation {
     }
 }
 
+/// The SIM generator as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Generator {
+    /// the generator thread, started with the first request and dropped when it stops
+    pub worker: Option<Generation>,
+    /// the last error, until SCPI takes it (`take_sim_error`)
+    pub error: Option<String>,
+}
+
 /// Serial-record strip: levels, bit period, edges, widths. Two rows of six.
 /// First six also have on-trace labels (pk-pk, amp, rise, fall, period, +width).
 const SIM_MEAS: [Meas; 12] = [
@@ -181,15 +190,16 @@ impl Ui {
     }
 
     pub(super) fn sim_operation(&self) -> Option<(u64, u64)> {
-        self.sim_generation.as_ref().and_then(|generation| generation.active.map(|id| (self.workflow_epoch, id)))
+        self.sim_gen.worker.as_ref().and_then(|generation| generation.active.map(|id| (self.workflow_epoch, id)))
     }
 
     pub(crate) fn sim_generating(&self) -> bool {
-        self.sim_generation.as_ref().is_some_and(|generation| generation.active.is_some())
+        self.sim_gen.worker.as_ref().is_some_and(|generation| generation.active.is_some())
     }
 
     fn sim_requested_running(&self) -> bool {
-        self.sim_generation
+        self.sim_gen
+            .worker
             .as_ref()
             .filter(|generation| generation.active.is_some())
             .map_or(self.m.run == RunState::Run, |generation| generation.run)
@@ -257,7 +267,7 @@ impl Ui {
     }
 
     pub(crate) fn sim_cancel_generation(&mut self) {
-        if let Some(generation) = &mut self.sim_generation {
+        if let Some(generation) = &mut self.sim_gen.worker {
             generation.active = None;
             generation.queued = None;
             generation.pending = None;
@@ -265,7 +275,7 @@ impl Ui {
     }
 
     pub(crate) fn take_sim_error(&mut self) -> Option<String> {
-        self.sim_error.take()
+        self.sim_gen.error.take()
     }
 
     fn sim_request_ui(&mut self, run: bool) {
@@ -277,7 +287,7 @@ impl Ui {
     /// Preflight before changing a live session or its working reference. Long
     /// SSC records are generated off the UI thread; ordinary records stay fast.
     fn sim_load(&mut self, run: bool) -> Result<(), String> {
-        self.sim_error = None;
+        self.sim_gen.error = None;
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         let lane = self.sim_lane();
@@ -308,7 +318,7 @@ impl Ui {
             let generated = Generated::evaluate(&request, generated);
             self.sim_finish(request, generated);
         } else {
-            let generation = match &mut self.sim_generation {
+            let generation = match &mut self.sim_gen.worker {
                 Some(generation) => generation,
                 none => none.insert(Generation::new()?),
             };
@@ -332,20 +342,20 @@ impl Ui {
     }
 
     pub(super) fn sim_poll(&mut self) {
-        let pending = self.sim_generation.as_mut().and_then(|generation| generation.pending.take());
+        let pending = self.sim_gen.worker.as_mut().and_then(|generation| generation.pending.take());
         if let Some((request, generated)) = pending {
-            if let Some(generation) = self.sim_generation.as_mut().filter(|g| g.active == Some(request.id)) {
+            if let Some(generation) = self.sim_gen.worker.as_mut().filter(|g| g.active == Some(request.id)) {
                 generation.active = None;
                 self.sim_finish(request, generated);
             }
         }
         loop {
-            let Some(generation) = &mut self.sim_generation else { return };
+            let Some(generation) = &mut self.sim_gen.worker else { return };
             match generation.thread.poll() {
                 Ok((request, result)) => {
                     if generation.active != Some(request.id) {
                         if let Err(error) = generation.advance_queue() {
-                            self.sim_error = Some(error);
+                            self.sim_gen.error = Some(error);
                         }
                         continue;
                     }
@@ -353,7 +363,7 @@ impl Ui {
                     match result {
                         Ok(generated) => self.sim_finish(request, generated),
                         Err(error) => {
-                            self.sim_error = Some(error.clone());
+                            self.sim_gen.error = Some(error.clone());
                             self.toast(&format!("SIM: {error}"));
                         }
                     }
@@ -361,10 +371,10 @@ impl Ui {
                 Err(mpsc::TryRecvError::Empty) => return,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     if generation.active.take().is_some() {
-                        self.sim_error = Some("SIM generator stopped; try again".into());
+                        self.sim_gen.error = Some("SIM generator stopped; try again".into());
                         self.toast("SIM generator stopped; try again");
                     }
-                    self.sim_generation = None;
+                    self.sim_gen.worker = None;
                     return;
                 }
             }
@@ -385,7 +395,8 @@ impl Ui {
     fn wait_sim_worker(&mut self) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while self
-            .sim_generation
+            .sim_gen
+            .worker
             .as_ref()
             .is_some_and(|generation| generation.thread.busy() || generation.queued.is_some())
         {
@@ -408,7 +419,7 @@ impl Ui {
             return;
         }
         if let Some(error) = generated.error {
-            self.sim_error = Some(error.into());
+            self.sim_gen.error = Some(error.into());
             self.m.status = TrigStatus::Wait;
             self.toast(&format!("SIM: {error}"));
             return;
@@ -628,16 +639,16 @@ impl Ui {
         self.replay.sim_attempt = self.replay.sim_attempt.wrapping_add(1);
         lane.seed ^= self.replay.sim_attempt.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         if let Err(error) = serial::sample_count(&lane) {
-            self.sim_error = Some(error);
+            self.sim_gen.error = Some(error);
             self.m.run = RunState::Stop;
             self.sim_play = false;
             return;
         }
-        if self.sim_generation.is_none() {
+        if self.sim_gen.worker.is_none() {
             match Generation::new() {
-                Ok(worker) => self.sim_generation = Some(worker),
+                Ok(worker) => self.sim_gen.worker = Some(worker),
                 Err(error) => {
-                    self.sim_error = Some(error);
+                    self.sim_gen.error = Some(error);
                     return;
                 }
             }
@@ -645,14 +656,14 @@ impl Ui {
         let initial = self.replay.sim_initial_armed;
         let request = self.sim_capture_request(lane, self.m.sim_slot, !initial, !initial, true);
         if let Some(Err(error)) = &request.bus_trigger {
-            self.sim_error = Some((*error).into());
+            self.sim_gen.error = Some((*error).into());
             self.m.status = TrigStatus::Wait;
             return;
         }
         // made above when there was none
-        let Some(generation) = self.sim_generation.as_mut() else { return };
+        let Some(generation) = self.sim_gen.worker.as_mut() else { return };
         if let Err(error) = generation.submit(request) {
-            self.sim_error = Some(error);
+            self.sim_gen.error = Some(error);
         }
     }
 
@@ -669,12 +680,12 @@ impl Ui {
             if self.reference_trigger_hits(source).is_none() {
                 // The actual external trigger source has not finished scanning.
                 // Retain one candidate off-screen; polling never installs it.
-                let generation = match &mut self.sim_generation {
+                let generation = match &mut self.sim_gen.worker {
                     Some(generation) => generation,
                     none => match Generation::new() {
                         Ok(worker) => none.insert(worker),
                         Err(error) => {
-                            self.sim_error = Some(error);
+                            self.sim_gen.error = Some(error);
                             return;
                         }
                     },

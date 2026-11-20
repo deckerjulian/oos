@@ -147,7 +147,7 @@ struct Held {
 impl Held {
     fn channel(ui: &mut Ui) -> Self {
         let (thread, input, reply) = Worker::manual();
-        ui.sim_generation = Some(Generation { thread, next: 0, active: None, run: false, queued: None, pending: None });
+        ui.sim_gen.worker = Some(Generation { thread, next: 0, active: None, run: false, queued: None, pending: None });
         Self { reply, request: None, _requests: input }
     }
     fn receive_request(&mut self) {
@@ -158,7 +158,7 @@ impl Held {
     fn submit(ui: &mut Ui) -> Self {
         let mut held = Self::channel(ui);
         let request = ui.sim_capture_request(ui.sim_lane(), 0, true, true, true);
-        ui.sim_generation.as_mut().unwrap().submit(request).unwrap();
+        ui.sim_gen.worker.as_mut().unwrap().submit(request).unwrap();
         held.receive_request();
         held
     }
