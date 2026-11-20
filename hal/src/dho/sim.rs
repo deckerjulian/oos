@@ -17,10 +17,10 @@
 //! header, the compression) and answers the reads the loop polls, all on one virtual clock. What the signal is, when it
 //! triggers and how the front ends scale it is the test's `Scene`; the writes of the front ends, the ADC, the trigger
 //! and the time base are recorded, not interpreted (3.2). Every access leaves a line in the trace. The roll stream and
-//! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. Not
-//! modelled yet: the hardware average (`Engine` has it). The stamps of a segmented record are those of the head of
-//! `seg`: the latch holds the trigger of the last frame played, the first-trigger stamp that of the first frame recorded
-//! since its clear, both in ticks of 0.8 ns.
+//! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
+//! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The stamps of a
+//! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
+//! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
 
 pub use crate::dho::seg::sim::{engine, Engine, SimBus, SimC2h};
 
@@ -28,7 +28,7 @@ use crate::dho::boot::Clock;
 use crate::dho::bus::{Bus, FPGA_VERSION};
 use crate::dho::roll::{CHUNK_BYTES, CHUNK_WORDS};
 use crate::dho::seg::{HEADER_TICK_FS, LATCH_TICK_FS};
-use crate::dho::{encode, pairs, readout, scu};
+use crate::dho::{acq, encode, pairs, readout, scu};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
@@ -157,6 +157,63 @@ struct Roll {
     made: u64,
 }
 
+/// The hardware average (horizontal-config.md 3, the head of `avg`): on while 0x1004 bit 3 is set, over the last
+/// 0x10b0 + 1 triggers since the last rising edge of 0x10b4 bit 0 (the clear). Each frame recorded in average mode is
+/// stored as the average of the record at its trigger and the records before it, each memory point the mean of the
+/// codes the frames that have it hold there, truncated: `avg::mean_words` for records of one length. Assumed, and kept
+/// simple: that the average runs over the triggers recorded (the running reading of `avg::Kind`;
+/// `seq::State::read_steps` assumes the frames reach it when they are played, which gives the same frames while every
+/// recorded frame is played, as the loop does), that a frame holds the average as it stood after its own trigger, and
+/// that a record of another length or scale without a clear is averaged with the ones before it. 0x10b0 reads back the
+/// triggers in the average less one, up to the count written (`avg::progress`: that it counts is assumed; once the
+/// average is full it is the value written either way).
+#[derive(Default)]
+struct Avg {
+    /// the codes of each channel over the whole record, of the triggers in the average, the newest last
+    raw: VecDeque<[Vec<u16>; 4]>,
+    /// per channel and memory point: the sum of the codes in `raw` and the number of frames that have the point
+    sum: [Vec<(u64, u32)>; 4],
+    /// triggers since the clear
+    triggers: u64,
+    /// the averaged record of each frame of the ring recorded in average mode
+    frames: BTreeMap<u32, [Vec<u16>; 4]>,
+}
+
+impl Avg {
+    fn clear(&mut self) {
+        self.raw.clear();
+        self.sum = Default::default();
+        self.triggers = 0;
+    }
+
+    /// Frame `k` recorded with the codes `raw` in an average of `n`: its averaged record.
+    fn push(&mut self, k: u32, raw: [Vec<u16>; 4], n: usize) {
+        for (sum, codes) in self.sum.iter_mut().zip(&raw) {
+            if sum.len() < codes.len() {
+                sum.resize(codes.len(), (0, 0));
+            }
+            for (s, &c) in sum.iter_mut().zip(codes) {
+                *s = (s.0 + c as u64, s.1 + 1);
+            }
+        }
+        self.raw.push_back(raw);
+        self.triggers += 1;
+        while self.raw.len() > n.max(1) {
+            let Some(old) = self.raw.pop_front() else { break };
+            for (sum, codes) in self.sum.iter_mut().zip(&old) {
+                for (s, &c) in sum.iter_mut().zip(codes) {
+                    *s = (s.0 - c as u64, s.1 - 1);
+                }
+            }
+        }
+        let mean = std::array::from_fn(|c| {
+            let len = self.raw.back().map_or(0, |f| f[c].len());
+            self.sum[c][..len].iter().map(|&(s, n)| (s / n.max(1) as u64) as u16).collect()
+        });
+        self.frames.insert(k, mean);
+    }
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream` and `Time`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -178,6 +235,7 @@ pub struct Unit {
     last_played: Option<u32>,
     latched: u64,
     first_trigger_fs: Option<i128>,
+    avg: Avg,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -200,6 +258,7 @@ impl Unit {
             last_played: None,
             latched: 0,
             first_trigger_fs: None,
+            avg: Avg::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -234,6 +293,7 @@ impl Unit {
         let wait = self.reg(0x4068) as i128 * INTERVAL_TICK_FS;
         let Some(r) = self.rec.as_mut() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
+        let mut new = Vec::new();
         loop {
             let from = match r.n {
                 0 => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
@@ -245,12 +305,28 @@ impl Unit {
             self.first_trigger_fs.get_or_insert(at);
             r.n += 1;
             self.trace.push(Event::Recorded { us: self.t_fs / US, frame: k, trigger_us: at / US });
+            new.push((k, at));
             if r.first + r.n > r.last {
                 self.recorded = r.n;
                 self.rec = None;
                 break;
             }
         }
+        for (k, at) in new {
+            self.average(k, at);
+        }
+    }
+
+    /// Frame `k`, triggered at `at`, into the hardware average while it is on (`Avg`); else it holds its own samples.
+    fn average(&mut self, k: u32, at: i128) {
+        if self.reg(0x1004) & 1 << 3 == 0 {
+            self.avg.frames.remove(&k);
+            return;
+        }
+        let mask = self.reg(0x4008) & 0xf;
+        let len = (self.view.pre + self.view.post) as usize;
+        let raw = std::array::from_fn(|c| if mask & 1 << c != 0 { self.words(c, at, 0, len) } else { Vec::new() });
+        self.avg.push(k, raw, self.reg(acq::AVG_COUNT) as usize + 1);
     }
 
     /// Makes the chunks of the roll or scan stream whose last point has come by now, into the stream.
@@ -343,7 +419,13 @@ impl Unit {
                     if mask & (1 << c) == 0 {
                         return Vec::new();
                     }
-                    let raw = self.words(c, trig, start, n * k);
+                    let mut raw = self.words(c, trig, start, n * k);
+                    // the averaged record where the frame has one; points past its end are the scene's (assumed)
+                    if let Some(a) = self.avg.frames.get(&f) {
+                        for (w, &x) in raw.iter_mut().zip(a[c].iter().skip(start as usize)) {
+                            *w = x;
+                        }
+                    }
                     if k > 1 {
                         pairs::model(&raw, k, pairs::LAYOUT)
                     } else {
@@ -371,6 +453,9 @@ impl Unit {
                 let at = self.last_played.and_then(|k| self.ring.get(&k)).copied().unwrap_or(0);
                 self.latched = (at / LATCH_TICK_FS) as u64;
             }
+        }
+        if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
+            self.avg.clear();
         }
         if off != 0x4004 {
             return;
@@ -450,6 +535,9 @@ impl Unit {
                 } else {
                     (t >> 32) as u32
                 }
+            }
+            acq::AVG_COUNT if self.reg(0x1004) & 1 << 3 != 0 => {
+                (self.avg.triggers.min(self.reg(off) as u64 + 1).saturating_sub(1)) as u32
             }
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
@@ -945,6 +1033,78 @@ mod tests {
             let want = lines((start + i as i128 * roll::la_spacing_fs(&rp) as i128) as f64 * 1e-15);
             assert!(x.abs_diff(want) <= 1, "LA word {}: {:#x}, not {:#x}", i, x, want);
         }
+    }
+
+    // Break it catches: a hardware average that is not the mean of the triggers since the clear, over the last 0x10b0 +
+    // 1 of them, a frame that holds another average than the one after its own trigger, a clear that does not start it
+    // over, a progress in 0x10b0 that does not count, or a frame of the normal mode that is averaged
+    #[test]
+    fn the_hardware_average_is_the_mean_of_the_triggers_since_its_clear() {
+        let avg = Settings {
+            tdiv: 100e-9,
+            depth: 1000,
+            frames: 10,
+            window: None,
+            mode: acq::Mode::Average { count: 16 },
+            ..Settings::default()
+        };
+        let mut st = State::handover(avg.mask, None);
+        let (cfg, p) = st.configure(&avg, None, None).unwrap();
+        // a level of 0.05 V x (g % 7) for the whole record of trigger g, every 20 us from 1 us
+        let period = 20 * US;
+        let level = move |t: f64| 0.05 * (((t * 1e15 - US as f64) / period as f64).round() as i64).rem_euclid(7) as f64;
+        let view = View { cal: CAL, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+        let scene = Scene {
+            volts: Box::new(move |_, t| level(t)),
+            la: None,
+            first_fs: US,
+            period_fs: Some(period),
+            auto_fs: None,
+            view,
+        };
+        let (u, bar, c2h, clock) = unit(scene);
+        let mut sides = (bar, c2h, clock);
+        let run = |steps: &[Step], (bar, c2h, clock): &mut (Bar, Stream, Time)| {
+            seq::execute_bus_on(steps, bar, c2h, &mut DmaBuf::new(), clock, &mut |_| {}, &|| false).unwrap()
+        };
+        run(&cfg, &mut sides);
+        assert_eq!(sides.0.rd(acq::AVG_COUNT), 0, "nothing in the average after the clear");
+        // one batch of 10 frames, each against the mean of the last `n` levels since the clear (`since`)
+        let mut dma = DmaBuf::new();
+        let mut check = |st: &mut State,
+                         (s, p): (&Settings, &hz::Params),
+                         since: &mut Vec<f64>,
+                         n: usize,
+                         sides: &mut (Bar, Stream, Time)| {
+            let (bar, c2h, clock) = sides;
+            let got = seq::acquire_batch_on(st, s, p, bar, c2h, &mut dma, clock, false, 12, |_| {}, || false, || false);
+            assert_eq!(got, Ok(10));
+            for (k, f) in dma.data().chunks_exact(seq::frame_bytes(s, p)).enumerate() {
+                let at = u.borrow().trigger_fs(k as u32).unwrap();
+                since.push(level(at as f64 * 1e-15));
+                let last = &since[since.len().saturating_sub(n)..];
+                let want = last.iter().sum::<f64>() / last.len() as f64;
+                let v = &seq::decode_volts(f, 1, CAL)[0];
+                let code = CAL[0].0 / crate::dho::readout::CODES_PER_DIV;
+                let ok = v.iter().all(|&x| (x as f64 - want).abs() <= code * 1.01);
+                assert!(ok, "frame {}: {} V, not {} V", k, v[0], want);
+            }
+            bar.rd(acq::AVG_COUNT)
+        };
+        // two batches: 10 triggers in, then the last 16 of 20
+        let mut since = Vec::new();
+        assert_eq!(check(&mut st, (&avg, &p), &mut since, 16, &mut sides), 9, "0x10b0: 10 triggers in");
+        assert_eq!(check(&mut st, (&avg, &p), &mut since, 16, &mut sides), 15, "0x10b0: full, the value written");
+        // the clear: the next frames average only the triggers after it
+        let clear = st.avg_clear_steps();
+        let mut fresh = Vec::new();
+        run(&clear, &mut sides);
+        assert_eq!(check(&mut st, (&avg, &p), &mut fresh, 16, &mut sides), 9, "0x10b0: 10 triggers since the clear");
+        // the normal mode: each frame its own trigger, 0x10b0 as written
+        let normal = Settings { mode: acq::Mode::Normal, ..avg.clone() };
+        let (cfg, pn) = st.configure(&normal, None, None).unwrap();
+        run(&cfg, &mut sides);
+        assert_eq!(check(&mut st, (&normal, &pn), &mut Vec::new(), 1, &mut sides), 1, "0x10b0 outside the average");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
