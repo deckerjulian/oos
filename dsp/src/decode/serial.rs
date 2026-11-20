@@ -10,6 +10,7 @@
 use super::{Kind, Packet, Parity};
 use crate::edges::{edges, states};
 use crate::protocols::{every_word_is_a_frame, BusWhat, Lines, ModuleInfo, OPTS};
+use crate::trigger::Slope;
 
 /// The baud rates of the Decode menu, as the options of a module choose them.
 pub const BAUDS: [f64; 10] = [1200.0, 2400.0, 4800.0, 9600.0, 19200.0, 38400.0, 57600.0, 115200.0, 460800.0, 921600.0];
@@ -252,6 +253,8 @@ fn i2c_read_end(mut out: Vec<Packet>) -> Vec<Packet> {
 pub static SPI: ModuleInfo = ModuleInfo::new("Spi", "SPI", "serial")
     .roles([Some("MOSI"), Some("Clock"), Some("CS"), None])
     .trigger(every_word_is_a_frame)
+    // a frame starts with the chip select
+    .starts_with(2, Slope::Falling)
     .bit(|_, _| 0.5e-6)
     .decoder(spi_lines);
 

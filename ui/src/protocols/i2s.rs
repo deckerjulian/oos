@@ -19,13 +19,6 @@ impl Protocol for I2s {
     fn shared(&self) -> &'static [Row] {
         &[Row::Bits]
     }
-    /// A frame starts at a change of WS, either way.
-    fn start_edge(&self) -> Slope {
-        Slope::Either
-    }
-    fn start_role(&self) -> usize {
-        2
-    }
     /// The demo: WS on CH1, SD on CH2, SCK on CH3, all three shown; 16-bit words; the trigger on WS falling.
     fn setup(&self) -> Setup {
         Setup {

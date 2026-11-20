@@ -10,6 +10,7 @@
 use super::{Kind, Packet};
 use crate::edges::edges;
 use crate::protocols::{BusWhat, ModuleInfo};
+use crate::trigger::Slope;
 
 /// Nominal half-bit time of a DCC `1` (58 us high + 58 us low).
 pub const DCC_ONE_HALF: f64 = 58e-6;
@@ -27,6 +28,8 @@ pub static DCC: ModuleInfo = ModuleInfo::new("Dcc", "DCC", "dcc")
     .roles([Some("Rail"), None, None, None])
     .differential()
     .starts_on(BusWhat::Id, 3)
+    // the signal never idles: every edge may start a packet
+    .starts_with(0, Slope::Either)
     // a `1` bit: two halves of 58 us
     .bit(|_, _| 2.0 * DCC_ONE_HALF)
     .decoder(|l| Ok(dcc(l.main(), l.dt, l.thr, l.hy)));

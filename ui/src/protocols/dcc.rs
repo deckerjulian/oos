@@ -65,10 +65,6 @@ impl Protocol for Dcc {
         }
         Some(v)
     }
-    /// The signal never idles: every edge may start a packet.
-    fn start_edge(&self) -> Slope {
-        Slope::Either
-    }
     fn setup(&self) -> Setup {
         Setup { src: [Some(2), None, None, None], thr: 0.0, ..Setup::default() }
     }

@@ -5,8 +5,45 @@
 //! decodes the record with the Decode menu's settings and triggers at the end of the matching field.
 
 use crate::model::*;
+use crate::protocols::Decoder;
 use oos_dsp::decode::{Kind, Packet};
 use oos_dsp::trigger::Input;
+
+/// Time scale of the trigger condition of `m` (s): the search resolution must resolve it.
+pub fn feature(m: &Model) -> f64 {
+    let t = |x: f32| x as f64;
+    match m.trig_type {
+        TrigType::Edge | TrigType::Pattern => f64::INFINITY,
+        TrigType::Bus => m.bus_bit() / 20.0,
+        TrigType::Video => 0.25e-6,
+        TrigType::SetupHold => t(m.setup.min(m.hold)) / 4.0,
+        TrigType::Timeout => t(m.trig_t1) / 20.0,
+        TrigType::NthEdge => t(m.nth_idle) / 20.0,
+        TrigType::Runt if m.trig_when == WhenKind::Off => f64::INFINITY,
+        TrigType::Window if m.win_mode != WinMode::Inside => f64::INFINITY,
+        _ => {
+            t(m.trig_t1.min(if matches!(m.trig_when, WhenKind::In | WhenKind::Out) { m.trig_t2 } else { f32::MAX }))
+                / 20.0
+        }
+    }
+}
+
+/// Record length the trigger of `m` needs to decide (s).
+pub fn span(m: &Model) -> f64 {
+    let t = |x: f32| x as f64;
+    match m.trig_type {
+        TrigType::Video => match m.video_sync {
+            VSync::AllLines => 4.0 * m.video_std.line(),
+            _ => 1.1 * m.video_std.lines() as f64 * m.video_std.line(),
+        },
+        TrigType::Timeout | TrigType::Duration => 3.0 * t(m.trig_t1.max(m.trig_t2)) + 6e-3,
+        TrigType::NthEdge => 4.0 * t(m.nth_idle) + 2e-3,
+        // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
+        TrigType::Bus => m.bus_frame_span(),
+        TrigType::Edge | TrigType::Pattern => 0.0,
+        _ => 3.0 * t(m.trig_t1.max(m.trig_t2)) + 3e-3,
+    }
+}
 
 /// Packets of the decoder settings in `m` on the channels of `inp` (times = fractional sample indices).
 pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'static str> {

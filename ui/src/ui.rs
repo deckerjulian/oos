@@ -8,6 +8,8 @@ use crate::font::{Font, Fonts};
 use crate::gfx::*;
 use crate::math::*;
 use crate::model::*;
+use crate::platform::Platform;
+use crate::protocols::Decoder;
 use crate::wave::*;
 
 mod acquire;
@@ -321,6 +323,39 @@ const WEB_CSV_MAX: usize = 2_000_000;
 /// Height of a decoder band in the plot.
 const DEC_BAND: i32 = 28;
 
+/// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour
+/// rings of the scope's own probes and inputs have them (CH2 cyan, CH4 blue); until 0.1.11 the two were the other way.
+const PALETTE: [Rgb; 8] = [
+    rgb(0xf0, 0xe4, 0x42),
+    rgb(0x2e, 0xc4, 0xa0),
+    rgb(0xe0, 0x8c, 0xc0),
+    rgb(0x56, 0xb4, 0xe9),
+    rgb(0xf0, 0x90, 0x40),
+    rgb(0xa0, 0x90, 0xf0),
+    rgb(0xc0, 0xd0, 0x60),
+    rgb(0xe0, 0x60, 0x60),
+];
+const CH_COLORS: [Rgb; NCH] = {
+    let mut c = [PALETTE[0]; NCH];
+    let mut i = 0;
+    while i < NCH {
+        c[i] = PALETTE[i];
+        i += 1;
+    }
+    c
+};
+const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
+/// Trace colours of M1..M8 (M1 = the classic math colour).
+const MATH_COLORS: [Rgb; 8] = [
+    MATH_COLOR,
+    rgb(0xff, 0x8b, 0xd0),
+    rgb(0x8b, 0xe9, 0xff),
+    rgb(0xff, 0xc8, 0x6b),
+    rgb(0x9b, 0xff, 0x8b),
+    rgb(0xff, 0x9b, 0x8b),
+    rgb(0xd8, 0xd8, 0xd8),
+    rgb(0x8b, 0xa8, 0xff),
+];
 /// Colours of the references.
 const REF_COLORS: [(&str, Rgb); 5] = [
     ("White", rgb(0xd8, 0xd8, 0xd8)),

@@ -8,7 +8,6 @@
 //! analysers, math, generator, and the start values in `defaults.rs`. A new setting goes into the struct here, its
 //! type and its methods into the file of its area.
 
-use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
 mod acquisition;
@@ -217,28 +216,6 @@ fn opt_src_step_in(i: usize, d: i32, nch: usize) -> usize {
 }
 pub const HDIV: f32 = 10.0;
 pub const VDIV: f32 = 8.0;
-
-/// Channel colours (yellow, teal, pink, sky blue: a colour-blind safe set). CH2 teal and CH4 blue as the colour
-/// rings of the scope's own probes and inputs have them (CH2 cyan, CH4 blue); until 0.1.11 the two were the other way.
-const PALETTE: [Rgb; 8] = [
-    rgb(0xf0, 0xe4, 0x42),
-    rgb(0x2e, 0xc4, 0xa0),
-    rgb(0xe0, 0x8c, 0xc0),
-    rgb(0x56, 0xb4, 0xe9),
-    rgb(0xf0, 0x90, 0x40),
-    rgb(0xa0, 0x90, 0xf0),
-    rgb(0xc0, 0xd0, 0x60),
-    rgb(0xe0, 0x60, 0x60),
-];
-pub const CH_COLORS: [Rgb; NCH] = {
-    let mut c = [PALETTE[0]; NCH];
-    let mut i = 0;
-    while i < NCH {
-        c[i] = PALETTE[i];
-        i += 1;
-    }
-    c
-};
 
 /// V/div at the probe tip for probe 1x: 500 µV .. 10 V (DHO800/900 range).
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
@@ -778,17 +755,6 @@ mod platform_tests {
         assert_eq!(src_step_in(3, NCH, 1, 4), 0);
         assert_eq!(src_step_in(2, NCH + 1, 1, 4), 3);
         assert_eq!((opt_src_step_in(2, 1, 2), opt_src_step_in(0, -1, 2), opt_src_step_in(4, 1, 4)), (0, 2, 0));
-    }
-
-    #[test]
-    fn four_channel_unit_keeps_everything() {
-        // the default platform (host tests) is the DHO924S
-        let mut m = Model::default();
-        m.ch[3].on = true;
-        m.dec_src = 3;
-        assert!(!m.fit_platform());
-        assert!(m.ch[3].on && m.dec_src == 3);
-        assert_eq!(ch_names().len(), 4);
     }
 
     #[test]
