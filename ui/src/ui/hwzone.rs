@@ -31,7 +31,7 @@ impl Ui {
             && self.src.is_hw()
             && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on)
             && !self.mask_hw_active()
-            && self.unit_blocked.is_none()
+            && self.mask_unit.blocked.is_none()
     }
 
     /// The one source channel of the usable zones; None without usable zones or with zones on different channels.
