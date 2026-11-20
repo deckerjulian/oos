@@ -750,6 +750,9 @@ fn a_large_body_at_a_time_and_net_allow_before_the_body() {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 1 << 20).into_bytes());
         assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "{path}: {r}");
     }
+    // a HEAD refused at the head: the length of the text, and no text
+    let r = request(&mut h, &mut ui, &cv, &mut scpi, b"HEAD /mcp HTTP/1.1\r\n\r\n".to_vec());
+    assert!(r.starts_with("HTTP/1.1 403") && r.contains("Content-Length: 7\r\n") && r.ends_with("\r\n\r\n"), "{r}");
     let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
     assert!(r.starts_with("HTTP/1.1 200"), "{r}");
 }

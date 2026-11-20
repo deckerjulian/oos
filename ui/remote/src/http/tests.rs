@@ -178,3 +178,25 @@ fn the_update_page_shows_the_state_the_last_result_and_the_form() {
     assert!(page.contains(r#"<input type="file" id="f" accept=".oosupd">"#), "{page}");
     assert!(page.contains(&format!("<style>{STYLE}</style>")), "the page has the style of the remote");
 }
+
+/// The answers `poll` sends before a request is read whole (403, 413, 503): the text with its length, and after a
+/// HEAD the same head without the text. A HEAD reaches 503 only here: its body may be at most `MAX_OTHER`, which is
+/// `LARGE_BODY`, so a HEAD that would wait for the large body's turn is 413 first.
+#[test]
+fn an_early_answer_to_a_head_has_no_body() {
+    for (status, msg) in [
+        ("403 Forbidden", "refused"),
+        ("413 Payload Too Large", "request too large"),
+        ("503 Service Unavailable", "busy, try again"),
+    ] {
+        let get = String::from_utf8(early_answer(status, msg, false)).unwrap();
+        let head = String::from_utf8(early_answer(status, msg, true)).unwrap();
+        assert!(
+            get.starts_with(&format!("HTTP/1.1 {status}\r\n")) && get.ends_with(&format!("\r\n\r\n{msg}")),
+            "{get}"
+        );
+        assert!(get.contains(&format!("Content-Length: {}\r\n", msg.len())), "{get}");
+        assert_eq!(head, get.strip_suffix(msg).unwrap(), "the head of a HEAD is the head of the GET");
+    }
+    assert_eq!(LARGE_BODY, MAX_OTHER, "a HEAD with a large body is 413 before it could be 503");
+}
