@@ -5,6 +5,8 @@
 //! decoded into volts per channel. The UI aligns each frame with the software trigger engine (all 12 trigger types on
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
+#[cfg(any(target_os = "linux", test))]
+mod batch;
 mod decode;
 #[cfg(test)]
 mod liverun;
@@ -23,15 +25,11 @@ mod trim;
 mod units;
 
 #[cfg(any(target_os = "linux", test))]
+use self::batch::BatchRun;
+#[cfg(test)]
 pub use self::decode::{codes_into, decode, decode_into};
 #[cfg(any(target_os = "linux", test))]
-use self::decode::{decode_with, la_record, POOL};
-#[cfg(any(target_os = "linux", test))]
-use self::plan::{
-    batch_plan, deep_raw_settings, disarm, edge_check, frame0_check_wanted, frame0_drop, frame0_left_out,
-    frame1_left_out, frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, prearm_on, FIRST_LEFT_MAX_S,
-    FRAME1_CHECK_MAX,
-};
+use self::plan::{batch_plan, disarm};
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
 pub use self::serial::serial_debug;
@@ -39,7 +37,7 @@ pub use self::serial::serial_debug;
 pub use self::settings::roll_la_t0;
 pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, ROLL_TDIV};
 #[cfg(any(target_os = "linux", test))]
-use self::settings::{avg_kind, raw_for_ui, raw_newest, single_wants_more};
+use self::settings::{avg_kind, raw_for_ui, single_wants_more};
 #[cfg(any(target_os = "linux", test))]
 use self::slow::SlowRun;
 #[cfg(any(target_os = "linux", test))]
@@ -48,21 +46,21 @@ use self::stop::StopRun;
 use self::trim::{core_offset_tight, core_trim, load_overlay, overlay_in_use, TrimPending, TRIM_TRIES};
 #[cfg(any(target_os = "linux", test))]
 use self::units::{
-    counter_tick, dvm_reading, dvm_step, hw_merge, hw_status_on, levels_measure, unit_key, DvmKey, DvmStep, UnitGuard,
+    counter_tick, dvm_reading, dvm_step, hw_merge, levels_measure, unit_key, DvmKey, DvmStep, UnitGuard,
 };
 pub use self::units::{dvm_hw_on, mask_hw_on, mask_map, mask_map_set, zone_hw_on};
 use super::cores;
+#[cfg(any(target_os = "linux", test))]
+use crate::board::HwShared;
 #[cfg(target_os = "linux")]
 use crate::board::Shared;
 #[cfg(any(target_os = "linux", test))]
-use crate::board::{Frame, Slow};
-#[cfg(any(target_os = "linux", test))]
-use crate::board::{HwShared, QUEUE_MAX, QUEUE_SAMPLES};
+use crate::board::Slow;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::{afe, hz};
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -204,33 +202,14 @@ fn run<P: port::Port>(
         let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
         let mut stamp;
         let mut xadc_at: Option<u64> = None;
-        let mut la_fails = 0u32;
         // STOP: the last batch, the view last read for, and whether arming is paused (`stop.rs`)
         let mut stop = StopRun::default();
+        // the batches: their buffers, raw reads, frames left out and the batch read last (`batch.rs`)
+        let mut batch = BatchRun::default();
         // the learnt offsets of the ADC cores (`cores`)
         let mut cores = super::cores::Cores::default();
-        // the read buffer of the batches, kept (bus::DmaBuf)
-        let mut dma = oos_hal::dho::bus::DmaBuf::new();
-        // the raw second read of the newest frame of a compressed batch (compress.rs)
-        let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
-        // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
-        let mut deep_last: Option<u64> = None;
-        // the settings of the last batch read, and whether its record was left out as the first with new ones
-        let mut read_with: Option<Settings> = None;
-        let mut first_left = false;
-        // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
-        let mut comp_last: Option<u64> = None;
-        // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
-        // raw)
-        let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
-        // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
-        let mut pool_made = 1usize;
-        // this thread's share of the deposit work while it waits (drawpipe.rs)
-        let mut helper = crate::drawpipe::Helper::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
-        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
-        let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -253,7 +232,7 @@ fn run<P: port::Port>(
         let mut slots_done: Option<u64> = None;
         // one pass per call of `keep_going`: always on the scope, a counted number in a host run
         while keep_going() {
-            let last_read = fresh.take();
+            let last_read = batch.fresh.take();
             counter_tick(&mut bar, &mut clock, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             let now = clock.now_us();
@@ -443,7 +422,7 @@ fn run<P: port::Port>(
                     n: &mut n,
                     stamp,
                 };
-                stop.hold(io, &mut armed, last_read.as_ref(), &mut raw_dma, &mut cores, (final_req, deep_want));
+                stop.hold(io, &mut armed, last_read.as_ref(), &mut batch.raw_dma, &mut cores, (final_req, deep_want));
             }
             let stop_view = out.lock().unwrap().stop_view;
             match stop_view {
@@ -477,7 +456,7 @@ fn run<P: port::Port>(
                             clock.sleep_us(500000);
                             continue;
                         }
-                        la_fails = 0;
+                        batch.la_fails = 0;
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
                         current = Some((want.clone(), p));
                         configs += 1;
@@ -602,7 +581,7 @@ fn run<P: port::Port>(
                     &mut bar,
                     &mut clock,
                     &mut c2h,
-                    &mut dma,
+                    &mut batch.dma,
                     &out,
                     &mut n,
                     stamp,
@@ -624,7 +603,7 @@ fn run<P: port::Port>(
                 out.lock().unwrap().queue.clear();
             }
             let b = batch_plan(&s, &p);
-            if !single_wants_more(&b, single_done, stamp) {
+            if !single_wants_more(&b, batch.single_done, stamp) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 clock.sleep_us(2000);
                 continue;
@@ -656,7 +635,7 @@ fn run<P: port::Port>(
             // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
             // the frame count, so the read waits at most one frame longer
             let pipe = crate::drawpipe::pipe();
-            let idle = || pipe.is_some_and(|x| x.help(&mut helper));
+            let idle = || pipe.is_some_and(|x| x.help(&mut batch.helper));
             let t_batch = clock.now_us();
             let got = seq::acquire_batch_on(
                 &mut state,
@@ -664,7 +643,7 @@ fn run<P: port::Port>(
                 &p,
                 &mut bar,
                 &mut c2h,
-                &mut dma,
+                &mut batch.dma,
                 &mut clock,
                 ahead,
                 25,
@@ -674,395 +653,27 @@ fn run<P: port::Port>(
             );
             let batch_ms = since(clock.now_us(), t_batch).as_secs_f32() * 1e3;
             if let Some(x) = pipe {
-                x.help_done(&mut helper);
+                x.help_done(&mut batch.helper);
             }
             match got {
                 Ok(count) => {
-                    guard.batch(false, false, unit_key(&b, mask_map()));
-                    crate::compress::note_batch_k(if raw_newest(&b, &p) { b.compress } else { 1 });
-                    // LA on: the second, raw read of the same record before anything else touches the FPGA
-                    // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
-                    // its time-out, and the analog frames must not wait with it
-                    let la_words = match b.la {
-                        Some(_) if la_fails < 3 => {
-                            match seq::acquire_la(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
-                                Ok(w) => {
-                                    la_fails = 0;
-                                    Some(w)
-                                }
-                                Err(e) => {
-                                    la_fails += 1;
-                                    status(format!("LA read ({} of 3): {}", la_fails, e));
-                                    None
-                                }
-                            }
-                        }
-                        _ => None,
+                    let io = slow::Io {
+                        state: &mut state,
+                        bar: &mut bar,
+                        c2h: &mut c2h,
+                        clock: &mut clock,
+                        out: &out,
+                        n: &mut n,
+                        stamp,
                     };
-                    // live compression: the newest frame once more, raw, before anything arms the FPGA again; at most
-                    // once per compress::RAW_PERIOD (each read cost 7-9 % of the frames at 1 channel on the unit)
-                    let raw_frame = if raw_newest(&b, &p)
-                        && count > 0
-                        && comp_last.is_none_or(|t| since(clock.now_us(), t) >= crate::compress::RAW_PERIOD)
-                    {
-                        comp_last = Some(clock.now_us());
-                        // the flag first: a guard taken in the argument would be held for the whole decode
-                        let mc = out.lock().unwrap().cores;
-                        match seq::read_raw_again(
-                            &mut state,
-                            &b,
-                            &p,
-                            &mut bar,
-                            &mut c2h,
-                            &mut raw_dma,
-                            count - 1,
-                            |_| {},
-                        ) {
-                            Ok(()) => Some(decode_with(
-                                raw_dma.data(),
-                                &seq::raw_settings(&b),
-                                &p,
-                                0,
-                                mc.then_some(&mut cores),
-                            )),
-                            Err(e) => {
-                                status(format!("raw read of the newest frame: {}", e));
-                                None
-                            }
-                        }
-                    } else {
-                        None
+                    let held = batch::Held {
+                        armed: &mut armed,
+                        avg: &mut avg,
+                        cores: &mut cores,
+                        last_batch: &mut stop.last_batch,
+                        guard: &mut guard,
                     };
-                    // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
-                    // once per deepmeas::PERIOD while running (deepmeas.rs)
-                    let deep_want = out.lock().unwrap().deep_raw;
-                    let now_deep = clock.now_us();
-                    let deep = deep_want.filter(|_| count > 0).and_then(|w| {
-                        deep_raw_settings(&b, &p)
-                            .filter(|ds| crate::deepmeas::due(w, deep_last, now_deep, seq::frame_bytes(ds, &p)))
-                    });
-                    let raw_frame = match deep {
-                        Some(ds) if raw_frame.is_none() => {
-                            deep_last = Some(clock.now_us());
-                            let mc = out.lock().unwrap().cores;
-                            match seq::read_raw_again(
-                                &mut state,
-                                &ds,
-                                &p,
-                                &mut bar,
-                                &mut c2h,
-                                &mut raw_dma,
-                                count - 1,
-                                |_| {},
-                            ) {
-                                Ok(()) => Some(decode_with(raw_dma.data(), &ds, &p, 0, mc.then_some(&mut cores))),
-                                Err(e) => {
-                                    status(format!("raw read of the deep window: {}", e));
-                                    None
-                                }
-                            }
-                        }
-                        _ => raw_frame,
-                    };
-                    fresh = Some((b.clone(), p, count, raw_frame.is_some()));
-                    // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
-                    // arm (prearm below) can record anything
-                    if hw_status_on() {
-                        let v = bar.rd(0x4034);
-                        bar.apply(&oos_hal::dho::scu::clear_status(v));
-                        let f = match oos_hal::dho::scu::fired(v) {
-                            oos_hal::dho::scu::Fired::Trigger => Some(true),
-                            oos_hal::dho::scu::Fired::Forced => Some(false),
-                            oos_hal::dho::scu::Fired::None => None,
-                        };
-                        let mut g = out.lock().unwrap();
-                        g.trig_fired = Some((g.trig_fired.map_or(1, |x| x.0 + 1), f));
-                    }
-                    // the mask unit's counters after every batch (docs/fork/hwmask.md)
-                    let mr = state.mask_ctrl().zip(b.hwmask.as_ref()).zip(state.mask_run).map(|((ctrl, m), run)| {
-                        let raw = oos_hal::dho::mask::read(&mut bar, ctrl);
-                        (m.ch, run.0, ctrl, raw)
-                    });
-                    {
-                        let mut g = out.lock().unwrap();
-                        let n = g.mask.map_or(0, |r| r.n) + 1;
-                        g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead {
-                            ch,
-                            slot,
-                            ctrl,
-                            raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi],
-                            frames: raw.frames(),
-                            fails: raw.fails(),
-                            n,
-                            scale: b.ch[ch].scale,
-                            offset: b.ch[ch].offset,
-                            gain: state.gain[ch],
-                            points: p.memsel,
-                            chans: b.mask,
-                        });
-                        // the table as loaded, for the column debug (`:SYSTem:DEBug:MASK:COLumns?`), when it changed
-                        let table: Option<Vec<[u8; 4]>> = state
-                            .mask_cols
-                            .as_ref()
-                            .filter(|_| mr.is_some())
-                            .map(|t| t.iter().map(|k| [k.lo, k.hi, k.lo_en as u8, k.hi_en as u8]).collect());
-                        if table.as_deref() != g.mask_table.as_deref().map(|t| &t[..]) {
-                            g.mask_table = table.map(std::sync::Arc::new);
-                        }
-                    }
-                    // the zone unit's status and qualified-frame counter (docs/fork/hwzone.md)
-                    let zr = state
-                        .zone_ctrl()
-                        .zip(b.hwzone.as_ref())
-                        .zip(state.zone_run)
-                        .map(|((ctrl, z), run)| (z.ch, run.0, ctrl, oos_hal::dho::zone::read(&mut bar, ctrl)));
-                    {
-                        let mut g = out.lock().unwrap();
-                        let n = g.zone.map_or(0, |r| r.n) + 1;
-                        g.zone = zr.map(|(ch, slot, ctrl, r)| {
-                            let c = r.counters;
-                            crate::board::ZoneRead {
-                                ch,
-                                slot,
-                                ctrl,
-                                raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi],
-                                frames: c.frames(),
-                                armed: r.armed(),
-                                pass: r.pass(),
-                                in_cycle: r.in_cycle(),
-                                state: r.state(),
-                                n,
-                                batch: (count, b.frames, batch_ms),
-                            }
-                        });
-                    }
-                    // hardware average: one frame, shown or not, the average cleared after a complete hold average
-                    let after = avg.as_mut().map(|(tr, _, logged)| {
-                        let a = tr.batch(count);
-                        if *logged < 32 {
-                            // hardware check: 0x10b0 progress and the first words next to the triggers counted here
-                            *logged += 1;
-                            // the newest frame's first words (every recorded frame was played)
-                            let at = (count.max(1) as usize - 1) * seq::frame_bytes(&b, &p);
-                            let w: Vec<String> = dma.data().get(at..).unwrap_or_default().as_chunks::<2>().0.iter().take(4).map(|x| format!("{:04x}", u16::from_le_bytes([x[0], x[1]]))).collect();
-                            eprintln!("oos-ui hw: average {:?} batch {} of {} triggers, {} in, show {}, 0x10b0 = {}, words {}", tr.kind, *logged, count, a.triggers, a.show, oos_hal::dho::avg::progress(&mut bar), w.join(" "));
-                        }
-                        a
-                    });
-                    // the next batch records while this one is decoded (after the LA read, which needs this record);
-                    // not in average mode, where a clear may have to come first, and not where the deep measurements
-                    // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if count > 0 && b.single {
-                        single_done = Some(stamp);
-                    }
-                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
-                        match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
-                            Ok(()) => armed = Some((b.clone(), stamp)),
-                            Err(e) => status(format!("prearm: {}", e)),
-                        }
-                    }
-                    let fb = seq::frame_bytes(&b, &p);
-                    // decode before taking the lock: the UI must not wait for 100 k-point conversions;
-                    // every recorded frame was read; in average mode only the newest goes to the screen
-                    let shown = match after {
-                        Some(a) if !a.show => 0,
-                        _ => count,
-                    };
-                    let avail = dma.data().len().checked_div(fb).map_or(0, |n| (shown as usize).min(n));
-                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
-                    // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
-                    // deposit workers, the next batch read into a buffer they gave back
-                    let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
-                    // the raw newest frame stands for the newest compressed one (same record)
-                    let raw_frame = raw_frame.filter(|_| avail as u32 == count);
-                    let mut skip = 0usize;
-                    // frame 0 of a small batch: kept when its edge is at the trigger point (issue #220), so a batch
-                    // of two at 1 ms/div does not lose every other record
-                    let f0_drop = after.is_none() && frame0_drop();
-                    let f0_edge = frame0_check_wanted(avail, f0_drop, p.memsel)
-                        .then(|| edge_check(&decode(&dma.data()[..fb], &b, &p, 0), &b));
-                    let f0_left = frame0_left_out(avail, f0_drop, f0_edge);
-                    let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
-                        n += avail as u64;
-                        // the record of measurements: with the ADC-core correction, as on the path without batches
-                        let mc = out.lock().unwrap().cores;
-                        let newest = match raw_frame {
-                            Some(f) => Frame { stamp, seq: n, ..f },
-                            None => {
-                                let last = &dma.data()[(avail - 1) * fb..avail * fb];
-                                Frame { stamp, ..decode_with(last, &b, &p, n, mc.then_some(&mut cores)) }
-                            }
-                        };
-                        // frame 1: left out when its edge is not at the trigger point. In a batch of two it is the
-                        // newest, checked before the workers are fed, so a frame 0 its edge check kept goes with it
-                        // (the workers take a run of frames; issue #220)
-                        let f1_off = frame0_drop()
-                            && match avail {
-                                2 => frame1_off_trigger(&newest, &b),
-                                a => {
-                                    frame1_left_out_unseen(a, true)
-                                        || (a > 2
-                                            && p.memsel <= FRAME1_CHECK_MAX
-                                            && frame1_off_trigger(&decode(&dma.data()[fb..2 * fb], &b, &p, 0), &b))
-                                }
-                            };
-                        let next =
-                            pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
-                        let next = next.or_else(|| {
-                            (pool_made < POOL).then(|| {
-                                pool_made += 1;
-                                oos_hal::dho::bus::DmaBuf::new()
-                            })
-                        });
-                        match next {
-                            Some(next) => {
-                                let full = std::mem::replace(&mut dma, next);
-                                let (bs, ps) = (b.clone(), p);
-                                let (cs, cp) = (b.clone(), p);
-                                let codes: crate::drawpipe::CodesInto =
-                                    Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
-                                // frame 0 left out as on the path without batches (issue #5; unit 2026-11-16: the
-                                // one stray frame of 7,075 in batch mode was frame 0 of its batch), unless its edge
-                                // check kept it; a frame 1 off the trigger takes frame 0 with it (the workers take a
-                                // run of frames); frame 1 itself is counted here only when the workers hold it
-                                let f1_fed = f1_off && avail > 2;
-                                skip = (f0_left || f1_off) as usize + f1_fed as usize;
-                                if f1_fed {
-                                    frame1_left_out(frame1_left_out_unseen(avail, true));
-                                }
-                                pipe.feed_codes(
-                                    Box::new(full),
-                                    fb,
-                                    skip,
-                                    avail - 1,
-                                    stamp,
-                                    Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)),
-                                    Some(codes),
-                                );
-                            }
-                            None => {
-                                crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1)
-                            }
-                        }
-                        // two frames: the newest is frame 1
-                        if avail == 2 && f1_off {
-                            frame1_left_out(false);
-                            skip += 1;
-                            Vec::new()
-                        } else {
-                            vec![newest]
-                        }
-                    } else {
-                        // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
-                        // which the frame loop needs), in average mode the newest one
-                        let (take, match_cores) = {
-                            let g = out.lock().unwrap();
-                            (if g.take == 0 { avail } else { g.take.min(avail) }, g.cores)
-                        };
-                        let take = if after.is_some() { take.min(1) } else { take };
-                        // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
-                        // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With
-                        // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div); in a small batch only
-                        // when its edge is not at the trigger point (`f0_left` above, issue #220)
-                        let stale = f0_left as usize;
-                        skip = (avail - take).max(stale);
-                        n += skip as u64;
-                        let mut all: Vec<Frame> = dma
-                            .data()
-                            .chunks_exact(fb.max(1))
-                            .take(avail)
-                            .skip(skip)
-                            .map(|chunk| {
-                                n += 1;
-                                Frame {
-                                    stamp,
-                                    hw_avg: after.is_some(),
-                                    ..decode_with(chunk, &b, &p, n, match_cores.then_some(&mut cores))
-                                }
-                            })
-                            .collect();
-                        // frame 1 without its edge at the trigger point: left out too, whether frame 0 before it was
-                        // left out or kept by its edge check (`all` starts at frame `skip`)
-                        let at1 = (f0_drop && avail > 1 && skip <= 1).then(|| 1 - skip);
-                        let off = |f: &Frame| frame1_left_out_unseen(avail, f0_drop) || frame1_off_trigger(f, &b);
-                        if let Some(i) = at1.filter(|&i| all.get(i).is_some_and(off)) {
-                            all.remove(i);
-                            frame1_left_out(frame1_left_out_unseen(avail, f0_drop));
-                            skip += 1;
-                        }
-                        if let (Some(r), Some(last)) = (raw_frame.filter(|_| !all.is_empty()), all.last_mut()) {
-                            *last = Frame { stamp, seq: last.seq, ..r };
-                        }
-                        all
-                    };
-                    // the first batch with new settings, of one frame (a deep record): that frame is frame 0, which the
-                    // FPGA records before the arm (issue #5), and the first after a change can still be the older
-                    // memory of the old settings (unit 2026-11-15: the whole screen window of a 10 M record was the
-                    // 4 Vpp of the depth-Auto records before it). It is left out, never two in a row; not in SINGLE
-                    // (its one record is the answer), not in hardware average, and only for a record shorter than
-                    // `FIRST_LEFT_MAX_S`: at slow time bases the next record would keep the screen waiting as long
-                    // again (1.25 s at 50 ms/div)
-                    let first = read_with.as_ref() != Some(&b);
-                    read_with = Some(b.clone());
-                    // not in roll and scan: their pieces come in batches of one with settings of their own
-                    let short = (p.memsel as f64) < FIRST_LEFT_MAX_S * p.rate as f64
-                        && frames.first().is_some_and(|f| !f.roll && !f.scan);
-                    if first
-                        && !first_left
-                        && short
-                        && frames.len() == 1
-                        && avail == 1
-                        && !b.single
-                        && after.is_none()
-                        && frame0_drop()
-                    {
-                        skip += frames.len();
-                        frames.clear();
-                        first_left = true;
-                        // the deep window read of this batch went with it: the next batch reads one at once
-                        deep_last = None;
-                    } else {
-                        first_left = false;
-                    }
-                    if after.is_some_and(|a| a.clear) {
-                        if let Err(e) =
-                            execute::<P>(&state.avg_clear_steps(), &mut bar, None, &mut c2h, &mut lines, &mut clock)
-                        {
-                            status(format!("average clear: {}", e));
-                        }
-                    }
-                    if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
-                        f.la = Some(la_record(w, &b, &p));
-                    }
-                    // the newest frame becomes the record: its six full-frame readings (PR #8, `BasicStats`) here, off
-                    // the frame loop; the fast path folds the other frames itself
-                    if let Some(f) = frames.last_mut() {
-                        f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
-                    }
-                    if count > 0 {
-                        stop.last_batch = Some((b.clone(), p, count - 1));
-                    }
-                    let mut g = out.lock().unwrap();
-                    // the pipeline's counters take every frame read that is neither queued nor lent to the workers:
-                    // the ones left out above, the ones the screen does not take, the oldest of a full queue
-                    let dropped_before = g.dropped;
-                    g.decoded += count as u64;
-                    g.dropped += skip as u64;
-                    g.queue.extend(frames);
-                    let size = |f: &Frame| f.ch.iter().map(Vec::len).sum::<usize>();
-                    let mut held: usize = g.queue.iter().map(size).sum();
-                    // the newest frame stays whatever its size
-                    while g.queue.len() > 1 && (g.queue.len() > QUEUE_MAX || held > QUEUE_SAMPLES) {
-                        if let Some(f) = g.queue.pop_front() {
-                            held -= size(&f);
-                        }
-                        g.dropped += 1;
-                    }
-                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, g.dropped - dropped_before);
-                    if let Some(f) = g.queue.back() {
-                        g.frame = f.clone();
-                    }
-                    drop(g);
+                    batch.take::<P>(io, &mut lines, (&b, &p, count, batch_ms), held);
                 }
                 // new settings (or STOP) while it waited for a trigger: at once to them. The arm has filled frame 0
                 // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record
