@@ -19,7 +19,6 @@
 mod board;
 mod cmd;
 mod compress;
-mod decode;
 mod deepmeas;
 mod drawpipe;
 #[cfg(target_os = "linux")]
@@ -33,16 +32,12 @@ mod hid;
 #[cfg(target_os = "linux")]
 mod input;
 mod layout;
-mod logic;
-mod math;
 mod measures;
-mod model;
 #[cfg(test)]
 mod perfguard;
 mod platform;
 mod protocols;
 mod scpi;
-mod settings;
 mod shots;
 mod site;
 #[cfg(test)]
@@ -54,14 +49,14 @@ mod trignear;
 mod ui;
 mod vpu;
 mod wave;
-mod words;
-mod zone;
 
 // the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
 #[cfg(target_os = "linux")]
 use oos_system::hostname;
 // the transports (ADR 0064), generic over the program they carry: here always `scpi::Program`
 use oos_remote::{announce, hislip, http, vxi11};
+// the model and the settings table (ADR 0064): their paths in this crate stay `crate::model` and the like
+use oos_model::{decode, logic, math, model, settings, words, zone};
 use oos_system::{
     base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
 };

@@ -243,7 +243,7 @@ impl Model {
     }
 
     /// `fit_platform` for the Bode, trigger, mask, zone, analyser, decoder and Z input sources on a missing input.
-    pub(crate) fn fit_wave_sources(&mut self, n: usize, mut changed: bool) -> bool {
+    pub fn fit_wave_sources(&mut self, n: usize, mut changed: bool) -> bool {
         // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
         if self.bode_sync >= n {
             self.bode_sync = n - 1;

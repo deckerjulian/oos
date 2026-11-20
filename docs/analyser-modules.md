@@ -13,7 +13,7 @@ scope asks the registry for everything around a page:
 | start menu entries | Menu > Analysers | `start` (its menu) |
 | overflow menu | the ⋮ button in the plot, before Settings and Exit | `more` (nothing) |
 | SCPI | `:VIEW <keyword>` | `scpi` (none) |
-| setups | `view = <AView>` | its view in `AView::STORED` (`ui/src/model/analysers.rs`), where a setup reader finds it |
+| setups | `view = <AView>` | its view in `AView::STORED` (`ui/model/src/model/analysers.rs`), where a setup reader finds it |
 | record | whether it computes without an acquisition record (a loaded reference, a capture of its own) | `without_record` (no) |
 | computing | from each new record (every captured sample of the window); `pane` when it runs beside the waveform | `update` (nothing) |
 | drawing | into the plot | `draw` (required) |

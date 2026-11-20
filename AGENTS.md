@@ -126,13 +126,13 @@ missing part, when one is forgotten (ADR 0046). The steps, with the commands for
 
 | Kind | Declare it in | Also touch | The check that fails when a part is missing |
 |---|---|---|---|
-| setting | a row in `ui/src/settings/` | model field, `Item` and menu, `ui/tests/scpi.txt`, probes of the snapshot | `ui/src/settings/tests.rs::every_row_is_complete` |
+| setting | a row in `ui/model/src/settings/` | model field, `Item` and menu, `ui/tests/scpi.txt`, probes of the snapshot | `ui/model/src/settings/tests.rs::every_row_is_complete` |
 | measurement | a `Def` in `ui/src/measures/` | `dsp/src/` with its test, a new group in `docs/reference-analysis.md` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
 | protocol decoder | a `ModuleInfo` in its family file of `dsp/src/decode/` (C-PHY: `dsp/src/cphy.rs`, line codes: `dsp/src/linecode.rs`), a `Protocol` in `ui/src/protocols/` | `dsp/src/protocols.rs`, `dsp/tests/decode/`, `wiki/Features.md`, `README.md` | `ui/src/protocols/mod.rs::every_decoder_is_complete`, `dsp/src/protocols.rs::every_declared_module_is_registered` |
-| trigger type | `TrigType` in `ui/src/model/trigger.rs` | `dsp/src/trigger.rs`, `hal/src/dho/tpu.rs`, `ui/src/scpi/dispatch.rs`, `docs/scpi.md`, the wiki, `ui/tests/triggers.txt` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
+| trigger type | `TrigType` in `ui/model/src/model/trigger.rs` | `dsp/src/trigger.rs`, `hal/src/dho/tpu.rs`, `ui/src/scpi/dispatch.rs`, `docs/scpi.md`, the wiki, `ui/tests/triggers.txt` | `ui/src/scpi/tests/trigger_types.rs::every_trigger_type_is_complete` |
 | menu page | its module in `ui/src/ui/` and its line in `PAGES` (`ui/src/ui/pages.rs`, ADR 0060) | its `MenuId` (`ui/src/ui.rs`), its `Item`s (`ui/src/ui/item.rs`), its longest states in `LAYOUTS`, the wiki | `ui/src/ui/pages.rs::every_page_is_complete`, `ui/src/ui/lint/menu_layout.rs::every_menu_fits` |
 | service (a thread of a part) | a `Service<J, R>` in its part's state (`ui/src/ui/service.rs`, ADR 0061), its poll in `POLLS` (`ui/src/ui/acquire.rs`) | `docs/architecture.md` (its thread) | `ui/src/ui/acquire.rs::every_poll_is_in_polls` |
-| analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
+| analyser page | an `Analyser` and its line in `ui/src/ui/analysers.rs` | `ui/model/src/model/analysers.rs`, `ui/src/ui.rs`, `ui/src/ui/lint/menu_layout.rs`, `docs/scpi.md`, the wiki | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | SCPI command | its file of `ui/src/scpi/` | `docs/scpi.md`, `ui/tests/scpi.txt`, `wiki/SCPI-and-VXI-11.md` | `tools/scpi-coverage.py` (layer `ratchet`) |
 | HTTP route or MCP tool | an arm of `Http::answer` in `ui/remote/src/http.rs`, or of `Site::answer` for `site::Ctx` in `ui/src/site.rs` when the screen answers it (an MCP tool: `site::mcp`) | its entry and mark in `docs/http.md` (ADR 0055), `wiki/Remote-Control.md` | `tools/http-coverage.py` (layer `ratchet`) |
 | register sequence | its block's module of `hal/src/dho/` | first its page in `docs/protocols/`, a test, its line in the board's matrix `tools/board/dho/plan-matrix.sh` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test` |

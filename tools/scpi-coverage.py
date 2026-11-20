@@ -12,8 +12,8 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
   words-docs     the command words of the interpreter, `kw(<node>, "Word")` in ui/src/scpi.rs and the files of its
                  folder ui/src/scpi/, where <node> holds a node of the header (NODE below; not an argument such as
                  `arg` or `item`), and the nodes of the commands of the settings table (`Scpi::Cmd("A:B")` in
-                 ui/src/settings/), that docs/scpi.md does not name. A word is named in a file when `[:*]Word\\b` is
-                 in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
+                 ui/model/src/settings/), that docs/scpi.md does not name. A word is named in a file when
+                 `[:*]Word\\b` is in it, ignoring case, or when it follows `{` or `|` as one of the choices of `{A|B}`;
   words-tests    the same words that ui/tests/scpi.txt does not name;
   queries-tests  the queries of docs/scpi.md (each command in backticks, starting with `:` or `*`, in any cell of a
                  table row or in the running text, without its arguments, a relative one completed from the last
@@ -46,7 +46,8 @@ SCPI_DIR = "ui/src/scpi"  # the rest of the interpreter, one file per subsystem
 SCPI_MD = "docs/scpi.md"
 SCPI_TXT = "ui/tests/scpi.txt"
 STORE_RS = "ui/src/store.rs"
-SETTINGS_DIR = "ui/src/settings"  # the settings tables: rows with a key, a command or none, and the fields they reach
+# the settings tables: rows with a key, a command or none, and the fields they reach
+SETTINGS_DIR = "ui/model/src/settings"
 NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
 
 # the file of the numbers that only go down, loaded by its path: `python3 -I` puts no folder of the tools on the path
@@ -268,11 +269,12 @@ def setup_fields(store_rs):
 
 
 def settings_rows(root):
-    """The rows of the settings tables (the .rs files of ui/src/settings/ but its tests), in the order of the files:
-    for each its command (None without one) and the fields of the model it reaches (`m.<field>`)."""
+    """The rows of the settings tables (the .rs files of ui/model/src/settings/ but its tests and testkit), in
+    the order of the files: for each its command (None without one) and the fields of the model it reaches
+    (`m.<field>`)."""
     folder = os.path.join(root, SETTINGS_DIR)
     names = os.listdir(folder) if os.path.isdir(folder) else []
-    names = sorted(f for f in names if f.endswith(".rs") and f != "tests.rs")
+    names = sorted(f for f in names if f.endswith(".rs") and f not in ("tests.rs", "testkit.rs"))
     rows = []
     for name in names:
         for part in SETTING.split(read(root, SETTINGS_DIR + "/" + name))[1:]:

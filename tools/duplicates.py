@@ -8,11 +8,12 @@
     tools/duplicates.py --min N [ROOT]            blocks of at least N lines (default 8)
 
 ROOT is the top of a tree (default: this tree). Read from it as it is: the Rust files below hal/src, dsp/src, ui/src,
-ui/system/src and fpgad/src, without tests, as tools/code-size.py decides: not a test module inside a file
-(`#[cfg(test)]` and `mod name {` to its closing brace at the same indentation), not a file or folder that is only built
-for tests (`#[cfg(test)] mod name;` in its parent), not a file `tests.rs` or `*_tests.rs`, not a folder `tests/`. More
-than tools/code-size.py reads: other attributes of the module, each on a line of its own, may stand between
-`#[cfg(test)]` and `mod`, and a `#[path = "file.rs"]` among them names the file that is built for tests only.
+ui/system/src, ui/remote/src, ui/model/src and fpgad/src, without tests, as tools/code-size.py decides: not a test
+module inside a file (`#[cfg(test)]` and `mod name {` to its closing brace at the same indentation), not a file or
+folder that is only built for tests (`#[cfg(test)] mod name;` in its parent), not a file `tests.rs` or `*_tests.rs`, not
+a folder `tests/`. More than tools/code-size.py reads: other attributes of the module, each on a line of its own, may
+stand between `#[cfg(test)]` and `mod`, and a `#[path = "file.rs"]` among them names the file that is built for tests
+only.
 
 Each line is normalised: comments and white space go, the tokens are joined by one space; a line left empty or only
 of brackets, `;`, `,` and `?` (`});`, `}`, `)?;`) is dropped, and a run of equal lines counts as one. In the loose
@@ -31,7 +32,8 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ("hal/src", "dsp/src", "ui/src", "ui/system/src", "ui/remote/src", "fpgad/src")  # ui/system: a crate of ui (ADR 0064)
+# ui/system, ui/remote, ui/model: crates of the workspace ui/ (ADR 0064)
+SOURCES = ("hal/src", "dsp/src", "ui/src", "ui/system/src", "ui/remote/src", "ui/model/src", "fpgad/src")
 MIN = 8
 
 TEST_MOD = re.compile(r"^(\s*)(?:pub(?:\([a-z]+\))? )?mod ([A-Za-z0-9_]+) \{$")

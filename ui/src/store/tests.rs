@@ -1130,3 +1130,21 @@ fn next_free_name() {
     assert_eq!(file_name(&next_name(&dir, "shot", "png")), "shot-003.png");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A value of every row of the settings table other than its default survives the setup file, in its own line.
+#[test]
+fn a_changed_value_survives_the_setup_file() {
+    for s in crate::settings::all() {
+        for n in crate::settings::testkit::instances(s) {
+            let m = crate::settings::testkit::changed(s, n);
+            let back = parse_setup(&setup_text(&m)).expect("the setup loads");
+            assert_eq!((s.get)(&back, n), (s.get)(&m, n), "{} {}", s.key, n);
+            // the line of the fields of a setup line is written by hand
+            if s.line().is_some() {
+                continue;
+            }
+            let line = format!("{} = {}", s.key_at(n), s.store(&m, n));
+            assert!(setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
+        }
+    }
+}

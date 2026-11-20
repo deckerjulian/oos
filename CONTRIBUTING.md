@@ -48,7 +48,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
 
 ### A new setting
 
-- **Declare it** as one row in its group's file of `ui/src/settings/`: the key in setup files, the type with its
+- **Declare it** as one row in its group's file of `ui/model/src/settings/`: the key in setup files, the type with its
   range or choices, the menu label, the SCPI command or why it has none, and its docs text. The setup file, the
   remote command, the menu row and the table in `docs/scpi.md` follow from the row
   ([ADR 0043](docs/adr/code/0043-one-declaration-per-setting.md),
@@ -56,13 +56,13 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   the trigger values, acquisition, math, the meters, the channels, mask, histogram, Bode, the logic
   analyser's switch, spectrum, eye and power. A setting of the other groups is still written out in each of those
   places.
-- **Also touch** its field of the model (`ui/src/model/`), its `Item` and its place in a menu (`ui/src/ui/item.rs`,
+- **Also touch** its field of the model (`ui/model/src/model/`), its `Item` and its place in a menu (`ui/src/ui/item.rs`,
   `ui/src/ui/menu_items.rs`, `ui/src/ui/setting_items.rs`), its query in `ui/tests/scpi.txt`, and its probes in
   `ui/src/store/settings_snapshot/setup_probes.rs` (with a command also in
   `ui/src/store/settings_snapshot/scpi_probes.rs`).
-- **Generate** its line of the docs table with `(cd ui && OOS_BLESS=1 cargo test --locked -q settings::tests)` and
+- **Generate** its line of the docs table with `(cd ui/model && OOS_BLESS=1 cargo test --locked -q settings::tests)` and
   its lines of `ui/tests/golden/settings.txt` with `(cd ui && OOS_BLESS=1 cargo test --locked -q settings_snapshot)`.
-- **The check:** `ui/src/settings/tests.rs::every_row_is_complete` fails on a row without its command or the reason,
+- **The check:** `ui/model/src/settings/tests.rs::every_row_is_complete` fails on a row without its command or the reason,
   its docs text or its query; `ui/src/ui/setting_items.rs::every_row_has_its_item_and_a_step_changes_it` on a row
   that is in no menu; `ui/src/store/settings_snapshot/setup_probes.rs::every_key_the_setup_writes_or_reads_is_probed`
   on a key without probes.
@@ -116,7 +116,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
 
 ### A new trigger type
 
-- **Declare it** as a variant of `TrigType` with its place in `TRIG_TYPES` and its name (`ui/src/model/trigger.rs`).
+- **Declare it** as a variant of `TrigType` with its place in `TRIG_TYPES` and its name (`ui/model/src/model/trigger.rs`).
   The type picker of the Trigger menu and the word in setup files follow. Trigger types have no registry yet: the
   rest is written by hand, and the compiler names most of it (a `match` without the new variant does not build).
 - **Also touch** the software trigger in `dsp/src/trigger.rs` with its test in `dsp/tests/triggers.rs`; the hardware
@@ -126,7 +126,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   `docs/scpi.md` and `wiki/SCPI-and-VXI-11.md`, its name under Trigger in `wiki/Features.md`; its pictures in
   `ui/tests/triggers.txt`; its row in `TYPES` of the check.
 - **Generate** nothing.
-- **The check:** `ui/src/model/trigger.rs::every_trigger_type_is_complete` fails on a type that is not in
+- **The check:** `ui/src/scpi/tests/trigger_types.rs::every_trigger_type_is_complete` fails on a type that is not in
   `TRIG_TYPES`, has no name, whose stored word or SCPI words differ from its row in `TYPES` or do not set it, whose
   words the docs or the wiki do not name, or that has no picture (or the reason in `NOT_SHOT`);
   `ui/src/ui/tests.rs::every_trigger_type_triggers_on_the_demo` on a type that does not trigger on the demo signals.
@@ -166,7 +166,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
 - **Declare it** as a type that implements `Analyser` at the end of its file in `ui/src/ui/`, with its line in
   `ANALYSERS` (`ui/src/ui/analysers.rs`). The start menu, System > Features, the view bar, `:VIEW`, setups and the
   drawing follow. [docs/analyser-modules.md](docs/analyser-modules.md) walks through it.
-- **Also touch** its variant of `AView` and of `AView::ALL` (`ui/src/model/analysers.rs`), its `MenuId` and its `mod`
+- **Also touch** its variant of `AView` and of `AView::ALL` (`ui/model/src/model/analysers.rs`), its `MenuId` and its `mod`
   line (`ui/src/ui.rs`), its menu rows (`ui/src/ui/item.rs`, `ui/src/ui/menu_items.rs`) and its settings as rows of a
   table (above), the signal processing in `dsp/src/` with its tests, its menu in the list of `menus_fit_at`
   (`ui/src/ui/lint/menu_layout.rs`), its keyword in the `:VIEW` rows of `docs/scpi.md` and

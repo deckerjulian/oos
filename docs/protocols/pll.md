@@ -221,6 +221,6 @@ the places as they were before that change.
 | `hal/src/model.rs` `Limits::standard`: `max_srate` [1.25e9, 625e6, 312.5e6], `adc_clock_hz`, `afg_clock_hz`; `afg.*_max_hz` clamp to afg_clock / 2 | sample-rate and generator limits (no limits.conf key for the clocks) |
 | `hal/src/dho/afe.rs` `auto_c`: `fs / 19_841_269` (= 1.25e9 / 63) | AFE auto filter code relative to 1.25 GSa/s |
 | `hal/src/dho/tpu.rs` `TICK_FS` 1.6 ns, `TICK64_FS` 6.4 ns (trigger t1/t2, holdoff, R timeout), video `VideoClk::Stock` 6.4 ns | 6.4 ns = one 156.25 MHz clock, 1.6 ns = 2 ADC periods (assumed); `VideoClk::Fast` 4 ns and `scu.rs` auto-trigger 4 ns ticks are probably another (250 MHz) clock (assumed) |
-| `ui/src/model.rs` `max_srate` (via `Limits`), `quantize_srate` | follow `Limits` automatically; decimation steps from the maximum rate |
+| `ui/model/src/model.rs` `max_srate` (via `Limits`), `quantize_srate` | follow `Limits` automatically; decimation steps from the maximum rate |
 | `ui/src/main.rs` default `--pre` preamble (dt 8e-10), `ui/src/wave.rs` simulator jitter `dt.min(8e-10)`, `ui/src/ui/sysinfo.rs` clock display | 0.8 ns sample period in the replay default and the simulator; display only |
 | tests: `hal/src/dho/afe.rs`, `spu.rs`, `hz.rs`, `roll.rs`, `afg.rs`, `model.rs`, `hal/src/dho/boot/tests.rs`, `ui/src/board/dho/hw/tests.rs`, `ui/src/ui.rs`, `fpgad` `status_interpretation` | expected values at 1.25 GHz / 156.25 MHz |

@@ -6,6 +6,7 @@
 //! when it gets one; its query also goes into ui/tests/scpi.txt, its line into docs/scpi.md (AGENTS.md).
 
 use super::*;
+use crate::settings::testkit::{changed, instances, GROUPS};
 
 #[test]
 fn digital_trigger_source_queries_preserve_identity_and_secondary_channel() {
@@ -309,4 +310,29 @@ fn run_after_single_goes_back_to_the_sweep_before_it() {
         assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:SWE?"), sweep, "after the Single key and Run/Stop");
     }
     assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+}
+
+/// A value of every row with a command, set over SCPI, reads back and is in the model (the rows: oos-model's
+/// `settings::testkit`).
+#[test]
+fn a_changed_value_set_over_scpi_reads_back() {
+    for (slices, root, _, _) in GROUPS {
+        for s in slices.iter().flat_map(|g| g.iter()) {
+            let crate::settings::Scpi::Cmd(c) = s.scpi else { continue };
+            for n in instances(s) {
+                let m = changed(s, n);
+                let want = s.query(&m, n);
+                let root = root.replace("<n>", &(n + 1).to_string());
+                let (mut sc, mut ui, cv) = session();
+                assert_eq!(line(&mut sc, &mut ui, &cv, &format!("{}:{} {}", root, c, want)), "");
+                // the query in the short form of the root (`:DISP`)
+                let short: String = root.chars().filter(|c| !c.is_ascii_lowercase()).collect();
+                assert_eq!(line(&mut sc, &mut ui, &cv, &format!("{}:{}?", short, c)), want, "{} {}", s.key, n);
+                for k in instances(s) {
+                    assert_eq!((s.get)(&ui.m, k), (s.get)(&m, k), "{} {} {}", s.key, n, k);
+                }
+                assert!(line(&mut sc, &mut ui, &cv, ":SYSTem:ERRor?").starts_with("0,"), "{}", s.key);
+            }
+        }
+    }
 }

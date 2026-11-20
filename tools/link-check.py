@@ -14,8 +14,8 @@ Checked:
     shortly). A path that .gitignore leaves out is fine: what a build makes is not in the tree. Not checked in the
     decision records and the changelog, which also tell what was there once, and not a path with a placeholder in
     it (`<name>`, `*`, `$VAR`, `...`);
-  - an item named behind such a path (`ui/src/settings/tests.rs::every_row_is_complete`): the file declares it, as a
-    function, a test, a type, a constant or a module. A recipe that names the test that keeps it true is checked
+  - an item named behind such a path (`ui/model/src/settings/tests.rs::every_row_is_complete`): the file declares it, as
+    a function, a test, a type, a constant or a module. A recipe that names the test that keeps it true is checked
     this way.
 
 Not checked: links to other sites. A path that is meant although nothing is there (a file a build makes, a path on
