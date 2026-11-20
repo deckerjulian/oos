@@ -68,7 +68,9 @@ pub trait RawBatch: Send + Sync {
 pub type DecodeInto = Arc<dyn Fn(&[u8], &mut Frame) + Send + Sync>;
 
 /// One batch for the workers (`Workers::feed`): frames `first..frames` of `fb` bytes in `raw`, recorded under settings
-/// stamp `stamp`, decoded with `decode` or drawn from their words with `codes`.
+/// stamp `stamp`, decoded with `decode` or drawn from their words with `codes`. `frames` is the end of that range, not
+/// a count from `first`: the frames of the batch from frame 0 that the workers take (the acquisition thread passes all
+/// but the newest, which it queues itself), and `first` how many of them at the start are left out.
 pub struct Feed {
     pub raw: Box<dyn RawBatch>,
     pub fb: usize,
