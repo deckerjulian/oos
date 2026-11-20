@@ -604,12 +604,14 @@ impl<U: Send + 'static> Http<U> {
             },
         };
         let length = format!("Content-Length: {}\r\n", body.len());
+        // an answer without a body has no type (the 202 of an MCP notification)
+        let ctype = if ctype.is_empty() { String::new() } else { format!("Content-Type: {ctype}\r\n") };
         let allowed = match allow {
             Some(a) if status.starts_with("405") => format!("Allow: {}\r\n", a),
             _ => String::new(),
         };
         let head = format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {}\r\n{}{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
             status, ctype, length, allowed
         );
         let body = if head_only { Vec::new() } else { body };

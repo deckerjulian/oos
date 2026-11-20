@@ -870,6 +870,14 @@ fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
 
 #[test]
 fn mcp_session() {
+    // over HTTP: a notification gets 202 with no body and no type
+    let mut h = Web::open(0);
+    let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+    let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let req = format!("POST /mcp HTTP/1.1\r\nContent-Length: {}\r\n\r\n{note}", note.len());
+    let r = request(&mut h, &mut ui, &cv, &mut scpi, req.into_bytes());
+    assert!(r.starts_with("HTTP/1.1 202 Accepted\r\n") && r.ends_with("\r\n\r\n"), "{r}");
+    assert!(r.contains("Content-Length: 0\r\n") && !r.contains("Content-Type"), "{r}");
     use crate::json::{parse, J};
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let mut call = |b: &str| crate::site::mcp(b, &mut Ctx::new(&mut ui, &cv, &mut scpi)).map(|r| parse(&r).unwrap());

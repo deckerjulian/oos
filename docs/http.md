@@ -32,8 +32,9 @@ the methods of its entries.
 - The route is the path before `?`, as sent (no percent-decoding). Of the query parameters, `name` of
   `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
   refused.
-- Answers carry `Content-Type` and `Content-Length` (not a 304) and `Cache-Control: no-store` (not a 413, nor a 503 of
-  `net::busy_answer`). An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once. A
+- Answers carry `Content-Type` (not one without a body: the 202 of an MCP notification, a 304), `Content-Length` (not
+  a 304, whose length would be that of the picture it stands for) and `Cache-Control: no-store`. Before 0.1.15 a 413
+  and a 503 had no `Cache-Control`, and the 202 an empty `Content-Type`. An answer above 48 KiB is sent from a thread of its own on the slow cores, at most two at once. A
   smaller one, a 403 or 413 and the result of an upload go out as the client takes them, from an outbox that the frame
   loop writes from on every pass without waiting (ADR 0066). The connection closes when a client takes nothing for 2 s
   or has not taken the whole answer after 30 s; while eight answers wait, a ninth closes unanswered.
@@ -209,7 +210,7 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
   `POST` only: another method gets 405 (before 0.1.15 any method was taken alike, and a `GET` got the parse error).
 - Answer: 200 `application/json`, the JSON-RPC answer; errors as JSON-RPC errors with status 200: -32700 parse error,
   -32601 method not found, -32602 unknown tool. A message without `id` (a notification) gets 202 with no body
-  and an empty `Content-Type`.
+  and no `Content-Type`.
 - Limits: 1 MiB.
 - net.allow: yes, as soon as the head is in, for every method.
 
