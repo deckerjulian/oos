@@ -319,6 +319,14 @@ const CASES: &[Case] = &[
         script: &[(1, Act::SegRun), (5, Act::SegStop)],
         ..BASE
     },
+    Case {
+        name: "segments-aborted-by-new-settings",
+        model: |m| segments(m, 1000),
+        period_us: Some(1_000),
+        passes: 12,
+        script: &[(1, Act::SegRun), (5, Act::Set(|m| tdiv(m, 2e-6)))],
+        ..BASE
+    },
     Case { name: "auto-ch1-1us-calibrated", model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0, cal: true, ..BASE },
     Case {
         name: "auto-ch1-200us-compressed-then-stop-raw",
@@ -357,6 +365,19 @@ const CASES: &[Case] = &[
         ..BASE
     },
 ];
+
+/// What each segment case must end with: the recordings armed (frame 0 recorded) and the segments of the last one.
+/// The stopped one ends after 30 (STOP at pass 5, a poll of 10 ms each and 1 ms a segment); the aborted one starts
+/// again with the new settings (`hw::seg_abort`, then a new recording).
+const SEG_EXPECT: &[(&str, usize, u32)] = &[
+    ("segments-20-then-show-one", 1, 20),
+    ("segments-10-1ms-apart", 1, 10),
+    ("segments-stopped-early", 1, 30),
+    ("segments-aborted-by-new-settings", 2, SEG_ABORTED),
+];
+
+/// Segments of the second recording of the aborted case when the run ends (it still records).
+const SEG_ABORTED: u32 = 60;
 
 /// The model with hardware segments: `n` of them, CH1 at 1 us/div.
 fn segments(m: &mut Model, n: usize) {
@@ -649,7 +670,12 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             // hardware segments: every segment recorded is read back with its time, a trigger period after the one
             // before it; delivered to the screen when the recording ended by itself, not after STOP
             let stopped = g.seg.total > 0 && g.seg.recorded < g.seg.total;
-            if g.seg.total > 0 {
+            let recording = g.seg.phase == crate::board::SegPhase::Recording;
+            if let Some(&(_, armed, recorded)) = SEG_EXPECT.iter().find(|e| e.0 == case.name) {
+                let zero = trace.lines().filter(|l| l.starts_with("Recorded") && l.contains(" frame: 0,")).count();
+                assert_eq!((zero, g.seg.recorded), (armed, recorded), "{}: recordings, segments", case.name);
+            }
+            if g.seg.total > 0 && !recording {
                 assert!(g.seg.recorded > 0 && g.seg.read == g.seg.recorded, "{}: {}", case.name, seg_line(&g));
                 // a segment is a trigger of the scene, and the next is the first trigger after the record before it
                 // and the interval: back to back without one, a whole number of trigger periods apart, never less
@@ -689,7 +715,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                 }
             }
             assert!(
-                played > 0 && (stopped || !frames.is_empty()),
+                (played > 0 || recording) && (stopped || !frames.is_empty()),
                 "{}: played {}, {} frames",
                 case.name,
                 played,
