@@ -5,7 +5,7 @@
 //! `CURRent?`. A new `:DVM` setting is a row of that table, another command goes into `dvm_cmd` here; either with its
 //! query in ui/tests/scpi.txt, docs/scpi.md gets the row's line from the table, the other's by hand (AGENTS.md).
 
-use super::{e, kw, parse_ch, Scpi};
+use super::{e, kw, parse_ch, t, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -14,7 +14,6 @@ impl Scpi {
         if let Some(row) = crate::settings::command(&crate::settings::meters::DVM_SLICES, n) {
             return self.setting_cmd(ui, row, query, arg);
         }
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if n.len() == 1 && kw(n0, "SOURce") {
             if query {

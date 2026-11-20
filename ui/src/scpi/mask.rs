@@ -6,7 +6,7 @@
 //! another command goes into `mask_cmd` here, with its line in docs/scpi.md; either with its query in
 //! ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, num, parse_ch, Scpi};
+use super::{e, kw, num, parse_ch, t, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -15,7 +15,6 @@ impl Scpi {
         if let Some(row) = crate::settings::command(&crate::settings::mask::SLICES, n) {
             return self.setting_cmd(ui, row, query, arg);
         }
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if n.len() == 1 && kw(n0, "SOURce") {
             if query {

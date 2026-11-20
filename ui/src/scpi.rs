@@ -195,6 +195,11 @@ pub struct Scpi {
 
 pub(crate) use crate::words::{e, kw, nearest_index, num, parse_bool};
 
+/// The answer of a query that is the text `s`, as the subsystems return it.
+fn t(s: &str) -> Option<Vec<u8>> {
+    Some(s.as_bytes().to_vec())
+}
+
 /// Splits a keyword with a numeric suffix: "CHAN2" -> ("CHAN", 2).
 fn suffix(tok: &str) -> (&str, Option<usize>) {
     let i = tok.find(|c: char| c.is_ascii_digit()).unwrap_or(tok.len());
