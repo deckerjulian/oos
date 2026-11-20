@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """tools/ci-parts.sh: which parts of CI a set of changed files reaches. No network, no build; needs sh."""
 import json
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -59,6 +61,48 @@ class Parts(unittest.TestCase):
     def test_together(self):
         self.assertEqual(parts("docs/scpi.md", "fpgad/src/main.rs", "dsp/src/fft.rs"),
                          (UI | {"test:dsp", "test:fpgad"}, True))
+
+
+def families(root, *files, all_parts=False):
+    args = ["sh", str(root / "tools/ci-parts.sh")] + (["--all"] if all_parts else [])
+    out = subprocess.run(args, input="".join(f + "\n" for f in files), capture_output=True, text=True, check=True)
+    return dict(line.split("=", 1) for line in out.stdout.splitlines())["families"].split()
+
+
+class Families(unittest.TestCase):
+    """The board families the job `check` builds for (ADR 0067): only those whose own folders a change touches."""
+
+    def setUp(self):
+        # a tree with a second family next to dho: the script and its library, the folders of rootfs/board/
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        for f in ("tools/ci-parts.sh", "tools/lib/board.sh"):
+            (self.root / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / f, self.root / f)
+        for name in ("mho", "dho"):
+            (self.root / "rootfs/board" / name / "etc").mkdir(parents=True)
+            (self.root / "rootfs/board" / name / "etc/oos-board").write_text(f"OOS_BOARD={name}\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_this_tree(self):
+        self.assertEqual(families(ROOT, "hal/src/dho/seq.rs"), ["dho"])
+        self.assertEqual(families(ROOT, all_parts=True), ["dho"])
+
+    def test_a_family_of_its_own(self):
+        for f in ("hal/src/mho/seq.rs", "ui/src/board/mho/hw.rs", "fpgad/src/mho/mod.rs",
+                  "rootfs/board/mho/bin/oos-board", "tools/board/mho/plan-matrix.sh"):
+            self.assertEqual(families(self.root, f), ["mho"], f)
+        self.assertEqual(families(self.root, "hal/src/dho/seq.rs", "hal/src/mho/seq.rs"), ["dho", "mho"], "dho first")
+
+    def test_neutral_code_reaches_every_family(self):
+        for f in ("hal/src/target.rs", "ui/src/board/mod.rs", "ui/src/board/policy/mod.rs", "fpgad/src/main.rs",
+                  "dsp/src/fft.rs", "rootfs/initramfs/etc/rcS", "hal/src/mhox/a.rs"):
+            self.assertEqual(families(self.root, f), ["dho", "mho"], f)
+        self.assertEqual(families(self.root, "hal/src/mho/seq.rs", "ui/src/scpi.rs"), ["dho", "mho"])
+        self.assertEqual(families(self.root, all_parts=True), ["dho", "mho"])
+        self.assertEqual(families(self.root), ["dho", "mho"], "no file: every family")
 
 
 if __name__ == "__main__":
