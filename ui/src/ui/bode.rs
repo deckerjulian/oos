@@ -32,9 +32,9 @@ pub struct State {
     /// `Model::hw_stamp` of the current step: hardware records with an older stamp are from before it
     pub stamp: u64,
     pub tx: Option<mpsc::Sender<String>>,
-    pub err: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    pub err: Slot,
     /// what the generator thread has to say without stopping the sweep (the `*IDN?` answer of a USB generator)
-    pub note: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    pub note: Slot,
     /// the user's time base, trigger source and level, restored at the end
     pub saved: Option<(usize, usize, f32)>,
     /// the built-in generator's settings before the sweep (on, Hz, Vpp, V), restored at the end
@@ -163,29 +163,40 @@ impl Link {
     }
 }
 
+/// A text the generator's thread leaves for the frame loop (`Bode::err`, `Bode::note`). Its lock is held only to put
+/// or take one `Option<String>`, which a panicking holder cannot leave half written: a lock poisoned by one is taken
+/// as it is, not unwrapped.
+#[derive(Clone, Default)]
+pub struct Slot(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+impl Slot {
+    fn put(&self, text: Option<String>) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = text;
+    }
+
+    fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    }
+}
+
 /// The generator thread: connects, sends every line it receives (a message with `\n` as several commands).
-fn gen_thread(
-    usb: bool,
-    addr: String,
-    err: std::sync::Arc<std::sync::Mutex<Option<String>>>,
-    note: std::sync::Arc<std::sync::Mutex<Option<String>>>,
-) -> mpsc::Sender<String> {
+fn gen_thread(usb: bool, addr: String, err: Slot, note: Slot) -> mpsc::Sender<String> {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         let (mut link, what) = match Link::open(usb, &addr) {
             Ok((l, w, n)) => {
-                *note.lock().unwrap() = n;
+                note.put(n);
                 (l, w)
             }
             Err(e) => {
-                *err.lock().unwrap() = Some(e);
+                err.put(Some(e));
                 return;
             }
         };
         for msg in rx {
             for line in msg.split('\n').filter(|l| !l.is_empty()) {
                 if let Err(e) = link.send(line) {
-                    *err.lock().unwrap() = Some(format!("{}: {}", what, e));
+                    err.put(Some(format!("{}: {}", what, e)));
                     return;
                 }
             }
@@ -392,7 +403,7 @@ impl Ui {
         self.bode.freqs = bode::log_sweep(self.m.bode_start, self.m.bode_stop, self.m.bode_points);
         self.bode.points.clear();
         self.bode.idx = 0;
-        *self.bode.err.lock().unwrap() = None;
+        self.bode.err.put(None);
         // two stored records: the sweep is the sine fit of those samples, with no generator and no front end
         if self.bode_sources_are_refs() {
             let rec = Self::blank_record();
@@ -436,7 +447,7 @@ impl Ui {
             (self.m.afg_wave, self.m.afg_mod) = (0, 0);
             self.bode_send_freq();
         } else {
-            *self.bode.note.lock().unwrap() = None;
+            self.bode.note.put(None);
             let tx =
                 gen_thread(self.m.bode_usb, self.m.bode_addr.clone(), self.bode.err.clone(), self.bode.note.clone());
             let g = &GENERATORS[self.bode_gen()];
@@ -516,12 +527,12 @@ impl Ui {
         if self.bode.free {
             return self.free_update();
         }
-        let e = self.bode.err.lock().unwrap().take();
+        let e = self.bode.err.take();
         if let Some(e) = e {
             self.bode_finish(&e);
             return;
         }
-        let n = self.bode.note.lock().unwrap().take();
+        let n = self.bode.note.take();
         if let Some(n) = n {
             self.toast(&n);
         }
