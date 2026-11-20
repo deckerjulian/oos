@@ -50,6 +50,16 @@ HTTP_RS = r'''impl Http {
     }
 }
 
+fn methods_of(route: &str) -> Option<&'static str> {
+    match route {
+        "/waveform" | "/mcp" => Some("POST"),
+        "/update" => Some("GET, HEAD, POST"),
+        "/screen.png" | "/screen.jpg" => Some("GET"),
+        "/" | "/ui-state" | "/wave.csv" => Some("GET, HEAD"),
+        _ => None,
+    }
+}
+
 pub fn mcp(body: &str, ui: &mut Ui) -> Option<String> {
     let result = match method {
         "initialize" => J::obj(&[("serverInfo", J::obj(&[("name", J::s("oos-ui"))]))]),
@@ -151,8 +161,10 @@ class Coverage(unittest.TestCase):
         found = self.findings()
         self.assertIn("ui/remote/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md",
                       found)
+        self.assertIn("ui/remote/src/http.rs: route /version has no arm in fn methods_of: it would take every method",
+                      found)
         # /update took GET and POST in http.rs already: the arm of site.rs adds nothing, and needs no entry
-        self.assertEqual(len(found), 1, found)
+        self.assertEqual(len(found), 2, found)
 
     def test_a_declaration_of_a_trait_is_no_body(self):
         rs = "pub trait Site {\n    fn answer(&mut self, route: &str) -> Option<u8>;\n}\n" + HTTP_RS
@@ -182,15 +194,39 @@ class Coverage(unittest.TestCase):
                                                     '            "/" => ("text/html"')
         self.write(rs, HTTP_MD)
         self.assertEqual(self.findings(), [
-            "ui/remote/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md"])
-        # with its entry it passes
+            "ui/remote/src/http.rs: route GET/POST /version has no entry `### \\`GET /version\\`` in docs/http.md",
+            "ui/remote/src/http.rs: route /version has no arm in fn methods_of: it would take every method"])
+        # with its entry and its arm of methods_of it passes
+        rs = rs.replace('"/" | "/ui-state"', '"/version" | "/" | "/ui-state"')
         self.write(rs, HTTP_MD + "\n### `GET /version`\n\n- Mark: **experimental**\n")
         self.assertEqual(self.findings(), [])
+
+    def test_methods_of_takes_the_methods_of_the_entries(self):
+        # a method more or less than the entries name, a HEAD without a GET
+        rs = HTTP_RS.replace('"/update" => Some("GET, HEAD, POST")', '"/update" => Some("GET, HEAD")')
+        rs = rs.replace('"/screen.png" | "/screen.jpg" => Some("GET")',
+                        '"/screen.png" | "/screen.jpg" => Some("GET, POST")')
+        rs = rs.replace('"/waveform" | "/mcp" => Some("POST")', '"/waveform" | "/mcp" => Some("HEAD, POST")')
+        self.write(rs, HTTP_MD)
+        self.assertEqual(self.findings(), [
+            "ui/remote/src/http.rs: fn methods_of takes HEAD on /mcp without GET",
+            "ui/remote/src/http.rs: fn methods_of lets GET, POST through to /screen.jpg, its entries in docs/http.md "
+            "name GET",
+            "ui/remote/src/http.rs: fn methods_of lets GET, POST through to /screen.png, its entries in docs/http.md "
+            "name GET",
+            "ui/remote/src/http.rs: fn methods_of lets GET through to /update, its entries in docs/http.md name GET, "
+            "POST",
+            "ui/remote/src/http.rs: fn methods_of takes HEAD on /waveform without GET"])
+        # without the function every route would take every method
+        self.write(HTTP_RS.replace("fn methods_of(", "fn methods(", 1), HTTP_MD)
+        self.assertEqual(self.findings(), ["ui/remote/src/http.rs: no arm found in fn methods_of"])
 
     def test_the_get_of_a_path_whose_post_is_documented_still_needs_its_own_entry(self):
         self.write(HTTP_RS, HTTP_MD.replace("### `GET /update`\n\n- Mark: **internal**\n\n", ""))
         self.assertEqual(self.findings(), [
-            "ui/remote/src/http.rs: route GET /update has no entry `### \\`GET /update\\`` in docs/http.md"])
+            "ui/remote/src/http.rs: route GET /update has no entry `### \\`GET /update\\`` in docs/http.md",
+            "ui/remote/src/http.rs: fn methods_of lets GET, POST through to /update, its entries in docs/http.md name "
+            "POST"])
 
     def test_an_entry_without_one_known_mark_fails(self):
         md = HTTP_MD.replace("### `GET /`\n\n- Mark: **internal**", "### `GET /`\n\nThe page.")
@@ -210,11 +246,13 @@ class Coverage(unittest.TestCase):
                        "\n### MCP tool `nope`\n\n- Mark: **stable**\n\n### `GET /wave.csv`\n\n- Mark: **stable**\n"
         self.write(HTTP_RS, md)
         found = self.findings()
-        self.assertEqual(len(found), 4, found)
+        self.assertEqual(len(found), 5, found)
         self.assertIn("GET /gone: no such route in fn answer of ui/remote/src/http.rs", found[0])
         self.assertIn("POST /ui-state: fn answer of ui/remote/src/http.rs and ui/src/site.rs takes only GET on /ui-state", found[1])
         self.assertIn("MCP tool `nope`: no such tool in fn mcp", found[2])
         self.assertIn("GET /wave.csv has a second entry", found[3])
+        self.assertIn("fn methods_of lets GET through to /ui-state, its entries in docs/http.md name GET, POST",
+                      found[4])
 
     def test_an_unknown_guard_fails_rather_than_being_passed_over(self):
         rs = HTTP_RS.replace('"/" => ("text/html"', '"/secret" if peer_ok => ("text/plain", Vec::new()),\n'
@@ -246,7 +284,8 @@ class Coverage(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             self.assertEqual(cov.main([str(self.root)]), 1)
         self.assertIn("route GET/POST /mcp has no entry", out.getvalue())
-        self.assertIn("1 findings", err.getvalue())
+        self.assertIn("fn methods_of lets POST through to /mcp, its entries in docs/http.md name none", out.getvalue())
+        self.assertIn("2 findings", err.getvalue())
         # the tree itself: every route and tool of ui/remote/src/http.rs has its entry and mark in docs/http.md
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

@@ -16,7 +16,8 @@ marks below are its first ones, and the interface has no version query yet):
 
 The text of an error message is not part of the interface; its status code is. `tools/http-coverage.py` (layer
 `ratchet` of `tools/check.sh`) fails when a route of the two or an MCP tool has no entry here, when an entry
-has no mark, or when an entry names a route the code does not answer.
+has no mark, when an entry names a route the code does not answer, or when a route has no arm in `methods_of` with
+the methods of its entries.
 
 ## Requests
 
