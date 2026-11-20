@@ -398,15 +398,17 @@ impl<P: crate::Program> Server<P> {
         let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
-            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
-            // what is still to be written goes first, as much as the socket takes now (#192)
-            closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
-            let mut eof = self.conns[i].closing;
-            if !closed && !eof {
-                let c = &mut self.conns[i];
-                let end = oos_system::net::read_some(&c.s, &mut c.buf, MAX_PAYLOAD + HEADER, 8192, 65536);
-                (eof, closed) = (end.eof, end.closed);
-            }
+            let left_out = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
+            let c = &mut self.conns[i];
+            let end = oos_system::net::flush_and_read(
+                &c.s,
+                &mut c.out,
+                &mut c.buf,
+                c.closing,
+                left_out,
+                MAX_PAYLOAD + HEADER,
+            );
+            let (eof, mut closed) = (end.eof, end.closed);
             let clearing =
                 self.conns[i].buf.get(2).is_some_and(|typ| matches!(*typ, DEVICE_CLEAR_COMPLETE | ASYNC_DEVICE_CLEAR));
             // the messages of a connection are taken once the replies before them are out, also those a client sent
