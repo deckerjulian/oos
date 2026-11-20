@@ -224,8 +224,8 @@ class Coverage(unittest.TestCase):
                       "name GET", self.findings())
         # an arm in a comment is no arm
         self.write(HTTP_RS.replace('"/waveform" | "/mcp" => Some("POST"),',
-                                   '// e.g. "/bogus" => Some("POST"), /* "/x" => Some("GET") */\n'
-                                   '        "/waveform" | "/mcp" => Some("POST"),'), HTTP_MD)
+                                   '// e.g. "/bogus" => Some("POST"),\n'
+                                   '        /* "/x" => Some("GET"), */ "/waveform" | "/mcp" => Some("POST"),'), HTTP_MD)
         self.assertEqual(self.findings(), [])
         # without the function every route would take every method
         self.write(HTTP_RS.replace("fn methods_of(", "fn methods(", 1), HTTP_MD)
