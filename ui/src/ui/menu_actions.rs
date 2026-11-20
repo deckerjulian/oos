@@ -811,342 +811,360 @@ impl Ui {
         match Self::kind(it) {
             Kind::Choice => self.adjust(it, 1),
             Kind::Value => {}
-            Kind::Action => match it {
-                Item::Open(MenuId::La) if !self.m.la.on && !self.la_probe_ok() => self.toast("No LA probe connected"),
-                // start menu > Measure: the measurement page, as the Measure button and key open it
-                Item::Open(MenuId::Measure) if self.menu == MenuId::Main => {
-                    self.ensure_meas_own();
-                    self.open_submenu(MenuId::MeasAdd);
+            Kind::Action => {
+                let _ = self.activate_menus(it) || self.activate_measure(it) || self.activate_more(it);
+            }
+        }
+    }
+
+    /// `activate` of an action: the start menu, its key functions and the pickers. True when `it` is one of them.
+    fn activate_menus(&mut self, it: Item) -> bool {
+        match it {
+            Item::Open(MenuId::La) if !self.m.la.on && !self.la_probe_ok() => self.toast("No LA probe connected"),
+            // start menu > Measure: the measurement page, as the Measure button and key open it
+            Item::Open(MenuId::Measure) if self.menu == MenuId::Main => {
+                self.ensure_meas_own();
+                self.open_submenu(MenuId::MeasAdd);
+            }
+            Item::Open(id) => {
+                if id == MenuId::Cursor && self.m.cursor == CursorMode::Off {
+                    // like the CURSOR key
+                    self.m.cursor = CursorMode::Time;
                 }
-                Item::Open(id) => {
-                    if id == MenuId::Cursor && self.m.cursor == CursorMode::Off {
-                        // like the CURSOR key
-                        self.m.cursor = CursorMode::Time;
-                    }
-                    self.open_submenu(id);
-                }
-                // start menu: the front-panel key functions; one-shot actions close the menu, stepping ones keep it
-                Item::RunStop
-                | Item::SingleAct
-                | Item::AutosetAct
-                | Item::DefaultAct
-                | Item::ForceAct
-                | Item::LockAct => {
-                    self.close_menu();
-                    self.key(match it {
-                        Item::RunStop => key::RUNSTOP,
-                        Item::SingleAct => key::SINGLE,
-                        Item::AutosetAct => key::AUTO,
-                        Item::DefaultAct => key::DEFAULT,
-                        Item::ForceAct => key::FORCE,
-                        _ => key::TOUCHLOCK,
-                    });
-                }
-                Item::SlopeAct => self.key(key::SLOPE),
-                Item::NavHist => self.key(key::NAVIGATE),
-                Item::NavBack => self.key(0x08),
-                Item::NavFwd => self.key(0x06),
-                Item::QuickRun => {
-                    self.close_menu();
-                    self.quick();
-                }
-                Item::PowerAct => {
-                    // the dialog of the POWER key, without the MCU answer that belongs to a key press
-                    self.close_menu();
-                    self.dialog = None;
-                    self.power_dlg = true;
-                }
-                Item::HZero => {
-                    self.m.delay = 0.0;
-                    self.settings_changed();
-                }
-                Item::AutoDeskew => self.auto_deskew(),
-                Item::ClearDeskew => self.clear_deskew(),
-                Item::Trig50 => self.level_50(),
-                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::hex_item(p.it)) => {
-                    // keypad: digits edit the entry, OK sets the value and goes back
-                    match KEYPAD.get(k).copied() {
-                        Some("OK") => {
-                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16)
-                                .unwrap_or(0)
-                                .min(BUS_VAL_MAX);
-                            if let Some(p) = self.pick {
-                                self.set_hex(p.it, v);
-                            }
-                            self.close_picker();
+                self.open_submenu(id);
+            }
+            // start menu: the front-panel key functions; one-shot actions close the menu, stepping ones keep it
+            Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::ForceAct | Item::LockAct => {
+                self.close_menu();
+                self.key(match it {
+                    Item::RunStop => key::RUNSTOP,
+                    Item::SingleAct => key::SINGLE,
+                    Item::AutosetAct => key::AUTO,
+                    Item::DefaultAct => key::DEFAULT,
+                    Item::ForceAct => key::FORCE,
+                    _ => key::TOUCHLOCK,
+                });
+            }
+            Item::SlopeAct => self.key(key::SLOPE),
+            Item::NavHist => self.key(key::NAVIGATE),
+            Item::NavBack => self.key(0x08),
+            Item::NavFwd => self.key(0x06),
+            Item::QuickRun => {
+                self.close_menu();
+                self.quick();
+            }
+            Item::PowerAct => {
+                // the dialog of the POWER key, without the MCU answer that belongs to a key press
+                self.close_menu();
+                self.dialog = None;
+                self.power_dlg = true;
+            }
+            Item::HZero => {
+                self.m.delay = 0.0;
+                self.settings_changed();
+            }
+            Item::AutoDeskew => self.auto_deskew(),
+            Item::ClearDeskew => self.clear_deskew(),
+            Item::Trig50 => self.level_50(),
+            Item::PickOpt(k) if self.pick.is_some_and(|p| Self::hex_item(p.it)) => {
+                // keypad: digits edit the entry, OK sets the value and goes back
+                match KEYPAD.get(k).copied() {
+                    Some("OK") => {
+                        let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16)
+                            .unwrap_or(0)
+                            .min(BUS_VAL_MAX);
+                        if let Some(p) = self.pick {
+                            self.set_hex(p.it, v);
                         }
-                        Some("Clear") => self.keypad.clear(),
-                        Some("Del") => {
-                            self.keypad.pop();
-                        }
-                        Some(d) if self.keypad.len() < 10 => {
-                            if self.keypad == "0" {
-                                self.keypad.clear();
-                            }
-                            self.keypad.push_str(d);
-                        }
-                        _ => {}
-                    }
-                }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::NumEntry) => self.numpad_key(k),
-                // a picker its page answers for (ADR 0060)
-                Item::PickOpt(k) if self.pick.is_some_and(|p| Self::page_of_pick(p.it).is_some()) => {
-                    if let Some((it, page)) = self.pick.and_then(|p| Some((p.it, Self::page_of_pick(p.it)?))) {
                         self.close_picker();
-                        (page.pick)(self, it, k);
                     }
+                    Some("Clear") => self.keypad.clear(),
+                    Some("Del") => {
+                        self.keypad.pop();
+                    }
+                    Some(d) if self.keypad.len() < 10 => {
+                        if self.keypad == "0" {
+                            self.keypad.clear();
+                        }
+                        self.keypad.push_str(d);
+                    }
+                    _ => {}
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
-                    let p = self.ref_files.get(k).cloned();
+            }
+            Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::AfgFreqEntry) => self.freq_key(k),
+            Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::NumEntry) => self.numpad_key(k),
+            // a picker its page answers for (ADR 0060)
+            Item::PickOpt(k) if self.pick.is_some_and(|p| Self::page_of_pick(p.it).is_some()) => {
+                if let Some((it, page)) = self.pick.and_then(|p| Some((p.it, Self::page_of_pick(p.it)?))) {
                     self.close_picker();
-                    if let Some(p) = p {
-                        self.ref_load_path(&p);
+                    (page.pick)(self, it, k);
+                }
+            }
+            Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
+                let p = self.ref_files.get(k).cloned();
+                self.close_picker();
+                if let Some(p) = p {
+                    self.ref_load_path(&p);
+                }
+            }
+            Item::PickOpt(k) => {
+                if let Some(p) = self.pick {
+                    let opts = self.options(p.it);
+                    self.close_picker();
+                    if let Some(o) = opts.get(k) {
+                        self.select_option(p.it, o);
                     }
                 }
-                Item::PickOpt(k) => {
-                    if let Some(p) = self.pick {
-                        let opts = self.options(p.it);
-                        self.close_picker();
-                        if let Some(o) = opts.get(k) {
-                            self.select_option(p.it, o);
-                        }
-                    }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// `activate` of an action: the measurements, math, references. True when `it` is one of them.
+    fn activate_measure(&mut self, it: Item) -> bool {
+        match it {
+            Item::AddMeas => {
+                if let Some(k) = self.next_usual_meas() {
+                    self.activate(Item::MeasAdd(k));
                 }
-                Item::AddMeas => {
-                    if let Some(k) = self.next_usual_meas() {
-                        self.activate(Item::MeasAdd(k));
+            }
+            Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
+            Item::MeasAdd(k) => {
+                let e = (k, self.meas_src);
+                if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
+                    self.m.meas.remove(index);
+                    self.meas_own.remove(&e);
+                    if self.meas_cfg == Some(index as u16) {
+                        self.meas_cfg = None;
+                    } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
+                        self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                     }
-                }
-                Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
-                Item::MeasAdd(k) => {
-                    let e = (k, self.meas_src);
-                    if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
-                        self.m.meas.remove(index);
-                        self.meas_own.remove(&e);
-                        if self.meas_cfg == Some(index as u16) {
-                            self.meas_cfg = None;
-                        } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
-                            self.meas_cfg = self.meas_cfg.map(|n| n - 1);
-                        }
-                        self.clear_measurement_statistics();
-                        self.toast(&format!(
-                            "{} {} removed",
-                            meascatalog::meas_long_name(k),
-                            self.wave_name(self.meas_src)
-                        ));
-                        return;
-                    } else {
-                        if !self.meas_make_room() {
-                            return;
-                        }
-                        self.m.meas.push(e);
-                        self.clear_measurement_statistics();
+                    self.clear_measurement_statistics();
+                    self.toast(&format!(
+                        "{} {} removed",
+                        meascatalog::meas_long_name(k),
+                        self.wave_name(self.meas_src)
+                    ));
+                    return true;
+                } else {
+                    if !self.meas_make_room() {
+                        return true;
                     }
-                    if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
-                        if let Some((a, _)) = self.meas_analysis(self.meas_src) {
-                            let p = a.period();
-                            if p.is_finite() && p > 0.0 {
-                                self.m.meas_idle = p;
-                            }
-                        }
-                    }
-                    self.ensure_meas_own();
-                    self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
-                }
-                Item::MeasPair(k) => self.meas_pair_toggle(k),
-                Item::CntClear => self.counter_clear(),
-                Item::DecTable => self.table_toggle(tables::TableKind::Decode),
-                Item::DecExport => self.events_export(tables::TableKind::Decode),
-                Item::SearchTable => self.table_toggle(tables::TableKind::Search),
-                Item::SearchSave => self.events_export(tables::TableKind::Search),
-                Item::StoreBin => match &self.last[0] {
-                    Some(rec) => {
-                        let p = self.new_file(&self.save_dir(), "wave", "bin");
-                        let r = crate::store::write(&p, &crate::store::wave_bin(rec, &self.m));
-                        self.toast_saved(&p, r);
-                    }
-                    None => self.toast("No waveform to save"),
-                },
-                Item::RefExport => self.ref_export(),
-                Item::RefImport => self.ref_import(),
-                Item::RefLoad => self.ref_load(),
-                Item::MaskSave => self.mask_save(),
-                Item::MaskLoad => self.mask_load(),
-                Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
-                Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
-                Item::RefLabel => match &self.refs[self.ref_sel] {
-                    Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
-                    None => self.toast("That slot is empty"),
-                },
-                Item::ChBiasZero(c) => self.zero_input(c),
-                Item::MathExprEdit => {
-                    self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel]))
-                }
-                Item::MeasRemove(index) => self.remove_measurement(index as usize),
-                Item::MeasClear => {
-                    self.m.meas.clear();
-                    self.m.meas2.clear();
-                    self.m.cat.clear();
-                    self.meas_own.clear();
-                    self.meas_cfg = None;
+                    self.m.meas.push(e);
                     self.clear_measurement_statistics();
                 }
-                Item::RefSave => {
-                    let c = self.ref_src;
-                    let rec = self.last[0].clone();
-                    let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
-                        let (v, dt) = self.meas_wave(r, c);
-                        let t0 =
-                            if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
-                        RefWave {
-                            src: c,
-                            color: 0,
-                            label: String::new(),
-                            t0,
-                            dt,
-                            v: v.into(),
-                            vpd: self.m.ch[c].volts_per_div(),
-                            offset: self.m.ch[c].offset,
-                            on: true,
+                if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
+                    if let Some((a, _)) = self.meas_analysis(self.meas_src) {
+                        let p = a.period();
+                        if p.is_finite() && p > 0.0 {
+                            self.m.meas_idle = p;
                         }
-                    });
-                    match saved {
-                        Some(w) => {
-                            let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
-                            self.m.deskew_ref[slot] = self.m.deskew_ch[c];
-                            self.refs[slot] = Some(w);
-                            self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
-                            self.measure_refs();
-                            self.analyzer_update();
-                        }
-                        None => self.toast("Source channel has no data"),
                     }
                 }
-                Item::RefClear => {
-                    self.refs = std::array::from_fn(|_| None);
-                    self.measure_refs();
-                    self.analyzer_update();
-                }
-                Item::ClearDisp => {
-                    if self.menu == MenuId::Main {
-                        self.close_menu();
-                    }
-                    self.clear_display();
-                }
-                Item::SysInfo => self.sysinfo_open(),
-                Item::ViewExit => self.view_exit(),
-                Item::ViewSettings => self.view_settings(),
-                Item::About => {
-                    let p = oos_hal::model::platform();
-                    let build = std::fs::read_to_string("/etc/oos-build").unwrap_or_default();
-                    let mut d = vec![
-                        "OOS".into(),
-                        "An open operating system for the DHO800/DHO900".into(),
-                        if build.is_empty() {
-                            format!("oos-ui {}", env!("CARGO_PKG_VERSION"))
-                        } else {
-                            format!("Build {}", oos_hal::update::short(build.trim()))
-                        },
-                        self.info.clone(),
-                        format!("Rigol {}", p.ident()),
-                        p.caps_line(),
-                    ];
-                    // experimental limits (limits.conf) and detection problems: the details are on System info
-                    if p.experimental() {
-                        d.push(format!("EXPERIMENTAL limits ({}), see System info", p.overrides.len()));
-                    }
-                    if !p.warnings.is_empty() {
-                        d.push(format!("{} warning(s), see System info", p.warnings.len()));
-                    }
-                    d.extend([
-                        format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
-                        self.start_up_summary().unwrap_or_default(),
-                        "Tap to close".into(),
-                    ]);
-                    d.retain(|l| !l.is_empty());
-                    self.dialog = Some(d)
-                }
-                Item::Shot => {
-                    // without the dialog on it
-                    self.close_menu();
-                    self.shot_request = Some(String::new());
-                }
-                Item::MathAuto => self.math_autoscale(),
-                Item::ZoneBox | Item::ZoneShape => {
-                    self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
-                    self.close_menu();
-                    self.toast(if it == Item::ZoneShape {
-                        "Draw the zone with one finger"
-                    } else {
-                        "Drag a box for the zone"
-                    });
-                }
-                Item::ZoneClear => {
-                    self.m.zones[self.zone_sel] =
-                        crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
-                }
-                Item::StoreSaveSetup => {
-                    let p = self.setup_path();
-                    let r = crate::store::write(
-                        &p,
-                        format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes(),
-                    );
+                self.ensure_meas_own();
+                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
+            }
+            Item::MeasPair(k) => self.meas_pair_toggle(k),
+            Item::CntClear => self.counter_clear(),
+            Item::DecTable => self.table_toggle(tables::TableKind::Decode),
+            Item::DecExport => self.events_export(tables::TableKind::Decode),
+            Item::SearchTable => self.table_toggle(tables::TableKind::Search),
+            Item::SearchSave => self.events_export(tables::TableKind::Search),
+            Item::StoreBin => match &self.last[0] {
+                Some(rec) => {
+                    let p = self.new_file(&self.save_dir(), "wave", "bin");
+                    let r = crate::store::write(&p, &crate::store::wave_bin(rec, &self.m));
                     self.toast_saved(&p, r);
                 }
-                Item::StoreRecall => self.recall_setup(),
-                Item::StoreCsv => match &self.last[0] {
-                    Some(rec) => {
-                        let p = self.new_file(&self.save_dir(), "wave", "csv");
-                        let mut r = crate::store::write(&p, crate::store::wave_csv(rec, &self.m).as_bytes());
-                        // the LA lines go to their own file: another sample rate, and only the changes
-                        if let (Ok(()), Some(la), true) = (&r, &rec.la, self.m.la_on()) {
-                            let q = self.new_file(&self.save_dir(), "la", "csv");
-                            r = crate::store::write(&q, crate::store::la_csv(la, &self.m.la.lines()).as_bytes());
-                        }
-                        self.toast_saved(&p, r);
-                    }
-                    None => self.toast("No waveform to save"),
-                },
-                Item::StorePng => {
-                    // without the dialog: the screen is saved after the next frame (main loop / script runner)
-                    let p = self.new_file(&self.save_dir(), "shot", "png");
-                    self.close_menu();
-                    self.shot_request = Some(p.to_string_lossy().into_owned());
-                }
-                Item::MaskCreate => self.create_mask(),
-                Item::MaskFromRef => self.create_mask_from_ref(),
-                Item::MaskClear => {
-                    self.mask = None;
-                    self.mask_ref = None;
-                    self.m.mask_on = false;
-                    self.mask_counts_reset();
-                    self.toast("Mask cleared");
-                }
-                Item::MaskReset => self.mask_counts_reset(),
-                Item::StoreFfSave => self.ff_save(),
-                Item::StoreFfLoad => self.ff_load(),
-                Item::Stock => self.stock_tap(),
-                Item::BootAgain => self.boot_again_tap(),
-                Item::Update => self.dialog = Some(self.update_lines()),
-                Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
-                Item::SrcOn => {
-                    let v = self.off_sources(self.menu);
-                    for &c in &v {
-                        self.m.ch[c].on = true;
-                    }
-                    self.focus = 0;
-                    self.settings_changed();
-                    let names: Vec<String> = v.iter().map(|c| format!("CH{}", c + 1)).collect();
-                    self.toast(&format!("{} on", names.join(", ")));
-                }
-                Item::WlanInfo => self.dialog = Some(self.wlan_lines()),
-                Item::WlanScan => self.wlan_scan(),
-                Item::WlanForget => self.wlan_forget_tap(),
-                Item::UpdateRollback => self.update_rollback_tap(),
-                _ => {}
+                None => self.toast("No waveform to save"),
             },
+            Item::RefExport => self.ref_export(),
+            Item::RefImport => self.ref_import(),
+            Item::RefLoad => self.ref_load(),
+            Item::MaskSave => self.mask_save(),
+            Item::MaskLoad => self.mask_load(),
+            Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
+            Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
+            Item::RefLabel => match &self.refs[self.ref_sel] {
+                Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
+                None => self.toast("That slot is empty"),
+            },
+            Item::ChBiasZero(c) => self.zero_input(c),
+            Item::MathExprEdit => {
+                self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel]))
+            }
+            Item::MeasRemove(index) => self.remove_measurement(index as usize),
+            Item::MeasClear => {
+                self.m.meas.clear();
+                self.m.meas2.clear();
+                self.m.cat.clear();
+                self.meas_own.clear();
+                self.meas_cfg = None;
+                self.clear_measurement_statistics();
+            }
+            Item::RefSave => {
+                let c = self.ref_src;
+                let rec = self.last[0].clone();
+                let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
+                    let (v, dt) = self.meas_wave(r, c);
+                    let t0 = if v.len() > r.ch[c].len() { r.raw.as_ref().map(|x| x.t0).unwrap_or(r.t0) } else { r.t0 };
+                    RefWave {
+                        src: c,
+                        color: 0,
+                        label: String::new(),
+                        t0,
+                        dt,
+                        v: v.into(),
+                        vpd: self.m.ch[c].volts_per_div(),
+                        offset: self.m.ch[c].offset,
+                        on: true,
+                    }
+                });
+                match saved {
+                    Some(w) => {
+                        let slot = self.refs.iter().position(|r| r.is_none()).unwrap_or(NREF - 1);
+                        self.m.deskew_ref[slot] = self.m.deskew_ch[c];
+                        self.refs[slot] = Some(w);
+                        self.toast(&format!("CH{} saved to R{}", c + 1, slot + 1));
+                        self.measure_refs();
+                        self.analyzer_update();
+                    }
+                    None => self.toast("Source channel has no data"),
+                }
+            }
+            Item::RefClear => {
+                self.refs = std::array::from_fn(|_| None);
+                self.measure_refs();
+                self.analyzer_update();
+            }
+            _ => return false,
         }
+        true
+    }
+
+    /// `activate` of an action: display, storage, zones, mask, system and network. True when `it` is one of them.
+    fn activate_more(&mut self, it: Item) -> bool {
+        match it {
+            Item::ClearDisp => {
+                if self.menu == MenuId::Main {
+                    self.close_menu();
+                }
+                self.clear_display();
+            }
+            Item::SysInfo => self.sysinfo_open(),
+            Item::ViewExit => self.view_exit(),
+            Item::ViewSettings => self.view_settings(),
+            Item::About => {
+                let p = oos_hal::model::platform();
+                let build = std::fs::read_to_string("/etc/oos-build").unwrap_or_default();
+                let mut d = vec![
+                    "OOS".into(),
+                    "An open operating system for the DHO800/DHO900".into(),
+                    if build.is_empty() {
+                        format!("oos-ui {}", env!("CARGO_PKG_VERSION"))
+                    } else {
+                        format!("Build {}", oos_hal::update::short(build.trim()))
+                    },
+                    self.info.clone(),
+                    format!("Rigol {}", p.ident()),
+                    p.caps_line(),
+                ];
+                // experimental limits (limits.conf) and detection problems: the details are on System info
+                if p.experimental() {
+                    d.push(format!("EXPERIMENTAL limits ({}), see System info", p.overrides.len()));
+                }
+                if !p.warnings.is_empty() {
+                    d.push(format!("{} warning(s), see System info", p.warnings.len()));
+                }
+                d.extend([
+                    format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
+                    self.start_up_summary().unwrap_or_default(),
+                    "Tap to close".into(),
+                ]);
+                d.retain(|l| !l.is_empty());
+                self.dialog = Some(d)
+            }
+            Item::Shot => {
+                // without the dialog on it
+                self.close_menu();
+                self.shot_request = Some(String::new());
+            }
+            Item::MathAuto => self.math_autoscale(),
+            Item::ZoneBox | Item::ZoneShape => {
+                self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
+                self.close_menu();
+                self.toast(if it == Item::ZoneShape {
+                    "Draw the zone with one finger"
+                } else {
+                    "Drag a box for the zone"
+                });
+            }
+            Item::ZoneClear => {
+                self.m.zones[self.zone_sel] =
+                    crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+            }
+            Item::StoreSaveSetup => {
+                let p = self.setup_path();
+                let r = crate::store::write(
+                    &p,
+                    format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes(),
+                );
+                self.toast_saved(&p, r);
+            }
+            Item::StoreRecall => self.recall_setup(),
+            Item::StoreCsv => match &self.last[0] {
+                Some(rec) => {
+                    let p = self.new_file(&self.save_dir(), "wave", "csv");
+                    let mut r = crate::store::write(&p, crate::store::wave_csv(rec, &self.m).as_bytes());
+                    // the LA lines go to their own file: another sample rate, and only the changes
+                    if let (Ok(()), Some(la), true) = (&r, &rec.la, self.m.la_on()) {
+                        let q = self.new_file(&self.save_dir(), "la", "csv");
+                        r = crate::store::write(&q, crate::store::la_csv(la, &self.m.la.lines()).as_bytes());
+                    }
+                    self.toast_saved(&p, r);
+                }
+                None => self.toast("No waveform to save"),
+            },
+            Item::StorePng => {
+                // without the dialog: the screen is saved after the next frame (main loop / script runner)
+                let p = self.new_file(&self.save_dir(), "shot", "png");
+                self.close_menu();
+                self.shot_request = Some(p.to_string_lossy().into_owned());
+            }
+            Item::MaskCreate => self.create_mask(),
+            Item::MaskFromRef => self.create_mask_from_ref(),
+            Item::MaskClear => {
+                self.mask = None;
+                self.mask_ref = None;
+                self.m.mask_on = false;
+                self.mask_counts_reset();
+                self.toast("Mask cleared");
+            }
+            Item::MaskReset => self.mask_counts_reset(),
+            Item::StoreFfSave => self.ff_save(),
+            Item::StoreFfLoad => self.ff_load(),
+            Item::Stock => self.stock_tap(),
+            Item::BootAgain => self.boot_again_tap(),
+            Item::Update => self.dialog = Some(self.update_lines()),
+            Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
+            Item::SrcOn => {
+                let v = self.off_sources(self.menu);
+                for &c in &v {
+                    self.m.ch[c].on = true;
+                }
+                self.focus = 0;
+                self.settings_changed();
+                let names: Vec<String> = v.iter().map(|c| format!("CH{}", c + 1)).collect();
+                self.toast(&format!("{} on", names.join(", ")));
+            }
+            Item::WlanInfo => self.dialog = Some(self.wlan_lines()),
+            Item::WlanScan => self.wlan_scan(),
+            Item::WlanForget => self.wlan_forget_tap(),
+            Item::UpdateRollback => self.update_rollback_tap(),
+            _ => return false,
+        }
+        true
     }
 }
 
