@@ -160,7 +160,7 @@ fn main() {
             m
         ));
     }
-    ui.limits_path = limits;
+    ui.overclock.path = limits;
     if experimental {
         ui.toast("Experimental limits active (limits.conf), see System > System info");
     }

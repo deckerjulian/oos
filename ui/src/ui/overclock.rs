@@ -13,6 +13,20 @@ use oos_hal::fsutil::{DirSync, Opts};
 use oos_hal::model::with_adc_clock;
 use std::fs;
 
+/// The ADC clock of the next start as the screen keeps it (ADR 0062).
+pub struct Next {
+    /// limits.conf, where the clock is kept (`--limits` of the command line)
+    pub path: String,
+    /// the clock limits.conf sets for the next start
+    pub hz: f64,
+}
+
+impl Default for Next {
+    fn default() -> Self {
+        Next { path: oos_hal::model::LIMITS_CONF.into(), hz: oos_hal::model::platform().limits.adc_clock_hz }
+    }
+}
+
 /// The switch that shows System > Overclock (system.conf, ADR 0010).
 pub(super) const SWITCH: crate::sysconf::Flag =
     crate::sysconf::Flag { key: "adc.overclock", env: Some("OOS_OVERCLOCK"), on: "on" };
@@ -64,13 +78,13 @@ impl Ui {
     /// One step up or down the list (`d` from the picker can be several).
     pub(super) fn overclock_step(&mut self, d: i32) {
         let n = board().clock_steps().len() as i32;
-        let i = board().clock_steps().iter().position(|&hz| hz == self.clock_next).unwrap_or(0) as i32;
+        let i = board().clock_steps().iter().position(|&hz| hz == self.overclock.hz).unwrap_or(0) as i32;
         // no wrap: one step down from the standard clock must not land on the test clock
         let hz = board().clock_steps()[(i + d).clamp(0, n - 1) as usize];
-        if let Err(e) = store(&self.limits_path, hz) {
+        if let Err(e) = store(&self.overclock.path, hz) {
             return self.toast(&format!("Overclock not saved: {}", e));
         }
-        self.clock_next = hz;
+        self.overclock.hz = hz;
         self.toast(&if hz == board().clock_steps()[0] {
             format!("ADC {} after power off and on", label(hz))
         } else {
@@ -91,7 +105,7 @@ mod tests {
         let path = dir.join("limits.conf");
         fs::write(&path, "# my limits\nafg.sine_max_hz = 7e7\nadc.clock_hz = 2e9\n").unwrap();
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.limits_path = path.to_str().unwrap().into();
+        ui.overclock.path = path.to_str().unwrap().into();
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
         ui.select_option(Item::Overclock, "1.5 GHz (test)");
         assert_eq!(ui.value(Item::Overclock), "1.5 GHz (test)");
@@ -120,7 +134,7 @@ mod tests {
         let dir = crate::ui::testkit::Scratch::new("overclock-ends");
         fs::create_dir_all(&dir).unwrap();
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.limits_path = dir.join("limits.conf").to_str().unwrap().into();
+        ui.overclock.path = dir.join("limits.conf").to_str().unwrap().into();
         ui.overclock_step(-1);
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
         ui.overclock_step(10);
@@ -133,7 +147,7 @@ mod tests {
     #[test]
     fn a_step_the_file_cannot_take_stays_as_it_was() {
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.limits_path = "/nonexistent-dir/limits.conf".into();
+        ui.overclock.path = "/nonexistent-dir/limits.conf".into();
         ui.select_option(Item::Overclock, "1.5 GHz (test)");
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
     }
@@ -147,7 +161,7 @@ mod tests {
         // a clock set before the switch went off: the item stays, so 1.25 GHz can be chosen again
         assert!(shown(false, board().clock_steps()[1]));
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.clock_next = std;
+        ui.overclock.hz = std;
         assert_eq!(ui.items(super::super::MenuId::Utility).contains(&Item::Overclock), switch_on());
     }
 }

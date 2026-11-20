@@ -214,8 +214,8 @@ impl Ui {
             d.push(kvc("ramp", si_short(g.ramp, "Hz"), mark(g.ramp == n.ramp)));
         }
         d.push(kv("ADC clock", exact(l.adc_clock_hz, "Hz")));
-        if self.clock_next != l.adc_clock_hz {
-            d.push(kvc("after power off and on", exact(self.clock_next, "Hz"), AMBER));
+        if self.overclock.hz != l.adc_clock_hz {
+            d.push(kvc("after power off and on", exact(self.overclock.hz, "Hz"), AMBER));
         }
         if c.has_gen() {
             d.push(kv("Generator clock", exact(l.afg_clock_hz, "Hz")));

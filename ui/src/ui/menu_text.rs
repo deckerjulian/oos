@@ -644,7 +644,7 @@ impl Ui {
         let m = &self.m;
         match it {
             Item::BootMode => self.boot_mode().into(),
-            Item::Overclock => overclock::label(self.clock_next),
+            Item::Overclock => overclock::label(self.overclock.hz),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),
             Item::RefSrc => format!("CH{}", self.ref_src + 1),
             Item::RefShow(i) => match &self.refs[i] {
