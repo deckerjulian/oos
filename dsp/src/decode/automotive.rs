@@ -7,7 +7,7 @@
 //! `pub use` line in `decode.rs`); the ui reaches it through a protocol module registered in `ui/src/protocols/mod.rs`
 //! (ADR 0002).
 
-use super::{flexray_frame_crc, flexray_header_crc, sent_crc, uart, Kind, Packet, Parity};
+use super::{flexray_frame_crc, flexray_header_crc, sent_crc, Kind, Packet};
 use crate::edges::{edges, states};
 use crate::protocols::{BusWhat, ModuleInfo, OPTS};
 
@@ -47,49 +47,95 @@ pub static LIN: ModuleInfo = ModuleInfo::new("Lin", "LIN", "automotive")
     .bit(|_, sh| 1.0 / sh.baud)
     .decoder(|l| Ok(lin(l.main(), l.dt, l.sh.baud, l.thr, l.hy)));
 
-/// LIN frames: break (dominant >= 11 bit times), sync 0x55, protected ID, data bytes and the checksum (the last byte
-/// before the next break or the end; classic or enhanced checksum accepted). Bytes are UART 8N1, idle high.
+/// The longest a LIN frame may take, in bit times from the start of its break: 1.4 times the header of 34 bits and
+/// a response of eight data bytes and the checksum (LIN 2.x, T_Frame_Maximum).
+const LIN_FRAME_BITS: f64 = 1.4 * (34.0 + 90.0);
+
+/// LIN frames: break, sync 0x55, protected ID, up to eight data bytes and the checksum (classic or enhanced checksum
+/// accepted). Bytes are UART 8N1, idle high.
+///
+/// The bit time of a frame is measured on its sync field, as a node does: its five falling edges are two bits apart.
+/// A dominant pulse of at least 10 of those bit times before it is the break (13 are sent). A frame whose sync
+/// cannot be read that way is read at the rate of the other frames of the record (their median), and only a record
+/// without one readable sync at `baud`: a pulse of 11 of those bit times is its break, and the byte after it is
+/// listed as a failed sync. The value of the break packet is the measured bit rate in bit/s (0 when it was not
+/// measured).
+///
+/// A frame is what follows its break within the longest time a frame may take, at most eight data bytes and the
+/// checksum: a byte that comes later is not part of it (it was taken for its checksum).
 pub fn lin(v: &[f32], dt: f64, baud: f64, thr: f32, hyst: f32) -> Vec<Packet> {
-    let spb = 1.0 / baud / dt;
+    let nominal = 1.0 / baud / dt;
     let mut out = Vec::new();
-    if spb < 2.5 {
-        return out;
-    }
     let e = edges(v, thr, hyst);
-    // breaks: falling edge followed by the next rising edge >= 11 bit times later
-    let mut breaks = Vec::new();
-    for w in e.windows(2) {
-        if !w[0].rising && w[1].rising && w[1].t - w[0].t >= 11.0 * spb {
-            breaks.push((w[0].t, w[1].t));
-        }
-    }
-    let bytes = uart(v, dt, baud, 8, Parity::None, thr, hyst, false);
-    for (k, &(b0, b1)) in breaks.iter().enumerate() {
-        let end = breaks.get(k + 1).map_or(f64::INFINITY, |b| b.0);
-        let fr: Vec<&Packet> = bytes.iter().filter(|p| p.t0 > b1 && p.t0 < end).collect();
-        out.push(Packet::new(Kind::Break, b0, b1, 0, true));
-        if fr.len() < 2 || fr[0].value != 0x55 {
+    let st = states(v, thr, hyst);
+    let level = |x: f64| -> Option<bool> { st.get(x as usize).copied().flatten() };
+    // the falling edges, each with how long the line stays low after it
+    let low = |w: &[crate::edges::Edge]| (!w[0].rising && w[1].rising).then(|| (w[0].t, w[1].t - w[0].t));
+    let falls: Vec<(f64, f64)> = e.windows(2).filter_map(low).collect();
+    // the bit time of the sync field after the pulse `k`, when that pulse is a break and a sync follows it: five
+    // falling edges two bits apart, soon after the break
+    let sync = |k: usize| -> Option<f64> {
+        let (b0, low) = falls[k];
+        let f = falls.get(k + 1..k + 6)?;
+        let bit = (f[4].0 - f[0].0) / 8.0;
+        let even = f.windows(2).all(|p| ((p[1].0 - p[0].0) / (2.0 * bit) - 1.0).abs() < 0.15);
+        (bit >= 2.5 && even && low >= 10.0 * bit && f[0].0 - (b0 + low) <= 15.0 * bit).then_some(bit)
+    };
+    // the rate of the bus, for a frame whose own sync cannot be read
+    let mut rates: Vec<f64> = (0..falls.len()).filter_map(sync).collect();
+    rates.sort_by(|a, b| a.total_cmp(b));
+    let bus = rates.get(rates.len() / 2).copied().unwrap_or(nominal);
+    let mut busy_until = f64::NEG_INFINITY;
+    for (k, &(b0, low)) in falls.iter().enumerate() {
+        if b0 < busy_until {
             continue;
         }
-        out.push(Packet { kind: Kind::Data, ..fr[0].clone() }); // sync
-        let pid = fr[1].value as u8;
-        out.push(Packet {
-            kind: Kind::Id { ext: false, rtr: false },
-            value: (pid & 0x3f) as u32,
-            ok: lin_pid(pid & 0x3f) == pid,
-            ..fr[1].clone()
-        });
-        if fr.len() >= 3 {
-            let data: Vec<u8> = fr[2..fr.len() - 1].iter().map(|p| p.value as u8).collect();
-            for p in &fr[2..fr.len() - 1] {
-                out.push(Packet { kind: Kind::Data, ..(*p).clone() });
+        let b1 = b0 + low;
+        let (bit, measured) = match sync(k) {
+            Some(bit) => (bit, true),
+            None if bus >= 2.5 && low >= 11.0 * bus => (bus, false),
+            None => continue,
+        };
+        let rate = if measured { (1.0 / (bit * dt)).round() as u32 } else { 0 };
+        out.push(Packet::new(Kind::Break, b0, b1, rate, true));
+        busy_until = b1;
+        // the bytes of the frame: sync, protected identifier, up to eight data bytes, the checksum
+        let last = b0 + LIN_FRAME_BITS * bit;
+        let mut bytes: Vec<Packet> = Vec::new();
+        let mut from = b1;
+        for &(s, low) in &falls[k + 1..] {
+            if s < from {
+                continue;
             }
-            let cs = fr[fr.len() - 1];
-            let mut enh = vec![pid];
-            enh.extend(&data);
-            let ok = cs.value as u8 == lin_checksum(&data) || cs.value as u8 == lin_checksum(&enh);
-            out.push(Packet { kind: Kind::Crc, ok, ..cs.clone() });
+            // the next break, a byte that comes too late, or a frame that is full
+            if low >= 10.0 * bit || s + 10.0 * bit > last || bytes.len() == 11 {
+                break;
+            }
+            let bits: Option<Vec<bool>> = (0..9).map(|b| level(s + (1.5 + b as f64) * bit)).collect();
+            let Some(bits) = bits else { break };
+            let value = (0..8).fold(0u32, |v, b| v | (bits[b] as u32) << b);
+            // (a stop bit that is low is a framing error)
+            bytes.push(Packet::new(Kind::Data, s, s + 10.0 * bit, value, bits[8]));
+            from = s + 9.5 * bit;
+            busy_until = s + 10.0 * bit;
         }
+        let mut bytes = bytes.into_iter();
+        let Some(first) = bytes.next() else { continue };
+        // a sync that could not be measured is listed with what was read in its place
+        out.push(Packet { ok: first.ok && measured && first.value == 0x55, ..first });
+        let Some(second) = bytes.next() else { continue };
+        let pid = second.value as u8;
+        let id = pid & 0x3f;
+        let kind = Kind::Id { ext: false, rtr: false };
+        out.push(Packet { kind, value: id as u32, ok: second.ok && lin_pid(id) == pid, ..second });
+        let rest: Vec<Packet> = bytes.collect();
+        let Some((cs, data)) = rest.split_last() else { continue };
+        out.extend(data.iter().cloned());
+        let values: Vec<u8> = data.iter().map(|p| p.value as u8).collect();
+        let mut with_pid = vec![pid];
+        with_pid.extend(&values);
+        let sum_ok = cs.value as u8 == lin_checksum(&values) || cs.value as u8 == lin_checksum(&with_pid);
+        out.push(Packet { kind: Kind::Crc, ok: cs.ok && sum_ok, ..cs.clone() });
     }
     out
 }
