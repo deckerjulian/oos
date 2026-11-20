@@ -864,7 +864,7 @@ fn colour_grade_renders() {
         let a = ui.area;
         let ph = if zoom { &ui.phz } else { &ui.ph };
         let mut direct = Canvas::new(W, H);
-        ui.draw_graded(&mut direct, a, ph, if zoom { ui.vmaxz_cg } else { ui.vmax_cg }, false);
+        ui.draw_graded(&mut direct, a, ph, if zoom { ui.grade.vmaxz_cg } else { ui.grade.vmax_cg }, false);
         let mut active = 0;
         for y in 0..ph.h {
             for x in 0..ph.w {

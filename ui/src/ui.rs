@@ -729,7 +729,6 @@ pub struct Ui {
     /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
     /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
     full_asked: bool,
-    vmaxz: [u32; NCH],
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
     menu: MenuId,
@@ -939,16 +938,8 @@ pub struct Ui {
     pub(crate) times: acquire::FrameTimes,
     pub info: String,
     pub dirty_map: bool,
-    vmax: [u32; NCH],
-    /// brightest pixel of the merged maps (colour grade), main / zoom view
-    vmax_cg: u32,
-    vmaxz_cg: u32,
-    /// minimum persistence: frames in the picture on screen, and the brightest pixel per frame behind `vmax`, `vmaxz`,
-    /// `vmax_cg`, `vmaxz_cg` (`picture_ref`)
-    pic_frames: u32,
-    per_frame: [u32; NCH],
-    per_framez: [u32; NCH],
-    per_frame_cg: [u32; 2],
+    /// the counts the traces are graded against (render.rs)
+    grade: render::Grade,
     /// storage directory (setups, CSV, PNG), created when missing
     pub store_dir: std::path::PathBuf,
     /// Auto / USB stick / desktop for waveform, mask and screenshot files
@@ -1046,7 +1037,7 @@ impl Ui {
         self.bus_views_clear();
         self.ph.clear();
         self.phz.clear();
-        (self.vmax, self.vmaxz, self.vmax_cg, self.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
+        (self.grade.vmax, self.grade.vmaxz, self.grade.vmax_cg, self.grade.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
         // without a last record there is nothing to redraw in STOP, average with, compute math / decode / search on
         self.last[0] = None;
         self.hist_pos = None;

@@ -167,8 +167,11 @@ impl Ui {
     /// window's maps.
     /// `all_sources`: every channel that is on (the zoom overview), else only those of the window being drawn.
     fn traces(&self, l: &mut Layers, area: Rect, zoom: bool, all_sources: bool) {
-        let (ph, vmax, vmax_cg) =
-            if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
+        let (ph, vmax, vmax_cg) = if zoom {
+            (&self.phz, &self.grade.vmaxz, self.grade.vmaxz_cg)
+        } else {
+            (&self.ph, &self.grade.vmax, self.grade.vmax_cg)
+        };
         if l.over.is_none() {
             return self.draw_traces(l.under, area, ph, vmax, vmax_cg, all_sources);
         }
@@ -459,25 +462,27 @@ impl Ui {
     /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
     /// the zoom map are near saturation.
     pub(super) fn grade_refs(&mut self) -> (bool, bool) {
-        let n = self.pic_frames;
+        let n = self.grade.frames;
         let (mut full, mut fullz) = (false, false);
         for c in 0..NCH {
             if self.m.ch[c].on {
                 let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
-                self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
+                self.grade.vmax[c] = picture_ref(self.grade.vmax[c], &mut self.grade.per_frame[c], mx, n);
                 full |= mx > 0xc000;
                 if self.m.zoom {
                     let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
-                    self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
+                    self.grade.vmaxz[c] = picture_ref(self.grade.vmaxz[c], &mut self.grade.per_framez[c], mz, n);
                     fullz |= mz > 0xc000;
                 }
             }
         }
         if self.m.color_grade {
             let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
-            self.vmax_cg = picture_ref(self.vmax_cg, &mut self.per_frame_cg[0], self.ph.merged_max(on), n);
+            self.grade.vmax_cg =
+                picture_ref(self.grade.vmax_cg, &mut self.grade.per_frame_cg[0], self.ph.merged_max(on), n);
             if self.m.zoom {
-                self.vmaxz_cg = picture_ref(self.vmaxz_cg, &mut self.per_frame_cg[1], self.phz.merged_max(on), n);
+                self.grade.vmaxz_cg =
+                    picture_ref(self.grade.vmaxz_cg, &mut self.grade.per_frame_cg[1], self.phz.merged_max(on), n);
             }
         }
         (full, fullz)
@@ -567,6 +572,37 @@ impl Ui {
                     *d = lut[((s >> shift) as usize).min(1023)];
                 }
             }
+        }
+    }
+}
+
+/// The counts the traces are graded against (`Ui::grade_refs`), each followed by `picture_ref`. ADR 0062.
+pub(super) struct Grade {
+    /// the brightest pixel per channel of the main and of the zoom map
+    pub vmax: [u32; NCH],
+    pub vmaxz: [u32; NCH],
+    /// the brightest pixel of the merged maps (colour grade), main / zoom view
+    pub vmax_cg: u32,
+    pub vmaxz_cg: u32,
+    /// minimum persistence: the frames in the picture on screen, and the brightest pixel per frame behind `vmax`,
+    /// `vmaxz`, `vmax_cg`, `vmaxz_cg`
+    pub frames: u32,
+    pub per_frame: [u32; NCH],
+    pub per_framez: [u32; NCH],
+    pub per_frame_cg: [u32; 2],
+}
+
+impl Default for Grade {
+    fn default() -> Grade {
+        Grade {
+            vmax: [1; NCH],
+            vmaxz: [1; NCH],
+            vmax_cg: 1,
+            vmaxz_cg: 1,
+            frames: 0,
+            per_frame: [1; NCH],
+            per_framez: [1; NCH],
+            per_frame_cg: [1; 2],
         }
     }
 }
