@@ -90,7 +90,7 @@ fn files_go_to_the_stick_while_it_is_there() {
     let mut u = crate::ui::testkit::demo_ui();
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
-    u.usb = true;
+    u.stick.mounted = true;
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::USB_DIR));
     assert_eq!(u.menu_title(MenuId::Storage), "Storage \u{b7} USB stick");
     // a directory given by hand stays
@@ -195,7 +195,7 @@ fn screen_in_order_on(scr: Screen) {
         // top bar, with every mix of the status boxes that can be there (ADR 0063): those that come and go are set by
         // the state their `shown` reads, so a box that is not set up here fails the count below
         let sticks: [fn(&mut Ui, bool); 3] =
-            [|u, on| u.net.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.usb = on];
+            [|u, on| u.net.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.stick.mounted = on];
         for k in 0..1usize << sticks.len() {
             for (i, set) in sticks.iter().enumerate() {
                 set(&mut u, k & 1 << i != 0);

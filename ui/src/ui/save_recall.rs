@@ -7,6 +7,15 @@
 
 use super::*;
 
+/// The USB stick as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Stick {
+    /// a USB stick is mounted (the top bar's USB box, where files go, SSH key import)
+    pub mounted: bool,
+    /// when `usb_poll` looks for the USB, WLAN and Bluetooth sticks next (`Ui::now`)
+    pub next_look: f64,
+}
+
 impl Ui {
     /// The band the external display scales when it shows the waveform: between the top bar and the cards.
     /// HDMI workspace: the waveform area as it is now (one canvas: the band between the bars; with layers: the layer
@@ -41,7 +50,7 @@ impl Ui {
 
     /// A USB stick is mounted and the storage directory was not set by hand: files go to it.
     pub fn usb_used(&self) -> bool {
-        self.usb && self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR)
+        self.stick.mounted && self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR)
     }
 
     /// Where screenshots, CSV, mask copies and fast-frame files go now.
@@ -62,7 +71,7 @@ impl Ui {
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
         match self.store_dest {
-            crate::store::StoreDest::Local if self.usb => " locally, not on the stick",
+            crate::store::StoreDest::Local if self.stick.mounted => " locally, not on the stick",
             crate::store::StoreDest::Stick => " on the USB stick",
             crate::store::StoreDest::Auto if self.usb_used() => " on the USB stick",
             _ => "",
@@ -78,16 +87,16 @@ impl Ui {
 
     /// From `step`: is a stick mounted (`/bin/oos-usb`); says so when that changes.
     pub(super) fn usb_poll(&mut self) {
-        if cfg!(test) || self.now < self.usb_check {
+        if cfg!(test) || self.now < self.stick.next_look {
             return;
         }
-        self.usb_check = self.now + 2.0;
+        self.stick.next_look = self.now + 2.0;
         self.net.wlan_stick = wlan::stick_there();
         self.bt.stick = bt::stick_there();
         self.bt.inputs = bt::inputs_connected(&bt::inputs());
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
-        if on != self.usb {
-            self.usb = on;
+        if on != self.stick.mounted {
+            self.stick.mounted = on;
             if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
                 self.toast(if on { "USB stick ready: files are saved to it" } else { "USB stick removed" });
             }

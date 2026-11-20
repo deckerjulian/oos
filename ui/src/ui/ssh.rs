@@ -205,7 +205,7 @@ impl Ui {
 
     fn ssh_import(&mut self) {
         let Some(dir) = self.ssh.dir.clone() else { return };
-        if !self.usb {
+        if !self.stick.mounted {
             return self.toast("No USB stick in the front port");
         }
         let text = match ssh::stick_text(&self.ssh.stick) {
@@ -278,7 +278,7 @@ mod tests {
         assert!(u.sys.ssh_password, "no key: password login must stay on");
         assert!(u.toast.as_ref().unwrap().0.contains("locks root out"));
         // a key from the stick, then it may go off
-        u.usb = true;
+        u.stick.mounted = true;
         std::fs::write(d.join("usb").join("id_ed25519.pub"), ED).unwrap();
         u.activate(Item::SshImport);
         assert_eq!(u.toast.as_ref().unwrap().0, "1 key added");
@@ -303,7 +303,7 @@ mod tests {
         let (mut u, d) = with_dir("import");
         u.activate(Item::SshImport);
         assert_eq!(u.toast.as_ref().unwrap().0, "No USB stick in the front port");
-        u.usb = true;
+        u.stick.mounted = true;
         u.activate(Item::SshImport);
         assert!(u.toast.as_ref().unwrap().0.starts_with("No *.pub"));
         std::fs::write(d.join("usb").join("id_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
