@@ -519,10 +519,8 @@ impl Canvas {
 
     /// Filled triangle, 4x supersampled edges.
     pub fn triangle(&mut self, p: [(i32, i32); 3], c: Rgb) {
-        let minx = p.iter().map(|q| q.0).min().unwrap();
-        let maxx = p.iter().map(|q| q.0).max().unwrap();
-        let miny = p.iter().map(|q| q.1).min().unwrap();
-        let maxy = p.iter().map(|q| q.1).max().unwrap();
+        let (minx, maxx) = (p[0].0.min(p[1].0).min(p[2].0), p[0].0.max(p[1].0).max(p[2].0));
+        let (miny, maxy) = (p[0].1.min(p[1].1).min(p[2].1), p[0].1.max(p[1].1).max(p[2].1));
         let (x0, y0, x1, y1, x2, y2) =
             (p[0].0 as f32, p[0].1 as f32, p[1].0 as f32, p[1].1 as f32, p[2].0 as f32, p[2].1 as f32);
         let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);

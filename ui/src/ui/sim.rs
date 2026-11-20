@@ -308,10 +308,11 @@ impl Ui {
             let generated = Generated::evaluate(&request, generated);
             self.sim_finish(request, generated);
         } else {
-            if self.sim_generation.is_none() {
-                self.sim_generation = Some(Generation::new()?);
-            }
-            self.sim_generation.as_mut().unwrap().submit(request)?;
+            let generation = match &mut self.sim_generation {
+                Some(generation) => generation,
+                none => none.insert(Generation::new()?),
+            };
+            generation.submit(request)?;
             self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
         }
         Ok(())
@@ -333,8 +334,8 @@ impl Ui {
     pub(super) fn sim_poll(&mut self) {
         let pending = self.sim_generation.as_mut().and_then(|generation| generation.pending.take());
         if let Some((request, generated)) = pending {
-            if self.sim_generation.as_ref().is_some_and(|generation| generation.active == Some(request.id)) {
-                self.sim_generation.as_mut().unwrap().active = None;
+            if let Some(generation) = self.sim_generation.as_mut().filter(|g| g.active == Some(request.id)) {
+                generation.active = None;
                 self.sim_finish(request, generated);
             }
         }
@@ -648,7 +649,9 @@ impl Ui {
             self.m.status = TrigStatus::Wait;
             return;
         }
-        if let Err(error) = self.sim_generation.as_mut().unwrap().submit(request) {
+        // made above when there was none
+        let Some(generation) = self.sim_generation.as_mut() else { return };
+        if let Err(error) = generation.submit(request) {
             self.sim_error = Some(error);
         }
     }
@@ -666,16 +669,16 @@ impl Ui {
             if self.reference_trigger_hits(source).is_none() {
                 // The actual external trigger source has not finished scanning.
                 // Retain one candidate off-screen; polling never installs it.
-                if self.sim_generation.is_none() {
-                    match Generation::new() {
-                        Ok(worker) => self.sim_generation = Some(worker),
+                let generation = match &mut self.sim_generation {
+                    Some(generation) => generation,
+                    none => match Generation::new() {
+                        Ok(worker) => none.insert(worker),
                         Err(error) => {
                             self.sim_error = Some(error);
                             return;
                         }
-                    }
-                }
-                let generation = self.sim_generation.as_mut().unwrap();
+                    },
+                };
                 generation.active = Some(request.id);
                 generation.run = request.run;
                 generation.pending = Some((request, generated));
