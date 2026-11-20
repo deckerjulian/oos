@@ -134,7 +134,7 @@ impl Ui {
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
-        if self.hdmi_snap_want && self.m.density == Density::Full {
+        if self.hdmi.snap_want && self.m.density == Density::Full {
             self.capture_hdmi(l);
         }
         let cv = l.over();
@@ -146,7 +146,7 @@ impl Ui {
         self.draw_table(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
-        if self.hdmi_snap_want && self.m.density != Density::Full {
+        if self.hdmi.snap_want && self.m.density != Density::Full {
             self.capture_hdmi(l);
         }
         let cv = l.over();
@@ -224,13 +224,13 @@ impl Ui {
             self.area,
             self.cur_win,
             self.frames,
-            self.hdmi_snap_want,
+            self.hdmi.snap_want,
         );
         self.scr = Screen { w: l.under.w, h: l.under.h };
-        (self.view_pass, self.hdmi_snap_want) = (true, false);
+        (self.view_pass, self.hdmi.snap_want) = (true, false);
         self.render_layers(l);
         self.view_pass = false;
-        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi_snap_want) = keep;
+        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi.snap_want) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid

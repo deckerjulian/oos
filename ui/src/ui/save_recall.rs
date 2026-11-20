@@ -16,11 +16,11 @@ impl Ui {
             None => {
                 let cv = &*l.under;
                 let body = self.frame().body;
-                self.hdmi_snap.clear();
-                self.hdmi_snap.extend_from_slice(&cv.px[(body.y * cv.w) as usize..(body.bottom() * cv.w) as usize]);
+                self.hdmi.snap.clear();
+                self.hdmi.snap.extend_from_slice(&cv.px[(body.y * cv.w) as usize..(body.bottom() * cv.w) as usize]);
             }
             Some(o) => {
-                let s = self.hdmi_over.get_or_insert_with(|| Canvas::new_layer(o.w, o.h));
+                let s = self.hdmi.over.get_or_insert_with(|| Canvas::new_layer(o.w, o.h));
                 if (s.w, s.h) != (o.w, o.h) {
                     *s = Canvas::new_layer(o.w, o.h);
                 }

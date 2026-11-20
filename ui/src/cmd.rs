@@ -162,7 +162,7 @@ pub fn stat_text(ui: &Ui) -> String {
         crate::compress::last_k()
     );
     // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
-    let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
+    let hdmi = ui.hdmi.out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
     // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
     let screens = ui.times.gpu_screens.map_or(String::new(), |(p, m)| {
         format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m)))

@@ -414,7 +414,7 @@ fn hdmi_gpu_frame(
             hc.text_in(&f.xl, gfx::Rect::new(0, 0, mw, band), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
             // the waveform area without the bars and menus: the layer over the traces as it was before them
             let over =
-                ui.hdmi_over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
+                ui.hdmi.over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
             let plot = gpu::Quad {
                 over: Some(over),
                 reuse: false,
@@ -479,7 +479,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
     // one frame: on the CPU, or in layers through the GPU and read back
     fn frame(ui: &mut Ui, cv: &mut Canvas, gpu: &mut Option<gpu::Gpu>, gl: &mut GpuLayers, shot_n: &mut u32) {
         ui.step(1.0 / 30.0);
-        ui.hdmi_snap_want = std::env::var_os("OOS_GPU_HDMI").is_some();
+        ui.hdmi.snap_want = std::env::var_os("OOS_GPU_HDMI").is_some();
         match gpu.as_mut() {
             Some(g) => {
                 if let Err(e) = gl.compose(ui, g, cv, 0, true) {
@@ -996,7 +996,7 @@ impl Device {
         let t1 = Instant::now();
         self.ui.set_hdmi_present(self.hdmi.is_some());
         let hdmi_frame = self.hdmi.is_some() && (self.frame_n + 1).is_multiple_of(2);
-        self.ui.hdmi_snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
+        self.ui.hdmi.snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
         self.gpu_follow();
         // the web page's picture: the screen the CPU draws next swaps out the shown one; with the GPU, `cv` changes
         // only when a picture comes back, and each one goes to the web page from there
@@ -1018,7 +1018,7 @@ impl Device {
         self.hdmi_picture(hdmi_frame, hdmi_done);
         let t3 = Instant::now();
         self.hdmi_watch();
-        self.ui.hdmi_out = self.hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
+        self.ui.hdmi.out = self.hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
         let a = 0.05;
         self.ui.times.step += a * ((t1 - t0).as_secs_f32() * 1000.0 - self.ui.times.step);
         self.ui.times.render += a * ((t2 - t1).as_secs_f32() * 1000.0 - self.ui.times.render);
@@ -1161,7 +1161,7 @@ impl Device {
             // the monitor's picture: its own layout, the workspace, or the panel's
             let size = match self.ui.m.hdmi {
                 model::HdmiMode::Layout => ui::Screen::for_monitor(h.width, h.height),
-                model::HdmiMode::Waveform if !self.ui.hdmi_snap.is_empty() => {
+                model::HdmiMode::Waveform if !self.ui.hdmi.snap.is_empty() => {
                     Some(ui::Screen { w: h.width, h: h.height })
                 }
                 _ => None,
@@ -1342,7 +1342,7 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     hc.clear(HDMI_BG);
     let body = ui.frame().body;
     let (sw, sh) = (ui.scr.w, body.h);
-    if ui.hdmi_snap.len() < (sw * sh) as usize {
+    if ui.hdmi.snap.len() < (sw * sh) as usize {
         return;
     }
     // the waveform area as large as it fits; the settings line in the band above it (at least 48 px)
@@ -1354,7 +1354,7 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     hc.text_in(&f.xl, gfx::Rect::new(0, 0, hc.w, head), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
     // `fit` centres in the rest: start at the band so the plot sits right under the settings line
     let top = (head as usize).saturating_sub(fit.y0) * stride;
-    fit.scale(&ui.hdmi_snap, &mut hc.px[top..], stride);
+    fit.scale(&ui.hdmi.snap, &mut hc.px[top..], stride);
 }
 
 /// The address to show in the top bar, and all of them, as (interface, address).
@@ -1410,7 +1410,7 @@ mod tests {
     fn hdmi_workspace_picture() {
         let mut ui = crate::ui::testkit::demo_ui();
         let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
-        ui.hdmi_snap_want = true;
+        ui.hdmi.snap_want = true;
         for _ in 0..10 {
             ui.step(1.0 / 30.0);
             ui.render(&mut cv);
@@ -1418,7 +1418,7 @@ mod tests {
         let mut hc = Canvas::new(1920, 1080);
         hdmi_workspace(&ui, &mut hc);
         // the plot fills the width under the settings band (1024 x 486 -> 1920 x 911 under an 84-px band)
-        assert_eq!(ui.hdmi_snap.len(), (ui.scr.w * ui.frame().body.h) as usize);
+        assert_eq!(ui.hdmi.snap.len(), (ui.scr.w * ui.frame().body.h) as usize);
         assert!(ui.hdmi_header().contains("CH1 1 V/div"));
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/hdmi-workspace.png", d), store::png_of(&hc));
