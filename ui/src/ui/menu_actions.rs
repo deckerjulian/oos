@@ -520,7 +520,7 @@ impl Ui {
             Item::MathLinB => m.math_lin.1 = (m.math_lin.1 + 0.1 * d as f32).clamp(-1e6, 1e6),
             Item::CurMode => {
                 let all = [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
-                let i = all.iter().position(|&x| x == m.cursor).unwrap();
+                let i = all.iter().position(|&x| x == m.cursor).unwrap_or(0);
                 m.cursor = all[cycle(i, all.len(), d)];
             }
             Item::CurA => m.cur_a = (m.cur_a + d as f32 * 0.005).clamp(0.0, 1.0),
@@ -734,7 +734,7 @@ impl Ui {
             Item::DecParity => {
                 use oos_dsp::decode::Parity;
                 let all = [Parity::None, Parity::Even, Parity::Odd];
-                let i = all.iter().position(|&x| x == self.m.dec_parity).unwrap();
+                let i = all.iter().position(|&x| x == self.m.dec_parity).unwrap_or(0);
                 self.m.dec_parity = all[cycle(i, 3, d)];
             }
             Item::Zoom => {

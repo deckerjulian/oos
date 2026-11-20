@@ -64,8 +64,8 @@ fn put_bus_wave(ui: &mut Ui, slot: usize, protocol: Proto, role: usize, source: 
     } else {
         ui.m.dec_la_in = false;
         match role {
-            0 => ui.m.dec_src = source.unwrap(),
-            1 => ui.m.dec_src2 = source.unwrap(),
+            0 => ui.m.dec_src = source.unwrap_or(ui.m.dec_src),
+            1 => ui.m.dec_src2 = source.unwrap_or(ui.m.dec_src2),
             2 => ui.m.dec_cs = source,
             _ => unreachable!(),
         }

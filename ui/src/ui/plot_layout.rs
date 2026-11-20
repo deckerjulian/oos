@@ -550,7 +550,9 @@ impl Ui {
             return false;
         }
         let lane = self.wins.iter().position(|area| area.contains(x, y));
-        let detail = self.m.zoom && lane.is_some();
+        // the lane of the zoomed window the wheel is over
+        let detail_lane = lane.filter(|_| self.m.zoom);
+        let detail = detail_lane.is_some();
         if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) {
             return false;
         }
@@ -563,8 +565,8 @@ impl Ui {
         }
         let steps = steps.clamp(-32, 32);
         if zoom_time {
-            let area = if detail {
-                self.wins[lane.unwrap()]
+            let area = if let Some(l) = detail_lane {
+                self.wins[l]
             } else if self.m.zoom {
                 Self::split_zoom(self.grid).0
             } else {
@@ -579,8 +581,8 @@ impl Ui {
                 }
             }
         } else if vertical {
-            if detail {
-                let area = self.wins[lane.unwrap()];
+            if let Some(l) = detail_lane {
+                let area = self.wins[l];
                 let fraction = (y - area.y) as f32 / area.h.max(1) as f32;
                 for _ in 0..steps.unsigned_abs() {
                     self.zoom_vertical_step(steps.signum(), area, fraction);

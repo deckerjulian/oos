@@ -962,8 +962,9 @@ impl Ui {
                 sigma: f64::NAN,
             });
         }
-        let first = bins.iter().position(|&b| b > 0).unwrap() as f64;
-        let last = bins.iter().rposition(|&b| b > 0).unwrap() as f64;
+        // n > 0: some bin holds a count
+        let first = bins.iter().position(|&b| b > 0).unwrap_or(0) as f64;
+        let last = bins.iter().rposition(|&b| b > 0).unwrap_or(0) as f64;
         let (min_px, max_px) = if high_is_low_index { (last, first) } else { (first, last) };
         let mut peaks = 0u64;
         for i in 0..bins.len() {
