@@ -164,10 +164,12 @@ Install on a running OOS:
 
 - browser: `http://<scope>:8080/update`, choose the file, Install; or
   `curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
-- shell: upload the file to /tmp (SCP or SFTP), or leave it on a USB stick in the front port (mounted at `/mnt/usb`),
-  `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`. From 0.1.13 or older to a package larger
-  than its kexec restart carries (0.1.14: 47 MB), add `--no-kexec` (#327); the web page's install ends in a kernel
-  panic there, with nothing written
+- shell: `oos-update install FILE` (dry run), then `oos-update install FILE --execute`. FILE is the package uploaded
+  to /tmp (SCP or SFTP, for example `/tmp/oos-dev.oosupd`), or on a USB stick in the front port, which OOS mounts at
+  `/mnt/usb` (for example `/mnt/usb/oos-dev.oosupd`).
+- From 0.1.13 or older to a package larger than its kexec restart carries (0.1.14: 47 MB), the web page's install
+  ends in a kernel panic, with nothing written (#327). There: `oos-update install FILE --no-kexec --execute`, a direct
+  install without the safety net of the kexec start (below)
 
 The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the
 result. Then power-cycle: that start is its trial. If the screen stays dark after the restart, power-cycle too: the

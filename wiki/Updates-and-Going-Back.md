@@ -19,14 +19,17 @@ switch off at the mains and on again, and the old build starts). Install it from
 in 0.1.13) with `--no-kexec`, which writes the image directly:
 
 ```sh
-oos-update install /mnt/usb/oos-0.1.14.oosupd --no-kexec --execute
+oos-update install /mnt/usb/oos-0.1.14.oosupd                        # dry run: checks the package
+oos-update install /mnt/usb/oos-0.1.14.oosupd --no-kexec --execute   # writes it
 ```
 
 The package can stay on a USB stick in the front port, which OOS mounts at `/mnt/usb`; copying it to `/tmp` first
 needs SCP or SFTP on the computer. Then switch off at the mains, wait 30 seconds and switch on: that start is the
-trial. This way has not been tried from 0.1.13 on a unit yet; it is the path 0.1.13 already has for packages without
-a kexec trial. Or use the USB stick install of the stock system ([[Installation]]). From 0.1.14 on, updates over the web page
-carry packages of this size again.
+trial of what runs after the start-up scripts. Unlike the web page's install, this direct install has no safety net
+before them: a new build whose kernel panics or hangs that early starts again on every power-on, and the card has to
+come out ([[Installation]], "On a second card"). This way has not been tried from 0.1.13 on a unit yet; it is the
+path 0.1.13 already has for packages without a kexec trial. The other way is the USB stick install of the stock
+system ([[Installation]]). From 0.1.14 on, updates over the web page carry packages of this size again.
 
 The new build runs on trial. If it crashes in a loop or never becomes stable, the previous image is written back.
 **System > Update** shows the state, **System > Roll back update** (or `oos-update rollback --execute` in a shell)
