@@ -12,11 +12,27 @@ use crate::board::Frame;
 use oos_hal::dho::hz;
 use oos_hal::dho::seq::Settings;
 
+thread_local! {
+    /// tests: `prearm_on` for this thread
+    #[cfg(test)]
+    static PREARM_FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets `prearm_on` for the calling thread (tests: the live run, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_prearm(on: Option<bool>) {
+    PREARM_FORCE.with(|f| f.set(on));
+}
+
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
 /// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
 ///.
 pub(super) fn prearm_on() -> bool {
+    #[cfg(test)]
+    if let Some(on) = PREARM_FORCE.with(|f| f.get()) {
+        return on;
+    }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get())
 }
