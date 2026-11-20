@@ -531,11 +531,11 @@ fn start_menu_and_keys_reach_everything() {
     assert!(!ui.items(MenuId::Main).contains(&Item::NavBack));
     let (x, y) = mid(row_of(&ui, Item::NavHist).ctrl);
     ui.tap(x, y);
-    assert!(ui.hist_pos.is_some() && ui.items(MenuId::Main).contains(&Item::NavBack));
-    let i = ui.hist_pos.unwrap();
+    assert!(ui.history.pos.is_some() && ui.items(MenuId::Main).contains(&Item::NavBack));
+    let i = ui.history.pos.unwrap();
     let (x, y) = mid(row_of(&ui, Item::NavBack).ctrl);
     ui.tap(x, y);
-    assert_eq!(ui.hist_pos, Some(i - 1));
+    assert_eq!(ui.history.pos, Some(i - 1));
     // power: the dialog, without the MCU frame of a key press
     let (x, y) = mid(row_of(&ui, Item::PowerAct).ctrl);
     ui.tap(x, y);

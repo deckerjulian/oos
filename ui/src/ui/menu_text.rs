@@ -48,7 +48,7 @@ impl Ui {
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
             Item::DecThr if self.m.dec_proto == Proto::CPHY => "Min level gap",
             Item::TrigT1 if matches!(self.m.trig_when, WhenKind::In | WhenKind::Out) => "Lower limit",
-            Item::NavHist if self.hist_pos.is_some() => "Live",
+            Item::NavHist if self.history.pos.is_some() => "Live",
             _ => Self::label(it),
         }
     }
