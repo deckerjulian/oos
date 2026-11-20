@@ -9,6 +9,21 @@
 
 use super::*;
 
+/// The external display (ADR 0062).
+#[derive(Default)]
+pub struct Hdmi {
+    /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
+    /// to cards) is copied to `snap` during `render`
+    pub snap_want: bool,
+    /// An external display is attached. Only then does "waveform on the external display" keep the panel bars in Full.
+    present: bool,
+    pub snap: Vec<u32>,
+    /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
+    pub over: Option<Canvas>,
+    /// the monitor's size while one is driven (main.rs), for `:SYSTem:STATe?`
+    pub out: Option<(u32, u32)>,
+}
+
 const CH_NAMES: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
 const REF_NAMES: [&str; NREF] = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"];
 const MATH_NAMES: [&str; 8] = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"];
@@ -84,14 +99,14 @@ impl Ui {
         }
         // waveform on an external display keeps the panel's bars unless the button asked; with no display attached
         // Full enlarges the panel
-        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi_present;
+        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi.present;
         self.full = self.m.density == Density::Full && (!external || self.full_asked);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
     pub(crate) fn set_hdmi_present(&mut self, present: bool) {
-        if self.hdmi_present != present {
-            self.hdmi_present = present;
+        if self.hdmi.present != present {
+            self.hdmi.present = present;
             // a display plugged in takes the waveform; the panel keeps its bars until the button is tapped again
             if present {
                 self.full_asked = false;
@@ -457,7 +472,7 @@ mod tests {
         render(&mut u);
         let normal = u.grid;
         u.set_hdmi_present(true);
-        u.hdmi_snap_want = true;
+        u.hdmi.snap_want = true;
         u.select_option(Item::WinLayout, "Full");
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
@@ -472,11 +487,11 @@ mod tests {
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
-        assert_eq!(u.hdmi_snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
-        assert_ne!(u.hdmi_snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
+        assert_eq!(u.hdmi.snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
+        assert_ne!(u.hdmi.snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
         u.select_option(Item::WinLayout, "Scope");
         u.render(&mut cv);
-        assert_eq!(u.hdmi_snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
+        assert_eq!(u.hdmi.snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
         assert_eq!(u.wins.len(), 4);
