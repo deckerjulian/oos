@@ -94,15 +94,19 @@ impl Ui {
         d
     }
 
-    /// What the web page /update shows (http.rs): the state as `oos-update status --quick` gives it, and the result
-    /// of the last upload.
-    pub fn update_state(&self) -> (String, &str) {
-        let status = std::process::Command::new(BIN)
+    /// What the web page /update shows (http.rs): the state as `oos-update status --quick` gives it. It runs a
+    /// program and waits for it, so the web server calls it on a thread of its own, never in the frame loop (#205).
+    pub fn update_status() -> String {
+        std::process::Command::new(BIN)
             .args(["status", "--quick"])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
-            .unwrap_or_else(|e| format!("{}: {}", BIN, e));
-        (status, &self.upd.last)
+            .unwrap_or_else(|e| format!("{}: {}", BIN, e))
+    }
+
+    /// The result of the last upload, as the web page /update shows it.
+    pub fn update_last(&self) -> &str {
+        &self.upd.last
     }
 
     /// System > Boot mode.

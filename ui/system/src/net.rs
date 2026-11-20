@@ -219,6 +219,16 @@ pub static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 
 /// A large answer in the background. False when too many run already, or no thread could be started.
 pub fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static) -> bool {
+    answer_in_background(s, move || (head, body))
+}
+
+/// An answer made and sent in the background, one of the `MAX_SENDERS`: `make` gives its head and body there (an
+/// answer that takes a while to make, as GET /update's state). False when too many run already, or no thread could
+/// be started; then `make` is not called.
+pub fn answer_in_background<B: AsRef<[u8]>>(
+    s: &TcpStream,
+    make: impl FnOnce() -> (String, B) + Send + 'static,
+) -> bool {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(mut c) = s.try_clone() else { return false };
     if SENDERS.fetch_add(1, SeqCst) >= MAX_SENDERS {
@@ -227,6 +237,7 @@ pub fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + 
     }
     let t = std::thread::Builder::new().name("web-send".into()).spawn(move || {
         crate::system::lower_priority();
+        let (head, body) = make();
         let _ = c.set_write_timeout(Some(Duration::from_secs(SEND_TIMEOUT_S)));
         use std::io::Write;
         let _ = c.write_all(head.as_bytes());

@@ -333,14 +333,15 @@ fn page_lets_the_viewer_pick_png_or_bmp() {
 }
 
 /// GET /update: the state of `oos-update status --quick` and the last result, escaped, above the upload form; through
-/// the server it shows what `Ui::update_state` gives (on the host: why `oos-update` did not run).
+/// the server it shows what `Ui::update_status` gives (on the host: why `oos-update` did not run), made on a sender
+/// thread, not in the frame loop.
 #[test]
 fn the_update_page_shows_the_state_the_last_result_and_the_form() {
     let _sends = sends();
     let mut h = Web::open(0);
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     let r = get(&mut h, &mut ui, &cv, &mut scpi, "/update");
-    let (status, last) = ui.update_state();
+    let (status, last) = (Ui::update_status(), ui.update_last());
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
     assert!(r.starts_with("HTTP/1.1 200") && r.contains("text/html"), "{r}");
     assert!(r.contains(&format!("<pre>{}</pre>", esc(&status))), "{r}");

@@ -235,8 +235,10 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
 - Mark: **internal**
 - Request: nothing.
 - Answer: 200 `text/html; charset=utf-8`, the update page: the state that `oos-update status --quick` prints, the
-  result of the last job (`Ui::update_state`, `ui/src/ui/update.rs`), and the upload form (`update_page`,
-  `ui/remote/src/http.rs`).
+  result of the last job (`Ui::update_status`, `Ui::update_last`, `ui/src/ui/update.rs`), and the upload form
+  (`update_page`, `ui/remote/src/http.rs`). The page is made and sent on one of the two sender threads of the large
+  answers, since the state comes from a program that takes a while; 503 while both are busy. Before 0.1.15 it was
+  made in the frame loop, and the screen stood still while `oos-update` ran.
 - net.allow: no.
 
 ### `POST /update`

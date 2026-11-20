@@ -93,10 +93,9 @@ impl oos_remote::http::Site for Ctx<'_> {
         }
     }
 
-    /// The state as `oos-update status --quick` gives it, and the result of the last upload.
-    fn update_state(&mut self) -> (String, String) {
-        let (status, last) = self.ui.update_state();
-        (status, last.to_string())
+    /// `Ui::update_status` (run by the server on a thread of its own), and the result of the last upload.
+    fn update_state(&mut self) -> (fn() -> String, String) {
+        (Ui::update_status, self.ui.update_last().to_string())
     }
 
     /// `Ui::waveform_epoch`.
