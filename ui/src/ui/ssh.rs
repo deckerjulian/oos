@@ -167,10 +167,10 @@ impl Ui {
     }
 
     fn ssh_login(&self) -> String {
-        if self.net.is_empty() {
+        if self.net.addr.is_empty() {
             "ssh root@<address of the scope>".into()
         } else {
-            format!("ssh root@{}", self.net)
+            format!("ssh root@{}", self.net.addr)
         }
     }
 
@@ -319,7 +319,7 @@ mod tests {
         let (mut u, d) = with_dir("show");
         std::fs::create_dir_all(d.join("ssh")).unwrap();
         std::fs::write(d.join("ssh").join("password"), "abcd-efgh-jkmn-pqrs\n").unwrap();
-        u.net = "192.0.2.10".into();
+        u.net.addr = "192.0.2.10".into();
         let d_items = u.dlg_layout().unwrap();
         for r in &d_items.rows {
             assert!(!u.value(r.it).contains("abcd"), "{:?} shows the password", r.it);

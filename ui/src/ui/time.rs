@@ -286,7 +286,7 @@ impl Ui {
     }
 
     fn net_up(&self) -> bool {
-        (self.eth_link && self.addr_of("eth0").is_some()) || self.addr_of(oos_hal::wlan::IFACE).is_some()
+        (self.net.eth_link && self.addr_of("eth0").is_some()) || self.addr_of(oos_hal::wlan::IFACE).is_some()
     }
 
     /// From `step`: requests when due, answers of the worker, the kernel's time zone once a minute (daylight saving).
@@ -682,8 +682,8 @@ mod tests {
 
     fn ui() -> Ui {
         let mut u = crate::ui::testkit::demo_ui();
-        u.net_ifs = vec![("eth0".into(), "192.168.1.20".into())];
-        u.eth_link = true;
+        u.net.ifs = vec![("eth0".into(), "192.168.1.20".into())];
+        u.net.eth_link = true;
         u
     }
 

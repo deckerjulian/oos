@@ -190,8 +190,8 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.m.cursor = CursorMode::Track;
         }),
         ("s-network", |u| {
-            (u.net, u.net_if) = ("192.168.177.64".into(), "wlan0".into());
-            u.net_ifs = vec![("eth0".into(), "192.0.2.51".into()), ("wlan0".into(), "192.168.177.64".into())];
+            (u.net.addr, u.net.iface) = ("192.168.177.64".into(), "wlan0".into());
+            u.net.ifs = vec![("eth0".into(), "192.0.2.51".into()), ("wlan0".into(), "192.168.177.64".into())];
             u.wlan.link = wlan::tests_link("Labor", "192.168.177.64");
             u.open_menu(MenuId::Network);
         }),

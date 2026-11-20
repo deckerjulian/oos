@@ -1239,10 +1239,10 @@ impl Device {
         if self.net_t.is_none_or(|t| t.elapsed().as_secs() >= 5) {
             let ui = &mut self.ui;
             let (first, all) = ipv4_addresses();
-            (ui.net_if, ui.net) = first;
-            ui.net_ifs = all;
-            ui.net_fixed = std::path::Path::new("/tmp/oos-net.fallback").exists();
-            ui.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
+            (ui.net.iface, ui.net.addr) = first;
+            ui.net.ifs = all;
+            ui.net.fixed = std::path::Path::new("/tmp/oos-net.fallback").exists();
+            ui.net.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
             self.net_t = Some(Instant::now());
         }
         if self.eth_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
@@ -1308,13 +1308,13 @@ fn hdmi_targets(g: &mut gpu::Gpu, h: &drm::Display, base: usize) -> Result<bool,
 #[cfg(target_os = "linux")]
 fn eth_watch(ui: &mut Ui, now: f64) {
     let speed = ethlink::speed();
-    match ui.eth.step(now, ethlink::carrier(), speed, ui.sys.eth_retry_10m) {
+    match ui.net.eth.step(now, ethlink::carrier(), speed, ui.sys.eth_retry_10m) {
         Some(ethlink::Act::Restart) => {
             eprintln!(
                 "oos-ui: {} up at 10 Mbit/s {}, restarting the autonegotiation ({} of {}; {})",
                 ethlink::IFACE,
                 ethlink::duplex(),
-                ui.eth.tries,
+                ui.net.eth.tries,
                 ethlink::MAX_TRIES,
                 ethlink::mii_regs()
             );

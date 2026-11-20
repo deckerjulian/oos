@@ -169,10 +169,10 @@ impl Ui {
             None => kv("FPGA", "-"),
         });
         a.push(kv("Uptime", uptime().unwrap_or("-".into())));
-        a.push(if self.net.is_empty() {
+        a.push(if self.net.addr.is_empty() {
             kvc("Network", "not connected", DIM)
         } else {
-            kv("Network", self.net.clone())
+            kv("Network", self.net.addr.clone())
         });
         a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.fps)));
         a

@@ -82,7 +82,7 @@ impl Ui {
             return;
         }
         self.usb_check = self.now + 2.0;
-        self.wlan_stick = wlan::stick_there();
+        self.net.wlan_stick = wlan::stick_there();
         self.bt.stick = bt::stick_there();
         self.bt.inputs = bt::inputs_connected(&bt::inputs());
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
