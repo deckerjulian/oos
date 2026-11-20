@@ -758,16 +758,10 @@ pub struct Ui {
     touch: TouchState,
     /// what the input keeps between two events: keys and fingers held, knob times, the zone path, the pinch (input.rs)
     input: input::State,
-    /// zone being edited in the Zone menu; a "draw" action arms the next drag in the plot (zone, shape)
-    zone_sel: usize,
-    zone_arm: Option<(usize, bool)>,
     /// the zoom box: armed, and the one being drawn (plot_layout.rs)
     zoom_box: plot_layout::ZoomBox,
-    /// records dropped by the zone condition
-    zone_drops: u64,
-    /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter
-    zone_hw: Option<crate::board::ZoneRead>,
-    zone_hw_clear: u64,
+    /// the zone trigger: the zone the menu edits, the drawing armed, the records dropped, the zone unit (hwzone.rs)
+    zone_trig: hwzone::ZoneTrig,
     /// the fast path for the queued hardware frames: its trigger statistics, its share of a screen and its times
     pub(crate) fast: acquire::FastPath,
     /// segmented recording, in software and in the hardware (records.rs)
@@ -995,7 +989,7 @@ impl Ui {
         self.ana = Default::default();
         self.clear_measurement_statistics();
         self.mask_counts_reset();
-        (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
+        (self.zone_trig.drops, self.zone_trig.clear) = (0, self.zone_trig.clear + 1);
         self.hw_avg_restart();
         self.toast("Display cleared");
     }

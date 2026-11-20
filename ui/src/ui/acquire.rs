@@ -431,7 +431,7 @@ impl Ui {
                 Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
                     // zone trigger: not a qualifying record
                     let _ = &mut rec;
-                    self.zone_drops += 1;
+                    self.zone_trig.drops += 1;
                 }
                 // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
                 // decides; Single waits on for the record that holds the event

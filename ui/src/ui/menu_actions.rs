@@ -548,17 +548,17 @@ impl Ui {
                     r.offset += 0.1 * r.vpd * d as f32;
                 }
             }
-            Item::ZoneSel => self.zone_sel = cycle(self.zone_sel, 2, d),
+            Item::ZoneSel => self.zone_trig.sel = cycle(self.zone_trig.sel, 2, d),
             Item::ZoneOn => {
-                let z = &mut m.zones[self.zone_sel];
+                let z = &mut m.zones[self.zone_trig.sel];
                 z.on = !z.on;
             }
             Item::ZoneSrc => {
-                let z = &mut m.zones[self.zone_sel];
+                let z = &mut m.zones[self.zone_trig.sel];
                 z.src = src_step(z.src, NCH, d);
             }
             Item::ZoneMode => {
-                let z = &mut m.zones[self.zone_sel];
+                let z = &mut m.zones[self.zone_trig.sel];
                 z.inside = !z.inside;
             }
             Item::Hdmi => {
@@ -1078,7 +1078,7 @@ impl Ui {
             }
             Item::MathAuto => self.math_autoscale(),
             Item::ZoneBox | Item::ZoneShape => {
-                self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
+                self.zone_trig.arm = Some((self.zone_trig.sel, it == Item::ZoneShape));
                 self.close_menu();
                 self.toast(if it == Item::ZoneShape {
                     "Draw the zone with one finger"
@@ -1087,8 +1087,8 @@ impl Ui {
                 });
             }
             Item::ZoneClear => {
-                self.m.zones[self.zone_sel] =
-                    crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                self.m.zones[self.zone_trig.sel] =
+                    crate::zone::Zone { src: self.m.zones[self.zone_trig.sel].src, ..Default::default() };
             }
             Item::StoreSaveSetup => {
                 let p = self.setup_path();
