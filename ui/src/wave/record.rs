@@ -4,7 +4,7 @@
 //! A frame of the hardware made into a screen record: software trigger near the hardware trigger point, then the
 //! screen window. Board-neutral: it works on frames in volts.
 
-use super::Frame;
+use crate::board::Frame;
 use crate::model::*;
 use std::sync::Arc;
 

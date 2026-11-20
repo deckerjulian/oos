@@ -30,7 +30,7 @@ The data is fine. The NORM screen record holds min/max pairs, and a column with 
 
 Display "Dots" is on (`Model::dots`, default `true` upstream, saved in the settings).
 
-1. The newest frame of each step takes the record path (`Source::acquire` -> `board::to_record` -> `draw_ex`); the
+1. The newest frame of each step takes the record path (`Source::acquire` -> `wave::to_record` -> `draw_ex`); the
    fast path only draws the older queued frames and the deposit workers' batches. At Min persistence a new record
    clears the picture. At slow time bases a batch holds one frame, so the screen is the record path.
 2. With two or more samples per record point (`dt / f.dt >= 2`), `to_record` builds peak-detect pairs: point 2j the

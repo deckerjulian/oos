@@ -122,7 +122,7 @@ fn auto_depth_covers_a_delayed_screen() {
     }
 }
 use super::*;
-use crate::board::to_record;
+use crate::wave::to_record;
 
 #[test]
 fn aux_out_reaches_the_settings() {

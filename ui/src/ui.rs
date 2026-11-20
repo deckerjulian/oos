@@ -1054,8 +1054,8 @@ impl Ui {
             // did not fire (#279)
             let src = self.m.trig_src.min(NCH - 1);
             let mean = self.last[0].as_ref().map_or(0.0, |r| match r.raw.as_ref() {
-                Some(raw) => crate::board::trig_mean(&self.m, &raw.frame.ch[src]),
-                None => crate::board::trig_mean(&self.m, &r.ch[src]),
+                Some(raw) => crate::wave::trig_mean(&self.m, &raw.frame.ch[src]),
+                None => crate::wave::trig_mean(&self.m, &r.ch[src]),
             });
             self.m.trig_level = crate::wave::mid_level(&s) - mean;
             self.settings_changed();

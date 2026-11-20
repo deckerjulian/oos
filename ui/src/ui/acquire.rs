@@ -822,7 +822,7 @@ impl Ui {
             f.fixed_ti = Some(t + off / f.dt);
         }
         let window = view.0 * HDIV as f64;
-        let rec = crate::board::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
+        let rec = crate::wave::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
         // a view read as min/max pairs (zoomed out on a record above `LIVE_READ`: the whole record compressed) after a
         // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
         // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
@@ -1025,7 +1025,7 @@ pub fn fast_plan(
     if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
         // the record's 3600 points: fewer thin out the picture of a fast signal (at 8 samples a period, two points a
         // column lit a fifth fewer pixels than 3600, and those a sixth fewer than a nearly continuous curve)
-        let rec = crate::board::to_record(f, m, 3600, window, t_first);
+        let rec = crate::wave::to_record(f, m, 3600, window, t_first);
         // the statistics on the screen record, as the measurements of a sparse record
         let fold = std::array::from_fn(|c| (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(&rec.ch[c])));
         let triggered = rec.triggered;

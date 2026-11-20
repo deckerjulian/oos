@@ -14,10 +14,6 @@
 //! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
 
 pub mod dho;
-mod record;
-
-pub use record::resample as resample_record;
-pub use record::{sw_trig_level, to_record, trig_mean, trigger_point};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};

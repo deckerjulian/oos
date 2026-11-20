@@ -859,7 +859,7 @@ mod tests {
             stamp,
             ..Default::default()
         });
-        crate::board::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
+        crate::wave::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
     }
 
     /// Runs an auto set-up on hardware-like records (`hw_record_of`) without letting time pass; returns the stages seen.
@@ -1093,7 +1093,7 @@ mod tests {
                     stamp: a.stamp,
                     ..Default::default()
                 });
-                ui.last[0] = Some(crate::board::to_record(&fr, &ui.m, 3600, window, -window / 2.0));
+                ui.last[0] = Some(crate::wave::to_record(&fr, &ui.m, 3600, window, -window / 2.0));
                 ui.auto_step();
             }
             assert!(ui.auto.is_none(), "{} Hz: {:?}", f, seen);

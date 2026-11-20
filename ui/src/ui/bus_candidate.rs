@@ -157,7 +157,7 @@ impl Ui {
             // Preserve the hardware's original time zero. Refining an Edge on
             // CH alone here would shift it relative to the fixed R roles.
             let pre = frame.pre as f64;
-            return Some(crate::board::resample_record(
+            return Some(crate::wave::resample_record(
                 &std::sync::Arc::new(frame),
                 &self.m,
                 3600,

@@ -94,7 +94,7 @@ executor.
   generator, and makes a `Record` at once: no `Frame`, no bytes. **Replay** turns the words of one captured CH1 frame
   and its preamble into volts and a `Record`.
 - **Bytes to a frame:** `hw/decode.rs` (`decode_with`: the 16-byte header, `seq::decode_volts_into` or
-  `seq::deinterleave` with the core offsets, then the frame's fields), then `board::to_record` (the software trigger
+  `seq::deinterleave` with the core offsets, then the frame's fields), then `wave::to_record` (the software trigger
   nearest the hardware point, the screen window). The codec is `hal/src/dho/seq/samples.rs`, the sizes are
   `hal/src/dho/seq/frame.rs` (`frame_bytes`, `frame_stride`, `read_len`, `unpad_in`, `window`), the pairs
   `hal/src/dho/pairs.rs` (`model`), the roll chunks `roll::split`, `split_la` and `counter`. There is no encoder: the

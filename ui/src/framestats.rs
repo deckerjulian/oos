@@ -193,12 +193,12 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     let n = crate::sparse::POINTS;
     let window = m.time_per_div() as f64 * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
-    // the record's trigger point and screen window (`board::to_record`; roll and scan do not take the fast path)
+    // the record's trigger point and screen window (`wave::to_record`; roll and scan do not take the fast path)
     // min/max pairs of the live compression are no samples (compress.rs): the raw newest frame of the batch counts
     if f.roll || f.scan || crate::compress::live(f) {
         return false;
     }
-    let ti = crate::board::trigger_point(f, m, n, window, t_first).unwrap_or(f.pre as f64);
+    let ti = crate::wave::trigger_point(f, m, n, window, t_first).unwrap_or(f.pre as f64);
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let i0 = (ti + t_first / f.dt).floor().max(0.0) as usize;
     let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
@@ -328,7 +328,7 @@ mod tests {
     /// What the record path gives for frame `f`: `to_record`, the samples `Ui::meas_slice` takes, `analyze_min`.
     fn reference(f: &Frame, m: &Model, folds: &mut Folds) {
         let window = m.time_per_div() as f64 * HDIV as f64;
-        let rec = crate::board::to_record(
+        let rec = crate::wave::to_record(
             &Arc::new(f.clone()),
             m,
             crate::sparse::POINTS,

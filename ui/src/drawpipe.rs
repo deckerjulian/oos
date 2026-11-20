@@ -36,7 +36,7 @@ pub struct Stats<'a> {
 }
 
 /// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
-/// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw`, else `board::to_record`).
+/// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw`, else `wave::to_record`).
 pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>) -> bool {
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
@@ -49,7 +49,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         }
         let fr = std::sync::Arc::new(f.clone());
         let window = tdiv * HDIV as f64;
-        let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
+        let rec = crate::wave::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
         for c in 0..NCH {
             if m.ch[c].on && !rec.ch[c].is_empty() {
                 ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
@@ -145,7 +145,7 @@ pub fn refine_edge(
     let (edge, class) = if on_la {
         (None, None)
     } else {
-        let (e, any) = refine(EdgeSeek::new(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col));
+        let (e, any) = refine(EdgeSeek::new(crate::wave::sw_trig_level(m, f), hyst, rising, either, half, col));
         let class = match (e, any) {
             (None, _) => (3, 0.0),
             (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),

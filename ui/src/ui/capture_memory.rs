@@ -67,7 +67,7 @@ fn acquire_demo(job: DemoJob) -> DemoResult {
             hw_avg: false,
         });
         let window = job.model.time_per_div() as f64 * HDIV as f64;
-        crate::board::resample_record(
+        crate::wave::resample_record(
             &frame,
             &job.model,
             3600,
@@ -227,7 +227,7 @@ impl Ui {
             return Some(Arc::clone(cached));
         }
         let window = view.0 as f64 * HDIV as f64;
-        let mut display = crate::board::resample_record(
+        let mut display = crate::wave::resample_record(
             &raw.frame,
             &self.m,
             3600,
@@ -292,7 +292,7 @@ mod tests {
             fixed_ti: None,
             hw_avg: false,
         });
-        ui.last[0] = Some(crate::board::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6));
+        ui.last[0] = Some(crate::wave::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6));
         ui
     }
     #[test]

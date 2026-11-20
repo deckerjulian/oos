@@ -19,7 +19,7 @@ fn native(count: usize) -> Ui {
         basic: [basic, Default::default(), Default::default(), Default::default()],
         ..Default::default()
     });
-    let mut record = crate::board::to_record(&frame, &ui.m, 3600, count as f64 * 1e-9, -(count as f64) * 0.5e-9);
+    let mut record = crate::wave::to_record(&frame, &ui.m, 3600, count as f64 * 1e-9, -(count as f64) * 0.5e-9);
     // A physical origin away from trigger zero catches timestamp/gate errors.
     record.raw.as_mut().unwrap().t0 = 0.01 + record.raw.as_ref().unwrap().i0 as f64 * frame.dt;
     ui.last[0] = Some(record);
