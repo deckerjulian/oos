@@ -3,7 +3,8 @@
 
 //! The opt-in FPGA units around an acquisition: their system.conf switches, the measure unit's levels, the mask
 //! and zone unit (comparator mapping, stall guard, merge into the settings), the DVM block and the frequency
-//! counter. A new opt-in unit gets its switch and its steps here.
+//! counter, and the measure unit's side jobs in the acquisition loop (`UnitJobs`: DVM, levels, debug slots, :TFORce).
+//! A new opt-in unit gets its switch and its steps here.
 
 #[cfg(any(target_os = "linux", test))]
 use crate::board::HwShared;
@@ -293,6 +294,111 @@ pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clo
             out.lock().unwrap().counter =
                 Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
             *counting = Some((w, clock.now_us()));
+        }
+    }
+}
+
+/// The measure unit's side jobs between passes of the loop: what the DVM block runs on since when and its readings so
+/// far, and the last requests of the levels for the auto set-up and of the debug slots answered.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Default)]
+pub(super) struct UnitJobs {
+    dvm_run: Option<(DvmKey, u64)>,
+    dvm_n: u64,
+    levels_done: Option<u64>,
+    slots_done: Option<u64>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl UnitJobs {
+    /// The DVM block (`dvm.hw = on`) on the settings `s`, configuration number `configs`: (re)started while nothing is
+    /// armed, read like the counter; not during a hardware segment recording (`seg_recording`).
+    pub(super) fn dvm<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
+        &mut self,
+        io: super::slow::Io<'_, B, R, C>,
+        armed: &mut Option<(Settings, u64)>,
+        s: &Settings,
+        configs: u64,
+        seg_recording: bool,
+    ) {
+        let super::slow::Io { state, bar, c2h, clock, out, .. } = io;
+        if !seg_recording {
+            use oos_hal::dho::dvm;
+            let want = out.lock().unwrap().dvm_want;
+            let now = clock.now_us();
+            let elapsed = self.dvm_run.map_or(0.0, |r| super::since(now, r.1).as_secs_f64());
+            let (step, key) = dvm_step(want, s.mask, configs, self.dvm_run.map(|r| r.0), elapsed);
+            match step {
+                DvmStep::Start(lane) => {
+                    super::plan::disarm(armed, state, bar, c2h);
+                    bar.apply(&dvm::start(lane, dvm::EXP));
+                    out.lock().unwrap().dvm = None;
+                }
+                DvmStep::Stop => {
+                    super::plan::disarm(armed, state, bar, c2h);
+                    bar.apply(&dvm::stop());
+                    out.lock().unwrap().dvm = None;
+                }
+                DvmStep::Read => {
+                    let raw = dvm::read(bar);
+                    self.dvm_n += 1;
+                    let r = key.map(|k| dvm_reading(&raw, k, s, &state.gain, self.dvm_n));
+                    out.lock().unwrap().dvm = r;
+                }
+                DvmStep::Idle => {}
+            }
+            if step != DvmStep::Idle {
+                let now = clock.now_us();
+                self.dvm_run = key.map(|k| (k, now));
+            }
+        }
+    }
+
+    /// Levels for the auto set-up from the measure unit, once the settings they ask for are applied (the stamp of
+    /// `io`); the unit is set up while nothing is armed (configuration crosses into the ADC clock without
+    /// synchronisers).
+    pub(super) fn levels<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
+        &mut self,
+        io: super::slow::Io<'_, B, R, C>,
+        armed: &mut Option<(Settings, u64)>,
+        s: &Settings,
+        mode: crate::board::Slow,
+        seg_recording: bool,
+    ) {
+        let super::slow::Io { state, bar, c2h, clock, out, stamp, .. } = io;
+        let lw = out.lock().unwrap().levels_want;
+        if let Some((id, _, runs)) = lw.filter(|w| {
+            mode == crate::board::Slow::Off && !seg_recording && stamp >= w.1 && self.levels_done != Some(w.0)
+        }) {
+            super::plan::disarm(armed, state, bar, c2h);
+            let v = levels_measure(bar, clock, s, &state.gain, runs);
+            out.lock().unwrap().levels = Some((id, v));
+            self.levels_done = Some(id);
+        }
+    }
+
+    /// Debug: one raw run of the measure unit for `:DEBug:SLOTs?`. Then :TFORce (from PR #8): a pulse of the force bit
+    /// on the shadows now in force, then back. Not part of the set-up, so it does not reconfigure. Pulsed between
+    /// batches: a batch already waiting for its trigger takes it at its next arm.
+    pub(super) fn slots_and_force<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
+        &mut self,
+        io: super::slow::Io<'_, B, R, C>,
+        armed: &mut Option<(Settings, u64)>,
+        mode: crate::board::Slow,
+        seg_recording: bool,
+    ) {
+        let super::slow::Io { state, bar, c2h, clock, out, .. } = io;
+        let sw = out.lock().unwrap().slots_want;
+        if let Some(id) =
+            sw.filter(|&id| mode == crate::board::Slow::Off && !seg_recording && self.slots_done != Some(id))
+        {
+            super::plan::disarm(armed, state, bar, c2h);
+            let r = oos_hal::dho::levels::run(bar, &mut |us| clock.sleep_us(us as u64));
+            out.lock().unwrap().slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
+            self.slots_done = Some(id);
+        }
+        if std::mem::take(&mut out.lock().unwrap().force) {
+            bar.apply(&oos_hal::dho::tpu::force(&state.ts));
         }
     }
 }
