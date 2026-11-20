@@ -13,7 +13,8 @@ use oos_hal::update::{self, pkg, State};
 use std::path::Path;
 
 const BIN: &str = "/bin/oos-update";
-/// The longest `oos-update status --quick` may take for the page /update (on the DHO924S it takes about 0.04 s).
+/// The longest `oos-update status --quick` may take for the page /update (on the DHO924S it took about 0.04 s,
+/// verified on the unit 2026-11-20).
 const STATUS_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 const NOTICE: &str = "/tmp/oos-update.notice";
 const UPLOAD: &str = "/tmp/oos-update.upload";
@@ -304,17 +305,19 @@ fn output_within(mut cmd: std::process::Command, limit: std::time::Duration) -> 
     let out = reader(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let err = reader(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let until = std::time::Instant::now() + limit;
+    // a program given up on is killed and reaped on a thread of its own: one stuck in I/O of the card dies only when
+    // that I/O returns, and the caller must not wait for that; the readers end when its pipes close
+    let give_up = |mut child: std::process::Child, why: String| {
+        let _ = child.kill();
+        let _ = std::thread::Builder::new().name("reap".into()).spawn(move || drop(child.wait()));
+        Err(why)
+    };
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // the readers end when the pipes close; nothing waits for them
-                return Err(format!("no answer within {} s, stopped", limit.as_secs_f32()));
-            }
-            Err(e) => return Err(e.to_string()),
+            Ok(None) => return give_up(child, format!("no answer within {} s, stopped", limit.as_secs_f32())),
+            Err(e) => return give_up(child, e.to_string()),
         }
     }
     let text =
