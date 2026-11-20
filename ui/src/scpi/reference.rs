@@ -5,7 +5,7 @@
 //! `IMPort`, `SAVE`, `SHOW`, `DISPlay` and `CLEar` of the slots R1..R10. A new `:REFerence` command goes into `ref_cmd`
 //! here, with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, num, parse_bool, parse_ch, parse_slot, Scpi};
+use super::{e, kw, num, parse_bool, parse_ch, parse_slot, t, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -56,7 +56,6 @@ impl Scpi {
     }
 
     pub(super) fn ref_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if kw(n0, "SLOT") {
             if query {
@@ -154,7 +153,6 @@ impl Scpi {
 
     /// `:REFerence:SOURce`: the channel a save of a slot copies.
     fn ref_source(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let (slot, rest) = self.ref_pair(ui, arg);
         let slot = slot?;
         if query {
@@ -174,7 +172,6 @@ impl Scpi {
 
     /// `:REFerence:VSCale|VOFFset` (`n0`) of a slot.
     fn ref_scale(&mut self, ui: &mut Ui, n0: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let scale = kw(n0, "VSCale");
         let (slot, rest) = self.ref_pair(ui, arg);
         let slot = slot?;
@@ -203,7 +200,6 @@ impl Scpi {
 
     /// `:REFerence:LABel:CONTent` of a slot.
     fn ref_label(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let (slot, rest) = self.ref_pair(ui, arg);
         let slot = slot?;
         if query {
@@ -225,7 +221,6 @@ impl Scpi {
 
     /// `:REFerence:COLor` of a slot.
     fn ref_color_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let (slot, rest) = self.ref_pair(ui, arg);
         let slot = slot?;
         if query {

@@ -6,7 +6,7 @@
 //! `INPut`, `EVENts?`, `BUSY?`, `CPHY:RATE`). A new decoder command goes into `bus_cmd` or `decode_cmd` here, with
 //! its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{block, e, kw, nearest_index, num, parse_bool, parse_wave, suffix, Scpi};
+use super::{block, e, kw, nearest_index, num, parse_bool, parse_wave, suffix, t, Scpi};
 use crate::model::*;
 use crate::protocols::PROTOS;
 use crate::ui::Ui;
@@ -121,7 +121,6 @@ fn parse_proto(arg: &str) -> Option<Proto> {
 impl Scpi {
     /// One of the four decoders. RS232 is the screen's UART. The event table is one window for every bus.
     pub(super) fn bus_cmd(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         let cfg = ui.m.dec_slot(k);
         if n.len() == 1 && kw(n0, "MODE") {
@@ -232,7 +231,6 @@ impl Scpi {
 
     /// `:BUS<n>:DATA?`: the decoder's protocol and its rows of the event table.
     fn bus_data(&mut self, ui: &Ui, k: usize) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let events = match ui.decode_events_result() {
             Ok(events) => events,
@@ -253,7 +251,6 @@ impl Scpi {
 
     /// `:BUS<n>:IIC:SCLK|SDA:SOURce` (`n` without the root).
     fn bus_iic_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let clock = kw(n[1], "SCLK");
         if query {
@@ -271,7 +268,6 @@ impl Scpi {
 
     /// `:BUS<n>:SPI:SCLK|MOSI|SS:SOURce` (`n` without the root); SS takes OFF.
     fn bus_spi_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let role = if kw(n[1], "SCLK") {
             1
@@ -305,7 +301,6 @@ impl Scpi {
     }
 
     fn bus_rs232(&mut self, ui: &mut Ui, k: usize, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         if kw(which, "TX") || kw(which, "RX") {
             let role = usize::from(kw(which, "RX"));

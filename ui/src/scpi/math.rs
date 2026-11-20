@@ -7,7 +7,7 @@
 //! `math_cmd` here; either with its query in ui/tests/scpi.txt, docs/scpi.md gets the row's line from the table, the
 //! other's by hand (AGENTS.md).
 
-use super::{e, kw, nearest_index, parse_bool, parse_wave, suffix, Scpi};
+use super::{e, kw, nearest_index, parse_bool, parse_wave, suffix, t, Scpi};
 use crate::math::{math_scales, MathCh, MathOp, MATH_REF_BASE, NMATH};
 use crate::model::*;
 use crate::ui::Ui;
@@ -144,7 +144,6 @@ fn unquote(s: &str) -> &str {
 impl Scpi {
     /// One of the eight math traces. Display off is `MathOp::Off`. A math source may be a channel or an earlier math trace.
     pub(super) fn math_cmd(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         // the rows of settings/math.rs hold the selected channel: channel k is read and set in a copy of the model
         // that selects it
@@ -229,7 +228,6 @@ impl Scpi {
 
     /// `:MATH<n>:DISPlay`: the trace on (keeping its operator, else ADD) or off.
     fn math_display(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             return t(if ui.m.math_ch(k).op == MathOp::Off { "0" } else { "1" });
         }
@@ -257,7 +255,6 @@ impl Scpi {
 
     /// `:MATH<n>:SOURce1` and `SOURce2`: a channel, an earlier math trace or a filled reference.
     fn math_source(&mut self, ui: &mut Ui, k: usize, second: bool, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             let c = ui.m.math_ch(k);
             return t(&math_src_name(if second { c.b } else { c.a }));
@@ -282,7 +279,6 @@ impl Scpi {
 
     /// `:MATH<n>:SCALe`: the nearest step of the trace's scale list (dB for an FFT).
     fn math_scale(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let c = ui.m.math_ch(k);
         if query {
             let v = if c.op == MathOp::Fft {
@@ -308,7 +304,6 @@ impl Scpi {
 
     /// `:MATH<n>:FFT:SOURce`: the source of an FFT; setting it makes the trace an FFT.
     fn math_fft_source(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             return t(&math_src_name(ui.m.math_ch(k).a));
         }
@@ -329,7 +324,6 @@ impl Scpi {
 
     /// `:MATH<n>:FFT:SCALe`: the nearest dB step; setting it makes the trace an FFT.
     fn math_fft_scale(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             let c = ui.m.math_ch(k);
             return t(&e(FFT_DB[c.scale.min(FFT_DB.len() - 1)] as f64));
@@ -347,7 +341,6 @@ impl Scpi {
 
     /// `:MATH<n>:FILTer:TYPE`: low pass, high pass, band pass or band stop.
     fn math_filter_type(&mut self, ui: &mut Ui, k: usize, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             return t(match ui.m.math_ch(k).op {
                 MathOp::Lpf => "LPAS",
@@ -377,7 +370,6 @@ impl Scpi {
 
     /// `:MATH<n>:FILTer:W1` and `W2`: the corner of a filter, the low and high edge of a band.
     fn math_filter_corner(&mut self, ui: &mut Ui, k: usize, high: bool, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let c = ui.m.math_ch(k);
         let band = matches!(c.op, MathOp::Bpf | MathOp::Bsf);
         if !c.op.has_fc() || (high && !band) {

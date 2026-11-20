@@ -6,7 +6,7 @@
 //! units. A new command goes into `system_cmd` here (a debug node into `system_debug_cmd`), with its line in
 //! docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{kw, parse_bool, Scpi};
+use super::{kw, parse_bool, t, Scpi};
 use crate::board::{board, Board};
 use crate::model::*;
 use crate::ui::Ui;
@@ -21,7 +21,6 @@ impl Scpi {
         arg: &str,
         cmd: &str,
     ) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if nodes.len() >= 3 && kw(nodes[1], "DEBug") {
             return self.system_debug_cmd(ui, nodes, query, arg, cmd);
         }
@@ -124,7 +123,6 @@ impl Scpi {
 
     /// `:SYSTem:DEBug:...` of the fork, the raw state of the FPGA units next to the software (`nodes` with the root).
     fn system_debug_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str, cmd: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         // fork: the TPU UART receiver's words for the current settings (docs/fork/hwuart.md)
         if nodes.len() == 3 && (kw(nodes[2], "UART") || kw(nodes[2], "SERial")) && query {
             return t(&board().uart_debug(&ui.m));

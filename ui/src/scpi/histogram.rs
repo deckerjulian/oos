@@ -5,14 +5,13 @@
 //! `:HISTogram` setting of a setup file is a row of that table, another command goes into `hist_cmd` here, with its
 //! line in docs/scpi.md; either with its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, parse_bool, parse_ch, Scpi};
+use super::{e, kw, parse_bool, parse_ch, t, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
 impl Scpi {
     /// Vertical or horizontal histogram of one live channel. The source is the measurement source, which is what the screen uses.
     pub(super) fn hist_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if n.len() == 1 && kw(n0, "ENABle") {
             if query {
