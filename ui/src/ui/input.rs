@@ -7,6 +7,51 @@
 
 use super::*;
 
+/// What the input keeps between two events (ADR 0062).
+pub(super) struct State {
+    /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
+    /// (`panel_key`)
+    pub ch: Option<(usize, f64, bool)>,
+    /// a finger on the card of a channel that is on, since when (a long touch: AC/DC, as the key)
+    pub card: Option<(usize, f64)>,
+    /// when each knob turned last, for its acceleration (`knob_accel`)
+    pub knob_t: [f64; 16],
+    /// screen path of the zone being drawn
+    pub zone_path: Vec<(i32, i32)>,
+    /// two fingers on the plot
+    pub pinch: Pinch,
+}
+
+impl Default for State {
+    fn default() -> State {
+        State {
+            ch: None,
+            card: None,
+            knob_t: [0.0; 16],
+            zone_path: Vec::new(),
+            pinch: Pinch {
+                active: false,
+                p0: (0, 0),
+                p1: (0, 0),
+                ref_dx: 0,
+                ref_dy: 0,
+                area: Rect::new(0, 0, 0, 0),
+                detail: false,
+            },
+        }
+    }
+}
+
+pub(super) struct Pinch {
+    pub active: bool,
+    p0: (i32, i32),
+    p1: (i32, i32),
+    ref_dx: i32,
+    ref_dy: i32,
+    area: Rect,
+    detail: bool,
+}
+
 /// What a press hits, found before the touch state starts.
 struct PressHits {
     in_plot: bool,
@@ -51,8 +96,8 @@ impl Ui {
 
     fn knob_accel(&mut self, k: u8) -> i32 {
         let i = ((k >> 4) & 15) as usize;
-        let dt = self.now - self.knob_t[i];
-        self.knob_t[i] = self.now;
+        let dt = self.now - self.input.knob_t[i];
+        self.input.knob_t[i] = self.now;
         if dt < 0.04 {
             4
         } else if dt < 0.1 {
@@ -87,10 +132,10 @@ impl Ui {
         if c < 4 && c < n_ch() {
             // a second channel key while one is held: the held one counts as a short press
             self.ch_release();
-            self.ch_hold = Some((c, self.now, false));
+            self.input.ch = Some((c, self.now, false));
             return;
         }
-        if k == 0 || self.ch_hold.is_some() {
+        if k == 0 || self.input.ch.is_some() {
             self.ch_release();
         }
         self.key(k);
@@ -98,7 +143,7 @@ impl Ui {
 
     /// A held channel key let go: its own action, unless it was held long enough for AC/DC.
     fn ch_release(&mut self) {
-        if let Some((c, _, long)) = self.ch_hold.take() {
+        if let Some((c, _, long)) = self.input.ch.take() {
             if !long {
                 self.key(key::CH1 + c as u8);
             }
@@ -108,21 +153,21 @@ impl Ui {
     /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. The same for a finger
     /// held on a channel's card: then the finger's lift is no tap.
     pub(super) fn ch_hold_poll(&mut self) {
-        if let Some((c, t)) = self.card_hold {
+        if let Some((c, t)) = self.input.card {
             let still = self.touch.down
                 && (self.touch.x - self.touch.x0).abs() < 16
                 && (self.touch.y - self.touch.y0).abs() < 16;
             if !still {
-                self.card_hold = None;
+                self.input.card = None;
             } else if self.now - t >= LONG_PRESS {
-                self.card_hold = None;
+                self.input.card = None;
                 self.touch.down = false;
                 self.toggle_ac_dc(c);
             }
         }
-        if let Some((c, t, false)) = self.ch_hold {
+        if let Some((c, t, false)) = self.input.ch {
             if self.now - t >= LONG_PRESS {
-                self.ch_hold = Some((c, t, true));
+                self.input.ch = Some((c, t, true));
                 self.toggle_ac_dc(c);
             }
         }
@@ -483,7 +528,7 @@ impl Ui {
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
         let modal =
             self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
-        let p = &mut self.pinch;
+        let p = &mut self.input.pinch;
         if id == 1 {
             match ph {
                 Phase::Down => {
@@ -522,7 +567,7 @@ impl Ui {
             self.touch_ev(ph, x, y);
             return;
         }
-        let p = &mut self.pinch;
+        let p = &mut self.input.pinch;
         if !p.active {
             return;
         }
@@ -656,7 +701,7 @@ impl Ui {
         if !in_plot {
             // a finger held on the card of a channel that is on: AC/DC, as the channel key
             let (chs, _, _) = self.cards();
-            self.card_hold =
+            self.input.card =
                 chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
         } else {
             // an edge strip of the plot swipes between the views (not while a zoom box is armed)
@@ -669,7 +714,7 @@ impl Ui {
                 self.zoom_map = Some(map);
             } else if let Some((k, _)) = self.zone_arm {
                 t.drag = Drag::Zone(k);
-                self.zone_path = vec![(x, y)];
+                self.input.zone_path = vec![(x, y)];
             }
         }
     }
@@ -926,12 +971,12 @@ impl Ui {
             }
             Drag::Zone(_) => {
                 let shape = self.zone_arm.is_some_and(|a| a.1);
-                let last = self.zone_path.last().copied().unwrap_or((x, y));
+                let last = self.input.zone_path.last().copied().unwrap_or((x, y));
                 if !shape {
-                    self.zone_path.truncate(1);
-                    self.zone_path.push((x, y));
+                    self.input.zone_path.truncate(1);
+                    self.input.zone_path.push((x, y));
                 } else if (x - last.0).abs() + (y - last.1).abs() >= 6 {
-                    self.zone_path.push((x, y));
+                    self.input.zone_path.push((x, y));
                 }
             }
             Drag::ZoomBox => {
@@ -1069,7 +1114,7 @@ impl Ui {
     fn finish_zone(&mut self, k: usize) {
         let shape = self.zone_arm.is_some_and(|a| a.1);
         self.zone_arm = None;
-        let path = std::mem::take(&mut self.zone_path);
+        let path = std::mem::take(&mut self.input.zone_path);
         let a = self.area;
         let (tdiv, delay) = self.view();
         let ch = &self.m.ch[self.m.zones[k].src];
@@ -1135,12 +1180,12 @@ impl Ui {
         }
         cv.set_clip(self.grid);
         if self.zone_arm.is_some_and(|a| a.1) {
-            for w in self.zone_path.windows(2) {
+            for w in self.input.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
             }
         }
-        if self.zone_arm.is_some_and(|a| !a.1) && self.zone_path.len() == 2 {
-            let ((x0, y0), (x1, y1)) = (self.zone_path[0], self.zone_path[1]);
+        if self.zone_arm.is_some_and(|a| !a.1) && self.input.zone_path.len() == 2 {
+            let ((x0, y0), (x1, y1)) = (self.input.zone_path[0], self.input.zone_path[1]);
             for (p, q) in [((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))] {
                 cv.line(p.0, p.1, q.0, q.1, ACCENT);
             }
