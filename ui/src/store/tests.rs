@@ -6,7 +6,10 @@
 //! into `header_import_tests.rs`.
 
 use super::*;
+use crate::model::*;
 use crate::wave::Record;
+use oos_dsp::decode::Parity;
+use std::path::Path;
 
 // Break it catches: an importer that indexes past the end of a damaged file and panics (the UI thread with it)
 // instead of refusing it. Random bodies behind each recognised header, some with small numbers where counts and
@@ -38,10 +41,6 @@ fn damaged_waveform_files_are_refused_not_a_panic() {
         let _ = parse_wave(&b, ["a.bin", "a.wfm", "a.isf", "a.trc", "a.bin", "a.bin"][it % 6]);
         let _ = parse_ff(&b);
     }
-    let f = Fields::new(b"\x01\x02\x03", true);
-    assert_eq!((f.u16(1), Fields::new(b"\x01\x02\x03", false).u16(1)), (Ok(0x0302), Ok(0x0203)));
-    assert_eq!(f.u32(0), Err("truncated waveform".to_string()));
-    assert_eq!(f.u16(usize::MAX), Err("truncated waveform".to_string()));
 }
 use crate::gfx::{rgb, Canvas};
 use crate::math::{MathOp, Window};
@@ -1148,4 +1147,19 @@ fn a_changed_value_survives_the_setup_file() {
             assert!(setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
         }
     }
+}
+
+// Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
+// build, failing to load as a whole
+#[test]
+fn a_setup_loads_what_it_can() {
+    let m = Model { dec_on: true, tscale: 5, ..Default::default() };
+    // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
+    let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
+    assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");
+    let (back, bad) = parse_setup_lenient(&text);
+    assert_eq!(back.tscale, 5, "the rest of the setup stands");
+    assert!(!back.dec_on, "the decoder without its protocol is off");
+    assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
+    assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
 }

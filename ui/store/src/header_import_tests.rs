@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The tests of the waveform files of other instruments (`import.rs`): their headers, the samples read from them and
-//! the damaged files refused; and the lenient setup reader. A test of a new importer goes here.
+//! the damaged files refused. A test of a new importer goes here; the files it builds into `testkit.rs`.
 
+use super::testkit::*;
 use super::*;
 #[test]
 fn other_waveform_headers_load_and_unknown_bytes_are_refused() {
@@ -224,119 +225,11 @@ fn assert_close(t: &WaveTrace, t0: f64, dt: f64, v: &[f32]) {
     }
 }
 
-pub(super) fn isf_i16(t0: f64, dt: f64, ymult: f64, codes: &[i16]) -> Vec<u8> {
-    let mut curve = Vec::new();
-    for c in codes {
-        curve.extend_from_slice(&c.to_le_bytes());
-    }
-    let len = curve.len().to_string();
-    let mut b = format!(":WFMPRE:BYT_NR 2;ENCDG BIN;BN_FMT RI;BYT_OR LSB;NR_PT {};PT_FMT Y;XINCR {dt:.9e};XZERO {t0:.9e};PT_OFF 0;YMULT {ymult:.9e};YOFF 0;YZERO 0;WFID \"lane\";:CURVE #{}{len}", codes.len(), len.len()).into_bytes();
-    b.extend(curve);
-    b
-}
-
-pub(super) fn wavedesc_i16(t0: f64, dt: f64, gain: f32, off: f32, codes: &[i16]) -> Vec<u8> {
-    let desc = 346usize;
-    let mut b = vec![0u8; desc + codes.len() * 2];
-    b[..8].copy_from_slice(b"WAVEDESC");
-    b[32] = 1;
-    b[34] = 1;
-    b[36..40].copy_from_slice(&(desc as u32).to_le_bytes());
-    b[60..64].copy_from_slice(&((codes.len() * 2) as u32).to_le_bytes());
-    b[116..120].copy_from_slice(&(codes.len() as u32).to_le_bytes());
-    b[96..98].copy_from_slice(b"C1");
-    b[156..160].copy_from_slice(&gain.to_le_bytes());
-    b[160..164].copy_from_slice(&off.to_le_bytes());
-    b[176..180].copy_from_slice(&(dt as f32).to_le_bytes());
-    b[180..188].copy_from_slice(&t0.to_le_bytes());
-    for (k, c) in codes.iter().enumerate() {
-        b[desc + k * 2..desc + k * 2 + 2].copy_from_slice(&c.to_le_bytes());
-    }
-    b
-}
-
-pub(super) fn ag_f32(t0: f64, dt: f64, v: &[f32], label: &str) -> Vec<u8> {
-    let mut b = Vec::new();
-    b.extend_from_slice(b"AG10");
-    let size_at = b.len();
-    b.extend_from_slice(&0u32.to_le_bytes());
-    b.extend_from_slice(&1u32.to_le_bytes());
-    let mut h = vec![0u8; 140];
-    h[..4].copy_from_slice(&140u32.to_le_bytes());
-    h[4..8].copy_from_slice(&1u32.to_le_bytes());
-    h[8..12].copy_from_slice(&1u32.to_le_bytes());
-    h[12..16].copy_from_slice(&(v.len() as u32).to_le_bytes());
-    h[32..40].copy_from_slice(&dt.to_le_bytes());
-    h[40..48].copy_from_slice(&t0.to_le_bytes());
-    h[112..112 + label.len()].copy_from_slice(label.as_bytes());
-    b.extend(h);
-    b.extend_from_slice(&12u32.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&4u16.to_le_bytes());
-    b.extend_from_slice(&((v.len() * 4) as u32).to_le_bytes());
-    for x in v {
-        b.extend_from_slice(&x.to_le_bytes());
-    }
-    let n = b.len() as u32;
-    b[size_at..size_at + 4].copy_from_slice(&n.to_le_bytes());
-    b
-}
-
-fn tr0_block(payload: &[u8]) -> Vec<u8> {
-    let mut b = Vec::new();
-    b.extend_from_slice(b"\x04\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00");
-    b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    b.extend_from_slice(payload);
-    b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    b
-}
-
-pub(super) fn tr0_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-    let mut header = String::from("00020000000000009601*x ");
-    for name in ["TIME", "v(1)"] {
-        header.push_str(&format!("{name:<16}"));
-    }
-    header.push_str("$&%#");
-    let mut data = Vec::new();
-    for (k, x) in v.iter().enumerate() {
-        let t = (t0 + k as f64 * dt) as f32;
-        data.extend_from_slice(&t.to_le_bytes());
-        data.extend_from_slice(&x.to_le_bytes());
-    }
-    data.extend_from_slice(&1.0e30_f32.to_le_bytes());
-    let mut b = tr0_block(header.as_bytes());
-    b.extend(tr0_block(&data));
-    b
-}
-
-pub(super) fn raw_f64(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-    let mut b = format!("Title: t\nDate: today\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 2\nNo. Points: {}\nVariables:\n\t0\ttime\ttime\n\t1\tv(1)\tvoltage\nBinary:\n", v.len()).into_bytes();
-    for (k, x) in v.iter().enumerate() {
-        b.extend_from_slice(&(t0 + k as f64 * dt).to_le_bytes());
-        b.extend_from_slice(&(*x as f64).to_le_bytes());
-    }
-    b
-}
-
-pub(super) fn wfmx_f32(t0: f64, dt: f64, v: &[f32]) -> Vec<u8> {
-    let mut b = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<DcaFile><Header><FileType>WaveformInternal</FileType></Header><Points>{}</Points><XOrg>{t0}</XOrg><XInc>{dt}</XInc><Data Lengths=\"{}, 1\"></Data></DcaFile>\n", v.len(), v.len()).into_bytes();
-    for x in v {
-        b.extend_from_slice(&x.to_le_bytes());
-    }
-    b
-}
-
-// Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
-// build, failing to load as a whole
+// Break it catches: a reader of the fields of a header that reads past the end of a damaged file
 #[test]
-fn a_setup_loads_what_it_can() {
-    let m = Model { dec_on: true, tscale: 5, ..Default::default() };
-    // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
-    let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
-    assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");
-    let (back, bad) = parse_setup_lenient(&text);
-    assert_eq!(back.tscale, 5, "the rest of the setup stands");
-    assert!(!back.dec_on, "the decoder without its protocol is off");
-    assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
-    assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
+fn the_fields_of_a_header_are_read_in_both_byte_orders_and_not_past_the_end() {
+    let f = Fields::new(b"\x01\x02\x03", true);
+    assert_eq!((f.u16(1), Fields::new(b"\x01\x02\x03", false).u16(1)), (Ok(0x0302), Ok(0x0203)));
+    assert_eq!(f.u32(0), Err("truncated waveform".to_string()));
+    assert_eq!(f.u16(usize::MAX), Err("truncated waveform".to_string()));
 }

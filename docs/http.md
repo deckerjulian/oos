@@ -156,7 +156,7 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
 - Mark: **stable**
 - Request: query `slot`, 1 to 10, the reference R1 to R10; `name`, the file's name for the display (its last path
   part, without control characters, at most 128 characters; `waveform.csv` without one). Body: the file as it is, any
-  `Content-Type`; the formats `store::parse_wave` recognises by their header (`ui/src/store/import.rs`).
+  `Content-Type`; the formats `store::parse_wave` recognises by their header (`ui/store/src/import.rs`).
 - Answer: `text/plain; charset=utf-8`. 200 `Loaded <name> into R<n>. ...` with a hint for the next step. 400 without
   a slot from 1 to 10 (409 before 0.1.15); 409 for a file that is refused, or when the session changed during the
   parse; the slot chosen before stays either way. 503 while another upload is parsed. The file is parsed on a thread

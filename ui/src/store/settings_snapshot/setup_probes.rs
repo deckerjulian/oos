@@ -540,7 +540,7 @@ fn family(k: &str) -> String {
 /// `set` is a match on text besides the settings table, so its source and the table are the lists of what it reads. When it changes shape this
 /// scan fails by its own checks below and has to follow it.
 fn set_keys() -> Vec<String> {
-    let src = include_str!("../setup_read.rs");
+    let src = include_str!("../../../store/src/setup_read.rs");
     let start = src.find("\npub fn set(").expect("setup_read.rs has no `pub fn set(`: update this scan");
     let end = start
         + src[start..]

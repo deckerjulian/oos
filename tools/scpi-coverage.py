@@ -20,7 +20,7 @@ ROOT is the top of a tree (default: this tree). Read from it as it is:
                  absolute one of its cell or sentence, when it ends in `?` or `[?]`) that no `scpi` line of
                  ui/tests/scpi.txt asks, in the long or the short form as written; NOT_ASKED below lists the
                  ones it cannot ask, with the reason, and they do not count unless the list is no longer true;
-  fields-scpi    the fields of the model that ui/src/store.rs writes to a setup file (`m.<field>` in `setup_text`
+  fields-scpi    the fields of the model that ui/store/src/lib.rs writes to a setup file (`m.<field>` in `setup_text`
                  and in the functions it hands `m` to, and the fields of the rows of the settings table) that the
                  interpreter never names as `.field` and no row with a command reaches. An upper bound:
                  a field can be set by a command under another name, and some fields are no setting a remote
@@ -45,7 +45,7 @@ SCPI_RS = "ui/src/scpi.rs"
 SCPI_DIR = "ui/src/scpi"  # the rest of the interpreter, one file per subsystem
 SCPI_MD = "docs/scpi.md"
 SCPI_TXT = "ui/tests/scpi.txt"
-STORE_RS = "ui/src/store.rs"
+STORE_RS = "ui/store/src/lib.rs"  # the setup writer of the crate oos-store
 # the settings tables: rows with a key, a command or none, and the fields they reach
 SETTINGS_DIR = "ui/model/src/settings"
 NUMBERS = "tools/scpi-coverage.txt"  # the counts that may only go down, `<count> <key>` per line
@@ -257,7 +257,7 @@ def fn_body(src, name):
 
 
 def setup_fields(store_rs):
-    """The fields of the model setup_text writes: `m.<field>` in it and in the functions of store.rs it hands `m`
+    """The fields of the model setup_text writes: `m.<field>` in it and in the functions of that file it hands `m`
     to. A name followed by `(` is a method, not a field."""
     body = fn_body(store_rs, "setup_text")
     text = body + "".join(fn_body(store_rs, f) for f in sorted(set(HANDS_M.findall(body))))

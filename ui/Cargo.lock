@@ -37,6 +37,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oos-store"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "oos-dsp",
+ "oos-model",
+]
+
+[[package]]
 name = "oos-system"
 version = "0.0.0"
 dependencies = [
@@ -53,5 +62,6 @@ dependencies = [
  "oos-hal",
  "oos-model",
  "oos-remote",
+ "oos-store",
  "oos-system",
 ]

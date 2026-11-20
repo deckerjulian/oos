@@ -6,10 +6,10 @@
 //! waveform files take them as arguments; the functions here pass oos-ui's in, so the callers say
 //! `store::parse_setup_lenient(text)` and `store::parse_ff(bytes)` as before.
 
-use super::{Registries, Samples};
 use crate::model::{Model, NCH};
 use crate::wave::Record;
 use oos_dsp::protocols::OPTS;
+use oos_store::{Registries, Samples};
 
 /// The registries of oos-ui: `measures::MODULES` and `protocols::MODULES`.
 struct Modules;
@@ -51,14 +51,14 @@ impl Samples for Record {
     }
 }
 
-/// Takes one `key = value` line of a setup into the model (`setup_read::set`).
+/// Takes one `key = value` line of a setup into the model (`oos_store::set`).
 pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
-    super::setup_read::set(m, k, v, &Modules)
+    oos_store::set(m, k, v, &Modules)
 }
 
-/// A setup file on top of the default set-up, with the lines it could not take (`setup_read::parse_setup_lenient`).
+/// A setup file on top of the default set-up, with the lines it could not take (`oos_store::parse_setup_lenient`).
 pub fn parse_setup_lenient(text: &str) -> (Model, Vec<String>) {
-    super::setup_read::parse_setup_lenient(text, &Modules)
+    oos_store::parse_setup_lenient(text, &Modules)
 }
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
@@ -72,13 +72,13 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
     }
 }
 
-/// One OOSW blob as a record of the screen, and the number of bytes consumed (`waveform::parse_wave_bin`).
+/// One OOSW blob as a record of the screen, and the number of bytes consumed (`oos_store::parse_wave_bin`).
 #[cfg(test)] // the frame files are read whole (`parse_ff`); the tests read one blob
 pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
-    super::waveform::parse_wave_bin(b)
+    oos_store::parse_wave_bin(b)
 }
 
-/// The records of a fast-frame file (`waveform::parse_ff`).
+/// The records of a fast-frame file (`oos_store::parse_ff`).
 pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
-    super::waveform::parse_ff(b)
+    oos_store::parse_ff(b)
 }
