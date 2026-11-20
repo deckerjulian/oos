@@ -20,7 +20,8 @@
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
 //! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The generator's
 //! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The frequency counter
-//! (counter.md) counts the scene's trigger instants over its gates (`Counter`). The stamps of a
+//! (counter.md) counts the scene's trigger instants over its gates (`Counter`), the DVM block (docs/fork/dvm.md) sums the
+//! codes of a lane over its windows (`Dvm`). The stamps of a
 //! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
 //! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
 
@@ -325,6 +326,28 @@ struct Counter {
     words: [u32; 10],
 }
 
+/// One sample of the DVM block: one ADC lane at 156.25 MSa/s (docs/fork/dvm.md, on the DHO924S: a window of 2^28
+/// samples every 1.71 s, whatever the time base).
+const DVM_SAMPLE_FS: i128 = 6_400_000;
+/// Samples of the scene the model takes per window at most, evenly spread; the sums are scaled to the window's.
+const DVM_POINTS_LOG2: u32 = 12;
+
+/// The DVM block (docs/fork/dvm.md): a write of 0x2244 that clears the restart bit (bit 0) after it was set starts
+/// windows of 2^exp samples (bits 5:1) of one lane (bits 9:8) back to back from then; exp 0 (the stop) runs none. The
+/// rising edge of 0x2248 bit 0 latches the sum and the sum of squares of the last whole window. The samples are the
+/// stored 12-bit codes of the channel on that lane (`dvm::lane`; with one channel every lane carries it): the scene's
+/// volts as the read-out codes, divided by 16 (a read-path gain of 1, which the scene's view has). Assumed: that the
+/// windows run back to back from the restart, that the latch takes the last whole one, the zeros without one, that a
+/// lane without a channel sums nothing, the low half of 0x2250 and bits 7:6 of 0x2244 as 0; and the sums are those of
+/// 2^12 samples of the window, scaled.
+#[derive(Default)]
+struct Dvm {
+    /// the start of the first window while it runs, its exp and lane
+    run: Option<(i128, u32, u32)>,
+    /// the sum and the sum of squares latched
+    sums: (u64, u64),
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -349,6 +372,7 @@ pub struct Unit {
     avg: Avg,
     gen: GenRegs,
     counter: Counter,
+    dvm: Dvm,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -374,6 +398,7 @@ impl Unit {
             avg: Avg::default(),
             gen: GenRegs::default(),
             counter: Counter::default(),
+            dvm: Dvm::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -430,6 +455,29 @@ impl Unit {
         let flag = |on: bool| if on { 1u64 << 63 } else { 0 };
         let w = [start | flag(n > 0), end, n, period.unwrap_or(0) | flag(period.is_some()), total];
         self.counter.words = std::array::from_fn(|i| (w[i / 2] >> (32 * (i % 2))) as u32);
+    }
+
+    /// The DVM block's sums of its last whole window, latched (`Dvm`).
+    fn dvm_latch(&mut self) {
+        self.dvm.sums = (0, 0);
+        let Some((run, exp, lane)) = self.dvm.run else { return };
+        let window = (1i128 << exp) * DVM_SAMPLE_FS;
+        let whole = (self.t_fs - run) / window;
+        let mask = self.reg(0x4008) & 0xf;
+        let one = (mask.count_ones() == 1).then(|| mask.trailing_zeros() as usize);
+        let ch = one.or_else(|| (0..4).find(|&c| crate::dho::dvm::lane(mask, c) == Some(lane)));
+        let Some(c) = ch.filter(|_| whole > 0) else { return };
+        let g0 = run + (whole - 1) * window;
+        let points = exp.min(DVM_POINTS_LOG2);
+        let (scale, offset) = self.scene.view.cal[c];
+        let (mut sum, mut sq) = (0u64, 0u64);
+        for i in 0..1i128 << points {
+            let t = g0 + (2 * i + 1) * window / (2 << points);
+            let code = (encode::code((self.scene.volts)(c, t as f64 * 1e-15), scale, offset) as u64 + 8) >> 4;
+            let code = code.min(4095);
+            (sum, sq) = (sum + code, sq + code * code);
+        }
+        self.dvm.sums = (sum << (exp - points), sq << (exp - points));
     }
 
     /// The trace as text, one event a line (for a comparison of two runs).
@@ -628,6 +676,13 @@ impl Unit {
         if off == crate::dho::counter::LATCH && v & 1 != 0 {
             self.count_latch();
         }
+        if off == crate::dho::dvm::CFG && v & 1 == 0 && before & 1 != 0 {
+            let exp = v >> 1 & 0x1f;
+            self.dvm.run = (exp > 0).then_some((self.t_fs, exp, v >> 8 & 3));
+        }
+        if off == crate::dho::dvm::LATCH && v & 1 != 0 && before & 1 == 0 {
+            self.dvm_latch();
+        }
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -714,6 +769,11 @@ impl Unit {
                 (self.avg.triggers.min(self.reg(off) as u64 + 1).saturating_sub(1)) as u32
             }
             0x221c..=0x2240 => self.counter.words[(off - crate::dho::counter::RESULTS) as usize / 4],
+            crate::dho::dvm::CFG => (self.dvm.sums.1 >> 32) as u32 & !0x3ff | self.reg(off) & 0x33f,
+            crate::dho::dvm::SUM_LO => self.dvm.sums.0 as u32,
+            crate::dho::dvm::SUM_HI => ((self.dvm.sums.0 >> 32) as u32) << 16,
+            crate::dho::dvm::SQ_LO => self.dvm.sums.1 as u32,
+            crate::dho::dvm::SQ_HI => (self.dvm.sums.1 >> 32) as u32,
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
                 Some(r) if r.scan && !self.sweep_done && r.made >= SWEEP_CHUNKS / 2 && self.reg(0x4058) == 0 => {
@@ -1377,6 +1437,40 @@ mod tests {
         bar.apply(&counter::stop());
         clock.sleep_us(300_000);
         assert_eq!(counter::read(&mut bar), counter::Raw::default(), "stopped: nothing latched");
+    }
+
+    // Break it catches: a DVM block that sums another lane or channel than the one written, results of a window not yet
+    // whole, sums not on the stored codes' scale (the volts of `dvm::volts` would be off), a block that runs on after
+    // its stop
+    #[test]
+    fn the_dvm_block_sums_the_codes_of_its_lane_over_its_windows() {
+        use crate::dho::dvm::{self, Mode};
+        use crate::dho::levels::Vert;
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (_, mut bar, _, mut clock) = unit(scene(&p, None, None));
+        let vert = |c: usize| Vert { scale: CAL[c].0, offset: CAL[c].1, gain: 1.0 };
+        let rms = |c: usize| 0.3 * (c as f64 + 1.0) / 2f64.sqrt();
+        // CH2 of CH1 + CH2 is lane 2; windows of 2^20 samples, 6.7 ms
+        bar.wr(0x4008, 0b0011);
+        bar.apply(&dvm::start(2, 20));
+        clock.sleep_us(5_000);
+        assert_eq!(dvm::decode(&dvm::read(&mut bar), 20), None, "no whole window yet");
+        clock.sleep_us(5_000);
+        let r = dvm::decode(&dvm::read(&mut bar), 20).expect("a whole window");
+        let (dc, ac) = (dvm::volts(&r, Mode::Dc, &vert(1)), dvm::volts(&r, Mode::AcRms, &vert(1)));
+        assert!(dc.abs() < 2e-3 && (ac - rms(1)).abs() < rms(1) * 1e-2, "CH2: DC {} V, AC {} V", dc, ac);
+        // CH1 alone on lane 3: with one channel every lane carries it
+        bar.wr(0x4008, 0b0001);
+        bar.apply(&dvm::start(3, 20));
+        clock.sleep_us(7_000);
+        let r = dvm::decode(&dvm::read(&mut bar), 20).expect("a whole window");
+        let ac = dvm::volts(&r, Mode::AcRms, &vert(0));
+        assert!((ac - rms(0)).abs() < rms(0) * 1e-2, "CH1: AC {} V", ac);
+        bar.apply(&dvm::stop());
+        clock.sleep_us(20_000);
+        let r = dvm::read(&mut bar);
+        assert_eq!((r.sum(), r.sq()), (0, 0), "stopped: nothing summed");
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
