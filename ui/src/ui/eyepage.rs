@@ -123,6 +123,21 @@ const SLIDE: f64 = 0.22;
 const TAB_W: i32 = 40;
 const TAB_H: i32 = 52;
 
+/// The right column of the page (ADR 0062): it slides from `from` to `to` (0 hidden, 1 shown), starting at `t`; `big`
+/// is the one of the four plots that fills the chart area.
+pub(super) struct Column {
+    pub from: f32,
+    pub to: f32,
+    pub t: f64,
+    pub big: Option<u8>,
+}
+
+impl Default for Column {
+    fn default() -> Column {
+        Column { from: 1.0, to: 1.0, t: 0.0, big: None }
+    }
+}
+
 /// The rectangles of the page. They tile the area down to its bottom edge: the plots take what the text leaves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Layout {

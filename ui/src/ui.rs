@@ -846,12 +846,8 @@ pub struct Ui {
     stats_on: bool,
     /// measurement results overlay folded to its header
     results_min: bool,
-    /// Eye page: the right column slides from `eye_from` to `eye_to` (0 hidden, 1 shown), starting at `eye_t`.
-    eye_from: f32,
-    eye_to: f32,
-    eye_t: f64,
-    /// Which of the four eye-page plots fills the chart area.
-    eye_big: Option<u8>,
+    /// Eye page: its right column, sliding, and the plot that fills the chart area (eyepage.rs)
+    eye_col: eyepage::Column,
     /// Clear pressed: the screen stays empty (also in STOP) until the next record
     cleared: bool,
     refs: [Option<RefWave>; NREF],

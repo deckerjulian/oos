@@ -110,10 +110,10 @@ impl Ui {
         if l.charts[0].x < a.x + a.w {
             cv.set_clip(a);
             // One workspace header owns source/rate and docking; charts need no duplicate title.
-            let (charts, plots) = charts_shown(&l, self.eye_big);
+            let (charts, plots) = charts_shown(&l, self.eye_col.big);
             let col = self.wave_color(self.m.eye_src);
             for k in 0..4 {
-                if self.eye_big.is_some_and(|b| b as usize != k) {
+                if self.eye_col.big.is_some_and(|b| b as usize != k) {
                     continue;
                 }
                 if charts[k].w < 40 || charts[k].h < 36 {
@@ -171,7 +171,7 @@ impl Ui {
         let r = self.eye_tab();
         cv.round(r, 6, PANEL_BG, 235);
         cv.round_outline(r, 6, BTN_BORDER);
-        chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_to > 0.5 { 1 } else { -1 }, TEXT);
+        chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_col.to > 0.5 { 1 } else { -1 }, TEXT);
     }
 
     /// The eye: frame, axes in volts and UI, the coloured hits and the two levels.
