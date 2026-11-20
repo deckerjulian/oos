@@ -7,8 +7,9 @@
 use crate::board::{board, Board};
 use crate::model::*;
 
-/// The state shared with the acquisition thread, locked: the board's one lock helper (`board::lock`), which panics
-/// when another holder panicked while it held the lock.
+/// A state shared with a thread of the board (`HwShared` of the acquisition thread, `LiveShared` of the read-out of
+/// `--fpga-live`), locked: the board's one lock helper (`board::lock`), which panics when another holder panicked
+/// while it held the lock.
 pub(crate) use crate::board::lock as hw;
 
 mod levels;

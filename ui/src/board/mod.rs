@@ -515,10 +515,11 @@ pub const QUEUE_SAMPLES: usize = 32 << 20;
 
 pub type HwShared = Arc<Mutex<Shared>>;
 
-/// A state shared with the acquisition thread (`HwShared`, `LiveShared`, the board's own cells), locked: the one place
-/// for every reader and writer of it, the thread's and the screen's (`wave::hw` is this). A lock fails only when
-/// another holder panicked while it held it, and the state may then be half written; this panics then, as each of
-/// these places did before: neither the acquisition thread nor the screen goes on with such a state.
+/// A state shared with a thread of the board (`HwShared` of the acquisition thread, `LiveShared` of the read-out of
+/// `--fpga-live`, the board's own cells), locked: the one place for every reader and writer of it, the threads' and the
+/// screen's (`wave::hw` is this). A lock fails only when another holder panicked while it held it, and the state may
+/// then be half written; this panics then, as each of these places did before: neither a thread of the board nor the
+/// screen goes on with such a state.
 pub fn lock<T>(shared: &Mutex<T>) -> MutexGuard<'_, T> {
     shared.lock().expect("a holder of the shared state panicked while holding it: the state may be half written")
 }
