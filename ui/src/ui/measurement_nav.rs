@@ -11,6 +11,14 @@ const NAV_ROWS: i32 = 2;
 /// Rows of the Selected page: two columns of this many.
 const SEL_ROWS: usize = 8;
 
+/// The pages shown (ADR 0062): of the readouts on the screen and of Measure > Selected; a page past the last shows the
+/// last.
+#[derive(Default)]
+pub(super) struct Pages {
+    pub readouts: usize,
+    pub selected: usize,
+}
+
 impl Ui {
     fn selected_all(&self) -> Vec<Item> {
         (0..self.measurement_count()).map(|index| Item::MeasRemove(index as u16)).collect()
@@ -25,7 +33,7 @@ impl Ui {
         let size = 2 * SEL_ROWS;
         self.selected_all()
             .into_iter()
-            .skip(self.meas_catalog_page.min(self.selected_pages() - 1) * size)
+            .skip(self.meas_pages.selected.min(self.selected_pages() - 1) * size)
             .take(size)
             .collect()
     }
@@ -84,7 +92,7 @@ impl Ui {
         let (r, prev, next) = self.selected_frame();
         let f = self.fonts();
         if self.selected_pages() > 1 {
-            let page = self.meas_catalog_page.min(self.selected_pages() - 1);
+            let page = self.meas_pages.selected.min(self.selected_pages() - 1);
             for (b, label) in [(prev, "Prev"), (next, "Next")] {
                 btn(cv, b, BTN, BTN_BORDER);
                 cv.text_in(&f.sb, b, 1, label, TEXT);
@@ -111,10 +119,10 @@ impl Ui {
         if pages > 1 {
             let (_, prev, next) = self.selected_frame();
             if prev.contains(x, y) || next.contains(x, y) {
-                self.meas_catalog_page = if prev.contains(x, y) {
-                    self.meas_catalog_page.min(pages - 1).saturating_sub(1)
+                self.meas_pages.selected = if prev.contains(x, y) {
+                    self.meas_pages.selected.min(pages - 1).saturating_sub(1)
                 } else {
-                    (self.meas_catalog_page + 1).min(pages - 1)
+                    (self.meas_pages.selected + 1).min(pages - 1)
                 };
                 return true;
             }
@@ -156,7 +164,7 @@ impl Ui {
 
     fn page_bounds(&self, total: usize, size: usize) -> (usize, usize, usize) {
         let pages = total.max(1).div_ceil(size.max(1));
-        let first = self.meas_page.min(pages - 1) * size;
+        let first = self.meas_pages.readouts.min(pages - 1) * size;
         (first, (first + size).min(total), pages)
     }
 
@@ -185,10 +193,10 @@ impl Ui {
             };
             let (_, _, pages) = self.page_bounds(total, self.measurement_page_size());
             if prev.contains(x, y) || next.contains(x, y) {
-                self.meas_page = if prev.contains(x, y) {
-                    self.meas_page.min(pages - 1).saturating_sub(1)
+                self.meas_pages.readouts = if prev.contains(x, y) {
+                    self.meas_pages.readouts.min(pages - 1).saturating_sub(1)
                 } else {
-                    (self.meas_page + 1).min(pages - 1)
+                    (self.meas_pages.readouts + 1).min(pages - 1)
                 };
                 return true;
             }
@@ -200,10 +208,10 @@ impl Ui {
                 let (prev, next) = Self::results_page_buttons(body);
                 let pages = total.div_ceil(fit);
                 if prev.contains(x, y) || next.contains(x, y) {
-                    self.meas_page = if prev.contains(x, y) {
-                        self.meas_page.min(pages - 1).saturating_sub(1)
+                    self.meas_pages.readouts = if prev.contains(x, y) {
+                        self.meas_pages.readouts.min(pages - 1).saturating_sub(1)
                     } else {
-                        (self.meas_page + 1).min(pages - 1)
+                        (self.meas_pages.readouts + 1).min(pages - 1)
                     };
                     return true;
                 }
@@ -395,7 +403,7 @@ mod tests {
         assert!(ui.grid.h >= 300);
         let mut visited = HashSet::new();
         for page in 0..73usize.div_ceil(BAND_PAGE) {
-            ui.meas_page = page;
+            ui.meas_pages.readouts = page;
             let (first, end, _) = ui.page_bounds(73, BAND_PAGE);
             visited.extend(first..end);
         }
@@ -486,7 +494,7 @@ mod tests {
             ui.m.eye_place = placement;
             for dock in StripDock::ALL {
                 ui.m.strip_dock = dock;
-                ui.meas_page = 0;
+                ui.meas_pages.readouts = 0;
                 ui.relayout();
                 let (wave, eye) = (ui.grid, ui.eye_pane_rect());
                 let strip = ui.strip_rect().expect("73 readouts have a strip");
@@ -504,7 +512,7 @@ mod tests {
                 let (previous, next) = ui.page_buttons().expect("all selected readouts remain paged");
                 assert!(!overlaps(next, eye) && !overlaps(previous, eye));
                 ui.tap(next.x + next.w / 2, next.y + next.h / 2);
-                assert_eq!(ui.meas_page, 1, "{placement:?}/{dock:?}: Next remains operable");
+                assert_eq!(ui.meas_pages.readouts, 1, "{placement:?}/{dock:?}: Next remains operable");
                 let mut canvas = Canvas::new(W, H);
                 ui.render(&mut canvas);
                 assert_eq!(ui.meas_rows().len(), 73);

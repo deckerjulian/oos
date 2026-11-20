@@ -170,11 +170,11 @@ mod tests {
         assert!(ui.results_name(0, &rows[0]).starts_with("R1 "));
         assert!(ui.results_name(73, &rows[73]).starts_with("R1-R2 "), "both pair sources precede any clipped label");
         ui.workspace_action(Action::MeasureFloat);
-        ui.meas_page = 2;
+        ui.meas_pages.readouts = 2;
         for dock in StripDock::ALL {
             ui.workspace_action(Action::MeasureDock(dock));
             assert!(ui.stats_on && ui.results_panel());
-            assert_eq!(ui.meas_page, 2);
+            assert_eq!(ui.meas_pages.readouts, 2);
             let (header, body) = ui.results_rects().unwrap();
             assert!(header.x >= 0 && header.x + header.w <= W);
             assert!(header.y >= TOP.h && body.y + body.h <= BOTTOM.y);
