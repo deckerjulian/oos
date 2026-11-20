@@ -5,6 +5,7 @@
 //! hook: UART at a selectable bit rate. A real decoder declares its [`ModuleInfo`] in the file of its family
 //! (`decode/<family>.rs`); the example's is here, behind the feature `example`, which oos-ui turns on for its tests
 //! only, so it is in [`MODULES`](super::MODULES) at the place of the module in oos-ui's registry and never on a scope.
+//! Its family is this file, where the test of a family file finds it.
 
 use super::{BusWhat, ModuleInfo};
 use crate::decode::{uart, Kind, Packet, Parity};
@@ -13,7 +14,7 @@ use crate::trigger::Slope;
 /// The bit rates of the module's first option.
 pub const RATES: [f64; 3] = [9600.0, 19200.0, 115200.0];
 
-pub static EXAMPLE: ModuleInfo = ModuleInfo::new("Example", "Example", "serial")
+pub static EXAMPLE: ModuleInfo = ModuleInfo::new("Example", "Example", "protocols/example")
     .roles([Some("Data"), None, None, None])
     .trigger(trigger)
     .starts_on(BusWhat::Data, 0x4f)
