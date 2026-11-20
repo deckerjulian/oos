@@ -166,10 +166,7 @@ impl Ui {
             mask: None,
             mask_pass: 0,
             mask_fail: 0,
-            mask_cols: None,
-            mask_hw: None,
-            mask_hw_clear: 0,
-            unit_blocked: None,
+            mask_unit: Default::default(),
             shot_request: None,
             quit: false,
         };

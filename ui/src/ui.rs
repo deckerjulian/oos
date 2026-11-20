@@ -890,14 +890,9 @@ pub struct Ui {
     mask: Option<oos_dsp::mask::Mask>,
     mask_pass: u64,
     mask_fail: u64,
-    /// the mask in the columns of the hardware table (hwmask.rs), the latest counters of the mask unit, and a number
-    /// raised to clear them
-    mask_cols: Option<(Vec<f32>, Vec<f32>)>,
-    mask_hw: Option<crate::board::MaskRead>,
-    mask_hw_clear: u64,
-    /// the acquisition thread dropped the mask/zone unit for the current settings after it stalled the acquisition:
-    /// why (hwmask.rs); the software test and filter take over
-    unit_blocked: Option<String>,
+    /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why
+    /// the acquisition thread dropped the unit (hwmask.rs)
+    mask_unit: hwmask::Unit,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
