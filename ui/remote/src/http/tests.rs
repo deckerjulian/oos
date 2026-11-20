@@ -4,7 +4,7 @@
 //! The tests of the transport that need no screen; those that do are in oos-ui (ui/src/site/tests.rs).
 
 use super::*;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
 
@@ -24,8 +24,8 @@ impl Site for Nothing {
     fn answer(&mut self, _: &str, _: bool, _: &[u8]) -> Option<(&'static str, Vec<u8>, bool)> {
         None
     }
-    fn update_state(&mut self) -> (String, String) {
-        (String::new(), String::new())
+    fn update_state(&mut self) -> (fn() -> String, String) {
+        (held_state, "last <upload>".into())
     }
     fn waveform_epoch(&self) -> u64 {
         0
@@ -35,6 +35,78 @@ impl Site for Nothing {
     }
     fn take_upload(&mut self, _: Result<(), String>, _: &str, _: usize, _: u64) -> (bool, String) {
         (false, String::new())
+    }
+}
+
+/// While set, the state of the update is not given (`held_state` waits): the program that gives it is still running.
+static HOLD_STATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set when `held_state` has given the state.
+static STATE_GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The state of the update of `Nothing`, once `HOLD_STATE` is clear (at most 60 s, so a server that waits for it in
+/// `poll` fails the test instead of holding it).
+fn held_state() -> String {
+    let until = std::time::Instant::now() + Duration::from_secs(60);
+    while HOLD_STATE.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    STATE_GIVEN.store(true, std::sync::atomic::Ordering::SeqCst);
+    "state of the update".into()
+}
+
+/// GET /update: the state comes from a program that takes a while (`oos-update status --quick`); `poll`, which runs
+/// in the frame loop, hands the request on and returns while that program still runs, and the page follows (#205).
+/// While both senders hold such a request, the next one is 503 at once.
+#[test]
+fn the_update_page_is_made_off_the_frame_loop() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut h = Http::<()>::open(0);
+    HOLD_STATE.store(true, SeqCst);
+    let until = std::time::Instant::now() + Duration::from_secs(60);
+    let ask = || {
+        let mut c = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
+        c.write_all(b"GET /update HTTP/1.1\r\n\r\n").unwrap();
+        c
+    };
+    let (mut first, mut second) = (ask(), ask());
+    // until a sender thread has each request (it holds one of the senders while the state is held)
+    while oos_system::net::SENDERS.load(SeqCst) < oos_system::net::MAX_SENDERS && std::time::Instant::now() < until {
+        h.poll(&mut Nothing);
+        assert!(!STATE_GIVEN.load(SeqCst), "poll waited for the state of the update");
+    }
+    assert!(h.pending.is_empty(), "the requests were handed on");
+    for c in [&mut first, &mut second] {
+        c.set_nonblocking(true).unwrap();
+        let mut got = Vec::new();
+        assert!(c.read_to_end(&mut got).is_err() && got.is_empty(), "an answer before the state: {got:?}");
+        c.set_nonblocking(false).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+    }
+    // both senders busy: the third is answered 503 in poll, and its state is not asked for
+    let mut third = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
+    third.write_all(b"GET /update HTTP/1.1\r\n\r\n").unwrap();
+    third.set_nonblocking(true).unwrap();
+    let mut got = Vec::new();
+    while std::time::Instant::now() < until {
+        h.poll(&mut Nothing);
+        match third.read_to_end(&mut got) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e) => panic!("{e}"),
+        }
+    }
+    let r = String::from_utf8_lossy(&got);
+    assert!(r.starts_with("HTTP/1.1 503 Service Unavailable\r\n"), "{r}");
+    assert!(!STATE_GIVEN.load(SeqCst), "the state was given before it was let go");
+    HOLD_STATE.store(false, SeqCst);
+    for mut c in [first, second] {
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).unwrap();
+        let r = String::from_utf8_lossy(&got);
+        assert!(r.starts_with("HTTP/1.1 200 OK\r\n") && r.contains("Content-Type: text/html"), "{r}");
+        assert!(r.contains("<pre>state of the update</pre>") && r.contains("last &lt;upload>"), "{r}");
+        let (head, body) = r.split_once("\r\n\r\n").unwrap();
+        assert!(head.contains(&format!("Content-Length: {}\r\n", body.len())), "{head}");
     }
 }
 

@@ -41,8 +41,9 @@ pub trait Site {
     /// The answer of a route of the program: (content type, body, whether the body is the reason it failed and not
     /// the data asked for); None for a route that is none of its. An empty content type is 202 with no body.
     fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)>;
-    /// What `GET /update` shows: the state of the update and the result of the last upload.
-    fn update_state(&mut self) -> (String, String);
+    /// What `GET /update` shows: what gives the state of the update (it may take a while: the server calls it on a
+    /// thread of its own, not in the frame loop) and the result of the last upload.
+    fn update_state(&mut self) -> (fn() -> String, String);
     /// The session of the screen: an upload that started in another one is not taken.
     fn waveform_epoch(&self) -> u64;
     /// Reads an uploaded waveform file (on the server's thread for it, not the frame loop).
@@ -163,7 +164,14 @@ pub struct Http<U> {
     offer: Offer,
 }
 
-/// The web page /update: the state of `Ui::update_state` and an upload form.
+/// The head of an answer of `Http::answer`: status, type (none for an answer without a body: the 202 of an MCP
+/// notification), length, the `extra` lines, no caching, and the connection closes after it.
+fn answer_head(status: &str, ctype: &str, length: usize, extra: &str) -> String {
+    let ctype = if ctype.is_empty() { String::new() } else { format!("Content-Type: {ctype}\r\n") };
+    format!("HTTP/1.1 {status}\r\n{ctype}Content-Length: {length}\r\n{extra}Cache-Control: no-store\r\nConnection: close\r\n\r\n")
+}
+
+/// The web page /update: the state of `Ui::update_status` and an upload form.
 fn update_page(status: &str, last: &str) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
     format!(
@@ -582,10 +590,21 @@ impl<U: Send + 'static> Http<U> {
                 self.pending.remove(i);
                 return false;
             }
-            "/update" if !post => (OK, "text/html; charset=utf-8", {
+            // the state comes from a program that takes a while: the page is made and sent on a thread of the senders
+            // (#205), 503 when they are all busy
+            "/update" if !post => {
                 let (status, last) = site.update_state();
-                update_page(&status, &last).into_bytes()
-            }),
+                let made = oos_system::net::answer_in_background(s, move || {
+                    let page = update_page(&status(), &last).into_bytes();
+                    let head = answer_head(OK, "text/html; charset=utf-8", page.len(), "");
+                    (head, if head_only { Vec::new() } else { page })
+                });
+                if !made {
+                    oos_system::net::busy_answer(s);
+                }
+                self.pending.remove(i);
+                return false;
+            }
             "/lxi/identification" => {
                 (OK, "text/xml", lxi_identification(&self.offer, &oos_hal::model::platform().caps.name).into_bytes())
             }
@@ -603,17 +622,11 @@ impl<U: Send + 'static> Http<U> {
                 None => ("404 Not Found", "text/plain", b"not found".to_vec()),
             },
         };
-        let length = format!("Content-Length: {}\r\n", body.len());
-        // an answer without a body has no type (the 202 of an MCP notification)
-        let ctype = if ctype.is_empty() { String::new() } else { format!("Content-Type: {ctype}\r\n") };
         let allowed = match allow {
             Some(a) if status.starts_with("405") => format!("Allow: {}\r\n", a),
             _ => String::new(),
         };
-        let head = format!(
-            "HTTP/1.1 {}\r\n{}{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
-            status, ctype, length, allowed
-        );
+        let head = answer_head(status, ctype, body.len(), &allowed);
         let body = if head_only { Vec::new() } else { body };
         if body.len() > SEND_INLINE {
             if !oos_system::net::send_in_background(s, head, body) {
