@@ -271,3 +271,17 @@ scpi $S/scpi-answers.txt *CLS?
 scpi $S/scpi-answers.txt :SYSTem:ERRor?
 scpi $S/scpi-answers.txt *RST?
 scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the words of the interpreter the queries above leave out: the aliases of the runt thresholds and of the UART
+# debug query, the XY cursor B and the Y coordinates, and the cursor values and deltas
+scpi $S/scpi-answers.txt :TRIGger:RUNT:ALEVel?
+scpi $S/scpi-answers.txt :TRIGger:RUNT:BLEVel?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:SERial?
+scpi $S/scpi-answers.txt :CURSor:XY:BX?
+scpi $S/scpi-answers.txt :CURSor:XY:AY?
+scpi $S/scpi-answers.txt :CURSor:XY:BY?
+scpi $S/scpi-answers.txt :CURSor:MANual:BXValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:AYValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:BYValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:XDELta?
+scpi $S/scpi-answers.txt :CURSor:MANual:YDELta?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
