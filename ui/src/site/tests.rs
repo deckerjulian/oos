@@ -127,7 +127,7 @@ fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
     assert!(!ui.record_mode(), "loading into a live session adds a reference overlay");
     assert_eq!(ui.ref_slot(), 2);
     let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=no-slot.csv", csv.as_bytes()));
-    assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+    assert!(reply.starts_with("HTTP/1.1 400") && reply.contains("R1 to R10"), "{reply}");
     assert_eq!(ui.ref_slot(), 2, "an omitted destination must not replace R1");
     assert_eq!(ui.ref_shown(), Some(true));
     assert!(!store.exists(), "an upload is read into memory, not written to a server-selected path");
@@ -145,13 +145,13 @@ fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
     assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("32-million-sample import limit"), "{reply}");
     assert_eq!(ui.ref_slot(), 2);
     let reply = request(&mut h, &mut ui, &cv, &mut scpi, post("/waveform?name=clock.csv", csv.as_bytes()));
-    assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+    assert!(reply.starts_with("HTTP/1.1 400") && reply.contains("R1 to R10"), "{reply}");
     assert_eq!(ui.ref_slot(), 2, "a file with no slot does not replace R1");
     assert!(ui.meas_at(crate::model::WaveId::Ref(0), oos_dsp::measure::Meas::Vpp).is_nan());
     assert!(ui.meas_at(crate::model::WaveId::Ref(2), oos_dsp::measure::Meas::Vpp).is_finite());
     for slot in ["0", "11", "nope", ""] {
         let reply = request(&mut h, &mut ui, &cv, &mut scpi, post(&format!("/waveform?slot={slot}"), csv.as_bytes()));
-        assert!(reply.starts_with("HTTP/1.1 409") && reply.contains("R1 to R10"), "{reply}");
+        assert!(reply.starts_with("HTTP/1.1 400") && reply.contains("R1 to R10"), "{reply}");
     }
     let state = get(&mut h, &mut ui, &cv, &mut scpi, "/ui-state");
     let body = state.split("\r\n\r\n").nth(1).unwrap();
@@ -682,7 +682,7 @@ fn update_upload_limits() {
     let big = vec![0xffu8; 5 << 20];
     let r = request(&mut h, &mut ui, &cv, &mut scpi, post("/update", &big));
     assert!(
-        r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package"),
+        r.starts_with("HTTP/1.1 409") && r.contains("REFUSED: not an OOS update package"),
         "{}",
         &r[..r.len().min(300)]
     );
@@ -765,7 +765,7 @@ fn net_allow_follows_a_change_without_a_restart() {
     h.acl = acl.clone();
     acl.peers_as(Some("198.51.100.7".parse().unwrap()));
     let update = b"POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\njunk".to_vec();
-    let taken = |r: &str| r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package");
+    let taken = |r: &str| r.starts_with("HTTP/1.1 409") && r.contains("REFUSED: not an OOS update package");
     let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
     assert!(taken(&r), "no list: everyone: {r}");
     acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
