@@ -537,7 +537,7 @@ impl Ui {
             return self.reference_decode_packets(m);
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (self.wfm_total, self.history.pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
+        (self.counts.wfm_total, self.history.pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
         for c in 0..NCH {
             (rec.ch[c].as_ptr() as usize, rec.ch[c].len(), m.ch[c].volts_per_div().to_bits()).hash(&mut h);
         }

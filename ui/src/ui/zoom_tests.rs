@@ -329,7 +329,7 @@ fn desktop_modifier_events_pan_and_control_zoom_time_without_vertical_changes() 
     assert_eq!(ui.refs[0].as_ref().unwrap().offset, original.1);
     assert_eq!(ui.m.ch, ch);
     assert_eq!(ui.m.trigger(), trigger);
-    assert_eq!((ui.m.run, ui.records, ui.replay.captures), (RunState::Stop, 0, 0));
+    assert_eq!((ui.m.run, ui.counts.records, ui.replay.captures), (RunState::Stop, 0, 0));
     ui.set_zoom(true);
     stacked(&mut ui);
     let a = ui.source_area(WaveId::Ch(0)).unwrap();
@@ -429,7 +429,7 @@ fn fit_record_recovers_selected_reference_time_and_voltage_without_changing_trig
     assert_eq!((ui.refs[1].as_ref().unwrap().vpd, ui.refs[1].as_ref().unwrap().offset), other);
     assert_eq!(ui.m.trigger(), trigger);
     assert_eq!(ui.m.ch, channels);
-    assert_eq!((ui.m.run, ui.records, ui.replay.captures), (RunState::Stop, 0, 0));
+    assert_eq!((ui.m.run, ui.counts.records, ui.replay.captures), (RunState::Stop, 0, 0));
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn fit_record_exposes_native_capture_extent_without_copying_or_reconfiguring_the
     assert_eq!(ui.m.ch, channels);
     assert_eq!(ui.m.trigger(), trigger);
     assert!(!ui.m.zoom);
-    assert_eq!((ui.m.run, ui.records, ui.replay.captures), (RunState::Stop, 0, 0));
+    assert_eq!((ui.m.run, ui.counts.records, ui.replay.captures), (RunState::Stop, 0, 0));
 }
 
 #[test]
@@ -484,7 +484,7 @@ fn close_corner_and_escape_remain_closed_with_histogram_box_and_overlapping_summ
                 ui.stats_on = true;
                 ui.workspace.measure_float = Some((close.x - 10, close.y));
                 let trigger = ui.m.trigger();
-                let counters = (ui.records, ui.replay.captures);
+                let counters = (ui.counts.records, ui.replay.captures);
                 let mode = ui.m.run;
                 if exit == 0 {
                     tap(&mut ui, close);
@@ -498,7 +498,7 @@ fn close_corner_and_escape_remain_closed_with_histogram_box_and_overlapping_summ
                     }
                 }
                 assert!(!ui.m.zoom && !ui.zoom_box.arm, "exit{exit},armed{armed},running{running}");
-                assert_eq!((ui.records, ui.replay.captures), counters);
+                assert_eq!((ui.counts.records, ui.replay.captures), counters);
                 assert_eq!(ui.m.trigger(), trigger);
                 assert_eq!(ui.m.run, mode);
                 for _ in 0..4 {
@@ -594,8 +594,8 @@ fn ctrl_wheel_anchors_main_detail_and_overview_for_reference_native_and_mixed_re
                 ui.m.tscale = tscales().iter().position(|&t| t == 5e-9f32).unwrap();
                 ui.m.tfine = 1.0;
                 ui.m.delay = 0.0;
-                ui.records = 11;
-                ui.wfm_total = 11;
+                ui.counts.records = 11;
+                ui.counts.wfm_total = 11;
                 ui.replay.captures = 7;
                 ui.m.run = RunState::Stop;
                 ui.relayout();
@@ -650,7 +650,10 @@ fn ctrl_wheel_anchors_main_detail_and_overview_for_reference_native_and_mixed_re
                 if let Some(owner) = reference {
                     assert!(Arc::ptr_eq(&owner, &ui.refs[0].as_ref().unwrap().v));
                 }
-                assert_eq!((ui.m.run, ui.records, ui.wfm_total, ui.replay.captures), (RunState::Stop, 11, 11, 7));
+                assert_eq!(
+                    (ui.m.run, ui.counts.records, ui.counts.wfm_total, ui.replay.captures),
+                    (RunState::Stop, 11, 11, 7)
+                );
             }
         }
     }

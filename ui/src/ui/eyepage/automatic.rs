@@ -303,7 +303,7 @@ impl Ui {
                 let Some((values, dt, _)) = self.eye_channel_samples(rec, c) else { return false };
                 out.extend([0, c as u64, values.len() as u64, dt.to_bits(), self.source_time_shift(id).to_bits()]);
                 if snapshot {
-                    out.extend([self.records, self.wfm_total, values.as_ptr() as u64]);
+                    out.extend([self.counts.records, self.counts.wfm_total, values.as_ptr() as u64]);
                     if let Some(raw) = &rec.raw {
                         out.extend([raw.frame.seq, std::sync::Arc::as_ptr(&raw.frame) as u64]);
                     } else {
@@ -382,7 +382,7 @@ impl Ui {
         for source in self.auto_eye_inputs() {
             let revision = match source {
                 WaveId::Ref(i) if self.session_is_sim && i == self.m.sim_slot => Some(self.replay.sim_revision),
-                WaveId::Ch(_) => Some(self.records),
+                WaveId::Ch(_) => Some(self.counts.records),
                 _ => None,
             };
             if let Some(revision) = revision {
@@ -737,8 +737,8 @@ mod performance_and_timing_tests {
             pairs: false,
         };
         ui.last[0] = Some(record);
-        ui.records = 17;
-        ui.wfm_total = 17;
+        ui.counts.records = 17;
+        ui.counts.wfm_total = 17;
         ui.select_workspace_source(WaveId::Ch(0));
         ui.m.eye_src = WaveId::Ch(0);
         let sampled = ui.eye_samples(ui.last[0].as_ref().unwrap(), WaveId::Ch(0)).unwrap();

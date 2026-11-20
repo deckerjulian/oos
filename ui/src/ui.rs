@@ -857,18 +857,12 @@ pub struct Ui {
     pub now: f64,
     /// what the step saw last: the trigger level and its change, the last record and the usual interval (acquire.rs)
     seen: acquire::Seen,
-    pub frames: u64,
-    /// records taken in, for the state line
-    pub records: u64,
+    /// the counts of the screen and the acquisition: frames drawn, records taken in, their rates (acquire.rs)
+    pub counts: acquire::Counts,
     /// the auto set-up under way on the hardware, the bar of views after one, the last `:DEBug:SLOTs?` (autoset.rs)
     auto: autoset::Auto,
     /// the jobs a remote command can wait for: their numbers and the receipts of the finished ones (scpi_operations.rs)
     ops: scpi_operations::Ledger,
-    pub fps: f32,
-    /// acquisitions per second (smoothed)
-    pub wfm_rate: f32,
-    /// every waveform acquired since the start (Clear resets it)
-    pub wfm_total: u64,
     /// the network as the main loop last read it: the addresses, the LAN link, the WLAN stick (wlan.rs)
     pub net: wlan::Network,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
@@ -966,7 +960,7 @@ impl Ui {
     /// waveforms, persistence / colour-grade maps, averaging, measurements and their statistics, mask counts and
     /// search marks start over; in STOP the screen stays empty until the next acquisition (RUN draws again at once).
     fn clear_display(&mut self) {
-        self.wfm_total = 0;
+        self.counts.wfm_total = 0;
         self.bus_views_clear();
         self.ph.clear();
         self.phz.clear();

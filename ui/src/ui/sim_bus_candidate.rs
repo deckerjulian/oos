@@ -160,7 +160,7 @@ impl Ui {
                                 format!(
                                     "{:p}:{}:{}:{}:{}:{}:{}:{:?}",
                                     record.ch[c].as_ptr(),
-                                    self.wfm_total,
+                                    self.counts.wfm_total,
                                     record.ch[c].len(),
                                     record.dt.to_bits(),
                                     self.source_time_origin(id, record.t0).to_bits(),

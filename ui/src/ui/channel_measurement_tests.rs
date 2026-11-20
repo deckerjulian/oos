@@ -83,7 +83,7 @@ fn native_full_edge_job_is_nonblocking_shared_and_reused_after_pan() {
     assert!(Arc::ptr_eq(&analysis, &again));
     assert_eq!(again_t0, t0);
     assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1);
-    assert_eq!((ui.m.run, ui.records), (RunState::Stop, 0));
+    assert_eq!((ui.m.run, ui.counts.records), (RunState::Stop, 0));
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn large_screen_pan_rejects_old_gate_and_preserves_native_timebase() {
     assert!(t0 > 0.0106 && t0 < 0.0107);
     assert!((analysis.get(Meas::Period) - 40e-9).abs() < 1e-12);
     assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.dt, 1e-9);
-    assert_eq!((ui.m.run, ui.records), (RunState::Stop, 0));
+    assert_eq!((ui.m.run, ui.counts.records), (RunState::Stop, 0));
 }
 
 #[test]
@@ -126,14 +126,14 @@ fn native_cache_rejects_conditioning_changes_and_new_acceptance_without_mutating
     assert_eq!(frame.ch[0][0].to_bits(), original, "settings invalidate results, not immutable captures");
     // Replay can keep seq=1 and an allocator may repeat addresses. The accepted
     // acquisition counter must still invalidate that otherwise identical key.
-    ui.wfm_total += 1;
+    ui.counts.wfm_total += 1;
     let accepted = ui.channel_measurement_key(0, false).unwrap().0;
     assert!(accepted != changed);
     assert!(ui.channel_measurement(0, true).is_none());
     let _ = wait(&mut ui);
     assert_eq!(ui.azr.ch_measure[0].borrow().as_ref().unwrap().key, accepted);
     assert_eq!(frame.ch[0][0].to_bits(), original);
-    assert_eq!((ui.m.run, ui.records), (RunState::Stop, 0));
+    assert_eq!((ui.m.run, ui.counts.records), (RunState::Stop, 0));
 }
 
 #[test]

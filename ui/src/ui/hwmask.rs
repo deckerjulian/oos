@@ -94,7 +94,7 @@ impl Ui {
         let (acq, used, _) = crate::board::pipe::counters().read();
         let sw = format!(
             "sw_pass={},sw_fail={},acquired={},used={},records={}",
-            self.mask_sw.pass, self.mask_sw.fail, acq, used, self.records
+            self.mask_sw.pass, self.mask_sw.fail, acq, used, self.counts.records
         );
         let Some(r) = self.mask_unit.read else {
             return format!(

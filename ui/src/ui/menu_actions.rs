@@ -1063,7 +1063,7 @@ impl Ui {
                     d.push(format!("{} warning(s), see System info", p.warnings.len()));
                 }
                 d.extend([
-                    format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
+                    format!("Source: {}   {:.0} fps", self.src.name(), self.counts.fps),
                     self.start_up_summary().unwrap_or_default(),
                     "Tap to close".into(),
                 ]);
