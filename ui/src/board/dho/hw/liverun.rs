@@ -83,6 +83,9 @@ enum Act {
     Force,
     /// the measurements want the screen window of a deep record raw, for every batch (`Shared::deep_raw`)
     DeepRaw,
+    /// the loop busy this many microseconds before the pass (its work on the batch it read, such as decoding): the
+    /// unit's clock runs on, and a batch armed ahead records
+    Busy(u64),
 }
 
 /// A switch of system.conf that the board reads itself and a case turns on for the test's thread.
@@ -398,7 +401,15 @@ const CASES: &[Case] = &[
         model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
         switches: &[Switch::Prearm],
         passes: 22,
-        script: &[(8, Act::SetView(|m| tdiv(m, 2e-6))), (16, Act::Hold), (18, Act::StopView(1e-6, 0.0))],
+        // the loop busy before the new settings and the STOP, so the batch armed ahead is complete when the disarm
+        // polls: its poll waits on the wall clock (`seq::disarm`), and then its count of reads depends on the machine
+        script: &[
+            (8, Act::Busy(10_000)),
+            (8, Act::SetView(|m| tdiv(m, 2e-6))),
+            (16, Act::Busy(10_000)),
+            (16, Act::Hold),
+            (18, Act::StopView(1e-6, 0.0)),
+        ],
         ..BASE
     },
     Case {
@@ -611,8 +622,10 @@ fn is_arm(line: &str) -> bool {
 /// while running arms the next before it ends and waits for nothing after that arm; the pass after it waits without
 /// arming again. New settings and the STOP disarm first: the pass that takes them starts with the disarm (its poll of
 /// 0x4034, then the stop sequence in 0x4004), and nothing is recorded after its stop (bit 31) until the next arm;
-/// after the STOP nothing is recorded or played at all. Break it catches: no arming ahead, a batch armed ahead and
-/// armed again, a configuration or a STOP while the FSM records, a view in STOP read from the ring the arm wrote.
+/// after the STOP nothing is recorded or played at all. The case lets the batch armed ahead complete first
+/// (`Act::Busy`), so the poll finds the FSM stopped at its first read. Break it catches: no arming ahead, a batch
+/// armed ahead and armed again, a configuration or a STOP without the disarm, a view in STOP read from the ring the
+/// arm wrote.
 fn prearm_checks(case: &Case, trace: &str, seen: &[Seen]) {
     if !case.switches.contains(&Switch::Prearm) {
         return;
@@ -642,8 +655,13 @@ fn prearm_checks(case: &Case, trace: &str, seen: &[Seen]) {
         let first = p.iter().position(|l| l.starts_with("Write"));
         let first = first.unwrap_or_else(|| panic!("{}: pass {} wrote nothing: no disarm", case.name, k));
         let stop = access(p[first]).is_some_and(|(_, off, _)| off == 0x4004);
-        let polled = p[..first].iter().any(|l| access(l).is_some_and(|(w, off, _)| !w && off == 0x4034));
-        assert!(stop && polled, "{}: pass {} did not start with the disarm: {}", case.name, k, p[first]);
+        let status: Vec<&str> =
+            p[..first].iter().copied().filter(|l| access(l).is_some_and(|(w, off, _)| !w && off == 0x4034)).collect();
+        assert!(stop && !status.is_empty(), "{}: pass {} did not start with the disarm: {}", case.name, k, p[first]);
+        // the case's `Act::Busy`: the batch armed ahead is complete, the poll ends at its first read on any machine
+        let at_once = matches!(status[..], [l] if l.ends_with("times: 1 }")
+            && access(l).is_some_and(|(_, _, v)| v & oos_hal::dho::scu::status::STOPPED != 0));
+        assert!(at_once, "{}: the disarm of pass {} polled a running FSM: {:?}", case.name, k, status);
         let halt = |l: &&str| access(l).is_some_and(|(w, off, v)| w && off == 0x4004 && v & 1 << 31 != 0);
         let halt = p.iter().position(halt).unwrap_or_else(|| panic!("{}: pass {} did not stop the FSM", case.name, k));
         let rest = &lines[seen[k - 1].events + halt..];
@@ -1190,6 +1208,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
                 Act::StopView(t, d) => g.stop_view = Some((*t, *d)),
                 Act::Force => g.force = true,
                 Act::DeepRaw => g.deep_raw = Some(crate::board::policy::deep::Want { every: true }),
+                Act::Busy(us) => sim.borrow_mut().pass_us(*us),
             }
         }
         if rearm_due && g.halted {
