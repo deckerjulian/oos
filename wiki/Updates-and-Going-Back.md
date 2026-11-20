@@ -37,9 +37,9 @@ returns to the previous image.
 
 **Back to an older build with the USB stick:** the stick install keeps a build in `recovery` that is as new as its
 own or newer, writes only the selection and still reports "Upgrade complete". The newer build then starts again. To
-write the older build, put an empty file `oos-reinstall.txt` next to the `.GEL` on the stick. Such an install keeps
-no rollback image: **System > Roll back update** says "No rollback image kept" until an update over OOS itself has
-made one. `oos-install.log` on the stick tells what a run did ("kept, only selected" or written).
+write the older build, put an empty file `oos-reinstall.txt` next to the `.GEL` on the stick. Such an install neither
+makes nor replaces a rollback image: **System > Roll back update** offers the one an update over OOS made before, if
+any, and says "No rollback image kept" when there is none. `oos-install.log` on the stick tells what a run did ("kept, only selected" or written).
 
 Signatures protect against damaged files, not against an attacker: the community key is public. Details: [docs/update.md](https://github.com/dekajoule/oos/blob/main/docs/update.md).
 
