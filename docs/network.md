@@ -410,7 +410,10 @@ them. The rules and the page in `ui` tests (`ssh::tests`, `ui::ssh::tests`).
 ## 8. IPv6
 
 Off by default (`net.ipv6`, section 6): then the services listen on IPv4 only, as upstream, and the kernel makes its
-usual SLAAC addresses. The DHO804 unit image sets `net.ipv6 = on` and `net.allow = 192.0.2.0/24 169.254.0.0/16
+usual SLAAC addresses. SSH too: `oos-ssh` starts Dropbear on `0.0.0.0:22`, and on port 22 of both families only with
+`net.ipv6 = on` (up to 0.1.14 it listened on both whatever the setting, #330). Whatever listens, the firewall
+(`inet oos_fw`, section 6) filters IPv6 by the same `net.allow` as IPv4: a list of IPv4 prefixes only lets no new IPv6
+connection in, to no port. The DHO804 unit image sets `net.ipv6 = on` and `net.allow = 192.0.2.0/24 169.254.0.0/16
 fe80::/10 onlink6`.
 
 **Addresses.** The kernel takes them from the router's advertisements (SLAAC; the firewall lets router advertisements
@@ -437,7 +440,7 @@ only to a program that listens for it, and the image has none; on a network with
 
 **Services.** The web remote (8080), SCPI (5555) and VXI-11 (111, 9009) listen on `[::]`, which takes IPv4 too
 (`net6.rs`; an IPv4 peer appears as `::ffff:a.b.c.d`, which `net.allow` maps back). Dropbear (22) listens on both
-anyway. mDNS publishes an AAAA record for each IPv6 address of the interface asked on, link-local included, and
+too (`oos-ssh`). mDNS publishes an AAAA record for each IPv6 address of the interface asked on, link-local included, and
 answers questions over IPv6 as before. Without `net.ipv6` it publishes none (a computer tries IPv6 first). The web
 remote's guard against DNS rebinding takes an IPv6 literal, `http://[2001:db8::5]:8080`.
 
