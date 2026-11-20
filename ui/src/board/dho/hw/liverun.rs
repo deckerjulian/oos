@@ -63,6 +63,10 @@ enum Act {
     /// a request of the zone trigger on CH1 (`Shared::zone_want`): a box from (s, V) to (s, V) the trace must touch
     /// (true) or must not; None to stop it
     Zone(Option<ZoneBox>),
+    /// the auto set-up's levels from the measure unit (`Shared::levels_want`): request 1, this many runs
+    Levels(u32),
+    /// one raw run of the measure unit for `:DEBug:SLOTs?` (`Shared::slots_want`): request 1
+    Slots,
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -462,6 +466,13 @@ const CASES: &[Case] = &[
         ..BASE
     },
     Case {
+        name: "levels-and-slots-ch12-1us",
+        model: |m| (ch(m, &[0, 1]), tdiv(m, 1e-6)).0,
+        passes: 10,
+        script: &[(2, Act::Levels(2)), (6, Act::Slots)],
+        ..BASE
+    },
+    Case {
         name: "dvm-ch2-then-ch1-then-off",
         model: |m| (ch(m, &[0, 1]), tdiv(m, 1e-3), depth(m, "1k"), m.ch[1].offset = DVM_OFFSET).0,
         freq_hz: 1e3,
@@ -605,6 +616,34 @@ fn la_record_checks(case: &Case, frames: &[Frame]) {
         let advance = la.words[n - 1].wrapping_sub(la.words[0]) as f64;
         let want = (n - 1) as f64 * la.dt / LA_TICK_S;
         assert!(steps && (advance - want).abs() <= 1.0, "{}: the LA count {} for {}", case.name, advance, want);
+    }
+}
+
+/// The checks of the measure unit's answers a case asked for, in the shared state the loop left: the levels of each
+/// channel of the settings the scene's sine (-0.5 V to 0.5 V, mean 0 V; within a 12-bit step and 5 mV), none of a
+/// channel not acquired; the slot dump of the raw run, each slot's extremes 1 V apart (on the 12-bit scale, 7500 codes
+/// a division at 1 V/div) and the slots of one channel alike. Break it catches: levels not measured or not answered,
+/// a channel read from another's slots, volts of another scale or offset, a dump not answered.
+fn measure_checks(case: &Case, g: &Shared) {
+    let asked = |f: fn(&Act) -> bool| case.script.iter().any(|(_, a)| f(a));
+    if asked(|a| matches!(a, Act::Levels(_))) {
+        let mut m = Model::default();
+        (case.model)(&mut m);
+        let Some((1, lv)) = g.levels else { panic!("{}: no levels answered", case.name) };
+        for (c, l) in lv.iter().enumerate() {
+            assert_eq!(l.is_some(), m.ch[c].on, "{}: levels of CH{}: {:?}", case.name, c + 1, l);
+            let Some(l) = l else { continue };
+            let ok = (l.lo + 0.5).abs() < 5e-3 && (l.hi - 0.5).abs() < 5e-3 && l.mean.abs() < 5e-3 && !l.clipped;
+            assert!(ok, "{}: CH{} levels {:?}", case.name, c + 1, l);
+        }
+    }
+    if asked(|a| matches!(a, Act::Slots)) {
+        let Some((1, Some(slots))) = g.slots else { panic!("{}: no slot dump answered: {:?}", case.name, g.slots) };
+        for (k, x) in slots.iter().enumerate() {
+            let swing = (x[1] - x[0]) * 16.0;
+            assert!((swing - 7500.0).abs() < 7500.0 * 2e-2, "{}: slot {}: {:?}", case.name, k, x);
+            assert_eq!(*x, slots[k / 4 * 4], "{}: slot {} not like the other slots of its channel", case.name, k);
+        }
     }
 }
 
@@ -961,6 +1000,8 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
                 Act::Gen(w) => g.afg[0] = Some(*w),
                 Act::Counter(w) => g.counter_want = *w,
                 Act::Dvm(w) => g.dvm_want = *w,
+                Act::Levels(runs) => g.levels_want = Some((1, 0, *runs)),
+                Act::Slots => g.slots_want = Some(1),
                 Act::Mask(w) => g.mask_want = w.map(|w| mask_want(case, &m, w)),
                 Act::Zone(w) => {
                     g.zone_want =
@@ -1040,6 +1081,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         generator_checks(case, &seen);
         counter_checks(case, &trace, &seen);
         dvm_checks(case, &trace, &seen);
+        measure_checks(case, &g);
         mask_checks(case, &trace, &seen);
         zone_checks(case, &trace, &seen);
         let count = |what: &str| trace.lines().filter(|l| l.starts_with(what)).count();

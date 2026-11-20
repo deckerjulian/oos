@@ -328,9 +328,9 @@ struct Counter {
     words: [u32; 10],
 }
 
-/// One sample of the DVM block: one ADC lane at 156.25 MSa/s (docs/fork/dvm.md, on the DHO924S: a window of 2^28
-/// samples every 1.71 s, whatever the time base).
-const DVM_SAMPLE_FS: i128 = 6_400_000;
+/// One sample of an ADC lane at 156.25 MSa/s, the rate the DVM block and the measure unit count in (docs/fork/dvm.md,
+/// on the DHO924S: a window of 2^28 samples every 1.71 s, whatever the time base; self-cal.md 2.4).
+const CORE_SAMPLE_FS: i128 = 6_400_000;
 /// Samples of the scene the model takes per window at most, evenly spread; the sums are scaled to the window's.
 const DVM_POINTS_LOG2: u32 = 12;
 
@@ -373,6 +373,22 @@ struct MaskUnit {
     latched: (u64, u64),
 }
 
+/// Samples of the scene the measure unit's model takes per run, evenly spread over it.
+const MEASURE_POINTS: i128 = 1024;
+
+/// The ADC measure unit (self-cal.md 2.4, the head of `levels`): the rising edge of 0x1040 bit 31 starts a run of 2^e
+/// samples per core (e = bits 4:0) at 156.25 MHz, bit 30 reads set once it is over. Bits 10:8 select the slot 0x1044
+/// (its mean on the 16-bit scale) and 0x1048 (its 12-bit maximum in bits 27:16, minimum in 11:0) show. A slot shows
+/// the channel `levels::slots` gives it (assumed there) over the run: the scene's read-out codes, which are those of
+/// the measure unit with a read-path gain of 1, as the scene has. 0xeeeeeeee in both before a run is over (what
+/// `levels::run` refuses). Assumed: the extremes and the mean of 1024 samples of the run, every core alike (no core
+/// offsets).
+#[derive(Default)]
+struct Measure {
+    /// the start and the end of the last run
+    run: Option<(i128, i128)>,
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -399,6 +415,7 @@ pub struct Unit {
     counter: Counter,
     dvm: Dvm,
     mask: MaskUnit,
+    measure: Measure,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -426,6 +443,7 @@ impl Unit {
             counter: Counter::default(),
             dvm: Dvm::default(),
             mask: MaskUnit::default(),
+            measure: Measure::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -488,7 +506,7 @@ impl Unit {
     fn dvm_latch(&mut self) {
         self.dvm.sums = (0, 0);
         let Some((run, exp, lane)) = self.dvm.run else { return };
-        let window = (1i128 << exp) * DVM_SAMPLE_FS;
+        let window = (1i128 << exp) * CORE_SAMPLE_FS;
         let whole = (self.t_fs - run) / window;
         let mask = self.reg(0x4008) & 0xf;
         let one = (mask.count_ones() == 1).then(|| mask.trailing_zeros() as usize);
@@ -588,6 +606,22 @@ impl Unit {
                 self.mask.latched = (self.mask.frames, self.mask.fails);
             }
         }
+    }
+
+    /// What the measure unit's slot selected in 0x1040 shows of its last run: (0x1044, 0x1048) (`Measure`).
+    fn measure_slot(&self) -> (u32, u32) {
+        let none = (0xeeee_eeee, 0xeeee_eeee);
+        let Some((a, b)) = self.measure.run.filter(|r| r.1 <= self.t_fs) else { return none };
+        let (mask, slot) = (self.reg(0x4008) & 0xf, (self.reg(0x1040) >> 8 & 7) as usize);
+        let Some(c) = (0..4).find(|&c| crate::dho::levels::slots(mask, c).contains(&slot)) else { return none };
+        let (scale, offset) = self.scene.view.cal[c];
+        let codes: Vec<u16> = (0..MEASURE_POINTS)
+            .map(|i| a + (2 * i + 1) * (b - a) / (2 * MEASURE_POINTS))
+            .map(|t| encode::code((self.scene.volts)(c, t as f64 * 1e-15), scale, offset))
+            .collect();
+        let (lo, hi) = codes.iter().fold((u16::MAX, 0), |(l, h), &x| (l.min(x), h.max(x)));
+        let mean = codes.iter().map(|&x| x as f64).sum::<f64>() / codes.len() as f64;
+        (mean.round() as u32, ((hi >> 4) as u32) << 16 | (lo >> 4) as u32)
     }
 
     /// The trace as text, one event a line (for a comparison of two runs).
@@ -823,6 +857,9 @@ impl Unit {
             self.dvm_latch();
         }
         self.mask_write(off, v, before);
+        if off == 0x1040 && v & 1 << 31 != 0 && before & 1 << 31 == 0 {
+            self.measure.run = Some((self.t_fs, self.t_fs + (1i128 << (v & 0x1f)) * CORE_SAMPLE_FS));
+        }
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -921,6 +958,9 @@ impl Unit {
             crate::dho::dvm::SUM_HI => ((self.dvm.sums.0 >> 32) as u32) << 16,
             crate::dho::dvm::SQ_LO => self.dvm.sums.1 as u32,
             crate::dho::dvm::SQ_HI => (self.dvm.sums.1 >> 32) as u32,
+            0x1040 => self.reg(off) & !(1 << 30) | (self.measure.run.is_some_and(|r| r.1 <= self.t_fs) as u32) << 30,
+            0x1044 => self.measure_slot().0,
+            0x1048 => self.measure_slot().1,
             crate::dho::mask::FRAMES_LO => self.mask.latched.0 as u32,
             crate::dho::mask::FRAMES_HI => (self.mask.latched.0 >> 32) as u32,
             crate::dho::mask::FAILS_LO => self.mask.latched.1 as u32,
@@ -1707,6 +1747,31 @@ mod tests {
             assert!(u.borrow().stream.is_empty(), "mask {:#x}: bytes left after the LA read", mask);
             assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "mask {:#x}: the next batch", mask);
         }
+    }
+
+    // Break it catches: a measure unit that shows a slot another channel than `levels::slots` gives it, values of
+    // another scale (12-bit extremes, 16-bit mean) or offset, a run done before its time, values before a run
+    #[test]
+    fn the_measure_unit_shows_each_slots_channel_over_its_run() {
+        use crate::dho::levels::{self, Vert};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (_, mut bar, _, mut clock) = unit(scene(&p, None, None));
+        bar.wr(0x4008, 0b0011);
+        assert_eq!(bar.rd(0x1044), 0xeeee_eeee, "no run yet");
+        bar.wr(0x1040, 0x8000_0000 | levels::RUN_EXP);
+        assert_eq!(bar.rd(0x1040) & 1 << 30, 0, "a run of 1.68 ms is not over at once");
+        let runs = [levels::run(&mut bar, &mut |us| clock.sleep_us(us as u64)).expect("a run")];
+        let vert = std::array::from_fn(|c| Vert { scale: CAL[c].0, offset: CAL[c].1, gain: 1.0 });
+        let lv = levels::channel_levels(&runs, 0b0011, &vert);
+        // CH1 0.3 V, CH2 0.6 V around 0 V; CH3 and CH4 not acquired
+        for (c, a) in [(0, 0.3), (1, 0.6)] {
+            let l = lv[c].unwrap_or_else(|| panic!("CH{} levels", c + 1));
+            let step = 16.0 * CAL[c].0 / 7500.0;
+            assert!((l.hi - a).abs() < a * 1e-2 + step && (l.lo + a).abs() < a * 1e-2 + step, "CH{}: {:?}", c + 1, l);
+            assert!(l.mean.abs() < a * 1e-2 && !l.clipped, "CH{}: {:?}", c + 1, l);
+        }
+        assert!(lv[2].is_none() && lv[3].is_none());
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
