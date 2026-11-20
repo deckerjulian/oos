@@ -174,7 +174,7 @@ fn long_reference_cache_reuses_analysis_and_invalidates_accepted_sim_settings() 
     ui.measure_refs();
     let (pan, _) = ui.reference_measurement(0).unwrap();
     assert!(Arc::ptr_eq(&first, &pan), "full-record panning and capture ticks must reuse the exact analysis");
-    assert!(Arc::ptr_eq(&pan, &ui.ref_ana[0]), "every readout shares the cached result");
+    assert!(Arc::ptr_eq(&pan, &ui.measured.refs[0]), "every readout shares the cached result");
     ui.refs[0].as_mut().unwrap().vpd = 2.0;
     let (scale, _) = ui.reference_measurement(0).unwrap();
     assert!(!Arc::ptr_eq(&pan, &scale));

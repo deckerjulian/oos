@@ -53,7 +53,7 @@ fn native_full_basic_values_are_inline_and_do_not_start_edge_analysis() {
     assert!(start.elapsed() < Duration::from_millis(250));
     assert!(ui.azr.ref_measure_worker.borrow().is_none());
     assert_eq!(ui.measurement_statistics_snapshot_for_test(), before, "polling never counts an acquisition");
-    assert!(ui.ana[0].rises.is_empty());
+    assert!(ui.measured.ch[0].rises.is_empty());
     assert!(!ui.measurement_busy());
 }
 

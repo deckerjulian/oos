@@ -761,18 +761,10 @@ pub struct Ui {
     history: records::History,
     /// mark all trigger events in the record (search)
     search_on: bool,
-    /// measurements per channel (oos-dsp) of the last record
-    ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NCH],
-    /// measurements of each ref slot, from the stored samples (no front-end bandwidth)
-    ref_ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NREF],
-    /// False when a hidden, unrequested reference skipped the capture-time scan.
-    ref_ana_valid: [bool; NREF],
+    /// the measurements (oos-dsp) of the last record per channel and of each ref slot (analysis/measure.rs)
+    measured: analysis::Measured,
     /// the measurements in the background (records.rs)
     meas_bg: records::MeasBackground,
-    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
-    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
-    /// would be dropped). The setup files and SCPI count it too
-    meas_n: u64,
     /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
     /// Bus switches exactly those off again, what the user had on stays
     bus_auto: Option<([bool; NCH], bool)>,
@@ -961,8 +953,8 @@ impl Ui {
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
-        (self.meas_n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_n + 1, false, None);
-        self.ana = Default::default();
+        (self.meas_bg.n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_bg.n + 1, false, None);
+        self.measured.ch = Default::default();
         self.clear_measurement_statistics();
         self.mask_counts_reset();
         (self.zone_trig.drops, self.zone_trig.clear) = (0, self.zone_trig.clear + 1);

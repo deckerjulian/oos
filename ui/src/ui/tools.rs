@@ -194,7 +194,7 @@ impl Ui {
         if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             return f64::NAN;
         }
-        self.meas_of(&self.ana[c], k)
+        self.meas_of(&self.measured.ch[c], k)
     }
 
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
@@ -487,7 +487,7 @@ impl Ui {
         if !self.m.ch[c].on {
             return;
         }
-        let a = &self.ana[c];
+        let a = &self.measured.ch[c];
         self.cnt.total += a.rises.len() as u64;
         let v = self.meas_at(WaveId::Ch(c), Meas::Freq);
         if v.is_finite() {
@@ -510,7 +510,7 @@ impl Ui {
         }
         if let Some(i) = self.offline_meter() {
             let v = match self.m.cnt_mode {
-                2 => self.ref_ana[i].rises.len() as f64,
+                2 => self.measured.refs[i].rises.len() as f64,
                 1 => self.meas_at(WaveId::Ref(i), Meas::Period),
                 _ => self.meas_at(WaveId::Ref(i), Meas::Freq),
             };
@@ -642,7 +642,7 @@ impl Ui {
         }
         if self.m.cnt_on {
             if let Some(i) = self.offline_meter() {
-                let a = &self.ref_ana[i];
+                let a = &self.measured.refs[i];
                 let digits = self.m.cnt_digits as usize;
                 let period = self.meas_at(WaveId::Ref(i), Meas::Period);
                 let frequency = self.meas_at(WaveId::Ref(i), Meas::Freq);

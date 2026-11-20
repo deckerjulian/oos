@@ -641,7 +641,7 @@ impl Ui {
                     }
                 }
             } else if self.meas_bg.worker.is_some() {
-                // the result for the last record is still good when it comes after this one: `meas_n` only
+                // the result for the last record is still good when it comes after this one: `meas_bg.n` only
                 // changes where a result out becomes wrong (a clear, measuring here at once)
                 self.meas_bg.want = true;
                 // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
