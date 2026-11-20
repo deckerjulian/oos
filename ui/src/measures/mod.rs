@@ -277,7 +277,7 @@ pub fn derived(ids: &[u16], value: impl Fn(u16) -> f64) -> Values {
 /// `compute`.
 pub trait MeasModule: Sync {
     /// Stable name of the module (tests, docs): letters, digits and '_' only.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))] // only the registry's tests read it; every module still names itself
     fn key(&self) -> &'static str;
 
     /// Its measurements.
