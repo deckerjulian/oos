@@ -4,9 +4,25 @@
 //! The ADC core offsets matched on the unit (`cal.core_offset`, `coretrim`): the unit side of the trim, the kept
 //! overlay and the trim run of the acquisition thread. A new way of matching the cores goes here.
 
+thread_local! {
+    /// tests: `core_offset_tight` for this thread
+    #[cfg(test)]
+    static TIGHT_FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets `core_offset_tight` for the calling thread (tests: the live run, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_core_offset(on: Option<bool>) {
+    TIGHT_FORCE.with(|f| f.set(on));
+}
+
 /// `cal.core_offset = tight` in system.conf (docs/fork/core-offset.md): the core offsets of every ADC mode used are
 /// matched to each other at its first configuration, and kept in OOS's own cal_adc.hex. Off by default.
 pub(super) fn core_offset_tight() -> bool {
+    #[cfg(test)]
+    if let Some(on) = TIGHT_FORCE.with(|f| f.get()) {
+        return on;
+    }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| CORE_OFFSET.get())
 }

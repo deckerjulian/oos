@@ -376,17 +376,28 @@ struct MaskUnit {
 /// Samples of the scene the measure unit's model takes per run, evenly spread over it.
 const MEASURE_POINTS: i128 = 1024;
 
+/// Measure codes (16-bit scale) one step of a core's offset register moves the slot of that core by: about half an ADC
+/// step of 16 codes (docs/fork/core-offset.md, rounds 11 and 12 on the unit: 8 to 10.6 codes).
+const CORE_STEP_CODES: i32 = 9;
+/// The slot of the measure unit that shows ADC core n (core-offset.md, round 11: mode 2 on the unit; the other modes
+/// alike, assumed).
+const CORE_SLOT: [usize; 8] = [0, 2, 1, 3, 4, 6, 5, 7];
+
 /// The ADC measure unit (self-cal.md 2.4, the head of `levels`): the rising edge of 0x1040 bit 31 starts a run of 2^e
 /// samples per core (e = bits 4:0) at 156.25 MHz, bit 30 reads set once it is over. Bits 10:8 select the slot 0x1044
 /// (its mean on the 16-bit scale) and 0x1048 (its 12-bit maximum in bits 27:16, minimum in 11:0) show. A slot shows
 /// the channel `levels::slots` gives it (assumed there) over the run: the scene's read-out codes, which are those of
 /// the measure unit with a read-path gain of 1, as the scene has. 0xeeeeeeee in both before a run is over (what
-/// `levels::run` refuses). Assumed: the extremes and the mean of 1024 samples of the run, every core alike (no core
-/// offsets).
+/// `levels::run` refuses). Assumed: the extremes and the mean of 1024 samples of the run. Where the test gives the
+/// cores' own offsets (`Unit::cores`), each slot is moved by its core's offset register against them,
+/// `CORE_STEP_CODES` a register step; else every core is alike.
 #[derive(Default)]
 struct Measure {
     /// the start and the end of the last run
     run: Option<(i128, i128)>,
+    /// the offset register of each ADC core as written through 0x1034 (adc-mode.md 2.2: `0x01000000 | (0x14 + 8n) <<
+    /// 16 | o & 0x7ff`, 11 bits signed)
+    offsets: [i32; 8],
 }
 
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
@@ -416,6 +427,9 @@ pub struct Unit {
     dvm: Dvm,
     mask: MaskUnit,
     measure: Measure,
+    /// the value of each ADC core's offset register at which that core reads the scene as it is (its own offset, which
+    /// the stored calibration and the core trim aim at); None: every core alike, whatever is written
+    pub cores: Option<[i32; 8]>,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -444,6 +458,7 @@ impl Unit {
             dvm: Dvm::default(),
             mask: MaskUnit::default(),
             measure: Measure::default(),
+            cores: None,
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -457,6 +472,11 @@ impl Unit {
     /// The trigger time of frame `k` of the ring, fs, when it was recorded.
     pub fn trigger_fs(&self, k: u32) -> Option<i128> {
         self.ring.get(&k).copied()
+    }
+
+    /// The ADC cores' offset registers as last written (`Measure`).
+    pub fn core_offsets(&self) -> [i32; 8] {
+        self.measure.offsets
     }
 
     /// What the generator was told so far.
@@ -618,10 +638,19 @@ impl Unit {
         let codes: Vec<u16> = (0..MEASURE_POINTS)
             .map(|i| a + (2 * i + 1) * (b - a) / (2 * MEASURE_POINTS))
             .map(|t| encode::code((self.scene.volts)(c, t as f64 * 1e-15), scale, offset))
+            .map(|x| (x as i32 + self.core_shift(slot)).clamp(0, u16::MAX as i32) as u16)
             .collect();
         let (lo, hi) = codes.iter().fold((u16::MAX, 0), |(l, h), &x| (l.min(x), h.max(x)));
         let mean = codes.iter().map(|&x| x as f64).sum::<f64>() / codes.len() as f64;
         (mean.round() as u32, ((hi >> 4) as u32) << 16 | (lo >> 4) as u32)
+    }
+
+    /// Measure codes the core shown in `slot` reads off the scene: its offset register against its own offset
+    /// (`Unit::cores`), `CORE_STEP_CODES` a step; 0 without them.
+    fn core_shift(&self, slot: usize) -> i32 {
+        let Some(own) = self.cores else { return 0 };
+        let n = CORE_SLOT.iter().position(|&k| k == slot).unwrap_or(slot);
+        (self.measure.offsets[n] - own[n]) * CORE_STEP_CODES
     }
 
     /// The trace as text, one event a line (for a comparison of two runs).
@@ -857,6 +886,11 @@ impl Unit {
             self.dvm_latch();
         }
         self.mask_write(off, v, before);
+        // an ADC word (bit 24) to a core's offset register 0x14 + 8n
+        let adc_reg = v >> 16 & 0x7f;
+        if off == 0x1034 && v & 1 << 24 != 0 && (0x14..0x54).contains(&adc_reg) && adc_reg % 8 == 4 {
+            self.measure.offsets[(adc_reg as usize - 0x14) / 8] = ((v & 0x7ff) << 21) as i32 >> 21;
+        }
         if off == 0x1040 && v & 1 << 31 != 0 && before & 1 << 31 == 0 {
             self.measure.run = Some((self.t_fs, self.t_fs + (1i128 << (v & 0x1f)) * CORE_SAMPLE_FS));
         }
@@ -1823,6 +1857,61 @@ mod tests {
             assert!(l.mean.abs() < a * 1e-2 && !l.clipped, "CH{}: {:?}", c + 1, l);
         }
         assert!(lv[2].is_none() && lv[3].is_none());
+    }
+
+    /// The core trim's side of the simulated unit (as `hw::trim::UnitTrim` of oos-ui): measure runs and offset words.
+    struct Trim<'a>(&'a mut Bar, &'a mut Time, crate::dho::adc::Adc);
+
+    impl crate::dho::coretrim::TrimHw for Trim<'_> {
+        fn slots(&mut self) -> Option<[crate::dho::levels::Slot; 8]> {
+            let clock = &mut *self.1;
+            crate::dho::levels::run(self.0, &mut |us| clock.sleep_us(us as u64))
+        }
+        fn wait_ms(&mut self, ms: u32) {
+            self.1.sleep_us(ms as u64 * 1000);
+        }
+        fn set_offset(&mut self, core: usize, o: i32) {
+            for w in self.2.core_offset(core, o) {
+                self.0.wr(w.reg, w.val);
+            }
+        }
+    }
+
+    // Break it catches: an offset word not taken for its core (another register, the sign of 11 bits lost), a core
+    // shown in another slot than core-offset.md's or moved by another step, cores that differ without `cores`
+    #[test]
+    fn the_measure_unit_shows_each_cores_offset_and_the_core_trim_matches_them() {
+        use crate::dho::coretrim::{self, TrimHw};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let quiet = Scene { volts: Box::new(|_, _| 0.0), ..scene(&p, None, None) };
+        let (u, mut bar, _, mut clock) = unit(quiet);
+        bar.wr(0x4008, 1);
+        let own = [-30, 31, 32, 33, 34, 35, 36, 37];
+        // stored offsets: core 5 three steps high, core 7 two low, core 0 below zero (the sign of the 11 bits)
+        let stored = [-30, 31, 32, 33, 34, 38, 36, 35];
+        let mut hw = Trim(&mut bar, &mut clock, crate::dho::adc::Adc::default());
+        for (n, &o) in stored.iter().enumerate() {
+            hw.set_offset(n, o);
+        }
+        assert_eq!(u.borrow().core_offsets(), stored);
+        let alike = hw.slots().expect("a run");
+        assert!(alike.iter().all(|k| *k == alike[0]), "without the cores' own offsets every slot alike: {:?}", alike);
+        u.borrow_mut().cores = Some(own);
+        let m = hw.slots().expect("a run");
+        let mid = m[0].mean;
+        let want = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 27.0, -18.0];
+        for (k, w) in want.iter().enumerate() {
+            assert_eq!(m[k].mean - mid, *w, "slot {}: {:?}", k, m[k]);
+        }
+        let (groups, lsb) = coretrim::plan(1, &[1.0; 4]);
+        let g = coretrim::gate(&mut hw, &groups, &lsb).expect("the gate");
+        assert_eq!((g.matched, g.skipped), (1, 0), "a quiet channel at mid-scale");
+        let order = coretrim::order(&mut hw, &stored).expect("the order");
+        assert_eq!((order.slot, order.codes), (CORE_SLOT, [CORE_STEP_CODES as f64; 8]));
+        let t = coretrim::trim_gated(&mut hw, &groups, &stored, &order, &lsb, &g).expect("the trim");
+        assert_eq!(t.offsets, own, "every core at its own offset: {:?}", t);
+        assert_eq!(u.borrow().core_offsets(), own);
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
