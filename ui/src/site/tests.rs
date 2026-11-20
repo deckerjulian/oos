@@ -1050,6 +1050,7 @@ fn each_route_takes_its_methods_and_a_head_gets_no_body() {
         ("GET /waveform?slot=1", "POST"),
         ("DELETE /update", "GET, HEAD, POST"),
         ("HEAD /cmd?c=key%20runstop", "GET"),
+        ("HEAD /screen.png", "GET"),
     ] {
         let (head, body) = parts(&ask(line, &mut ui, &mut scpi));
         assert!(head.starts_with("HTTP/1.1 405"), "{line}: {head}");
@@ -1063,4 +1064,10 @@ fn each_route_takes_its_methods_and_a_head_gets_no_body() {
     for line in ["GET /nothing", "PUT /nothing"] {
         assert!(ask(line, &mut ui, &mut scpi).starts_with("HTTP/1.1 404"), "{line}");
     }
+    // refused before the request is read whole (413 here): a HEAD still gets no body
+    let too_big = |m: &str| format!("{m} /ui-state HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n").into_bytes();
+    let (head, body) = parts(&request(&mut h, &mut ui, &cv, &mut scpi, too_big("HEAD")));
+    assert!(head.starts_with("HTTP/1.1 413") && body.is_empty(), "{head} / {body}");
+    let (head, body) = parts(&request(&mut h, &mut ui, &cv, &mut scpi, too_big("GET")));
+    assert!(head.starts_with("HTTP/1.1 413") && body == "request too large", "{head} / {body}");
 }

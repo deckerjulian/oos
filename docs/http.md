@@ -23,9 +23,10 @@ has no mark, or when an entry names a route the code does not answer.
 - HTTP/1.1, one request per connection: every answer says `Connection: close`. A body is read by its
   `Content-Length` (none: no body); chunked bodies are not read.
 - Each route takes the methods in its heading below (`methods_of`): a `GET` route takes `HEAD` too, except `/cmd`,
-  whose `GET` does something; `/update` takes `GET` and `POST`. A `HEAD` gets the head of the `GET` with its
-  `Content-Length` and no body (the live pictures: no `Content-Length`, since their length is known only when one is
-  made). Another method gets 405 with an `Allow` header naming the ones the route takes. Before 0.1.15 only `POST`
+  whose `GET` does something, and the live pictures `/screen.png` and `/screen.jpg`, whose status, type and length
+  are known only once a picture is made; `/update` takes `GET` and `POST`. A `HEAD` gets the head of the `GET` with
+  its `Content-Length` and no body, also when it is refused early (403, 413, 503). Another method gets 405 with an
+  `Allow` header naming the ones the route takes. Before 0.1.15 only `POST`
   was told apart, every other method was taken as `GET` and a `HEAD` got the body too.
 - The route is the path before `?`, as sent (no percent-decoding). Of the query parameters, `name` of
   `POST /waveform` and `c` of `/cmd` are percent-decoded (`+` is a space); `slot` is read as sent, so `slot=%31` is
