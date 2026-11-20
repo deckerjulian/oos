@@ -7,6 +7,13 @@
 use crate::board::{board, Board};
 use crate::model::*;
 
+/// The state shared with the acquisition thread, locked: the one `unwrap` for every reader and writer of `HwShared`
+/// in this file. A lock fails only when another holder panicked while it held it, and the state may then be half
+/// written; this panics then, as each of these lines did before.
+fn hw(shared: &crate::board::HwShared) -> std::sync::MutexGuard<'_, crate::board::Shared> {
+    shared.lock().unwrap()
+}
+
 mod levels;
 
 pub use levels::*;
@@ -352,7 +359,7 @@ impl Source {
     /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
     pub fn force_hw(&self) {
         if let Source::Hw { shared, .. } = self {
-            let mut state = shared.lock().unwrap();
+            let mut state = hw(shared);
             state.force = true;
             #[cfg(test)]
             {
@@ -366,7 +373,7 @@ impl Source {
     /// (`Shared::needs_raw`: no live compression).
     pub fn hw_needs_raw(&self, on: bool) {
         if let Source::Hw { shared, .. } = self {
-            shared.lock().unwrap().needs_raw = on;
+            hw(shared).needs_raw = on;
         }
     }
 
@@ -375,7 +382,7 @@ impl Source {
     /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             if g.hold && !hold {
                 g.queue.clear();
             }
@@ -387,7 +394,7 @@ impl Source {
 
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             for i in 0..gen_count() {
                 g.afg[i] = Some(board().gen(&m.gen_ch(i)));
             }
@@ -425,7 +432,7 @@ impl Source {
             }
             Source::Hw { shared, .. } => {
                 // the latest hardware record of the channel, wrapped around (auto set-up looks at levels and periods)
-                let f = shared.lock().unwrap().frame.clone();
+                let f = hw(shared).frame.clone();
                 let v = &f.ch[ch];
                 if v.is_empty() {
                     return vec![0.0; n];
@@ -439,7 +446,7 @@ impl Source {
     /// latest reading; None off the hardware (the counter is then worked out from the records).
     pub fn hw_counter(&self, want: Option<crate::board::CounterWant>) -> Option<Option<crate::board::CounterRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             g.counter_want = want;
             return Some(g.counter);
         }
@@ -449,7 +456,7 @@ impl Source {
     /// Hardware source: why the mask/zone unit is off for the current settings (`Shared::unit_blocked`).
     pub fn hw_unit_blocked(&self) -> Option<String> {
         if let Source::Hw { shared, .. } = self {
-            return shared.lock().unwrap().unit_blocked.clone();
+            return hw(shared).unit_blocked.clone();
         }
         None
     }
@@ -457,7 +464,7 @@ impl Source {
     /// Hardware source: the mask table last loaded (`Shared::mask_table`).
     pub fn hw_mask_table(&self) -> Option<std::sync::Arc<Vec<[u8; 4]>>> {
         if let Source::Hw { shared, .. } = self {
-            return shared.lock().unwrap().mask_table.clone();
+            return hw(shared).mask_table.clone();
         }
         None
     }
@@ -466,7 +473,7 @@ impl Source {
     /// reading; None off the hardware.
     pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             if g.zone_want != want {
                 g.zone_want = want;
             }
@@ -479,7 +486,7 @@ impl Source {
     /// counter reading; None off the hardware.
     pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             if g.mask_want != want {
                 g.mask_want = want;
             }
@@ -492,7 +499,7 @@ impl Source {
     /// reading; None off the hardware.
     pub fn hw_dvm(&self, want: Option<crate::board::DvmWant>) -> Option<Option<crate::board::DvmRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             g.dvm_want = want;
             return Some(g.dvm);
         }
@@ -506,7 +513,7 @@ impl Source {
         want: Option<(u64, u64, u32)>,
     ) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             g.levels_want = want;
             return Some(g.levels);
         }
@@ -517,7 +524,7 @@ impl Source {
     /// for other sources.
     pub fn hw_slots(&self, want: u64) -> Option<Option<crate::board::SlotDump>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             g.slots_want = Some(want);
             return Some(g.slots);
         }
@@ -527,7 +534,7 @@ impl Source {
     /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
     pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
         if let Source::Hw { shared, .. } = self {
-            return shared.lock().unwrap().trig_fired;
+            return hw(shared).trig_fired;
         }
         None
     }
@@ -535,7 +542,7 @@ impl Source {
     /// Hardware source: FPGA version (0 = not reached) and the latest XADC reading (die degC, VCCINT V).
     pub fn hw_board(&self) -> Option<(u32, Option<(f32, f32)>)> {
         if let Source::Hw { shared, .. } = self {
-            let g = shared.lock().unwrap();
+            let g = hw(shared);
             return Some((g.fpga_version, g.xadc));
         }
         None
@@ -545,7 +552,7 @@ impl Source {
     /// choice for Auto depth; the hardware source reads a shorter live record).
     pub fn hw_rate_depth(&self) -> Option<(f64, usize)> {
         if let Source::Hw { shared, .. } = self {
-            let g = shared.lock().unwrap();
+            let g = hw(shared);
             let n = g.frame.ch.iter().map(|c| c.len()).max().unwrap_or(0);
             if g.frame.seq > 0 && g.frame.acq.1 > 0 {
                 return Some(g.frame.acq);
@@ -567,7 +574,7 @@ impl Source {
     /// source.
     pub fn seg_sync(&self, run: u64, running: bool) -> Option<SegView> {
         let Source::Hw { shared, .. } = self else { return None };
-        let mut g = shared.lock().unwrap();
+        let mut g = hw(shared);
         (g.seg.run, g.seg.running) = (run, running);
         let current = g.seg.done_run == run;
         Some(SegView {
@@ -582,7 +589,7 @@ impl Source {
     /// Hardware segments: the trigger times read back so far (seconds since the first trigger).
     pub fn seg_times(&self) -> Vec<Option<f64>> {
         match self {
-            Source::Hw { shared, .. } => shared.lock().unwrap().seg.times.clone(),
+            Source::Hw { shared, .. } => hw(shared).seg.times.clone(),
             _ => Vec::new(),
         }
     }
@@ -590,7 +597,7 @@ impl Source {
     /// Hardware segments: asks the thread to play segment `k`; `seg_shown` delivers it.
     pub fn seg_request(&self, k: u32) {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             (g.seg.want, g.seg.shown) = (Some(k), None);
         }
     }
@@ -598,7 +605,7 @@ impl Source {
     /// Hardware segments: the segment asked for with `seg_request`, as a record for the screen.
     pub fn seg_shown(&self, m: &Model) -> Option<(u32, Record)> {
         let Source::Hw { shared, .. } = self else { return None };
-        let (k, f) = shared.lock().unwrap().seg.shown.take()?;
+        let (k, f) = hw(shared).seg.shown.take()?;
         let window = m.time_per_div() as f64 * HDIV as f64;
         Some((k, crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
     }
@@ -607,7 +614,7 @@ impl Source {
     /// thread has read again from the stored record for it, if a new one came (`board::Shared::stop_view`).
     pub fn hw_stop(&mut self, view: Option<(f64, f64)>) -> Option<crate::board::Frame> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             g.stop_view = view;
             return g.replay.take().filter(|_| view.is_some());
         }
@@ -617,7 +624,7 @@ impl Source {
     /// Hardware source: every frame of a batch decoded again (the record path, which takes them one by one).
     pub fn hw_take_all(&mut self) {
         if let Source::Hw { shared, .. } = self {
-            shared.lock().unwrap().take = 0;
+            hw(shared).take = 0;
         }
     }
 
@@ -634,7 +641,7 @@ impl Source {
     /// ones are dropped and counted.
     pub fn drain_newest(&mut self, max: usize) -> Vec<crate::board::Frame> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
+            let mut g = hw(shared);
             // the thread decodes no more than this of a batch (the record takes one more)
             g.take = max + 1;
             let n = g.queue.len().saturating_sub(1);
@@ -709,7 +716,7 @@ struct ScreenGrid {
 
 /// A hardware acquisition: the newest frame of the board thread, or None.
 fn acquire_hw(m: &Model, shared: &crate::board::HwShared, seen: &mut u64) -> Option<Record> {
-    let mut g = shared.lock().unwrap();
+    let mut g = hw(shared);
     g.want = Some(board().want(m));
     g.deep_raw = crate::deepmeas::want(m);
     g.slow = board().slow_mode(m);
