@@ -772,7 +772,7 @@ impl Ui {
                 self.m.mask_y = ((self.m.mask_y + d as f32 * 0.04) * 100.0).round().clamp(4.0, 400.0) / 100.0;
                 self.build_mask();
             }
-            Item::RefSrc => self.ref_src = src_step(self.ref_src, NCH, d),
+            Item::RefSrc => self.ref_page.src = src_step(self.ref_page.src, NCH, d),
             Item::RefShow(i) => {
                 if let Some(r) = &mut self.refs[i] {
                     r.on = !r.on;
@@ -900,7 +900,7 @@ impl Ui {
                 }
             }
             Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
-                let p = self.ref_files.get(k).cloned();
+                let p = self.ref_page.files.get(k).cloned();
                 self.close_picker();
                 if let Some(p) = p {
                     self.ref_load_path(&p);
@@ -1003,7 +1003,7 @@ impl Ui {
                 self.clear_measurement_statistics();
             }
             Item::RefSave => {
-                let c = self.ref_src;
+                let c = self.ref_page.src;
                 let rec = self.last[0].clone();
                 let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                     let (v, dt) = self.meas_wave(r, c);

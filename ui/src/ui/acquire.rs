@@ -258,8 +258,8 @@ impl Ui {
                 self.meas_src_b = WaveId::Ch(0);
             }
         }
-        if self.ref_src >= n_ch() {
-            self.ref_src = n_ch() - 1;
+        if self.ref_page.src >= n_ch() {
+            self.ref_page.src = n_ch() - 1;
         }
         self.auto_step();
         self.sysinfo_poll();

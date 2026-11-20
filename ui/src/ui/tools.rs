@@ -10,6 +10,7 @@ use super::*;
 #[path = "frozen41_helpers_tests.rs"]
 mod frozen41_helpers_tests;
 mod refs;
+pub(super) use refs::RefPage;
 #[cfg(test)]
 #[path = "scpi_helpers_tests.rs"]
 mod scpi_helpers_tests;
