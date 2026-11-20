@@ -346,23 +346,9 @@ impl<U: Send + 'static> Http<U> {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = Self::bind_quietly(port);
+        let l = oos_system::net6::tcp_service(port, "web remote");
         if l.is_none() {
             eprintln!("oos-ui: web port {} not available", port);
-        }
-        l
-    }
-
-    /// `bind` without the message when the port is taken.
-    fn bind_quietly(port: u16) -> Option<TcpListener> {
-        let l = oos_system::net6::tcp(port);
-        if let Some(l) = &l {
-            let _ = l.set_nonblocking(true);
-            eprintln!(
-                "oos-ui: web remote on port {}{}",
-                port,
-                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
-            );
         }
         l
     }
@@ -373,7 +359,7 @@ impl<U: Send + 'static> Http<U> {
         if self.l.is_some() {
             return false;
         }
-        self.l = Self::bind_quietly(port);
+        self.l = oos_system::net6::tcp_service(port, "web remote");
         self.l.is_some()
     }
 
