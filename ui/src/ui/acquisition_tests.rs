@@ -357,7 +357,7 @@ fn hardware_pictures_look_the_same_whatever_the_frames_per_picture() {
             }
         }
         ui.step(0.033);
-        let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+        let (lut, sh, _) = ui.trace_lut(ui.grade.vmax[0]);
         ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
     };
     let first = picture(&mut ui, 3);
@@ -428,9 +428,9 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
         for _ in 0..n {
             ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
         }
-        ui.pic_frames = n;
+        ui.grade.frames = n;
         ui.grade_refs();
-        let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+        let (lut, sh, _) = ui.trace_lut(ui.grade.vmax[0]);
         // as `draw_traces`: an empty pixel stays dark
         ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
     };
@@ -442,12 +442,12 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
     }
     // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
     // counts
-    ui.pic_frames = 0;
+    ui.grade.frames = 0;
     ui.m.persist = 1;
     let _ = picture(&mut ui, 16);
-    ui.pic_frames = 0;
+    ui.grade.frames = 0;
     ui.grade_refs();
-    let bright = |ui: &super::Ui| ui.vmax[0];
+    let bright = |ui: &super::Ui| ui.grade.vmax[0];
     let before = bright(&ui);
     ui.ph.clear();
     ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);

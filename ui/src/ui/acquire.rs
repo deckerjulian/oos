@@ -568,9 +568,9 @@ impl Ui {
         }
         // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
         if persist != 0.0 {
-            self.pic_frames = 0;
+            self.grade.frames = 0;
         } else if take.got > 0 {
-            self.pic_frames = take.got as u32;
+            self.grade.frames = take.got as u32;
         }
         if take.got > 0 {
             let iv = (self.now - self.last_rec_t).min(2.0);
@@ -689,13 +689,13 @@ impl Ui {
         // long or infinite persistence: halve the maps before the counts saturate (keeps the density ratios)
         if full {
             self.ph.halve();
-            self.vmax.iter_mut().for_each(|v| *v = (*v / 2).max(1));
-            self.vmax_cg = (self.vmax_cg / 2).max(1);
+            self.grade.vmax.iter_mut().for_each(|v| *v = (*v / 2).max(1));
+            self.grade.vmax_cg = (self.grade.vmax_cg / 2).max(1);
         }
         if fullz {
             self.phz.halve();
-            self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
-            self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
+            self.grade.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
+            self.grade.vmaxz_cg = (self.grade.vmaxz_cg / 2).max(1);
         }
         if let Some((_, t)) = &self.toast {
             if self.now > *t {
