@@ -59,20 +59,20 @@ Single scan only).
 
 ## Host tests
 
-- `ui/src/ui.rs` `stop_shows_the_final_raw_frame_of_a_deep_record`: STOP on a pair record holds the thread and asks
-  for the final frame; the batch's last pair frame and the raw final frame are taken, the raw one is shown and
-  measured (Mean of its samples), status STOP; later frames are not taken; RUN releases the hold; without an answer
-  the STOP ends after 3 s; a shallow record's STOP holds without a request. Mutation check: without taking records
-  while waiting the test fails.
-- `ui/src/ui.rs` `stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs`: 10 M at 1 ms/div, the
-  final raw frame, then the view read as pairs: the pairs are drawn, Mean, RMS, Std dev, AC RMS and Max stay those of
-  the raw frame, the count stays; zoomed in and out (pairs): same values, statistics stay cleared; far zoomed in (raw
-  window): that window is measured; out again: the raw frame of the STOP again; RUN lets it go. Fails without the
-  change: "the view read as pairs: Vavg NaN instead of 0.5".
-- `ui/src/ui.rs` `clear_in_stop_keeps_the_hardware_held`: started in STOP, not held until the first record; held
-  after a Clear in STOP; RUN releases it.
-- `ui/src/ui.rs` `run_after_stop_takes_no_frame_from_before`: a frame queued in STOP (the batch in progress) is not
-  the first record of the next RUN; the first frame after the RUN is.
+- `ui/src/ui/stop_tests.rs` `stop_shows_the_final_raw_frame_of_a_deep_record`: STOP on a pair record holds the thread
+  and asks for the final frame; the batch's last pair frame and the raw final frame are taken, the raw one is shown
+  and measured (Mean of its samples), status STOP; later frames are not taken; RUN releases the hold; without an
+  answer the STOP ends after 3 s; a shallow record's STOP holds without a request. Mutation check: without taking
+  records while waiting the test fails.
+- `ui/src/ui/stop_tests.rs` `stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs`: 10 M at
+  1 ms/div, the final raw frame, then the view read as pairs: the pairs are drawn, Mean, RMS, Std dev, AC RMS and Max
+  stay those of the raw frame, the count stays; zoomed in and out (pairs): same values, statistics stay cleared; far
+  zoomed in (raw window): that window is measured; out again: the raw frame of the STOP again; RUN lets it go. Fails
+  without the change: "the view read as pairs: Vavg NaN instead of 0.5".
+- `ui/src/ui/stop_tests.rs` `clear_in_stop_keeps_the_hardware_held`: started in STOP, not held until the first record;
+  held after a Clear in STOP; RUN releases it.
+- `ui/src/ui/stop_tests.rs` `run_after_stop_takes_no_frame_from_before`: a frame queued in STOP (the batch in
+  progress) is not the first record of the next RUN; the first frame after the RUN is.
 - `ui/src/board/dho/hw/tests.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
   raw, nothing armed ahead, deep measurements on; with prearm on, such a batch is not armed ahead, so the replay
   stays possible; prearm stays for shallow records and without deep measurements.

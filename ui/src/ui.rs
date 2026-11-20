@@ -1392,6 +1392,8 @@ mod acquisition_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod stop_tests;
+#[cfg(test)]
 mod tests;
 
 /// Menu text of a hardware segment interval.
