@@ -49,7 +49,7 @@ fn stop_shows_the_final_raw_frame_of_a_deep_record() {
         assert!(g.hold && g.final_req == 1);
     }
     assert!(
-        ui.stop_final.is_some()
+        ui.stop.final_until.is_some()
             && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope))
     );
     // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
@@ -60,7 +60,7 @@ fn stop_shows_the_final_raw_frame_of_a_deep_record() {
         g.final_ack = 1;
     }
     steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
+    assert!(ui.stop.final_until.is_none());
     let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
     assert_eq!(shown, Some((3, false)), "the final raw frame is the record shown");
     let avg = ui.meas(0, Meas::Vavg);
@@ -81,9 +81,9 @@ fn stop_shows_the_final_raw_frame_of_a_deep_record() {
     steps(&mut ui, 2);
     ui.m.run = RunState::Stop;
     steps(&mut ui, 2);
-    assert!(ui.stop_final.is_some());
+    assert!(ui.stop.final_until.is_some());
     steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
-    assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
+    assert!(ui.stop.final_until.is_none() && ui.m.status == TrigStatus::Stop);
     // a shallow record: STOP holds the thread at once and waits for its last record as well (#24), which the thread
     // answers without a raw read
     ui.m.run = RunState::Run;
@@ -92,13 +92,13 @@ fn stop_shows_the_final_raw_frame_of_a_deep_record() {
     steps(&mut ui, 2);
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
-    assert!(ui.stop_final.is_some() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 3);
+    assert!(ui.stop.final_until.is_some() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 3);
     {
         let mut g = shared.lock().unwrap();
         g.final_ack = g.final_req;
     }
     steps(&mut ui, 1);
-    assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
+    assert!(ui.stop.final_until.is_none() && ui.m.status == TrigStatus::Stop);
     crate::deepmeas::force(None);
 }
 
@@ -162,7 +162,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
         g.final_ack = 1;
     }
     steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
+    assert!(ui.stop.final_until.is_none());
     check(&ui, "the final raw frame");
     let counted = ui.mstat[0].n;
     assert!(counted > 0);
@@ -208,7 +208,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
     ui.m.run = RunState::Run;
     shared.lock().unwrap().queue.push_back(frame(7, true, pairs.clone()));
     steps(&mut ui, 2);
-    assert!(ui.stop_raw.is_none() && ui.stop_picture().is_none());
+    assert!(ui.stop.raw.is_none() && ui.stop_picture().is_none());
     crate::deepmeas::force(None);
 }
 
@@ -408,7 +408,7 @@ fn opc_after_stop_waits_for_the_record_of_the_stop() {
     for _ in 0..(STOP_FINAL_WAIT / 0.05) as usize + 2 {
         ui.step(0.05);
     }
-    assert!(ui.stop_final.is_none());
+    assert!(ui.stop.final_until.is_none());
     assert_eq!(fence.state(&ui), OperationState::Cancelled);
     crate::deepmeas::force(None);
 }

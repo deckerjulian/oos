@@ -221,14 +221,14 @@ fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
     // STOP on a pair record: the final raw frame is asked for and shown
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
-    assert!(ui.stop_final.is_some() && shared.lock().unwrap().final_req == 1);
+    assert!(ui.stop.final_until.is_some() && shared.lock().unwrap().final_req == 1);
     {
         let mut g = shared.lock().unwrap();
         g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()));
         g.final_ack = 1;
     }
     steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
+    assert!(ui.stop.final_until.is_none());
     assert_eq!(
         ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)),
         Some((5, false))

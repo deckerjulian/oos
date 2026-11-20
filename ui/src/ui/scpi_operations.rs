@@ -86,9 +86,11 @@ impl Ui {
             sim: self.sim_operation(),
             single: (self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run)
                 .then(|| (self.single_operation, self.record_mode())),
-            // a STOP of the hardware not yet taken by the step, or waiting for its last record (`stop_final`)
-            stop: (self.src.is_hw() && self.m.run == RunState::Stop && (self.was_running || self.stop_final.is_some()))
-                .then_some(self.final_req),
+            // a STOP of the hardware not yet taken by the step, or waiting for its last record (`Stop::final_until`)
+            stop: (self.src.is_hw()
+                && self.m.run == RunState::Stop
+                && (self.was_running || self.stop.final_until.is_some()))
+            .then_some(self.stop.final_req),
         }
     }
 }

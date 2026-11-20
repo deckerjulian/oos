@@ -25,7 +25,7 @@ In the acquisition thread the STOP is `StopRun` in `ui/src/board/dho/hw/stop.rs`
 - A batch already armed when STOP comes is finished and read; a wait for its trigger ends at the STOP (`hold` cuts it as
   new settings do), so a STOP in Normal without a trigger does not wait the whole `STOP_FINAL_WAIT`. Verified on the unit (2026-11-20).
 - Final frame (`Ui::stop_wants_final`): every plain STOP of a normal acquisition on the hardware (not the end of
-  Single or segments, not a mask stop, not a history view, not roll or scan). The request (`final_req`, counted at every RUN, so that a
+  Single or segments, not a mask stop, not a history view, not roll or scan). The request (`Stop::final_req`, counted at every RUN, so that a
   `*OPC?` taken with the STOP knows it) is the thread's to answer; the UI keeps taking records (status STOP) until `final_ack` answers it and the queue is empty, at most `STOP_FINAL_WAIT` = 3 s.
   So the record of the STOP is the newest frame the thread read, the one it reads again for the views (#24: before,
   only deep records waited, and a batch finished after the STOP was read again for the views, another acquisition
@@ -49,8 +49,8 @@ In the acquisition thread the STOP is `StopRun` in `ui/src/board/dho/hw/stop.rs`
   at other time bases drawn from it).
   Otherwise the thread reads the stored record again for every view (`stop_plan`),
   the first time right after the STOP. Zoomed out on a record above `LIVE_READ` (625 k points: 10 M at 1 ms/div) that
-  read is the whole record through the compression, min/max pairs. Those pairs are drawn (`stop_pic`), but the raw
-  record of the STOP (`stop_raw`: the final frame, or a raw record already shown) stays `last[0]`, the record measured
+  read is the whole record through the compression, min/max pairs. Those pairs are drawn (`Stop::pic`), but the raw
+  record of the STOP (`Stop::raw`: the final frame, or a raw record already shown) stays `last[0]`, the record measured
   and read out (`:WAV:MODE RAW`). Before, the pairs replaced it one step after the STOP and Mean, RMS, Std dev and AC
   RMS turned to "----" (A3 of the 2026-11-16 review). Far zoomed in the thread reads every sample of the view; that
   window becomes the record shown and measured, as before, and the raw record of the STOP comes back with the next
