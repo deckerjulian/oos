@@ -688,9 +688,12 @@ fn run<P: port::Port>(
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
             }
             armed = None;
+            // new settings, a view read in STOP, or the STOP itself (`hold`): a wait for a trigger ends at once. The
+            // UI waits for the thread to hold before it takes the record of the STOP as its last (#24); in Normal
+            // without a trigger that wait was the whole `STOP_FINAL_WAIT`
             let changed = || {
                 let g = out.lock().unwrap();
-                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.stop_view.is_some()
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.stop_view.is_some() || g.hold
             };
             // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
             // the frame count, so the read waits at most one frame longer
@@ -1109,6 +1112,14 @@ fn run<P: port::Port>(
                 Err(e) if e == seq::NEW_SETTINGS => {
                     if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
                         last_batch = None;
+                    }
+                    // cut by the STOP (`hold`): the FSM still waits armed. New settings disarm it as they configure
+                    // and a view read in STOP as it plays; a STOP that reads nothing again (#24: a whole record) must
+                    // do it here, or the next SINGLE armed a running FSM and never got its record (unit 2026-11-20)
+                    if out.lock().is_ok_and(|g| g.hold) {
+                        if let Err(e) = seq::disarm(&mut state, &mut bar, &mut c2h, |_| {}) {
+                            status(format!("disarm at STOP: {}", e));
+                        }
                     }
                 }
                 Err(e) => {

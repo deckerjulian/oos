@@ -54,6 +54,15 @@ const POLLS: [(&str, Poll); 13] = [
 ];
 
 /// The polls that are called from elsewhere on purpose, and why. The list only gets shorter (ADR 0061).
+/// Whether the raw record `r` holds the whole acquisition: samples, not min/max pairs, and every point of the memory
+/// (`Frame::acq`). A view read again from the memory then holds nothing it does not; a window of a deep record does not.
+fn raw_whole(r: &Record) -> bool {
+    r.raw.as_ref().is_some_and(|x| {
+        let len = x.frame.ch.iter().map(Vec::len).max().unwrap_or(0);
+        !x.frame.envelope && x.frame.dt > 0.0 && len > 0 && len >= x.frame.acq.1
+    })
+}
+
 #[cfg(test)]
 const POLLED_ELSEWHERE: [(&str, &str); 7] = [
     ("sim_poll", "step_polls, before relayout, and sim.rs while a SIM run is started"),
@@ -105,6 +114,11 @@ impl Ui {
         // the final frame was taken (or did not come in time): stopped
         if self.stop_final.is_some_and(|t| final_done || self.now > t) {
             self.stop_final = None;
+            // only an answered request is a STOP in place: after the time limit a `*OPC?` waiting for it is cancelled
+            // (-410), not told `1` about a record the thread did not confirm
+            if self.m.run == RunState::Stop && final_done {
+                self.scpi_finish_operation(OperationToken::Stop(self.final_req));
+            }
         }
         if self.m.run == RunState::Stop {
             if !self.record_mode() {
@@ -186,6 +200,9 @@ impl Ui {
         // RUN after STOP: the hardware average starts over (stock clears it on every state change)
         if running && !self.was_running {
             self.hw_avg_restart();
+            // the final-frame request of the next STOP, counted here so that a `*OPC?` taken with the STOP, before
+            // this step sees it, waits for it (`OperationToken::Stop`)
+            self.final_req += 1;
         }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg_n = 0;
@@ -199,9 +216,12 @@ impl Ui {
         }
         // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
         // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
-        if !running && self.was_running && self.stop_wants_final() {
-            self.final_req += 1;
-            self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+        if !running && self.was_running {
+            if self.stop_wants_final() {
+                self.stop_final = Some(self.now + STOP_FINAL_WAIT);
+            } else {
+                self.scpi_finish_operation(OperationToken::Stop(self.final_req));
+            }
         }
         // held while stopped, unless the screen still waits for a first record (a source started in STOP, as the
         // record path below takes it); a Clear in STOP leaves the screen empty, not the thread free to arm
@@ -723,6 +743,24 @@ impl Ui {
             });
         }
         let view = (self.m.time_per_div() as f64, self.m.delay as f64);
+        // the raw record of the STOP holds the whole acquisition: it stays the record shown, measured and read out,
+        // drawn for every view from its own samples. Read again by the thread, the view was a record of its own (another
+        // length and origin) that replaced it some 90 ms after the STOP, between two queries of a client (#24)
+        let covered = self.stop_raw.as_ref().filter(|r| raw_whole(r));
+        if let Some(rec) = covered.and_then(|r| self.captured_record_view(r, (view.0 as f32, view.1 as f32))) {
+            // nothing to read: the thread stays held (and drops a view asked for before)
+            self.src.hw_stop(None);
+            if self.last[0]
+                .as_ref()
+                .and_then(|r| r.raw.as_ref())
+                .map(|r| (std::sync::Arc::as_ptr(&r.frame), r.i0, r.i1))
+                != rec.raw.as_ref().map(|r| (std::sync::Arc::as_ptr(&r.frame), r.i0, r.i1))
+            {
+                (self.last[0], self.stop_pic) = (Some(rec.as_ref().clone()), None);
+                self.measure_last();
+            }
+            return;
+        }
         let Some(mut f) = self.src.hw_stop(Some(view)) else { return };
         if let (Some(t), Some(off)) = (f.fixed_ti, self.stop_ti_off) {
             f.fixed_ti = Some(t + off / f.dt);

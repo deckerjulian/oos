@@ -65,19 +65,20 @@ impl Ui {
     }
 
     /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
-    /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
-    /// deep measurements on.
+    /// stop or a history view) of a normal acquisition on the hardware. The records go on until the thread holds: the
+    /// record shown is then the newest it read, the one it reads again for the views after the STOP (#24; before, a
+    /// batch finished after the STOP was read again, another acquisition than the one shown). For live-compression
+    /// pairs or a deep record's pairs with raw deep measurements on, that last frame is read once more raw.
     pub(super) fn stop_wants_final(&self) -> bool {
         let m = &self.m;
-        m.trig_mode != TrigMode::Single
+        self.src.is_hw()
+            && board().slow_mode(m) == crate::board::Slow::Off
+            && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
             && self.seg_pos.is_none()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
-                crate::compress::live(&r.frame)
-                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
-            })
+            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some())
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
