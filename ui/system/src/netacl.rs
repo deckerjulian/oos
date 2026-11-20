@@ -107,7 +107,7 @@ impl Acl {
     pub fn from_value(v: &str) -> (Acl, Vec<String>) {
         let (mut acl, bad) = Acl::parse(v);
         if acl.is_open() && !bad.is_empty() {
-            acl.nets.push(("::1".parse().unwrap(), 128));
+            acl.nets.push((std::net::Ipv6Addr::LOCALHOST.into(), 128));
         }
         (acl, bad)
     }
@@ -176,7 +176,7 @@ impl Shared {
     /// Tests: every peer is taken to be `ip` (None: its own address again).
     #[cfg(any(test, feature = "testkit"))]
     pub fn peers_as(&self, ip: Option<IpAddr>) {
-        *self.0.peers_as.lock().unwrap() = ip;
+        *self.0.peers_as.lock().unwrap_or_else(|e| e.into_inner()) = ip;
     }
 }
 

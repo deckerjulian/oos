@@ -415,8 +415,9 @@ impl Ui {
         let assign = |m: &mut Model| {
             m.dec_la_in = false;
             match role {
-                0 => m.dec_src = source.unwrap(),
-                1 => m.dec_src2 = source.unwrap(),
+                // roles 0 and 1 have a source: checked above
+                0 => m.dec_src = source.unwrap_or(m.dec_src),
+                1 => m.dec_src2 = source.unwrap_or(m.dec_src2),
                 2 => m.dec_cs = source,
                 3 => m.dec_src4 = source,
                 _ => m.dec_diff = source,

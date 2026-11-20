@@ -114,7 +114,7 @@ fn close_fd(fd: i32) {
 }
 
 fn open_nb(path: &str, flags: i32) -> i32 {
-    let c = CString::new(path).unwrap();
+    let Ok(c) = CString::new(path) else { return -1 };
     unsafe { libc::open(c.as_ptr(), flags | libc::O_NONBLOCK | libc::O_CLOEXEC) }
 }
 
@@ -209,7 +209,7 @@ impl Inputs {
         if panel < 0 {
             eprintln!("oos-ui: no front panel");
         }
-        let c = CString::new(CTL).unwrap();
+        let c = CString::new(CTL).unwrap_or_default();
         unsafe {
             libc::unlink(c.as_ptr());
             libc::mkfifo(c.as_ptr(), 0o666);
