@@ -731,7 +731,7 @@ impl Ui {
             .map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V")))
             .collect();
         parts.push(format!("{}/div", si_short(m.time_per_div() as f64, "s")));
-        if self.offline {
+        if self.offline.on {
             let (name, sub) = self.ref_card_lines();
             parts.push(if sub == "empty" || sub.ends_with("pts") { name } else { format!("{} {}", name, sub) });
             parts.push(self.run_caption().0.into());

@@ -38,7 +38,7 @@ fn fixture() -> (Ui, Vec<f32>, Vec<f32>) {
         channel.on = false;
     }
     ui.m.la.on = false;
-    ui.offline = false;
+    ui.offline.on = false;
     ui.session_is_sim = true;
     ui.sim_play = true;
     ui.m.sim_slot = 0;

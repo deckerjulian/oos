@@ -248,7 +248,7 @@ mod tests {
         ui.m.deskew_ref[1] = 3e-9;
         let after = ui.meas_at(WaveId::Ref(1), Meas::Vavg);
         assert!(before.is_finite() && after.is_finite() && (before - after).abs() > 0.1);
-        ui.offline = false;
+        ui.offline.on = false;
         ui.m.ch[0].on = true;
         let record = Record {
             t0: 10e-9,

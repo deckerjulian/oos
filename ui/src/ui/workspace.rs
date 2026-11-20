@@ -257,7 +257,7 @@ mod tests {
     fn reference_source_pill_routes_vertical_hardware_knobs_without_changing_replay_or_trigger() {
         let mut ui = mixed();
         ui.set_offline(true);
-        ui.offline_ref = 0;
+        ui.offline.slot = 0;
         ui.m.set_trigger_wave(WaveId::Ref(0), false);
         ui.m.trig_type = TrigType::Runt;
         let (_, pill) = ui.source_pills().into_iter().find(|(id, _)| *id == WaveId::Ref(1)).unwrap();
@@ -375,7 +375,7 @@ mod tests {
                 if !live {
                     ui.set_offline(true);
                 }
-                ui.offline_ref = 3;
+                ui.offline.slot = 3;
                 ui.m.set_trigger_wave(WaveId::Ref(0), false);
                 ui.select_workspace_source(WaveId::Ref(3));
                 ui.trace_mode(true);
@@ -399,7 +399,7 @@ mod tests {
                 ui.key(0xda);
                 assert!(ui.refs[1].as_ref().unwrap().vpd < scale);
                 assert_eq!(ui.refs[3].as_ref().unwrap().vpd, other);
-                assert_eq!(ui.offline_ref, 3);
+                assert_eq!(ui.offline.slot, 3);
                 assert_eq!(ui.m.trigger_wave(), WaveId::Ref(0));
                 assert_eq!(ui.m.run, RunState::Stop);
                 assert_eq!(ui.replay.captures, 0);

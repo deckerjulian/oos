@@ -479,7 +479,7 @@ impl Ui {
     /// DVM and counter: a new record came in. Offline mode reads the reference directly; on the hardware the FPGA
     /// counts (`counter_poll`).
     pub(super) fn counter_update(&mut self) {
-        if self.offline || !self.m.cnt_on || self.src.is_hw() {
+        if self.offline.on || !self.m.cnt_on || self.src.is_hw() {
             return;
         }
         let c = self.m.cnt_src;

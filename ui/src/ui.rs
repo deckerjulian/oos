@@ -782,17 +782,14 @@ pub struct Ui {
     sim_play: bool,
     /// SIM: the generator thread and the error it left for SCPI (sim.rs)
     sim_gen: sim::Generator,
-    /// Offline mode. Off, the live screen stays as it is.
-    offline: bool,
+    /// Offline mode: whether it is on, the reference on its card, the live settings it puts back (offline.rs)
+    offline: offline::Mode,
     /// Take over, offline waveforms, or the live scope.
     look: reflook::RefLook,
     /// Settings of each added measurement. Missing keys follow the shared measure menu.
     meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
     /// Settings dialog open on this index of `m.meas`.
     meas_cfg: Option<u16>,
-    /// Reference named on the card that replaces the trigger card, and read by the DVM and the counter.
-    offline_ref: usize,
-    offline_hold: Option<offline::LiveHold>,
     /// the external display: whether one is attached, its size, and the waveform copied for it (windows.rs)
     pub hdmi: windows::Hdmi,
     /// the start-up screen and the last start-up's result for About (startup.rs)

@@ -89,7 +89,7 @@ impl Ui {
                 self.relayout();
             }
             RefLook::TakeOver => {
-                if !self.offline {
+                if !self.offline.on {
                     self.remember_live();
                     self.set_offline(true);
                 }
@@ -99,7 +99,7 @@ impl Ui {
                 self.solo_reference(slot);
             }
             RefLook::Waves => {
-                if !self.offline {
+                if !self.offline.on {
                     self.remember_live();
                     self.set_offline(true);
                 }
@@ -118,7 +118,7 @@ impl Ui {
                 r.on = i == slot;
             }
         }
-        self.offline_ref = slot;
+        self.offline.slot = slot;
     }
 
     /// Every loaded reference with samples stays on screen.
@@ -789,11 +789,11 @@ mod tests {
         u.ref_sel = 0;
         u.activate(Item::RefImport);
         assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
-        assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
+        assert!(!u.offline.on && u.m.ch[0].on, "import keeps the live channels");
         assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);
         u.set_look(RefLook::TakeOver);
         assert_eq!(u.look, RefLook::TakeOver);
-        assert!(u.offline);
+        assert!(u.offline.on);
         assert!(u.m.ch.iter().all(|c| !c.on), "other channels are hidden");
         assert!(u.cards().0.iter().all(|c| c.w == 0));
         assert!(u.refs[0].as_ref().unwrap().on);
@@ -801,7 +801,7 @@ mod tests {
         assert!(u.m.time_per_div() > 0.0);
         u.set_look(RefLook::Live);
         assert_eq!(u.look, RefLook::Live);
-        assert!(!u.offline);
+        assert!(!u.offline.on);
         assert_eq!((u.m.tscale, u.m.tfine, u.m.delay, u.m.ch[0].on), held);
         assert!(u.refs[1].as_ref().unwrap().on);
         let _ = std::fs::remove_dir_all(&dir);
@@ -839,7 +839,7 @@ mod tests {
         u.step(0.25);
         assert!(u.replay.captures >= 1, "the set plays");
         u.set_look(RefLook::Live);
-        assert!(u.m.ch[0].on && !u.offline && u.waves_board_rect().is_none());
+        assert!(u.m.ch[0].on && !u.offline.on && u.waves_board_rect().is_none());
     }
 
     #[test]

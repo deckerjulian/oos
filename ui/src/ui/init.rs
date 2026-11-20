@@ -86,12 +86,10 @@ impl Ui {
             analyzed_view: AView::Scope,
             sim_play: false,
             sim_gen: Default::default(),
-            offline: false,
+            offline: Default::default(),
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
             meas_cfg: None,
-            offline_ref: 0,
-            offline_hold: None,
             input: input::State::default(),
             touch: TouchState {
                 down: false,

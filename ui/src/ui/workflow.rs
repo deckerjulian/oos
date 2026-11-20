@@ -165,8 +165,8 @@ mod tests {
     fn replay() -> Ui {
         let mut u = crate::ui::testkit::demo_ui();
         u.remember_live();
-        u.offline = true;
-        u.offline_ref = 0;
+        u.offline.on = true;
+        u.offline.slot = 0;
         u.m.trig_ref = Some(0);
         for ch in &mut u.m.ch {
             ch.on = false;
@@ -632,14 +632,14 @@ impl Ui {
     }
     pub fn record_mode(&self) -> bool {
         // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
-        self.offline || self.session_is_sim || self.sim_play
+        self.offline.on || self.session_is_sim || self.sim_play
     }
 
     pub(super) fn active_reference(&self) -> usize {
         if self.session_is_sim {
             self.m.sim_slot
-        } else if self.offline {
-            self.offline_ref
+        } else if self.offline.on {
+            self.offline.slot
         } else if self.refs.get(self.ref_sel).is_some_and(Option::is_some) {
             self.ref_sel
         } else {
