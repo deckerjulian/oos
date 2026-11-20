@@ -1237,7 +1237,7 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
         Scene { volts, la: None, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
     let (u, bar, c2h, clock) = unit(scene);
     let lines = oos_hal::dho::lines::Recorded::default();
-    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };
+    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort(None) };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
     lock(&out).want = Some(want.clone());
     let mut passes = 0;
