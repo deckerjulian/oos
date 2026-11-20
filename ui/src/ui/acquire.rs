@@ -261,13 +261,13 @@ impl Ui {
             self.stop.final_req += 1;
         }
         if running && !self.was_running && self.m.segments > 0 {
-            self.seg_n = 0;
+            self.seg.n = 0;
             self.history.clear();
             self.hist_pos = None;
             if hw_seg {
-                self.seg_run += 1;
-                (self.seg_pos, self.seg_view) = (None, None);
-                self.seg_times.clear();
+                self.seg.run += 1;
+                (self.seg.pos, self.seg.view) = (None, None);
+                self.seg.times.clear();
             }
         }
         // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
@@ -503,14 +503,14 @@ impl Ui {
         take.got += 1;
         self.records += 1;
         if self.m.segments > 0 {
-            self.seg_n += 1;
+            self.seg.n += 1;
             // hardware segments end when the thread has read them all back (`seg_poll`)
-            if !hw_seg && self.seg_n >= self.seg_count() {
+            if !hw_seg && self.seg.n >= self.seg_count() {
                 if self.m.trig_mode == TrigMode::Single {
                     self.scpi_finish_operation(OperationToken::Single(self.single_operation));
                 }
                 self.m.run = RunState::Stop;
-                self.toast(&format!("{} segments recorded", self.seg_n));
+                self.toast(&format!("{} segments recorded", self.seg.n));
                 return true;
             }
         } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {

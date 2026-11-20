@@ -799,14 +799,9 @@ pub struct Ui {
     zone_hw_clear: u64,
     /// the fast path for the queued hardware frames: its trigger statistics, its share of a screen and its times
     pub(crate) fast: acquire::FastPath,
-    /// segmented recording: records since the acquisition started, and whether it ran in the last frame
-    seg_n: usize,
-    /// hardware segments: recording number told to the thread, its state, the segment shown (browsing), the trigger
-    /// times read back
-    seg_run: u64,
-    seg_view: Option<crate::wave::SegView>,
-    seg_pos: Option<usize>,
-    seg_times: Vec<Option<f64>>,
+    /// segmented recording, in software and in the hardware (records.rs)
+    seg: records::Segments,
+    /// the acquisition ran in the last frame
     was_running: bool,
     /// analysers (analysis.rs)
     azr: analysis::State,

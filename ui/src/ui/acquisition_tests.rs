@@ -496,7 +496,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
         ui.step(0.02);
     }
     assert_eq!(ui.m.run, RunState::Run);
-    assert_eq!(ui.seg_view.unwrap().recorded, 40);
+    assert_eq!(ui.seg.view.unwrap().recorded, 40);
     // read back: 100 stamps 10 us apart, the frames went through the queue; done once the queue is empty
     {
         let mut g = shared.lock().unwrap();
@@ -521,7 +521,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     };
     shared.lock().unwrap().seg.shown = Some((98, f));
     ui.step(0.02);
-    assert_eq!(ui.seg_pos, Some(98));
+    assert_eq!(ui.seg.pos, Some(98));
     assert!(ui.last[0].is_some());
     assert!(shared.lock().unwrap().seg.shown.is_none());
     // the table and SCPI have every stamp
@@ -534,7 +534,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     ui.m.run = RunState::Run;
     ui.step(0.02);
     assert_eq!(shared.lock().unwrap().seg.run, 2);
-    assert!(ui.seg_times.is_empty());
+    assert!(ui.seg.times.is_empty());
 }
 
 // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
@@ -587,7 +587,7 @@ fn segment_scpi() {
     q(&mut ui, ":ACQ:SEGM:INT -3");
     q(&mut ui, ":ACQ:SEGM OFF");
     assert_eq!((ui.m.segments, ui.m.seg_ivl), (0, 0.0));
-    ui.seg_times = vec![Some(0.0), None, Some(2e-3)];
+    ui.seg.times = vec![Some(0.0), None, Some(2e-3)];
     assert_eq!(q(&mut ui, ":ACQ:SEGM:TIM?"), "0e0,9.9E37,2e-3");
 }
 /// Fast display path: every queued hardware frame is drawn, the newest also becomes the record.
