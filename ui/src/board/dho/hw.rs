@@ -1113,6 +1113,14 @@ fn run<P: port::Port>(
                     if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
                         last_batch = None;
                     }
+                    // cut by the STOP (`hold`): the FSM still waits armed. New settings disarm it as they configure
+                    // and a view read in STOP as it plays; a STOP that reads nothing again (#24: a whole record) must
+                    // do it here, or the next SINGLE armed a running FSM and never got its record (unit 2026-11-20)
+                    if out.lock().unwrap().hold {
+                        if let Err(e) = seq::disarm(&mut state, &mut bar, &mut c2h, |_| {}) {
+                            status(format!("disarm at STOP: {}", e));
+                        }
+                    }
                 }
                 Err(e) => {
                     if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
