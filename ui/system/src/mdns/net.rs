@@ -82,60 +82,31 @@ fn open(v6: bool) -> io::Result<UdpSocket> {
 /// interface too, for a test on a host), else every one but loopback.
 pub fn interfaces(only: Option<&[String]>) -> Vec<Iface> {
     let mut out: Vec<Iface> = Vec::new();
-    // SAFETY: the list from getifaddrs is read while it is alive and freed once
-    unsafe {
-        let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifa) != 0 {
-            return out;
+    for e in crate::ifaddrs::list() {
+        let wanted = match only {
+            Some(l) => l.contains(&e.name),
+            None => !e.has(libc::IFF_LOOPBACK),
+        };
+        if !wanted || !e.has(libc::IFF_UP) || !e.has(libc::IFF_RUNNING) || !e.has(libc::IFF_MULTICAST) {
+            continue;
         }
-        let mut p = ifa;
-        while !p.is_null() {
-            let a = &*p;
-            p = a.ifa_next;
-            let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-            let f = a.ifa_flags;
-            let flag = |x: i32| f & (x as u32) != 0;
-            let wanted = match only {
-                Some(l) => l.contains(&name),
-                None => !flag(libc::IFF_LOOPBACK),
-            };
-            if !wanted
-                || !flag(libc::IFF_UP)
-                || !flag(libc::IFF_RUNNING)
-                || !flag(libc::IFF_MULTICAST)
-                || a.ifa_addr.is_null()
-            {
-                continue;
-            }
-            let index = libc::if_nametoindex(a.ifa_name);
-            if index == 0 {
-                continue;
-            }
-            let i = match out.iter().position(|i| i.index == index) {
-                Some(i) => i,
-                None => {
-                    out.push(Iface { index, name, v4: None, v6: Vec::new() });
-                    out.len() - 1
-                }
-            };
-            match (*a.ifa_addr).sa_family as i32 {
-                libc::AF_INET if out[i].v4.is_none() => {
-                    let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
-                    let mask = if a.ifa_netmask.is_null() {
-                        0
-                    } else {
-                        u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr)
-                    };
-                    out[i].v4 = Some((Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), Ipv4Addr::from(mask)));
-                }
-                libc::AF_INET6 => {
-                    let sin = &*(a.ifa_addr as *const libc::sockaddr_in6);
-                    out[i].v6.push(Ipv6Addr::from(sin.sin6_addr.s6_addr));
-                }
-                _ => {}
-            }
+        let Some(addr) = e.addr else { continue };
+        let index = e.index;
+        if index == 0 {
+            continue;
         }
-        libc::freeifaddrs(ifa);
+        let i = match out.iter().position(|i| i.index == index) {
+            Some(i) => i,
+            None => {
+                out.push(Iface { index, name: e.name, v4: None, v6: Vec::new() });
+                out.len() - 1
+            }
+        };
+        match addr {
+            IpAddr::V4(a) if out[i].v4.is_none() => out[i].v4 = Some((a, e.netmask.unwrap_or(Ipv4Addr::UNSPECIFIED))),
+            IpAddr::V6(a) => out[i].v6.push(a),
+            IpAddr::V4(_) => {}
+        }
     }
     out.retain(|i| i.v4.is_some() || !i.v6.is_empty());
     out.sort_by_key(|i| i.index);
@@ -144,34 +115,11 @@ pub fn interfaces(only: Option<&[String]>) -> Vec<Iface> {
 
 /// `ipv4_networks`: every IPv4 address of the interfaces that are up, with its netmask.
 pub fn ipv4_all() -> Vec<(Ipv4Addr, Ipv4Addr)> {
-    let mut out = Vec::new();
-    // SAFETY: the list from getifaddrs is read while it is alive and freed once
-    unsafe {
-        let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifa) != 0 {
-            return out;
-        }
-        let mut p = ifa;
-        while !p.is_null() {
-            let a = &*p;
-            p = a.ifa_next;
-            let f = a.ifa_flags;
-            if f & (libc::IFF_LOOPBACK as u32) != 0
-                || f & (libc::IFF_UP as u32) == 0
-                || a.ifa_addr.is_null()
-                || a.ifa_netmask.is_null()
-            {
-                continue;
-            }
-            if (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
-                let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
-                let mask = u32::from_be((*(a.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr);
-                out.push((Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), Ipv4Addr::from(mask)));
-            }
-        }
-        libc::freeifaddrs(ifa);
-    }
-    out
+    crate::ifaddrs::list()
+        .into_iter()
+        .filter(|e| e.has(libc::IFF_UP) && !e.has(libc::IFF_LOOPBACK))
+        .filter_map(|e| Some((e.v4()?, e.netmask?)))
+        .collect()
 }
 
 /// The sockets and the groups joined on them.
