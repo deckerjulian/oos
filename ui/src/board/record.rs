@@ -17,7 +17,10 @@ pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
 }
 
 /// What the trigger's coupling takes off the source `v` before its comparators: with AC or LF-reject the mean (at most
-/// 4096 samples of `v`), else nothing. The trigger level is set from there (`sw_trig_level`, level 50 %).
+/// 4096 samples of `v`), else nothing. The trigger level is set from there (`sw_trig_level`, level 50 %). Verified on
+/// the unit: AC and LF reject remove the DC and their level counts from the filtered signal (trigger.md 2.5,
+/// 2026-11-13); level 50 % from this mean fires on a 0 to 2 V square, from the middle in volts it did not (#279,
+/// 2026-11-20). That the removed part is the mean over the record is assumed.
 pub fn trig_mean(m: &Model, v: &[f32]) -> f32 {
     match m.trig_coupling() {
         TrigCoup::Ac | TrigCoup::LfReject => {
