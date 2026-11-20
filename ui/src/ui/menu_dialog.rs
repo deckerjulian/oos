@@ -870,7 +870,7 @@ impl Ui {
                 cv.text_in(&f.mb, b, 1, t, c);
             }
         }
-        if self.dialog.is_some() && self.sysinfo.is_some() {
+        if self.dialog.is_some() && self.sysinfo.rows.is_some() {
             self.draw_sysinfo(cv);
         } else if let Some(lines) = &self.dialog {
             let scr = self.scr.rect();

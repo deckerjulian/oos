@@ -758,9 +758,8 @@ pub struct Ui {
     stop: acquire::Stop,
     toast: Option<(String, f64)>,
     dialog: Option<Vec<String>>,
-    /// System info page (sysinfo.rs): its rows while open (shown instead of the dialog lines), last refresh
-    sysinfo: Option<[Vec<sysinfo::Row>; 3]>,
-    sysinfo_t: f64,
+    /// System info page (sysinfo.rs)
+    sysinfo: sysinfo::Page,
     touch: TouchState,
     /// what the input keeps between two events: keys and fingers held, knob times, the zone path, the pinch (input.rs)
     input: input::State,

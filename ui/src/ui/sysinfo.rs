@@ -9,6 +9,13 @@
 use super::*;
 use crate::board::{board, Board};
 
+/// The page's state (ADR 0062): its rows while open (shown instead of the dialog lines), and when they were made.
+#[derive(Default)]
+pub(super) struct Page {
+    pub rows: Option<[Vec<Row>; 3]>,
+    pub t: f64,
+}
+
 pub(super) enum Row {
     /// section heading
     Head(String),
@@ -100,8 +107,8 @@ fn temp_col(t: f32, warn: f32, limit: f32) -> Rgb {
 impl Ui {
     /// Opens the page (System > System info).
     pub(super) fn sysinfo_open(&mut self) {
-        self.sysinfo = Some(self.sysinfo_rows());
-        self.sysinfo_t = self.now;
+        self.sysinfo.rows = Some(self.sysinfo_rows());
+        self.sysinfo.t = self.now;
         // the dialog marker: every path that closes a dialog (tap, key) closes the page too
         self.dialog = Some(Vec::new());
     }
@@ -109,10 +116,10 @@ impl Ui {
     /// Per frame: refresh once a second while open; forget the page once its dialog was closed.
     pub(super) fn sysinfo_poll(&mut self) {
         if self.dialog.is_none() {
-            self.sysinfo = None;
-        } else if self.sysinfo.is_some() && self.now - self.sysinfo_t >= 1.0 {
-            self.sysinfo = Some(self.sysinfo_rows());
-            self.sysinfo_t = self.now;
+            self.sysinfo.rows = None;
+        } else if self.sysinfo.rows.is_some() && self.now - self.sysinfo.t >= 1.0 {
+            self.sysinfo.rows = Some(self.sysinfo_rows());
+            self.sysinfo.t = self.now;
         }
     }
 
@@ -251,7 +258,7 @@ impl Ui {
     }
 
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
-        let Some(cols) = &self.sysinfo else { return };
+        let Some(cols) = &self.sysinfo.rows else { return };
         let f = self.fonts();
         let scr = self.scr.rect();
         cv.blend(scr, rgb(0, 0, 0), 140);
@@ -380,8 +387,8 @@ mod tests {
     fn opens_refreshes_and_closes_like_a_dialog() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);
-        assert!(ui.sysinfo.is_some() && ui.dialog.is_some());
-        let rows = ui.sysinfo.as_ref().unwrap();
+        assert!(ui.sysinfo.rows.is_some() && ui.dialog.is_some());
+        let rows = ui.sysinfo.rows.as_ref().unwrap();
         // unit, temperatures, limits; the default platform is the DHO924S with the standard limits
         assert!(rows.iter().all(|c| !c.is_empty()));
         assert!(rows[0].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "Model" && v.contains("DHO924S"))));
@@ -393,7 +400,7 @@ mod tests {
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);
         ui.step(0.02);
-        assert!(ui.dialog.is_none() && ui.sysinfo.is_none());
+        assert!(ui.dialog.is_none() && ui.sysinfo.rows.is_none());
     }
 
     #[test]
