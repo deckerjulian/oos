@@ -832,14 +832,10 @@ pub struct Ui {
     pub frames: u64,
     /// records taken in, for the state line
     pub records: u64,
-    /// auto set-up under way on the hardware (autoset.rs)
-    auto: Option<autoset::AutoRun>,
+    /// the auto set-up under way on the hardware, the bar of views after one, the last `:DEBug:SLOTs?` (autoset.rs)
+    auto: autoset::Auto,
     /// the jobs a remote command can wait for: their numbers and the receipts of the finished ones (scpi_operations.rs)
     ops: scpi_operations::Ledger,
-    /// when the bar of views after an auto set-up came up (ui/autoset.rs)
-    auto_bar: Option<f64>,
-    /// request number of the last `:DEBug:SLOTs?`
-    slot_req: u64,
     pub fps: f32,
     /// acquisitions per second (smoothed)
     pub wfm_rate: f32,
