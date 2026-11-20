@@ -8,6 +8,17 @@
 
 use super::*;
 
+/// Segmented recording (ADR 0062): the records since the acquisition started (in software); for hardware segments the
+/// recording number told to the thread, its state, the segment shown (browsing) and the trigger times read back.
+#[derive(Default)]
+pub(super) struct Segments {
+    pub n: usize,
+    pub run: u64,
+    pub view: Option<crate::wave::SegView>,
+    pub pos: Option<usize>,
+    pub times: Vec<Option<f64>>,
+}
+
 impl Ui {
     /// The last record for the web page, as Storage > CSV writes it. A long record is refused rather than cut: making
     /// the text runs in the frame loop, and a file that looks complete but is not would be worse.
@@ -77,7 +88,7 @@ impl Ui {
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
-            && self.seg_pos.is_none()
+            && self.seg.pos.is_none()
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some())
     }
 
@@ -237,11 +248,11 @@ impl Ui {
     /// Hardware segments: tells the thread about RUN/STOP, takes the times when the read-back is done, stops when every
     /// segment is on the screen, shows a segment asked for.
     pub(super) fn seg_poll(&mut self, running: bool) {
-        let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
-        let was = self.seg_view.map(|x| x.phase);
-        self.seg_view = Some(v);
+        let Some(v) = self.src.seg_sync(self.seg.run, running) else { return };
+        let was = self.seg.view.map(|x| x.phase);
+        self.seg.view = Some(v);
         if v.phase == crate::board::SegPhase::Done && was != Some(crate::board::SegPhase::Done) {
-            self.seg_times = self.src.seg_times();
+            self.seg.times = self.src.seg_times();
             if running && !v.queued {
                 self.m.run = RunState::Stop;
                 self.toast(&format!("{} segments recorded", v.recorded));
@@ -251,7 +262,7 @@ impl Ui {
             self.toast(&format!("{} segments recorded", v.recorded));
         }
         if let Some((k, rec)) = self.src.seg_shown(&self.m) {
-            self.seg_pos = Some(k as usize);
+            self.seg.pos = Some(k as usize);
             self.last[0] = Some(rec);
             self.cleared = false;
             self.measure_last();
@@ -260,8 +271,8 @@ impl Ui {
 
     /// "Segment k/N", the trigger time since the first trigger and the step from the previous segment.
     pub(super) fn seg_label(&self, i: usize) -> String {
-        let n = self.seg_view.map_or(0, |v| v.recorded);
-        let t = |k: usize| self.seg_times.get(k).copied().flatten();
+        let n = self.seg.view.map_or(0, |v| v.recorded);
+        let t = |k: usize| self.seg.times.get(k).copied().flatten();
         let mut s = format!("Segment {}/{}", i + 1, n);
         if let Some(x) = t(i) {
             s += &format!(" \u{b7} {}", si(x, "s"));
@@ -274,7 +285,8 @@ impl Ui {
 
     /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
     pub fn seg_times_text(&self) -> String {
-        self.seg_times
+        self.seg
+            .times
             .iter()
             .map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x)))
             .collect::<Vec<_>>()
@@ -284,7 +296,7 @@ impl Ui {
     /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
     pub(super) fn seg_show(&mut self, i: usize) {
         self.m.run = RunState::Stop;
-        self.seg_pos = Some(i);
+        self.seg.pos = Some(i);
         self.src.seg_request(i as u32);
         self.toast(&self.seg_label(i));
     }
@@ -293,10 +305,10 @@ impl Ui {
     pub(super) fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
         if let Some(v) =
-            self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
+            self.seg.view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
         {
             let n = v.recorded as i32;
-            let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
+            let cur = self.seg.pos.unwrap_or(n as usize - 1) as i32;
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
             return self.seg_show(i as usize);
         }

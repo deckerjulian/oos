@@ -143,7 +143,7 @@ impl Ui {
 
     /// One row per hardware segment read back: time since the first trigger (NaN without a stamp), number, step.
     fn segment_rows(&self) -> Vec<EventRow> {
-        let t = &self.seg_times;
+        let t = &self.seg.times;
         (0..t.len())
             .map(|k| {
                 let d = match (t[k], k.checked_sub(1).and_then(|j| t[j])) {

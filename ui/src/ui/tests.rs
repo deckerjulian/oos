@@ -383,11 +383,11 @@ fn segmented_recording_stops_after_n_records() {
     for _ in 0..20 {
         ui.step(0.02);
     }
-    assert_eq!((ui.m.run, ui.seg_n, ui.history.len()), (RunState::Stop, 10, 10));
+    assert_eq!((ui.m.run, ui.seg.n, ui.history.len()), (RunState::Stop, 10, 10));
     // RUN again: a new set
     ui.key(key::RUNSTOP);
     ui.step(0.02);
-    assert!(ui.seg_n <= 6 && ui.history.len() == ui.seg_n);
+    assert!(ui.seg.n <= 6 && ui.history.len() == ui.seg.n);
 }
 
 #[test]
