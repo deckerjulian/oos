@@ -139,7 +139,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
 
 /// The running state in one line: the `stat` command and `:SYSTem:STATe?`.
 pub fn stat_text(ui: &Ui) -> String {
-    let e = ui.fast_edges;
+    let e = ui.fast.edges;
     let gpu = ui.times.gpu.map_or(String::new(), |t| {
         format!(
             " gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1} read {:.1}) ms",
@@ -172,13 +172,13 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = match ui.src.hw_frames() {
         Some((d, x)) => format!(
             "{} hw frames {} dropped {} fast {:.1} ms (place {:.1} draw {:.1} of it fold {:.1}, {:.0} frames a call) take {} map {}x{}",
-            gpu, d, x, ui.t_fast, ui.t_fast_ab.0, ui.t_fast_ab.1, ui.t_fast_fold, ui.fast_n, ui.fast_take as usize, ui.ph.w, ui.ph.h
+            gpu, d, x, ui.fast.t, ui.fast.t_ab.0, ui.fast.t_ab.1, ui.fast.t_fold, ui.fast.n, ui.fast.take as usize, ui.ph.w, ui.ph.h
         ),
         None => gpu,
     };
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
-        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.times.step, ui.times.acq, ui.times.draw, ui.times.render, ui.times.present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu
+        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.times.step, ui.times.acq, ui.times.draw, ui.times.render, ui.times.present, e[0], e[1], e[2], e[3], ui.fast.off.0, ui.fast.off.1, gpu
     )
 }
 

@@ -799,15 +799,8 @@ pub struct Ui {
     /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter
     zone_hw: Option<crate::board::ZoneRead>,
     zone_hw_clear: u64,
-    /// fast path frames by where the edge of the set direction was: at the hardware trigger point; further away with
-    /// an edge of the other direction at the point (the hardware fired on the wrong edge); further away with no edge at
-    /// the point (the point is off); none found. And the offsets of the last kind in samples: sum, largest
-    /// (`stat`, trigger.md 8)
-    pub fast_edges: [u64; 4],
-    pub fast_off: (f64, f64),
-    /// frames the fast path takes in one screen (`fast_max`), its time in the last screens (ms, smoothed) and that of
-    /// its two phases (placing, drawing; `:SYSTem:STATe?`)
-    pub fast_take: f32,
+    /// the fast path for the queued hardware frames: its trigger statistics, its share of a screen and its times
+    pub(crate) fast: acquire::FastPath,
     /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
     /// records read again (`stop_replay`)
     stop_ti_off: Option<f64>,
@@ -816,13 +809,6 @@ pub struct Ui {
     /// stays `last[0]`, the record measured and read out (`stop_replay`, docs/fork/stop-exact.md)
     stop_raw: Option<Record>,
     stop_pic: Option<Record>,
-    pub t_fast: f32,
-    pub t_fast_ab: (f32, f32),
-    /// of the drawing: adding the collected frames to the maps (ms), frames a call (smoothed)
-    pub t_fast_fold: f32,
-    pub fast_n: f32,
-    /// the fast path's collected differences per channel (`fastdraw::diff_span`), zero between screens
-    acc_t: [Vec<u16>; NCH],
     /// segmented recording: records since the acquisition started, and whether it ran in the last frame
     seg_n: usize,
     /// hardware segments: recording number told to the thread, its state, the segment shown (browsing), the trigger

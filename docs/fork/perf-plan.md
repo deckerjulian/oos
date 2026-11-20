@@ -72,14 +72,14 @@ register writes (posted writes, microseconds per configure; do it only as cleanu
    channels or of a DMA buffer copy, plus a snapshot of the screen mapping (time/div, delay, V/div, offsets, map size,
    trigger level, slope, hysteresis, dots). It deposits every frame into its own u16 maps. The UI takes the maps once
    per screen frame (swap, saturating add, before decay) and keeps only the newest frame for `acquire`. A mapping
-   change bumps a generation counter; stale batches are dropped. Keeps `fast_draw` statistics (`fast_edges`). Per
-   frame on the A72 at 1408 points: about 25 us est, 40k frames/s per core; two A53 workers with private maps add
+   change bumps a generation counter; stale batches are dropped. Keeps `fast_draw` statistics (`FastPath::edges`).
+   Per frame on the A72 at 1408 points: about 25 us est, 40k frames/s per core; two A53 workers with private maps add
    about the same again. Host test: identical maps to the current UI path on a fixture batch.
 2. In the batch loop, `skip(shown - QUEUE_MAX)` before decode, `n` still counts every frame. Superseded by 1 for the
    fast path, still right for the queue.
 3. Search `16 x column + 64` samples around `pre` first; fall back to the half-screen search when nothing is found.
-   Same answer whenever the near search finds an edge with its lead-in intact; the unit's `fast_edges[0]` rate shows
-   the hit ratio. Applies to `fast_draw` and `to_record`.
+   Same answer whenever the near search finds an edge with its lead-in intact; the unit's `FastPath::edges[0]` rate
+   shows the hit ratio. Applies to `fast_draw` and `to_record`.
 4. Sparse frames: refine with `edge_near` (narrow), sinc-interpolate only the screen window (polyphase, fixed taps,
    NEON-friendly), then `draw_ex`. Removes the per-frame `Frame::clone` and the 3600-point record. Default once
    screenshots match `to_record` at 5, 20, 100, 200 ns/div.
@@ -246,10 +246,11 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   `DmaBuf` is a plain heap buffer, the xdma read can target any of them) with the other frames to 2 deposit workers on
   the A53s. Each decodes its share into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and
   draws with `draw_frame` (the body of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per
-  refresh the UI adds the maps and the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older
-  settings and an older mapping drop work, counted. Where the fast path does not apply the hw thread queues every frame
-  as before. Counters acquired / used / dropped: `:SYSTem:STATe?` and `stat` (`pipeline Batch|Off ... acquired .. used
-  .. dropped ..` at the end of the line; `Off` with a source other than the hardware), System info "Frames used".
+  refresh the UI adds the maps and the statistics (`FastPath::edges`, `FastPath::off` cover every frame). Busy
+  workers, older settings and an older mapping drop work, counted. Where the fast path does not apply the hw thread
+  queues every frame as before. Counters acquired / used / dropped: `:SYSTem:STATe?` and `stat` (`pipeline Batch|Off
+  ... acquired .. used .. dropped ..` at the end of the line; `Off` with a source other than the hardware), System info
+  "Frames used".
   Guards: batch picture == `draw_frame` on every frame one by one over the same frames (dense, sparse, dots, 1-2
   channels, split over 2 workers), trigger statistics equal, buffers come back, stale/busy work dropped and counted with
   dropped = fed - taken.

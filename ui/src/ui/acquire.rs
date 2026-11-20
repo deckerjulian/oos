@@ -31,6 +31,42 @@ pub(crate) struct FrameTimes {
     pub parts: [f32; 4],
 }
 
+/// The fast path for the queued hardware frames (`Ui::fast_draw_all`): its trigger statistics, how many frames it
+/// takes in one screen, its times, and its buffers between screens. The `stat` line of the console and
+/// `:SYSTem:STATe?` read them. ADR 0062.
+pub(crate) struct FastPath {
+    /// frames by where the edge of the set direction was: at the hardware trigger point; further away with an edge of
+    /// the other direction at the point (the hardware fired on the wrong edge); further away with no edge at the point
+    /// (the point is off); none found. And the offsets of the last kind in samples: sum, largest (`stat`, trigger.md 8)
+    pub edges: [u64; 4],
+    pub off: (f64, f64),
+    /// frames the fast path takes in one screen (`fast_max`), its time in the last screens (ms, smoothed) and that of
+    /// its two phases (placing, drawing; `:SYSTem:STATe?`)
+    pub take: f32,
+    pub t: f32,
+    pub t_ab: (f32, f32),
+    /// of the drawing: adding the collected frames to the maps (ms), frames a call (smoothed)
+    pub t_fold: f32,
+    pub n: f32,
+    /// the collected differences per channel (`fastdraw::diff_span`), zero between screens
+    acc: [Vec<u16>; NCH],
+}
+
+impl Default for FastPath {
+    fn default() -> FastPath {
+        FastPath {
+            edges: [0; 4],
+            off: (0.0, 0.0),
+            take: crate::board::QUEUE_MAX as f32,
+            t: 0.0,
+            t_ab: (0.0, 0.0),
+            t_fold: 0.0,
+            n: 0.0,
+            acc: Default::default(),
+        }
+    }
+}
+
 /// What a part runs on each frame to take what its thread or its probe has for it.
 type Poll = fn(&mut Ui);
 
@@ -340,19 +376,19 @@ impl Ui {
         take.got += n;
         let ms = t0.elapsed().as_secs_f32() * 1000.0;
         take.td += ms;
-        self.t_fast += 0.05 * (ms - self.t_fast);
+        self.fast.t += 0.05 * (ms - self.fast.t);
         if n > 0 && ms > 0.0 {
             // as many as would have filled the budget at this pace: with a fixed part in each screen's time
             // (starting the helpers) this settles where the time meets the budget. Down only when the budget
             // was exceeded, up only when the take was the limit: the hardware delivers in bursts, and a screen
             // with a few frames says nothing about how many fit
-            self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
+            self.fast.take = fast_take_next(self.fast.take, n, ms, self.fast_budget());
         }
         // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
         if let Some(p) = crate::drawpipe::pipe() {
             let t1 = std::time::Instant::now();
             p.set_view(Some(&self.m), self.ph.w, self.ph.h);
-            let d = p.merge(&mut self.ph, &mut take.clear_pending, &mut self.fast_edges, &mut self.fast_off);
+            let d = p.merge(&mut self.ph, &mut take.clear_pending, &mut self.fast.edges, &mut self.fast.off);
             if d.triggered > 0 {
                 self.m.status = TrigStatus::Triggered;
             }
@@ -425,7 +461,7 @@ impl Ui {
         // the trace flickered with the batch sizes (docs/fork/flicker.md)
         let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
         if let Some(f) = frame {
-            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
+            let stats = crate::drawpipe::Stats { edges: &mut self.fast.edges, off: &mut self.fast.off };
             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
         } else {
             self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
@@ -680,13 +716,13 @@ impl Ui {
     /// Frames the fast path takes in one screen: as many as fit into `fast_budget` at the pace of the last screens.
     /// Beyond that the frame rate would drop (and with it the time the newest frame waits to be seen).
     pub(super) fn fast_max(&self) -> usize {
-        (self.fast_take as usize).clamp(4, crate::board::QUEUE_MAX)
+        (self.fast.take as usize).clamp(4, crate::board::QUEUE_MAX)
     }
 
     /// Time of a screen the fast path may spend (ms): what a frame of the 30 a second (33 ms) leaves after the rest of
     /// the step, drawing and showing the screen, less 2 ms of slack; 5 to 28 ms.
     pub(super) fn fast_budget(&self) -> f32 {
-        let rest = (self.times.step - self.t_fast).max(0.0) + self.times.render + self.times.present;
+        let rest = (self.times.step - self.fast.t).max(0.0) + self.times.render + self.times.present;
         (31.0 - rest).clamp(5.0, 28.0)
     }
 
@@ -829,9 +865,9 @@ impl Ui {
         for (p, f) in placed.iter().zip(&frames) {
             trig += p.triggered as usize;
             if let FastPlan::Raw { class: Some(k), off, .. } = p.plan {
-                self.fast_edges[k] += 1;
+                self.fast.edges[k] += 1;
                 if k == 2 {
-                    self.fast_off = (self.fast_off.0 + off, self.fast_off.1.max(off));
+                    self.fast.off = (self.fast.off.0 + off, self.fast.off.1.max(off));
                 }
             }
             // as the deposit workers (`framestats::fold_frame`): nothing of live-compression pairs (the raw newest
@@ -853,14 +889,14 @@ impl Ui {
         let m = &self.m;
         let on: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on).collect();
         for &c in &on {
-            if self.acc_t[c].len() != w * (h + 1) {
-                self.acc_t[c] = vec![0; w * (h + 1)];
+            if self.fast.acc[c].len() != w * (h + 1) {
+                self.fast.acc[c] = vec![0; w * (h + 1)];
             }
         }
         let bands = if frames.len() < 2 || on.is_empty() { 1 } else { (helpers + 1).div_ceil(on.len()) };
         let band_cols = w.div_ceil(bands).max(1);
         let mut jobs: Vec<(usize, usize, &mut [u16])> = Vec::new();
-        for (c, acc) in self.acc_t.iter_mut().enumerate() {
+        for (c, acc) in self.fast.acc.iter_mut().enumerate() {
             if on.contains(&c) {
                 jobs.extend(acc.chunks_mut(band_cols * (h + 1)).enumerate().map(|(b, band)| (c, b * band_cols, band)));
             }
@@ -886,7 +922,7 @@ impl Ui {
             .ph
             .map
             .iter_mut()
-            .zip(self.acc_t.iter_mut())
+            .zip(self.fast.acc.iter_mut())
             .enumerate()
             .filter(|(c, _)| on.contains(c))
             .map(|(c, (a, b))| (c, a, b))
@@ -895,10 +931,10 @@ impl Ui {
             crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1)
         });
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);
-        self.t_fast_ab.0 += 0.05 * (a - self.t_fast_ab.0);
-        self.t_fast_ab.1 += 0.05 * (b - self.t_fast_ab.1);
-        self.t_fast_fold += 0.05 * (t2.elapsed().as_secs_f32() * 1e3 - self.t_fast_fold);
-        self.fast_n += 0.05 * (frames.len() as f32 - self.fast_n);
+        self.fast.t_ab.0 += 0.05 * (a - self.fast.t_ab.0);
+        self.fast.t_ab.1 += 0.05 * (b - self.fast.t_ab.1);
+        self.fast.t_fold += 0.05 * (t2.elapsed().as_secs_f32() * 1e3 - self.fast.t_fold);
+        self.fast.n += 0.05 * (frames.len() as f32 - self.fast.n);
         trig
     }
 }
@@ -919,7 +955,7 @@ pub enum FastPlan {
     /// sparse views (fewer than 2 samples a column), envelopes, roll and scan: a screen record, drawn as a trace
     /// (made here, so the interpolation is spread over the frames, not the channels)
     Rec(crate::wave::Record),
-    /// dense views: the raw samples with the trigger at sample `ti`; `class`: the `Ui::fast_edges` index (None: the
+    /// dense views: the raw samples with the trigger at sample `ti`; `class`: the `FastPath::edges` index (None: the
     /// source is an LA line), `off`: how far the edge was from the hardware point (class 2); per channel the columns'
     /// spans (None: dots, drawn sample by sample)
     Raw { ti: f64, class: Option<usize>, off: f64, spans: [Option<crate::fastdraw::Spans>; NCH] },

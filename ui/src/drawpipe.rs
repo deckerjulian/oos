@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Trigger statistics of the fast path (`Ui::fast_edges`, `Ui::fast_off`).
+/// Trigger statistics of the fast path (`FastPath::edges`, `FastPath::off`).
 pub struct Stats<'a> {
     pub edges: &'a mut [u64; 4],
     pub off: &'a mut (f64, f64),
@@ -119,7 +119,7 @@ fn dense(
 pub struct Trigger {
     /// the trigger's sample: the refined edge, else the hardware trigger point
     pub ti: f64,
-    /// for the trigger statistics (`Ui::fast_edges`, `Ui::fast_off`): 0 the edge at the hardware point, 1 an edge of
+    /// for the trigger statistics (`FastPath::edges`, `FastPath::off`): 0 the edge at the hardware point, 1 an edge of
     /// the other slope, 2 one elsewhere (with its distance in samples), 3 none; None with an LA line as the source
     pub class: Option<(usize, f64)>,
     pub triggered: bool,
