@@ -580,16 +580,6 @@ enum Drag {
     Scroll(scroll::List, scroll::Grip),
 }
 
-struct Pinch {
-    active: bool,
-    p0: (i32, i32),
-    p1: (i32, i32),
-    ref_dx: i32,
-    ref_dy: i32,
-    area: Rect,
-    detail: bool,
-}
-
 struct TouchState {
     down: bool,
     x0: i32,
@@ -772,11 +762,11 @@ pub struct Ui {
     sysinfo: Option<[Vec<sysinfo::Row>; 3]>,
     sysinfo_t: f64,
     touch: TouchState,
+    /// what the input keeps between two events: keys and fingers held, knob times, the zone path, the pinch (input.rs)
+    input: input::State,
     /// zone being edited in the Zone menu; a "draw" action arms the next drag in the plot (zone, shape)
     zone_sel: usize,
     zone_arm: Option<(usize, bool)>,
-    /// screen path of the zone being drawn
-    zone_path: Vec<(i32, i32)>,
     /// Persistent draw-a-box tool; independent of the corner zoom-display toggle.
     zoom_arm: bool,
     /// screen corners of the zoom box being drawn
@@ -835,7 +825,6 @@ pub struct Ui {
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
-    pinch: Pinch,
     mstat: Vec<MStat>,
     /// past values of each measurement row
     trend: Vec<panes::Trend>,
@@ -861,7 +850,6 @@ pub struct Ui {
     /// files the Import slot picker is showing
     ref_files: Vec<std::path::PathBuf>,
     xy: bool,
-    knob_t: [f64; 16],
     pub now: f64,
     /// the trigger level last seen and when it changed: the level line shows for `LEVEL_LINE_S` after a change (knob,
     /// touch, remote), so the level can be followed while it moves
@@ -936,11 +924,6 @@ pub struct Ui {
     view_pass: bool,
     /// a USB stick is mounted
     usb: bool,
-    /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
-    /// (`panel_key`)
-    ch_hold: Option<(usize, f64, bool)>,
-    /// a finger on the card of a channel that is on, since when (a long touch: AC/DC, as the key)
-    card_hold: Option<(usize, f64)>,
     /// LA probe detect: None = not known (no hardware, not read yet)
     la_probe: Option<bool>,
     usb_check: f64,

@@ -1352,7 +1352,7 @@ impl Ui {
         self.touch.down = false;
         self.touch.held = false;
         self.touch.drag = Drag::None;
-        self.pinch.active = false;
+        self.input.pinch.active = false;
     }
 
     pub(super) fn fit_selected_record(&mut self) -> bool {
