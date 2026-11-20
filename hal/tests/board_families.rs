@@ -7,7 +7,9 @@
 //! `tools/board/<name>/plan-matrix.sh`, the keys of `etc/oos-board` the build and the scripts read, a `bin/oos-board`
 //! that answers every command the common scripts ask, and its row in the table "Board families" of docs/porting.md,
 //! whose family name is the `Target`'s, and the commands of oos-fpgad for it (`fpgad/src/<name>/mod.rs` with its
-//! `run`, brought in and chosen as `board` by `fpgad/src/main.rs`). A row or a `Target` without a folder fails too.
+//! `run`, brought in and chosen as `board` by `fpgad/src/main.rs`), and its folder `hal/src/<name>/` among the paths
+//! that only a run on a unit proves, in each list of them (`UNIT_PATHS`). A row or a `Target` without a folder fails
+//! too.
 
 use oos_hal::target::FAMILIES;
 use std::collections::BTreeSet;
@@ -36,6 +38,18 @@ const KEYS: [&str; 20] = [
     "OOS_OOSDATA_LBA",
     "OOS_OOSDATA_SECTORS",
     "OOS_RIGOL_LBA",
+];
+
+/// The lists of the paths that only a run on a unit proves (AGENTS.md, ADR 0041): the file, the start of the line
+/// that holds the list, and how a folder is written in it. `ui/src/board/`, `fpgad/` and `rootfs/` hold every family
+/// already; a family's folder of hal is named one by one, so `hal/src/update/` and the neutral folders stay apart.
+/// Without its folder in these, a change of a family's register sequences would pass the gate, start no comparison of
+/// the programs for the scope and be offered to an agent as a task without a unit.
+const UNIT_PATHS: [(&str, &str, &str); 4] = [
+    ("tools/pr-gate.sh", "hardware=", "hal/src/{}/|"),
+    ("tools/pr-labels.sh", "hardware=", "hal/src/{}/|"),
+    ("tools/ci-parts.sh", "hal/src/", "hal/src/{}/* |"),
+    ("tools/agent-target.py", "UNIT = ", "\"hal/src/{}/\","),
 ];
 
 /// The states a family can have in docs/porting.md.
@@ -175,6 +189,14 @@ fn missing(name: &str, family: Option<&str>, cmds: &BTreeSet<String>) -> Vec<Str
             out.push(format!("fpgad/src/main.rs: `{}`", line));
         }
     }
+    for (file, start, form) in UNIT_PATHS {
+        let text = read(&t.join(file));
+        let line = text.lines().map(str::trim_start).find(|l| l.starts_with(start) && l.contains("hal/src/update/"));
+        let path = form.replace("{}", name);
+        if !line.is_some_and(|l| l.contains(&path)) {
+            out.push(format!("{}: `{}` in the paths only a unit proves", file, path));
+        }
+    }
     let matrix = format!("tools/board/{}/plan-matrix.sh", name);
     if !t.join(&matrix).is_file() {
         out.push(format!("{}: its matrix of register sequences (tools/plan-matrix.sh)", matrix));
@@ -234,6 +256,18 @@ fn a_case_branch_is_an_answer() {
     assert!(answers(s, "late"));
     assert!(!answers(s, "bring-up"));
     assert!(!answers(s, "usage"));
+}
+
+/// Break it catches: a second family whose folder of hal is in none of the lists of the paths only a unit proves.
+#[test]
+fn a_family_outside_the_unit_paths_is_named() {
+    let out = missing("nofamily", None, &BTreeSet::new());
+    for (file, _, form) in UNIT_PATHS {
+        let want = format!("{}: `{}` in the paths only a unit proves", file, form.replace("{}", "nofamily"));
+        assert!(out.contains(&want), "not named: {}\n{}", want, out.join("\n"));
+    }
+    let dho = missing("dho", None, &BTreeSet::new());
+    assert!(!dho.iter().any(|m| m.contains("only a unit proves")), "{:?}", dho);
 }
 
 /// The family that each `pub const NAME` of hal/src/target.rs takes its value from (`crate::<family>::...`), in order.
