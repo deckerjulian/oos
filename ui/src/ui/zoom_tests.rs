@@ -58,10 +58,10 @@ fn corner_magnifier_toggles_display_and_keeps_distinct_touch_targets() {
     let (win, win_hit) = ui.win_btn();
     assert!(!overlaps(zoom, win) && !overlaps(hit, win_hit));
     tap(&mut ui, hit);
-    assert!(ui.m.zoom && !ui.zoom_arm && !ui.full);
+    assert!(ui.m.zoom && !ui.zoom_box.arm && !ui.full);
     let hit = ui.zoom_btn().1;
     tap(&mut ui, hit);
-    assert!(!ui.m.zoom && !ui.zoom_arm);
+    assert!(!ui.m.zoom && !ui.zoom_box.arm);
     ui.m.zscale = before.zscale;
     ui.m.zdelay = before.zdelay;
     assert_eq!(ui.m, before);
@@ -75,26 +75,26 @@ fn repeated_boxes_magnify_both_axes_and_tap_menu_escape_cancel_only_drawing_firs
     let source = (ui.refs[0].as_ref().unwrap().vpd, ui.refs[0].as_ref().unwrap().offset);
     let main = (ui.m.tscale, ui.m.tfine, ui.m.delay);
     control(&mut ui, "Box");
-    assert!(ui.zoom_arm);
+    assert!(ui.zoom_box.arm);
     let a = ui.wave_area();
     let old = ui.view().0;
     drag(&mut ui, (a.x + a.w / 4, a.y + a.h / 4), (a.x + a.w / 2, a.y + 3 * a.h / 4));
-    assert!(ui.m.zoom && ui.zoom_arm && ui.view().0 < old);
+    assert!(ui.m.zoom && ui.zoom_box.arm && ui.view().0 < old);
     assert!((ui.zoom_vfactor - 2.0).abs() < 0.02);
     let first = ui.zoom_vfactor;
     let a = ui.wave_area();
     drag(&mut ui, (a.x + a.w / 4, a.y + a.h / 4), (a.x + a.w / 2, a.y + 3 * a.h / 4));
-    assert!(ui.zoom_arm && ui.zoom_vfactor > first);
+    assert!(ui.zoom_box.arm && ui.zoom_vfactor > first);
     let a = ui.wave_area();
     tap(&mut ui, Rect::new(a.x + 80, a.y + 80, 2, 2));
-    assert!(ui.m.zoom && !ui.zoom_arm);
+    assert!(ui.m.zoom && !ui.zoom_box.arm);
     control(&mut ui, "Box");
     ui.open_menu(MenuId::Cursor);
-    assert!(!ui.zoom_arm && ui.m.zoom);
+    assert!(!ui.zoom_box.arm && ui.m.zoom);
     ui.close_menu();
     control(&mut ui, "Box");
     ui.dismiss_context();
-    assert!(!ui.zoom_arm && ui.m.zoom);
+    assert!(!ui.zoom_box.arm && ui.m.zoom);
     ui.dismiss_context();
     assert!(!ui.m.zoom);
     assert_eq!((ui.m.tscale, ui.m.tfine, ui.m.delay), main);
@@ -419,7 +419,7 @@ fn fit_record_recovers_selected_reference_time_and_voltage_without_changing_trig
     let trigger = ui.m.trigger();
     let channels = ui.m.ch.clone();
     assert!(ui.fit_selected_record());
-    assert!(!ui.m.zoom && !ui.zoom_arm);
+    assert!(!ui.m.zoom && !ui.zoom_box.arm);
     let record = ui.refs[0].as_ref().unwrap();
     assert_eq!((record.v.as_ptr(), record.v.len(), record.dt, record.t0), metadata);
     assert!(record.vpd < 10.0 && record.offset.abs() < 0.01);
@@ -479,7 +479,7 @@ fn close_corner_and_escape_remain_closed_with_histogram_box_and_overlapping_summ
                 ui.m.ch[0].offset = -20.81701;
                 ui.m.delay = 819.2e-9;
                 ui.set_zoom(true);
-                ui.zoom_arm = armed;
+                ui.zoom_box.arm = armed;
                 let close = ui.zoom_close();
                 ui.stats_on = true;
                 ui.workspace.measure_float = Some((close.x - 10, close.y));
@@ -497,7 +497,7 @@ fn close_corner_and_escape_remain_closed_with_histogram_box_and_overlapping_summ
                         ui.dismiss_context();
                     }
                 }
-                assert!(!ui.m.zoom && !ui.zoom_arm, "exit{exit},armed{armed},running{running}");
+                assert!(!ui.m.zoom && !ui.zoom_box.arm, "exit{exit},armed{armed},running{running}");
                 assert_eq!((ui.records, ui.replay.captures), counters);
                 assert_eq!(ui.m.trigger(), trigger);
                 assert_eq!(ui.m.run, mode);

@@ -8,6 +8,24 @@
 
 use super::*;
 
+/// The zoom box (ADR 0062): the tool armed to draw boxes (persistent, independent of the corner zoom-display toggle),
+/// the screen corners of the box being drawn (`path`) and the waveform rectangle and time base it started in (`map`:
+/// rect, s/div, delay).
+#[derive(Default)]
+pub(super) struct ZoomBox {
+    pub arm: bool,
+    pub path: Vec<(i32, i32)>,
+    pub map: Option<(Rect, f32, f32)>,
+}
+
+impl ZoomBox {
+    /// Disarmed, and no box drawn.
+    pub fn cancel(&mut self) {
+        (self.arm, self.map) = (false, None);
+        self.path.clear();
+    }
+}
+
 impl Ui {
     /// Measurement results in a panel on the right instead of the strip under the grid.
     pub(super) fn results_panel(&self) -> bool {
@@ -427,15 +445,15 @@ impl Ui {
 
     /// The box while a zoom-area drag is in progress.
     pub(super) fn draw_zoom_box(&self, cv: &mut Canvas) {
-        if self.touch.drag != Drag::ZoomBox || self.zoom_path.len() != 2 {
+        if self.touch.drag != Drag::ZoomBox || self.zoom_box.path.len() != 2 {
             return;
         }
-        let ((x0, y0), (x1, y1)) = (self.zoom_path[0], self.zoom_path[1]);
+        let ((x0, y0), (x1, y1)) = (self.zoom_box.path[0], self.zoom_box.path[1]);
         let (w, h) = ((x1 - x0).abs(), (y1 - y0).abs());
         if w < 2 && h < 2 {
             return;
         }
-        cv.set_clip(self.zoom_map.map_or(self.grid, |map| map.0));
+        cv.set_clip(self.zoom_box.map.map_or(self.grid, |map| map.0));
         cv.rect(Rect::new(x0.min(x1), y0.min(y1), w.max(1), h.max(1)), ACCENT);
         cv.no_clip();
     }
@@ -469,8 +487,8 @@ impl Ui {
             self.toast("Not on this view");
             return;
         }
-        self.zoom_arm = !self.zoom_arm;
-        if self.zoom_arm {
+        self.zoom_box.arm = !self.zoom_box.arm;
+        if self.zoom_box.arm {
             self.zone_arm = None;
             self.toast("Drag a box to zoom");
         }
@@ -716,9 +734,7 @@ impl Ui {
             self.zoom_saved = None;
         }
         self.m.zoom = on;
-        self.zoom_arm = false;
-        self.zoom_path.clear();
-        self.zoom_map = None;
+        self.zoom_box.cancel();
         self.relayout();
     }
 
@@ -750,8 +766,8 @@ impl Ui {
         btn(cv, reset, BTN, BTN_BORDER);
         cv.text_in(&f.sb, reset, 1, "Reset", TEXT);
         for (rect, text) in controls {
-            btn(cv, rect, if text == "Box" && self.zoom_arm { ACCENT } else { BTN }, BTN_BORDER);
-            cv.text_in(&f.sb, rect, 1, text, if text == "Box" && self.zoom_arm { DARK_TEXT } else { TEXT });
+            btn(cv, rect, if text == "Box" && self.zoom_box.arm { ACCENT } else { BTN }, BTN_BORDER);
+            cv.text_in(&f.sb, rect, 1, text, if text == "Box" && self.zoom_box.arm { DARK_TEXT } else { TEXT });
         }
     }
 
@@ -792,7 +808,7 @@ impl Ui {
         self.m.zdelay = self.m.delay;
         self.zoom_vfactor = 1.0;
         self.zoom_vcenter = 0.0;
-        self.zoom_arm = false;
+        self.zoom_box.arm = false;
         self.clamp_zoom();
         self.settings_changed();
     }

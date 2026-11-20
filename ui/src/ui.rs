@@ -767,12 +767,8 @@ pub struct Ui {
     /// zone being edited in the Zone menu; a "draw" action arms the next drag in the plot (zone, shape)
     zone_sel: usize,
     zone_arm: Option<(usize, bool)>,
-    /// Persistent draw-a-box tool; independent of the corner zoom-display toggle.
-    zoom_arm: bool,
-    /// screen corners of the zoom box being drawn
-    zoom_path: Vec<(i32, i32)>,
-    /// waveform rectangle and time base the zoom box started in: (rect, s/div, delay)
-    zoom_map: Option<(Rect, f32, f32)>,
+    /// the zoom box: armed, and the one being drawn (plot_layout.rs)
+    zoom_box: plot_layout::ZoomBox,
     /// records dropped by the zone condition
     zone_drops: u64,
     /// the zone unit (hwzone.rs): latest reading, and a number raised to clear its counter

@@ -1098,13 +1098,13 @@ impl Ui {
             Action::Menu(MenuId::La) => self.key(key::LA),
             Action::Menu(menu) => self.open_menu(menu),
             Action::ZoomReset => {
-                self.zoom_arm = false;
-                self.zoom_path.clear();
+                self.zoom_box.arm = false;
+                self.zoom_box.path.clear();
                 self.reset_zoom();
             }
             Action::ZoomClose => {
-                self.zoom_arm = false;
-                self.zoom_path.clear();
+                self.zoom_box.arm = false;
+                self.zoom_box.path.clear();
                 self.set_zoom(false);
             }
             Action::FitRecord => {
@@ -1333,12 +1333,10 @@ impl Ui {
             self.cancel_load_slot();
             return;
         }
-        let was_drawing = self.zoom_arm;
+        let was_drawing = self.zoom_box.arm;
         self.workspace.popup = None;
         self.workspace.gesture = None;
-        self.zoom_arm = false;
-        self.zoom_path.clear();
-        self.zoom_map = None;
+        self.zoom_box.cancel();
         self.touch.down = false;
         self.touch.drag = Drag::None;
         if self.menu_open {
@@ -1416,8 +1414,6 @@ impl Ui {
         self.m.pane = 0;
         self.m.win_layout = WinLayout::One;
         self.m.density = if self.full_on() { Density::Full } else { Density::Scope };
-        self.zoom_arm = false;
-        self.zoom_path.clear();
-        self.zoom_map = None;
+        self.zoom_box.cancel();
     }
 }

@@ -9,9 +9,7 @@ use super::*;
 
 impl Ui {
     pub(super) fn open_menu(&mut self, id: MenuId) {
-        self.zoom_arm = false;
-        self.zoom_path.clear();
-        self.zoom_map = None;
+        self.zoom_box.cancel();
         self.menu = id;
         self.menu_open = true;
         self.parent = None;
