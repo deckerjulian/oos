@@ -469,6 +469,13 @@ impl Unit {
         self.t_fs / US
     }
 
+    /// Lets `us` of virtual time pass while the code under test does not touch the unit (a test's stand-in for the
+    /// host's own work, such as decoding a batch): what was armed records on. Not a wait, so not in `slept_us`.
+    pub fn pass_us(&mut self, us: u64) {
+        self.t_fs += us as i128 * US;
+        self.advance();
+    }
+
     /// The trigger time of frame `k` of the ring, fs, when it was recorded.
     pub fn trigger_fs(&self, k: u32) -> Option<i128> {
         self.ring.get(&k).copied()
