@@ -115,11 +115,22 @@ fn switching_the_web_remote_off_drops_the_answers_that_wait() {
 
 #[test]
 fn identification_names_custom_hislip_port_without_advertising_the_default() {
-    let xml = lxi_identification(&Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(14880) });
+    let xml = lxi_identification(&Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(14880) }, "DHO924S");
     assert!(xml.contains("TCPIP::hislip0,14880::INSTR"), "{xml}");
     assert!(!xml.contains("TCPIP::hislip0::INSTR"), "{xml}");
-    let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false, hislip_port: None });
+    let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false, hislip_port: None }, "DHO924S");
     assert!(!closed.contains("InstrumentAddressString"), "{closed}");
+}
+
+// Break it catches: the identification named every unit a DHO924S (#205); a DHO804 answered so on LXI discovery.
+#[test]
+fn identification_names_the_units_model() {
+    let offer = Offer { scpi_port: Some(5555), vxi11: true, hislip_port: None };
+    let xml = lxi_identification(&offer, "DHO804");
+    assert!(xml.contains("<Model>DHO804</Model>") && !xml.contains("DHO924S"), "{xml}");
+    assert!(xml.contains("<SerialNumber>0</SerialNumber>"), "the serial stays out: {xml}");
+    let odd = lxi_identification(&offer, "A<B&C");
+    assert!(odd.contains("<Model>A&lt;B&amp;C</Model>"), "{odd}");
 }
 
 #[test]

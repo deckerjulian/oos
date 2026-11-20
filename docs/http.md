@@ -188,9 +188,9 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Mark: **stable**
 - Request: nothing.
 - Answer: 200 `text/xml`, the LXI identification (LXI Device Specification 2011, 10.2; `lxi_identification`):
-  manufacturer `OOS`, model `DHO924S`, serial number `0`, firmware `oos-ui <version>`, and an instrument address per
-  service offered: `TCPIP::INSTR` (VXI-11), `TCPIP::<port>::SOCKET` (the SCPI socket), `TCPIP::hislip0[,<port>]::INSTR`
-  (HiSLIP). LXI version 1.5.
+  manufacturer `OOS`, the unit's model as `*IDN?` names it (before 0.1.15 always `DHO924S`), serial number `0`,
+  firmware `oos-ui <version>`, and an instrument address per service offered: `TCPIP::INSTR` (VXI-11),
+  `TCPIP::<port>::SOCKET` (the SCPI socket), `TCPIP::hislip0[,<port>]::INSTR` (HiSLIP). LXI version 1.5.
 - net.allow: no.
 
 ### `POST /mcp`
