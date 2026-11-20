@@ -424,8 +424,7 @@ impl Ui {
             )
         } else {
             let result = self.math_record(k);
-            let rec = result.as_ref().ok().and_then(|w| w.as_ref());
-            if rec.is_none() {
+            let Some(rec) = result.as_ref().ok().and_then(|w| w.as_ref()) else {
                 cv.no_clip();
                 let status = match result {
                     Err(e) => e,
@@ -433,8 +432,7 @@ impl Ui {
                 };
                 cv.text(&f.s, self.area.x + 60, self.area.y + 40 + 18 * row, &format!("M{}: {}", k + 1, status), col);
                 return None;
-            }
-            let rec = rec.unwrap();
+            };
             let w = rec.v.as_ref();
             let sc = math_scales();
             let vpd = sc[c.scale.min(sc.len() - 1)] as f32;

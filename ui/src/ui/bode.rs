@@ -111,7 +111,8 @@ pub fn free_plan(m: &Model, sw: &bode::Sweep) -> Result<FreePlan, String> {
         }
     }
     let Some(i) = pick(sw.time * 1.02 / 5.0) else {
-        return Err(format!("Sweep time too long: at most {}", si_short(*ts.last().unwrap() as f64 * 5.0 / 1.02, "s")));
+        let longest = ts.last().map_or(0.0, |&t| t as f64);
+        return Err(format!("Sweep time too long: at most {}", si_short(longest * 5.0 / 1.02, "s")));
     };
     (c.tscale, c.delay, c.mdepth) = (i, 0.0, 0);
     Ok(FreePlan { tscale: i, delay: 0.0, mdepth: 0, scan: board().slow_mode(&c) != crate::board::Slow::Off })

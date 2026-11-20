@@ -499,8 +499,8 @@ impl<U: Send + 'static> Http<U> {
 
     /// Answers the waveform upload whose parsing has finished.
     fn finish_wave<S: Site<Upload = U>>(&mut self, site: &mut S) {
-        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(site)) {
-            let job = self.wave.take().unwrap();
+        let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(site)) else { return };
+        if let Some(job) = self.wave.take() {
             let status = if ok { "200 OK" } else { "409 Conflict" };
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\

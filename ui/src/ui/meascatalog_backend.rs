@@ -219,24 +219,28 @@ impl Ui {
                     (
                         {
                             let pointer = values.as_ptr() as usize;
-                            if state.small.iter().all(|(id, p, capture, generation, _)| {
-                                *id != WaveId::Ch(c)
-                                    || *p != pointer
-                                    || *capture != self.wfm_total
-                                    || *generation != state.stats_epoch
-                            }) {
-                                state.small.retain(|(id, _, _, _, _)| *id != WaveId::Ch(c));
-                                state.small.push((
-                                    WaveId::Ch(c),
-                                    pointer,
-                                    self.wfm_total,
-                                    state.stats_epoch,
-                                    Arc::new(values.clone()),
-                                ));
-                            }
-                            Samples::Small(Arc::clone(
-                                &state.small.iter().find(|(id, _, _, _, _)| *id == WaveId::Ch(c)).unwrap().4,
-                            ))
+                            let kept = state.small.iter().find(|(id, p, capture, generation, _)| {
+                                *id == WaveId::Ch(c)
+                                    && *p == pointer
+                                    && *capture == self.wfm_total
+                                    && *generation == state.stats_epoch
+                            });
+                            let small = match kept {
+                                Some(entry) => Arc::clone(&entry.4),
+                                None => {
+                                    let copy = Arc::new(values.clone());
+                                    state.small.retain(|(id, _, _, _, _)| *id != WaveId::Ch(c));
+                                    state.small.push((
+                                        WaveId::Ch(c),
+                                        pointer,
+                                        self.wfm_total,
+                                        state.stats_epoch,
+                                        Arc::clone(&copy),
+                                    ));
+                                    copy
+                                }
+                            };
+                            Samples::Small(small)
                         },
                         values.len(),
                         self.source_time_origin(id, record.t0),

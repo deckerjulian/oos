@@ -79,8 +79,8 @@ impl Fonts {
         let count = u16le(b, 4) as usize;
         assert_eq!(count, 7);
         let mut o = 6;
-        let mut v = Vec::new();
-        for _ in 0..count {
+        // the seven sizes one after the other, in the order of the fields
+        let [s, sb, m, mb, l, lb, xl] = std::array::from_fn(|_| {
             let size = u16le(b, o) as i32;
             // o + 2: the ascent, not used; o + 4: the descent, for the layout tests
             #[cfg(test)]
@@ -103,17 +103,15 @@ impl Fonts {
             }
             let alpha = &b[o..o + alen];
             o += alen;
-            v.push(Font {
+            Font {
                 size,
                 #[cfg(test)]
                 descent,
                 glyphs,
                 alpha,
-            });
-        }
-        let mut it = v.into_iter();
-        let mut next = || it.next().unwrap();
-        Fonts { s: next(), sb: next(), m: next(), mb: next(), l: next(), lb: next(), xl: next() }
+            }
+        });
+        Fonts { s, sb, m, mb, l, lb, xl }
     }
 }
 

@@ -244,7 +244,8 @@ pub fn par_each<T: Send>(helpers: usize, items: Vec<T>, f: impl Fn(T) + Sync) {
     }
     let q = std::sync::Mutex::new(items.into_iter());
     together(n, || loop {
-        let Some(x) = q.lock().unwrap().next() else { return };
+        // poisoned only when `next` panicked on another worker, whose panic the scope passes on
+        let Some(x) = q.lock().ok().and_then(|mut q| q.next()) else { return };
         f(x);
     });
 }

@@ -213,9 +213,9 @@ const CONNECTOR_DSI: u32 = 16;
 /// a type and a length (u32 each) and their data.
 fn flip_events(buf: &[u8]) -> u32 {
     let (mut at, mut n) = (0, 0);
-    while at + 8 <= buf.len() {
-        let typ = u32::from_ne_bytes(buf[at..at + 4].try_into().unwrap());
-        let len = u32::from_ne_bytes(buf[at + 4..at + 8].try_into().unwrap()) as usize;
+    while let Some(h) = buf.get(at..at + 8) {
+        let typ = u32::from_ne_bytes([h[0], h[1], h[2], h[3]]);
+        let len = u32::from_ne_bytes([h[4], h[5], h[6], h[7]]) as usize;
         if len < 8 {
             break;
         }
@@ -227,7 +227,7 @@ fn flip_events(buf: &[u8]) -> u32 {
 
 impl Display {
     pub fn open(path: &str) -> io::Result<Display> {
-        let c = CString::new(path).unwrap();
+        let c = CString::new(path).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -531,7 +531,8 @@ impl Display {
         }
         let back = self.free();
         let b = &self.bufs[back];
-        let fit = self.fit.as_ref().unwrap();
+        // made just above when there was none
+        let Some(fit) = self.fit.as_ref() else { return };
         let stride = (b.pitch / 4) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(b.map, b.size / 4) };
         fit.scale(&cv.px, dst, stride);

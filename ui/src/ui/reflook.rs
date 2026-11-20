@@ -493,8 +493,8 @@ impl Ui {
     }
 
     pub(super) fn draw_meas_cfg(&self, cv: &mut Canvas) {
-        let Some(g) = self.cfg_geom() else { return };
-        let index = self.meas_cfg.unwrap() as usize;
+        let (Some(g), Some(index)) = (self.cfg_geom(), self.meas_cfg) else { return };
+        let index = index as usize;
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
         let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
         let f = &self.fonts();
