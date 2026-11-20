@@ -3,9 +3,10 @@
 
 //! Line codes, logic, FIR, and 4-level slicing used by math channels, measurements and the decoder.
 
-use crate::decode::{Kind, Packet};
+use crate::decode::{opt_baud, Kind, Packet};
 use crate::edges::edges;
 use crate::eye;
+use crate::protocols::ModuleInfo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gate {
@@ -29,7 +30,11 @@ pub fn fir_lowpass(a: &[f32], dt: f64, fc: f64) -> Vec<f32> {
     let mut s = 0.0;
     for (k, tap) in h.iter_mut().enumerate() {
         let x = k as f64 - mid;
-        let sinc = if x.abs() < 1e-12 { 2.0 * f } else { (2.0 * f * x * std::f64::consts::PI).sin() / (std::f64::consts::PI * x) };
+        let sinc = if x.abs() < 1e-12 {
+            2.0 * f
+        } else {
+            (2.0 * f * x * std::f64::consts::PI).sin() / (std::f64::consts::PI * x)
+        };
         let w = 0.54 - 0.46 * (2.0 * std::f64::consts::PI * k as f64 / (m - 1) as f64).cos();
         *tap = sinc * w;
         s += *tap;
@@ -103,7 +108,11 @@ pub fn gate(a: &[f32], b: &[f32], g: Gate) -> Vec<f32> {
                 Gate::Nand => !(p && q),
                 Gate::Nor => !(p || q),
             };
-            if o { 1.0 } else { 0.0 }
+            if o {
+                1.0
+            } else {
+                0.0
+            }
         })
         .collect()
 }
@@ -139,8 +148,11 @@ pub fn pam4_levels(f: &[f32], vmin: f32, vmax: f32) -> [f64; 4] {
     for q in 0..4 {
         let (a, b) = (q * 64, (q + 1) * 64);
         let i = (a..b).max_by_key(|&i| hist[i]).unwrap_or(a);
-        out[q] = if hist[i] == 0 { f64::NAN }
-            else { (vmin as f64 + span as f64 * (i as f64 + 0.5) / 255.0).clamp(vmin as f64, vmax as f64) };
+        out[q] = if hist[i] == 0 {
+            f64::NAN
+        } else {
+            (vmin as f64 + span as f64 * (i as f64 + 0.5) / 255.0).clamp(vmin as f64, vmax as f64)
+        };
     }
     out
 }
@@ -232,23 +244,12 @@ pub fn prbs11(n: usize) -> Vec<bool> {
 }
 
 pub fn mac_text(hi32: u32, lo16: u32) -> String {
-    let b = [
-        (hi32 >> 24) as u8,
-        (hi32 >> 16) as u8,
-        (hi32 >> 8) as u8,
-        hi32 as u8,
-        (lo16 >> 8) as u8,
-        lo16 as u8,
-    ];
+    let b = [(hi32 >> 24) as u8, (hi32 >> 16) as u8, (hi32 >> 8) as u8, hi32 as u8, (lo16 >> 8) as u8, lo16 as u8];
     format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", b[0], b[1], b[2], b[3], b[4], b[5])
 }
 
 pub fn ip_text(v: u32) -> String {
     format!("{}.{}.{}.{}", v >> 24, (v >> 16) & 255, (v >> 8) & 255, v & 255)
-}
-
-fn pkt(t0: f64, t1: f64, kind: Kind, value: u32, value2: Option<u32>, ok: bool) -> Packet {
-    Packet { t0, t1, kind, value, value2, ok }
 }
 
 fn bits_to_bytes(bits: &[(f64, bool)]) -> Vec<(f64, f64, u8)> {
@@ -280,21 +281,26 @@ fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
     let t1 = bytes[i + 6].1;
     let dst_hi = b(0) << 24 | b(1) << 16 | b(2) << 8 | b(3);
     let dst_lo = b(4) << 8 | b(5);
-    out.push(pkt(t0, t1, Kind::Field("MAC"), dst_hi, Some(dst_lo), true));
+    out.push(Packet::field("MAC", t0, t1, dst_hi, true).with_value2(dst_lo));
     let s0 = bytes[i + 7].0;
     let s1 = bytes[i + 12].1;
     let src_hi = b(6) << 24 | b(7) << 16 | b(8) << 8 | b(9);
     let src_lo = b(10) << 8 | b(11);
-    out.push(pkt(s0, s1, Kind::Field("SRC"), src_hi, Some(src_lo), true));
+    out.push(Packet::field("SRC", s0, s1, src_hi, true).with_value2(src_lo));
     let et = (b(12) << 8 | b(13)) as u16;
-    out.push(pkt(bytes[i + 13].0, bytes[i + 14].1, Kind::Field("TYPE"), et as u32, None, true));
+    out.push(Packet::field("TYPE", bytes[i + 13].0, bytes[i + 14].1, et as u32, true));
     if et == 0x0800 && i + 35 < bytes.len() {
         let sip = b(26) << 24 | b(27) << 16 | b(28) << 8 | b(29);
         let dip = b(30) << 24 | b(31) << 16 | b(32) << 8 | b(33);
-        out.push(pkt(bytes[i + 27].0, bytes[i + 30].1, Kind::Field("IP"), sip, None, true));
-        out.push(pkt(bytes[i + 31].0, bytes[i + 34].1, Kind::Field("DIP"), dip, None, true));
+        out.push(Packet::field("IP", bytes[i + 27].0, bytes[i + 30].1, sip, true));
+        out.push(Packet::field("DIP", bytes[i + 31].0, bytes[i + 34].1, dip, true));
     }
 }
+
+/// Manchester (IEEE 802.3) on one line.
+pub static MANCHESTER: ModuleInfo = ModuleInfo::new("Manchester", "Manchester", "linecode")
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(manchester(l.main(), l.dt, opt_baud(&l.opt, 0), l.thr, l.hy)));
 
 /// IEEE 802.3 Manchester: a 1 is low→high in the bit cell (mid-cell rising). `bitrate` 0 = from the edge spacings.
 pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<Packet> {
@@ -303,11 +309,7 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
         return Vec::new();
     }
     let spacings: Vec<f64> = e.windows(2).map(|w| (w[1].t - w[0].t) * dt).collect();
-    let half = if bitrate > 0.0 {
-        0.5 / bitrate
-    } else {
-        eye::unit_interval(&spacings).unwrap_or(0.0)
-    };
+    let half = if bitrate > 0.0 { 0.5 / bitrate } else { eye::unit_interval(&spacings).unwrap_or(0.0) };
     if !(half > dt) {
         return Vec::new();
     }
@@ -333,10 +335,15 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
     let b = if e.len() > 1 { decode_from(1) } else { Vec::new() };
     let bits = if b.len() > a.len() { b } else { a };
     let bytes = bits_to_bytes(&bits);
-    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| pkt(s, e, Kind::Data, v as u32, None, true)).collect();
+    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
     ethernet_fields(&bytes, &mut out);
     out
 }
+
+/// MLT-3 on one line.
+pub static MLT3: ModuleInfo = ModuleInfo::new("Mlt3", "MLT-3", "linecode")
+    .bit(|opt, _| 1.0 / opt_baud(opt, 0))
+    .decoder(|l| Ok(mlt3(l.main(), l.dt, opt_baud(&l.opt, 0), l.thr, l.hy)));
 
 /// MLT-3: cycling −A / 0 / +A; every change of level is a 1, a hold is a 0. The line is sliced to its three levels
 /// with two comparators at ±A/2 around the middle of its outer levels (the 1st and 99th percentile), each with the
@@ -382,7 +389,7 @@ pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, _thr: f32, hyst: f32) -> Vec<Packe
         t += ui;
     }
     let bytes = bits_to_bytes(&bits);
-    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| pkt(s, e, Kind::Data, v as u32, None, true)).collect();
+    let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
     ethernet_fields(&bytes, &mut out);
     out
 }
@@ -397,7 +404,10 @@ mod tests {
             let lo = samples.iter().copied().fold(f32::INFINITY, f32::min);
             let hi = samples.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let levels = pam4_levels(&samples, lo, hi);
-            assert!(levels.iter().filter(|level| level.is_finite()).all(|level| (lo as f64..=hi as f64).contains(level)));
+            assert!(levels
+                .iter()
+                .filter(|level| level.is_finite())
+                .all(|level| (lo as f64..=hi as f64).contains(level)));
             assert_eq!(levels[3], hi as f64);
             let occupied: Vec<f64> = levels.into_iter().filter(|level| level.is_finite()).collect();
             assert!(occupied.windows(2).all(|pair| pair[0] <= pair[1]));

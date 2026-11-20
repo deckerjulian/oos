@@ -15,6 +15,14 @@ const HOLD_WARN: f64 = 5.0;
 /// Without a new line for this long (a hung mount or driver load) a tap leaves the screen.
 const STALL_S: f64 = 60.0;
 
+/// The start-up as the screen shows it (ADR 0062): the start-up screen while it is up, and the last start-up's result
+/// (System > About).
+#[derive(Default)]
+pub(super) struct StartUp {
+    pub screen: Option<StartScreen>,
+    pub last: Option<View>,
+}
+
 pub struct StartScreen {
     pub view: View,
     /// uptime at the last update (the running stage's clock)
@@ -41,14 +49,15 @@ impl Ui {
     /// Shows the start-up screen until the file says the start-up is complete.
     pub fn start_up_begin(&mut self, splash: Option<Vec<u32>>) {
         let version = version_line(std::fs::read_to_string("/etc/oos-build").ok().as_deref());
-        self.start_up = Some(StartScreen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
+        self.start_up.screen =
+            Some(StartScreen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
     }
 
     /// The start-up file's text and the current uptime. A file that is complete at the first update (oos-ui restarted
     /// later in the boot) shows no screen.
     pub fn start_up_update(&mut self, text: &str, uptime: f64) {
         let now = self.now;
-        let Some(s) = self.start_up.as_mut() else { return };
+        let Some(s) = self.start_up.screen.as_mut() else { return };
         let first = s.view == View::default() && s.uptime == 0.0;
         s.view = oos_hal::bootstatus::parse(text);
         s.uptime = uptime;
@@ -58,24 +67,28 @@ impl Ui {
                 s.dismissed = true;
             }
         }
-        self.start_up_last = Some(s.view.clone());
+        self.start_up.last = Some(s.view.clone());
     }
 
     /// The screen is up (the scope screen and its input wait).
     pub fn start_up_active(&self) -> bool {
-        let Some(s) = &self.start_up else { return false };
+        let Some(s) = &self.start_up.screen else { return false };
         if s.dismissed {
             return false;
         }
         match (&s.view.finished, s.done_at) {
-            (Some(Ok(())), Some(t)) => self.now - t < if s.view.warnings().next().is_some() { HOLD_WARN } else { HOLD_OK },
+            (Some(Ok(())), Some(t)) => {
+                self.now - t < if s.view.warnings().next().is_some() { HOLD_WARN } else { HOLD_OK }
+            }
             _ => true,
         }
     }
 
     /// No progress line for `STALL_S` seconds: the start-up probably hangs.
     fn start_up_stalled(s: &StartScreen) -> bool {
-        s.view.finished.is_none() && s.uptime > 0.0 && s.uptime - s.view.t.max(s.view.stages.first().map_or(0.0, |x| x.t0)) > STALL_S
+        s.view.finished.is_none()
+            && s.uptime > 0.0
+            && s.uptime - s.view.t.max(s.view.stages.first().map_or(0.0, |x| x.t0)) > STALL_S
     }
 
     /// Input while the screen is up: the power key and its dialog work, a finished (or stalled) start-up closes on any
@@ -95,7 +108,9 @@ impl Ui {
             Ev::Wheel { .. } => false,
         };
         if pressed {
-            if let Some(s) = self.start_up.as_mut().filter(|s| s.view.finished.is_some() || Self::start_up_stalled(s)) {
+            if let Some(s) =
+                self.start_up.screen.as_mut().filter(|s| s.view.finished.is_some() || Self::start_up_stalled(s))
+            {
                 s.dismissed = true;
             }
         }
@@ -104,18 +119,20 @@ impl Ui {
 
     /// One line for About: how the last start-up went.
     pub(super) fn start_up_summary(&self) -> Option<String> {
-        let v = self.start_up_last.as_ref()?;
+        let v = self.start_up.last.as_ref()?;
         let warn: Vec<&str> = v.warnings().map(|s| s.label.as_str()).collect();
         Some(match &v.finished {
             None => format!("Start-up running ({:.1} s)", v.t),
-            Some(Err(_)) => format!("Start-up stopped at {} ({:.1} s)", v.failed().map_or("?", |s| s.label.as_str()), v.t),
+            Some(Err(_)) => {
+                format!("Start-up stopped at {} ({:.1} s)", v.failed().map_or("?", |s| s.label.as_str()), v.t)
+            }
             Some(Ok(())) if warn.is_empty() => format!("Start-up {:.1} s, self-test passed", v.t),
             Some(Ok(())) => format!("Start-up {:.1} s, warnings: {}", v.t, warn.join(", ")),
         })
     }
 
     pub(super) fn draw_start_up(&self, cv: &mut Canvas) {
-        let Some(s) = &self.start_up else { return };
+        let Some(s) = &self.start_up.screen else { return };
         let f = self.fonts();
         let scr = self.scr.rect();
         // the picture is laid out on 600 px: a taller screen gets it in its middle
@@ -133,7 +150,8 @@ impl Ui {
         let rows = v.stages.len().max(1) as i32;
         let row_h = 26;
         let failed = matches!(v.finished, Some(Err(_)));
-        let card = Rect::new(scr.w / 2 - 330, dy + 212, 660, 16 + rows * row_h + 12 + 24 + if failed { 34 } else { 14 });
+        let card =
+            Rect::new(scr.w / 2 - 330, dy + 212, 660, 16 + rows * row_h + 12 + 24 + if failed { 34 } else { 14 });
         cv.round(card, 10, DLG_BG, 235);
         let mut y = card.y + 16;
         let blink = (self.now * 2.0) as i64 % 2 == 0;
@@ -142,7 +160,13 @@ impl Ui {
                 St::Ok => GREEN,
                 St::Warn => AMBER,
                 St::Fail => RED,
-                St::Run => if blink { ACCENT } else { DIM },
+                St::Run => {
+                    if blink {
+                        ACCENT
+                    } else {
+                        DIM
+                    }
+                }
             };
             let (cx, cy) = (card.x + 30, y + row_h / 2);
             cv.circle(cx, cy, 8, col);
@@ -174,7 +198,19 @@ impl Ui {
             if !st.detail.is_empty() {
                 let x0 = card.x + 300;
                 let room = card.x + card.w - 100 - x0;
-                cv.text(&f.s, x0, y + 17, &fit_text(&f.s, &st.detail, room), if st.state == St::Warn { AMBER } else if st.state == St::Fail { RED } else { DIM });
+                cv.text(
+                    &f.s,
+                    x0,
+                    y + 17,
+                    &fit_text(&f.s, &st.detail, room),
+                    if st.state == St::Warn {
+                        AMBER
+                    } else if st.state == St::Fail {
+                        RED
+                    } else {
+                        DIM
+                    },
+                );
             }
             y += row_h;
         }
@@ -183,7 +219,9 @@ impl Ui {
             None => (format!("Starting the acquisition hardware ...  {:.1} s", s.uptime), TEXT),
             Some(Ok(())) => match v.warnings().count() {
                 0 => (format!("Ready after {:.1} s  \u{b7}  self-test passed", v.t), GREEN),
-                n => (format!("Ready after {:.1} s  \u{b7}  {} warning{}", v.t, n, if n == 1 { "" } else { "s" }), AMBER),
+                n => {
+                    (format!("Ready after {:.1} s  \u{b7}  {} warning{}", v.t, n, if n == 1 { "" } else { "s" }), AMBER)
+                }
             },
             Some(Err(_)) => (format!("Start-up stopped: {}", v.failed().map_or("", |s| s.label.as_str())), RED),
         };
@@ -192,10 +230,25 @@ impl Ui {
         cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 20, scr.w, 16), 1, &s.version, DIM);
         if let Some(Err(d)) = &v.finished {
             cv.text_in(&f.s, Rect::new(card.x, y + 24, card.w, 20), 1, &fit_text(&f.s, d, card.w - 40), DIM);
-            cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 40, scr.w, 20), 1, "Tap to continue without acquisition", DIM);
+            cv.text_in(
+                &f.s,
+                Rect::new(scr.x, scr.bottom() - 40, scr.w, 20),
+                1,
+                "Tap to continue without acquisition",
+                DIM,
+            );
         } else if Self::start_up_stalled(s) {
             let quiet = s.uptime - v.t;
-            cv.text_in(&f.s, Rect::new(scr.x, scr.bottom() - 40, scr.w, 20), 1, &format!("No progress for {:.0} s (see /tmp/oos-cold.log) \u{b7} tap to continue without acquisition", quiet), AMBER);
+            cv.text_in(
+                &f.s,
+                Rect::new(scr.x, scr.bottom() - 40, scr.w, 20),
+                1,
+                &format!(
+                    "No progress for {:.0} s (see /tmp/oos-cold.log) \u{b7} tap to continue without acquisition",
+                    quiet
+                ),
+                AMBER,
+            );
         }
     }
 }
@@ -259,7 +312,10 @@ impl Layer {
 /// Points of an elliptic arc (angles in degrees, y down: 0 = right, 90 = down).
 fn arc(cx: f32, cy: f32, rx: f32, ry: f32, a0: f32, a1: f32) -> Vec<(f32, f32)> {
     let n = ((a1 - a0).abs() / 4.0).ceil().max(2.0) as usize;
-    (0..=n).map(|k| (a0 + (a1 - a0) * k as f32 / n as f32).to_radians()).map(|a| (cx + rx * a.cos(), cy + ry * a.sin())).collect()
+    (0..=n)
+        .map(|k| (a0 + (a1 - a0) * k as f32 / n as f32).to_radians())
+        .map(|a| (cx + rx * a.cos(), cy + ry * a.sin()))
+        .collect()
 }
 
 /// Intersection of the segments a-b and c-d: (point, position along a-b in 0..1).
@@ -271,7 +327,7 @@ fn cross(a: (f32, f32), b: (f32, f32), c: (f32, f32), d: (f32, f32)) -> Option<(
     }
     let t = ((c.0 - a.0) * sy - (c.1 - a.1) * sx) / den;
     let u = ((c.0 - a.0) * ry - (c.1 - a.1) * rx) / den;
-    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| ((a.0 + t * rx, a.1 + t * ry), t))
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(((a.0 + t * rx, a.1 + t * ry), t))
 }
 
 /// Strokes the letters (polylines) so that they weave: at every crossing one letter passes over the other, which
@@ -299,7 +355,7 @@ fn interlace(cv: &mut Canvas, area: Rect, paths: &[Vec<(f32, f32)>], hw: f32, c:
                     }
                 }
             }
-            xs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            xs.sort_by(|a, b| a.1.total_cmp(&b.1));
             let upper = xs.iter().map(|x| x.0 .1).fold(f32::INFINITY, f32::min);
             for (n, (p, _)) in xs.iter().enumerate() {
                 let j_over = if i == 0 && j == 1 { p.1 > upper } else { n % 2 == 0 };
@@ -308,7 +364,7 @@ fn interlace(cv: &mut Canvas, area: Rect, paths: &[Vec<(f32, f32)>], hw: f32, c:
                 let path = &paths[over];
                 let near = (0..path.len()).min_by(|&a, &b| {
                     let d = |k: usize| (path[k].0 - p.0).hypot(path[k].1 - p.1);
-                    d(a).partial_cmp(&d(b)).unwrap()
+                    d(a).total_cmp(&d(b))
                 });
                 let Some(k0) = near else { continue };
                 let reach = 3.0 * hw;
@@ -371,7 +427,10 @@ fn logo() -> &'static Canvas {
         let tr: Vec<(f32, f32)> = (0..=96)
             .map(|i| {
                 let t = i as f32 / 96.0;
-                (g.x as f32 + t * g.w as f32, (g.y + g.h / 2) as f32 - 0.34 * g.h as f32 * (std::f32::consts::TAU * 1.25 * t).sin())
+                (
+                    g.x as f32 + t * g.w as f32,
+                    (g.y + g.h / 2) as f32 - 0.34 * g.h as f32 * (std::f32::consts::TAU * 1.25 * t).sin(),
+                )
             })
             .collect();
         let mut glow = Layer::new(m);
@@ -420,10 +479,21 @@ mod tests {
         u
     }
 
+    /// A point of NaN in a letter: the point nearest a crossing was chosen with `partial_cmp(..).unwrap()`, which
+    /// panicked.
+    #[test]
+    fn interlace_passes_over_a_nan_point() {
+        let mut cv = Canvas::new(64, 64);
+        let a = vec![(4.0, 4.0), (60.0, 60.0), (f32::NAN, f32::NAN)];
+        let b = vec![(4.0, 60.0), (60.0, 4.0)];
+        interlace(&mut cv, Rect::new(0, 0, 64, 64), &[a, b], 2.0, TEXT);
+    }
+
     #[test]
     fn screen_follows_the_start_up() {
         let mut u = ui();
-        let mut text = line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "run", "FPGA image", "loading the image from flash");
+        let mut text =
+            line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "run", "FPGA image", "loading the image from flash");
         u.start_up_update(&text, 6.0);
         assert!(u.start_up_active());
         // input waits while it runs
@@ -434,7 +504,9 @@ mod tests {
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/start-up-running.png", d), crate::store::png_of(&cv));
         }
-        text += &(line(14.2, "ok", "FPGA image", "") + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex") + &line(18.0, "end", "", ""));
+        text += &(line(14.2, "ok", "FPGA image", "")
+            + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex")
+            + &line(18.0, "end", "", ""));
         u.start_up_update(&text, 18.1);
         assert!(u.start_up_active());
         u.draw_start_up(&mut cv);
@@ -461,7 +533,9 @@ mod tests {
     #[test]
     fn failed_start_up_stays_until_a_tap() {
         let mut u = ui();
-        let text = line(4.0, "run", "FPGA image", "") + &line(14.0, "fail", "FPGA image", "PCIe / BAR1: FPGA did not appear on PCIe") + &line(14.1, "abort", "", "see /tmp/oos-cold.log");
+        let text = line(4.0, "run", "FPGA image", "")
+            + &line(14.0, "fail", "FPGA image", "PCIe / BAR1: FPGA did not appear on PCIe")
+            + &line(14.1, "abort", "", "see /tmp/oos-cold.log");
         u.start_up_update(&text, 14.2);
         u.now += 60.0;
         assert!(u.start_up_active());

@@ -10,7 +10,9 @@ use oos_dsp::trigger::Input;
 
 /// Packets of the decoder settings in `m` on the channels of `inp` (times = fractional sample indices).
 pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'static str> {
-    if m.dec_src >= NCH { return Err("stored decoder inputs need the reference adapter"); }
+    if m.dec_src >= NCH {
+        return Err("stored decoder inputs need the reference adapter");
+    }
     decode_at(m, ch, dt, m.dec_thr, 0.1 * m.ch[m.dec_src].volts_per_div())
 }
 
@@ -24,10 +26,15 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
     if m.dec_proto == Proto::PARALLEL {
         // up to 16 data lines upwards from the main source, skipping the clock line
         let first = la[0].unwrap_or(0);
-        let lines: Vec<Vec<f32>> = (0..16u8).map(|k| (first + k) % 16).filter(|&n| Some(n) != la[2]).take(m.dec_bits.clamp(1, 16) as usize).map(wave).collect();
+        let lines: Vec<Vec<f32>> = (0..16u8)
+            .map(|k| (first + k) % 16)
+            .filter(|&n| Some(n) != la[2])
+            .take(m.dec_bits.clamp(1, 16) as usize)
+            .map(wave)
+            .collect();
         let refs: Vec<&[f32]> = lines.iter().map(|l| &l[..]).collect();
         let clk = la[2].map(wave);
-        return Ok(oos_dsp::decode_ext::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
+        return Ok(oos_dsp::decode::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
     }
     let slots: [Vec<f32>; NCH] = std::array::from_fn(|i| la.get(i).copied().flatten().map_or(Vec::new(), &wave));
     let mut s = m.clone();
@@ -37,14 +44,14 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
 
 /// `decode` with the threshold and hysteresis given.
 pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
-    use oos_dsp::decode_ext as x1;
+    use oos_dsp::decode;
     let get = |c: usize| ch.get(c).copied().filter(|v| !v.is_empty()).ok_or("source channel off");
     let opt = |c: Option<usize>| -> Result<Option<&[f32]>, &'static str> { c.map(get).transpose() };
     // RS-485 / differential: A - B, threshold around 0 V like the pair's receiver
     let diff;
     let line: &[f32] = match (m.dec_proto.diff_ok(), m.dec_diff) {
         (true, Some(b)) => {
-            diff = x1::diff(get(m.dec_src)?, get(b)?);
+            diff = decode::diff(get(m.dec_src)?, get(b)?);
             &diff
         }
         _ => get(m.dec_src)?,
@@ -53,42 +60,39 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
     // "none")
     let Proto::Module(i) = m.dec_proto;
     let p = crate::protocols::get(i);
-    let r = p.roles();
-    let lines = [Some(line), if r[1].is_some() { Some(get(m.dec_src2)?) } else { None }, if r[2].is_some() { opt(m.dec_cs)? } else { None }, if r[3].is_some() { opt(m.dec_src4)? } else { None }];
+    let r = p.info().roles;
+    let lines = [
+        Some(line),
+        if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },
+        if r[2].is_some() { opt(m.dec_cs)? } else { None },
+        if r[3].is_some() { opt(m.dec_src4)? } else { None },
+    ];
     let chans: [Option<&[f32]>; 4] = std::array::from_fn(|c| ch.get(c).copied().filter(|v| !v.is_empty()));
     let src = [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4];
-    p.decode(&crate::protocols::Lines { lines, dt, thr, hy, opt: m.dec_opts(), sh: crate::protocols::Shared::of(m), chans, src })
+    p.info().decode(&crate::protocols::Lines {
+        lines,
+        dt,
+        thr,
+        hy,
+        opt: m.dec_opts(),
+        sh: crate::protocols::shared(m),
+        chans,
+        src,
+    })
 }
 
 /// Whether a packet satisfies the protocol trigger condition of `m` on its own. UART and SPI data take the relation,
 /// limit and mask of `m.ser`; I2C addresses and data need the frame around them (`points`).
 pub fn matches(m: &Model, p: &Packet) -> bool {
     let v = m.trig_bus_val;
-    if let Some(r) = m.dec_proto.module().and_then(|x| x.trigger_match(m.trig_bus, v as u32, p)) {
-        return r;
-    }
-    let v32 = v as u32;
     if matches!(m.dec_proto, Proto::UART | Proto::SPI) && m.trig_bus == BusWhat::Data {
         return p.kind == Kind::Data && m.ser.rel.test(p.value as u64, v, m.ser.max, m.ser.mask);
     }
     if m.dec_proto == Proto::I2C && matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
         return false;
     }
-    let v = v32;
-    match m.trig_bus {
-        BusWhat::Frame => match p.kind {
-            Kind::Start | Kind::Break | Kind::Word { cmd: true } => true,
-            Kind::Data => matches!(m.dec_proto, Proto::UART | Proto::SPI | Proto::PARALLEL),
-            Kind::Sample { right: false } => true,
-            // the first field of a frame of the extended decoders
-            Kind::Field(l) => matches!(l, "!RESET" | "PRE" | "TSS" | "CMD" | "REQ" | "BLK" | "IR" | "DR" | "SYNC"),
-            _ => false,
-        },
-        // USB: the token address or the PID byte
-        BusWhat::Id => (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true }) || p.kind == Kind::Field("ROM") || p.kind == Kind::Field("CMD") || p.kind == Kind::Field("HDR") || p.kind == Kind::Field("STAT")) && p.value == v,
-        BusWhat::Data => matches!(p.kind, Kind::Data | Kind::Sample { .. } | Kind::Word { cmd: false }) && p.value == v,
-        BusWhat::Error => !p.ok,
-    }
+    let Proto::Module(i) = m.dec_proto;
+    crate::protocols::get(i).info().trigger_match(m.trig_bus, v as u32, p)
 }
 
 /// The trigger points (packet ends) of `m`'s protocol condition among `packets`: `matches` per packet, and for I2C

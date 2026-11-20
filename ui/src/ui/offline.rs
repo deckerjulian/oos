@@ -86,7 +86,7 @@ impl Ui {
         if let Some((t0, dt, n)) = spec {
             let t0 = self.source_time_origin(WaveId::Ref(slot), t0);
             self.apply_record_timebase(t0, dt, n);
-            self.m.zoom = n > 8192 && !self.zoom_user_closed;
+            self.m.zoom = n > 8192 && !self.zoom_view.user_closed;
             if self.m.zoom {
                 let detail = dt * 8192.0 / HDIV as f64;
                 self.m.zscale = tscales().iter().rposition(|&t| t as f64 <= detail).unwrap_or(0);
@@ -142,9 +142,18 @@ impl Ui {
     pub(super) fn acq_caption(&self) -> (String, bool) {
         if self.record_mode() {
             let kind = if self.session_is_sim { "SIM" } else { "REF" };
-            if let Some(r) = self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0) {
+            if let Some(r) =
+                self.refs.get(self.active_reference()).and_then(|r| r.as_ref()).filter(|r| r.v.len() >= 2 && r.dt > 0.0)
+            {
                 let sr = 1.0 / r.dt;
-                return (format!("{kind} \u{b7} {} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(r.v.len() as f64, "pts", 3)), false);
+                return (
+                    format!(
+                        "{kind} \u{b7} {} \u{b7} {}",
+                        si_digits(sr, "Sa/s", 3),
+                        si_digits(r.v.len() as f64, "pts", 3)
+                    ),
+                    false,
+                );
             }
             return (format!("{kind} \u{b7} \u{2014}"), false);
         }
@@ -158,8 +167,8 @@ impl Ui {
             }
             None
         });
-        let (sr, depth) = self.src.hw_rate_depth().map(|(r, n)| (r, n as u64))
-            .or(captured).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) =
+            self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).or(captured).unwrap_or_else(|| self.m.srate_depth());
         (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), true)
     }
 
@@ -293,7 +302,8 @@ mod tests {
         let scale = live.m.tscale;
         let dt = 5e-9;
         let n = 400;
-        let sine: Vec<f32> = (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
+        let sine: Vec<f32> =
+            (0..n).map(|k| (0.5 + (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin()) as f32).collect();
         write_csv(&dir, 1, 0.0, dt, &sine);
         live.activate(Item::RefImport);
         assert!(live.m.ch[0].on && !live.offline, "a live import adds an overlay without taking over acquisition");
@@ -301,7 +311,10 @@ mod tests {
         assert!(live.cards().0.iter().any(|card| card.w > 0));
         assert!(live.refs[0].as_ref().unwrap().on);
         live.set_look(reflook::RefLook::TakeOver);
-        assert!(live.m.ch.iter().all(|channel| !channel.on) && live.offline, "Take over explicitly enters a stored-waveform session");
+        assert!(
+            live.m.ch.iter().all(|channel| !channel.on) && live.offline,
+            "Take over explicitly enters a stored-waveform session"
+        );
 
         let mut play = ui();
         play.activate(Item::SimPlay);
@@ -340,7 +353,10 @@ mod tests {
         assert_eq!(u.ref_card_lines().0, "R1");
         let loaded = u.refs[0].as_ref().unwrap();
         assert_eq!(loaded.v.as_ref(), &sine);
-        assert!(u.m.time_per_div() > 0.0 && u.m.time_per_div() as f64 * HDIV as f64 <= n as f64 * dt * 1.01, "import fits a useful view of the record");
+        assert!(
+            u.m.time_per_div() > 0.0 && u.m.time_per_div() as f64 * HDIV as f64 <= n as f64 * dt * 1.01,
+            "import fits a useful view of the record"
+        );
         let (sr, live_mode) = u.acq_caption();
         assert!(!live_mode);
         assert!(sr.contains("200 MSa/s") || sr.contains("200.000"), "{}", sr);
@@ -365,21 +381,45 @@ mod tests {
     fn import_gates_existing_references_before_the_first_measurement() {
         let mut u = ui();
         u.set_offline(true);
-        u.refs[1] = Some(RefWave { color: 1, label: "previous capture".into(), ..RefWave::test((0..20_000).map(|index| { let amplitude = if index < 1000 { 1.0 } else { 5.0 }; if index % 4 < 2 { -amplitude } else { amplitude } }).collect::<Vec<_>>(), 1e-9, 0.0) });
+        u.refs[1] = Some(RefWave {
+            color: 1,
+            label: "previous capture".into(),
+            ..RefWave::test(
+                (0..20_000)
+                    .map(|index| {
+                        let amplitude = if index < 1000 { 1.0 } else { 5.0 };
+                        if index % 4 < 2 {
+                            -amplitude
+                        } else {
+                            amplitude
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                1e-9,
+                0.0,
+            )
+        });
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {
             csv.push_str(&format!("{},{}\n", index as f64 * 1e-9, if index % 4 < 2 { -0.5 } else { 0.5 }));
         }
         u.load_waveform_bytes(csv.as_bytes(), "new record.csv").unwrap();
-        assert!((u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
-            "existing refs use the imported screen gate immediately, not their full record");
+        assert!(
+            (u.meas_at(WaveId::Ref(1), Meas::Vpp) - 2.0).abs() < 1e-6,
+            "existing refs use the imported screen gate immediately, not their full record"
+        );
         assert!(u.reference_slice(1).unwrap().0.len() < 1000);
     }
 
     #[test]
     fn import_keeps_the_live_window_until_take_over() {
         let mut u = ui();
-        u.refs[1] = Some(RefWave { color: 1, label: "existing".into(), vpd: 0.2, ..RefWave::test(vec![0.0, 1.0, 0.0], 1e-9, 0.0) });
+        u.refs[1] = Some(RefWave {
+            color: 1,
+            label: "existing".into(),
+            vpd: 0.2,
+            ..RefWave::test(vec![0.0, 1.0, 0.0], 1e-9, 0.0)
+        });
         let held = (u.m.tscale, u.m.tfine, u.m.delay);
         let mut csv = String::from("Time (s),Volts\n");
         for index in 0..100 {

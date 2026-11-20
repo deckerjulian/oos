@@ -16,7 +16,8 @@ pub struct Glyph {
 
 pub struct Font {
     pub size: i32,
-    #[cfg_attr(not(test), allow(dead_code))] // read by the layout tests
+    /// read by the layout tests only
+    #[cfg(test)]
     pub descent: i32,
     pub glyphs: Vec<Glyph>,
     pub alpha: &'static [u8],
@@ -35,7 +36,11 @@ pub struct Fonts {
 }
 
 /// The atlases by text size: normal, large, larger.
-static BLOBS: [&[u8]; 3] = [include_bytes!("../assets/font.bin"), include_bytes!("../assets/font-large.bin"), include_bytes!("../assets/font-larger.bin")];
+static BLOBS: [&[u8]; 3] = [
+    include_bytes!("../assets/font.bin"),
+    include_bytes!("../assets/font-large.bin"),
+    include_bytes!("../assets/font-larger.bin"),
+];
 
 fn u16le(b: &[u8], o: usize) -> u16 {
     u16::from_le_bytes([b[o], b[o + 1]])
@@ -63,7 +68,8 @@ impl Font {
 impl Fonts {
     /// The set of text size `k` (0 normal, 1 large, 2 larger), loaded on first use.
     pub fn get(k: usize) -> &'static Fonts {
-        static SETS: [std::sync::OnceLock<Fonts>; 3] = [std::sync::OnceLock::new(), std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+        static SETS: [std::sync::OnceLock<Fonts>; 3] =
+            [std::sync::OnceLock::new(), std::sync::OnceLock::new(), std::sync::OnceLock::new()];
         let k = k.min(SETS.len() - 1);
         SETS[k].get_or_init(|| Fonts::load(BLOBS[k]))
     }
@@ -73,10 +79,11 @@ impl Fonts {
         let count = u16le(b, 4) as usize;
         assert_eq!(count, 7);
         let mut o = 6;
-        let mut v = Vec::new();
-        for _ in 0..count {
+        // the seven sizes one after the other, in the order of the fields
+        let [s, sb, m, mb, l, lb, xl] = std::array::from_fn(|_| {
             let size = u16le(b, o) as i32;
-            // o + 2: the ascent, not used
+            // o + 2: the ascent, not used; o + 4: the descent, for the layout tests
+            #[cfg(test)]
             let descent = u16le(b, o + 4) as i32;
             let n = u16le(b, o + 6) as usize;
             let alen = u32le(b, o + 8) as usize;
@@ -96,11 +103,15 @@ impl Fonts {
             }
             let alpha = &b[o..o + alen];
             o += alen;
-            v.push(Font { size, descent, glyphs, alpha });
-        }
-        let mut it = v.into_iter();
-        let mut next = || it.next().unwrap();
-        Fonts { s: next(), sb: next(), m: next(), mb: next(), l: next(), lb: next(), xl: next() }
+            Font {
+                size,
+                #[cfg(test)]
+                descent,
+                glyphs,
+                alpha,
+            }
+        });
+        Fonts { s, sb, m, mb, l, lb, xl }
     }
 }
 

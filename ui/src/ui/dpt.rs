@@ -3,7 +3,7 @@
 
 //! Wide-bandgap double pulse page. E on and E off are the existing switching-loss pair, not recomputed here.
 
-use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash};
+use super::magnetic::{add_note, clash_wave, missing_wave, needs_more_channels, num, wave_clash};
 use super::*;
 use oos_dsp::dpt::{self, Fourth};
 use oos_dsp::power;
@@ -22,7 +22,9 @@ impl Ui {
     pub(super) fn dpt_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::DptPct => Kind::Value,
-            Item::DptOn | Item::DptV | Item::DptI | Item::DptG | Item::DptFourth | Item::Dpt4 | Item::DptZoom => Kind::Choice,
+            Item::DptOn | Item::DptV | Item::DptI | Item::DptG | Item::DptFourth | Item::Dpt4 | Item::DptZoom => {
+                Kind::Choice
+            }
             _ => return None,
         })
     }
@@ -44,7 +46,13 @@ impl Ui {
     pub(super) fn dpt_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::DptOn => if m.view == AView::Dpt { "On".into() } else { "Off".into() },
+            Item::DptOn => {
+                if m.view == AView::Dpt {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::DptV => self.wave_name(m.dpt_v),
             Item::DptI => self.wave_name(m.dpt_i),
             Item::DptG => self.wave_name(m.dpt_g),
@@ -153,17 +161,9 @@ impl Ui {
         let mut note = if gate.is_none() { missing_wave(m.dpt_g) } else { String::new() };
         let fourth_s = taken.opt[1].as_ref();
         if m.dpt_4th != DptFourth::Off && fourth_s.is_none() {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str(&missing_wave(m.dpt_4ch));
+            add_note(&mut note, &missing_wave(m.dpt_4ch));
         }
-        if taken.moved {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str("on the finest ref interval");
-        }
+        taken.note_moved(&mut note);
         let fourth = match (m.dpt_4th, fourth_s) {
             (DptFourth::Gate, Some(v)) => Fourth::Gate(v),
             (DptFourth::DiodeV, Some(v)) => Fourth::DiodeV(v),
@@ -171,12 +171,7 @@ impl Ui {
             _ => Fourth::Off,
         };
         let pulse = dpt::measure(vds, id, gate.map(|g| g.as_slice()), fourth, dt, m.dpt_pct);
-        if !pulse.note.is_empty() {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str(pulse.note);
-        }
+        add_note(&mut note, pulse.note);
         let sw = power::switching(vds, id, dt, 10.0);
         self.azr.dpt_loss = if sw.transitions.is_empty() { None } else { Some((sw.e_on, sw.e_off)) };
         let end = (vds.len().saturating_sub(1)) as f64 * dt;
@@ -218,7 +213,20 @@ impl Ui {
             draw_cols(cv, band, cols, *col);
         }
         if let Some(p) = &self.azr.dpt {
-            for t in [p.marks.gate10, p.marks.gate90_off, p.marks.i10, p.marks.i90, p.marks.i10_off, p.marks.i90_off, p.marks.vpeak, p.marks.ipeak, p.marks.trr_end].into_iter().flatten() {
+            for t in [
+                p.marks.gate10,
+                p.marks.gate90_off,
+                p.marks.i10,
+                p.marks.i90,
+                p.marks.i10_off,
+                p.marks.i90_off,
+                p.marks.vpeak,
+                p.marks.ipeak,
+                p.marks.trr_end,
+            ]
+            .into_iter()
+            .flatten()
+            {
                 if t >= t0 && t <= t1 && t1 > t0 {
                     let x = plot.x + ((t - t0) / (t1 - t0) * plot.w as f64) as i32;
                     cv.line(x, plot.y, x, plot.y + plot.h, AMBER);

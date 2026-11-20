@@ -16,12 +16,6 @@ pub struct Mho;
 /// Time base from which the screen rolls (as on the DHO800/DHO900 and stock: 200 ms/div).
 const ROLL_TDIV: f64 = 0.2;
 
-/// The depths of the Acquire menu. New entries go to the end: setups store the position.
-const DEPTHS: [(&str, u64); 9] = [
-    ("Auto", 0), ("1k", 1_000), ("10k", 10_000), ("100k", 100_000), ("1M", 1_000_000), ("10M", 10_000_000),
-    ("25M", 25_000_000), ("50M", 50_000_000), ("100M", 100_000_000),
-];
-
 /// The arbitrary wave of the demo generator: one period of samples.
 static ARB: Mutex<Vec<f32>> = Mutex::new(Vec::new());
 
@@ -118,10 +112,6 @@ impl Board for Mho {
         (super::MASK_COLUMNS, points as f64 / super::MASK_COLUMNS as f64)
     }
 
-    fn depths(&self) -> &'static [(&'static str, u64)] {
-        &DEPTHS
-    }
-
     fn vscale_steps_nv(&self) -> Vec<i64> {
         oos_hal::mho::board::scale_ladder()
     }
@@ -147,7 +137,7 @@ impl Board for Mho {
         if v.len() < 2 {
             return None;
         }
-        *ARB.lock().unwrap() = v.to_vec();
+        *super::lock(&ARB) = v.to_vec();
         Some(1)
     }
 
@@ -156,7 +146,7 @@ impl Board for Mho {
     }
 
     fn arb_at(&self, phase: f64) -> f64 {
-        let a = ARB.lock().unwrap();
+        let a = super::lock(&ARB);
         if a.is_empty() {
             return 0.0;
         }

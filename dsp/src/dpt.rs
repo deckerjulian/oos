@@ -147,12 +147,11 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
     let vds = &vds[..n];
     let id_raw = &id[..n];
     let pct = (gate_pct / 100.0).clamp(0.01, 0.49);
-    let Some(g) = vgs.map(|g| &g[..n]).filter(|g| swing(g).is_some()) else {
+    let Some((g, (gmin, gmax))) = vgs.map(|g| &g[..n]).and_then(|g| Some((g, swing(g)?))) else {
         out.note = "no gate";
         ungated(&mut out, vds, id_raw, dt);
         return out;
     };
-    let (gmin, gmax) = swing(g).unwrap();
     let ev = edges(g, ((gmin + gmax) / 2.0) as f32, (0.1 * (gmax - gmin)) as f32);
     let rises: Vec<f64> = ev.iter().filter(|e| e.rising).map(|e| e.t).collect();
     let falls: Vec<f64> = ev.iter().filter(|e| !e.rising).map(|e| e.t).collect();
@@ -342,7 +341,11 @@ fn median(x: &[f32]) -> f64 {
     }
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) }
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
 }
 
 fn at(x: &[f32], t: f64) -> f64 {
@@ -351,7 +354,11 @@ fn at(x: &[f32], t: f64) -> f64 {
     }
     let k = (t.floor() as usize).min(x.len() - 2);
     let (p, q) = (x[k] as f64, x[k + 1] as f64);
-    if p.is_finite() && q.is_finite() { p + (q - p) * (t - k as f64) } else { f64::NAN }
+    if p.is_finite() && q.is_finite() {
+        p + (q - p) * (t - k as f64)
+    } else {
+        f64::NAN
+    }
 }
 
 fn max_in(x: &[f32], t0: f64, t1: f64) -> Option<(f64, f64)> {
@@ -369,6 +376,34 @@ fn max_in(x: &[f32], t0: f64, t1: f64) -> Option<(f64, f64)> {
     best.map(|(k, y)| (y, k as f64))
 }
 
+/// The first peak of `pts` (index, value): the running maximum, once the value has fallen back from it by a quarter of
+/// its height above `base` and by at least `min_drop`. The current of a double pulse peaks on the turn-on, load current
+/// plus recovery, falls back to the load current and then goes on rising while the inductor charges; the largest value
+/// of the pulse is the end of that ramp, not the peak. Without such a fall, the largest value. Returns (value, index).
+fn first_peak(pts: impl Iterator<Item = (usize, f64)>, base: f64, min_drop: f64) -> Option<(f64, usize)> {
+    let mut best: Option<(f64, usize)> = None;
+    for (k, y) in pts.filter(|p| p.1.is_finite()) {
+        match best {
+            Some((p, _)) if y <= p => {
+                if p > base && p - y >= (0.25 * (p - base)).max(min_drop) {
+                    return best;
+                }
+            }
+            _ => best = Some((y, k)),
+        }
+    }
+    best
+}
+
+/// The smallest fall `first_peak` takes for a peak: 2 % of the load current, so noise on the plateau is not one.
+fn min_drop(il: f64) -> f64 {
+    if il.is_finite() {
+        0.02 * il.abs()
+    } else {
+        0.0
+    }
+}
+
 fn vpeak_window(out: &mut Pulse, vds: &[f32], t0: f64, t1: f64, dt: f64, vbus: f64) {
     if let Some((v, t)) = max_in(vds, t0, t1) {
         out.vpeak = Some(v);
@@ -379,10 +414,13 @@ fn vpeak_window(out: &mut Pulse, vds: &[f32], t0: f64, t1: f64, dt: f64, vbus: f
     }
 }
 
+/// Ipeak: the first peak of the current from `t0` on (`first_peak`); without I_L the largest value of the window.
 fn ipeak_window(out: &mut Pulse, id: &[f32], t0: f64, t1: f64, dt: f64, il: f64) {
-    if let Some((v, t)) = max_in(id, t0, t1) {
+    let i0 = bound(t0).min(id.len());
+    let i1 = (t1.ceil() as usize).clamp(i0, id.len());
+    if let Some((v, k)) = first_peak((i0..i1).map(|k| (k, id[k] as f64)), il, min_drop(il)) {
         out.ipeak = Some(v);
-        out.marks.ipeak = Some(t * dt);
+        out.marks.ipeak = Some(k as f64 * dt);
         if il.is_finite() {
             out.i_over = Some(v - il);
         }
@@ -418,8 +456,20 @@ fn fourth_v<'a>(f: &'a Fourth<'a>, n: usize) -> Option<&'a [f32]> {
     }
 }
 
-/// Recovery on the turn-on edge. Without a diode current, i_rev = Id − I_L (positive above the plateau).
-fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Option<&[f32]>, il: f64, vbus: f64, t0w: f64, t1w: f64, dt: f64) {
+/// Recovery on the turn-on edge. Without a diode current, i_rev = Id − I_L (positive above the plateau). Irrm is its
+/// first peak (`first_peak`), Trr ends where it falls back to 10 % of Irrm.
+fn diode(
+    out: &mut Pulse,
+    id: &[f32],
+    vds: &[f32],
+    idi: Option<&[f32]>,
+    vdi: Option<&[f32]>,
+    il: f64,
+    vbus: f64,
+    t0w: f64,
+    t1w: f64,
+    dt: f64,
+) {
     let (a, b) = (bound(t0w), bound(t1w) + 1);
     let from_id = idi.is_none();
     out.diode_from_id = from_id;
@@ -442,17 +492,12 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
     let Some(t0) = t0 else { return };
     let i1 = bound(t1w).min(rev.len());
     let i0 = bound(t0).min(i1);
-    let mut peak = 0.0;
-    let mut t_peak = t0;
-    for (k, &y) in rev[i0..i1].iter().enumerate() {
-        if y.is_finite() && y > peak {
-            peak = y;
-            t_peak = (i0 + k) as f64;
-        }
-    }
+    // Irrm is the first peak of the reverse current: computed from Id, the current goes on rising after the recovery
+    let Some((peak, k)) = first_peak((i0..i1).map(|k| (k, rev[k])), 0.0, min_drop(il)) else { return };
     if !(peak > 0.0) {
         return;
     }
+    let t_peak = k as f64;
     out.irrm = Some(peak);
     let tend = crossing(&rev, bound(t_peak), i1, 0.1 * peak, false);
     let Some(tend) = tend else { return };
@@ -481,7 +526,11 @@ fn diode(out: &mut Pulse, id: &[f32], vds: &[f32], idi: Option<&[f32]>, vdi: Opt
     let prod: Vec<f64> = (0..n)
         .map(|k| {
             let i = rev[k];
-            if i.is_finite() { vd[k] * i } else { 0.0 }
+            if i.is_finite() {
+                vd[k] * i
+            } else {
+                0.0
+            }
         })
         .collect();
     out.err = Some(integrate(&prod, t0, tend, dt));

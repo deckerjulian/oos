@@ -59,7 +59,11 @@ pub fn trig(m: &mut Model, bus: &str, key: &str, arg: &str, query: bool) -> Opti
             return t(rel_name(if addr { m.ser.addr_rel } else { m.ser.rel }).into());
         }
         let r = rel_of(arg)?;
-        if addr { m.ser.addr_rel = r } else { m.ser.rel = r }
+        if addr {
+            m.ser.addr_rel = r
+        } else {
+            m.ser.rel = r
+        }
         return Some(None);
     }
     if kw(key, "DMAX") || kw(key, "AMAX") {
@@ -84,185 +88,203 @@ pub fn trig(m: &mut Model, bus: &str, key: &str, arg: &str, query: bool) -> Opti
         return Some(None);
     }
     if kw(bus, "RS232") {
-        if kw(key, "WHEN") {
-            if query {
-                return t(match (m.trig_bus, m.ser.uart_err) {
-                    (BusWhat::Data, _) => "DATA",
-                    (BusWhat::Error, UartErr::Parity) => "CERR",
-                    (BusWhat::Error, UartErr::Framing) => "ERR",
-                    (BusWhat::Error, UartErr::Either) => "EITH",
-                    _ => "STAR",
-                }
-                .into());
-            }
-            (m.trig_bus, m.ser.uart_err) = match a.as_str() {
-                "STAR" | "START" => (BusWhat::Frame, m.ser.uart_err),
-                "DATA" => (BusWhat::Data, m.ser.uart_err),
-                "ERR" | "ERROR" => (BusWhat::Error, UartErr::Framing),
-                "CERR" | "CERROR" => (BusWhat::Error, UartErr::Parity),
-                "EITH" | "EITHER" => (BusWhat::Error, UartErr::Either),
-                _ => return None,
-            };
-        } else if kw(key, "POLarity") {
-            if query {
-                return t(if m.ser.uart_inv { "NEG" } else { "POS" }.into());
-            }
-            m.ser.uart_inv = match a.as_str() {
-                "POS" | "POSITIVE" => false,
-                "NEG" | "NEGATIVE" => true,
-                _ => return None,
-            };
-        } else if kw(key, "STOP") {
-            if query {
-                return t(match m.ser.uart_stop {
-                    StopBits::One => "1",
-                    StopBits::OneHalf => "1.5",
-                    StopBits::Two => "2",
-                }
-                .into());
-            }
-            m.ser.uart_stop = match a.as_str() {
-                "1" => StopBits::One,
-                "1.5" => StopBits::OneHalf,
-                "2" => StopBits::Two,
-                _ => return None,
-            };
-        } else if kw(key, "PARity") {
-            use oos_dsp::decode::Parity;
-            if query {
-                return t(match m.dec_parity {
-                    Parity::None => "NONE",
-                    Parity::Even => "EVEN",
-                    Parity::Odd => "ODD",
-                }
-                .into());
-            }
-            m.dec_parity = match a.as_str() {
-                "NONE" => Parity::None,
-                "EVEN" => Parity::Even,
-                "ODD" => Parity::Odd,
-                _ => return None,
-            };
-        } else if kw(key, "WIDTh") {
-            if query {
-                return t(m.dec_bits.to_string());
-            }
-            m.dec_bits = int(arg).filter(|w| (5..=8).contains(w))? as u32;
-        } else if kw(key, "BAUD") {
-            let b = &crate::decode::BAUDS;
-            if query {
-                return t(format!("{}", b[m.dec_baud]));
-            }
-            let want = int(arg)? as f64;
-            m.dec_baud = (0..b.len()).min_by(|&i, &j| (b[i] - want).abs().total_cmp(&(b[j] - want).abs()))?;
-        } else {
-            return None;
-        }
-        return Some(None);
+        return rs232(m, key, arg, &a, query);
     }
     if kw(bus, "SPI") {
-        if kw(key, "WHEN") {
-            if query {
-                return t(if m.dec_cs.is_some() { "CS" } else { "TIM" }.into());
-            }
-            match a.as_str() {
-                // chip select: the decoder's CS line, CH3 when it has none
-                "CS" => m.dec_cs = m.dec_cs.or(Some(2)),
-                "TIM" | "TIMEOUT" => {
-                    m.dec_cs = None;
-                    if m.ser.spi_timeout <= 0.0 {
-                        m.ser.spi_timeout = 1e-6;
-                    }
-                }
-                _ => return None,
-            }
-        } else if kw(key, "TIMeout") {
-            if query {
-                return t(format!("{:e}", m.ser.spi_timeout));
-            }
-            m.ser.spi_timeout = arg.trim().parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.0 && *x <= 1.0)?;
-        } else if kw(key, "SLOPe") {
-            if query {
-                return t(if matches!(m.dec_mode, 0 | 3) { "POS" } else { "NEG" }.into());
-            }
-            m.dec_mode = match a.as_str() {
-                "POS" | "POSITIVE" => 0,
-                "NEG" | "NEGATIVE" => 1,
-                _ => return None,
-            };
-        } else if kw(key, "MODE") {
-            if query {
-                return t(if m.ser.spi_cs_high { "HIGH" } else { "LOW" }.into());
-            }
-            m.ser.spi_cs_high = match a.as_str() {
-                "HIGH" => true,
-                "LOW" => false,
-                _ => return None,
-            };
-        } else if kw(key, "WIDTh") {
-            if query {
-                return t(m.dec_bits.to_string());
-            }
-            m.dec_bits = int(arg).filter(|w| (4..=32).contains(w))? as u32;
-        } else {
-            return None;
-        }
-        return Some(None);
+        return spi(m, key, arg, &a, query);
     }
     if kw(bus, "IIC") {
-        if kw(key, "WHEN") {
-            if query {
-                return t(match m.trig_bus {
-                    BusWhat::Id => "ADDR",
-                    BusWhat::Data => "DATA",
-                    BusWhat::Error => "NACK",
-                    BusWhat::Frame => "STAR",
-                }
-                .into());
-            }
-            // repeated start, stop and address + data have no menu condition yet
-            m.trig_bus = match a.as_str() {
-                "STAR" | "START" => BusWhat::Frame,
-                "ADDR" | "ADDRESS" => BusWhat::Id,
-                "DATA" => BusWhat::Data,
-                "NACK" | "NACKNOWLEDGE" => BusWhat::Error,
-                _ => return None,
-            };
-        } else if kw(key, "AWIDth") {
-            if query {
-                return t(if m.ser.ten_bit { "10" } else { "7" }.into());
-            }
-            m.ser.ten_bit = match a.as_str() {
-                "7" => false,
-                "10" => true,
-                _ => return None,
-            };
-        } else if kw(key, "DIRection") {
-            if query {
-                return t(match m.ser.dir {
-                    I2cDir::Read => "READ",
-                    I2cDir::Write => "WRIT",
-                    I2cDir::Either => "RWR",
-                }
-                .into());
-            }
-            m.ser.dir = match a.as_str() {
-                "READ" => I2cDir::Read,
-                "WRIT" | "WRITE" => I2cDir::Write,
-                "RWR" | "RWRITE" => I2cDir::Either,
-                _ => return None,
-            };
-        } else if kw(key, "DBYTes") {
-            if query {
-                return t(m.ser.bytes.to_string());
-            }
-            m.ser.bytes = int(arg).filter(|&n| n <= 5)? as u8;
-        } else {
-            return None;
-        }
-        return Some(None);
+        return iic(m, key, arg, &a, query);
     }
     None
+}
+
+/// `:TRIGger:RS232:<key>` on `m`; `a` is `arg` in capitals.
+fn rs232(m: &mut Model, key: &str, arg: &str, a: &str, query: bool) -> Option<Option<Vec<u8>>> {
+    let t = |s: String| Some(Some(s.into_bytes()));
+    if kw(key, "WHEN") {
+        if query {
+            return t(match (m.trig_bus, m.ser.uart_err) {
+                (BusWhat::Data, _) => "DATA",
+                (BusWhat::Error, UartErr::Parity) => "CERR",
+                (BusWhat::Error, UartErr::Framing) => "ERR",
+                (BusWhat::Error, UartErr::Either) => "EITH",
+                _ => "STAR",
+            }
+            .into());
+        }
+        (m.trig_bus, m.ser.uart_err) = match a {
+            "STAR" | "START" => (BusWhat::Frame, m.ser.uart_err),
+            "DATA" => (BusWhat::Data, m.ser.uart_err),
+            "ERR" | "ERROR" => (BusWhat::Error, UartErr::Framing),
+            "CERR" | "CERROR" => (BusWhat::Error, UartErr::Parity),
+            "EITH" | "EITHER" => (BusWhat::Error, UartErr::Either),
+            _ => return None,
+        };
+    } else if kw(key, "POLarity") {
+        if query {
+            return t(if m.ser.uart_inv { "NEG" } else { "POS" }.into());
+        }
+        m.ser.uart_inv = match a {
+            "POS" | "POSITIVE" => false,
+            "NEG" | "NEGATIVE" => true,
+            _ => return None,
+        };
+    } else if kw(key, "STOP") {
+        if query {
+            return t(match m.ser.uart_stop {
+                StopBits::One => "1",
+                StopBits::OneHalf => "1.5",
+                StopBits::Two => "2",
+            }
+            .into());
+        }
+        m.ser.uart_stop = match a {
+            "1" => StopBits::One,
+            "1.5" => StopBits::OneHalf,
+            "2" => StopBits::Two,
+            _ => return None,
+        };
+    } else if kw(key, "PARity") {
+        use oos_dsp::decode::Parity;
+        if query {
+            return t(match m.dec_parity {
+                Parity::None => "NONE",
+                Parity::Even => "EVEN",
+                Parity::Odd => "ODD",
+            }
+            .into());
+        }
+        m.dec_parity = match a {
+            "NONE" => Parity::None,
+            "EVEN" => Parity::Even,
+            "ODD" => Parity::Odd,
+            _ => return None,
+        };
+    } else if kw(key, "WIDTh") {
+        if query {
+            return t(m.dec_bits.to_string());
+        }
+        m.dec_bits = int(arg).filter(|w| (5..=8).contains(w))? as u32;
+    } else if kw(key, "BAUD") {
+        let b = &crate::decode::BAUDS;
+        if query {
+            return t(format!("{}", b[m.dec_baud]));
+        }
+        let want = int(arg)? as f64;
+        m.dec_baud = (0..b.len()).min_by(|&i, &j| (b[i] - want).abs().total_cmp(&(b[j] - want).abs()))?;
+    } else {
+        return None;
+    }
+    Some(None)
+}
+
+/// `:TRIGger:SPI:<key>` on `m`; `a` is `arg` in capitals.
+fn spi(m: &mut Model, key: &str, arg: &str, a: &str, query: bool) -> Option<Option<Vec<u8>>> {
+    let t = |s: String| Some(Some(s.into_bytes()));
+    if kw(key, "WHEN") {
+        if query {
+            return t(if m.dec_cs.is_some() { "CS" } else { "TIM" }.into());
+        }
+        match a {
+            // chip select: the decoder's CS line, CH3 when it has none
+            "CS" => m.dec_cs = m.dec_cs.or(Some(2)),
+            "TIM" | "TIMEOUT" => {
+                m.dec_cs = None;
+                if m.ser.spi_timeout <= 0.0 {
+                    m.ser.spi_timeout = 1e-6;
+                }
+            }
+            _ => return None,
+        }
+    } else if kw(key, "TIMeout") {
+        if query {
+            return t(format!("{:e}", m.ser.spi_timeout));
+        }
+        m.ser.spi_timeout = arg.trim().parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.0 && *x <= 1.0)?;
+    } else if kw(key, "SLOPe") {
+        if query {
+            return t(if matches!(m.dec_mode, 0 | 3) { "POS" } else { "NEG" }.into());
+        }
+        m.dec_mode = match a {
+            "POS" | "POSITIVE" => 0,
+            "NEG" | "NEGATIVE" => 1,
+            _ => return None,
+        };
+    } else if kw(key, "MODE") {
+        if query {
+            return t(if m.ser.spi_cs_high { "HIGH" } else { "LOW" }.into());
+        }
+        m.ser.spi_cs_high = match a {
+            "HIGH" => true,
+            "LOW" => false,
+            _ => return None,
+        };
+    } else if kw(key, "WIDTh") {
+        if query {
+            return t(m.dec_bits.to_string());
+        }
+        m.dec_bits = int(arg).filter(|w| (4..=32).contains(w))? as u32;
+    } else {
+        return None;
+    }
+    Some(None)
+}
+
+/// `:TRIGger:IIC:<key>` on `m`; `a` is `arg` in capitals.
+fn iic(m: &mut Model, key: &str, arg: &str, a: &str, query: bool) -> Option<Option<Vec<u8>>> {
+    let t = |s: String| Some(Some(s.into_bytes()));
+    if kw(key, "WHEN") {
+        if query {
+            return t(match m.trig_bus {
+                BusWhat::Id => "ADDR",
+                BusWhat::Data => "DATA",
+                BusWhat::Error => "NACK",
+                BusWhat::Frame => "STAR",
+            }
+            .into());
+        }
+        // repeated start, stop and address + data have no menu condition yet
+        m.trig_bus = match a {
+            "STAR" | "START" => BusWhat::Frame,
+            "ADDR" | "ADDRESS" => BusWhat::Id,
+            "DATA" => BusWhat::Data,
+            "NACK" | "NACKNOWLEDGE" => BusWhat::Error,
+            _ => return None,
+        };
+    } else if kw(key, "AWIDth") {
+        if query {
+            return t(if m.ser.ten_bit { "10" } else { "7" }.into());
+        }
+        m.ser.ten_bit = match a {
+            "7" => false,
+            "10" => true,
+            _ => return None,
+        };
+    } else if kw(key, "DIRection") {
+        if query {
+            return t(match m.ser.dir {
+                I2cDir::Read => "READ",
+                I2cDir::Write => "WRIT",
+                I2cDir::Either => "RWR",
+            }
+            .into());
+        }
+        m.ser.dir = match a {
+            "READ" => I2cDir::Read,
+            "WRIT" | "WRITE" => I2cDir::Write,
+            "RWR" | "RWRITE" => I2cDir::Either,
+            _ => return None,
+        };
+    } else if kw(key, "DBYTes") {
+        if query {
+            return t(m.ser.bytes.to_string());
+        }
+        m.ser.bytes = int(arg).filter(|&n| n <= 5)? as u8;
+    } else {
+        return None;
+    }
+    Some(None)
 }
 
 #[cfg(test)]
@@ -280,29 +302,65 @@ mod tests {
     #[test]
     fn rs232() {
         let mut m = Model::default();
-        for (key, v, back) in [("WHEN", "DATA", "DATA"), ("WHEN", "CERRor", "CERR"), ("WHEN", "ERR", "ERR"), ("POLarity", "NEGative", "NEG"), ("STOP", "1.5", "1.5"), ("PARity", "EVEN", "EVEN"), ("WIDTh", "7", "7"), ("BAUD", "115200", "115200"), ("DATA", "65", "65"), ("RELation", "IN", "IN"), ("DMAX", "0x39", "57")] {
+        for (key, v, back) in [
+            ("WHEN", "DATA", "DATA"),
+            ("WHEN", "CERRor", "CERR"),
+            ("WHEN", "ERR", "ERR"),
+            ("POLarity", "NEGative", "NEG"),
+            ("STOP", "1.5", "1.5"),
+            ("PARity", "EVEN", "EVEN"),
+            ("WIDTh", "7", "7"),
+            ("BAUD", "115200", "115200"),
+            ("DATA", "65", "65"),
+            ("RELation", "IN", "IN"),
+            ("DMAX", "0x39", "57"),
+        ] {
             assert!(set(&mut m, "RS232", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "RS232", key), back, "{}", key);
         }
         assert!(m.ser.uart_inv && m.ser.uart_err == UartErr::Framing && m.dec_bits == 7 && m.ser.rel == Rel::In);
-        assert!(!set(&mut m, "RS232", "WIDTh", "9") && !set(&mut m, "RS232", "STOP", "3") && !set(&mut m, "RS232", "RELation", "ABOUT"));
+        assert!(
+            !set(&mut m, "RS232", "WIDTh", "9")
+                && !set(&mut m, "RS232", "STOP", "3")
+                && !set(&mut m, "RS232", "RELation", "ABOUT")
+        );
     }
 
     #[test]
     fn spi_and_iic() {
-        let mut m = Model::default();
-        m.dec_cs = Some(2);
+        let mut m = Model { dec_cs: Some(2), ..Default::default() };
         assert!(set(&mut m, "SPI", "WHEN", "TIMeout"));
         assert_eq!((m.dec_cs, m.ser.spi_timeout, q(&mut m, "SPI", "WHEN")), (None, 1e-6, "TIM".to_string()));
-        for (key, v, back) in [("TIMeout", "2e-6", "2e-6"), ("SLOPe", "NEG", "NEG"), ("MODE", "HIGH", "HIGH"), ("WIDTh", "16", "16"), ("MASK", "0xff00", "65280"), ("WHEN", "CS", "CS")] {
+        for (key, v, back) in [
+            ("TIMeout", "2e-6", "2e-6"),
+            ("SLOPe", "NEG", "NEG"),
+            ("MODE", "HIGH", "HIGH"),
+            ("WIDTh", "16", "16"),
+            ("MASK", "0xff00", "65280"),
+            ("WHEN", "CS", "CS"),
+        ] {
             assert!(set(&mut m, "SPI", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "SPI", key), back, "{}", key);
         }
         assert_eq!((m.dec_mode, m.dec_cs, m.ser.spi_cs_high), (1, Some(2), true));
-        for (key, v, back) in [("WHEN", "ADDRess", "ADDR"), ("AWIDth", "10", "10"), ("ADDRess", "0x2a5", "677"), ("ARELation", "GT", "GT"), ("AMAX", "1023", "1023"), ("DIRection", "READ", "READ"), ("WHEN", "DATA", "DATA"), ("DBYTes", "3", "3"), ("DATA", "0x123456", "1193046")] {
+        for (key, v, back) in [
+            ("WHEN", "ADDRess", "ADDR"),
+            ("AWIDth", "10", "10"),
+            ("ADDRess", "0x2a5", "677"),
+            ("ARELation", "GT", "GT"),
+            ("AMAX", "1023", "1023"),
+            ("DIRection", "READ", "READ"),
+            ("WHEN", "DATA", "DATA"),
+            ("DBYTes", "3", "3"),
+            ("DATA", "0x123456", "1193046"),
+        ] {
             assert!(set(&mut m, "IIC", key, v), "{} {}", key, v);
             assert_eq!(q(&mut m, "IIC", key), back, "{}", key);
         }
-        assert!(!set(&mut m, "IIC", "WHEN", "RESTart") && !set(&mut m, "IIC", "AWIDth", "8") && !set(&mut m, "IIC", "DBYTes", "6"));
+        assert!(
+            !set(&mut m, "IIC", "WHEN", "RESTart")
+                && !set(&mut m, "IIC", "AWIDth", "8")
+                && !set(&mut m, "IIC", "DBYTes", "6")
+        );
     }
 }

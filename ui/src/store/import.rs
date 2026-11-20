@@ -12,7 +12,9 @@ use super::*;
 /// XML `WaveformInternal` or `WaveformPatternInternal`; or a CSV time column.
 /// Anything else is refused.
 pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
-    if bytes.len() > MAX_WAVEFORM_BYTES { return Err("waveform exceeds the 128 MiB import limit".into()); }
+    if bytes.len() > MAX_WAVEFORM_BYTES {
+        return Err("waveform exceeds the 128 MiB import limit".into());
+    }
     if bytes.starts_with(b"OOSW") {
         return parse_oosw(bytes);
     }
@@ -41,7 +43,8 @@ pub fn parse_wave(bytes: &[u8], name: &str) -> Result<Vec<WaveTrace>, String> {
 }
 
 pub(super) fn looks_wfm(bytes: &[u8]) -> bool {
-    bytes.len() >= 10 && (bytes[2..].starts_with(b":WFM#") || bytes[2..].starts_with(b"WFM#") || bytes.starts_with(b":WFM#"))
+    bytes.len() >= 10
+        && (bytes[2..].starts_with(b":WFM#") || bytes[2..].starts_with(b"WFM#") || bytes.starts_with(b":WFM#"))
 }
 
 pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
@@ -56,11 +59,18 @@ pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let nch = f.u32(8)? as usize;
     let n = usize::try_from(f.u64(12)?).map_err(|_| "OOS waveform is too large".to_string())?;
     let (dt, t0) = (f.f64(20)?, f.f64(28)?);
-    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
-    if nch == 0 || nch > 8 || n < 2 || !dt.is_finite() || dt <= 0.0 || !t0.is_finite() {
+    if n > MAX_WAVEFORM_SAMPLES {
+        return Err("waveform exceeds the 32-million-sample import limit".into());
+    }
+    if nch == 0 || nch > 8 || !oosw_timing_ok(n, dt, t0) {
         return Err("that file holds no waveform".into());
     }
-    let need = n.checked_mul(4).and_then(|bytes| bytes.checked_add(4)).and_then(|bytes| bytes.checked_mul(nch)).and_then(|bytes| bytes.checked_add(36)).ok_or("OOS waveform is too large")?;
+    let need = n
+        .checked_mul(4)
+        .and_then(|bytes| bytes.checked_add(4))
+        .and_then(|bytes| bytes.checked_mul(nch))
+        .and_then(|bytes| bytes.checked_add(36))
+        .ok_or("OOS waveform is too large")?;
     if b.len() < need {
         return Err("truncated OOS waveform".into());
     }
@@ -83,16 +93,26 @@ pub(super) fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
 /// than the reference slots ends the parse: a single line of many columns no longer makes as many traces.
 pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
     let mut columns: Vec<Vec<f32>> = Vec::new();
-    let mut times: [f64; 2] = [f64::NAN; 2];
+    // a stretch of lines whose time does not go back, as (first time, last time, lines): the one being read, and the
+    // longest of those before it that advance. A file of one sweep is one stretch
+    let mut stretch: (f64, f64, usize) = (f64::NAN, f64::NAN, 0);
+    let mut longest = stretch;
+    let mut first = f64::NAN;
     let mut rows = 0usize;
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
+        // a time that is no number (NaN, inf) on any line: the stretches below compare times, and NaN compares false
+        if !t.is_finite() {
+            return Err("that file holds no waveform".into());
+        }
         let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
         if rest.peek().is_none() {
             continue;
         }
-        if rows >= MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
+        if rows >= MAX_WAVEFORM_SAMPLES {
+            return Err("waveform exceeds the 32-million-sample import limit".into());
+        }
         let mut k = 0;
         for x in rest {
             if k >= NREF {
@@ -108,20 +128,44 @@ pub(super) fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, S
         for c in &mut columns[k..] {
             c.push(f32::NAN);
         }
-        if rows < 2 {
-            times[rows] = t;
+        if rows == 0 {
+            first = t;
+        }
+        if stretch.2 > 0 && t < stretch.1 {
+            // the time goes back: the next sweep or segment of the file begins
+            if stretch.1 > stretch.0 && stretch.2 > longest.2 {
+                longest = stretch;
+            }
+            stretch = (t, t, 1);
+        } else {
+            stretch = (if stretch.2 == 0 { t } else { stretch.0 }, t, stretch.2 + 1);
         }
         rows += 1;
     }
-    let dt = match times {
-        [a, b] if rows >= 2 && b > a => b - a,
-        _ => return Err("that file holds no waveform".into()),
+    if stretch.1 > stretch.0 && stretch.2 > longest.2 {
+        longest = stretch;
+    }
+    // the first time of a stretch and its last, over the steps between them. Not the first step alone: a file that
+    // rounds its times to a few digits has a first step that is off by a percent, or no step at all between its first
+    // two lines. Not the first time of the file and its last either: in a file of several sweeps the time starts
+    // again, and their distance is not that of the lines between them
+    let dt = match longest {
+        (a, b, lines) if lines >= 2 => (b - a) / (lines - 1) as f64,
+        _ => f64::NAN,
     };
+    // the time base the binary readers ask for: a time of inf gives an infinite step or start
+    if !oosw_timing_ok(rows, dt, first) {
+        return Err("that file holds no waveform".into());
+    }
     let ntrace = columns.len();
-    Ok(columns.into_iter().enumerate().map(|(k, v)| {
-        let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
-        WaveTrace { t0: times[0], dt, v, label }
-    }).collect())
+    Ok(columns
+        .into_iter()
+        .enumerate()
+        .map(|(k, v)| {
+            let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
+            WaveTrace { t0: first, dt, v, label }
+        })
+        .collect())
 }
 
 /// Tek reference waveform version 001/002/003, YT vector, first frame.
@@ -148,10 +192,17 @@ pub(super) fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     }
     let curve = usize::try_from(f.i32(16)?).map_err(|_| "WFM curve offset is negative")?;
     let label = b[40..72].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>().trim().to_string();
-    let (reference_size, explicit_size, implicit_size) = if ver == b":WFM#001" { (88, 156, 132) } else { (90, 160, 136) };
+    let (reference_size, explicit_size, implicit_size) =
+        if ver == b":WFM#001" { (88, 156, 132) } else { (90, 160, 136) };
     // Packed header follows the common 78-byte static block.
     let mut i = 78usize;
-    let need = |n: usize| -> Result<(), String> { if b.len() < n { Err("truncated WFM".into()) } else { Ok(()) } };
+    let need = |n: usize| -> Result<(), String> {
+        if b.len() < n {
+            Err("truncated WFM".into())
+        } else {
+            Ok(())
+        }
+    };
     need(i + reference_size)?;
     i += reference_size;
     need(i + explicit_size)?;
@@ -175,11 +226,21 @@ pub(super) fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if curve < i + 30 || data_start > post_start {
         return Err("WFM curve is empty".into());
     }
-    let expected_bpp = match fmt { 0 => 2, 1 | 2 | 4 => 4, 3 | 5 => 8, 6 | 7 => 1, _ => return Err("WFM sample format".into()) };
-    if bpp != expected_bpp { return Err("WFM sample format does not match bytes per point".into()); }
+    let expected_bpp = match fmt {
+        0 => 2,
+        1 | 2 | 4 => 4,
+        3 | 5 => 8,
+        6 | 7 => 1,
+        _ => return Err("WFM sample format".into()),
+    };
+    if bpp != expected_bpp {
+        return Err("WFM sample format does not match bytes per point".into());
+    }
     let start = curve.checked_add(data_start).ok_or("WFM curve offset overflow")?;
     let stop = curve.checked_add(post_start).ok_or("WFM curve offset overflow")?;
-    if stop > b.len().saturating_sub(8) { return Err("truncated WFM curve".into()); }
+    if stop > b.len().saturating_sub(8) {
+        return Err("truncated WFM curve".into());
+    }
     if stop <= start || (stop - start) % bpp != 0 {
         return Err("WFM curve is empty".into());
     }
@@ -187,7 +248,9 @@ pub(super) fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if n < 2 {
         return Err("WFM curve is empty".into());
     }
-    if n > MAX_WAVEFORM_SAMPLES { return Err("waveform exceeds the 32-million-sample import limit".into()); }
+    if n > MAX_WAVEFORM_SAMPLES {
+        return Err("waveform exceeds the 32-million-sample import limit".into());
+    }
     let mut v = Vec::with_capacity(n);
     for k in 0..n {
         let o = start + k * bpp;
@@ -218,7 +281,7 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let curve = b[s..].windows(6).position(|w| w == b":CURVE").map(|p| s + p).ok_or("that file holds no waveform")?;
     let mut kv = std::collections::HashMap::<String, String>::new();
     let pre = String::from_utf8_lossy(&b[s..curve]);
-    for part in pre.split(|c| c == ';' || c == '\n') {
+    for part in pre.split([';', '\n']) {
         let part = part.trim().trim_start_matches(':');
         let part = part.split_once(':').map(|(_, r)| r.trim()).unwrap_or(part);
         let mut it = part.split_whitespace();
@@ -249,7 +312,10 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     }
     let nr = match kv.get("NR_PT") {
         None => 0,
-        Some(value) => value.parse::<usize>().ok().filter(|n| (2..=MAX_WAVEFORM_SAMPLES).contains(n))
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (2..=MAX_WAVEFORM_SAMPLES).contains(n))
             .ok_or("invalid waveform point count")?,
     };
     let msb = kv.get("BYT_OR").is_some_and(|s| s.eq_ignore_ascii_case("MSB"));
@@ -261,12 +327,16 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     }
     let (raw, vals) = if b.get(i) == Some(&b'#') {
         i += 1;
-        let n = b.get(i).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as usize)
+        let n = b
+            .get(i)
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| (c - b'0') as usize)
             .ok_or("invalid waveform block length")?;
         if !(1..=9).contains(&n) || i + 1 + n > b.len() {
             return Err("truncated waveform".into());
         }
-        let len: usize = std::str::from_utf8(&b[i + 1..i + 1 + n]).ok().and_then(|s| s.parse().ok()).ok_or("truncated waveform")?;
+        let len: usize =
+            std::str::from_utf8(&b[i + 1..i + 1 + n]).ok().and_then(|s| s.parse().ok()).ok_or("truncated waveform")?;
         let start = i + 1 + n;
         if len > MAX_WAVEFORM_BYTES || start.checked_add(len).is_none_or(|end| end > b.len()) {
             return Err(if len > MAX_WAVEFORM_BYTES { "waveform is too large" } else { "truncated waveform" }.into());
@@ -296,29 +366,50 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         for k in 0..n {
             let o = raw + k * bpp;
             let code = match bpp {
-                1 => if signed { b[o] as i8 as f64 } else { b[o] as f64 },
+                1 => {
+                    if signed {
+                        b[o] as i8 as f64
+                    } else {
+                        b[o] as f64
+                    }
+                }
                 2 => {
                     let u = f.u16(o)?;
-                    if signed { u as i16 as f64 } else { u as f64 }
+                    if signed {
+                        u as i16 as f64
+                    } else {
+                        u as f64
+                    }
                 }
                 _ => {
                     let u = f.u32(o)?;
-                    if signed { u as i32 as f64 } else { u as f64 }
+                    if signed {
+                        u as i32 as f64
+                    } else {
+                        u as f64
+                    }
                 }
             };
             codes.push(code);
         }
     }
     let env = kv.get("PT_FMT").is_some_and(|s| s.eq_ignore_ascii_case("ENV"));
-    if env && nr == 0 { return Err("an envelope needs a waveform point count".into()); }
+    if env && nr == 0 {
+        return Err("an envelope needs a waveform point count".into());
+    }
     let needed = if env { nr * 2 } else { nr };
-    if codes.len() < needed { return Err("truncated waveform".into()); }
+    if codes.len() < needed {
+        return Err("truncated waveform".into());
+    }
     let t0 = xzero - pt_off * dt;
     let scale = |code: f64| ((code - yoff) * ymult + yzero) as f32;
     if env {
         let min: Vec<f32> = codes.iter().take(nr * 2).step_by(2).copied().map(scale).collect();
         let max: Vec<f32> = codes.iter().skip(1).take(nr * 2).step_by(2).copied().map(scale).collect();
-        return Ok(vec![WaveTrace { t0, dt, v: min, label: "min".into() }, WaveTrace { t0, dt, v: max, label: "max".into() }]);
+        return Ok(vec![
+            WaveTrace { t0, dt, v: min, label: "min".into() },
+            WaveTrace { t0, dt, v: max, label: "max".into() },
+        ]);
     }
     if nr >= 2 && codes.len() > nr {
         codes.truncate(nr);
@@ -326,7 +417,12 @@ pub(super) fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if codes.len() < 2 {
         return Err("that file holds no waveform".into());
     }
-    Ok(vec![WaveTrace { t0, dt, v: codes.into_iter().map(scale).collect(), label: kv.get("WFID").cloned().unwrap_or_default() }])
+    Ok(vec![WaveTrace {
+        t0,
+        dt,
+        v: codes.into_iter().map(scale).collect(),
+        label: kv.get("WFID").cloned().unwrap_or_default(),
+    }])
 }
 
 pub(super) fn looks_wavedesc(b: &[u8]) -> bool {
@@ -409,10 +505,10 @@ pub(super) fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let ris = f.u32(i + 52)? as usize;
     let nbytes = f.u32(i + 60)? as usize;
     let count = f.u32(i + 116)? as usize;
-    if desc < 188 || desc > 8192 || count < 2 || count > MAX_WAVEFORM_SAMPLES {
+    if !(188..=8192).contains(&desc) || !(2..=MAX_WAVEFORM_SAMPLES).contains(&count) {
         return Err("that file holds no waveform".into());
     }
-    let bpp = if count > 0 && nbytes % count == 0 && matches!(nbytes / count, 1 | 2 | 4) {
+    let bpp = if count > 0 && nbytes.is_multiple_of(count) && matches!(nbytes / count, 1 | 2 | 4) {
         nbytes / count
     } else {
         match f.u16(i + 32)? {
@@ -428,7 +524,12 @@ pub(super) fn parse_wavedesc(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if !(dt.is_finite() && dt > 0.0 && gain.is_finite() && off.is_finite() && t0.is_finite()) {
         return Err("that file holds no waveform".into());
     }
-    let start = i.checked_add(desc).and_then(|x| x.checked_add(user)).and_then(|x| x.checked_add(trig)).and_then(|x| x.checked_add(ris)).ok_or("waveform is too large")?;
+    let start = i
+        .checked_add(desc)
+        .and_then(|x| x.checked_add(user))
+        .and_then(|x| x.checked_add(trig))
+        .and_then(|x| x.checked_add(ris))
+        .ok_or("waveform is too large")?;
     let need = count.checked_mul(bpp).ok_or("waveform is too large")?;
     if start.checked_add(need).is_none_or(|end| end > b.len()) {
         return Err("truncated waveform".into());
@@ -495,9 +596,9 @@ pub(super) fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
                 return Err("truncated waveform".into());
             }
             let data = p + dsize;
-            if matches!(kind, 1 | 2 | 3) && bpp == 4 && bsize >= 8 && bsize % 4 == 0 {
+            if matches!(kind, 1..=3) && bpp == 4 && bsize >= 8 && bsize.is_multiple_of(4) {
                 let n = (bsize / 4).min(if npts >= 2 { npts } else { bsize / 4 });
-                if n >= 2 && n <= MAX_WAVEFORM_SAMPLES {
+                if (2..=MAX_WAVEFORM_SAMPLES).contains(&n) {
                     let v = (0..n).map(|k| f.f32(data + k * 4)).collect::<Result<Vec<f32>, String>>()?;
                     if kind == 1 {
                         normal = Some(v);
@@ -531,7 +632,9 @@ pub(super) fn block_le(head: &[u8]) -> Option<bool> {
 }
 
 pub(super) fn looks_raw(b: &[u8]) -> bool {
-    b.starts_with(b"Title:") && (b.windows(7).any(|w| w == b"Binary:") || b.windows(7).any(|w| w == b"Values:")) && b.windows(9).any(|w| w.eq_ignore_ascii_case(b"Plotname:"))
+    b.starts_with(b"Title:")
+        && (b.windows(7).any(|w| w == b"Binary:") || b.windows(7).any(|w| w == b"Values:"))
+        && b.windows(9).any(|w| w.eq_ignore_ascii_case(b"Plotname:"))
 }
 
 pub(super) fn looks_tr0(b: &[u8]) -> bool {
@@ -581,28 +684,38 @@ pub(super) fn post_vars(text: &str) -> Result<(usize, Vec<String>), String> {
         return Err("that file holds no waveform".into());
     }
     let names = if head.len() >= nvars * 16 {
-        head.as_bytes()[head.len() - nvars * 16..].chunks(16).map(|c| String::from_utf8_lossy(c).trim().to_string()).collect()
+        head.as_bytes()[head.len() - nvars * 16..]
+            .chunks(16)
+            .map(|c| String::from_utf8_lossy(c).trim().to_string())
+            .collect()
     } else {
         (0..nvars).map(|k| if k == 0 { "time".into() } else { format!("CH{k}") }).collect()
     };
     Ok((nvars, names))
 }
 
-pub(super) fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String], time_f32: bool) -> Result<Vec<WaveTrace>, String> {
-    if !(2..=64).contains(&nvars) { return Err("invalid waveform column count".into()); }
+pub(super) fn traces_from_columns(
+    cols: &[f64],
+    nvars: usize,
+    names: &[String],
+    time_f32: bool,
+) -> Result<Vec<WaveTrace>, String> {
+    if !(2..=64).contains(&nvars) {
+        return Err("invalid waveform column count".into());
+    }
     let mut n = cols.len();
     if n > 0 && cols[n - 1].abs() >= 1e29 {
         n -= 1;
     }
-    let body = if n >= nvars && n % nvars == 0 {
+    let body = if n >= nvars && n.is_multiple_of(nvars) {
         &cols[..n]
-    } else if n > nvars && (n - 1) % nvars == 0 {
+    } else if n > nvars && (n - 1).is_multiple_of(nvars) {
         &cols[1..n]
     } else {
         return Err("that file holds no waveform".into());
     };
     let rows = body.len() / nvars;
-    if rows < 2 || rows > MAX_WAVEFORM_SAMPLES {
+    if !(2..=MAX_WAVEFORM_SAMPLES).contains(&rows) {
         return Err(if rows < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
     }
     let t0 = body[0];
@@ -616,7 +729,9 @@ pub(super) fn traces_from_columns(cols: &[f64], nvars: usize, names: &[String], 
             let expected = t0 + r as f64 * dt;
             let tolerance = (dt.abs() * 1e-5).max(t0.abs().max(expected.abs()) * f32::EPSILON as f64 * 2.0).max(1e-45);
             t.is_finite() && expected.is_finite() && (t - expected).abs() <= tolerance
-        } else { uniform_time(t, t0, dt, r) }
+        } else {
+            uniform_time(t, t0, dt, r)
+        }
     };
     if !(0..rows).all(valid_time) {
         return Err("nonuniform waveform time axis is not supported".into());
@@ -681,7 +796,10 @@ pub(super) fn parse_tr0_ascii(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let (nvars, names) = post_vars(text)?;
     let rest = text[end + 4..].trim_start();
     let field = if width_bytes == 8 { 13 } else { 11 };
-    let packed = rest.as_bytes().get(..field).and_then(|b| std::str::from_utf8(b).ok())
+    let packed = rest
+        .as_bytes()
+        .get(..field)
+        .and_then(|b| std::str::from_utf8(b).ok())
         .is_some_and(|s| !s.bytes().any(|b| b.is_ascii_whitespace()) && s.trim().parse::<f64>().is_ok());
     let mut cols = Vec::new();
     if packed {
@@ -721,7 +839,8 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if !(2..=64).contains(&nvars) {
         return Err("that file holds no waveform".into());
     }
-    let complex = header.to_ascii_lowercase().contains("flags: complex") || header.to_ascii_lowercase().contains("flags:complex");
+    let complex =
+        header.to_ascii_lowercase().contains("flags: complex") || header.to_ascii_lowercase().contains("flags:complex");
     let names = raw_names(header, nvars);
     let binary = b[mark..].starts_with(b"Binary:");
     let mut cols = Vec::new();
@@ -734,7 +853,7 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             i += 1;
         }
         let points = if npts >= 2 { npts } else { (b.len() - i) / (nvars * 8) };
-        if points < 2 || points > MAX_WAVEFORM_SAMPLES {
+        if !(2..=MAX_WAVEFORM_SAMPLES).contains(&points) {
             return Err(if points < 2 { "that file holds no waveform" } else { "waveform is too large" }.into());
         }
         if i + points * nvars * 8 > b.len() {
@@ -750,7 +869,11 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
         }
     } else {
         let text = std::str::from_utf8(&b[mark + 7..]).map_err(|_| "that file is not a waveform".to_string())?;
-        let nums: Vec<f64> = text.split(|c: char| !(c.is_ascii_digit() || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E')).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect();
+        let nums: Vec<f64> = text
+            .split(|c: char| !(c.is_ascii_digit() || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E'))
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
         let stride = nvars + 1;
         let indexed = nums.len() >= stride * 2 && nums[0].abs() < 1e-9 && (nums[stride] - 1.0).abs() < 1e-6;
         if indexed {
@@ -758,7 +881,7 @@ pub(super) fn parse_raw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
             for r in 0..rows {
                 cols.extend_from_slice(&nums[r * stride + 1..r * stride + 1 + nvars]);
             }
-        } else if nums.len() >= nvars * 2 && nums.len() % nvars == 0 {
+        } else if nums.len() >= nvars * 2 && nums.len().is_multiple_of(nvars) {
             cols = nums;
         } else {
             return Err("that file holds no waveform".into());
@@ -821,7 +944,7 @@ pub(super) fn parse_wfmx(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let points: usize = xml_text(&head, "Points").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let t0: f64 = xml_text(&head, "XOrg").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
     let dt: f64 = xml_text(&head, "XInc").and_then(|s| s.parse().ok()).ok_or("that file holds no waveform")?;
-    if points < 2 || points > MAX_WAVEFORM_SAMPLES || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
+    if !(2..=MAX_WAVEFORM_SAMPLES).contains(&points) || !(dt.is_finite() && dt > 0.0 && t0.is_finite()) {
         return Err("that file holds no waveform".into());
     }
     let payload = wfmx_payload(b, points)?;
@@ -835,8 +958,9 @@ pub(super) fn wfmx_payload(b: &[u8], points: usize) -> Result<&[u8], String> {
     let [four, eight, sixteen] = lengths;
     let lengths = [four?, eight?, sixteen?];
     let fits = |p: &[u8]| lengths.contains(&p.len());
-    if let Some(start) = b.windows(5).enumerate().find_map(|(i, w)|
-        (w == b"<Data" && b.get(i + 5).is_some_and(|c| *c == b'>' || c.is_ascii_whitespace())).then_some(i)) {
+    if let Some(start) = b.windows(5).enumerate().find_map(|(i, w)| {
+        (w == b"<Data" && b.get(i + 5).is_some_and(|c| *c == b'>' || c.is_ascii_whitespace())).then_some(i)
+    }) {
         if let Some(gt) = b[start..].iter().position(|&c| c == b'>') {
             let from = start + gt + 1;
             for length in lengths {
@@ -868,7 +992,11 @@ pub(super) fn wfmx_payload(b: &[u8], points: usize) -> Result<&[u8], String> {
         // present separator is structural, never a replacement for missing data.
         for separator in [b"\r\n".as_slice(), b"\n".as_slice()] {
             if let Some(payload) = tail.strip_prefix(separator) {
-                return if fits(payload) { Ok(payload) } else { Err("truncated or unsupported waveform payload".into()) };
+                return if fits(payload) {
+                    Ok(payload)
+                } else {
+                    Err("truncated or unsupported waveform payload".into())
+                };
             }
         }
         if fits(tail) {
@@ -922,11 +1050,12 @@ pub(super) fn wfmx_volts(payload: &[u8], points: usize, t0: f64, dt: f64) -> Res
 }
 
 pub(super) fn x_matches_f32(xs: &[f64], t0: f64, dt: f64) -> bool {
-    xs.len() >= 2 && xs.iter().enumerate().all(|(i, &x)| {
-        let expected = t0 + i as f64 * dt;
-        let tolerance = (dt.abs() * 1e-5).max(expected.abs() * f32::EPSILON as f64).max(1e-45);
-        x.is_finite() && expected.is_finite() && (x - expected).abs() <= tolerance
-    })
+    xs.len() >= 2
+        && xs.iter().enumerate().all(|(i, &x)| {
+            let expected = t0 + i as f64 * dt;
+            let tolerance = (dt.abs() * 1e-5).max(expected.abs() * f32::EPSILON as f64).max(1e-45);
+            x.is_finite() && expected.is_finite() && (x - expected).abs() <= tolerance
+        })
 }
 
 pub(super) fn x_matches(xs: &[f64], t0: f64, dt: f64) -> bool {

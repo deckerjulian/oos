@@ -10,6 +10,15 @@
   tools/device-test.py --tier la --pico /dev/cu.usbmodem101    (needs pyserial)
   tools/device-test.py --tier rf --rf /dev/cu.wchusbserial110
   tools/device-test.py --sim                       against `oos-ui --serve` on this computer (no scope)
+  tools/device-test.py --host <ip> --changed origin/main --list    which tests this tree's change needs, and why
+  tools/device-test.py --host <ip> --changed origin/main           only those (and the smoke tests)
+  tools/device-test.py --host <ip> --save-known    a run of main: its failures are known from here on
+
+Focused, and judged without repeating by hand (tools/device_select.py, docs/device-testing.md):
+  --changed BASE  runs the tests of the areas the changed files reach; documents and CI only the smoke tests
+  --retries N     a test that fails runs again, up to N times (default 1); one that passes then is FLAKY
+  --known FILE    a failure that the known run (default device-test/known.json) has too is KNOWN
+FLAKY and KNOWN are listed in the report and do not fail the run.
 
 Tiers, in this order:
   a0  no signal: identity, record lengths, time bases, zero of every scale, network, limits
@@ -22,14 +31,16 @@ Tiers, in this order:
 A test that cannot run for lack of wiring is SKIP. A result that needs a decision is INFO. The results go to
 device-test/<time>/ as report.md, results.json and screenshots.
 
-It only talks to the published interfaces, plus read-only commands on the shell (telnet, or SSH with OOS_SHELL=ssh). shell() refuses everything
-that could write the FPGA flash, the calibration or the boot partitions, so a typo here cannot.
+It only talks to the published interfaces, plus read-only commands on the shell over SSH (a trusted key, the host key
+known first: docs/ssh.md; OOS_SSH_IDENTITY, OOS_SSH_PORT). shell() refuses everything that could write the FPGA flash,
+the calibration or the boot partitions, so a typo here cannot.
 """
 
 import argparse, base64, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oosclient import Link, LinkError, NoBlock  # noqa: E402
+import device_select  # noqa: E402
 
 CH = (1, 2, 3, 4)
 VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
@@ -69,8 +80,9 @@ class Scope:
             raise Gone(str(e))
 
     def line(self, timeout=15):
+        # a reply may be several lines (`:DEC:EVEN?`): all of them, as before the shared transport
         try:
-            return self.s.reply(timeout).decode(errors="replace").strip()
+            return self.s.text_reply(timeout).strip()
         except LinkError as e:
             raise Gone(str(e))
 
@@ -171,37 +183,22 @@ class Scope:
                 f.write(b)
 
     def shell(self, cmd, wait=2.0, reads_card=False):
-        """A read-only command on the scope's shell, the output as text: telnet (the default, as the image starts it)
-        or, with OOS_SHELL=ssh, key-authenticated SSH with strict host identity checking (OOS_SSH_IDENTITY,
-        OOS_SSH_PORT)."""
+        """A read-only command on the scope's shell, the output as text: key-authenticated SSH with strict host identity
+        checking (OOS_SSH_IDENTITY, OOS_SSH_PORT)."""
         if self.sim:
             raise Skip("no shell in the simulation")
         if FORBIDDEN.search(cmd) and not reads_card:
             raise AssertionError(f"refused here: {cmd}")
-        if os.environ.get("OOS_SHELL", "telnet") == "ssh":
-            args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-                    "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
-            if os.environ.get("OOS_SSH_IDENTITY"):
-                args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
-            result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True,
-                                    text=True, timeout=wait + 15, check=True)
-            return result.stdout.strip()
-        s = socket.create_connection((self.host, 23), timeout=10)
-        time.sleep(1)
-        s.sendall(b"echo @@S; " + cmd.encode() + b"; echo @@E\n")
-        s.settimeout(wait + 8)
-        b, end = b"", time.time() + wait + 8
-        while b.count(b"@@E") < 2 and time.time() < end:
-            try:
-                c = s.recv(65536)
-            except socket.timeout:
-                break
-            if not c:
-                break
-            b += c
-        s.close()
-        t = b.decode(errors="replace")
-        return t.split("@@S", 2)[-1].split("@@E")[0].strip()
+        args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                "-o", "ConnectTimeout=10", "-p", os.environ.get("OOS_SSH_PORT", "22")]
+        if os.environ.get("OOS_SSH_IDENTITY"):
+            args += ["-i", os.environ["OOS_SSH_IDENTITY"]]
+        result = subprocess.run(args + [f"root@{self.host}", cmd], capture_output=True, text=True, timeout=wait + 15)
+        # the command's own exit status is its business (`grep -c` with no match ends with 1), as it was on telnet; 255
+        # is ssh's: no connection, no key, a host key that does not match
+        if result.returncode == 255:
+            raise AssertionError(f"ssh root@{self.host}: {result.stderr.strip()}")
+        return result.stdout.strip()
 
     def base(self):
         """Back to a known state: defaults, the waveform view, the generator's channel at 1 V/div, generator off, running."""
@@ -321,9 +318,11 @@ def plan_matches_this_build(s, o):
     """The same register sequences on the unit as on this computer."""
     if s.sim or not o.plan:
         raise Skip("needs --plan with the host's plan-matrix output and plan-matrix.sh on the unit")
-    t = s.shell("F=/tmp/oos-fpgad.new; [ -x $F ] || F=/bin/oos-fpgad; OOS_CAL_DIR=/rigol/data sh /tmp/plan-matrix.sh $F | md5sum", wait=60)
-    want = subprocess.run(["md5"], input=open(o.plan, "rb").read(), capture_output=True).stdout.decode().strip()
-    assert want in t, f"unit {t}, host {want}"
+    unit = s.shell("F=/tmp/oos-fpgad.new; [ -x $F ] || F=/bin/oos-fpgad; OOS_CAL_DIR=/rigol/data sh /tmp/plan-matrix.sh $F", wait=90)
+    diff, skipped = device_select.plan_compare(open(o.plan).read(), unit)
+    assert not diff, f"{len(diff)} sections differ: " + "; ".join(diff[:3])
+    if skipped:
+        raise Info(f"equal; {len(skipped)} sections left out, a calibration file on one side only: {skipped[:3]}")
 
 
 @test("a0")
@@ -471,6 +470,20 @@ def web_keeps_foreign_sites_out(s, o):
 
 
 @test("a0")
+def no_telnet_shell(s, o):
+    """There is no shell without password on the network (ADR 0054): port 23 does not answer, and no telnetd runs."""
+    if s.sim:
+        raise Skip("the scope's own ports only")
+    try:
+        socket.create_connection((s.host, 23), timeout=3).close()
+    except OSError:
+        pass
+    else:
+        raise AssertionError("port 23 answers")
+    assert s.shell("pidof telnetd || echo none") == "none", "telnetd runs"
+
+
+@test("a0")
 def mcp_tools(s, o):
     def rpc(method, params=None):
         c, b = s.http("/mcp", data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode(), headers={"Content-Type": "application/json"})
@@ -597,6 +610,10 @@ def menus_open_and_close(s, o):
 # combination of graphics and monitor mode; the CPU drawing the monitor's own screen (Layout) is known to be heavier.
 FPS_FLOOR = 27.0
 FPS_FLOOR_CPU_LAYOUT = 22.0
+# The GPU drawing the monitor's own screen runs at 27 frames a second: ten runs of builds with equal behaviour on a
+# DHO924S (2026-11-17 and -18) gave 26.6 to 27.7, mean 27.0, standard deviation 0.35, so a floor of 27 failed every
+# other run of main. 26 is three deviations below the mean and still above the 25 the test was written to catch.
+FPS_FLOOR_GPU_LAYOUT = 26.0
 # the GPU may be this far below the CPU in the same mode (noise), and its frame loop this much busier (points)
 GPU_BEHIND_FPS = 1.5
 GPU_BUSIER = 5.0
@@ -680,7 +697,8 @@ def frame_rate_by_graphics_and_monitor(s, o):
         s.w(f":SYST:SET hdmi = {keep_h}")
         s.base()
     for (g, h), (fps, loop, *_) in rows.items():
-        floor = FPS_FLOOR_CPU_LAYOUT if (g, h) == ("CPU", "Layout") else FPS_FLOOR
+        floors = {("CPU", "Layout"): FPS_FLOOR_CPU_LAYOUT, ("GPU", "Layout"): FPS_FLOOR_GPU_LAYOUT}
+        floor = floors.get((g, h), FPS_FLOOR)
         if fps < floor:
             bad.append(f"{g} {h or 'panel'}: {fps:.1f} frames a second, at least {floor:.0f} expected")
     for h in modes:
@@ -2358,7 +2376,26 @@ def main():
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from ui/target/debug, generator on CH1 and CH2")
     ap.add_argument("--out")
+    ap.add_argument("--changed", metavar="BASE", help="only the tests the changes since BASE reach (git), and the smoke tests")
+    ap.add_argument("--list", action="store_true", help="name the tests that would run, and why, then stop")
+    ap.add_argument("--retries", type=int, default=1, help="runs of a failed test again (default 1)")
+    ap.add_argument("--known", default=os.path.join("device-test", "known.json"), help="results.json of a run of main")
+    ap.add_argument("--save-known", action="store_true", help="this run becomes the known run (run it on main)")
     o = ap.parse_args()
+    selected = None
+    if o.changed:
+        paths = device_select.changed_files(o.changed)
+        areas, why = device_select.areas_for(paths)
+        selected = set(device_select.select([t[1] for t in TESTS], areas))
+        print(f"{len(paths)} files changed since {o.changed}: areas {', '.join(sorted(areas)) or '(none: smoke tests)'}")
+        if o.list:
+            for p, a in sorted(why.items()):
+                print(f"  {p}: {', '.join(a) or '-'}")
+    if o.list:
+        names = [t[1] for t in TESTS if (selected is None or t[1] in selected) and (not o.tier or t[0] == o.tier)]
+        print(f"{len(names)} of {len(TESTS)} tests: " + " ".join(names))
+        return
+    known = device_select.load_known(o.known)
     o.out = o.out or os.path.join("device-test", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(o.out, exist_ok=True)
     proc = None
@@ -2391,31 +2428,40 @@ def main():
                 continue
             if o.only and o.only not in name and not always:
                 continue
+            if selected is not None and name not in selected:
+                continue
             t0 = time.time()
-            try:
-                if need and len(s.loop) < need[0]:
-                    raise Skip(f"generator on {need[0]} channel(s) needed, found {len(s.loop)}")
-                s.base()
-                time.sleep(0.2)
-                detail = f(s, o)
-                res = "PASS"
-                left = s.errors()
-                if left:
-                    res, detail = "FAIL", f"SCPI errors: {left[:3]}"
-            except Skip as e:
-                res, detail = "SKIP", str(e)
-            except Info as e:
-                res, detail = "INFO", str(e)
-            except Gone as e:
-                res, detail = "GONE", str(e)
-                gone = name
-            except AssertionError as e:
-                res, detail = "FAIL", str(e) or traceback.format_exc(limit=2)
-            except Exception:
-                res, detail = "ERROR", traceback.format_exc(limit=3)
+            attempts = []
+            while True:
+                try:
+                    if need and len(s.loop) < need[0]:
+                        raise Skip(f"generator on {need[0]} channel(s) needed, found {len(s.loop)}")
+                    s.base()
+                    time.sleep(0.2)
+                    detail = f(s, o)
+                    res = "PASS"
+                    left = s.errors()
+                    if left:
+                        res, detail = "FAIL", f"SCPI errors: {left[:3]}"
+                except Skip as e:
+                    res, detail = "SKIP", str(e)
+                except Info as e:
+                    res, detail = "INFO", str(e)
+                except Gone as e:
+                    res, detail = "GONE", str(e)
+                    gone = name
+                except AssertionError as e:
+                    res, detail = "FAIL", str(e) or traceback.format_exc(limit=2)
+                except Exception:
+                    res, detail = "ERROR", traceback.format_exc(limit=3)
+                attempts.append((res, str(detail or "")))
+                if res not in device_select.BAD or len(attempts) > o.retries:
+                    break
+                log(f"again {tier} {name}: {str(detail or '')[:120]}")
+            res, detail = device_select.judge(name, attempts, known)
             results.append({"tier": tier, "test": name, "result": res, "s": round(time.time() - t0, 1), "detail": str(detail or "")})
             log(f"{res:5} {tier} {name} ({time.time() - t0:.0f} s) {str(detail or '')[:160]}")
-            if res in ("FAIL", "ERROR"):
+            if res in device_select.BAD:
                 try:
                     s.shot(f"fail-{name}", o.out)
                 except Exception:
@@ -2443,12 +2489,16 @@ def main():
     finally:
         if proc:
             proc.terminate()
-    count = {k: sum(1 for r in results if r["result"] == k) for k in ("PASS", "FAIL", "ERROR", "INFO", "SKIP", "GONE")}
+    count = {k: sum(1 for r in results if r["result"] == k) for k in ("PASS", "FLAKY", "KNOWN", "FAIL", "ERROR", "INFO", "SKIP", "GONE")}
     with open(os.path.join(o.out, "report.md"), "w") as f:
         f.write(f"# OOS device test {os.path.basename(o.out)}\n\n{count}\n\n| Result | Tier | Test | s | Detail |\n|---|---|---|---|---|\n")
         for r in results:
             f.write(f"| {r['result']} | {r['tier']} | {r['test']} | {r['s']} | {r['detail'][:300].replace('|', '/').replace(chr(10), ' ')} |\n")
     log(f"done: {count}, report in {o.out}")
+    if o.save_known and not gone:
+        with open(o.known, "w") as fh:
+            json.dump(results, fh, indent=1)
+        log(f"known run: {o.known}")
     sys.exit(1 if count["FAIL"] or count["ERROR"] or count["GONE"] or gone else 0)
 
 

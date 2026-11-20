@@ -4,18 +4,25 @@ The unit has no built-in WLAN. OOS joins a network through a stick in the front 
 fe900000, `protocols/frontpanel.md`).
 
 Tested without hardware: wpa_supplicant, `oos-wlan`, `udhcpc.script` and the join code of oos-ui ran against access points
-on simulated radios (`tools/wlan-sim.sh`, section 6). **Not yet verified on hardware:** the stick's driver and firmware
-under OOS, and the front USB port with kernel 6.12.
+on simulated radios (`tools/wlan-sim.sh`, section 6). **Verified on the unit** (DHO924S, 2026-11-16, development image
+started by kexec): the TP-Link Archer TX10UB Nano in the front port with `rtw89`, from loading the driver to an address
+by DHCP on a WPA2 network (5 GHz, Wi-Fi 6, 80 MHz, 540 Mbit/s link rate, about 84 Mbit/s sent). **Not yet verified on
+hardware:** an RTL8188EU stick with `rtl8xxxu`, the joining pages of oos-ui with the TX10UB, long runs.
 
 ## 1. What works
 
 | | |
 |---|---|
-| Sticks | RTL8188EU (USB id 0bda:8179 and the other ids of the kernel driver `rtl8xxxu` that need `rtl8188eufw.bin`) |
-| Band | what the stick has: 2.4 GHz for the RTL8188EU |
+| Sticks | RTL8851BU with `rtw89` (TP-Link Archer TX10UB Nano, USB id 3625:010b, and the other ids of `rtw89_8851bu`); RTL8188EU with `rtl8xxxu` (USB id 0bda:8179 and the other ids of `rtl8xxxu` that need `rtl8188eufw.bin`) |
+| Band | what the stick has: 2.4 and 5 GHz for the RTL8851BU, 2.4 GHz for the RTL8188EU |
 | Networks | open, WPA and WPA2 personal, WPA2/WPA3 mixed, hidden names |
 | Not supported | WPA3 only, enterprise (802.1X), WEP. The list says so, a join is refused |
 | Address | DHCP only |
+
+The TX10UB first shows up as a driver CD; `oos-usbmode` (started by `oos-bt`, [bluetooth.md](bluetooth.md)) switches it,
+then its Bluetooth and its WLAN interface are there. `rtw89` with USB came with Linux 6.17: OOS builds the driver of
+6.18.63 as modules beside its 6.12 kernel (`kernel/modules/rtw89/`, ADR 0027). Next to `wlan0` a second interface of the
+same radio, `p2p0`, shows up and stays down.
 
 Another chip of `rtl8xxxu` needs its firmware file under `rootfs/initramfs/lib/firmware/rtlwifi/`, and some need the kernel
 option `RTL8XXXU_UNTESTED`. Another driver needs its modules in `boot/build-dev-image.sh` and in `oos-wlan`.
@@ -24,8 +31,8 @@ option `RTL8XXXU_UNTESTED`. Another driver needs its modules in `boot/build-dev-
 
 The network box at the top right, or System > Network:
 
-- **Find WLAN networks:** scans for a few seconds, then lists the 17 strongest names with their signal. Tap one and enter the
-  password. A saved network joins without one. **Other network** takes a hidden name, then a password (empty: open).
+- **Find WLAN networks:** scans for a few seconds, then lists every name it found with its signal, the strongest first
+  (a long list scrolls). Tap one and enter the password. A saved network joins without one. **Other network** takes a hidden name, then a password (empty: open).
 - **Forget WLAN network:** lists the saved networks, a tap removes one.
 - **WLAN details:** connection, signal, address, MAC of the stick.
 
@@ -44,7 +51,8 @@ when the network runs over the stick. With both, Ethernet stays the default rout
 | Part | Where | Does |
 |---|---|---|
 | kernel | `cfg80211`, `mac80211`, `rtl8xxxu`, `libarc4` modules | already in the base kernel, loaded by `oos-wlan` |
-| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin` | from linux-firmware, unchanged, with its licence beside it |
+| kernel | `rtw89_core`, `rtw89_usb`, `rtw89_8851b`, `rtw89_8851bu` | `kernel/modules/rtw89/` with `rtw89-linux-6.12.patch`, in `updates/` |
+| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin`, `lib/firmware/rtw89/rtw8851b_fw.bin` | from linux-firmware, unchanged, with its licence beside it |
 | `/bin/wpa_supplicant`, `/bin/wpa_cli` | `rootfs/build-wlan-tools.sh`, into `rootfs/out/` | version 2.11, static, internal crypto, no EAP, no SAE, no P2P |
 | `/bin/oos-wlan` | started by `rcS` (5c) | driver, wpa_supplicant, DHCP, section 4 |
 | `oos_hal::wlan` | `hal/src/wlan.rs` | control socket, parsers, key derivation |
@@ -55,7 +63,8 @@ when the network runs over the stick. With both, Ethernet stays the default rout
 Waits for `end` or `abort` in the start-up status (at most 60 s), so nothing of this runs beside the acquisition bring-up.
 Then every 2 s:
 
-1. A USB device there and no driver: load the modules. A scope without a stick never loads them.
+1. A vendor-specific USB interface there and no driver: load the modules. `rtw89` when the interface's id is one of
+   its aliases (`modules.alias`), else `rtl8xxxu`. A scope without a stick never loads them.
 2. `wlan0` there: wpa_supplicant runs, started again if it died.
 3. Joined a network: `udhcpc` runs in the background and renews the lease. Moving between access points of one network
    keeps the address; a lost link or another network drops it.
@@ -75,7 +84,7 @@ treat the card as you would the password. Without `/oos` the file is in `/tmp/wl
 oos-ui passes only hexadecimal forms to wpa_supplicant (SSID bytes, the key), so a name or password cannot break a command
 or the file. Names from a scan are untrusted: they are cut, and control characters are replaced on the screen.
 
-**Everything open on Ethernet is open on the WLAN too:** SSH (when on: password or key), telnet, SCPI, VXI-11, HiSLIP
+**Everything open on Ethernet is open on the WLAN too:** SSH (when on: password or key), SCPI, VXI-11, HiSLIP
 on a computer, the web remote, the LAN announcement, MCP and the update page. SSH keys do not add authentication to
 the other interfaces. Join only networks in which you trust every device. See [SSH provisioning](ssh.md).
 
@@ -90,7 +99,7 @@ the password, DHCP, the file holding the key and not the password, a second netw
 network, forgetting the current one and falling back to a saved one, wpa_supplicant killed and rejoining by itself, the stick
 pulled.
 
-Not covered: `rtl8xxxu`, the firmware load, the USB port, radio conditions, the on-screen steps on the panel (unit tests only).
+Not covered: the drivers, the firmware load, the USB port, radio conditions, the on-screen steps on the panel (unit tests only).
 
 ## 7. To check on the unit
 

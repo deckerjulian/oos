@@ -1,0 +1,287 @@
+# The answers to remote commands: every query that docs/scpi.md lists, on the default set-up with the demo signal,
+# then a few settings with their queries, measurements, a waveform page, the error queue and a loaded reference.
+# The answers go to a text file next to the pictures, and tools/compare-base.sh compares it between two builds: a
+# change of a remote answer shows there as a change of a picture does. A new query is added here with its command.
+frames 5
+scpi $S/scpi-answers.txt *IDN?
+scpi $S/scpi-answers.txt *ESR?
+scpi $S/scpi-answers.txt :CHANnel1:DISPlay?
+scpi $S/scpi-answers.txt :CHANnel1:SCALe?
+scpi $S/scpi-answers.txt :CHANnel1:OFFSet?
+scpi $S/scpi-answers.txt :CHANnel1:COUPling?
+scpi $S/scpi-answers.txt :CHANnel1:BWLimit?
+scpi $S/scpi-answers.txt :CHANnel1:PROBe?
+scpi $S/scpi-answers.txt :CHANnel1:INVert?
+scpi $S/scpi-answers.txt :TIMebase:SCALe?
+scpi $S/scpi-answers.txt :TIMebase:OFFSet?
+scpi $S/scpi-answers.txt :ACQuire:SRATe?
+scpi $S/scpi-answers.txt :ACQuire:MDEPth?
+scpi $S/scpi-answers.txt :TRIGger:MODE?
+scpi $S/scpi-answers.txt :TRIGger:STATus?
+scpi $S/scpi-answers.txt :TRIGger:SWEep?
+scpi $S/scpi-answers.txt :TRIGger:EDGE:SOURce?
+scpi $S/scpi-answers.txt :TRIGger:EDGE:LEVel?
+scpi $S/scpi-answers.txt :TRIGger:EDGE:SLOPe?
+scpi $S/scpi-answers.txt :TRIGger:HOLDoff?
+scpi $S/scpi-answers.txt :TRIGger:NREJect?
+scpi $S/scpi-answers.txt :TRIGger:COUPling?
+scpi $S/scpi-answers.txt :TRIGger:RUNT:UPPer?
+scpi $S/scpi-answers.txt :TRIGger:SOURce2?
+scpi $S/scpi-answers.txt :WAVeform:SOURce?
+scpi $S/scpi-answers.txt :WAVeform:MODE?
+scpi $S/scpi-answers.txt :WAVeform:FORMat?
+scpi $S/scpi-answers.txt :WAVeform:STARt?
+scpi $S/scpi-answers.txt :WAVeform:POINts?
+scpi $S/scpi-answers.txt :WAVeform:PREamble?
+scpi $S/scpi-answers.txt :DISPlay:DATA? PNG
+scpi $S/scpi-answers.txt :MEASure:SOURce?
+scpi $S/scpi-answers.txt :MEASure:GATing?
+scpi $S/scpi-answers.txt :MEASure:REFS?
+scpi $S/scpi-answers.txt :MEASure:TSETup?
+scpi $S/scpi-answers.txt :MEASure:STRip?
+scpi $S/scpi-answers.txt :MEASure:READout?
+scpi $S/scpi-answers.txt :EYE:ITEM? HEIGHT
+scpi $S/scpi-answers.txt :VIEW?
+scpi $S/scpi-answers.txt :CURSor:MODE?
+scpi $S/scpi-answers.txt :CURSor:MANual:TYPE?
+scpi $S/scpi-answers.txt :CURSor:MANual:SOURce?
+scpi $S/scpi-answers.txt :CURSor:MANual:CAX?
+scpi $S/scpi-answers.txt :CURSor:MANual:CAY?
+scpi $S/scpi-answers.txt :CURSor:TRACk:SOURce?
+scpi $S/scpi-answers.txt :CURSor:TRACk:CBY?
+scpi $S/scpi-answers.txt :CURSor:XY:AX?
+scpi $S/scpi-answers.txt :CURSor:MANual:AXValue?
+scpi $S/scpi-answers.txt :CURSor:TRACk:IXDelta?
+scpi $S/scpi-answers.txt :DVM:SOURce?
+scpi $S/scpi-answers.txt :COUNter:SOURce?
+scpi $S/scpi-answers.txt :DVM:CURRent?
+scpi $S/scpi-answers.txt :COUNter:CURRent?
+scpi $S/scpi-answers.txt :DVM:ENABle?
+scpi $S/scpi-answers.txt :DVM:MODE?
+scpi $S/scpi-answers.txt :COUNter:ENABle?
+scpi $S/scpi-answers.txt :COUNter:MODE?
+scpi $S/scpi-answers.txt :COUNter:NDIGits?
+scpi $S/scpi-answers.txt :REFerence:SLOT?
+scpi $S/scpi-answers.txt :REFerence:SHOW?
+scpi $S/scpi-answers.txt :REFerence:CURRent?
+scpi $S/scpi-answers.txt :REFerence:SOURce?
+scpi $S/scpi-answers.txt :SIM:PRESet?
+scpi $S/scpi-answers.txt :SIM:SLOT?
+scpi $S/scpi-answers.txt :SIM:PATTern?
+scpi $S/scpi-answers.txt :SIM:PLAY?
+scpi $S/scpi-answers.txt :SIM:BUSY?
+scpi $S/scpi-answers.txt :SIM:SHOW?
+scpi $S/scpi-answers.txt :SIM:SSC:MODE?
+scpi $S/scpi-answers.txt :SIM:SSC:DEViation?
+scpi $S/scpi-answers.txt :SIM:SSC:FREQuency?
+scpi $S/scpi-answers.txt :SIM:JITTer:DCD?
+scpi $S/scpi-answers.txt :SIM:JITTer:CORRelated?
+scpi $S/scpi-answers.txt :SIM:JITTer:CORNer?
+scpi $S/scpi-answers.txt :DECode:SELect?
+scpi $S/scpi-answers.txt :DECode:PROTocol?
+scpi $S/scpi-answers.txt :DECode:STATe?
+scpi $S/scpi-answers.txt :DECode:INPut?
+scpi $S/scpi-answers.txt :DECode:SOURce?
+scpi $S/scpi-answers.txt :DECode:CS?
+scpi $S/scpi-answers.txt :DECode:THReshold?
+scpi $S/scpi-answers.txt :DECode:CPHY:RATE?
+scpi $S/scpi-answers.txt :DECode:BUSY?
+scpi $S/scpi-answers.txt :DECode:EVENts?
+scpi $S/scpi-answers.txt :CHANnel1:POSition?
+scpi $S/scpi-answers.txt :CHANnel1:UNITs?
+scpi $S/scpi-answers.txt :CHANnel1:VERNier?
+scpi $S/scpi-answers.txt :CHANnel1:TCALibrate?
+scpi $S/scpi-answers.txt :CHANnel1:BIAS?
+scpi $S/scpi-answers.txt :CHANnel1:EXPand?
+scpi $S/scpi-answers.txt :CHANnel1:LABel:SHOW?
+scpi $S/scpi-answers.txt :ACQuire:TYPE?
+scpi $S/scpi-answers.txt :ACQuire:AVERages?
+scpi $S/scpi-answers.txt :ACQuire:CORes?
+scpi $S/scpi-answers.txt :ACQuire:AVERages:HARDware?
+scpi $S/scpi-answers.txt :ACQuire:SEGMents:HARDware?
+scpi $S/scpi-answers.txt :ACQuire:ULTRa:MAXFrame?
+scpi $S/scpi-answers.txt :ACQuire:SEGMents?
+scpi $S/scpi-answers.txt :ACQuire:SEGMents:INTerval?
+scpi $S/scpi-answers.txt :ACQuire:SEGMents:TIMes?
+scpi $S/scpi-answers.txt :DISPlay:VIEW?
+scpi $S/scpi-answers.txt :DISPlay:VIEW:COUNt?
+scpi $S/scpi-answers.txt :DISPlay:VIEW:MONitor?
+scpi $S/scpi-answers.txt :TIMebase:DELay:ENABle?
+scpi $S/scpi-answers.txt :TIMebase:VERNier?
+scpi $S/scpi-answers.txt :TIMebase:HREFerence:MODE?
+scpi $S/scpi-answers.txt :TIMebase:MODE?
+scpi $S/scpi-answers.txt :TIMebase:ROLL?
+scpi $S/scpi-answers.txt :TIMebase:XY:ENABle?
+scpi $S/scpi-answers.txt :DISPlay:TYPE?
+scpi $S/scpi-answers.txt :DISPlay:GRADing:TIME?
+scpi $S/scpi-answers.txt :DISPlay:WBRightness?
+scpi $S/scpi-answers.txt :DISPlay:GRID?
+scpi $S/scpi-answers.txt :DISPlay:GBRightness?
+scpi $S/scpi-answers.txt :DISPlay:RULers?
+scpi $S/scpi-answers.txt :DISPlay:COLor?
+scpi $S/scpi-answers.txt :MEASure:STATistic:DISPlay?
+scpi $S/scpi-answers.txt :MEASure:STATistic:ITEM? CURRent,VPP,CHANnel1
+scpi $S/scpi-answers.txt :MEASure:SETup:MIN?
+scpi $S/scpi-answers.txt :MEASure:SETup:PSA?
+scpi $S/scpi-answers.txt :MEASure:BURSt:IDLE?
+scpi $S/scpi-answers.txt :MEASure:OUTSide?
+scpi $S/scpi-answers.txt :MEASure:NPERiods?
+scpi $S/scpi-answers.txt :MEASure:EDGes?
+scpi $S/scpi-answers.txt :MEASure:INDicator?
+scpi $S/scpi-answers.txt :MATH1:DISPlay?
+scpi $S/scpi-answers.txt :MATH1:SOURce1?
+scpi $S/scpi-answers.txt :MATH1:SCALe?
+scpi $S/scpi-answers.txt :MATH1:FFT:SOURce?
+scpi $S/scpi-answers.txt :MATH1:FFT:WINDow?
+scpi $S/scpi-answers.txt :MATH1:FILTer:TYPE?
+scpi $S/scpi-answers.txt :BUS1:MODE?
+scpi $S/scpi-answers.txt :BUS1:EVENt?
+scpi $S/scpi-answers.txt :BUS1:THReshold?
+scpi $S/scpi-answers.txt :BUS1:DATA?
+scpi $S/scpi-answers.txt :BUS1:RS232:TX?
+scpi $S/scpi-answers.txt :BUS1:RS232:BAUD?
+scpi $S/scpi-answers.txt :BUS1:IIC:SCLK:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:SCLK:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:DBITs?
+scpi $S/scpi-answers.txt :MATH1:EXPRession?
+scpi $S/scpi-answers.txt :SYSTem:PIPeline?
+scpi $S/scpi-answers.txt :SYSTem:GRAPhics?
+scpi $S/scpi-answers.txt :SYSTem:AOUTput?
+scpi $S/scpi-answers.txt :DEBug:SLOTs?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:UART?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:ZONE?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:MASK?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:MASK:MAP?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:MASK:COLumns?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:DVM?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:DVM:LANE?
+# settings, and what they answer afterwards
+scpi $S/scpi-answers.txt :CHANnel1:SCALe 0.5;:CHANnel1:SCALe?;:CHANnel1:OFFSet 0.25;:CHANnel1:OFFSet?
+scpi $S/scpi-answers.txt :CHANnel2:DISPlay ON;:CHANnel2:DISPlay?;:CHANnel2:COUPling AC;:CHANnel2:COUPling?
+scpi $S/scpi-answers.txt :TIMebase:SCALe 1E-3;:TIMebase:SCALe?;:TIMebase:OFFSet 2E-3;:TIMebase:OFFSet?
+scpi $S/scpi-answers.txt :TRIGger:EDGE:SLOPe NEGative;:TRIGger:EDGE:SLOPe?;:TRIGger:EDGE:LEVel 0.25;:TRIGger:EDGE:LEVel?
+scpi $S/scpi-answers.txt :ACQuire:TYPE AVERages;:ACQuire:TYPE?;:ACQuire:AVERages 16;:ACQuire:AVERages?
+scpi $S/scpi-answers.txt :ACQuire:TYPE NORMal;:ACQuire:SRATe?;:ACQuire:MDEPth?
+frames 10
+# measurements on the demo signal
+scpi $S/scpi-answers.txt :MEASure:ITEM? VPP,CHANnel1
+scpi $S/scpi-answers.txt :MEASure:ITEM? VMAX,CHANnel1
+scpi $S/scpi-answers.txt :MEASure:ITEM? VMIN,CHANnel1
+scpi $S/scpi-answers.txt :MEASure:ITEM? FREQuency,CHANnel1
+scpi $S/scpi-answers.txt :MEASure:ITEM? PERiod,CHANnel1
+# one acquisition, and a page of its record
+scpi $S/scpi-answers.txt :SINGle;*OPC?
+scpi $S/scpi-answers.txt :WAVeform:SOURce CHANnel1;:WAVeform:MODE NORMal;:WAVeform:FORMat ASCii
+scpi $S/scpi-answers.txt :WAVeform:STARt 1;:WAVeform:STOP 20
+scpi $S/scpi-answers.txt :WAVeform:PREamble?
+scpi $S/scpi-answers.txt :WAVeform:DATA?
+# what an unknown command leaves in the error queue
+scpi $S/scpi-answers.txt :NOPE?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# a reference saved from CH1, and what the queries of a loaded reference answer
+scpi $S/scpi-answers.txt :REFerence:SAVE;:REFerence:SHOW?
+scpi $S/scpi-answers.txt :REFerence:VSCale?
+scpi $S/scpi-answers.txt :REFerence:LABel:CONTent?
+scpi $S/scpi-answers.txt :REFerence:COLor?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the queries of the rows with more than one command, after the first one of each row
+scpi $S/scpi-answers.txt :AUToscale?
+scpi $S/scpi-answers.txt :TRIGger:RUNT:LOWer?
+scpi $S/scpi-answers.txt :WAVeform:STOP?
+scpi $S/scpi-answers.txt :MEASure:THOLd?
+scpi $S/scpi-answers.txt :CURSor:MANual:CBX?
+scpi $S/scpi-answers.txt :REFerence:VOFFset?
+scpi $S/scpi-answers.txt :DECode:SOURce2?
+scpi $S/scpi-answers.txt :DECode:SOURce4?
+scpi $S/scpi-answers.txt :DECode:DIFFerential?
+scpi $S/scpi-answers.txt :CHANnel1:LABel:CONTent?
+scpi $S/scpi-answers.txt :TIMebase:DELay:SCALe?
+scpi $S/scpi-answers.txt :TIMebase:DELay:OFFSet?
+scpi $S/scpi-answers.txt :TIMebase:XY:X?
+scpi $S/scpi-answers.txt :TIMebase:XY:Y?
+scpi $S/scpi-answers.txt :TIMebase:XY:Z?
+scpi $S/scpi-answers.txt :MEASure:SETup:MAX?
+scpi $S/scpi-answers.txt :MEASure:SETup:PSB?
+scpi $S/scpi-answers.txt :MEASure:SETup:DSA?
+scpi $S/scpi-answers.txt :MEASure:SETup:DSB?
+scpi $S/scpi-answers.txt :MATH1:OPERator?
+scpi $S/scpi-answers.txt :MATH1:SOURce2?
+scpi $S/scpi-answers.txt :MATH1:OFFSet?
+scpi $S/scpi-answers.txt :MATH1:FFT:SCALe?
+scpi $S/scpi-answers.txt :MATH1:FILTer:W1?
+scpi $S/scpi-answers.txt :MATH1:FILTer:W2?
+scpi $S/scpi-answers.txt :BUS1:DISPlay?
+scpi $S/scpi-answers.txt :BUS1:FORMat?
+scpi $S/scpi-answers.txt :BUS1:RS232:RX?
+scpi $S/scpi-answers.txt :BUS1:RS232:PARity?
+scpi $S/scpi-answers.txt :BUS1:RS232:DBITs?
+scpi $S/scpi-answers.txt :BUS1:IIC:SDA:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:MOSI:SOURce?
+scpi $S/scpi-answers.txt :BUS1:SPI:SS:SOURce?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the queries that docs/scpi.md names outside the first cell of a table row, and in its running text
+scpi $S/scpi-answers.txt :TRIG:EDGE:SOUR?
+scpi $S/scpi-answers.txt :SYST:ERR?
+scpi $S/scpi-answers.txt :ACQ:SRAT?
+scpi $S/scpi-answers.txt :TRIGger:TYPe?
+scpi $S/scpi-answers.txt :POWer:ITEM? VRMS,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :POWer:HARMonics? CHANnel1
+scpi $S/scpi-answers.txt :SPECtrum:ITEM? THD,CHANnel1
+scpi $S/scpi-answers.txt :MAGnetic:ITEM? L,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :INVerter:ITEM? FREQ,CHANnel1,CHANnel2,CHANnel3
+scpi $S/scpi-answers.txt :DPT:ITEM? VPEAK,CHANnel1,CHANnel2
+scpi $S/scpi-answers.txt :BANDwidth:ITEM? RISE,CHANnel1
+scpi $S/scpi-answers.txt :BODE:MODE?
+scpi $S/scpi-answers.txt :BODE:DATA?
+scpi $S/scpi-answers.txt :BODE:GENerator?
+scpi $S/scpi-answers.txt :LA:STATe?
+scpi $S/scpi-answers.txt :LA:DIGital0:DISPlay?
+scpi $S/scpi-answers.txt :LA:POD1:THReshold?
+scpi $S/scpi-answers.txt :IDENtify?
+scpi $S/scpi-answers.txt :CALibrate:STATus?
+scpi $S/scpi-answers.txt :SYSTem:GET? tdiv
+scpi $S/scpi-answers.txt :CURSor:MEASure:INDicator?
+scpi $S/scpi-answers.txt :CURSor:TRACk:SOURce1?
+scpi $S/scpi-answers.txt :CURSor:TRACk:SOURce2?
+scpi $S/scpi-answers.txt :MASK:ENABle?
+scpi $S/scpi-answers.txt :MASK:SOURce?
+scpi $S/scpi-answers.txt :MASK:X?
+scpi $S/scpi-answers.txt :MASK:Y?
+scpi $S/scpi-answers.txt :MASK:OPERate?
+scpi $S/scpi-answers.txt :MASK:FAILed?
+scpi $S/scpi-answers.txt :MASK:PASSed?
+scpi $S/scpi-answers.txt :MASK:TOTal?
+scpi $S/scpi-answers.txt :HISTogram:ENABle?
+scpi $S/scpi-answers.txt :HISTogram:TYPE?
+scpi $S/scpi-answers.txt :HISTogram:SOURce?
+scpi $S/scpi-answers.txt :HISTogram:STATistics:RESult?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# what the running text says is refused, each with the error it leaves: a catalog row as a measurement item, the
+# queries of actions
+scpi $S/scpi-answers.txt :MEAS:ITEM? CAT1
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :RUN?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :STOP?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt :SING?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt *CLS?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+scpi $S/scpi-answers.txt *RST?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the words of the interpreter the queries above leave out: the aliases of the runt thresholds and of the UART
+# debug query, the XY cursor B and the Y coordinates, and the cursor values and deltas
+scpi $S/scpi-answers.txt :TRIGger:RUNT:ALEVel?
+scpi $S/scpi-answers.txt :TRIGger:RUNT:BLEVel?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:SERial?
+scpi $S/scpi-answers.txt :CURSor:XY:BX?
+scpi $S/scpi-answers.txt :CURSor:XY:AY?
+scpi $S/scpi-answers.txt :CURSor:XY:BY?
+scpi $S/scpi-answers.txt :CURSor:MANual:BXValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:AYValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:BYValue?
+scpi $S/scpi-answers.txt :CURSor:MANual:XDELta?
+scpi $S/scpi-answers.txt :CURSor:MANual:YDELta?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?

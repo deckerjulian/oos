@@ -40,9 +40,21 @@ pub const MODEL_TABLE: [(&str, u32, usize, &str); 12] = [
 ///
 /// "DHO900" in the model table is not a model (the series forced by hand) and belongs to no variant.
 const VARIANTS: [Variant; 5] = [
-    Variant { name: "DHO800, 4 channels", models: &["DHO804", "DHO814", "DHO824"], ran_on: &[("DHO804", "user report, several releases")] },
-    Variant { name: "DHO800, 2 channels", models: &["DHO802", "DHO812"], ran_on: &[] },
-    Variant { name: "DHO900 with generator", models: &["DHO914S", "DHO924S"], ran_on: &[("DHO924S", "the developer's unit")] },
+    Variant {
+        name: "DHO800, 4 channels",
+        models: &["DHO804", "DHO814", "DHO824"],
+        ran_on: &[("DHO804", "user report, several releases")],
+    },
+    Variant {
+        name: "DHO800, 2 channels",
+        models: &["DHO802", "DHO812"],
+        ran_on: &[("DHO802", "user report, 0.1.13, issue #19")],
+    },
+    Variant {
+        name: "DHO900 with generator",
+        models: &["DHO914S", "DHO924S"],
+        ran_on: &[("DHO924S", "the developer's unit")],
+    },
     Variant { name: "DHO900 without generator", models: &["DHO914", "DHO924"], ran_on: &[] },
     Variant { name: "DHO900 EDU", models: &["DHO914-EDU", "DHO924-EDU"], ran_on: &[] },
 ];
@@ -70,7 +82,11 @@ fn caps(name: &str) -> Option<Caps> {
 pub fn family(name: &str) -> bool {
     let n = name.trim().to_ascii_uppercase();
     let b = n.as_bytes();
-    n.starts_with("DHO") && b.len() >= 6 && matches!(b[3], b'8' | b'9') && b[4].is_ascii_digit() && b[5].is_ascii_digit()
+    n.starts_with("DHO")
+        && b.len() >= 6
+        && matches!(b[3], b'8' | b'9')
+        && b[4].is_ascii_digit()
+        && b[5].is_ascii_digit()
 }
 
 /// The standard limits (the same for every DHO800/DHO900).
@@ -146,3 +162,19 @@ pub const DHO: Target = Target {
     clock_steps: &CLOCK_STEPS,
     acquisition: true,
 };
+
+/// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`batch_plan` of the
+/// DHO board of oos-ui). New entries go to the end: setups store the position.
+pub const DEPTHS: [(&str, u64); 11] = [
+    ("Auto", 0),
+    ("1k", 1_000),
+    ("10k", 10_000),
+    ("100k", 100_000),
+    ("1M", 1_000_000),
+    ("10M", 10_000_000),
+    ("25M", 25_000_000),
+    ("50M", 50_000_000),
+    ("62.5M", 62_500_000),
+    ("100M", 100_000_000),
+    ("125M", 125_000_000),
+];

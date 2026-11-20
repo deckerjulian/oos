@@ -28,7 +28,10 @@ enum Op {
     Fn(fn(f64) -> f64),
 }
 
-const FUNCS: [(&str, fn(f64) -> f64); 8] = [
+/// A function of one argument by its name.
+type Func = (&'static str, fn(f64) -> f64);
+
+const FUNCS: [Func; 8] = [
     ("sin", f64::sin),
     ("cos", f64::cos),
     ("tan", f64::tan),
@@ -86,33 +89,26 @@ impl Parser<'_> {
         if depth > DEPTH_MAX {
             return Err("Nested too deep".into());
         }
-        self.product(depth)?;
-        loop {
-            if self.eat(b'+') {
-                self.product(depth)?;
-                self.ops.push(Op::Add);
-            } else if self.eat(b'-') {
-                self.product(depth)?;
-                self.ops.push(Op::Sub);
-            } else {
-                return Ok(());
-            }
-        }
+        self.left(depth, Self::product, [(b'+', Op::Add), (b'-', Op::Sub)])
     }
 
     fn product(&mut self, depth: usize) -> Result<(), String> {
-        self.unary(depth)?;
-        loop {
-            if self.eat(b'*') {
-                self.unary(depth)?;
-                self.ops.push(Op::Mul);
-            } else if self.eat(b'/') {
-                self.unary(depth)?;
-                self.ops.push(Op::Div);
-            } else {
-                return Ok(());
-            }
+        self.left(depth, Self::unary, [(b'*', Op::Mul), (b'/', Op::Div)])
+    }
+
+    /// A left-associative level: operands from `next`, joined by the operators `ops` (character, operation).
+    fn left(
+        &mut self,
+        depth: usize,
+        next: fn(&mut Self, usize) -> Result<(), String>,
+        ops: [(u8, Op); 2],
+    ) -> Result<(), String> {
+        next(self, depth)?;
+        while let Some(&(_, op)) = ops.iter().find(|(c, _)| self.eat(*c)) {
+            next(self, depth)?;
+            self.ops.push(op);
         }
+        Ok(())
     }
 
     fn unary(&mut self, depth: usize) -> Result<(), String> {
@@ -154,13 +150,17 @@ impl Parser<'_> {
         if self.eat(b'(') {
             return self.call(&name, depth);
         }
-        match name.as_str() {
-            "t" => self.ops.push(Op::T),
-            "pi" => self.ops.push(Op::Num(std::f64::consts::PI)),
-            _ if self.names.iter().any(|s| s.eq_ignore_ascii_case(&name)) => {
-                let k = self.names.iter().position(|s| s.eq_ignore_ascii_case(&name)).unwrap();
-                if k < crate::CHANNELS { self.used[k] = true; }
-                if !self.used_sources.contains(&k) { self.used_sources.push(k); }
+        let source = self.names.iter().position(|s| s.eq_ignore_ascii_case(&name));
+        match (name.as_str(), source) {
+            ("t", _) => self.ops.push(Op::T),
+            ("pi", _) => self.ops.push(Op::Num(std::f64::consts::PI)),
+            (_, Some(k)) => {
+                if k < crate::CHANNELS {
+                    self.used[k] = true;
+                }
+                if !self.used_sources.contains(&k) {
+                    self.used_sources.push(k);
+                }
                 self.ops.push(Op::Ch(k));
             }
             _ => return Err(format!("Unknown name {}", name)),
@@ -216,7 +216,14 @@ impl Expr {
         if text.len() > EXPR_MAX {
             return Err("Formula too long".into());
         }
-        let mut p = Parser { s: text.as_bytes(), at: 0, ops: Vec::new(), used: [false; crate::CHANNELS], names, used_sources: Vec::new() };
+        let mut p = Parser {
+            s: text.as_bytes(),
+            at: 0,
+            ops: Vec::new(),
+            used: [false; crate::CHANNELS],
+            names,
+            used_sources: Vec::new(),
+        };
         p.sum(0)?;
         if let Some(c) = p.peek() {
             return Err(format!("Unexpected {}", c as char));
@@ -307,7 +314,24 @@ mod tests {
 
     #[test]
     fn the_rules_of_arithmetic() {
-        for (s, v) in [("1+2*3", 7.0), ("(1+2)*3", 9.0), ("2^3^2", 512.0), ("-2^2", -4.0), ("2^-1", 0.5), ("10/4/5", 0.5), ("1-2-3", -4.0), ("1.5e3", 1500.0), ("2e-3*1000", 2.0), ("--3", 3.0), ("+4", 4.0), ("max(1,min(5,3))", 3.0), ("abs(-2)", 2.0), ("log(1000)", 3.0), ("ln(exp(2))", 2.0), (" sqrt( 16 ) ", 4.0)] {
+        for (s, v) in [
+            ("1+2*3", 7.0),
+            ("(1+2)*3", 9.0),
+            ("2^3^2", 512.0),
+            ("-2^2", -4.0),
+            ("2^-1", 0.5),
+            ("10/4/5", 0.5),
+            ("1-2-3", -4.0),
+            ("1.5e3", 1500.0),
+            ("2e-3*1000", 2.0),
+            ("--3", 3.0),
+            ("+4", 4.0),
+            ("max(1,min(5,3))", 3.0),
+            ("abs(-2)", 2.0),
+            ("log(1000)", 3.0),
+            ("ln(exp(2))", 2.0),
+            (" sqrt( 16 ) ", 4.0),
+        ] {
             assert!((one(s) - v).abs() < 1e-3, "{} = {}", s, one(s));
         }
         assert!((one("SIN(PI/2)") - 1.0).abs() < 1e-6);
@@ -327,7 +351,10 @@ mod tests {
 
     #[test]
     fn what_is_not_a_formula() {
-        for s in ["", "   ", "1+", "(1", "1)", "foo", "foo(1)", "ch5", "ch1 ch2", "1..2", "min(1)", "sin(1,2)", "$", "\u{e4}", "1 2", "*3", "t(1)"] {
+        for s in [
+            "", "   ", "1+", "(1", "1)", "foo", "foo(1)", "ch5", "ch1 ch2", "1..2", "min(1)", "sin(1,2)", "$",
+            "\u{e4}", "1 2", "*3", "t(1)",
+        ] {
             assert!(Expr::parse(s).is_err(), "{:?}", s);
         }
         assert!(Expr::parse(&"1+".repeat(40)).is_err());
@@ -336,7 +363,14 @@ mod tests {
     #[test]
     fn nothing_breaks_it() {
         // right-leaning and deep ones, within the length limit: an error or a value, never a panic
-        for s in ["(".repeat(64), "-".repeat(64), "2^".repeat(31) + "2", "1+(".repeat(16) + "1", "max(1,".repeat(10) + "1", "1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1)))))))))))))))".to_string()] {
+        for s in [
+            "(".repeat(64),
+            "-".repeat(64),
+            "2^".repeat(31) + "2",
+            "1+(".repeat(16) + "1",
+            "max(1,".repeat(10) + "1",
+            "1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1)))))))))))))))".to_string(),
+        ] {
             if let Ok(e) = Expr::parse(&s) {
                 e.eval([&[], &[], &[], &[]], 0.0, 1.0, 2);
             }

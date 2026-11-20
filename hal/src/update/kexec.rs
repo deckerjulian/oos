@@ -11,12 +11,15 @@
 //! device tree the scope started with (`/oos-kexec.dt`). Only that start, once it reached rcS and found the card and
 //! /oos, installs it (`oos-update boot`). A hang there: power-cycle; `recovery` still holds the running build.
 //!
-//! The device tree: `kexec_file_load` gives the new kernel the tree of the running one. An image whose `second` (the
-//! RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) is started with
-//! `kexec_load` instead, through kexec-tools (`TOOL`, `kexec -c --dtb`), with its own tree and the changes the loader
-//! made to the running one (`fdt::with_loader_changes`): the tree a power-on would give it. A build without the tool
-//! (0.1.6 and older) refuses such an image. What it does not try: the start runs on warm hardware, so a kernel that
-//! only fails from a cold start passes.
+//! The device tree and where the segments go: a build with kexec-tools (`TOOL`, 0.1.7 and later) starts every image
+//! with `kexec_load` through them (`kexec -c --dtb`, `load_with_tree`), above `segments_from`. An image whose `second`
+//! (the RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) gets its own tree
+//! with the changes the loader made to the running one (`fdt::with_loader_changes`): the tree a power-on would give
+//! it; the same tree is the running one without the old ramdisk. `kexec_file_load` (`load`) is left for a build
+//! without the tool: it keeps the running tree, but puts the initramfs right behind the new kernel, low in memory,
+//! over the loader's reserved ramdisk area and the GIC's tables when it is large (a 68 MB one on the unit: no root).
+//! A build without the tool refuses an image with another tree. What it does not try: the start runs on warm
+//! hardware, so a kernel that only fails from a cold start passes.
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
 //! `trial kexec` (`LINE`), which `oos-update pack` writes. Older packages install the direct way.
@@ -70,8 +73,11 @@ pub fn announced(m: &super::pkg::Manifest) -> bool {
     m.extra.iter().any(|(k, v)| k == LINE.0 && v == LINE.1)
 }
 
+/// Kernel, ramdisk and second of an image.
+pub type Parts<'a> = (&'a [u8], &'a [u8], &'a [u8]);
+
 /// The sections of a checked image: kernel, ramdisk, second.
-pub fn parts(img: &[u8]) -> Result<(&[u8], &[u8], &[u8]), String> {
+pub fn parts(img: &[u8]) -> Result<Parts<'_>, String> {
     let info = check_image(img)?;
     let le = |at: usize| u32::from_le_bytes([img[at], img[at + 1], img[at + 2], img[at + 3]]) as usize;
     let (ks, rs, ss) = (le(8), le(16), le(24));
@@ -105,11 +111,11 @@ pub fn newc(files: &[(&str, u32, &[u8])]) -> Vec<u8> {
         }
         out.extend_from_slice(name.as_bytes());
         out.push(0);
-        while out.len() % 4 != 0 {
+        while !out.len().is_multiple_of(4) {
             out.push(0);
         }
         out.extend_from_slice(data);
-        while out.len() % 4 != 0 {
+        while !out.len().is_multiple_of(4) {
             out.push(0);
         }
     };
@@ -128,7 +134,11 @@ pub fn initrd(ramdisk: &[u8], package: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<
     b.resize(ramdisk.len().div_ceil(4) * 4, 0);
     let k = format!("{}\n", super::hash::hex(key));
     let n = |p: &'static str| p.trim_start_matches('/');
-    b.extend_from_slice(&newc(&[(n(PACKAGE), 0o100600, package), (n(KEY_FILE), 0o100600, k.as_bytes()), (n(DT_FILE), 0o100600, dt)]));
+    b.extend_from_slice(&newc(&[
+        (n(PACKAGE), 0o100600, package),
+        (n(KEY_FILE), 0o100600, k.as_bytes()),
+        (n(DT_FILE), 0o100600, dt),
+    ]));
     b
 }
 
@@ -205,7 +215,16 @@ mod sys {
         let i = memfd("oos-kexec-initrd", initrd)?;
         let c = std::ffi::CString::new(cmdline).map_err(|_| "command line with a NUL")?;
         let len = c.as_bytes_with_nul().len();
-        let r = unsafe { libc::syscall(SYS_KEXEC_FILE_LOAD, k.as_raw_fd(), i.as_raw_fd(), len as libc::c_ulong, c.as_ptr(), 0 as libc::c_ulong) };
+        let r = unsafe {
+            libc::syscall(
+                SYS_KEXEC_FILE_LOAD,
+                k.as_raw_fd(),
+                i.as_raw_fd(),
+                len as libc::c_ulong,
+                c.as_ptr(),
+                0 as libc::c_ulong,
+            )
+        };
         if r != 0 {
             return Err(format!("kexec_file_load: {}", std::io::Error::last_os_error()));
         }
@@ -234,7 +253,15 @@ mod sys {
             let p = |n: &str| dir.join(n).display().to_string();
             let from = super::segments_from(&kernel_log());
             let o = std::process::Command::new(super::TOOL)
-                .args(["-c", &format!("--mem-min=0x{:x}", from), "-l", &p("Image"), &format!("--initrd={}", p("initrd")), &format!("--dtb={}", p("tree.dtb")), &format!("--command-line={}", cmdline)])
+                .args([
+                    "-c",
+                    &format!("--mem-min=0x{:x}", from),
+                    "-l",
+                    &p("Image"),
+                    &format!("--initrd={}", p("initrd")),
+                    &format!("--dtb={}", p("tree.dtb")),
+                    &format!("--command-line={}", cmdline),
+                ])
                 .output()
                 .map_err(|e| format!("{}: {}", super::TOOL, e))?;
             if !o.status.success() {
@@ -250,7 +277,9 @@ mod sys {
 
     /// Forget a loaded kernel (either way it was loaded: both fill the same slot).
     pub fn unload() -> Result<(), String> {
-        let r = unsafe { libc::syscall(SYS_KEXEC_FILE_LOAD, -1, -1, 0 as libc::c_ulong, std::ptr::null::<u8>(), KEXEC_FILE_UNLOAD) };
+        let r = unsafe {
+            libc::syscall(SYS_KEXEC_FILE_LOAD, -1, -1, 0 as libc::c_ulong, std::ptr::null::<u8>(), KEXEC_FILE_UNLOAD)
+        };
         if r != 0 {
             return Err(format!("kexec unload: {}", std::io::Error::last_os_error()));
         }
@@ -281,7 +310,8 @@ mod tests {
         let mut out = Vec::new();
         loop {
             assert_eq!(&b[..6], b"070701");
-            let f = |i: usize| u32::from_str_radix(std::str::from_utf8(&b[6 + i * 8..14 + i * 8]).unwrap(), 16).unwrap();
+            let f =
+                |i: usize| u32::from_str_radix(std::str::from_utf8(&b[6 + i * 8..14 + i * 8]).unwrap(), 16).unwrap();
             let (mode, size, nlen) = (f(1), f(6) as usize, f(11) as usize);
             let name = String::from_utf8(b[110..110 + nlen - 1].to_vec()).unwrap();
             // every header starts at a multiple of 4, so aligning within `b` is aligning in the archive
@@ -301,7 +331,10 @@ mod tests {
         let a = newc(&[("oos-kexec.oosupd", 0o100600, b"package bytes"), ("x", 0o100644, b"")]);
         assert_eq!(a.len() % 4, 0);
         let r = read_newc(&a);
-        assert_eq!(r, vec![("oos-kexec.oosupd".into(), 0o100600, b"package bytes".to_vec()), ("x".into(), 0o100644, vec![])]);
+        assert_eq!(
+            r,
+            vec![("oos-kexec.oosupd".into(), 0o100600, b"package bytes".to_vec()), ("x".into(), 0o100644, vec![])]
+        );
     }
 
     #[test]

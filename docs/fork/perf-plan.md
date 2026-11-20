@@ -72,14 +72,14 @@ register writes (posted writes, microseconds per configure; do it only as cleanu
    channels or of a DMA buffer copy, plus a snapshot of the screen mapping (time/div, delay, V/div, offsets, map size,
    trigger level, slope, hysteresis, dots). It deposits every frame into its own u16 maps. The UI takes the maps once
    per screen frame (swap, saturating add, before decay) and keeps only the newest frame for `acquire`. A mapping
-   change bumps a generation counter; stale batches are dropped. Keeps `fast_draw` statistics (`fast_edges`). Per
-   frame on the A72 at 1408 points: about 25 us est, 40k frames/s per core; two A53 workers with private maps add
+   change bumps a generation counter; stale batches are dropped. Keeps `fast_draw` statistics (`FastPath::edges`).
+   Per frame on the A72 at 1408 points: about 25 us est, 40k frames/s per core; two A53 workers with private maps add
    about the same again. Host test: identical maps to the current UI path on a fixture batch.
 2. In the batch loop, `skip(shown - QUEUE_MAX)` before decode, `n` still counts every frame. Superseded by 1 for the
    fast path, still right for the queue.
 3. Search `16 x column + 64` samples around `pre` first; fall back to the half-screen search when nothing is found.
-   Same answer whenever the near search finds an edge with its lead-in intact; the unit's `fast_edges[0]` rate shows
-   the hit ratio. Applies to `fast_draw` and `to_record`.
+   Same answer whenever the near search finds an edge with its lead-in intact; the unit's `FastPath::edges[0]` rate
+   shows the hit ratio. Applies to `fast_draw` and `to_record`.
 4. Sparse frames: refine with `edge_near` (narrow), sinc-interpolate only the screen window (polyphase, fixed taps,
    NEON-friendly), then `draw_ex`. Removes the per-frame `Frame::clone` and the 3600-point record. Default once
    screenshots match `to_record` at 5, 20, 100, 200 ns/div.
@@ -146,7 +146,7 @@ the 5x of the arithmetic alone.
 
 - `seq::decode_volts_into(bytes, mask, cal, &mut [Vec<f32>; 4])`: no allocation once the vectors have room.
 - `decode_volts` keeps its signature: oos-ui builds unchanged.
-- Left for the ui: per-frame allocation in the batch loop goes away only when `hw.rs` `decode` takes recycled
+- Left for the ui: per-frame allocation in the batch loop goes away only when `hw/decode.rs` `decode` takes recycled
   vectors (a pool the UI thread returns dropped frames' `ch` vectors to) and calls `decode_volts_into`. Until then
   every frame of >= 32 k samples per channel is a fresh musl mmap.
 
@@ -237,19 +237,71 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
   screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
   kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
-- 1, batch pipeline (`drawpipe.rs`), selectable: `acq.pipeline = batch` in system.conf or `OOS_PIPELINE=batch`;
-  `frames` (default) is the old path. Batch is the default since 2026-11-16 (ADR 0029); `acq.pipeline = frames` is
-  the way back. Every frame is used: the hw thread decodes only the newest frame of a batch for
-  the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy; `DmaBuf` is a plain heap buffer, the
-  xdma read can target any of them) with the other frames to 2 deposit workers on the A53s. Each decodes its share
-  into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and draws with `draw_frame` (the body
-  of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per refresh the UI adds the maps and
-  the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older settings and an older mapping drop
-  work, counted. Where the fast path does not apply the hw thread queues every frame as before.
-  Counters acquired / used / dropped (both modes): `:SYSTem:STATe?` and `stat` (`pipeline ... acquired .. used ..
-  dropped ..` at the end of the line), System info "Frames used".
-  Guards: batch picture == frames mode over the same frames (dense, sparse, dots, 1-2 channels, split over 2 workers),
-  trigger statistics equal, buffers come back, stale/busy work dropped and counted with dropped = fed - taken.
+- 1, batch pipeline (`drawpipe.rs`), the only draw path of the hardware since 2026-11-18 (ADR 0059; the default since
+  2026-11-16, ADR 0029). Until then `acq.pipeline` in system.conf, `OOS_PIPELINE`, Acquire > Draw path and
+  `:SYSTem:PIPeline` chose between it and the frames path (every frame through the UI queue, the workers off), which the
+  numbers below call "frames mode"; that path, its switch and the setup key `draw_path` are removed (an old
+  `acq.pipeline` line is dropped, `:SYSTem:PIPeline?` answers `BATC`). Every frame is used: the hw thread decodes only
+  the newest frame of a batch for the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy;
+  `DmaBuf` is a plain heap buffer, the xdma read can target any of them) with the other frames to 2 deposit workers on
+  the A53s. Each decodes its share into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and
+  draws with `draw_frame` (the body of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per
+  refresh the UI adds the maps and the statistics (`FastPath::edges`, `FastPath::off` cover every frame). Busy
+  workers, older settings and an older mapping drop work, counted. Where the fast path does not apply the hw thread
+  queues every frame as before. Counters acquired / used / dropped: `:SYSTem:STATe?` and `stat` (`pipeline Batch|Off
+  ... acquired .. used .. dropped ..` at the end of the line; `Off` with a source other than the hardware), System info
+  "Frames used".
+  Guards: batch picture == `draw_frame` on every frame one by one over the same frames (dense, sparse, dots, 1-2
+  channels, split over 2 workers), trigger statistics equal, buffers come back, stale/busy work dropped and counted with
+  dropped = fed - taken.
+  The frame loop's share (issue #186, unit at 10 us/div: batch 14-19 frames a second on screen, frames 20-25): each
+  worker and the helper had a mailbox, and the UI added every map of each, 4 x 970 x 448 pixels per mailbox, also the
+  maps of channels that are off; in the host test about 4.9 sets a screen, 8.5 M pixel adds (about 50 MB read and
+  written, a memory-bound pass that the A72 cannot keep in its cache), plus waits for a worker that added into its
+  mailbox under the lock. Now each worker and the helper draw on into their maps over their batches and once a screen
+  (after their first batch since a merge) fold them into one set in a shared mailbox, on their own cores and outside
+  the lock (the UI never waits); after their other batches they park the maps in their slot and take them up again.
+  The UI swaps the set in for minimum persistence (no pixel touched) or adds the maps of the channels on (one map per
+  channel); without a whole set it takes a parked one. A set is cleared only in the maps it used. A batch's read-out
+  buffer goes back with its last frame drawn, not when every worker holding the batch lets it go. While the workers
+  have batches the fast path draws the few queued frames (the newest of older batches) on the frame loop alone: its
+  helpers would wait for the small cores the workers keep busy; without batches (one frame each, slow time bases)
+  it draws with its helpers as the frames mode did. Pictures equal to before (guards above, and the merge of 12
+  batches while the drawers fold equals 12 times the batch's picture). `perf_guard_batch_step_at_10_us_per_div`
+  (host M3, 16 frames of 250 kB a step, 4 workers; the frames mode is now its arm "queue", the frames pushed to
+  the queue with the workers on and idle): merge 0.64-0.69 ms with 8.5 M pixels before, 0 with minimum
+  persistence and 0.03-0.13 ms (0.43 / 0.87 / 1.74 M pixels for 1 / 2 / 4 channels) with persistence after; frame
+  loop per step 1 / 2 / 4 channels 5.4 / 3.3 / 3.3 ms before, 4.8 / 2.8 / 2.7 ms after, frames mode 7.5-8.7 /
+  5.0-5.4 / 4.3-4.7 ms. Unit (DHO924S, verified on the unit, 2026-11-18) with the shared mailbox folded after every
+  batch: 10 us/div 28.5-29.3 screens a second in batch mode (was 14.4-19.2), but more frames dropped at 4 channels
+  (37 -> 47 %): the set was folded 4-5 times a batch (once a drawer), each a 4-map add on an A53 while the worker
+  held the batch and with it its buffer, and was out of the mailbox so often that most screens found none. The
+  parking is not measured on the unit yet. `perf_guard_batch_at_a_fixed_rate` (host M3, the unit's loop at a fixed
+  batch rate, 3 buffers, 4 workers, 29 screens a second), dropped for want of a buffer at 4 channels with a batch
+  every 400 / 250 us: mailbox per drawer 31-37 / 55-57 %, shared mailbox folded after every batch 40 / 61 % with
+  the median screen getting 0-8 frames, parked 1-13 / 33-41 % with even screens (host numbers vary with its load).
+  Counters: every frame read and neither queued nor lent to the workers counts as dropped (frames 0 and 1 left out of
+  a batch, frames the screen does not take, frames the fast path skips); before, those were in the UI's own `hw
+  dropped` only, and acquired - used - dropped grew with them. Drops for want of a buffer (the workers behind the
+  acquisition) are counted in the pipeline's counters only; at short time bases they are the limit of batch mode: 4
+  A53 draw about 3 k frames/s at 10 us/div (estimate above), fewer than the acquisition delivers.
+  Unit (verified on the unit, 2026-11-18) with the parking: 28.7-29.4 screens a second at 10 us/div; frames a second
+  in the picture against the build before the shared mailbox: 1 channel +4-8 %, 2 channels equal, 4 channels -9 to
+  -14 % at 1 and 10 us/div. There the batches are fewer than the screens, so every drawer of a batch hands its maps on
+  after it: about 4 folds a batch, each four 970 x 448 maps added on an A53, where the mailbox per drawer was mostly
+  taken empty. Folds and clears now touch only the blocks of 64 pixels that hold counts (`add_map`, `clear_map`): a
+  trace covers a small part of a map (23 % of the blocks for 40 frames of a sine of 31 periods across the screen),
+  and a fold on a small core is memory-bound. Not measured on the unit yet. Tried and left: a worker claiming half a
+  batch (two drawers a batch, half the folds): on the host (M3) at 4 channels, a batch every 400 us, 34-49 % dropped
+  against 2 % with 4 frames a claim, as a batch then waits for two workers while the others have none.
+  1 ms/div (unit: 18 of 37-39 records a second in the picture, the earlier build 38): a batch plans 20 frames (4 MB a
+  read) and waits up to 25 ms for them; a batch of two frames gives the screen one, as frame 0 is left out of a batch
+  of several (issue #5, since 2026-11-16), in the batch path and the path without batches alike. The frame loop uses
+  every record of batches of one frame (`batch_mode_uses_every_record_at_1_ms_per_div`), with the fast path's helpers
+  as before batch mode's changes, and the batch sizes are the acquisition thread's. Issue #220: the batches there hold
+  two frames (frame 0, held from before the arm, and one more in the 25 ms wait for a 16 ms record); frame 0 of a batch
+  of up to four is now kept when its edge is at the trigger point (acquisition-start.md, "Frames 0 and 1 of a batch").
+  Not yet run on the unit.
   `perf_guard_deposit_worker_per_frame` (host M3): one worker costs 0.99-1.09 x the frames mode per frame; 2 workers
   40 k frames/s at 100 ns/div (1408 pt, sparse: 3600 interpolated points per frame), 83 k at 1 us/div, 13.5 k at
   10 us/div. A53 estimate (not measured): about 8x the host per frame (A72 about 4x, A53 about 2x an A72), so 2 A53
@@ -277,7 +329,7 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   exact / 60 us fast at 5 ns/div, A53 about 200 / 120 us. Default stays exact until a screenshot comparison.
   Measurement statistics over every frame (`framestats.rs`): Max, Min, Pk-pk, Mean, RMS, Std dev / AC RMS of the
   Measure page are made by the workers for every frame, on the samples the record path measures (the record's
-  trigger point via `board::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
+  trigger point via `wave::trigger_point`, split out of `to_record`; the screen window of the frame when it holds more
   than 3600 samples) and folded into the page's statistics (`Ui::mstat_fold`); other measurements keep counting the
   measured records. Frames whose record is measured on interpolated points (short time bases) are not counted.
   Sums split over 8 lanes (the data is 12 bit; bit identity of f64 sums has no physical meaning). Guard: per-frame
@@ -287,4 +339,4 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   definition); `measured` in the status line and "Frames in statistics" in System info show the coverage.
   Software averaging: deferred until the unit shows whether the FPGA average (B1) works and covers deep records
   (`fpga.md` "Average mode": coupled to the frame read-out, unverified). In batch mode Average stays outside the fast
-  path, so every frame goes through the queue as in frames mode.
+  path, so every frame goes through the queue to the frame loop.

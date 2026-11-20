@@ -8,11 +8,12 @@
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
 
+use super::service::Service;
 use super::*;
 use crate::clock::{self, Local, Tz, ZONES};
 use crate::sntp;
 use crate::sysconf::{self, NtpOrigin};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 
 /// A sync again after this long (the clock of the RK3399 drifts a few seconds a day).
 pub const RESYNC: f64 = 3600.0;
@@ -24,7 +25,8 @@ const RETRY_MAX: f64 = 900.0;
 /// Left in /tmp (RAM) once the clock was set in this boot: a restarted oos-ui knows the clock is right.
 const CLOCK_SET: &str = "/tmp/oos-clock.set";
 /// Servers offered in the picker (`dhcp` shows as "DHCP"); another one through "Other".
-pub const SERVERS: [&str; 6] = [sysconf::DHCP, "pool.ntp.org", "time.google.com", "time.cloudflare.com", "time.nist.gov", "ptbtime1.ptb.de"];
+pub const SERVERS: [&str; 6] =
+    [sysconf::DHCP, "pool.ntp.org", "time.google.com", "time.cloudflare.com", "time.nist.gov", "ptbtime1.ptb.de"];
 const DHCP_LABEL: &str = "DHCP";
 const OTHER: &str = "Other ...";
 /// Characters of a server or zone string shown in a row.
@@ -122,8 +124,7 @@ impl Schedule {
 #[derive(Default)]
 pub(super) struct NtpUi {
     pub st: Schedule,
-    tx: Option<Sender<String>>,
-    rx: Option<Receiver<Result<Synced, String>>>,
+    service: Service<String, Result<Synced, String>>,
     /// the offset last given to the kernel (FAT time stamps), and when it was checked
     kernel_tz: Option<i32>,
     tz_checked: f64,
@@ -139,7 +140,10 @@ pub(super) struct NtpUi {
 fn sync(server: &str) -> Result<Synced, String> {
     let s = sntp::query(server)?;
     sntp::step(s.offset).map_err(|e| format!("clock not set: {}", e))?;
-    eprintln!("oos-ui: NTP {} ({}, stratum {}): offset {:+.3} s, delay {:.3} s", server, s.addr, s.stratum, s.offset, s.delay);
+    eprintln!(
+        "oos-ui: NTP {} ({}, stratum {}): offset {:+.3} s, delay {:.3} s",
+        server, s.addr, s.stratum, s.offset, s.delay
+    );
     Ok(Synced { at: clock::unix_now(), server: server.into(), offset: s.offset, stratum: s.stratum })
 }
 
@@ -282,7 +286,7 @@ impl Ui {
     }
 
     fn net_up(&self) -> bool {
-        (self.eth_link && self.addr_of("eth0").is_some()) || self.addr_of(oos_hal::wlan::IFACE).is_some()
+        (self.net.eth_link && self.addr_of("eth0").is_some()) || self.addr_of(oos_hal::wlan::IFACE).is_some()
     }
 
     /// From `step`: requests when due, answers of the worker, the kernel's time zone once a minute (daylight saving).
@@ -293,21 +297,14 @@ impl Ui {
         }
         let up = self.net_up();
         if self.ntp.st.tick(self.now, self.sys.ntp, up) {
-            if self.ntp.tx.is_none() && !cfg!(test) {
-                let (tx, jobs) = channel();
-                let (out, rx) = channel();
-                if std::thread::Builder::new().name("ntp".into()).spawn(move || worker(jobs, out)).is_ok() {
-                    self.ntp.tx = Some(tx);
-                    self.ntp.rx = Some(rx);
-                }
-            }
+            self.ntp.service.start("ntp", worker);
             let (server, origin) = self.ntp_target();
             self.ntp.asked = Some((server.clone(), origin));
-            if !self.ntp.tx.as_ref().is_some_and(|tx| tx.send(server).is_ok()) && !cfg!(test) {
+            if !self.ntp.service.send(server) && !cfg!(test) {
                 self.ntp.st.done(self.now, Err("no worker".into()));
             }
         }
-        while let Some(r) = self.ntp.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        while let Some(r) = self.ntp.service.take() {
             self.ntp_report(r);
         }
     }
@@ -372,12 +369,10 @@ impl Ui {
             return "Asking the server ...".into();
         }
         match (&st.last_ok, &st.last_err) {
-            (_, Some((t, e))) => {
-                match &st.last_ok {
-                    Some(ok) => format!("{} {}, synced {}", e, hm(*t), hm(ok.at)),
-                    None => format!("{} at {}", e, at(*t)),
-                }
-            }
+            (_, Some((t, e))) => match &st.last_ok {
+                Some(ok) => format!("{} {}, synced {}", e, hm(*t), hm(ok.at)),
+                None => format!("{} at {}", e, at(*t)),
+            },
             (Some(ok), None) if ok.offset.abs() >= 60.0 => format!("Synced at {}, clock set", at(ok.at)),
             (Some(ok), None) => format!("Synced at {} ({:+.2} s)", at(ok.at), ok.offset),
             (None, None) if !self.net_up() => "Waiting for a network link".into(),
@@ -394,7 +389,9 @@ impl Ui {
     pub(super) fn time_kind(it: Item) -> Option<Kind> {
         match it {
             Item::NtpSync | Item::TimeSet => Some(Kind::Action),
-            Item::TimeNow | Item::NtpStatus | Item::NtpOn | Item::NtpServer | Item::TimeZone | Item::NetRetry10 => Some(Kind::Choice),
+            Item::TimeNow | Item::NtpStatus | Item::NtpOn | Item::NtpServer | Item::TimeZone | Item::NetRetry10 => {
+                Some(Kind::Choice)
+            }
             _ => None,
         }
     }
@@ -426,7 +423,11 @@ impl Ui {
                 let t = clock::unix_now() as i64;
                 let z = self.zone();
                 let s = format!("{} {}", z.local(t).text(), z.abbr_at(t));
-                if self.clock_known { s } else { format!("{} (not set)", s) }
+                if self.clock_known {
+                    s
+                } else {
+                    format!("{} (not set)", s)
+                }
             }
             Item::NtpOn => onoff(self.sys.ntp),
             Item::NtpServer => server_label(&self.sys.ntp_server),
@@ -465,7 +466,8 @@ impl Ui {
     }
 
     fn zone_options(&self) -> Vec<String> {
-        let mut v: Vec<String> = std::iter::once(DHCP_LABEL.to_string()).chain(ZONES.iter().map(|z| z.0.to_string())).collect();
+        let mut v: Vec<String> =
+            std::iter::once(DHCP_LABEL.to_string()).chain(ZONES.iter().map(|z| z.0.to_string())).collect();
         if self.sys.tz != sysconf::DHCP && clock::zone_name(&self.sys.tz).is_none() {
             v.push(short(&self.sys.tz));
         }
@@ -534,7 +536,9 @@ impl Ui {
     pub(super) fn time_activate(&mut self, it: Item) -> bool {
         match it {
             Item::NtpSync => self.ntp_sync_now(),
-            Item::TimeSet => self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::DateTime, &self.local_now().text_min())),
+            Item::TimeSet => {
+                self.wlan.osk = Some(wlan::Osk::with_text(wlan::OskFor::DateTime, &self.local_now().text_min()))
+            }
             _ => return false,
         }
         true
@@ -678,8 +682,8 @@ mod tests {
 
     fn ui() -> Ui {
         let mut u = crate::ui::testkit::demo_ui();
-        u.net_ifs = vec![("eth0".into(), "192.168.1.20".into())];
-        u.eth_link = true;
+        u.net.ifs = vec![("eth0".into(), "192.168.1.20".into())];
+        u.net.eth_link = true;
         u
     }
 

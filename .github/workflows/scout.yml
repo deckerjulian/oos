@@ -1,0 +1,26 @@
+# Once a week: new replies in the forum and new work in the fork, as one issue with the label `scout`
+# (tools/scout.py). A script, no model and no agent; it reads the forum and GitHub and writes that one issue.
+name: Scout
+on:
+  schedule:
+    - cron: '17 5 * * 5' # Friday
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scout:
+    if: github.repository == 'dekajoule/oos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: New replies in the forum, new work in the fork (tools/scout.py)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I tools/scout.py

@@ -1,9 +1,9 @@
 # Backing up and cloning the SD card
 
-For the card route (`README.md`, On a second card, steps 1 and 2): an image of the scope's original boot card, and a
-clone of it on the second card. Any tool that copies a whole disk sector by sector does the job. Tested here:
-`tools/sdcard-clone.sh` on macOS. The Windows tools and `dd` on Linux are common ways that users named or that do the
-same thing; they have not been run against a scope's card here.
+For the card route ([wiki/Installation.md](../wiki/Installation.md#on-a-second-card), steps 1 and 2): an image of the
+scope's original boot card, and a clone of it on the second card. Any tool that copies a whole disk sector by sector
+does the job. Tested here: `tools/sdcard-clone.sh` on macOS. The Windows tools and `dd` on Linux are common ways
+that users named or that do the same thing; they have not been run against a scope's card here.
 
 ## Before you start
 

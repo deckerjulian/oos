@@ -7,9 +7,8 @@
 //! (`legacy`). Checked against generated traffic.
 
 use super::*;
+use oos_dsp::decode;
 use oos_dsp::decode::Kind;
-use oos_dsp::decode_ext as x1;
-use oos_dsp::decode_ext3 as x3;
 
 /// Demo traffic on one line: `a` and then `idle` seconds.
 fn one_line(a: oos_dsp::sim::Logic, idle: f64) -> Demo {
@@ -31,29 +30,17 @@ const CANFD_OPTIONS: [Opt; 3] = [
 pub struct CanFd;
 
 impl Protocol for CanFd {
-    fn key(&self) -> &'static str {
-        "CanFd"
-    }
-    fn name(&self) -> &'static str {
-        "CAN-FD"
-    }
-    fn diff_ok(&self) -> bool {
-        true
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::CAN_FD
     }
     fn options(&self) -> &'static [Opt] {
         &CANFD_OPTIONS
     }
-    /// A bit of the arbitration phase.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / crate::decode::CAN_RATES[opt[0]]
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::can_fd(l.main(), l.dt, crate::decode::CAN_RATES[l.opt[0]], crate::decode::FD_RATES[l.opt[1]], l.thr, l.hy, l.opt[2] == 1))
-    }
     /// A CAN FD frame with ID 123, bit rate switch and 12 bytes, 500 kbit/s and 2 Mbit/s.
     fn demo(&self) -> Option<Demo> {
-        let fd = x1::gen::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
-        Some(one_line(x1::gen::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), 40e-6))
+        let fd =
+            decode::gen::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
+        Some(one_line(decode::gen::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), 40e-6))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.canrate, old.fdrate, usize::from(old.canh), 0])
@@ -63,76 +50,52 @@ impl Protocol for CanFd {
 pub struct FlexRay;
 
 impl Protocol for FlexRay {
-    fn key(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn name(&self) -> &'static str {
-        "FlexRay"
-    }
-    fn diff_ok(&self) -> bool {
-        true
-    }
-    fn bit_time(&self, _: &[usize; OPTS]) -> f64 {
-        0.1e-6
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x1::flexray(l.main(), l.dt, 10e6, l.thr, l.hy, false))
-    }
-    /// The frame ID of the demo.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Id, 0x2a)
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::FLEXRAY
     }
     /// A static frame (ID 2A, cycle 5) with 8 payload bytes on RxD.
     fn demo(&self) -> Option<Demo> {
-        let fr = x1::gen::FrFrame { ppi: false, nf: true, sync: false, startup: false, id: 0x2a, cycle: 5, payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88], channel_b: false };
-        Some(one_line(oos_dsp::sim::bits_logic(&x1::gen::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), 10e-6))
+        let fr = decode::gen::FrFrame {
+            ppi: false,
+            nf: true,
+            sync: false,
+            startup: false,
+            id: 0x2a,
+            cycle: 5,
+            payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+            channel_b: false,
+        };
+        Some(one_line(oos_dsp::sim::bits_logic(&decode::gen::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), 10e-6))
     }
 }
 
 /// The SENT clock ticks (`decode::SENT_TICKS`; the last one: any tick, from the sync pulses).
-const TICK_NAMES: [&str; 8] = ["3 \u{b5}s", "5 \u{b5}s", "10 \u{b5}s", "20 \u{b5}s", "30 \u{b5}s", "50 \u{b5}s", "90 \u{b5}s", "Auto"];
+const TICK_NAMES: [&str; 8] =
+    ["3 \u{b5}s", "5 \u{b5}s", "10 \u{b5}s", "20 \u{b5}s", "30 \u{b5}s", "50 \u{b5}s", "90 \u{b5}s", "Auto"];
 
 const SENT_OPTIONS: [Opt; 2] = [
     Opt { name: "Clock tick", choices: &TICK_NAMES, default: 0 },
     Opt { name: "Data nibbles", choices: &["1", "2", "3", "4", "5", "6"], default: 5 },
 ];
 
-/// The clock tick of the options; `None` = from the sync pulses.
-fn tick(opt: &[usize; OPTS]) -> Option<f64> {
-    let t = crate::decode::SENT_TICKS[opt[0]];
-    (t > 0.0).then_some(t)
-}
-
 pub struct Sent;
 
 impl Protocol for Sent {
-    fn key(&self) -> &'static str {
-        "Sent"
-    }
-    fn name(&self) -> &'static str {
-        "SENT"
+    fn info(&self) -> &'static ModuleInfo {
+        &oos_dsp::decode::SENT
     }
     fn options(&self) -> &'static [Opt] {
         &SENT_OPTIONS
     }
-    /// About 4 ticks per data bit; auto: the shortest tick.
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        4.0 * tick(opt).unwrap_or(crate::decode::SENT_TICKS[0])
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(x3::sent(l.main(), l.dt, tick(&l.opt), l.opt[1] + 1, l.thr, l.hy))
-    }
     /// The tick the sync pulse gave; the data as its nibbles.
     fn text(&self, p: &Packet, _: &[usize; OPTS]) -> Option<String> {
         match p.kind {
-            Kind::Field("SYNC") => Some(format!("SYNC {}{}", crate::model::si(p.value as f64 * 1e-9, "s"), if p.ok { "" } else { " !" })),
+            Kind::Field("SYNC") => {
+                Some(format!("SYNC {}{}", crate::model::si(p.value as f64 * 1e-9, "s"), if p.ok { "" } else { " !" }))
+            }
             Kind::Data => Some(format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize)),
             _ => None,
         }
-    }
-    /// The data of the first demo frame.
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Data, 0x7f480b)
     }
     /// 5 V logic.
     fn setup(&self) -> Setup {
@@ -140,8 +103,17 @@ impl Protocol for Sent {
     }
     /// Two fast-channel frames of 6 data nibbles with a pause pulse, 3 us tick, 5 V.
     fn demo(&self) -> Option<Demo> {
-        let sf = |status: u8, data: [u8; 6]| x3::gen::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
-        Some(one_line(x3::gen::sent(&[sf(0x0, [0x7, 0xf, 0x3, 0x8, 0x0, 0xc]), sf(0x4, [0x7, 0xf, 0x4, 0x8, 0x0, 0xb])], 3e-6, 0.0, 5.0), 0.0))
+        let sf =
+            |status: u8, data: [u8; 6]| decode::gen::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
+        Some(one_line(
+            decode::gen::sent(
+                &[sf(0x0, [0x7, 0xf, 0x3, 0x8, 0x0, 0xc]), sf(0x4, [0x7, 0xf, 0x4, 0x8, 0x0, 0xb])],
+                3e-6,
+                0.0,
+                5.0,
+            ),
+            0.0,
+        ))
     }
     fn legacy(&self, old: &Legacy) -> Option<[usize; OPTS]> {
         Some([old.tick, old.nibbles.clamp(1, 6) as usize - 1, 0, 0])
@@ -173,7 +145,10 @@ mod tests {
             assert_eq!(*n, if r > 0.0 { crate::model::si_short(r, "s") } else { "Auto".into() });
         }
         for (n, r) in CAN_RATE_NAMES.iter().zip(crate::decode::CAN_RATES) {
-            assert_eq!(n.split(' ').next().unwrap().parse::<f64>().unwrap() * if n.contains('M') { 1e6 } else { 1e3 }, r);
+            assert_eq!(
+                n.split(' ').next().unwrap().parse::<f64>().unwrap() * if n.contains('M') { 1e6 } else { 1e3 },
+                r
+            );
         }
         for (n, r) in FD_RATE_NAMES.iter().zip(crate::decode::FD_RATES) {
             assert_eq!(n.split(' ').next().unwrap().parse::<f64>().unwrap() * 1e6, r);

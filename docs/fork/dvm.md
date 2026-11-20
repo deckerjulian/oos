@@ -17,7 +17,7 @@ Code:
 | part | where |
 |---|---|
 | registers, writes, read, decode, volts | `hal/src/dho/dvm.rs` |
-| start, stop, poll in the acquisition thread; `dvm.hw` | `ui/src/board/dho/hw.rs` (`dvm_step`, `dvm_reading`, `dvm_hw_on`) |
+| start, stop, poll in the acquisition thread; `dvm.hw` | `ui/src/board/dho/hw/units.rs` (`UnitJobs::dvm`, `dvm_step`, `dvm_reading`, `dvm_hw_on`) |
 | UI value and fallback | `ui/src/ui/tools.rs` (`dvm_poll`, `dvm_value`) |
 | raw dump | SCPI `:SYSTem:DEBug:DVM?` |
 

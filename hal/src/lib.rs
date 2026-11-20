@@ -12,17 +12,27 @@
 //! build register sequences are pure (they return `(offset, value)` lists and update software shadows of the
 //! write-only registers), so they are unit-tested on the host; `dho::bus` applies them to the hardware.
 
+pub mod bluez;
 pub mod bootstatus;
+pub mod dbus;
 pub mod fsutil;
+#[cfg(test)]
+mod hostile;
 pub mod model;
 pub mod procs;
 pub mod target;
-pub mod vendorkeys;
 pub mod update;
+pub mod vendorkeys;
 pub mod wlan;
 
 pub mod dho;
 pub mod mho;
+
+/// The `N` bytes of `b` from offset `o` on, for `from_le_bytes`. Panics past the end of `b` like indexing does: for
+/// records whose length was checked when they were read in.
+pub(crate) fn bytes_at<const N: usize>(b: &[u8], o: usize) -> [u8; N] {
+    std::array::from_fn(|k| b[o + k])
+}
 
 /// zlib / IEEE 802.3 CRC32.
 pub fn crc32(d: &[u8]) -> u32 {

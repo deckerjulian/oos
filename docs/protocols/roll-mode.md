@@ -370,7 +370,8 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 - After every read (also an empty poll): `SCAN_INFO_REGS` = 0x1204, 0x40d0 -> `scan_info` (triggered, position, done).
 - Done in RUN: `scan_done` (stop sequence, average clear), 500 ms, `config_scan` + `start` again. Done in SINGLE: stop until the next
   SINGLE press. Leaving scan: `stop` (clears bit17 and bit22, 0x11fc = 1000).
-- oos-ui (`board::Slow`, `board::dho::hw::slow_mode`): Horizontal > Auto Roll on -> roll; off -> scan from 200 ms/div
+- oos-ui (`board::Slow`, `board::dho::hw::slow_mode`; the stream in the acquisition thread: `SlowRun` in
+  `ui/src/board/dho/hw/slow.rs`): Horizontal > Auto Roll on -> roll; off -> scan from 200 ms/div
   unless averaging (table 1.2). The sweep picture is one screen per channel, written from the left with
   a wrap at the right edge and a 2 % gap ahead of the write position; the picture is "partial" until done (SINGLE
   stops only on a complete sweep).

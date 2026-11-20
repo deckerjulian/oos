@@ -1,0 +1,5 @@
+# Who is asked to review a change (docs/adr/process/0036, 0038). GitHub asks the owner of every changed file for a
+# review by itself; whether a pull request may be merged is decided by the status `owner` (tools/pr-gate.sh): the
+# maintainer's own pass, everybody else's needs the maintainer's approval of its newest commit.
+# One owner for everything today. A second maintainer gets the lines of the parts they look after.
+* @dekajoule

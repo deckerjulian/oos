@@ -29,7 +29,7 @@ impl Ui {
     /// record once; its memory goes when its decoder changes protocol or is switched off.
     pub(super) fn bus_views(&mut self) -> Vec<(String, View)> {
         let mut v = Vec::new();
-        let rec = (self.wfm_total as u64, self.hist_pos);
+        let rec = (self.wfm_total, self.hist_pos);
         for k in 0..DECODERS {
             let m = self.m.dec_view(k);
             let module = m.dec_proto.module().filter(|_| self.m.dec_is_on(k));
@@ -62,7 +62,13 @@ impl Ui {
     /// Height of the views: a head line per decoder, its tallest column under it.
     pub(super) fn bus_view_h(&self) -> i32 {
         let (head_h, title_h, row_h) = heights(self.fonts());
-        self.pn.views.iter().map(|(_, v)| head_h + v.sections.iter().map(|s| title_h + s.rows.len() as i32 * row_h).max().unwrap_or(0) + 8).sum()
+        self.pn
+            .views
+            .iter()
+            .map(|(_, v)| {
+                head_h + v.sections.iter().map(|s| title_h + s.rows.len() as i32 * row_h).max().unwrap_or(0) + 8
+            })
+            .sum()
     }
 
     pub(super) fn draw_pane_bus(&self, cv: &mut Canvas, r: Rect) {
@@ -70,7 +76,13 @@ impl Ui {
         let (head_h, title_h, row_h) = heights(f);
         let views = &self.pn.views;
         if views.is_empty() {
-            cv.text(&f.sb, r.x + 12, r.y + r.h / 2 + 5, "No bus view: Decode > Protocol with a view of its own, decoder on", DIM);
+            cv.text(
+                &f.sb,
+                r.x + 12,
+                r.y + r.h / 2 + 5,
+                "No bus view: Decode > Protocol with a view of its own, decoder on",
+                DIM,
+            );
             return;
         }
         // room right of the text for the close button

@@ -322,7 +322,17 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
 
 - **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
   every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
-  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers.
+  - Exception for small batches (issue #220): in a batch of up to four frames (`hw::plan`,
+    `FRAME0_CHECK_MAX_FRAMES`), frame 0 is decoded and given the same edge check as frame 1 (below), and kept when
+    that check finds frame 0's own edge at the trigger point. A frame 1 off the trigger point still takes frame 0 with
+    it. At 1 ms/div with 100 kpts a batch holds frame 0 and one more, so leaving it out halved the records in the
+    picture (unit 2026-11-18: 18 of 37 a second with 1 channel, 14 of 27 with 4). The damaged frames 0 of issue #5
+    were found by this criterion (no edge near the trigger point); one joined with older memory that still has its
+    edge in place would pass, as for frame 1. Other trigger types, and longer batches, leave frame 0 out as before.
+    Verified on the unit (DHO924S, 2026-11-18, 1 kHz sine of 2 Vpp, edge on CH1 at 0 V): at 1 ms/div 206 to 215 of 222
+    records reached the picture with 1 channel and all with 4 (two runs), and 15 s of infinite persistence (about 450
+    records each) showed no trace off the trigger point; 10 us/div kept its 29 screens a second.
+  - The batch path (then chosen with `acq.pipeline = batch`) used to hand it to the deposit workers.
   - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
 - **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
   - Without frame 0, every frame found off the trigger was frame 1: 27 of 330,000 frames (about 12,700 batches). With
@@ -338,8 +348,18 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
   - The log line `frame 1 of a batch without its edge at the trigger point, left out` counts these (logged at 1, 2,
     4, 8, ... frames).
   - On the unit, every frame found was frame 1, and each was left out:
-    - standard path: 22 in 270,000 frames;
+    - standard path (the frames path, removed since: ADR 0059): 22 in 270,000 frames;
     - batch path: 85 in 300,000 frames, none of them reaching a deposit worker.
+- That check does not see every bad frame 1: one whose edge is at the trigger point can still hold older memory before
+  it, drawn as a full-swing step about 38 us left of the trigger at 10 us/div.
+  - Verified on the unit (DHO924S, 2026-11-19, the same square and trigger, 1 kpts, 10 us/div, batches of 26 to 32
+    frames): with the check alone, 60 s of infinite persistence showed such steps (the high level from -50 to -33 us).
+  - Two reporters counted none without frame 1: 0 in 4,000 batches (rdtsc, 0.1.13) and 0 in 134,174 (mj1911).
+  - So in a batch of more than `FRAME0_CHECK_MAX_FRAMES` frames, oos-ui leaves frame 1 out unseen
+    (`hw::plan::frame1_left_out_unseen`). That costs one frame of a long batch. A small batch keeps the edge check, so
+    slow time bases keep their records (issue #220).
+    The log line `frame 1 of a long batch, unseen, left out` counts these apart from the edge check's.
+  - Verified on the unit with that rule: two runs of 60 s of infinite persistence showed no trace off the square.
 
 ## Reading a stored frame again (STOP)
 

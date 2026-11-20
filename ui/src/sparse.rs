@@ -2,7 +2,7 @@
 
 //! Sparse frames on the fast display path (fork, docs/fork/perf-plan.md item 4): fewer than two samples per screen
 //! column, the short time bases where the waveform rate peaks. The fast path made a full screen record of each such
-//! frame (`board::to_record`: a copy of the frame, every channel, the raw window and the LA record) only to draw its
+//! frame (`wave::to_record`: a copy of the frame, every channel, the raw window and the LA record) only to draw its
 //! points. `draw` computes the same points of the channels that are on, with the same expressions, into reused
 //! buffers and draws them. It answers only in the plain case (edge trigger found on a channel, interpolated points);
 //! everything else returns None and takes `to_record` as before.
@@ -11,8 +11,9 @@
 //! cheaper (short time bases), within half a pixel of the exact points and one pixel on the screen (guarded); `exact`
 //! stays the default until a screenshot comparison on the unit.
 
-use crate::board::{sw_trig_level, Frame};
+use crate::board::Frame;
 use crate::model::*;
+use crate::wave::sw_trig_level;
 use crate::wave::Phosphor;
 use std::cell::RefCell;
 
@@ -80,7 +81,8 @@ const GRID: usize = 24;
 fn grid_table() -> &'static (Vec<f32>, Vec<f32>) {
     static T: std::sync::OnceLock<(Vec<f32>, Vec<f32>)> = std::sync::OnceLock::new();
     T.get_or_init(|| {
-        let sinc = |x: f64| if x.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x) };
+        let sinc =
+            |x: f64| if x.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x) };
         let (mut t, mut ws) = (Vec::new(), Vec::new());
         for u in 0..GRID {
             let fr = u as f64 / GRID as f64;
@@ -151,11 +153,14 @@ fn fast_many(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>) {
             }
             let (a, b) = (g[ki as usize], g[ki as usize + 1]);
             let fr = (pos - k) as f32;
-            out.push(if a.is_finite() && b.is_finite() { a + (b - a) * fr } else { oos_dsp::interp::lanczos8(v, x).unwrap_or(f32::NAN) });
+            out.push(if a.is_finite() && b.is_finite() {
+                a + (b - a) * fr
+            } else {
+                oos_dsp::interp::lanczos8(v, x).unwrap_or(f32::NAN)
+            });
         }
     });
 }
-
 
 /// Interpolation of sparse frames: `exact` (`lanczos8`, the record path's) or `fast` (`fast_many`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,7 +199,18 @@ fn trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<
     let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
     let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
     let fits = |t: f64| first > last || (first..=last).contains(&t);
-    let found = crate::trignear::edge_smooth_near(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst, rising, either, screen / 2, col, fits).0;
+    let found = crate::trignear::edge_smooth_near(
+        &f.ch[m.trig_src],
+        f.pre,
+        sw_trig_level(m, f),
+        hyst,
+        rising,
+        either,
+        screen / 2,
+        col,
+        fits,
+    )
+    .0;
     found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
 }
 
@@ -207,7 +223,7 @@ mod tests {
     fn reference(ph: &mut Phosphor, m: &Model, f: &Frame) -> bool {
         let fr = Arc::new(f.clone());
         let window = m.time_per_div() as f64 * HDIV as f64;
-        let rec = crate::board::to_record(&fr, m, POINTS, window, m.delay as f64 - window / 2.0);
+        let rec = crate::wave::to_record(&fr, m, POINTS, window, m.delay as f64 - window / 2.0);
         for c in 0..NCH {
             if m.ch[c].on && !rec.ch[c].is_empty() {
                 ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
@@ -230,8 +246,10 @@ mod tests {
     }
 
     fn model(tdiv: f64, chans: usize) -> Model {
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+            ..Default::default()
+        };
         for c in 0..NCH {
             m.ch[c].on = c < chans;
         }
@@ -249,7 +267,12 @@ mod tests {
             for chans in [1, 2, 4] {
                 for (len, f_sig) in [(80usize, 3e7), (1408, 1e7), (5000, 2.2e7)] {
                     for (k, slope) in [Slope::Rise, Slope::Fall, Slope::Either].into_iter().enumerate() {
-                        for (delay, level, dots, coup) in [(0.0f32, 0.0f32, false, TrigCoup::Dc), (3e-9, 0.2, true, TrigCoup::Dc), (-2e-8, 2.0, false, TrigCoup::Dc), (0.0, 2.0, false, TrigCoup::Ac)] {
+                        for (delay, level, dots, coup) in [
+                            (0.0f32, 0.0f32, false, TrigCoup::Dc),
+                            (3e-9, 0.2, true, TrigCoup::Dc),
+                            (-2e-8, 2.0, false, TrigCoup::Dc),
+                            (0.0, 2.0, false, TrigCoup::Ac),
+                        ] {
                             let mut m = model(tdiv, chans);
                             (m.slope, m.delay, m.trig_level, m.dots) = (slope, delay, level, dots);
                             m.trig_coup = coup;
@@ -266,7 +289,18 @@ mod tests {
                                 answered += 1;
                                 assert_eq!(t, want, "{} s/div {} ch {} pt {:?}", tdiv, chans, len, slope);
                                 for c in 0..NCH {
-                                    assert!(a.map[c] == b.map[c], "{} s/div {} ch {} pt {:?} delay {} level {} dots {}: CH{} pixels differ", tdiv, chans, len, slope, delay, level, dots, c + 1);
+                                    assert!(
+                                        a.map[c] == b.map[c],
+                                        "{} s/div {} ch {} pt {:?} delay {} level {} dots {}: CH{} pixels differ",
+                                        tdiv,
+                                        chans,
+                                        len,
+                                        slope,
+                                        delay,
+                                        level,
+                                        dots,
+                                        c + 1
+                                    );
                                 }
                             }
                         }
@@ -314,7 +348,8 @@ mod tests {
                         continue;
                     }
                     let hit = |r: usize| {
-                        let (y0, y1, x0, x1) = (y.saturating_sub(r), (y + r).min(h - 1), x.saturating_sub(r), (x + r).min(w - 1));
+                        let (y0, y1, x0, x1) =
+                            (y.saturating_sub(r), (y + r).min(h - 1), x.saturating_sub(r), (x + r).min(w - 1));
                         (y0..=y1).any(|yy| (x0..=x1).any(|xx| q[yy * w + xx] > 0))
                     };
                     // the screen edge counts as lit: a trace that leaves the screen in one map only
@@ -339,23 +374,44 @@ mod tests {
             for chans in [1usize, 4] {
                 let dt = chans as f64 / 1.25e9;
                 let len = ((tdiv * HDIV as f64 / dt) * 1.15) as usize + 40;
-                let sigs: Vec<(String, Box<dyn Fn(f64) -> f64>)> = vec![
+                type Sig = (String, Box<dyn Fn(f64) -> f64>);
+                let sigs: Vec<Sig> = vec![
                     ("sine 0.05".into(), Box::new(move |t: f64| 3.8 * (t / dt * 0.05 * std::f64::consts::TAU).sin())),
-                    ("sine 0.2".into(), Box::new(move |t: f64| 3.8 * (t / dt * 0.2 * std::f64::consts::TAU + 0.3).sin())),
-                    ("sine 0.4".into(), Box::new(move |t: f64| 3.8 * (t / dt * 0.4 * std::f64::consts::TAU + 0.7).sin())),
-                    ("sine 0.45".into(), Box::new(move |t: f64| 3.8 * (t / dt * 0.45 * std::f64::consts::TAU + 1.1).sin())),
-                    ("square".into(), Box::new(move |t: f64| if (t / dt / 37.0).rem_euclid(1.0) < 0.5 { -3.5 } else { 3.5 })),
+                    (
+                        "sine 0.2".into(),
+                        Box::new(move |t: f64| 3.8 * (t / dt * 0.2 * std::f64::consts::TAU + 0.3).sin()),
+                    ),
+                    (
+                        "sine 0.4".into(),
+                        Box::new(move |t: f64| 3.8 * (t / dt * 0.4 * std::f64::consts::TAU + 0.7).sin()),
+                    ),
+                    (
+                        "sine 0.45".into(),
+                        Box::new(move |t: f64| 3.8 * (t / dt * 0.45 * std::f64::consts::TAU + 1.1).sin()),
+                    ),
+                    (
+                        "square".into(),
+                        Box::new(move |t: f64| if (t / dt / 37.0).rem_euclid(1.0) < 0.5 { -3.5 } else { 3.5 }),
+                    ),
                 ];
                 for (name, sig) in &sigs {
-                    let mut m = Model::default();
-                    m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
-                    m.trig_level = 0.0;
+                    let mut m = Model {
+                        tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap(),
+                        trig_level: 0.0,
+                        ..Default::default()
+                    };
                     m.ch[0].offset = 0.0;
-                    let mut v = oos_dsp::sim::sample(|t| sig(t), -(len as f64 / 2.0) * dt + 0.37 * dt, dt, len);
+                    let mut v = oos_dsp::sim::sample(sig, -(len as f64 / 2.0) * dt + 0.37 * dt, dt, len);
                     if name == "square" {
                         oos_dsp::sim::add_noise(&mut v, 0.05, 3);
                     }
-                    let f = Frame { seq: 1, dt, pre: len / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+                    let f = Frame {
+                        seq: 1,
+                        dt,
+                        pre: len / 2,
+                        ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+                        ..Default::default()
+                    };
                     let x_per_sample = dt / tdiv * w as f64 / HDIV as f64;
                     if x_per_sample <= 0.5 {
                         continue;
@@ -384,7 +440,14 @@ mod tests {
             }
         }
         // 56 pixels a volt at 1 V/div
-        println!("fast vs exact over {} cases: max {:.4} V ({:.2} px) in the points, {} px on the screen (worst at {})", cases, worst_v, worst_v * h as f32 / VDIV, worst_px, at);
+        println!(
+            "fast vs exact over {} cases: max {:.4} V ({:.2} px) in the points, {} px on the screen (worst at {})",
+            cases,
+            worst_v,
+            worst_v * h as f32 / VDIV,
+            worst_px,
+            at
+        );
         assert!(cases > 30 && worst_px <= 1, "{} px at {}", worst_px, at);
     }
 
@@ -398,7 +461,12 @@ mod tests {
             m.trig_level = 0.0;
             let f = frame(len, chans, 1e7, 1);
             let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
-            assert_eq!(draw_with(&mut b, &m, &f, 24, Interp::Exact), Some(true), "{} s/div: the sparse path must answer", tdiv);
+            assert_eq!(
+                draw_with(&mut b, &m, &f, 24, Interp::Exact),
+                Some(true),
+                "{} s/div: the sparse path must answer",
+                tdiv
+            );
             let reps = 3000;
             let t0 = std::time::Instant::now();
             for _ in 0..reps {
@@ -411,7 +479,15 @@ mod tests {
             }
             let new = t0.elapsed();
             let r = new.as_secs_f64() / old.as_secs_f64();
-            println!("{} s/div, {} pt, {} ch: record path {:?}, sparse path {:?} per frame, ratio {:.2}", tdiv, len, chans, old / reps, new / reps, r);
+            println!(
+                "{} s/div, {} pt, {} ch: record path {:?}, sparse path {:?} per frame, ratio {:.2}",
+                tdiv,
+                len,
+                chans,
+                old / reps,
+                new / reps,
+                r
+            );
             assert!(r <= 0.8, "sparse/record {:.2}", r);
         }
     }
@@ -428,7 +504,8 @@ mod tests {
             m.trig_level = 0.0;
             let p = oos_dsp::sim::PulseTrain::square(1.0 / (60.0 * dt), -1.0, 1.0, 2.0 * dt);
             let v = oos_dsp::sim::sample(|t| p.v(t), -(len as f64 / 2.0) * dt, dt, len);
-            let f = Frame { seq: 1, dt, pre: len / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+            let f =
+                Frame { seq: 1, dt, pre: len / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
             let mut ph = Phosphor::new(w, h);
             assert_eq!(draw_with(&mut ph, &m, &f, 24, Interp::Fast), Some(true), "{} s/div", tdiv);
             let mut pf = Phosphor::new(w, h);
@@ -443,7 +520,15 @@ mod tests {
                 },
             );
             let r = fa.as_secs_f64() / e.as_secs_f64();
-            println!("{} s/div {} ch ({} samples on screen): exact {:?}, fast {:?} per frame, ratio {:.2}", tdiv, chans, (tdiv * HDIV as f64 / dt) as usize, e, fa, r);
+            println!(
+                "{} s/div {} ch ({} samples on screen): exact {:?}, fast {:?} per frame, ratio {:.2}",
+                tdiv,
+                chans,
+                (tdiv * HDIV as f64 / dt) as usize,
+                e,
+                fa,
+                r
+            );
             assert!(r <= 1.1, "fast must never cost more: {:.2}", r);
         }
     }

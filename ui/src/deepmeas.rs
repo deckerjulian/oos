@@ -8,26 +8,10 @@
 //! them (`hold`): every value of a measurement then belongs to one raw record, and the statistics count each once.
 //! The live picture stays on pairs.
 
+use crate::board::policy::compress::MAX_DEPTH;
+use crate::board::policy::deep::{Want, MAX_BYTES};
 use crate::board::Frame;
 use crate::model::*;
-
-/// Least time between two raw deep reads while running, for a read of up to `PERIOD_BYTES`; a larger read waits
-/// longer in proportion (`period`). On the DHO924S a raw read cost about 3 % of the records per MiB read once a second
-/// (10 M at 1 ms/div, 20 MiB: a third of the records at once a second, unit 2026-11-15): so a read costs at most about
-/// 6 % of them and of the screen rate.
-pub const PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
-/// Raw bytes a read may have to be due every `PERIOD`.
-pub const PERIOD_BYTES: usize = 2 << 20;
-/// Largest raw read of one frame (all channels): 24 MiB, 12 M points of one channel, six C2H reads of 4 MiB. A
-/// screen window above it keeps the pair measurement (mean-type values NaN).
-pub const MAX_BYTES: usize = 24 << 20;
-
-/// What the UI asks of the acquisition thread (`Shared::deep_raw`): raw deep reads, for every batch (`every`, Single:
-/// the one record is the answer) or at most once per `PERIOD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Want {
-    pub every: bool,
-}
 
 thread_local! {
     /// tests: `enabled` for this thread
@@ -58,18 +42,19 @@ const OFF: crate::sysconf::Flag = crate::sysconf::Flag { key: "meas.deep_raw", e
 /// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
 /// only: in Peak the memory holds peak pairs, not samples; Average and High res have their own records.
 pub fn want(m: &Model) -> Option<Want> {
-    let needs = m.meas.iter().any(|&(k, s)| s.ch().is_some_and(|c| m.ch[c].on) && crate::framestats::needs_samples(k)) || (m.dvm_on && m.ch[m.dvm_src].on);
+    let needs = m.meas.iter().any(|&(k, s)| s.ch().is_some_and(|c| m.ch[c].on) && crate::framestats::needs_samples(k))
+        || (m.dvm_on && m.ch[m.dvm_src].on);
     (enabled() && needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
 }
 
 /// A frame of the deep-memory read through the compression (min/max pairs of a record above 1 M points).
 pub fn deep_pairs(f: &Frame) -> bool {
-    f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
+    f.envelope && !f.roll && !f.scan && f.acq.1 > MAX_DEPTH as usize
 }
 
 /// A raw read of a deep record's screen window (the record of its batch while raw deep reads come).
 pub fn deep_raw_frame(f: &Frame) -> bool {
-    !f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
+    !f.envelope && !f.roll && !f.scan && f.acq.1 > MAX_DEPTH as usize
 }
 
 /// Points of the raw screen window `hw` reads for a deep record (screen and a quarter screen each side, at least 4096
@@ -86,32 +71,29 @@ pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {
 /// record (at most about `PERIOD` old).
 pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
     let Some(f) = f.filter(|f| deep_pairs(f)) else { return false };
-    // the thread reads no raw window while the LA records (`deep_raw_settings` in board/dho/hw.rs): holding for one
-    // would freeze the measurements
+    // the thread reads no raw window while the LA records (`deep_raw_settings` in board/dho/hw/plan.rs): holding for
+    // one would freeze the measurements
     if m.la_on() {
         return false;
     }
     let channels = f.ch.iter().filter(|v| !v.is_empty()).count();
-    m.run == RunState::Run && want(m).is_some_and(|w| !w.every) && fits(f.acq.0, m.hw_time_per_div() as f64, f.acq.1, channels)
-}
-
-/// Least time between two raw deep reads of `bytes`: `PERIOD` per `PERIOD_BYTES`, at least `PERIOD`.
-pub fn period(bytes: usize) -> std::time::Duration {
-    PERIOD.mul_f64((bytes as f64 / PERIOD_BYTES as f64).max(1.0))
-}
-
-/// The acquisition thread's rate limit: a raw deep read of `bytes` is due for every batch with `every`, else when its
-/// `period` has passed since the last (or none was made).
-pub fn due(w: Want, last: Option<std::time::Instant>, now: std::time::Instant, bytes: usize) -> bool {
-    w.every || last.is_none_or(|t| now.duration_since(t) >= period(bytes))
+    m.run == RunState::Run
+        && want(m).is_some_and(|w| !w.every)
+        && fits(f.acq.0, m.hw_time_per_div() as f64, f.acq.1, channels)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::policy::deep::*;
 
     fn deep(envelope: bool) -> Frame {
-        Frame { envelope, acq: (1.25e9, 10_000_000), ch: [vec![0.0; 16], Vec::new(), Vec::new(), Vec::new()], ..Default::default() }
+        Frame {
+            envelope,
+            acq: (1.25e9, 10_000_000),
+            ch: [vec![0.0; 16], Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -149,7 +131,10 @@ mod tests {
         // 10 M at 1 ms/div: the 10 M record is the window, 20 MB
         assert!(hold(&m, Some(&deep(true))));
         assert!(!hold(&m, Some(&deep(false))), "a raw record is measured");
-        assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) })), "live compression: the newest frame is raw anyway");
+        assert!(
+            !hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) })),
+            "live compression: the newest frame is raw anyway"
+        );
         assert!(!hold(&m, None));
         m.run = RunState::Stop;
         assert!(!hold(&m, Some(&deep(true))));
@@ -177,15 +162,16 @@ mod tests {
         // three channels are read as four (the interleave ratio): 3.5 M points are 28 MB, not 21 MB
         assert!(!fits(1.25e9, 1e-3, 3_500_000, 3));
         assert!(fits(1.25e9, 1e-3, 3_000_000, 3));
-        let t = std::time::Instant::now();
+        let t = 5_000_000u64;
+        let us = |d: std::time::Duration| d.as_micros() as u64;
         let w = Want { every: false };
         let small = PERIOD_BYTES / 2;
         assert!(due(w, None, t, small));
-        assert!(!due(w, Some(t), t + std::time::Duration::from_millis(999), small));
-        assert!(due(w, Some(t), t + PERIOD, small));
+        assert!(!due(w, Some(t), t + 999_000, small));
+        assert!(due(w, Some(t), t + us(PERIOD), small));
         assert!(due(Want { every: true }, Some(t), t, 10 * PERIOD_BYTES));
         // a read of ten times the bytes waits ten times as long
-        assert!(!due(w, Some(t), t + PERIOD * 9, 10 * PERIOD_BYTES));
-        assert!(due(w, Some(t), t + PERIOD * 10, 10 * PERIOD_BYTES));
+        assert!(!due(w, Some(t), t + us(PERIOD * 9), 10 * PERIOD_BYTES));
+        assert!(due(w, Some(t), t + us(PERIOD * 10), 10 * PERIOD_BYTES));
     }
 }

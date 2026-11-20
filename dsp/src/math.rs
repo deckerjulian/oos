@@ -157,7 +157,11 @@ impl Window {
             Window::Hann => 0.5 - 0.5 * x.cos(),
             Window::Hamming => 0.54 - 0.46 * x.cos(),
             Window::Blackman => 0.42 - 0.5 * x.cos() + 0.08 * (2.0 * x).cos(),
-            Window::Flattop => 0.215_578_95 - 0.416_631_58 * x.cos() + 0.277_263_158 * (2.0 * x).cos() - 0.083_578_947 * (3.0 * x).cos() + 0.006_947_368 * (4.0 * x).cos(),
+            Window::Flattop => {
+                0.215_578_95 - 0.416_631_58 * x.cos() + 0.277_263_158 * (2.0 * x).cos()
+                    - 0.083_578_947 * (3.0 * x).cos()
+                    + 0.006_947_368 * (4.0 * x).cos()
+            }
         }
     }
     pub fn name(self) -> &'static str {
@@ -249,8 +253,11 @@ pub fn dbv(vrms: f64) -> f64 {
 
 /// The `count` largest local maxima of a spectrum (bin, value), excluding DC, highest first.
 pub fn peaks(spec: &[f64], count: usize) -> Vec<(usize, f64)> {
-    let mut p: Vec<(usize, f64)> = (2..spec.len().saturating_sub(1)).filter(|&k| spec[k] > spec[k - 1] && spec[k] >= spec[k + 1]).map(|k| (k, spec[k])).collect();
-    p.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut p: Vec<(usize, f64)> = (2..spec.len().saturating_sub(1))
+        .filter(|&k| spec[k] > spec[k - 1] && spec[k] >= spec[k + 1])
+        .map(|k| (k, spec[k]))
+        .collect();
+    p.sort_by(|a, b| b.1.total_cmp(&a.1));
     p.truncate(count);
     p
 }
@@ -259,17 +266,29 @@ pub fn peaks(spec: &[f64], count: usize) -> Vec<(usize, f64)> {
 mod tests {
     use super::*;
 
+    /// A NaN bin is no peak and makes no neighbour one (every comparison with NaN is false), so the sort of the peaks
+    /// never sees a NaN.
+    #[test]
+    fn peaks_pass_over_nan_bins() {
+        let spec = [9.0, 9.0, 1.0, 5.0, 1.0, f64::NAN, 1.0, 3.0, 1.0, 7.0, f64::NAN, 0.0];
+        assert_eq!(peaks(&spec, 3), vec![(3, 5.0), (7, 3.0)]);
+    }
+
     #[test]
     fn band_pass_and_stop() {
         // 1 kHz + 10 kHz at 1 MSa/s: the band-pass at 10 kHz keeps 10 kHz and removes 1 kHz, the notch the opposite
         let dt = 1e-6;
-        let sine = |f: f64| (0..200_000).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 * dt).sin() as f32).collect::<Vec<f32>>();
+        let sine = |f: f64| {
+            (0..200_000).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 * dt).sin() as f32).collect::<Vec<f32>>()
+        };
         let (a, b) = (sine(1e3), sine(10e3));
         let mix: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x + y).collect();
         let rms = |v: &[f32], w: &[f32]| {
             // rms of the difference in the middle (edges excluded)
             let n = v.len();
-            (v[n / 4..3 * n / 4].iter().zip(&w[n / 4..3 * n / 4]).map(|(x, y)| ((x - y) as f64).powi(2)).sum::<f64>() / (n / 2) as f64).sqrt()
+            (v[n / 4..3 * n / 4].iter().zip(&w[n / 4..3 * n / 4]).map(|(x, y)| ((x - y) as f64).powi(2)).sum::<f64>()
+                / (n / 2) as f64)
+                .sqrt()
         };
         let bp = unary(Op1::Bandpass(10e3, 2e3), &mix, dt);
         assert!(rms(&bp, &b) < 0.03, "band-pass error {}", rms(&bp, &b));
@@ -277,7 +296,7 @@ mod tests {
         assert!(rms(&bs, &a) < 0.03, "band-stop error {}", rms(&bs, &a));
     }
     use crate::sim::sample;
-    use std::f64::consts::PI;
+    use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
     #[test]
     fn integral_and_derivative() {
@@ -306,15 +325,15 @@ mod tests {
         let v = sample(|t| (2.0 * PI * 100.0 * df * t).sin(), 0.0, dt, n);
         for w in [Window::Rect, Window::Hann, Window::Hamming, Window::Blackman, Window::Flattop] {
             let (_, s) = spectrum(&v, dt, w);
-            assert!((s[100] - 0.70711).abs() < 0.002, "{:?} {}", w, s[100]);
+            assert!((s[100] - FRAC_1_SQRT_2).abs() < 0.002, "{:?} {}", w, s[100]);
         }
         // between two bins: Flattop stays within 0.1 %, Hann reads low (scalloping)
         let v = sample(|t| (2.0 * PI * 100.5 * df * t).sin(), 0.0, dt, n);
         let fl = spectrum(&v, dt, Window::Flattop).1;
-        assert!((fl[100].max(fl[101]) - 0.70711).abs() < 0.0015, "{}", fl[100].max(fl[101]));
+        assert!((fl[100].max(fl[101]) - FRAC_1_SQRT_2).abs() < 0.0015, "{}", fl[100].max(fl[101]));
         let hn = spectrum(&v, dt, Window::Hann).1;
         assert!(hn[100].max(hn[101]) < 0.62);
-        assert!((dbv(0.70711) + 3.0103).abs() < 1e-3);
+        assert!((dbv(FRAC_1_SQRT_2) + 3.0103).abs() < 1e-3);
     }
 
     #[test]
@@ -333,8 +352,8 @@ mod tests {
         let fc = 10e3;
         let v = sample(|t| (2.0 * PI * fc * t).sin(), 0.0, dt, 200_000);
         let amp = |x: &[f32]| x[100_000..].iter().fold(0.0f32, |m, &y| m.max(y.abs()));
-        assert!((amp(&unary(Op1::Lowpass(fc), &v, dt)) - 0.7071).abs() < 0.01);
-        assert!((amp(&unary(Op1::Highpass(fc), &v, dt)) - 0.7071).abs() < 0.01);
+        assert!((amp(&unary(Op1::Lowpass(fc), &v, dt)) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
+        assert!((amp(&unary(Op1::Highpass(fc), &v, dt)) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01);
         // a decade above / below: -20 dB
         let v10 = sample(|t| (2.0 * PI * 10.0 * fc * t).sin(), 0.0, dt, 200_000);
         assert!((amp(&unary(Op1::Lowpass(fc), &v10, dt)) - 0.0995).abs() < 0.005);

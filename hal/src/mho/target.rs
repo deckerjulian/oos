@@ -113,6 +113,20 @@ pub const MHO: Target = Target {
     acquisition: false,
 };
 
+/// The depths of the Acquire menu (data sheet, **assumed**; they only shape the demo). New entries go to the end:
+/// setups store the position.
+pub const DEPTHS: [(&str, u64); 9] = [
+    ("Auto", 0),
+    ("1k", 1_000),
+    ("10k", 10_000),
+    ("100k", 100_000),
+    ("1M", 1_000_000),
+    ("10M", 10_000_000),
+    ("25M", 25_000_000),
+    ("50M", 50_000_000),
+    ("100M", 100_000_000),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

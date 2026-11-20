@@ -30,7 +30,14 @@ fn edge() {
 #[test]
 fn pulse_width_glitch() {
     let dt = 10e-9;
-    let p = PulseTrain { period: 100e-6, width: 50e-6, every: 5, at: 2, special: Pulse { width: 0.2e-6, height: 1.0 }, ..PulseTrain::square(1e4, 0.0, 1.0, 10e-9) };
+    let p = PulseTrain {
+        period: 100e-6,
+        width: 50e-6,
+        every: 5,
+        at: 2,
+        special: Pulse { width: 0.2e-6, height: 1.0 },
+        ..PulseTrain::square(1e4, 0.0, 1.0, 10e-9)
+    };
     let v = sample(|t| p.v(t), 0.0, dt, 100_000);
     let i = inp1(&v, dt, 0.05);
     let g = find_all(&Trigger::Pulse { src: 0, pol: Pol::Pos, level: 0.5, when: When::Lt(1e-6) }, &i);
@@ -58,21 +65,38 @@ fn slope_transition_time() {
     let v = sample(f, 0.0, dt, 20_000);
     let i = inp1(&v, dt, 0.02);
     // 20 % .. 80 % takes 60 ns or 600 ns
-    assert_eq!(find_all(&Trigger::Slope { src: 0, slope: Slope::Rising, lo: 0.2, hi: 0.8, when: When::Gt(300e-9) }, &i).len(), 5);
-    assert_eq!(find_all(&Trigger::Slope { src: 0, slope: Slope::Rising, lo: 0.2, hi: 0.8, when: When::Lt(300e-9) }, &i).len(), 5);
-    assert_eq!(find_all(&Trigger::Slope { src: 0, slope: Slope::Falling, lo: 0.2, hi: 0.8, when: When::Lt(300e-9) }, &i).len(), 10);
+    assert_eq!(
+        find_all(&Trigger::Slope { src: 0, slope: Slope::Rising, lo: 0.2, hi: 0.8, when: When::Gt(300e-9) }, &i).len(),
+        5
+    );
+    assert_eq!(
+        find_all(&Trigger::Slope { src: 0, slope: Slope::Rising, lo: 0.2, hi: 0.8, when: When::Lt(300e-9) }, &i).len(),
+        5
+    );
+    assert_eq!(
+        find_all(&Trigger::Slope { src: 0, slope: Slope::Falling, lo: 0.2, hi: 0.8, when: When::Lt(300e-9) }, &i).len(),
+        10
+    );
 }
 
 #[test]
 fn runt() {
     let dt = 100e-9;
-    let p = PulseTrain { every: 4, at: 2, special: Pulse { width: 50e-6, height: 0.5 }, ..PulseTrain::square(1e4, 0.0, 2.0, 100e-9) };
+    let p = PulseTrain {
+        every: 4,
+        at: 2,
+        special: Pulse { width: 50e-6, height: 0.5 },
+        ..PulseTrain::square(1e4, 0.0, 2.0, 100e-9)
+    };
     let v = sample(|t| p.v(t), 0.0, dt, 10_000);
     let i = inp1(&v, dt, 0.05);
     let r = find_all(&Trigger::Runt { src: 0, pol: Pol::Pos, lo: 0.5, hi: 1.5, when: None }, &i);
     assert_eq!(r.len(), 2);
     assert!(near(r[0], 200e-6 + 50e-6 + 25e-9, dt, 1.0));
-    assert_eq!(find_all(&Trigger::Runt { src: 0, pol: Pol::Pos, lo: 0.5, hi: 1.5, when: Some(When::Gt(60e-6)) }, &i).len(), 0);
+    assert_eq!(
+        find_all(&Trigger::Runt { src: 0, pol: Pol::Pos, lo: 0.5, hi: 1.5, when: Some(When::Gt(60e-6)) }, &i).len(),
+        0
+    );
 }
 
 #[test]
@@ -91,7 +115,12 @@ fn window() {
 #[test]
 fn timeout_missing_pulse() {
     let dt = 1e-6;
-    let p = PulseTrain { every: 6, at: 3, special: Pulse { width: 0.5e-3, height: 0.0 }, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
+    let p = PulseTrain {
+        every: 6,
+        at: 3,
+        special: Pulse { width: 0.5e-3, height: 0.0 },
+        ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6)
+    };
     let v = sample(|t| p.v(t), 0.0, dt, 12_000);
     let i = inp1(&v, dt, 0.05);
     let r = find_all(&Trigger::Timeout { src: 0, slope: Slope::Rising, level: 0.5, time: 1.5e-3 }, &i);
@@ -106,7 +135,20 @@ fn delay_between_channels() {
     let a = sample(|t| PulseTrain::square(1e3, 0.0, 1.0, 1e-6).v(t), 0.0, dt, 10_000);
     let b = sample(|t| PulseTrain { offset: 100e-6, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) }.v(t), 0.0, dt, 10_000);
     let i = Input { ch: [&a, &b, &E, &E], dt, hyst: [0.05; 4] };
-    let d = |when| find_all(&Trigger::Delay { a: 0, slope_a: Slope::Rising, level_a: 0.5, b: 1, slope_b: Slope::Rising, level_b: 0.5, when }, &i);
+    let d = |when| {
+        find_all(
+            &Trigger::Delay {
+                a: 0,
+                slope_a: Slope::Rising,
+                level_a: 0.5,
+                b: 1,
+                slope_b: Slope::Rising,
+                level_b: 0.5,
+                when,
+            },
+            &i,
+        )
+    };
     let r = d(When::In(90e-6, 110e-6));
     assert_eq!(r.len(), 10);
     assert!(near(r[0], 100e-6 + 0.5e-6, dt, 0.1));
@@ -138,7 +180,18 @@ fn setup_hold_violation() {
         20_000,
     );
     let i = Input { ch: [&data, &clk, &E, &E], dt, hyst: [0.05; 4] };
-    let r = find_all(&Trigger::SetupHold { data: 0, clk: 1, clk_slope: Slope::Rising, data_level: 0.5, clk_level: 0.5, setup: 10e-9, hold: 10e-9 }, &i);
+    let r = find_all(
+        &Trigger::SetupHold {
+            data: 0,
+            clk: 1,
+            clk_slope: Slope::Rising,
+            data_level: 0.5,
+            clk_level: 0.5,
+            setup: 10e-9,
+            hold: 10e-9,
+        },
+        &i,
+    );
     assert_eq!(r.len(), 2, "{:?}", r.iter().map(|t| t * dt).collect::<Vec<_>>());
     assert!(near(r[0], 6e-6 + 0.5e-9, dt, 1.0)); // setup violation: at the clock edge
     assert!(near(r[1], 13e-6 + 3.5e-9, dt, 1.0)); // hold violation: at the late data edge
@@ -176,10 +229,17 @@ fn pattern_and_duration() {
     let hr = find_all(&Trigger::Pattern { bits: [Bit::H, Bit::R, Bit::X, Bit::X], levels: lv }, &i);
     assert_eq!(hr.len(), 10);
     // duration: CH1 high for 300 us or 700 us alternately
-    let p = PulseTrain { width: 300e-6, every: 2, at: 1, special: Pulse { width: 700e-6, height: 1.0 }, ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6) };
+    let p = PulseTrain {
+        width: 300e-6,
+        every: 2,
+        at: 1,
+        special: Pulse { width: 700e-6, height: 1.0 },
+        ..PulseTrain::square(1e3, 0.0, 1.0, 1e-6)
+    };
     let c = sample(|t| p.v(t), 0.0, dt, 10_000);
     let i = Input { ch: [&c, &E, &E, &E], dt, hyst: [0.05; 4] };
-    let d = find_all(&Trigger::Duration { bits: [Bit::H, Bit::X, Bit::X, Bit::X], levels: lv, when: When::Gt(500e-6) }, &i);
+    let d =
+        find_all(&Trigger::Duration { bits: [Bit::H, Bit::X, Bit::X, Bit::X], levels: lv, when: When::Gt(500e-6) }, &i);
     assert_eq!(d.len(), 5);
     assert!(near(d[0], 1.7e-3 + 0.5e-6, dt, 0.2));
 }
@@ -211,4 +271,23 @@ fn video_pal() {
     let all = run(VideoSync::AllLines).len();
     eprintln!("all lines {}", all);
     assert!((612..=620).contains(&all), "{}", all);
+}
+
+/// Samples near the ends of the f32 range give crossings of NaN time (their differences overflow). The trigger types
+/// that merge the edges of two thresholds or channels sorted them with `partial_cmp(..).unwrap()` and panicked.
+#[test]
+fn edge_times_of_nan_do_not_panic() {
+    let v = [-3e38f32, 3.4e38, -3e38, 3.4e38, -3e38, 3.4e38];
+    let i = inp1(&v, 1e-6, 0.0);
+    let (lo, hi) = (0.0, 3e38);
+    for trig in [
+        Trigger::Slope { src: 0, slope: Slope::Either, lo, hi, when: When::Gt(0.0) },
+        Trigger::Runt { src: 0, pol: Pol::Pos, lo, hi, when: None },
+        Trigger::Window { src: 0, lo, hi, when: WinWhen::Exit },
+        Trigger::Pattern { bits: [Bit::H, Bit::X, Bit::X, Bit::X], levels: [hi; 4] },
+        Trigger::Video { src: 0, std: VideoStd::Pal, sync: VideoSync::AllLines, level: hi },
+    ] {
+        let t = find_all(&trig, &i);
+        assert!(t.iter().all(|x| x.is_finite()) && t.windows(2).all(|w| w[0] <= w[1]), "{trig:?} {t:?}");
+    }
 }

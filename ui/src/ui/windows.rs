@@ -9,6 +9,21 @@
 
 use super::*;
 
+/// The external display (ADR 0062).
+#[derive(Default)]
+pub struct Hdmi {
+    /// HDMI workspace: set by the main loop on frames it shows on the monitor; the waveform area (full width, top bar
+    /// to cards) is copied to `snap` during `render`
+    pub snap_want: bool,
+    /// An external display is attached. Only then does "waveform on the external display" keep the panel bars in Full.
+    present: bool,
+    pub snap: Vec<u32>,
+    /// the same for the GPU: the layer over the traces at that point (the monitor's workspace has no menus)
+    pub over: Option<Canvas>,
+    /// the monitor's size while one is driven (main.rs), for `:SYSTem:STATe?`
+    pub out: Option<(u32, u32)>,
+}
+
 const CH_NAMES: [&str; 4] = ["CH1", "CH2", "CH3", "CH4"];
 const REF_NAMES: [&str; NREF] = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"];
 const MATH_NAMES: [&str; 8] = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"];
@@ -65,7 +80,9 @@ impl Ui {
                 self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
             }
         }
-        if self.m.win_layout != WinLayout::One { self.workspace.stacked = false; }
+        if self.m.win_layout != WinLayout::One {
+            self.workspace.stacked = false;
+        }
         self.sync_full();
         if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
             self.spread_wins();
@@ -82,14 +99,14 @@ impl Ui {
         }
         // waveform on an external display keeps the panel's bars unless the button asked; with no display attached
         // Full enlarges the panel
-        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi_present;
+        let external = self.m.hdmi != HdmiMode::Mirror && self.hdmi.present;
         self.full = self.m.density == Density::Full && (!external || self.full_asked);
     }
 
     /// Called when an external display comes or goes, so Full follows it.
     pub(crate) fn set_hdmi_present(&mut self, present: bool) {
-        if self.hdmi_present != present {
-            self.hdmi_present = present;
+        if self.hdmi.present != present {
+            self.hdmi.present = present;
             // a display plugged in takes the waveform; the panel keeps its bars until the button is tapped again
             if present {
                 self.full_asked = false;
@@ -131,7 +148,9 @@ impl Ui {
     pub(super) fn win_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
             Item::WinLayout => Density::ALL.iter().map(|d| d.label().to_string()).collect(),
-            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
+            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => {
+                (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect()
+            }
             _ => return None,
         })
     }
@@ -184,7 +203,12 @@ mod tests {
             let g = u.grid;
             for (i, a) in u.wins.iter().enumerate() {
                 assert_eq!((a.w, a.h), (u.wins[0].w, u.wins[0].h), "{:?}", l);
-                assert!(a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h, "{:?} {:?}", l, a);
+                assert!(
+                    a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h,
+                    "{:?} {:?}",
+                    l,
+                    a
+                );
                 assert_eq!(a.h % 8, 0, "{:?}", l);
                 for b in &u.wins[i + 1..] {
                     assert!(!overlaps(*a, *b), "{:?}", l);
@@ -359,57 +383,45 @@ mod tests {
     }
 
     #[test]
-    fn the_corner_button_stays_where_it_is_dropped() {
+    fn the_corner_buttons_stay_in_place_and_windows_opens_its_menu() {
         let mut u = ui();
         u.select_option(Item::Hdmi, "Mirror");
         render(&mut u);
-        let (home, hit) = u.full_btn();
-        let zoom_at = u.zoom_btn();
+        let at = u.corner_btns();
+        let (home, _) = u.full_btn();
         let (off, delay, level) = (u.m.ch[0].offset, u.m.delay, u.m.trig_level);
-        let x0 = home.x + home.w / 2;
-        let y0 = home.y + home.h / 2;
-        assert!(hit.contains(x0, y0));
-        let (x1, y1) = (home.x - 140, home.y + 70);
-        u.touch_ev(Phase::Down, x0, y0);
-        u.touch_ev(Phase::Move, x1, y1);
-        let (dx, dy) = (x1 - x0, y1 - y0);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (home.x + dx, home.y + dy));
-        u.touch_ev(Phase::Up, x1, y1);
-        assert_eq!(u.m.density, Density::Scope);
-        assert!(!u.full);
-        assert_eq!((u.m.ch[0].offset, u.m.delay, u.m.trig_level), (off, delay, level));
-        assert_eq!(u.zoom_btn(), zoom_at);
-        let (dropped, hit) = u.full_btn();
-        assert_eq!((dropped.x, dropped.y), (home.x + dx, home.y + dy));
-        // a tap on the dropped button still switches, and the button does not jump back
-        u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
-        assert_eq!(u.m.density, Density::Full);
-        assert!(u.full);
-        render(&mut u);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (dropped.x, dropped.y));
-        let (at, hit) = u.full_btn();
-        let (tx, ty) = (at.x + at.w / 2, at.y + at.h / 2);
-        assert!(hit.contains(tx, ty));
+        // a drag that starts on a corner button moves neither the button nor the trace, and is no tap
+        for r in at {
+            let (x0, y0) = (r.x + r.w / 2, r.y + r.h / 2);
+            u.touch_ev(Phase::Down, x0, y0);
+            u.touch_ev(Phase::Move, x0 - 140, y0 + 70);
+            u.touch_ev(Phase::Up, x0 - 140, y0 + 70);
+            render(&mut u);
+            assert_eq!(u.corner_btns(), at);
+            assert_eq!((u.m.ch[0].offset, u.m.delay, u.m.trig_level), (off, delay, level));
+            assert_eq!(u.m.density, Density::Scope);
+            assert!(!u.m.zoom && !u.menu_open);
+        }
+        // a tap on the expand button still switches, from the same place
+        let (tx, ty) = (home.x + home.w / 2, home.y + home.h / 2);
         u.touch_ev(Phase::Down, tx, ty);
         u.touch_ev(Phase::Up, tx + 4, ty - 3);
+        assert_eq!(u.m.density, Density::Full);
+        u.touch_ev(Phase::Down, tx, ty);
+        u.touch_ev(Phase::Up, tx, ty);
         assert_eq!(u.m.density, Density::Scope);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (at.x, at.y));
-        // a drag on the trace leaves the button where it was dropped
-        let a = u.area;
-        let (px, py) = (a.x + a.w / 2, a.y + a.h / 2);
-        assert!(!u.full_btn().1.contains(px, py));
-        u.touch_ev(Phase::Down, px, py);
-        u.touch_ev(Phase::Move, px - 40, py);
-        u.touch_ev(Phase::Up, px - 40, py);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (at.x, at.y));
-        // the button cannot leave the screen
-        let (b, _) = u.full_btn();
-        u.touch_ev(Phase::Down, b.x + 4, b.y + 4);
-        u.touch_ev(Phase::Move, b.x - 2000, b.y - 2000);
-        u.touch_ev(Phase::Up, b.x - 2000, b.y - 2000);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (0, 0));
         render(&mut u);
-        assert_eq!((u.full_btn().0.x, u.full_btn().0.y), (0, 0));
+        assert_eq!(u.corner_btns(), at);
+        // the button under the magnifier opens the Windows menu, and a second tap closes it
+        let (w, hit) = u.win_btn();
+        assert!(hit.contains(w.x + w.w / 2, w.y + w.h / 2));
+        assert!(!hit.contains(u.zoom_btn().0.x + 4, u.zoom_btn().0.bottom() - 1));
+        u.tap(w.x + w.w / 2, w.y + w.h / 2);
+        assert!(u.menu_open && u.menu_root() == MenuId::Windows);
+        render(&mut u);
+        let (w, _) = u.win_btn();
+        u.tap(w.x + w.w / 2, w.y + w.h / 2);
+        assert!(!u.menu_open);
     }
 
     #[test]
@@ -426,7 +438,10 @@ mod tests {
         assert_eq!(u.value(Item::PaneSel), "Traces");
         u.select_option(Item::PaneSel, "Results");
         render(&mut u);
-        assert_eq!((u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density), (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split));
+        assert_eq!(
+            (u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
+            (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split)
+        );
         assert!(u.pane_h() > 0);
         u.select_option(Item::PaneSel, "Spectrum");
         assert_eq!(u.m.pane, tables::PANE_SPECTRUM);
@@ -457,7 +472,7 @@ mod tests {
         render(&mut u);
         let normal = u.grid;
         u.set_hdmi_present(true);
-        u.hdmi_snap_want = true;
+        u.hdmi.snap_want = true;
         u.select_option(Item::WinLayout, "Full");
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
@@ -472,11 +487,11 @@ mod tests {
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
-        assert_eq!(u.hdmi_snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
-        assert_ne!(u.hdmi_snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
+        assert_eq!(u.hdmi.snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
+        assert_ne!(u.hdmi.snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
         u.select_option(Item::WinLayout, "Scope");
         u.render(&mut cv);
-        assert_eq!(u.hdmi_snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
+        assert_eq!(u.hdmi.snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
         assert_eq!(u.wins.len(), 4);
@@ -524,7 +539,10 @@ mod tests {
             let (k, v) = l.split_once(" = ").unwrap();
             crate::store::set(&mut back, k, v).unwrap();
         }
-        assert_eq!((back.win_layout, back.density, back.split_pane, back.ch_win, back.math_win), (u.m.win_layout, u.m.density, u.m.split_pane, u.m.ch_win, u.m.math_win));
+        assert_eq!(
+            (back.win_layout, back.density, back.split_pane, back.ch_win, back.math_win),
+            (u.m.win_layout, u.m.density, u.m.split_pane, u.m.ch_win, u.m.math_win)
+        );
         // a setup written before the density row
         let old = crate::store::parse_setup("windows = Cols\npane = 0\n").unwrap();
         assert_eq!((old.density, old.win_layout), (Density::Split, WinLayout::Rows));
@@ -537,15 +555,24 @@ mod tests {
     #[test]
     fn auto_set_up_places_the_channels_per_window() {
         use crate::wave::{place, Stats};
-        let mut m = Model::default();
-        m.win_layout = WinLayout::Rows;
-        m.ch_win = [0, 1, 1, 0];
+        let mut m = Model { win_layout: WinLayout::Rows, ch_win: [0, 1, 1, 0], ..Default::default() };
         let s = Stats { vmin: -1.0, vmax: 1.0, ..Stats::default() };
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
         // CH1 alone in window 1: its 2 Vpp fill about 80 % of 8 div, centred
-        assert!(2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6, "{} {}", m.ch[0].volts_per_div(), m.ch[0].offset);
+        assert!(
+            2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6,
+            "{} {}",
+            m.ch[0].volts_per_div(),
+            m.ch[0].offset
+        );
         // CH2 and CH3 share window 2: half the height each, one above the other
-        assert!(2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0, "{} {} {}", m.ch[1].volts_per_div(), m.ch[1].offset, m.ch[2].offset);
+        assert!(
+            2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0,
+            "{} {} {}",
+            m.ch[1].volts_per_div(),
+            m.ch[1].offset,
+            m.ch[2].offset
+        );
         // one window: three bands
         m.win_layout = WinLayout::One;
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
@@ -568,7 +595,12 @@ mod tests {
         let w = u.wins[0];
         // at the bottom of the window, half of it or what 16 lanes of the smallest pitch need
         let n = u.m.la.lines().len() as i32;
-        assert!(band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w, "{:?} {:?}", band, w);
+        assert!(
+            band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w,
+            "{:?} {:?}",
+            band,
+            w
+        );
         assert!(band.h <= (w.h / 2).max(n * 9 + 18), "{:?} {:?}", band, w);
         assert!(pitch >= 9);
         // the plot keeps its height: no strip under it
@@ -591,7 +623,13 @@ mod tests {
         for _ in 0..30 {
             u.step(0.05);
         }
-        for (name, l, full) in [("win-one", WinLayout::One, false), ("win-cols", WinLayout::Cols, false), ("win-rows", WinLayout::Rows, false), ("win-quad", WinLayout::Quad, true), ("win-full", WinLayout::One, true)] {
+        for (name, l, full) in [
+            ("win-one", WinLayout::One, false),
+            ("win-cols", WinLayout::Cols, false),
+            ("win-rows", WinLayout::Rows, false),
+            ("win-quad", WinLayout::Quad, true),
+            ("win-full", WinLayout::One, true),
+        ] {
             u.m.win_layout = l;
             u.spread_wins();
             u.full = full;

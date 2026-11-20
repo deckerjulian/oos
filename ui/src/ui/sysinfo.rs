@@ -9,6 +9,13 @@
 use super::*;
 use crate::board::{board, Board};
 
+/// The page's state (ADR 0062): its rows while open (shown instead of the dialog lines), and when they were made.
+#[derive(Default)]
+pub(super) struct Page {
+    pub rows: Option<[Vec<Row>; 3]>,
+    pub t: f64,
+}
+
 pub(super) enum Row {
     /// section heading
     Head(String),
@@ -48,38 +55,36 @@ fn uptime() -> Option<String> {
 /// (available, total) bytes of RAM from /proc/meminfo.
 fn memory() -> Option<(u64, u64)> {
     let t = read("/proc/meminfo")?;
-    let get = |k: &str| t.lines().find(|l| l.starts_with(k)).and_then(|l| l.split_whitespace().nth(1)).and_then(|v| v.parse::<u64>().ok()).map(|kb| kb * 1024);
+    let get = |k: &str| {
+        t.lines()
+            .find(|l| l.starts_with(k))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|kb| kb * 1024)
+    };
     Some((get("MemAvailable:")?, get("MemTotal:")?))
 }
 
-/// (free, total) bytes of the file system holding `path` (none without `statvfs`, on Windows).
-#[cfg(not(unix))]
-fn disk(_path: &str) -> Option<(u64, u64)> {
-    None
-}
-
 /// (free, total) bytes of the file system holding `path`.
-#[cfg(unix)]
 fn disk(path: &str) -> Option<(u64, u64)> {
-    let c = std::ffi::CString::new(path).ok()?;
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        return None;
-    }
-    let fr = s.f_frsize as u64;
-    Some((s.f_bavail as u64 * fr, s.f_blocks as u64 * fr))
+    crate::system::fs_stats(path).ok()
 }
 
 /// Current clock of CPU `n` in Hz (cpufreq).
 fn cpu_hz(n: usize) -> Option<f64> {
-    read(&format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", n))?.parse::<f64>().ok().map(|khz| khz * 1e3)
+    read(&format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", n))?
+        .parse::<f64>()
+        .ok()
+        .map(|khz| khz * 1e3)
 }
 
 /// SI value with up to 5 digits and no trailing zeros ("312.5 MSa/s", "31.25 Mpts", "1.25 GSa/s").
 fn exact(v: f64, unit: &str) -> String {
     let s = si_digits(v, unit, 5);
     match s.split_once(' ') {
-        Some((num, rest)) if num.contains('.') => format!("{} {}", num.trim_end_matches('0').trim_end_matches('.'), rest),
+        Some((num, rest)) if num.contains('.') => {
+            format!("{} {}", num.trim_end_matches('0').trim_end_matches('.'), rest)
+        }
         _ => s,
     }
 }
@@ -102,8 +107,8 @@ fn temp_col(t: f32, warn: f32, limit: f32) -> Rgb {
 impl Ui {
     /// Opens the page (System > System info).
     pub(super) fn sysinfo_open(&mut self) {
-        self.sysinfo = Some(self.sysinfo_rows());
-        self.sysinfo_t = self.now;
+        self.sysinfo.rows = Some(self.sysinfo_rows());
+        self.sysinfo.t = self.now;
         // the dialog marker: every path that closes a dialog (tap, key) closes the page too
         self.dialog = Some(Vec::new());
     }
@@ -111,10 +116,10 @@ impl Ui {
     /// Per frame: refresh once a second while open; forget the page once its dialog was closed.
     pub(super) fn sysinfo_poll(&mut self) {
         if self.dialog.is_none() {
-            self.sysinfo = None;
-        } else if self.sysinfo.is_some() && self.now - self.sysinfo_t >= 1.0 {
-            self.sysinfo = Some(self.sysinfo_rows());
-            self.sysinfo_t = self.now;
+            self.sysinfo.rows = None;
+        } else if self.sysinfo.rows.is_some() && self.now - self.sysinfo.t >= 1.0 {
+            self.sysinfo.rows = Some(self.sysinfo_rows());
+            self.sysinfo.t = self.now;
         }
     }
 
@@ -122,8 +127,19 @@ impl Ui {
         let p = oos_hal::model::platform();
         let (c, l, base) = (&p.caps, &p.limits, oos_hal::model::Limits::standard());
         let readings = self.src.hw_board();
+        let a = self.sysinfo_unit(p, c, readings);
+        let b = sysinfo_temps(readings);
+        let d = self.sysinfo_limits(p, c, l, &base);
+        [a, b, d]
+    }
 
-        // ---- column 1: unit and software
+    /// Column 1 of System info: the unit and its software.
+    fn sysinfo_unit(
+        &self,
+        p: &oos_hal::model::Platform,
+        c: &oos_hal::model::Caps,
+        readings: Option<(u32, Option<(f32, f32)>)>,
+    ) -> Vec<Row> {
         let mut a = vec![Row::Head("Unit".into())];
         a.push(kv("Model", format!("Rigol {}", c.name)));
         a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
@@ -153,53 +169,23 @@ impl Ui {
             None => kv("FPGA", "-"),
         });
         a.push(kv("Uptime", uptime().unwrap_or("-".into())));
-        a.push(if self.net.is_empty() { kvc("Network", "not connected", DIM) } else { kv("Network", self.net.clone()) });
+        a.push(if self.net.addr.is_empty() {
+            kvc("Network", "not connected", DIM)
+        } else {
+            kv("Network", self.net.addr.clone())
+        });
         a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.fps)));
+        a
+    }
 
-        // ---- column 2: temperatures, load
-        let mut b = vec![Row::Head("Temperatures".into())];
-        let zones = board().thermal_zones();
-        let (soc, fpga) = board().temp_limits();
-        for z in &zones {
-            let name = match z.name.as_str() {
-                "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
-                "gpu-thermal" => "SoC (GPU)".to_string(),
-                n => n.trim_end_matches("-thermal").to_string(),
-            };
-            b.push(kvc(&name, format!("{:.1} \u{b0}C", z.temp), temp_col(z.temp, 70.0, soc)));
-        }
-        if zones.is_empty() {
-            b.push(kvc("SoC", "-", DIM));
-        }
-        match readings.and_then(|b| b.1) {
-            Some((t, v)) => {
-                b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));
-                b.push(kvc("FPGA VCCINT", format!("{:.3} V", v), if (0.95..=1.05).contains(&v) { TEXT } else { AMBER }));
-            }
-            None => b.push(kvc("FPGA die", "-", DIM)),
-        }
-        b.push(kv("Fan", board().fan()));
-        b.push(Row::Head("Temperature limits".into()));
-        b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
-        b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
-        b.push(kv("FPGA alarm", format!("{:.0} \u{b0}C", fpga)));
-        b.push(Row::Head("Load".into()));
-        if let Some(la) = read("/proc/loadavg") {
-            b.push(kv("CPU load", la.split_whitespace().take(3).collect::<Vec<_>>().join("  ")));
-        }
-        if let (Some(lo), Some(hi)) = (cpu_hz(0), cpu_hz(4)) {
-            b.push(kv("CPU clock", format!("A53 {}  A72 {}", si_short(lo, "Hz"), si_short(hi, "Hz"))));
-        }
-        match memory() {
-            Some((avail, total)) => b.push(kv("RAM", format!("{} free of {}", bytes(avail), bytes(total)))),
-            None => b.push(kvc("RAM", "-", DIM)),
-        }
-        match disk("/oos") {
-            Some((free, total)) => b.push(kvc("/oos", format!("{} free of {}", bytes(free), bytes(total)), if free < total / 20 { AMBER } else { TEXT })),
-            None => b.push(kvc("/oos", "-", DIM)),
-        }
-
-        // ---- column 3: limits, acquisition, overrides, warnings
+    /// Column 3 of System info: the limits in effect, the acquisition now, overrides and warnings.
+    fn sysinfo_limits(
+        &self,
+        p: &oos_hal::model::Platform,
+        c: &oos_hal::model::Caps,
+        l: &oos_hal::model::Limits,
+        base: &oos_hal::model::Limits,
+    ) -> Vec<Row> {
         let src = if p.experimental() { "standard + limits.conf" } else { "standard" };
         let mut d = vec![Row::Head(format!("Limits ({})", src))];
         // values that differ from the standard limits in amber (experimental)
@@ -207,7 +193,11 @@ impl Ui {
         // one row per channel count: max. sample rate and memory depth per channel (LA on: depth only)
         for (i, name) in ["1 channel", "2 channels", "3-4 channels"].iter().enumerate() {
             let same = l.max_srate[i] == base.max_srate[i] && l.max_mem[i] == base.max_mem[i];
-            d.push(kvc(name, format!("{}  {}", exact(l.max_srate[i], "Sa/s"), exact(l.max_mem[i] as f64, "pts")), mark(same)));
+            d.push(kvc(
+                name,
+                format!("{}  {}", exact(l.max_srate[i], "Sa/s"), exact(l.max_mem[i] as f64, "pts")),
+                mark(same),
+            ));
         }
         if c.la {
             let la = l.max_mem_la.iter().map(|&x| exact(x as f64, "")).collect::<Vec<_>>().join("/");
@@ -216,12 +206,16 @@ impl Ui {
         if c.has_gen() {
             let (g, n) = (l.afg_max_hz, base.afg_max_hz);
             d.push(kvc("Generator sine", exact(g.sine, "Hz"), mark(g.sine == n.sine)));
-            d.push(kvc("square / pulse", format!("{} / {}", si_short(g.square, "Hz"), si_short(g.pulse, "Hz")), mark(g.square == n.square && g.pulse == n.pulse)));
+            d.push(kvc(
+                "square / pulse",
+                format!("{} / {}", si_short(g.square, "Hz"), si_short(g.pulse, "Hz")),
+                mark(g.square == n.square && g.pulse == n.pulse),
+            ));
             d.push(kvc("ramp", si_short(g.ramp, "Hz"), mark(g.ramp == n.ramp)));
         }
         d.push(kv("ADC clock", exact(l.adc_clock_hz, "Hz")));
-        if self.clock_next != l.adc_clock_hz {
-            d.push(kvc("after power off and on", exact(self.clock_next, "Hz"), AMBER));
+        if self.overclock.hz != l.adc_clock_hz {
+            d.push(kvc("after power off and on", exact(self.overclock.hz, "Hz"), AMBER));
         }
         if c.has_gen() {
             d.push(kv("Generator clock", exact(l.afg_clock_hz, "Hz")));
@@ -233,14 +227,23 @@ impl Ui {
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
         d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
-        let (acq, used, dropped) = crate::drawpipe::counters().read();
+        let (acq, used, dropped) = crate::board::pipe::counters().read();
         if acq > 0 {
-            d.push(kv("Frames used", format!("{} of {} ({} dropped, {:?} pipeline)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64), crate::drawpipe::mode())));
-            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-            if crate::drawpipe::mode() == crate::drawpipe::Mode::Batch {
-                // short time bases measure the interpolated record: those frames stay out of the statistics
-                d.push(kv("Frames in statistics", format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64))));
-            }
+            d.push(kv(
+                "Frames used",
+                format!(
+                    "{} of {} ({} dropped)",
+                    fmt_count(used as f64),
+                    fmt_count(acq as f64),
+                    fmt_count(dropped as f64)
+                ),
+            ));
+            // short time bases measure the interpolated record: those frames stay out of the statistics
+            let measured = crate::board::pipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+            d.push(kv(
+                "Frames in statistics",
+                format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64)),
+            ));
         }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         if p.experimental() {
@@ -251,11 +254,11 @@ impl Ui {
             d.push(Row::Head("Warnings".into()));
             d.extend(p.warnings.iter().map(|w| Row::Note(w.clone(), AMBER)));
         }
-        [a, b, d]
+        d
     }
 
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
-        let Some(cols) = &self.sysinfo else { return };
+        let Some(cols) = &self.sysinfo.rows else { return };
         let f = self.fonts();
         let scr = self.scr.rect();
         cv.blend(scr, rgb(0, 0, 0), 140);
@@ -275,7 +278,11 @@ impl Ui {
             let kw = if self.m.text_size == TextSize::Normal {
                 cw * 2 / 5
             } else {
-                col.iter().map(|row| if let Row::Kv(k, ..) = row { f.s.width(k) + 10 } else { 0 }).max().unwrap_or(0).min(cw / 2)
+                col.iter()
+                    .map(|row| if let Row::Kv(k, ..) = row { f.s.width(k) + 10 } else { 0 })
+                    .max()
+                    .unwrap_or(0)
+                    .min(cw / 2)
             };
             cv.set_clip(Rect::new(x, r.y, cw, r.h - 4));
             for row in col {
@@ -289,7 +296,11 @@ impl Ui {
                     Row::Kv(k, v, c) => {
                         cv.text_in(&f.s, Rect::new(x, y, kw, kv_h - 1), 0, k, DIM);
                         // a value that would be cut off takes a smaller size
-                        let vf = if self.m.text_size == TextSize::Normal { &f.m } else { super::fit_font(&[&f.m, &f.s, &crate::font::Fonts::get(0).m], cw - kw, v) };
+                        let vf = if self.m.text_size == TextSize::Normal {
+                            &f.m
+                        } else {
+                            super::fit_font(&[&f.m, &f.s, &crate::font::Fonts::get(0).m], cw - kw, v)
+                        };
                         cv.text_in(vf, Rect::new(x + kw, y, cw - kw, kv_h - 1), 0, v, *c);
                         y += kv_h;
                     }
@@ -318,6 +329,56 @@ impl Ui {
     }
 }
 
+/// Column 2 of System info: temperatures with their limits, and the load.
+fn sysinfo_temps(readings: Option<(u32, Option<(f32, f32)>)>) -> Vec<Row> {
+    let mut b = vec![Row::Head("Temperatures".into())];
+    let zones = board().thermal_zones();
+    let (soc, fpga) = board().temp_limits();
+    for z in &zones {
+        let name = match z.name.as_str() {
+            "cpu-thermal" | "soc-thermal" => "SoC (CPU)".to_string(),
+            "gpu-thermal" => "SoC (GPU)".to_string(),
+            n => n.trim_end_matches("-thermal").to_string(),
+        };
+        b.push(kvc(&name, format!("{:.1} \u{b0}C", z.temp), temp_col(z.temp, 70.0, soc)));
+    }
+    if zones.is_empty() {
+        b.push(kvc("SoC", "-", DIM));
+    }
+    match readings.and_then(|b| b.1) {
+        Some((t, v)) => {
+            b.push(kvc("FPGA die", format!("{:.1} \u{b0}C", t), temp_col(t, fpga - 10.0, fpga)));
+            b.push(kvc("FPGA VCCINT", format!("{:.3} V", v), if (0.95..=1.05).contains(&v) { TEXT } else { AMBER }));
+        }
+        None => b.push(kvc("FPGA die", "-", DIM)),
+    }
+    b.push(kv("Fan", board().fan()));
+    b.push(Row::Head("Temperature limits".into()));
+    b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
+    b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
+    b.push(kv("FPGA alarm", format!("{:.0} \u{b0}C", fpga)));
+    b.push(Row::Head("Load".into()));
+    if let Some(la) = read("/proc/loadavg") {
+        b.push(kv("CPU load", la.split_whitespace().take(3).collect::<Vec<_>>().join("  ")));
+    }
+    if let (Some(lo), Some(hi)) = (cpu_hz(0), cpu_hz(4)) {
+        b.push(kv("CPU clock", format!("A53 {}  A72 {}", si_short(lo, "Hz"), si_short(hi, "Hz"))));
+    }
+    match memory() {
+        Some((avail, total)) => b.push(kv("RAM", format!("{} free of {}", bytes(avail), bytes(total)))),
+        None => b.push(kvc("RAM", "-", DIM)),
+    }
+    match disk("/oos") {
+        Some((free, total)) => b.push(kvc(
+            "/oos",
+            format!("{} free of {}", bytes(free), bytes(total)),
+            if free < total / 20 { AMBER } else { TEXT },
+        )),
+        None => b.push(kvc("/oos", "-", DIM)),
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,18 +387,20 @@ mod tests {
     fn opens_refreshes_and_closes_like_a_dialog() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);
-        assert!(ui.sysinfo.is_some() && ui.dialog.is_some());
-        let rows = ui.sysinfo.as_ref().unwrap();
+        assert!(ui.sysinfo.rows.is_some() && ui.dialog.is_some());
+        let rows = ui.sysinfo.rows.as_ref().unwrap();
         // unit, temperatures, limits; the default platform is the DHO924S with the standard limits
         assert!(rows.iter().all(|c| !c.is_empty()));
         assert!(rows[0].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "Model" && v.contains("DHO924S"))));
-        assert!(rows[2].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "3-4 channels" && v == "312.5 MSa/s  31.25 Mpts")));
+        assert!(rows[2]
+            .iter()
+            .any(|r| matches!(r, Row::Kv(k, v, _) if k == "3-4 channels" && v == "312.5 MSa/s  31.25 Mpts")));
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);
         ui.step(0.02);
-        assert!(ui.dialog.is_none() && ui.sysinfo.is_none());
+        assert!(ui.dialog.is_none() && ui.sysinfo.rows.is_none());
     }
 
     #[test]

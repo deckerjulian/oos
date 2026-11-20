@@ -7,7 +7,7 @@ use super::*;
 use std::io::Write;
 
 /// Interval steps (s).
-pub const LOG_STEPS: [f64; 10] = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0];
+pub const LOG_STEPS: [f64; LOG_STEPS_N] = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0];
 /// A log ends here: a stick left in for a year must not fill up.
 const LOG_ROWS_MAX: u64 = 1_000_000;
 
@@ -22,31 +22,20 @@ pub struct Logger {
     head: String,
 }
 
-#[cfg(test)]
-mod catalog_tests {
-    use super::*;
-
-    #[test]
-    fn catalog_log_headers_name_required_sources_and_pending_values_stay_empty() {
-        let mut ui=Ui::new(Source::Demo{t:0.0});ui.m.meas.clear();ui.m.meas2.clear();
-        ui.m.cat=vec![(90,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(2),WaveId::Ch(3)),
-            (92,WaveId::Ref(0),WaveId::Ref(1),WaveId::Ch(2),WaveId::Ch(3))];
-        let header=ui.log_head();
-        assert!(header.contains("R1-R2 Power Quality (W)"),"{header}");
-        assert!(header.contains("R2 Inrush Current (A)"),"{header}");
-        assert!(!header.contains("CH3") && !header.contains("CH4"),"unused sources must not be claimed");
-        let rows=ui.meas_rows();assert_eq!(rows.len(),2);assert!(rows.iter().all(|row|row.v.is_nan()));
-        assert_eq!(ui.wfm_total,0);
-    }
-}
-
 impl Ui {
     fn log_head(&self) -> String {
-        let cols: Vec<String> = self.meas_rows().iter().enumerate().map(|(i,r)| {
-            if i < self.m.meas.len()+self.m.meas2.len() {
-                format!("{} {} ({})",r.name.replace(','," "),self.wave_name(r.src),r.unit)
-            } else { format!("{} ({})",self.results_name(i,r).replace(','," "),r.unit) }
-        }).collect();
+        let cols: Vec<String> = self
+            .meas_rows()
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                if i < self.m.meas.len() + self.m.meas2.len() {
+                    format!("{} {} ({})", r.name.replace(',', " "), self.wave_name(r.src), r.unit)
+                } else {
+                    format!("{} ({})", self.results_name(i, r).replace(',', " "), r.unit)
+                }
+            })
+            .collect();
         format!("Elapsed (s),Unix time (s),{}", cols.join(","))
     }
 
@@ -103,7 +92,9 @@ impl Ui {
             }
         }
         row.push('\n');
-        let res = crate::store::check_target(&p).and_then(|_| std::fs::OpenOptions::new().append(true).open(&p)).and_then(|mut f| f.write_all(row.as_bytes()));
+        let res = crate::store::check_target(&p)
+            .and_then(|_| std::fs::OpenOptions::new().append(true).open(&p))
+            .and_then(|mut f| f.write_all(row.as_bytes()));
         if let Err(e) = res {
             self.log.file = None;
             return self.toast(&format!("Log ended: {}", e));
@@ -119,5 +110,29 @@ impl Ui {
             Some(p) => format!("{}: {} rows", crate::store::file_name(p), self.log.rows),
             None => format!("{} measurements, off", self.meas_rows().len()),
         }
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_log_headers_name_required_sources_and_pending_values_stay_empty() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        ui.m.cat = vec![
+            (90, WaveId::Ref(0), WaveId::Ref(1), WaveId::Ch(2), WaveId::Ch(3)),
+            (92, WaveId::Ref(0), WaveId::Ref(1), WaveId::Ch(2), WaveId::Ch(3)),
+        ];
+        let header = ui.log_head();
+        assert!(header.contains("R1-R2 Power Quality (W)"), "{header}");
+        assert!(header.contains("R2 Inrush Current (A)"), "{header}");
+        assert!(!header.contains("CH3") && !header.contains("CH4"), "unused sources must not be claimed");
+        let rows = ui.meas_rows();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.v.is_nan()));
+        assert_eq!(ui.wfm_total, 0);
     }
 }

@@ -31,6 +31,7 @@ The keys on 2026-11-15, as read by the code (`crate::sysconf::flag` and `setting
 | `perf.place = on` | the threads and the DMA interrupts on fixed cores | off by default |
 | `trig.serial_hw = on` | the UART protocol trigger in the FPGA's receiver | off by default |
 | `autoset.levels = unit` | auto set-up levels from the FPGA's measurement unit | off by default; failed on the unit 2026-11-15 |
+| `adc.overclock = on` | System > Overclock: an ADC clock above 1.25 GHz from the next start | off by default; every step boots, but records at the full rate lose samples (unit 2026-11-16; added 2026-11-17) |
 | `trig.hw_status = off` | trigger status read from the FPGA | on by default since it was verified on the unit 2026-11-13 |
 | `meas.deep_raw = off` | mean-type measurements from raw deep reads | on by default since it was verified on the unit 2026-11-15 |
 

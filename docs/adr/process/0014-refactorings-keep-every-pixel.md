@@ -1,6 +1,6 @@
 # ADR 0014: A refactoring keeps every pixel and every register write
 
-- Status: accepted
+- Status: accepted, amended by ADR 0032 (the two proofs are one command, and CI runs it against the base)
 - Date: 2026-11-12 (layout check); the register comparison from the first public version
 - Category: process
 

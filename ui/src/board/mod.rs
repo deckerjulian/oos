@@ -10,33 +10,35 @@
 //! `board::dho` out of the rest of the crate.
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
-//! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it: `mho` is the MHO900,
-//! a port of the platform without acquisition.
+//! tree). `OOS_BOARD=<name>` selects it for every crate (`cfg(oos_board = "<name>")`, build.rs, ADR 0067). A port adds
+//! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name: `mho` is
+//! the MHO900, a port of the platform without acquisition (docs/mho.md).
 
-#[cfg(not(feature = "board-mho"))]
+#[cfg(oos_board = "dho")]
 pub mod dho;
-#[cfg(feature = "board-mho")]
+#[cfg(oos_board = "mho")]
 pub mod mho;
-mod record;
-
-pub use record::resample as resample_record;
-pub use record::{sw_trig_level, to_record, trigger_point};
+pub mod pipe;
+pub mod policy;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-/// The board this build drives: the DHO800/DHO900, or with the feature `board-mho` the MHO900 (docs/mho.md).
-#[cfg(not(feature = "board-mho"))]
+/// The board this build drives: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
+#[cfg(oos_board = "dho")]
 pub type Active = dho::Dho;
-#[cfg(feature = "board-mho")]
+#[cfg(oos_board = "mho")]
 pub type Active = mho::Mho;
 
 /// The board of this build.
+#[cfg(oos_board = "dho")]
 pub fn board() -> &'static Active {
-    #[cfg(not(feature = "board-mho"))]
-    return &dho::Dho;
-    #[cfg(feature = "board-mho")]
-    return &mho::Mho;
+    &dho::Dho
+}
+/// The board of this build.
+#[cfg(oos_board = "mho")]
+pub fn board() -> &'static Active {
+    &mho::Mho
 }
 
 /// What the acquisition thread of the active board is to apply, made from the model (`Board::want`).
@@ -143,9 +145,6 @@ pub trait Board: Sync + 'static {
     fn mask_code(&self, volts: f64, scale: f64, offset: f64, gain: f64) -> f64;
     fn mask_layout(&self, points: u32, chans: u32) -> (usize, f64);
 
-    /// the memory depths of the Acquire menu (name, points per channel; 0 = Auto first). Setups store the position
-    fn depths(&self) -> &'static [(&'static str, u64)];
-
     // ---- front end
     /// the fine volts-per-division steps of the front end, in nV
     fn vscale_steps_nv(&self) -> Vec<i64>;
@@ -205,17 +204,31 @@ impl BasicStats {
             mean += delta / count as f64;
             m2 += delta * (value - mean);
             squares += value * value;
-            low = low.min(value); high = high.max(value);
+            low = low.min(value);
+            high = high.max(value);
         }
-        if count == 0 { return Self::default(); }
-        Self { valid: true, values: [low, high, high - low, mean,
-            (squares / count as f64).sqrt(), (m2 / count as f64).max(0.0).sqrt()] }
+        if count == 0 {
+            return Self::default();
+        }
+        Self {
+            valid: true,
+            values: [low, high, high - low, mean, (squares / count as f64).sqrt(), (m2 / count as f64).max(0.0).sqrt()],
+        }
     }
     pub fn reading(self, measurement: crate::model::Meas) -> Option<f64> {
         use crate::model::Meas;
-        if !self.valid { return None; }
-        let index = match measurement { Meas::Vmin => 0, Meas::Vmax => 1, Meas::Vpp => 2,
-            Meas::Vavg => 3, Meas::Vrms => 4, Meas::StdDev => 5, _ => return None };
+        if !self.valid {
+            return None;
+        }
+        let index = match measurement {
+            Meas::Vmin => 0,
+            Meas::Vmax => 1,
+            Meas::Vpp => 2,
+            Meas::Vavg => 3,
+            Meas::Vrms => 4,
+            Meas::StdDev => 5,
+            _ => return None,
+        };
         Some(self.values[index])
     }
 }
@@ -244,7 +257,7 @@ pub struct Frame {
     pub basic: [BasicStats; NCH],
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
-    pub la: Option<crate::ui::la::LaRec>,
+    pub la: Option<crate::logic::LaRec>,
     /// a frame read again from the stored record in STOP (another part or zoom of it): the trigger is at this
     /// (fractional) sample, which may lie outside the frame, and no software trigger moves it
     pub fixed_ti: Option<f64>,
@@ -260,7 +273,10 @@ pub enum Slow {
     Off,
     Roll,
     /// `delay`: horizontal position (scan trigger position 0x4058); `single`: stop after one sweep
-    Scan { delay: f64, single: bool },
+    Scan {
+        delay: f64,
+        single: bool,
+    },
 }
 
 /// The hardware frequency counter as the UI wants it: channel, mode (0 frequency, 1 period, 2 totalize), resolution in
@@ -365,6 +381,9 @@ pub struct MaskRead {
     pub chans: u32,
 }
 
+/// What the UI wants of raw reads of deep records for the measurements (`Shared::deep_raw`; None: off).
+pub type DeepWant = Option<policy::deep::Want>;
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -429,7 +448,7 @@ pub struct Shared {
     /// the UI reads records the model does not tell the board about (protocol watch, XY): no live compression
     pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
-    pub deep_raw: Option<crate::deepmeas::Want>,
+    pub deep_raw: DeepWant,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,
@@ -509,6 +528,15 @@ pub const QUEUE_SAMPLES: usize = 32 << 20;
 
 pub type HwShared = Arc<Mutex<Shared>>;
 
+/// A state shared with a thread of the board (`HwShared` of the acquisition thread, `LiveShared` of the read-out of
+/// `--fpga-live`, the board's own cells), locked: the one place for every reader and writer of it, the threads' and the
+/// screen's (`wave::hw` is this). A lock fails only when another holder panicked while it held it, and the state may
+/// then be half written; this panics then, as each of these places did before: neither a thread of the board nor the
+/// screen goes on with such a state.
+pub fn lock<T>(shared: &Mutex<T>) -> MutexGuard<'_, T> {
+    shared.lock().expect("a holder of the shared state panicked while holding it: the state may be half written")
+}
+
 #[cfg(test)]
 mod boundary {
     use std::path::{Path, PathBuf};
@@ -586,7 +614,9 @@ mod boundary {
         }
         assert!(bad.is_empty(), "board code outside board/dho:\n{}", bad.join("\n"));
         // the check itself sees what it is meant to see
-        assert!(production("use oos_hal::dho::afg;\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("afg"));
+        assert!(
+            production("use oos_hal::dho::afg;\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("afg")
+        );
         assert!(!production("fn a() {}\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("seq"));
         assert!(test_only.iter().any(|p| p.ends_with("ui/lint.rs")), "{:?}", test_only);
     }

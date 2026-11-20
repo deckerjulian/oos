@@ -6,6 +6,7 @@ One raw TCP SCPI connection (port 5555): a command is a line, a reply is a line 
 (`#<one digit 1-9><length><payload>` and its line end), read exactly, so binary payloads with line ends inside and
 short reads leave the next reply where it is. Python's standard library only; nothing here knows a command.
 """
+import select
 import socket
 import time
 
@@ -97,6 +98,28 @@ class Link:
 
     def query(self, command, timeout=None):
         return self.query_bytes(command, timeout).decode(errors="replace").strip()
+
+    def text_reply(self, timeout=None, what="a command", settle=0.05):
+        """The next reply as text, with every further line that follows it without a pause of `settle` seconds.
+        Some OOS answers are several lines in one reply (`:DECode:EVENts?`: one row per frame, no end mark); a reader
+        of one line would leave the rest as the answers to the next queries."""
+        lines = [self.reply(timeout, what).decode(errors="replace")]
+        while True:
+            # what the buffered reader already holds, without blocking (a non-blocking peek reads nothing new)
+            self.sock.settimeout(0)
+            try:
+                held = self.stream.peek(1)
+            finally:
+                self.sock.settimeout(self.timeout if timeout is None else timeout)
+            if not held and not select.select([self.sock], [], [], settle)[0]:
+                break
+            line = self.stream.readline(LINE_LIMIT)
+            if not line:
+                break
+            if not line.endswith(b"\n"):
+                raise LinkError(f"incomplete reply to {what}")
+            lines.append(line[:-1].rstrip(b"\r").decode(errors="replace"))
+        return "\n".join(lines)
 
     def block(self, command, timeout=None):
         """The payload of the definite block `command` answers; NoBlock when it answers a line."""

@@ -1,0 +1,63 @@
+# What a machine can say about a pull request without running its code:
+#   - its labels (tools/pr-labels.sh): areas by path, type by title, `agent`, `risk/hardware`;
+#   - four statuses (tools/pr-gate.sh, docs/adr/process/0038, 0039): waited, owner, unit and review, which say
+#     whether it may be merged without a person pressing the button.
+#
+# This workflow runs the scripts as they are on main, never code of the pull request: `pull_request_target` checks
+# out the base. Its token reads the repository and writes labels and statuses, nothing else.
+name: Gate
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+  # the waits run out without an event, and an approving review is picked up here within a quarter of an hour
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  # when CI is done: whether the comparison found nothing decides whether a pull request has to wait at all
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  # Copilot's review, and the maintainer resolving its comments, change the status review. On a fork's pull request
+  # these events get a token that cannot write, whatever `permissions` says: the job is left out there, and
+  # gate-review.yml runs the gate on main with a token that may, as soon as this run is done (#333)
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [edited, deleted]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+concurrency:
+  group: gate-${{ github.event.pull_request.number || 'all' }}
+jobs:
+  gate:
+    if: >-
+      github.repository == 'dekajoule/oos' &&
+      !(startsWith(github.event_name, 'pull_request_review') &&
+        github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: Labels by path, title and author (tools/pr-labels.sh)
+        if: github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: tools/pr-labels.sh "$PR"
+      - name: waited, owner, unit, review (tools/pr-gate.sh)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR" ]; then
+            tools/pr-gate.sh "$PR"
+          else
+            tools/pr-gate.sh --all
+          fi

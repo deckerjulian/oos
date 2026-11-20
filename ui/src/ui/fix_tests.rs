@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Regression tests for the compact chrome audit (PR #8; Display > Bottom bar = compact).
-use super::*;
 use super::workspace::Action;
+use super::*;
 
 fn fresh() -> Ui {
     super::testkit::fresh(true, 4)
@@ -47,7 +47,11 @@ fn overlay_keeps_a_split_and_stacked_leaves_a_consistent_density() {
         let layout = u.m.win_layout;
         assert_ne!(layout, WinLayout::One);
         u.trace_mode(false);
-        assert_eq!((u.m.density, u.m.win_layout, u.workspace.stacked), (density, layout, false), "Overlay keeps the split");
+        assert_eq!(
+            (u.m.density, u.m.win_layout, u.workspace.stacked),
+            (density, layout, false),
+            "Overlay keeps the split"
+        );
         u.trace_mode(true);
         assert!(u.workspace.stacked && u.m.win_layout == WinLayout::One && u.m.density == Density::Scope);
         // choosing a split again drops Stacked, so the highlighted pill is the one in force
@@ -59,7 +63,16 @@ fn overlay_keeps_a_split_and_stacked_leaves_a_consistent_density() {
 
 fn with_refs(u: &mut Ui, n: usize) {
     for i in 0..n {
-        u.refs[i] = Some(RefWave { color: i, label: format!("source-{i}"), vpd: 0.1, ..RefWave::test((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(), 1e-10, -2e-9) });
+        u.refs[i] = Some(RefWave {
+            color: i,
+            label: format!("source-{i}"),
+            vpd: 0.1,
+            ..RefWave::test(
+                (0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(),
+                1e-10,
+                -2e-9,
+            )
+        });
     }
 }
 
@@ -72,7 +85,9 @@ fn tap(u: &mut Ui, x: i32, y: i32) {
 fn sources_that_do_not_fit_sit_behind_a_plus_pill_that_opens_the_popup() {
     let mut u = fresh();
     assert!(u.source_overflow().is_none());
-    for c in 1..4 { u.activate_live_channel(c); }
+    for c in 1..4 {
+        u.activate_live_channel(c);
+    }
     with_refs(&mut u, NREF);
     u.relayout();
     let (hidden, pill) = u.source_overflow().expect("14 sources do not fit");
@@ -93,11 +108,24 @@ fn context_menu_stays_inside_the_plot_and_marks_the_trace_mode_in_force() {
         u.context_menu(x, y);
         let p = u.workspace.popup.as_ref().unwrap().rect;
         let g = u.grid;
-        assert!(p.x >= g.x && p.right() <= g.right() && p.y >= g.y && p.bottom() <= g.bottom(), "({x},{y}) {p:?} in {g:?}");
+        assert!(
+            p.x >= g.x && p.right() <= g.right() && p.y >= g.y && p.bottom() <= g.bottom(),
+            "({x},{y}) {p:?} in {g:?}"
+        );
     }
     u.context_menu(500, 250);
-    let row = |u: &Ui, i: i32| { let p = u.workspace.popup.as_ref().unwrap().rect; Rect::new(p.x + p.w - 30, p.y + 4 + i * 30, 24, 30) };
-    let ink = |u: &mut Ui, r: Rect| { let mut cv = Canvas::new(W, H); u.render(&mut cv); (r.y..r.y + r.h).flat_map(|y| (r.x..r.x + r.w).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * W + x) as usize] == ACCENT).count() };
+    let row = |u: &Ui, i: i32| {
+        let p = u.workspace.popup.as_ref().unwrap().rect;
+        Rect::new(p.x + p.w - 30, p.y + 4 + i * 30, 24, 30)
+    };
+    let ink = |u: &mut Ui, r: Rect| {
+        let mut cv = Canvas::new(W, H);
+        u.render(&mut cv);
+        (r.y..r.y + r.h)
+            .flat_map(|y| (r.x..r.x + r.w).map(move |x| (x, y)))
+            .filter(|&(x, y)| cv.px[(y * W + x) as usize] == ACCENT)
+            .count()
+    };
     let (overlay_row, stacked_row) = (row(&u, 0), row(&u, 1));
     assert!(ink(&mut u, overlay_row) > 0 && ink(&mut u, stacked_row) == 0, "check on Overlay");
     u.workspace.stacked = true;
@@ -110,11 +138,13 @@ fn a_floating_measurement_card_never_covers_the_zoom_bar_or_the_corner_buttons()
     u.set_zoom(true);
     for place in [None, Some((W - 220, TOP.h + 32)), Some((600, 60)), Some((W - 40, 140))] {
         u.workspace_action(Action::MeasureFloat);
-        if place.is_some() { u.workspace.measure_float = place; }
+        if place.is_some() {
+            u.workspace.measure_float = place;
+        }
         let (head, body) = u.results_rects().unwrap();
         let card = Rect::new(head.x, head.y, head.w, head.h + body.h);
         let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
-        assert!(!hits(u.full_btn().0) && !hits(u.zoom_btn().0), "{place:?} covers a corner button: {card:?}");
+        assert!(!u.corner_btns().into_iter().any(hits), "{place:?} covers a corner button: {card:?}");
         assert!(!hits(u.zoom_readout()), "{place:?} covers the zoom bar: {card:?}");
     }
 }
@@ -131,10 +161,12 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
         let g = u.grid;
         let apart = card.x >= g.right() || g.x >= card.right() || card.y >= g.bottom() || g.y >= card.bottom();
         assert!(apart, "{dock:?}: card {card:?} overlaps the plot {g:?}");
-        let (full, zoom) = (u.full_btn().0, u.zoom_btn().0);
         let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
-        assert!(!hits(full) && !hits(zoom), "{dock:?} covers a corner button");
-        assert!(card.y >= TOP.h && card.bottom() <= BOTTOM.y + 1 && card.x >= 0 && card.right() <= W, "{dock:?} {card:?} on screen");
+        assert!(!u.corner_btns().into_iter().any(hits), "{dock:?} covers a corner button");
+        assert!(
+            card.y >= TOP.h && card.bottom() <= BOTTOM.y + 1 && card.x >= 0 && card.right() <= W,
+            "{dock:?} {card:?} on screen"
+        );
     }
     // Statistics respects the Dock choice of the Measure menu
     let mut u = fresh();
@@ -167,7 +199,9 @@ fn reference_badges_are_fanned_out_and_the_legend_is_cut_with_a_count() {
     for width in [140, 300, 480, 800] {
         let cut = u.fit_ref_note(&note, width);
         assert!(u.fonts().s.width(&cut) <= width || cut.ends_with("+10"), "{cut:?} in {width}");
-        if cut != note { assert!(cut.contains('+'), "{cut:?}"); }
+        if cut != note {
+            assert!(cut.contains('+'), "{cut:?}");
+        }
     }
     assert_eq!(u.fit_ref_note(&note, 5000), note);
     // the note and the Fit button sit above the axis labels, not on them
@@ -185,17 +219,21 @@ fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_but
         u.workspace_action(place);
         let page = u.eye_page_rect();
         let l = eyepage::layout(page, false);
-        if l.charts[0].w == 0 { continue; }
+        if l.charts[0].w == 0 {
+            continue;
+        }
         let tab = u.eye_tab();
         for (k, c) in l.charts.iter().enumerate() {
-            if page.w < 700 { assert!(!hit(tab, *c), "tab {tab:?} over chart {k} {c:?}"); }
+            if page.w < 700 {
+                assert!(!hit(tab, *c), "tab {tab:?} over chart {k} {c:?}");
+            }
         }
     }
     let u = fresh();
     for y in (u.area.y..u.area.bottom()).step_by(3) {
         let x = u.right_tag_x(u.area, y, 24);
         let tag = Rect::new(x, y, 24, 14);
-        assert!(!hit(tag, u.full_btn().0) && !hit(tag, u.zoom_btn().0), "tag at y {y} covers a button");
+        assert!(!u.corner_btns().into_iter().any(|r| hit(tag, r)), "tag at y {y} covers a button");
     }
 }
 

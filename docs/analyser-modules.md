@@ -13,7 +13,7 @@ scope asks the registry for everything around a page:
 | start menu entries | Menu > Analysers | `start` (its menu) |
 | overflow menu | the ⋮ button in the plot, before Settings and Exit | `more` (nothing) |
 | SCPI | `:VIEW <keyword>` | `scpi` (none) |
-| setups | `view = <AView>` | `stored` (yes) |
+| setups | `view = <AView>` | its view in `AView::STORED` (`ui/src/model/analysers.rs`), where a setup reader finds it |
 | record | whether it computes without an acquisition record (a loaded reference, a capture of its own) | `without_record` (no) |
 | computing | from each new record (every captured sample of the window); `pane` when it runs beside the waveform | `update` (nothing) |
 | drawing | into the plot | `draw` (required) |
@@ -23,17 +23,23 @@ scope asks the registry for everything around a page:
 1. **The signal processing** goes into `oos-dsp`, with its tests there.
 2. **The page**: a file in `ui/src/ui/` with its `update` and `draw`, its menu rows (`Item`s of its own `MenuId`, the
    way `magnetic.rs` or `dpt.rs` do it) and its results in `Ui::azr`. Its settings live in the model, so setups keep
-   them. Add a variant to `AView` (and to `AView::ALL`) and one to `MenuId`.
+   them. Add a variant to `AView` (and to `AView::ALL`, and to `AView::STORED` unless it runs a procedure) and one to
+   `MenuId`.
 3. **The module**: a type that implements `Analyser` at the end of that file. `magnetic.rs` (`MagneticPage`) is a
-   complete small one; `bwtest.rs` shows a page that runs a procedure (not stored, not over SCPI, a second start menu
-   entry); `analysis.rs` (`SpectrumPage`) a page that also runs in the pane beside the waveform.
+   complete small one; `bwtest.rs` shows a page that runs a procedure (not in `AView::STORED`, not over SCPI, a
+   second start menu entry); `analysis.rs` (`SpectrumPage`) a page that also runs in the pane beside the waveform.
 4. **Register it** in `ui/src/ui/analysers.rs`: one entry in `ANALYSERS`. The position is the position in the start
    menu and in System > Features. Never change a feature id once released: system.conf stores it.
 5. **Test**: `(cd ui && cargo test)`. Every page is checked the same way (`analysers::tests`): views, feature ids,
    names, menus and SCPI keywords unique; it computes and draws on the demo signals without panicking; the view bar
    names it; its overflow menu leads to its settings and back to the waveform; leaving it out in System > Features
-   takes it out of the start menu; `:VIEW` reaches it and setups keep it when it says so. Add the page's own tests
-   next to it.
+   takes it out of the start menu; `:VIEW` reaches it, and setups keep it (a page that is not a procedure and is
+   missing in `AView::STORED` fails). Add the page's own tests next to it.
+6. **What is around it**: `ui/src/ui/analysers.rs::every_page_is_complete` names what a page still lacks. Its row in
+   `PAGES` of that test (feature id, the word of its view in setups, its `:VIEW` keyword: none of them changes once
+   released), the keyword in the `:VIEW` rows of `docs/scpi.md` and `wiki/SCPI-and-VXI-11.md`, its name under
+   Analysers in `wiki/Features.md`, and its menu in the list of `menus_fit_at` (`ui/src/ui/lint/menu_layout.rs`), so
+   the layout check opens it.
 
 ## What is not a module yet
 

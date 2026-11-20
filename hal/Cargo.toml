@@ -1,6 +1,6 @@
 [package]
 name = "oos-hal"
-version = "0.1.13"
+version = "0.1.14"
 repository = "https://github.com/dekajoule/oos"
 edition = "2021"
 description = "OOS hardware layer for the Rigol DHO800/DHO900: FPGA register sequences (SCU, SPU, TPU), front panel"
@@ -9,14 +9,24 @@ license = "GPL-2.0-or-later"
 [lib]
 name = "oos_hal"
 
-[features]
-# the board this build is for (hal/src/target.rs `ACTIVE`): without one the DHO800/DHO900
-board-mho = []
-
 [dependencies]
 libc = "0.2"
 
-# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same list in every crate.
+# `sim`: the simulated unit and the encoder of the read-out, for host runs of the board code (ADR 0053). Only tests
+# switch it on, hal's own through the dev-dependency below; the programs for the scope are built without it.
+[features]
+sim = []
+
+[dev-dependencies]
+oos-hal = { path = ".", features = ["sim"] }
+
+# The tests run optimised a little (docs/adr/process/0040): the tests of updates and pictures take seconds instead
+# of minutes. Debug assertions and overflow checks stay on.
+[profile.test]
+opt-level = 1
+
+# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The first two are the same in
+# every crate; `too_many_arguments` is for the step builders of this crate (docs/adr/process/0048).
 [lints.clippy]
 # `!(dt > 0.0)` is meant: it is also true for NaN, and the signal paths rely on that
 neg_cmp_op_on_partial_ord = "allow"

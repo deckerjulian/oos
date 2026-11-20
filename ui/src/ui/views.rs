@@ -13,13 +13,8 @@
 
 use super::*;
 use crate::store;
+use crate::store::views::KEYS;
 
-/// The most views.
-pub const VIEWS_MAX: usize = 4;
-/// Keys of a setup (store.rs) that belong to a view, besides `xy` and `full` (fields of the Ui).
-const KEYS: [&str; 21] = [
-    "windows", "ch_window", "math_window", "la_window", "meas", "meas2", "dvm", "counter", "cursor", "cur_a", "cur_b", "cur_c", "cur_d", "pane", "meas_labels", "trend_sel", "zoom", "zoom_tdiv", "zdelay", "hist", "view",
-];
 /// The strip at each edge of the plot where a horizontal swipe switches views (px).
 pub(super) const EDGE: i32 = 18;
 /// How far the swipe has to go (px).
@@ -27,35 +22,20 @@ const SWIPE: i32 = 70;
 /// Width of a number in the top bar's view buttons.
 const NUM_W: i32 = 28;
 
-/// Whether `k` is a key of a view's model part (not `xy` and `full`).
-pub(super) fn is_view_key(k: &str) -> bool {
-    KEYS.contains(&k)
-}
-
 /// A view not set up yet: the plot alone.
 pub(super) fn plot_alone() -> String {
     snapshot_of(&Model::default(), false, false)
 }
 
-fn known(k: &str) -> bool {
-    KEYS.contains(&k) || k == "xy" || k == "full"
-}
-
-/// A view as kept in a setup: `key=value; key=value ...` of its keys only.
-pub fn slot_checked(v: &str) -> Result<String, String> {
-    for part in v.split(';').map(str::trim).filter(|p| !p.is_empty()) {
-        let k = part.split_once('=').map(|(k, _)| k.trim()).ok_or_else(|| format!("not key=value: {}", part))?;
-        if !known(k) {
-            return Err(format!("not part of a view: {}", k));
-        }
-    }
-    Ok(v.trim().to_string())
-}
-
 /// The view of a model and the Ui's XY and full screen.
 fn snapshot_of(m: &Model, xy: bool, full: bool) -> String {
     let text = store::setup_text(m);
-    let mut parts: Vec<String> = text.lines().filter_map(|l| l.split_once(" = ")).filter(|(k, _)| KEYS.contains(k)).map(|(k, v)| format!("{}={}", k, v)).collect();
+    let mut parts: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.split_once(" = "))
+        .filter(|(k, _)| KEYS.contains(k))
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
     parts.push(format!("xy={}", xy));
     parts.push(format!("full={}", full));
     parts.join("; ")
@@ -155,7 +135,8 @@ impl Ui {
     }
 
     pub(super) fn views_options(&self, it: Item) -> Option<Vec<String>> {
-        (it == Item::Views).then(|| (1..=VIEWS_MAX).map(|n| if n == 1 { "Off".to_string() } else { n.to_string() }).collect())
+        (it == Item::Views)
+            .then(|| (1..=VIEWS_MAX).map(|n| if n == 1 { "Off".to_string() } else { n.to_string() }).collect())
     }
 
     pub(super) fn views_adjust(&mut self, it: Item, d: i32) -> bool {

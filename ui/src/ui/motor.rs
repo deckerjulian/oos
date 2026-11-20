@@ -3,13 +3,16 @@
 
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
-use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, wave_clash};
+use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, pad, wave_clash, Taken};
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
 impl Ui {
     pub(super) fn inverter_items(&self) -> Vec<Item> {
-        use Item::{InvA, InvAn, InvAng, InvB, InvC, InvCpr, InvDeg, InvEi, InvElec, InvEv, InvHa, InvHb, InvHc, InvOff, InvOn, InvPage, InvPoles, InvQa, InvQb, InvQi, InvQty, InvScale, InvSwap, InvTq};
+        use Item::{
+            InvA, InvAn, InvAng, InvB, InvC, InvCpr, InvDeg, InvEi, InvElec, InvEv, InvHa, InvHb, InvHc, InvOff, InvOn,
+            InvPage, InvPoles, InvQa, InvQb, InvQi, InvQty, InvScale, InvSwap, InvTq,
+        };
         let m = &self.m;
         let mut v = vec![InvOn, InvPage];
         if m.inv_page == crate::model::InvPage::Dq0 {
@@ -17,7 +20,10 @@ impl Ui {
             if m.inv_ang == InvAngle::Analog {
                 v.push(InvAn);
             }
-            if m.inv_ang == InvAngle::Phase || (m.inv_ang == InvAngle::Analog && m.inv_elec) || m.inv_ang == InvAngle::Off {
+            if m.inv_ang == InvAngle::Phase
+                || (m.inv_ang == InvAngle::Analog && m.inv_elec)
+                || m.inv_ang == InvAngle::Off
+            {
                 v.push(InvPoles);
             }
             if m.inv_ang == InvAngle::Analog {
@@ -50,8 +56,30 @@ impl Ui {
 
     pub(super) fn inverter_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::InvPoles | Item::InvScale | Item::InvDeg | Item::InvOff | Item::InvQa | Item::InvQb | Item::InvQi | Item::InvCpr | Item::InvHa | Item::InvHb | Item::InvHc => Kind::Value,
-            Item::InvOn | Item::InvPage | Item::InvA | Item::InvB | Item::InvC | Item::InvAng | Item::InvAn | Item::InvQty | Item::InvTq | Item::InvEv | Item::InvEi | Item::InvElec | Item::InvSwap => Kind::Choice,
+            Item::InvPoles
+            | Item::InvScale
+            | Item::InvDeg
+            | Item::InvOff
+            | Item::InvQa
+            | Item::InvQb
+            | Item::InvQi
+            | Item::InvCpr
+            | Item::InvHa
+            | Item::InvHb
+            | Item::InvHc => Kind::Value,
+            Item::InvOn
+            | Item::InvPage
+            | Item::InvA
+            | Item::InvB
+            | Item::InvC
+            | Item::InvAng
+            | Item::InvAn
+            | Item::InvQty
+            | Item::InvTq
+            | Item::InvEv
+            | Item::InvEi
+            | Item::InvElec
+            | Item::InvSwap => Kind::Choice,
             _ => return None,
         })
     }
@@ -93,21 +121,39 @@ impl Ui {
         let line = |n: u8| format!("D{}", n.min(15));
         Some(match it {
             Item::InvOn => onoff(m.view == AView::Inverter),
-            Item::InvPage => if m.inv_page == InvPage::Dq0 { "DQ0".into() } else { "Mechanical".into() },
+            Item::InvPage => {
+                if m.inv_page == InvPage::Dq0 {
+                    "DQ0".into()
+                } else {
+                    "Mechanical".into()
+                }
+            }
             Item::InvA => self.wave_name(m.inv_a),
             Item::InvB => self.wave_name(m.inv_b),
             Item::InvC => self.wave_name(m.inv_c),
             Item::InvAng => self.ang_name(),
             Item::InvPoles => format!("{}", m.inv_poles.max(1)),
             Item::InvAn => self.wave_name(m.inv_an),
-            Item::InvQty => if m.inv_volt { "Voltage".into() } else { "Current".into() },
+            Item::InvQty => {
+                if m.inv_volt {
+                    "Voltage".into()
+                } else {
+                    "Current".into()
+                }
+            }
             Item::InvTq => opt(m.inv_tq),
             Item::InvEv => opt(m.inv_ev),
             Item::InvEi => opt(m.inv_ei),
             Item::InvScale => short_num(m.inv_scale),
             Item::InvDeg => format!("{} \u{b0}/V", short_num(m.inv_degv)),
             Item::InvOff => format!("{} \u{b0}", short_num(m.inv_off)),
-            Item::InvElec => if m.inv_elec { "Elec".into() } else { "Mech".into() },
+            Item::InvElec => {
+                if m.inv_elec {
+                    "Elec".into()
+                } else {
+                    "Mech".into()
+                }
+            }
             Item::InvQa => line(m.inv_qa),
             Item::InvQb => line(m.inv_qb),
             Item::InvQi => m.inv_qi.map(line).unwrap_or_else(|| "Off".into()),
@@ -126,7 +172,11 @@ impl Ui {
             Item::InvOn | Item::InvSwap => v(&["Off", "On"]),
             Item::InvPage => v(&["DQ0", "Mechanical"]),
             Item::InvA | Item::InvB | Item::InvC | Item::InvAn => Some(self.wave_names()),
-            Item::InvAng => Some(if self.m.inv_page == InvPage::Dq0 { vec!["Off".into(), "Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()] } else { vec!["Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()] }),
+            Item::InvAng => Some(if self.m.inv_page == InvPage::Dq0 {
+                vec!["Off".into(), "Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()]
+            } else {
+                vec!["Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()]
+            }),
             Item::InvQty => v(&["Voltage", "Current"]),
             Item::InvTq | Item::InvEv | Item::InvEi => Some(self.wave_names_opt()),
             Item::InvElec => v(&["Mech", "Elec"]),
@@ -135,7 +185,11 @@ impl Ui {
     }
 
     fn ang_name(&self) -> String {
-        let a = if self.m.inv_page == InvPage::Mech && self.m.inv_ang == InvAngle::Off { InvAngle::Phase } else { self.m.inv_ang };
+        let a = if self.m.inv_page == InvPage::Mech && self.m.inv_ang == InvAngle::Off {
+            InvAngle::Phase
+        } else {
+            self.m.inv_ang
+        };
         match a {
             InvAngle::Off => "Off",
             InvAngle::Phase => "Phase",
@@ -261,16 +315,15 @@ impl Ui {
                 return;
             }
         };
-        if analog.is_some() && taken.opt[0].is_none() {
-            self.azr.inv_note = missing_wave(m.inv_an);
-            return;
-        }
         let (a, b, c, dt, t0) = (&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0);
         let owned;
         let theta = match ang {
             InvAngle::Off | InvAngle::Phase => Theta::Vector,
             InvAngle::Analog => {
-                let v = taken.opt[0].as_deref().unwrap();
+                let Some(v) = taken.opt[0].as_deref() else {
+                    self.azr.inv_note = missing_wave(m.inv_an);
+                    return;
+                };
                 owned = motor::analog_elec(v, degv, off, elec, poles);
                 Theta::Elec(&owned)
             }
@@ -286,12 +339,7 @@ impl Ui {
                 if q.short {
                     note = "cycle window is short".into();
                 }
-                if taken.moved {
-                    if !note.is_empty() {
-                        note.push_str(". ");
-                    }
-                    note.push_str("on the finest ref interval");
-                }
+                taken.note_moved(&mut note);
                 self.azr.inv_note = note;
                 self.azr.dq = Some(q);
             }
@@ -324,26 +372,15 @@ impl Ui {
         }
         let (poles, degv, off, elec, ang) = (m.inv_poles.max(1), m.inv_degv, m.inv_off, m.inv_elec, m.inv_ang);
         let nreq = if ang == InvAngle::Analog { 1 } else { 3 };
-        let taken = match self.take_waves(rec, &used[..nreq], &roles) {
-            Ok(t) => t,
-            Err(id) => {
-                self.azr.inv_note = missing_wave(id);
-                return;
-            }
-        };
-        for (slot, id) in roles.into_iter().enumerate() {
-            if id.is_some() && taken.opt[slot].is_none() {
-                self.azr.inv_note = missing_wave(id.unwrap());
-                return;
-            }
-        }
+        let Some(taken) = self.mech_waves(rec, &used[..nreq], roles) else { return };
         let shaft = match ang {
-            InvAngle::Phase | InvAngle::Off => motor::shaft_phase(&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0, poles),
+            InvAngle::Phase | InvAngle::Off => {
+                motor::shaft_phase(&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0, poles)
+            }
             InvAngle::Analog => motor::shaft_analog(&taken.v[0], taken.dt, taken.t0, degv, off, elec, poles),
             InvAngle::Quad | InvAngle::Hall => return,
         };
-        let moved = taken.moved;
-        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), moved);
+        self.finish_mech(shaft, &taken);
     }
 
     fn mech_digital(&mut self, rec: &Record) {
@@ -364,34 +401,38 @@ impl Ui {
         let shaft = if m.inv_ang == InvAngle::Hall {
             motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
         } else {
-            let ix = m.inv_qi.map(|q| bit(q));
+            let ix = m.inv_qi.map(&bit);
             motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
         };
         let roles = [self.m.inv_tq, self.m.inv_ev, self.m.inv_ei];
-        let taken = match self.take_waves(rec, &[], &roles) {
+        let Some(taken) = self.mech_waves(rec, &[], roles) else { return };
+        self.finish_mech(shaft, &taken);
+    }
+
+    /// The waves `required` of the shaft angle and the `roles` torque, bus voltage and bus current; when one of them
+    /// has no samples, None and the page's note names it.
+    fn mech_waves(&mut self, rec: &Record, required: &[WaveId], roles: [Option<WaveId>; 3]) -> Option<Taken> {
+        let taken = match self.take_waves(rec, required, &roles) {
             Ok(t) => t,
             Err(id) => {
                 self.azr.inv_note = missing_wave(id);
-                return;
+                return None;
             }
         };
         for (slot, id) in roles.into_iter().enumerate() {
-            if id.is_some() && taken.opt[slot].is_none() {
-                self.azr.inv_note = missing_wave(id.unwrap());
-                return;
+            if let Some(id) = id.filter(|_| taken.opt[slot].is_none()) {
+                self.azr.inv_note = missing_wave(id);
+                return None;
             }
         }
-        self.finish_mech(shaft, taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref(), taken.moved);
+        Some(taken)
     }
 
-    fn finish_mech(&mut self, shaft: oos_dsp::motor::Shaft, tq: Option<&[f32]>, ev: Option<&[f32]>, ei: Option<&[f32]>, moved: bool) {
+    /// The mechanical values of `shaft` with the role waves of `taken` (`mech_waves`).
+    fn finish_mech(&mut self, shaft: oos_dsp::motor::Shaft, taken: &Taken) {
+        let (tq, ev, ei) = (taken.opt[0].as_deref(), taken.opt[1].as_deref(), taken.opt[2].as_deref());
         let mut note = shaft.note.to_string();
-        if moved {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str("on the finest ref interval");
-        }
+        taken.note_moved(&mut note);
         let mech = motor::mechanical(shaft, tq, self.m.inv_scale, ev, ei);
         self.azr.inv_note = note;
         self.azr.mech = Some(mech);
@@ -425,7 +466,7 @@ impl Ui {
         let shaft = if m.inv_ang == InvAngle::Hall {
             motor::shaft_hall(&col(m.inv_ha), &col(m.inv_hb), &col(m.inv_hc), dt, t0, m.inv_poles.max(1))
         } else {
-            let ix = m.inv_qi.map(|q| col(q));
+            let ix = m.inv_qi.map(&col);
             motor::shaft_quad(&col(m.inv_qa), &col(m.inv_qb), ix.as_deref(), dt, t0, m.inv_cpr, m.inv_swap)
         };
         if shaft.rad.is_empty() {
@@ -446,7 +487,8 @@ impl Ui {
     fn draw_dq(&self, cv: &mut Canvas) {
         let a = self.area;
         let f = &self.fonts();
-        let mut lines = vec![format!("{}   angle {}", if self.m.inv_volt { "voltage" } else { "current" }, self.ang_name())];
+        let mut lines =
+            vec![format!("{}   angle {}", if self.m.inv_volt { "voltage" } else { "current" }, self.ang_name())];
         if let Some(q) = &self.azr.dq {
             lines.push(format!("D {}   Q {}   zero {}", num(Some(q.d), ""), num(Some(q.q), ""), num(Some(q.zero), "")));
             lines.push(format!("f {}", if q.freq > 0.0 { num(Some(q.freq), "Hz") } else { "----".into() }));
@@ -527,7 +569,11 @@ impl Ui {
             lines.push(format!("{:?}", s.direction));
             lines.push(format!("angle {}   travel {}", num(s.angle_deg, "\u{b0}"), num(s.travel_deg, "\u{b0}")));
             lines.push(format!("torque {}   Pmech {}", num(me.torque, "N\u{b7}m"), num(me.p_mech, "W")));
-            lines.push(format!("Pelec {}   eff {}", num(me.p_elec, "W"), me.eff.map(|e| format!("{:.1} %", e * 100.0)).unwrap_or_else(|| "----".into())));
+            lines.push(format!(
+                "Pelec {}   eff {}",
+                num(me.p_elec, "W"),
+                me.eff.map(|e| format!("{:.1} %", e * 100.0)).unwrap_or_else(|| "----".into())
+            ));
             if me.generating {
                 lines.push("generating".into());
             }
@@ -595,16 +641,11 @@ fn step_line(n: u8, d: i32) -> u8 {
 fn step_index(n: Option<u8>, d: i32) -> Option<u8> {
     let i = n.map(|x| x as i32 + 1).unwrap_or(0);
     let j = (i + d).rem_euclid(17);
-    if j == 0 { None } else { Some((j - 1) as u8) }
-}
-
-fn pad(lo: f64, hi: f64) -> (f64, f64) {
-    if !lo.is_finite() || !hi.is_finite() || hi - lo < 1e-15 {
-        let c = if lo.is_finite() { lo } else { 0.0 };
-        return (c - 1.0, c + 1.0);
+    if j == 0 {
+        None
+    } else {
+        Some((j - 1) as u8)
     }
-    let p = (hi - lo) * 0.08;
-    (lo - p, hi + p)
 }
 
 /// The inverter page (motor drive: phases, DQ0, shaft).

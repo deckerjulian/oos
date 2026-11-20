@@ -7,9 +7,10 @@ Tested on a file laid out like a stock card, with the stock update script, in a 
 system (`tools/gel-sim.sh`), and by unit tests. Run on a DHO924S (2026-11-08, package 0.1.1) through Storage > Upgrade:
 the dry run, the first install over the stock `recovery` (rescue set with the stock `recovery`, image written and
 read back, OOS selected, OOS started) and the run again on a card that already holds OOS ("already holds", OOS
-selected). The stock system of that unit is a modified one; an unmodified stock system has not run it yet.
+selected). The stock system of that unit is a modified one. A user ran the same install of 0.1.13 on a DHO802 with an
+unmodified stock system (00.01.05), with `oos-any-model.txt`: dry run, install, and OOS started (issue #19).
 
-Compared with the card route (`README.md`, Installation):
+Compared with the card route ([wiki/Installation.md](../wiki/Installation.md#on-a-second-card)):
 
 | | USB stick | second card |
 |---|---|---|
@@ -26,7 +27,7 @@ This is why only models with the hardware of a model OOS has run on are accepted
 ## 1. Steps
 
 1. Download `DHO800_DHO900_OOS_Install.GEL` from the [release](https://github.com/dekajoule/oos/releases/latest) and check it
-   against `SHA256SUMS`, or build it (`README.md`, Installation, steps 3 to 5): it is in `boot/out/`.
+   against `SHA256SUMS`, or build it ([wiki/Building.md](../wiki/Building.md)): it is in `boot/out/`.
 2. A FAT32 USB stick with at least 200 MiB free. Copy the file to its top folder. The name has to end in `.GEL` and
    contain `DHO800_DHO900`, or the update ignores it. Keep the name.
 3. **Recommended, first a dry run:** an empty file `oos-dry-run.txt` on the stick runs all checks and saves the rescue set, without
@@ -45,14 +46,15 @@ the images), it is written: the stick updates OOS. An empty file `oos-reinstall.
 build in any case. A
 damaged OOS image in `recovery` (an update cut by a power loss) is replaced by the rollback image when that one is whole,
 else by the stick's build. If the OOS in `recovery` starts but hangs early every time (no rollback happens because the
-start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist (`README.md`, Installation, step 8).
+start is never counted), `oos-reinstall.txt` is the way out. To stay on OOS: System > Boot mode > Persist
+([wiki/Installation.md](../wiki/Installation.md#how-oos-starts)).
 
 ### Over ADB
 
 The same install also runs over ADB, without a stick: `oos-update gel-install` is the same code, only `/rigol/data` has
 to be saved by hand. It ran on the same DHO924S (2026-11-07). You need `adb` on your computer and a scope that answers
-on its network port 55555 with root access; this is known from a modified stock system and has not been checked on an
-unmodified one.
+on its network port 55555 with root access; this is known from a modified stock system, and a user found the same on
+the unmodified stock system of a DHO802 (issue #19).
 
 ```sh
 adb connect <scope>:55555
@@ -127,15 +129,16 @@ in their licensed bandwidth.
 
 | Verified | Not verified yet |
 |---|---|
-| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO802, DHO812 |
-| DHO914S, DHO924S (a DHO924S runs OOS) | DHO914, DHO924, DHO914-EDU, DHO924-EDU |
+| DHO804, DHO814, DHO824 (a DHO804 runs OOS) | DHO914, DHO924 |
+| DHO802, DHO812 (a DHO802 runs OOS) | DHO914-EDU, DHO924-EDU |
+| DHO914S, DHO924S (a DHO924S runs OOS) | |
 
 On another model the update stops before it writes anything; the screen reports a failure, and `oos-install.log` on
 the stick says:
 
 ```
-oos-update: OOS has not run on a DHO802 yet (hardware variant "DHO800, 2 channels": no unit of it has run OOS so far). Nothing written.
-Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO914S, DHO924S.
+oos-update: OOS has not run on a DHO914 yet (hardware variant "DHO900 without generator": no unit of it has run OOS so far). Nothing written.
+Verified (OOS has run on a model with the same hardware): DHO804, DHO814, DHO824, DHO802, DHO812, DHO914S, DHO924S.
 ...
 exit code 1
 ```
@@ -157,7 +160,7 @@ Stock starts by itself after every OOS start in one-shot mode. In persist mode: 
 Putting the stock `recovery` back needs the card in a reader (`card-install.py restore`, with `OOS-rescue/recovery.bin`).
 There is no update file for this yet.
 
-If the scope shows only a black screen: `README.md`, If something goes wrong.
+If the scope shows only a black screen: [wiki/Troubleshooting.md](../wiki/Troubleshooting.md).
 
 ### The stock system does not see the stick
 

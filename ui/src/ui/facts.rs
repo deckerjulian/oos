@@ -13,6 +13,9 @@ use oos_dsp::motor::{self, Theta};
 use oos_dsp::power;
 use oos_dsp::spectrum;
 
+/// The waves `grid` takes on one time grid: (t0, dt, the required waves, the optional ones).
+type Grid = (f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>);
+
 pub(crate) enum Fact {
     Num(f64),
     Word(&'static str),
@@ -40,7 +43,7 @@ impl Ui {
         self.pair_at(14, data, clk)
     }
 
-    fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<(f64, f64, Vec<Vec<f32>>, Vec<Option<Vec<f32>>>)> {
+    fn grid(&self, req: &[WaveId], opt: &[Option<WaveId>]) -> Option<Grid> {
         self.on_rec(|rec| {
             let t = self.take_waves(rec, req, opt).ok()?;
             Some((t.t0, t.dt, t.v, t.opt))
@@ -117,12 +120,20 @@ impl Ui {
                     "LINE" | "LINER" => {
                         let fl = if self.m.pw_fline > 0.0 { self.m.pw_fline } else { power::line_hz(&v, dt) };
                         let t = power::tone_ripple(&v, dt, fl);
-                        if item == "LINE" { t.pp } else { t.rms }
+                        if item == "LINE" {
+                            t.pp
+                        } else {
+                            t.rms
+                        }
                     }
                     _ => {
                         let fs = if self.m.pw_fsw > 0.0 { self.m.pw_fsw } else { power::switch_hz(&v, dt) };
                         let t = power::switching_ripple(&v, dt, fs);
-                        if item == "SWITCH" { t.pp } else { t.rms }
+                        if item == "SWITCH" {
+                            t.pp
+                        } else {
+                            t.rms
+                        }
                     }
                 }
             }
@@ -130,7 +141,11 @@ impl Ui {
                 let id = Self::one_id(over, self.m.pw_i)?;
                 let Some((i, dt)) = volt(self, id) else { return Ok(miss) };
                 let (pk, _, i2t) = power::inrush(&i, dt);
-                if item == "INRUSH" { pk } else { i2t }
+                if item == "INRUSH" {
+                    pk
+                } else {
+                    i2t
+                }
             }
             "TON" | "TOFF" => {
                 let (vin, vout) = match over {
@@ -140,7 +155,11 @@ impl Ui {
                 };
                 let Some(vin) = vin else { return Ok(miss) };
                 let Some((_, dt, w, _)) = self.grid(&[vin, vout], &[]) else { return Ok(miss) };
-                if item == "TON" { power::turn_on_time(&w[0], &w[1], dt) } else { power::turn_off_time(&w[0], &w[1], dt) }
+                if item == "TON" {
+                    power::turn_on_time(&w[0], &w[1], dt)
+                } else {
+                    power::turn_off_time(&w[0], &w[1], dt)
+                }
             }
             "CIN" => {
                 let (v, i) = Self::two_id(over, self.m.pw_v, self.m.pw_i)?;
@@ -156,7 +175,13 @@ impl Ui {
                     _ => return Err(()),
                 };
                 let Some((_, dt, w, opt)) = self.grid(&[rail], &[vin, clk]) else { return Ok(miss) };
-                let r = power::rail(&w[0], dt, self.m.pw_ref, opt.first().and_then(|s| s.as_deref()), opt.get(1).and_then(|s| s.as_deref()));
+                let r = power::rail(
+                    &w[0],
+                    dt,
+                    self.m.pw_ref,
+                    opt.first().and_then(|s| s.as_deref()),
+                    opt.get(1).and_then(|s| s.as_deref()),
+                );
                 match item {
                     "ROVER" => r.overshoot,
                     "RUNDER" => r.undershoot,
@@ -286,14 +311,26 @@ impl Ui {
                 let theta = motor::analog_elec(ang, m.inv_degv, m.inv_off, m.inv_elec, poles);
                 let dq = motor::dq0(&v[0], &v[1], &v[2], dt, Theta::Elec(&theta));
                 let shaft = motor::shaft_analog(ang, dt, t0, m.inv_degv, m.inv_off, m.inv_elec, poles);
-                let mech = motor::mechanical(shaft, opt.get(1).and_then(|s| s.as_deref()), m.inv_scale, opt.get(2).and_then(|s| s.as_deref()), opt.get(3).and_then(|s| s.as_deref()));
+                let mech = motor::mechanical(
+                    shaft,
+                    opt.get(1).and_then(|s| s.as_deref()),
+                    m.inv_scale,
+                    opt.get(2).and_then(|s| s.as_deref()),
+                    opt.get(3).and_then(|s| s.as_deref()),
+                );
                 Some(InvPack { dq, mech })
             }
             InvAngle::Phase | InvAngle::Off => {
                 let (t0, dt, v, opt) = self.grid(&[a, b, c], &[m.inv_tq, m.inv_ev, m.inv_ei])?;
                 let dq = motor::dq0(&v[0], &v[1], &v[2], dt, Theta::Vector);
                 let shaft = motor::shaft_phase(&v[0], &v[1], &v[2], dt, t0, poles);
-                let mech = motor::mechanical(shaft, opt.first().and_then(|s| s.as_deref()), m.inv_scale, opt.get(1).and_then(|s| s.as_deref()), opt.get(2).and_then(|s| s.as_deref()));
+                let mech = motor::mechanical(
+                    shaft,
+                    opt.first().and_then(|s| s.as_deref()),
+                    m.inv_scale,
+                    opt.get(1).and_then(|s| s.as_deref()),
+                    opt.get(2).and_then(|s| s.as_deref()),
+                );
                 Some(InvPack { dq, mech })
             }
         }
@@ -313,12 +350,18 @@ impl Ui {
             let shaft = if m.inv_ang == InvAngle::Hall {
                 motor::shaft_hall(&bit(m.inv_ha), &bit(m.inv_hb), &bit(m.inv_hc), la.dt, la.t0, m.inv_poles.max(1))
             } else {
-                let ix = m.inv_qi.map(|q| bit(q));
+                let ix = m.inv_qi.map(&bit);
                 motor::shaft_quad(&bit(m.inv_qa), &bit(m.inv_qb), ix.as_deref(), la.dt, la.t0, m.inv_cpr, m.inv_swap)
             };
             let roles = [m.inv_tq, m.inv_ev, m.inv_ei];
             let taken = self.take_waves(rec, &[], &roles).ok()?;
-            Some(motor::mechanical(shaft, taken.opt.first().and_then(|s| s.as_deref()), m.inv_scale, taken.opt.get(1).and_then(|s| s.as_deref()), taken.opt.get(2).and_then(|s| s.as_deref())))
+            Some(motor::mechanical(
+                shaft,
+                taken.opt.first().and_then(|s| s.as_deref()),
+                m.inv_scale,
+                taken.opt.get(1).and_then(|s| s.as_deref()),
+                taken.opt.get(2).and_then(|s| s.as_deref()),
+            ))
         })?;
         Some(InvPack { dq: None, mech })
     }
@@ -399,7 +442,9 @@ impl Ui {
                 (r.v.len() >= 2 && r.dt > 0.0).then_some((r.v.as_ref().clone(), r.dt))
             }
             WaveId::Ch(c) => self.on_rec(|rec| match &rec.raw {
-                Some(r) if c < r.frame.ch.len() && !r.frame.ch[c].is_empty() && r.frame.dt > 0.0 => Some((r.frame.ch[c].clone(), r.frame.dt)),
+                Some(r) if c < r.frame.ch.len() && !r.frame.ch[c].is_empty() && r.frame.dt > 0.0 => {
+                    Some((r.frame.ch[c].clone(), r.frame.dt))
+                }
                 _ => {
                     let (v, dt) = self.meas_wave(rec, c);
                     (v.len() >= 2 && dt > 0.0).then_some((v, dt))

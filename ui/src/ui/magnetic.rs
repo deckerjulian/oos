@@ -50,7 +50,13 @@ impl Ui {
             Item::MagN => format!("{:.0}", m.mag_n),
             Item::MagAe => geom(m.mag_ae, "m\u{b2}"),
             Item::MagLe => geom(m.mag_le, "m"),
-            Item::MagRcu => if m.mag_rcu > 0.0 { si(m.mag_rcu, "\u{3a9}") } else { "0 \u{3a9}".into() },
+            Item::MagRcu => {
+                if m.mag_rcu > 0.0 {
+                    si(m.mag_rcu, "\u{3a9}")
+                } else {
+                    "0 \u{3a9}".into()
+                }
+            }
             Item::MagPlot => {
                 if m.mag_plot == MagPlot::BH && m.mag_ae > 0.0 && m.mag_le > 0.0 {
                     "B-H".into()
@@ -78,7 +84,11 @@ impl Ui {
         if matches!(it, Item::MagV | Item::MagI) {
             let cur = if it == Item::MagV { self.m.mag_v } else { self.m.mag_i };
             let next = self.step_wave(cur, d);
-            if it == Item::MagV { self.m.mag_v = next; } else { self.m.mag_i = next; }
+            if it == Item::MagV {
+                self.m.mag_v = next;
+            } else {
+                self.m.mag_i = next;
+            }
             self.analyzer_update();
             return true;
         }
@@ -136,19 +146,9 @@ impl Ui {
                 }
             }
         }
-        if taken.moved {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str("on the finest ref interval");
-        }
+        taken.note_moved(&mut note);
         let got = magnetic::measure(v, i, dt, geom);
-        if !got.note.is_empty() {
-            if !note.is_empty() {
-                note.push_str(". ");
-            }
-            note.push_str(got.note);
-        }
+        add_note(&mut note, got.note);
         self.azr.mag_note = note;
         let n = got.loops.last().map(|l| l.len()).unwrap_or(0);
         if n > 0 {
@@ -178,17 +178,26 @@ impl Ui {
         }
         cv.set_clip(a);
         if !xs.is_empty() {
-            let (x0, x1) = pad(xs.iter().copied().fold(f64::INFINITY, f64::min), xs.iter().copied().fold(f64::NEG_INFINITY, f64::max));
-            let (y0, y1) = pad(ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+            let (x0, x1) = pad(
+                xs.iter().copied().fold(f64::INFINITY, f64::min),
+                xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            );
+            let (y0, y1) = pad(
+                ys.iter().copied().fold(f64::INFINITY, f64::min),
+                ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            );
             let px = |x: f64| a.x + ((x - x0) / (x1 - x0) * (a.w - 16) as f64) as i32 + 8;
             let py = |y: f64| a.y + a.h - 16 - ((y - y0) / (y1 - y0) * (a.h - 28) as f64) as i32;
             let z = self.wave_color(m.mag_i);
             for (k, lp) in loops.iter().enumerate() {
                 let col = if k + 1 == loops.len() { z } else { DIM };
-                let pts: Vec<(i32, i32)> = lp.iter().filter_map(|&(psi, i)| {
-                    let (x, y) = map(psi, i);
-                    (x.is_finite() && y.is_finite()).then_some((px(x), py(y)))
-                }).collect();
+                let pts: Vec<(i32, i32)> = lp
+                    .iter()
+                    .filter_map(|&(psi, i)| {
+                        let (x, y) = map(psi, i);
+                        (x.is_finite() && y.is_finite()).then_some((px(x), py(y)))
+                    })
+                    .collect();
                 for w in pts.windows(2) {
                     cv.line(w[0].0, w[0].1, w[1].0, w[1].1, col);
                 }
@@ -208,12 +217,23 @@ impl Ui {
                     let slope = if k > 0 {
                         let (p0, i0) = lp[k - 1];
                         let di = i - i0;
-                        if di.abs() > 1e-12 { (psi - p0) / di } else { f64::NAN }
+                        if di.abs() > 1e-12 {
+                            (psi - p0) / di
+                        } else {
+                            f64::NAN
+                        }
                     } else {
                         f64::NAN
                     };
                     let (xu, yu) = if bh { ("T", "A/m") } else { ("V\u{b7}s", "A") };
-                    let t = format!("{}  {}  \u{394}{}/{} {}", num(Some(x), xu), num(Some(y), yu), xl, yl, num(slope.is_finite().then_some(slope), if bh { "" } else { "H" }));
+                    let t = format!(
+                        "{}  {}  \u{394}{}/{} {}",
+                        num(Some(x), xu),
+                        num(Some(y), yu),
+                        xl,
+                        yl,
+                        num(slope.is_finite().then_some(slope), if bh { "" } else { "H" })
+                    );
                     cv.text(&f.s, (cx + 8).min(a.x + a.w - 220), (cy - 4).max(a.y + 14), &t, ACCENT);
                 }
             }
@@ -264,6 +284,26 @@ pub(super) struct Taken {
     pub v: Vec<Vec<f32>>,
     pub opt: Vec<Option<Vec<f32>>>,
     pub moved: bool,
+}
+
+impl Taken {
+    /// Adds to a page's `note` that the waves were placed on the interval of a finer ref, when they were.
+    pub(super) fn note_moved(&self, note: &mut String) {
+        if self.moved {
+            add_note(note, "on the finest ref interval");
+        }
+    }
+}
+
+/// Adds `part` to a page's `note`, after ". " when the note says something already; an empty part adds nothing.
+pub(super) fn add_note(note: &mut String, part: &str) {
+    if part.is_empty() {
+        return;
+    }
+    if !note.is_empty() {
+        note.push_str(". ");
+    }
+    note.push_str(part);
 }
 
 impl Ui {
@@ -332,7 +372,11 @@ impl Ui {
             Some(id) => v.iter().position(|&x| x == id).map(|k| k as i32 + 1).unwrap_or(0),
         };
         let j = (i + d).rem_euclid(n);
-        if j == 0 { None } else { Some(v[(j - 1) as usize]) }
+        if j == 0 {
+            None
+        } else {
+            Some(v[(j - 1) as usize])
+        }
     }
 
     pub(super) fn wave_samples(&self, rec: &Record, id: WaveId) -> Option<WaveSamp> {
@@ -342,7 +386,8 @@ impl Ui {
                     return None;
                 }
                 let (v, dt) = self.meas_wave(rec, c);
-                let t0 = if v.len() > rec.ch[c].len() { rec.raw.as_ref().map(|r| r.t0).unwrap_or(rec.t0) } else { rec.t0 };
+                let t0 =
+                    if v.len() > rec.ch[c].len() { rec.raw.as_ref().map(|r| r.t0).unwrap_or(rec.t0) } else { rec.t0 };
                 (v.len() >= 2 && dt > 0.0).then_some(WaveSamp { v, t0: self.source_time_origin(id, t0), dt })
             }
             WaveId::Ref(i) => {
@@ -356,7 +401,12 @@ impl Ui {
     /// The grid is the finest loaded ref among the waves that were read, and that ref is not resampled.
     /// With no ref, the first required wave's own interval is the grid. Channels stay on the hardware path
     /// until they are placed on a finer ref.
-    pub(super) fn take_waves(&self, rec: &Record, required: &[WaveId], optional: &[Option<WaveId>]) -> Result<Taken, WaveId> {
+    pub(super) fn take_waves(
+        &self,
+        rec: &Record,
+        required: &[WaveId],
+        optional: &[Option<WaveId>],
+    ) -> Result<Taken, WaveId> {
         let mut req = Vec::with_capacity(required.len());
         for &id in required {
             req.push((id, self.wave_samples(rec, id).ok_or(id)?));
@@ -368,14 +418,17 @@ impl Ui {
         if req.is_empty() && opt_s.iter().all(|s| s.is_none()) {
             return Ok(Taken { t0: 0.0, dt: 0.0, v: Vec::new(), opt: vec![None; optional.len()], moved: false });
         }
-        let pool: Vec<(WaveId, &WaveSamp)> = req.iter().map(|(id, s)| (*id, s)).chain(opt_s.iter().flatten().map(|(id, s)| (*id, s))).collect();
-        let refs: Vec<(WaveId, &WaveSamp)> = pool.iter().copied().filter(|(id, _)| matches!(id, WaveId::Ref(_))).collect();
-        let grid = if refs.is_empty() {
-            pool[0]
-        } else {
-            let best = refs.iter().map(|(_, s)| s.dt).min_by(|a, b| a.total_cmp(b)).unwrap_or(0.0);
-            *refs.iter().filter(|(_, s)| (s.dt - best).abs() <= best.abs() * 1e-9).max_by_key(|(_, s)| s.v.len()).unwrap()
-        };
+        let pool: Vec<(WaveId, &WaveSamp)> =
+            req.iter().map(|(id, s)| (*id, s)).chain(opt_s.iter().flatten().map(|(id, s)| (*id, s))).collect();
+        let refs: Vec<(WaveId, &WaveSamp)> =
+            pool.iter().copied().filter(|(id, _)| matches!(id, WaveId::Ref(_))).collect();
+        let best = refs.iter().map(|(_, s)| s.dt).min_by(|a, b| a.total_cmp(b)).unwrap_or(0.0);
+        // the reference of the finest step leads, the first source when there is no reference
+        let grid = *refs
+            .iter()
+            .filter(|(_, s)| (s.dt - best).abs() <= best.abs() * 1e-9)
+            .max_by_key(|(_, s)| s.v.len())
+            .unwrap_or(&pool[0]);
         let (t0, dt, n) = (grid.1.t0, grid.1.dt, grid.1.v.len());
         let mut moved = false;
         let mut v = Vec::with_capacity(req.len());
@@ -478,7 +531,8 @@ pub(super) fn num(x: Option<f64>, unit: &str) -> String {
     }
 }
 
-fn pad(lo: f64, hi: f64) -> (f64, f64) {
+/// The range `lo..hi` of a plot axis with 8 % room each side; an empty or not finite one is `lo` +- 1 (0 +- 1).
+pub(super) fn pad(lo: f64, hi: f64) -> (f64, f64) {
     if !lo.is_finite() || !hi.is_finite() || hi - lo < 1e-15 {
         let c = if lo.is_finite() { lo } else { 0.0 };
         return (c - 1.0, c + 1.0);

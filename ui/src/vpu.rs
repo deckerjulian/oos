@@ -1,7 +1,7 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The VPU's JPEG encoder for the live picture of the web remote (`http.rs`, `/screen.jpg`).
+//! The VPU's JPEG encoder for the live picture of the web remote (`shots.rs`, `/screen.jpg`).
 //!
 //! The RK3399 has a Hantro video unit whose encoder makes JPEG; Linux drives it with the upstream `hantro-vpu`
 //! driver as a V4L2 memory-to-memory device (kernel/config, the `vpu` node of the device tree). The screen goes in as
@@ -241,7 +241,10 @@ mod imp {
                 // SAFETY: a fresh descriptor we own
                 let fd = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
                 let mut cap: Cap = zeroed();
-                if ioc(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap).is_err() || !cap.driver.starts_with(b"hantro-vpu") || cap.device_caps & CAP_M2M_MPLANE == 0 {
+                if ioc(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap).is_err()
+                    || !cap.driver.starts_with(b"hantro-vpu")
+                    || cap.device_caps & CAP_M2M_MPLANE == 0
+                {
                     continue;
                 }
                 match Self::setup(fd, w, h) {
@@ -265,7 +268,11 @@ mod imp {
             let raw_fmt = |pixfmt: u32, bytes: usize| {
                 let mut rf: Format = zeroed();
                 (rf.typ, rf.width, rf.height, rf.pixfmt, rf.num_planes) = (OUTPUT, w as u32, h as u32, pixfmt, 1);
-                let ok = ioc(f, VIDIOC_S_FMT, &mut rf).is_ok() && rf.pixfmt == pixfmt && rf.width as usize >= w && rf.height as usize >= h && rf.planes[0].bytesperline as usize >= w * bytes;
+                let ok = ioc(f, VIDIOC_S_FMT, &mut rf).is_ok()
+                    && rf.pixfmt == pixfmt
+                    && rf.width as usize >= w
+                    && rf.height as usize >= h
+                    && rf.planes[0].bytesperline as usize >= w * bytes;
                 ok.then_some(rf)
             };
             let (rf, rgb) = match raw_fmt(XRGB, 4) {
@@ -280,12 +287,26 @@ mod imp {
                 let mut t = t as i32;
                 ioc(f, VIDIOC_STREAMON, &mut t).map_err(|e| format!("stream on: {}", e))?;
             }
-            Ok(JpegEnc { fd, w, h, rows: rf.height as usize, stride: rf.planes[0].bytesperline as usize, raw_size: rf.planes[0].sizeimage, raw, jpeg, rgb })
+            Ok(JpegEnc {
+                fd,
+                w,
+                h,
+                rows: rf.height as usize,
+                stride: rf.planes[0].bytesperline as usize,
+                raw_size: rf.planes[0].sizeimage,
+                raw,
+                jpeg,
+                rgb,
+            })
         }
 
         /// What the encoder is given: the screen as it is, or converted to YUYV here.
         pub fn input(&self) -> &'static str {
-            if self.rgb { "xrgb" } else { "YUYV" }
+            if self.rgb {
+                "xrgb"
+            } else {
+                "YUYV"
+            }
         }
 
         /// One buffer of the queue, mapped.
@@ -301,7 +322,9 @@ mod imp {
             ioc(f, VIDIOC_QUERYBUF, &mut b).map_err(|e| format!("buffer: {}", e))?;
             let (len, off) = (planes[0].length as usize, planes[0].m as u32 as libc::off_t);
             // SAFETY: the plane's offset and length as the driver gave them
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f, off) };
+            let p = unsafe {
+                libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f, off)
+            };
             if p == libc::MAP_FAILED {
                 return Err(format!("map: {}", std::io::Error::last_os_error()));
             }
@@ -366,7 +389,10 @@ mod imp {
         #[test]
         fn v4l2_structs_have_the_kernels_layout() {
             use std::mem::size_of;
-            assert_eq!((size_of::<Cap>(), size_of::<Format>(), size_of::<ReqBufs>(), size_of::<Plane>(), size_of::<Buffer>()), (104, 208, 20, 64, 88));
+            assert_eq!(
+                (size_of::<Cap>(), size_of::<Format>(), size_of::<ReqBufs>(), size_of::<Plane>(), size_of::<Buffer>()),
+                (104, 208, 20, 64, 88)
+            );
         }
     }
 }
@@ -416,7 +442,9 @@ mod tests {
     #[test]
     fn jpeg_height_is_set_in_the_frame_header() {
         // SOI, APP0 of 4 bytes, SOF0 with 608 x 1024, SOS
-        let mut j = vec![0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0x02, 0x60, 0x04, 0x00, 1, 1, 0x11, 0, 0xff, 0xda];
+        let mut j = vec![
+            0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0x02, 0x60, 0x04, 0x00, 1, 1, 0x11, 0, 0xff, 0xda,
+        ];
         assert!(set_jpeg_height(&mut j, 600));
         assert_eq!(&j[13..15], &600u16.to_be_bytes());
         assert_eq!(&j[15..17], &1024u16.to_be_bytes());

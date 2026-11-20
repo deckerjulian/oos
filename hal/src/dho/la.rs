@@ -263,7 +263,7 @@ pub fn window(t: &Timing) -> (u32, u32) {
 
 /// LA words of a raw read (little-endian, bit n = Dn), the read padding dropped.
 pub fn words(bytes: &[u8], n: usize) -> Vec<u16> {
-    bytes.chunks_exact(2).take(n).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
+    bytes.as_chunks::<2>().0.iter().take(n).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
 }
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(thresholds(&c, 0.0, 0.0).1, 0x2184_21a1);
         assert_eq!((code(15e9, 8609), code(-15e9, 8609), code(99e9, 8609)), (13260, 3957, 13260));
         assert_eq!(code(2.5e9, 8580), 9355);
-        assert_eq!(lines(0x8001)[0] && lines(0x8001)[15] && !lines(0x8001)[1], true);
+        assert!(lines(0x8001)[0] && lines(0x8001)[15] && !lines(0x8001)[1]);
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full");
         if let Some(f) = Cal::load(dir) {
             assert_eq!(f, Cal::default());
@@ -303,7 +303,16 @@ mod tests {
         assert_eq!((deskew(1), deskew(2), deskew(4)), (424, 145, 145));
         // live check 2026-10-10 (10 ms/div, 100 kpts): LA alone 500 kSa/s -> LA period 4 us; with CH1 shown the rate
         // is halved (250 kSa/s, 8 us), memsel and pre stay
-        let p = hz::Params { ratio: 1, rate: 500_000, memsel: 100_000, dot_fs: 2_000_000_000, seg: 16384, max_frames: 100, pre: 50_000, post: 50_000 };
+        let p = hz::Params {
+            ratio: 1,
+            rate: 500_000,
+            memsel: 100_000,
+            dot_fs: 2_000_000_000,
+            seg: 16384,
+            max_frames: 100,
+            pre: 50_000,
+            post: 50_000,
+        };
         let alone = prep(p, false);
         assert_eq!((alone.rate, alone.memsel, alone.seg), (500_000, 100_000, 32768));
         assert_eq!(timing(&alone, 1), Timing { m: 1, rate: 250_000, n: 50_000, pre: 25_000 });
@@ -329,11 +338,18 @@ mod tests {
         let w = config(&mut sh, &p, 1, false);
         assert_eq!(sh.s4008 & (1 << 26 | 1 << 24 | 1 << 23), 1 << 26 | 1 << 23);
         assert_eq!(w.iter().filter(|x| x.0 == 0x4008).count(), 2);
-        assert!(w.contains(&(0x10e4, 2 * p.memsel)) && w.contains(&(0x4050, 2 * p.pre)) && w.contains(&(0x4054, 2 * p.post)));
+        assert!(
+            w.contains(&(0x10e4, 2 * p.memsel))
+                && w.contains(&(0x4050, 2 * p.pre))
+                && w.contains(&(0x4054, 2 * p.post))
+        );
         assert!(w.contains(&(0x10e0, p.seg)));
         // 0x131c: x = 0 at ratio 1 (the live shadow 0x2580004), 4 with the LA off
         assert!(w.contains(&(0x131c, 0x0258_0004)));
-        assert_eq!((wave_early(Some(2)).1, wave_early(Some(4)).1, wave_early(None).1), (0x0258_0034, 0x0258_0064, 0x0258_0044));
+        assert_eq!(
+            (wave_early(Some(2)).1, wave_early(Some(4)).1, wave_early(None).1),
+            (0x0258_0034, 0x0258_0064, 0x0258_0044)
+        );
         // roll: 0x10e4 not doubled, LA stream on
         let w = config(&mut sh, &p, 1, true);
         assert!(w.contains(&(0x10e4, p.memsel)) && sh.s4008 & (1 << 24) != 0);
@@ -367,7 +383,8 @@ mod tests {
         // la.md 5.1 formula on the UI presets (pod 1 zero 8609): TTL 1.4 V, CMOS 5 V 2.5 V, CMOS 3.3 V 1.65 V,
         // LVCMOS 2.5 / 1.8 / 1.2 V (1.25 / 0.9 / 0.6 V), ECL -1.3 V
         let c = Cal::default();
-        let codes: Vec<u32> = [1.4, 2.5, 1.65, 1.25, 0.9, 0.6, -1.3].iter().map(|v| thresholds(&c, *v, 0.0).1 & 0xffff).collect();
+        let codes: Vec<u32> =
+            [1.4, 2.5, 1.65, 1.25, 0.9, 0.6, -1.3].iter().map(|v| thresholds(&c, *v, 0.0).1 & 0xffff).collect();
         assert_eq!(codes, [9043, 9384, 9120, 8996, 8888, 8795, 8205]);
     }
 }

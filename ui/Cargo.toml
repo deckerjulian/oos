@@ -1,43 +1,32 @@
 [package]
 name = "oos-ui"
-version = "0.1.13"
+version = "0.1.14"
 repository = "https://github.com/dekajoule/oos"
 edition = "2021"
 description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
 license = "GPL-2.0-or-later"
 
-# Decoders beyond the seven core ones (UART, I2C, SPI, CAN, LIN, Parallel, C-PHY, always built), one feature per
-# file in src/protocols. All are on by default; a build without some: `--no-default-features --features "..."`, or
-# OOS_DECODERS / OOS_DECODERS_OFF with build.sh and boot/build-dev-image.sh (tools/decoder-features.sh).
-[features]
-# the board (hal/src/target.rs `ACTIVE`): without one the DHO800/DHO900
-board-mho = ["oos-hal/board-mho"]
-default = ["decoders"]
-decoders = ["dec-dmx512", "dec-spdif", "dec-usbpd", "dec-dcc", "dec-linecode", "dec-serial", "dec-onewire", "dec-debug", "dec-qspi", "dec-i3c", "dec-vehicle", "dec-avionics", "dec-i2s", "dec-usb"]
-dec-dmx512 = []
-dec-spdif = []
-dec-usbpd = []
-dec-dcc = []
-dec-linecode = []
-dec-serial = []
-dec-onewire = []
-dec-debug = []
-dec-qspi = []
-dec-i3c = []
-dec-vehicle = []
-dec-avionics = []
-dec-i2s = []
-dec-usb = []
-
+# Every decoder is always built in; `decoders.off` in /oos/system.conf (System > Features) leaves some out at run time
+# (docs/adr/code/0071).
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
+oos-system = { path = "system" }
+oos-remote = { path = "remote" }
 
-# a desktop window for the host build (src/desktop.rs); the scope build does not use it
-[target.'cfg(windows)'.dependencies]
-minifb = "0.27"
-windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_UI_Controls_Dialogs"] }
+# the tests use the helpers of oos-system's tests too (a scratch directory, the test switches); the program does not
+[dev-dependencies]
+# the simulated unit, for the host run of the acquisition loop (ADR 0053); the program is built without it
+oos-hal = { path = "../hal", features = ["sim"] }
+oos-system = { path = "system", features = ["testkit"] }
+oos-remote = { path = "remote", features = ["testkit"] }
+
+# oos-ui and the crates its layers became (ADR 0064): one lock file, one target directory, one `cargo test --workspace`
+[workspace]
+members = ["remote", "system"]
+# tools/compare-base.sh checks the base out below target/: its ui/ is a tree of its own, not a member
+exclude = ["target"]
 
 [profile.release]
 opt-level = 3
@@ -51,11 +40,15 @@ debug = false
 [profile.dev.package.oos-dsp]
 opt-level = 2
 
-# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same list in every crate.
+# The tests run optimised a little (docs/adr/process/0040): the tests of updates and pictures take seconds instead
+# of minutes. Debug assertions and overflow checks stay on.
+[profile.test]
+opt-level = 1
+
+# The lints allowed for the whole crate, each with its reason (docs/adr/process/0017). The same two in every crate;
+# `too_many_arguments` is for the step builders of hal and not allowed here (docs/adr/process/0048).
 [lints.clippy]
 # `!(dt > 0.0)` is meant: it is also true for NaN, and the signal paths rely on that
 neg_cmp_op_on_partial_ord = "allow"
 # index loops over several buffers of the same length read better than zipped iterators
 needless_range_loop = "allow"
-# step builders take the fields of one register; a struct for each would only move the list
-too_many_arguments = "allow"

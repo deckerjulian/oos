@@ -33,7 +33,7 @@ impl Ui {
             match k {
                 "xy" => xy = v == "true",
                 "full" => full = v == "true",
-                _ if views::is_view_key(k) => {
+                _ if crate::store::views::is_view_key(k) => {
                     let _ = crate::store::set(&mut m, k, v);
                 }
                 _ => {}
@@ -84,7 +84,11 @@ impl Ui {
     }
 
     pub(super) fn monitor_options(&self, it: Item) -> Option<Vec<String>> {
-        (it == Item::HdmiView).then(|| std::iter::once("Panel's".to_string()).chain((1..=self.m.views.max(1)).map(|n| format!("View {}", n))).collect())
+        (it == Item::HdmiView).then(|| {
+            std::iter::once("Panel's".to_string())
+                .chain((1..=self.m.views.max(1)).map(|n| format!("View {}", n)))
+                .collect()
+        })
     }
 
     pub(super) fn monitor_value(&self, it: Item) -> Option<String> {

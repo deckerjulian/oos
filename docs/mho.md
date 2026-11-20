@@ -75,9 +75,10 @@ kernel/build-base.sh                         # one kernel for both boards; the b
 OOS_BOARD=mho boot/build-dev-image.sh        # boot/out/oos-dev.img for the MHO900, and MHO900_OOS_Install.GEL
 ```
 
-The Rust crates take the board as a feature: `cargo build --features board-mho` in `ui/` and `fpgad/` (it passes
-`oos-hal/board-mho` on). `tools/check.sh` builds that for the host and the scope in its `target` layer and runs the
-board's own tests in `test`. The UI's tests are those of the DHO800/DHO900 and run without the feature.
+The Rust crates take the board from `OOS_BOARD` when they are built (`cfg(oos_board = "mho")`, ADR 0067):
+`OOS_BOARD=mho cargo build` in `ui/` and `fpgad/`. `tools/check.sh` builds every family for the scope in its `target`
+layer; the board's own tests are in `oos-hal`, which holds every family. The UI's tests are those of the DHO800/DHO900
+and run with the default `dho`.
 
 ## Trying it on a unit
 
@@ -91,7 +92,7 @@ on this board. What keeps it small:
 - The stock MHO900 update may not take the `.GEL` file: it is not known which file names it accepts. Over ADB the
   same install runs without it (`oos-update gel-install ... --any-model`, docs/install-usb.md).
 - What to look for: the panel lights up and shows OOS, touch works, Ethernet gets an address, the fan runs, and
-  `dmesg` from a shell (telnet or SSH) says what did not come up.
+  `dmesg` from a shell (SSH) says what did not come up.
 
 ## Next: the acquisition
 

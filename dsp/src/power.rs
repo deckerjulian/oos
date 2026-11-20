@@ -33,6 +33,11 @@ pub struct Quality {
 
 /// Frequency of a periodic signal from its rising crossings of the mean (hysteresis 10 % of peak-peak).
 pub(crate) fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
+    mean_crossings(x, dt).map(|(freq, _)| freq)
+}
+
+/// The frequency of `freq_of` (of any sign) and the rising crossings of the mean it is counted from.
+pub(crate) fn mean_crossings(x: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
     let f: Vec<f32> = x.iter().copied().filter(|v| v.is_finite()).collect();
     if f.len() < 4 {
         return None;
@@ -46,7 +51,7 @@ pub(crate) fn freq_of(x: &[f32], dt: f64) -> Option<f64> {
     if r.len() < 2 {
         return None;
     }
-    Some((r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt))
+    Some(((r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt), r))
 }
 
 /// Sample range [a, b) covering the largest whole number of cycles of `f` (at least the whole record when shorter
@@ -122,7 +127,8 @@ pub fn quality(v: &[f32], i: &[f32], dt: f64, f_line: Option<f64>) -> Quality {
     let (ir, ii) = dft(i, dt, a, b, f);
     let ph = (vi.atan2(vr) - ii.atan2(ir)).to_degrees();
     q.phase_deg = (ph + 180.0).rem_euclid(360.0) - 180.0;
-    q.q_reactive = (q.s_apparent * q.s_apparent - q.p_real * q.p_real).max(0.0).sqrt() * if q.phase_deg < 0.0 { -1.0 } else { 1.0 };
+    q.q_reactive = (q.s_apparent * q.s_apparent - q.p_real * q.p_real).max(0.0).sqrt()
+        * if q.phase_deg < 0.0 { -1.0 } else { 1.0 };
     q.crest_v = if q.vrms > 0.0 { pv / q.vrms } else { f64::NAN };
     q.crest_i = if q.irms > 0.0 { pi / q.irms } else { f64::NAN };
     q
@@ -140,7 +146,7 @@ pub fn class_a_limit(order: u32) -> f64 {
         9 => 0.40,
         11 => 0.33,
         13 => 0.21,
-        8..=40 if order % 2 == 0 => 0.23 * 8.0 / order as f64,
+        8..=40 if order.is_multiple_of(2) => 0.23 * 8.0 / order as f64,
         15..=39 => 0.15 * 15.0 / order as f64,
         _ => f64::INFINITY,
     }
@@ -261,7 +267,11 @@ pub fn switching(vds: &[f32], id: &[f32], dt: f64, thr_pct: f64) -> Switching {
         return out;
     }
     let (vds, id) = (&vds[..n], &id[..n]);
-    let p: Vec<f64> = vds.iter().zip(id).map(|(&v, &i)| if v.is_finite() && i.is_finite() { v as f64 * i as f64 } else { 0.0 }).collect();
+    let p: Vec<f64> = vds
+        .iter()
+        .zip(id)
+        .map(|(&v, &i)| if v.is_finite() && i.is_finite() { v as f64 * i as f64 } else { 0.0 })
+        .collect();
     out.p_avg = p.iter().sum::<f64>() / n as f64;
     let (av, ai) = (analyze(vds, dt), analyze(id, dt));
     if !av.valid || !ai.valid {
@@ -349,7 +359,11 @@ fn edge_slope(x: &[f32], dt: f64, a: &crate::measure::Analysis, rising: bool) ->
             slopes.push(s);
         }
     }
-    if slopes.is_empty() { f64::NAN } else { slopes.iter().sum::<f64>() / slopes.len() as f64 }
+    if slopes.is_empty() {
+        f64::NAN
+    } else {
+        slopes.iter().sum::<f64>() / slopes.len() as f64
+    }
 }
 
 /// Slope of y against time for the samples with fractional index in [t0, t1].
@@ -393,7 +407,11 @@ fn conduction_r(v: &[f32], i: &[f32], a: f64, b: f64, i_amp: f64) -> Option<f64>
             return f64::NAN;
         }
         let s: Vec<f64> = x[i0..=i1].iter().copied().filter(|v| v.is_finite()).map(|v| v as f64).collect();
-        if s.is_empty() { f64::NAN } else { s.iter().sum::<f64>() / s.len() as f64 }
+        if s.is_empty() {
+            f64::NAN
+        } else {
+            s.iter().sum::<f64>() / s.len() as f64
+        }
     };
     let (mv, mi) = (mean(v), mean(i));
     if mi.is_finite() && mv.is_finite() && mi.abs() >= 0.1 * i_amp && mi != 0.0 {
@@ -563,7 +581,11 @@ pub fn line_hz(v: &[f32], dt: f64) -> f64 {
 /// Switching frequency from the period of `v`, clamped at 1 MHz. Empty when the period is not measurable.
 pub fn switch_hz(v: &[f32], dt: f64) -> f64 {
     let p = analyze(v, dt).period();
-    if p.is_finite() && p > 0.0 { (1.0 / p).min(1e6) } else { f64::NAN }
+    if p.is_finite() && p > 0.0 {
+        (1.0 / p).min(1e6)
+    } else {
+        f64::NAN
+    }
 }
 
 /// Time from the input crossing 50 % rising to the output first reaching its histogram top.
@@ -590,7 +612,11 @@ fn rail_delay(vin: &[f32], vout: &[f32], dt: f64, on: bool) -> f64 {
     let Some(t_in) = crossing(&vin[..n], 1, n, mid, on) else { return f64::NAN };
     let level = if on { aout.top } else { aout.base };
     let Some(t_out) = crossing(&vout[..n], t_in.floor() as usize, n, level, on) else { return f64::NAN };
-    if t_out > t_in { (t_out - t_in) * dt } else { f64::NAN }
+    if t_out > t_in {
+        (t_out - t_in) * dt
+    } else {
+        f64::NAN
+    }
 }
 
 /// Input capacitance C = q / v. `q` is the trapezoid integral of the current over the whole record, `v` the
@@ -639,7 +665,8 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
     }
     let a = analyze(v, dt);
     let reference = reference.filter(|x| x.is_finite()).unwrap_or(a.top);
-    let finite: Vec<(usize, f64)> = v.iter().enumerate().filter_map(|(k, &x)| x.is_finite().then_some((k, x as f64))).collect();
+    let finite: Vec<(usize, f64)> =
+        v.iter().enumerate().filter_map(|(k, &x)| x.is_finite().then_some((k, x as f64))).collect();
     if finite.is_empty() || !reference.is_finite() {
         return r;
     }
@@ -648,11 +675,14 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
             let ck = analyze(c, dt);
             if ck.rises.len() >= 2 {
                 // only the cycles inside the rail: a longer clock goes on past its end
-                ck.rises.windows(2).filter_map(|w| {
-                    let s = (w[0] / dt).ceil() as usize;
-                    let e = (w[1] / dt).floor() as usize;
-                    (e > s && e < v.len()).then_some((s, e))
-                }).collect()
+                ck.rises
+                    .windows(2)
+                    .filter_map(|w| {
+                        let s = (w[0] / dt).ceil() as usize;
+                        let e = (w[1] / dt).floor() as usize;
+                        (e > s && e < v.len()).then_some((s, e))
+                    })
+                    .collect()
             } else {
                 Vec::new()
             }
@@ -686,7 +716,12 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
             if ai.valid && amp > 0.0 {
                 if let Some(t) = crossing(vin, 1, vin.len().min(v.len()), ai.base + 0.5 * amp, true) {
                     let s = t.ceil() as usize;
-                    v[s.min(v.len() - 1)..].iter().copied().filter(|x| x.is_finite()).map(|x| x as f64).fold(f64::NEG_INFINITY, f64::max)
+                    v[s.min(v.len() - 1)..]
+                        .iter()
+                        .copied()
+                        .filter(|x| x.is_finite())
+                        .map(|x| x as f64)
+                        .fold(f64::NEG_INFINITY, f64::max)
                 } else {
                     f64::NAN
                 }
@@ -731,7 +766,11 @@ mod tests {
                     slopes.push(s);
                 }
             }
-            if slopes.is_empty() { f64::NAN } else { slopes.iter().sum::<f64>() / slopes.len() as f64 }
+            if slopes.is_empty() {
+                f64::NAN
+            } else {
+                slopes.iter().sum::<f64>() / slopes.len() as f64
+            }
         }
         // trapezoids with uneven plateaus and some noise; a few runts that miss a level
         let mut s = 9u32;

@@ -15,6 +15,13 @@ pub(super) enum TableKind {
     Segments,
 }
 
+/// The table window over the plot (ADR 0062): what it shows (None: no window) and the first row shown.
+#[derive(Default)]
+pub(super) struct Window {
+    pub kind: Option<TableKind>,
+    pub top: usize,
+}
+
 #[cfg(test)]
 mod reference_search_navigation_tests {
     use super::*;
@@ -23,7 +30,11 @@ mod reference_search_navigation_tests {
     fn stopped_reference_table_jumps_to_an_event_outside_the_current_main_window() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.set_offline(true);
-        ui.refs[0] = Some(RefWave { label: "Long reference".into(), vpd: 0.5, ..RefWave::test((0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect::<Vec<_>>(), 2e-9, -7e-6) });
+        ui.refs[0] = Some(RefWave {
+            label: "Long reference".into(),
+            vpd: 0.5,
+            ..RefWave::test((0..1600).map(|i| if i % 16 < 8 { -1.0 } else { 1.0 }).collect::<Vec<_>>(), 2e-9, -7e-6)
+        });
         ui.m.set_trigger_wave(WaveId::Ref(0), false);
         ui.m.trig_level = 0.0;
         ui.m.slope = Slope::Rise;
@@ -34,12 +45,15 @@ mod reference_search_navigation_tests {
         ui.mstat = vec![MStat { n: 7, sum: 14.0, ..MStat::default() }];
         ui.adjust(Item::SearchOn, 1);
         ui.activate(Item::SearchTable);
-        assert_eq!(ui.table, Some(TableKind::Search));
+        assert_eq!(ui.table.kind, Some(TableKind::Search));
         let events = ui.search_events();
         assert_eq!(events.len(), 100);
         let (rect, _) = ui.table_rect(events.len());
         ui.tap(rect.x + 16, rect.y + HEAD_H + 8);
-        assert!((ui.m.zdelay as f64 - events[0]).abs() < 1e-12, "detail must reach the stored event, not clamp back into the previous ADC window");
+        assert!(
+            (ui.m.zdelay as f64 - events[0]).abs() < 1e-12,
+            "detail must reach the stored event, not clamp back into the previous ADC window"
+        );
         assert!((ui.m.delay as f64 - events[0]).abs() < 1e-12, "overview follows an event outside its former range");
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.replay.captures, 9);
@@ -51,7 +65,7 @@ mod reference_search_navigation_tests {
 }
 
 /// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
-pub const PANES: [&str; 6] = ["Traces", "Spectrum", "Results", "Events", "Trend", "Bus view"];
+pub const PANES: [&str; PANES_N] = ["Traces", "Spectrum", "Results", "Events", "Trend", "Bus view"];
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
@@ -83,13 +97,23 @@ impl Ui {
             let Ok(p) = self.decode_packets_of(&m) else { continue };
             // a module may give a row per command
             if let Some(rows) = m.dec_proto.module().and_then(|x| x.events(&p, &m.dec_opts())) {
-                v.extend(rows.into_iter().map(|(t, text, ok)| EventRow { t, who: format!("D{} {}", k + 1, m.dec_proto.name()), text, ok }));
+                v.extend(rows.into_iter().map(|(t, text, ok)| EventRow {
+                    t,
+                    who: format!("D{} {}", k + 1, m.dec_proto.name()),
+                    text,
+                    ok,
+                }));
                 continue;
             }
             for x in p.iter() {
                 let text = packet_tag(&m, x).map_or_else(|| packet_text(&m, x), |t| t.to_string());
                 let source = if m.dec_on_la() { String::new() } else { format!(" {}", decode_source_name(m.dec_src)) };
-                v.push(EventRow { t: x.t0, who: format!("D{} {}{}", k + 1, m.dec_proto.name(), source), text, ok: x.ok });
+                v.push(EventRow {
+                    t: x.t0,
+                    who: format!("D{} {}{}", k + 1, m.dec_proto.name(), source),
+                    text,
+                    ok: x.ok,
+                });
             }
         }
         v.sort_by(|a, b| a.t.total_cmp(&b.t));
@@ -101,27 +125,32 @@ impl Ui {
     }
 
     fn search_row(&self, index: usize, t: f64) -> EventRow {
-        EventRow { t, who: format!("{} #{}", self.trigger_source_label(), index + 1), text: self.m.trig_type.name().to_string(), ok: true }
+        EventRow {
+            t,
+            who: format!("{} #{}", self.trigger_source_label(), index + 1),
+            text: self.m.trig_type.name().to_string(),
+            ok: true,
+        }
     }
 
     /// Whether the decoder event table is open.
     pub(crate) fn decode_table_on(&self) -> bool {
-        self.table == Some(TableKind::Decode)
+        self.table.kind == Some(TableKind::Decode)
     }
 
     /// Opens or closes the decoder event table. A search table stays up until this opens the decoder one.
     pub(crate) fn set_decode_table(&mut self, on: bool) {
         if on {
-            self.table = Some(TableKind::Decode);
-            self.table_top = 0;
-        } else if self.table == Some(TableKind::Decode) {
-            self.table = None;
+            self.table.kind = Some(TableKind::Decode);
+            self.table.top = 0;
+        } else if self.table.kind == Some(TableKind::Decode) {
+            self.table.kind = None;
         }
     }
 
     /// One row per hardware segment read back: time since the first trigger (NaN without a stamp), number, step.
     fn segment_rows(&self) -> Vec<EventRow> {
-        let t = &self.seg_times;
+        let t = &self.seg.times;
         (0..t.len())
             .map(|k| {
                 let d = match (t[k], k.checked_sub(1).and_then(|j| t[j])) {
@@ -136,7 +165,11 @@ impl Ui {
 
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
     pub fn events_text(&self) -> String {
-        self.decode_events().iter().map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" })).collect::<Vec<_>>().join("\n")
+        self.decode_events()
+            .iter()
+            .map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" }))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub(super) fn table_rows(&self, k: TableKind) -> Vec<EventRow> {
@@ -156,8 +189,8 @@ impl Ui {
     }
 
     pub(super) fn table_toggle(&mut self, k: TableKind) {
-        self.table = if self.table == Some(k) { None } else { Some(k) };
-        self.table_top = 0;
+        self.table.kind = if self.table.kind == Some(k) { None } else { Some(k) };
+        self.table.top = 0;
         self.close_menu();
     }
 
@@ -168,48 +201,87 @@ impl Ui {
 
     /// The number of rows of the open table.
     fn table_total(&self, k: TableKind) -> usize {
-        if k == TableKind::Search { self.search_events().len() } else { self.table_rows(k).len() }
+        if k == TableKind::Search {
+            self.search_events().len()
+        } else {
+            self.table_rows(k).len()
+        }
     }
 
     /// The scroll bar of the open table and its rows.
     pub(super) fn table_bar(&self) -> Option<(scroll::Bar, Rect)> {
-        let k = self.table?;
+        let k = self.table.kind?;
         let total = self.table_total(k);
         let (r, fit) = self.table_rect(total);
         let rows = Rect::new(r.x, r.y + HEAD_H, r.w, fit as i32 * ROW_H);
         let track = Rect::new(r.x + r.w - scroll::BAR_W - 2, rows.y, scroll::BAR_W, rows.h);
-        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table_top as i32 }, rows))
+        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table.top as i32 }, rows))
     }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
-        let Some(k) = self.table else { return };
+        let Some(k) = self.table.kind else { return };
         let f = self.fonts();
-        let (total, mut rows) = if k == TableKind::Search { (self.search_events().len(), Vec::new()) }
-            else { let rows = self.table_rows(k); (rows.len(), rows) };
+        let (total, mut rows) = if k == TableKind::Search {
+            (self.search_events().len(), Vec::new())
+        } else {
+            let rows = self.table_rows(k);
+            (rows.len(), rows)
+        };
         let (r, fit) = self.table_rect(total);
-        let top = self.table_top.min(total.saturating_sub(fit));
+        let top = self.table.top.min(total.saturating_sub(fit));
         if k == TableKind::Search {
-            rows = self.search_events().iter().copied().enumerate().skip(top).take(fit).map(|(i, t)| self.search_row(i, t)).collect();
-        } else { rows = rows.into_iter().skip(top).take(fit).collect(); }
+            rows = self
+                .search_events()
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(top)
+                .take(fit)
+                .map(|(i, t)| self.search_row(i, t))
+                .collect();
+        } else {
+            rows = rows.into_iter().skip(top).take(fit).collect();
+        }
         cv.round(r, 6, CARD_BORDER, 255);
         cv.round(r.inset(1), 5, BAR, 240);
         let title = match k {
-            TableKind::Decode => if self.decode_busy() { "Decoder events - Computing".into() } else { format!("Decoder events \u{b7} {}", total) },
-            TableKind::Search => if self.m.trig_ref.is_some() && self.reference_search_busy() { "Search · computing…".into() }
-                else { format!("Search {} · {}", self.trigger_source_label(), total) },
+            TableKind::Decode => {
+                if self.decode_busy() {
+                    "Decoder events - Computing".into()
+                } else {
+                    format!("Decoder events \u{b7} {}", total)
+                }
+            }
+            TableKind::Search => {
+                if self.m.trig_ref.is_some() && self.reference_search_busy() {
+                    "Search · computing…".into()
+                } else {
+                    format!("Search {} · {}", self.trigger_source_label(), total)
+                }
+            }
             TableKind::Segments => format!("Segments \u{b7} {}", rows.len()),
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
         let close = Self::table_close(r);
         btn(cv, close, BTN, BTN_BORDER);
         cv.text_in(&f.mb, close, 1, "\u{d7}", TEXT);
-        scroll::Bar { track: Rect::new(r.x + r.w - scroll::BAR_W - 2, r.y + HEAD_H, scroll::BAR_W, fit as i32 * ROW_H), total: total as i32, shown: fit as i32, pos: top as i32 }.draw(cv);
+        scroll::Bar {
+            track: Rect::new(r.x + r.w - scroll::BAR_W - 2, r.y + HEAD_H, scroll::BAR_W, fit as i32 * ROW_H),
+            total: total as i32,
+            shown: fit as i32,
+            pos: top as i32,
+        }
+        .draw(cv);
         if rows.is_empty() {
             let empty = if k == TableKind::Search && self.m.trig_ref.is_some() && !self.reference_search_supported() {
                 "This condition needs physical hardware channels"
-            } else if k == TableKind::Decode && self.decode_busy() { "Decoding the full reference record..." }
-            else if k == TableKind::Search && self.reference_search_busy() { "Searching the full reference record…" }
-            else { "nothing found in this record" };
+            } else if k == TableKind::Decode && self.decode_busy() {
+                "Decoding the full reference record..."
+            } else if k == TableKind::Search && self.reference_search_busy() {
+                "Searching the full reference record…"
+            } else {
+                "nothing found in this record"
+            };
             cv.text(&f.s, r.x + 12, r.y + HEAD_H + 18, empty, DIM);
         }
         for (i, e) in rows.iter().enumerate() {
@@ -223,7 +295,7 @@ impl Ui {
 
     /// A tap while the table is open; true when it was on the table.
     pub(super) fn table_tap(&mut self, x: i32, y: i32) -> bool {
-        let Some(k) = self.table else { return false };
+        let Some(k) = self.table.kind else { return false };
         let events = (k == TableKind::Search).then(|| self.search_events());
         let rows = if events.is_none() { self.table_rows(k) } else { Vec::new() };
         let total = events.as_ref().map_or(rows.len(), |events| events.len());
@@ -232,17 +304,19 @@ impl Ui {
             return false;
         }
         let last = total.saturating_sub(fit);
-        self.table_top = self.table_top.min(last);
+        self.table.top = self.table.top.min(last);
         let on_bar = total > fit && x >= r.x + r.w - scroll::BAR_W - 2;
         if Self::table_close(r).contains(x, y) {
-            self.table = None;
+            self.table.kind = None;
         } else if on_bar {
             // the scroll bar (moved by the finger, see ui/scroll.rs)
         } else if y >= r.y + HEAD_H {
-            let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
+            let i = self.table.top + ((y - r.y - HEAD_H) / ROW_H) as usize;
             if k == TableKind::Segments && i < rows.len() {
                 self.seg_show(i);
-            } else if let Some(t) = events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t)) {
+            } else if let Some(t) =
+                events.as_ref().and_then(|events| events.get(i).copied()).or_else(|| rows.get(i).map(|event| event.t))
+            {
                 self.go_to_time(t);
             }
         }
@@ -260,7 +334,9 @@ impl Ui {
                 let half_zoom = tscales()[self.m.zscale] * HDIV * 0.5;
                 if (t as f32 - self.m.delay).abs() + half_zoom > half_main {
                     self.m.delay = t as f32;
-                    if let Some(saved) = self.zoom_saved.as_mut() { saved.2 = t as f32; }
+                    if let Some(saved) = self.zoom_view.saved.as_mut() {
+                        saved.2 = t as f32;
+                    }
                 }
             }
             self.m.zdelay = t as f32;
@@ -268,8 +344,11 @@ impl Ui {
         } else {
             self.m.delay = t as f32;
         }
-        if self.m.trig_ref.is_some() { self.refresh_stopped_reference(); }
-        else { self.settings_changed(); }
+        if self.m.trig_ref.is_some() {
+            self.refresh_stopped_reference();
+        } else {
+            self.settings_changed();
+        }
         self.toast(&format!("At {}", si(t, "s")));
     }
 
@@ -302,7 +381,11 @@ impl Ui {
         // the plot keeps its height; with many LA lanes there may be no room left
         let room = self.plot_base() - self.la_strip_h() - 160;
         let h = (self.frame().body.h * 2 / 5).min(room);
-        if h < 100 { 0 } else { h.min(self.pane_want() + 4) }
+        if h < 100 {
+            0
+        } else {
+            h.min(self.pane_want() + 4)
+        }
     }
 
     /// The second pane: under the plot and the lanes.

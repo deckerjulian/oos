@@ -23,38 +23,109 @@ use crate::spectrum::distortion;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SignalKind {
-    Dc { level: f64 },
-    Noise { rms: f64 },
+    Dc {
+        level: f64,
+    },
+    Noise {
+        rms: f64,
+    },
     /// amplitude = peak, V
-    Sine { freq: f64, amp: f64 },
-    Mains { freq: f64, vrms: f64 },
+    Sine {
+        freq: f64,
+        amp: f64,
+    },
+    Mains {
+        freq: f64,
+        vrms: f64,
+    },
     /// square wave / clock
-    Clock { freq: f64, duty: f64, lo: f64, hi: f64 },
-    Pwm { freq: f64, duty_min: f64, duty_max: f64 },
-    Triangle { freq: f64, amp: f64 },
-    Sawtooth { freq: f64, amp: f64, rising: bool },
+    Clock {
+        freq: f64,
+        duty: f64,
+        lo: f64,
+        hi: f64,
+    },
+    Pwm {
+        freq: f64,
+        duty_min: f64,
+        duty_max: f64,
+    },
+    Triangle {
+        freq: f64,
+        amp: f64,
+    },
+    Sawtooth {
+        freq: f64,
+        amp: f64,
+        rising: bool,
+    },
     /// periodic, but none of the above (amplitude = peak of the fundamental)
-    Periodic { freq: f64, amp: f64 },
+    Periodic {
+        freq: f64,
+        amp: f64,
+    },
     /// narrow periodic pulses (width = typical pulse width; `positive` = high pulses); `anomalies` = glitches /
     /// missing pulses
-    PulseTrain { freq: f64, width: f64, positive: bool, anomalies: usize },
+    PulseTrain {
+        freq: f64,
+        width: f64,
+        positive: bool,
+        anomalies: usize,
+    },
     /// a single step (fewer than 3 edges)
-    Step { rising: bool, lo: f64, hi: f64 },
+    Step {
+        rising: bool,
+        lo: f64,
+        hi: f64,
+    },
     /// bursts of a signal of `freq`, each `length` s, repeating every `period` s (NaN with a single burst)
-    Burst { freq: f64, length: f64, period: f64 },
-    Am { carrier: f64, modulation: f64, depth: f64 },
-    Fm { carrier: f64, modulation: f64, deviation: f64 },
-    Uart { baud: f64, idle_high: bool },
-    I2c { rate: f64 },
-    Spi { rate: f64, mode: u8, bits: u32 },
-    Can { bitrate: f64, dominant_low: bool },
-    Lin { baud: f64 },
+    Burst {
+        freq: f64,
+        length: f64,
+        period: f64,
+    },
+    Am {
+        carrier: f64,
+        modulation: f64,
+        depth: f64,
+    },
+    Fm {
+        carrier: f64,
+        modulation: f64,
+        deviation: f64,
+    },
+    Uart {
+        baud: f64,
+        idle_high: bool,
+    },
+    I2c {
+        rate: f64,
+    },
+    Spi {
+        rate: f64,
+        mode: u8,
+        bits: u32,
+    },
+    Can {
+        bitrate: f64,
+        dominant_low: bool,
+    },
+    Lin {
+        baud: f64,
+    },
     OneWire,
-    Manchester { bitrate: f64 },
+    Manchester {
+        bitrate: f64,
+    },
     /// serial data of an unknown protocol (`rate` = 1 / unit interval)
-    Data { rate: f64 },
+    Data {
+        rate: f64,
+    },
     /// composite video; line rate 15.625 kHz (PAL) or 15.734 kHz (NTSC)
-    Video { line_rate: f64, ntsc: bool },
+    Video {
+        line_rate: f64,
+        ntsc: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -62,10 +133,24 @@ pub enum TriggerHint {
     /// free running / auto (DC, noise)
     None,
     /// edge trigger; `holdoff` s (0 = none, set for bursts)
-    Edge { source: usize, level: f32, rising: bool, holdoff: f64 },
+    Edge {
+        source: usize,
+        level: f32,
+        rising: bool,
+        holdoff: f64,
+    },
     /// pulse width trigger: pulses (`positive` = high) shorter than `less_than` or longer than `greater_than` s
-    PulseWidth { source: usize, level: f32, positive: bool, less_than: Option<f64>, greater_than: Option<f64> },
-    Video { source: usize, ntsc: bool },
+    PulseWidth {
+        source: usize,
+        level: f32,
+        positive: bool,
+        less_than: Option<f64>,
+        greater_than: Option<f64>,
+    },
+    Video {
+        source: usize,
+        ntsc: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,13 +177,20 @@ pub struct Finding {
 
 /// Standard UART / CAN / LIN / clock rates that estimates are snapped to (±3 %).
 pub const STANDARD_RATES: [f64; 42] = [
-    50.0, 75.0, 110.0, 150.0, 300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0, 10_000.0, 10_400.0, 14_400.0, 19_200.0, 20_000.0, 28_800.0, 31_250.0, 33_333.0, 38_400.0, 50_000.0, 57_600.0,
-    76_800.0, 83_333.0, 100_000.0, 115_200.0, 125_000.0, 230_400.0, 250_000.0, 400_000.0, 460_800.0, 500_000.0, 800_000.0, 921_600.0, 1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6, 5e6, 8e6, 10e6,
+    50.0, 75.0, 110.0, 150.0, 300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0, 10_000.0, 10_400.0, 14_400.0, 19_200.0,
+    20_000.0, 28_800.0, 31_250.0, 33_333.0, 38_400.0, 50_000.0, 57_600.0, 76_800.0, 83_333.0, 100_000.0, 115_200.0,
+    125_000.0, 230_400.0, 250_000.0, 400_000.0, 460_800.0, 500_000.0, 800_000.0, 921_600.0, 1e6, 1.5e6, 2e6, 2.5e6,
+    3e6, 4e6, 5e6, 8e6, 10e6,
 ];
 
 /// The nearest standard rate within ±3 %, else `r` itself.
 pub fn snap_rate(r: f64) -> f64 {
-    STANDARD_RATES.iter().copied().filter(|&s| (r / s - 1.0).abs() <= 0.03).min_by(|a, b| (r / a - 1.0).abs().total_cmp(&(r / b - 1.0).abs())).unwrap_or(r)
+    STANDARD_RATES
+        .iter()
+        .copied()
+        .filter(|&s| (r / s - 1.0).abs() <= 0.03)
+        .min_by(|a, b| (r / a - 1.0).abs().total_cmp(&(r / b - 1.0).abs()))
+        .unwrap_or(r)
 }
 
 /// Bit rate of a serial signal from its pulse widths (`eye::unit_interval`, the GCD of the edge spacings), snapped
@@ -120,7 +212,13 @@ fn si(x: f64, unit: &str) -> String {
     let p = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"), (1e-12, "p")];
     let (s, pre) = p.iter().copied().find(|(s, _)| x.abs() >= *s * 0.9995).unwrap_or((1e-12, "p"));
     let y = x / s;
-    let dec = if y.abs() >= 100.0 { 1 } else if y.abs() >= 10.0 { 2 } else { 3 };
+    let dec = if y.abs() >= 100.0 {
+        1
+    } else if y.abs() >= 10.0 {
+        2
+    } else {
+        3
+    };
     format!("{:.*} {}{}", dec, y, pre, unit)
 }
 
@@ -170,7 +268,15 @@ impl<'a> Chan<'a> {
         let a = analyze(v, dt);
         let (lo, hi) = if a.valid { (a.base, a.top) } else { (min, max) };
         let amp = hi - lo;
-        let near = if amp > 0.0 { v.iter().filter(|x| x.is_finite() && ((**x as f64 - hi).abs() < 0.15 * amp || (**x as f64 - lo).abs() < 0.15 * amp)).count() } else { 0 };
+        let near = if amp > 0.0 {
+            v.iter()
+                .filter(|x| {
+                    x.is_finite() && ((**x as f64 - hi).abs() < 0.15 * amp || (**x as f64 - lo).abs() < 0.15 * amp)
+                })
+                .count()
+        } else {
+            0
+        };
         let logic = n > 0 && amp > 0.0 && near as f64 >= 0.8 * n as f64 && amp >= 0.6 * (max - min);
         let thr = ((lo + hi) / 2.0) as f32;
         let hyst = (0.2 * amp) as f32;
@@ -182,7 +288,11 @@ impl<'a> Chan<'a> {
     }
     /// Durations (s) of the high (`high` = true) or low pulses between edges.
     fn widths(&self, high: bool) -> Vec<f64> {
-        self.e.windows(2).filter(|w| w[0].rising == high && w[1].rising != high).map(|w| (w[1].t - w[0].t) * self.dt).collect()
+        self.e
+            .windows(2)
+            .filter(|w| w[0].rising == high && w[1].rising != high)
+            .map(|w| (w[1].t - w[0].t) * self.dt)
+            .collect()
     }
     /// Level of the longest run (the idle level of a bus), including the runs before the first / after the last edge.
     fn idle_high(&self) -> bool {
@@ -204,7 +314,14 @@ impl<'a> Chan<'a> {
     }
 }
 
-fn finding(ch: &[usize], kind: SignalKind, confidence: f32, summary: String, trigger: TriggerHint, decoder: Option<DecoderHint>) -> Finding {
+fn finding(
+    ch: &[usize],
+    kind: SignalKind,
+    confidence: f32,
+    summary: String,
+    trigger: TriggerHint,
+    decoder: Option<DecoderHint>,
+) -> Finding {
     Finding { channels: ch.to_vec(), kind, confidence: confidence.clamp(0.0, 1.0), summary, trigger, decoder }
 }
 
@@ -243,7 +360,14 @@ fn single(c: &Chan) -> Option<Finding> {
     }
     let pp = c.max - c.min;
     if pp < 0.01 || c.std < 0.002 * c.mean.abs() {
-        return Some(finding(&[c.idx], SignalKind::Dc { level: c.mean }, 0.95, format!("DC {}", si(c.mean, "V")), TriggerHint::None, None));
+        return Some(finding(
+            &[c.idx],
+            SignalKind::Dc { level: c.mean },
+            0.95,
+            format!("DC {}", si(c.mean, "V")),
+            TriggerHint::None,
+            None,
+        ));
     }
     if let Some(f) = video(c) {
         return Some(f);
@@ -275,7 +399,8 @@ fn video(c: &Chan) -> Option<Finding> {
         return None;
     }
     // sync pulses are short (H sync 4.7 us, equalising 2.35 us; broad pulses are long but rare)
-    let lows: Vec<f64> = e.windows(2).filter(|w| !w[0].rising && w[1].rising).map(|w| (w[1].t - w[0].t) * c.dt).collect();
+    let lows: Vec<f64> =
+        e.windows(2).filter(|w| !w[0].rising && w[1].rising).map(|w| (w[1].t - w[0].t) * c.dt).collect();
     if (lows.iter().filter(|&&w| w < 8e-6).count() as f64) < 0.7 * lows.len() as f64 {
         return None;
     }
@@ -283,7 +408,14 @@ fn video(c: &Chan) -> Option<Finding> {
     let rate = 1.0 / line;
     let ntsc = (rate - 15_734.0).abs() < (rate - 15_625.0).abs();
     let summary = format!("Composite video {}, line rate {}", if ntsc { "NTSC" } else { "PAL" }, si(rate, "Hz"));
-    Some(finding(&[c.idx], SignalKind::Video { line_rate: rate, ntsc }, 0.9, summary, TriggerHint::Video { source: c.idx, ntsc }, None))
+    Some(finding(
+        &[c.idx],
+        SignalKind::Video { line_rate: rate, ntsc },
+        0.9,
+        summary,
+        TriggerHint::Video { source: c.idx, ntsc },
+        None,
+    ))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -294,7 +426,14 @@ fn logic(c: &Chan) -> Finding {
     let levels = format!("{} .. {}", si(c.lo, "V"), si(c.hi, "V"));
     if c.e.len() < 3 {
         let rising = c.e.first().map_or(c.mean > c.thr as f64, |e| e.rising);
-        return finding(&id, SignalKind::Step { rising, lo: c.lo, hi: c.hi }, 0.5, format!("Single {} edge, {}", if rising { "rising" } else { "falling" }, levels), c.edge_trigger(rising), None);
+        return finding(
+            &id,
+            SignalKind::Step { rising, lo: c.lo, hi: c.hi },
+            0.5,
+            format!("Single {} edge, {}", if rising { "rising" } else { "falling" }, levels),
+            c.edge_trigger(rising),
+            None,
+        );
     }
     // a clean clock / PWM / pulse train wins; a pulse train with anomalies may be serial data with a repetitive
     // pattern (0x55 sync bytes), so a decoder-confirmed protocol beats it
@@ -316,7 +455,14 @@ fn logic(c: &Chan) -> Finding {
         return f;
     }
     let rate = c.e.len() as f64 / (c.n as f64 * c.dt);
-    finding(&id, SignalKind::Data { rate: f64::NAN }, 0.3, format!("Irregular digital signal, {} edges/s, {}", si(rate, ""), levels), c.edge_trigger(true), None)
+    finding(
+        &id,
+        SignalKind::Data { rate: f64::NAN },
+        0.3,
+        format!("Irregular digital signal, {} edges/s, {}", si(rate, ""), levels),
+        c.edge_trigger(true),
+        None,
+    )
 }
 
 /// Clock, PWM or pulse train: the rising edges are regular (≥ 80 % of the periods within ±3 % of the median).
@@ -356,32 +502,79 @@ fn periodic_logic(c: &Chan, levels: &str) -> Option<Finding> {
     let positive = dmed <= 0.5;
     let width = if positive { dmed * p } else { (1.0 - dmed) * p };
     // glitches: a few pulses much narrower than the rest
-    let glitches = duty.iter().filter(|&&d| if positive { d < 0.5 * dmed } else { 1.0 - d < 0.5 * (1.0 - dmed) }).count();
+    let glitches =
+        duty.iter().filter(|&&d| if positive { d < 0.5 * dmed } else { 1.0 - d < 0.5 * (1.0 - dmed) }).count();
     if typical as f64 >= 0.7 * duty.len() as f64 && (glitches > 0 || missing > 0) {
         missing += glitches;
         let trigger = if glitches > 0 {
-            TriggerHint::PulseWidth { source: c.idx, level: c.thr, positive, less_than: Some(0.5 * width), greater_than: None }
+            TriggerHint::PulseWidth {
+                source: c.idx,
+                level: c.thr,
+                positive,
+                less_than: Some(0.5 * width),
+                greater_than: None,
+            }
         } else {
-            TriggerHint::PulseWidth { source: c.idx, level: c.thr, positive: !positive, less_than: None, greater_than: Some(1.5 * (p - width)) }
+            TriggerHint::PulseWidth {
+                source: c.idx,
+                level: c.thr,
+                positive: !positive,
+                less_than: None,
+                greater_than: Some(1.5 * (p - width)),
+            }
         };
-        let summary = format!("Pulse train {}, width {}, {} anomal{}", si(freq, "Hz"), si(width, "s"), missing, if missing == 1 { "y" } else { "ies" });
-        return Some(finding(&id, SignalKind::PulseTrain { freq, width, positive, anomalies: missing }, 0.8, summary, trigger, None));
+        let summary = format!(
+            "Pulse train {}, width {}, {} anomal{}",
+            si(freq, "Hz"),
+            si(width, "s"),
+            missing,
+            if missing == 1 { "y" } else { "ies" }
+        );
+        return Some(finding(
+            &id,
+            SignalKind::PulseTrain { freq, width, positive, anomalies: missing },
+            0.8,
+            summary,
+            trigger,
+            None,
+        ));
     }
     if dmax - dmin > 0.05 {
         let summary = format!("PWM {}, duty {:.1} .. {:.1} %, {}", si(freq, "Hz"), dmin * 100.0, dmax * 100.0, levels);
-        return Some(finding(&id, SignalKind::Pwm { freq, duty_min: dmin, duty_max: dmax }, 0.85, summary, c.edge_trigger(true), None));
+        return Some(finding(
+            &id,
+            SignalKind::Pwm { freq, duty_min: dmin, duty_max: dmax },
+            0.85,
+            summary,
+            c.edge_trigger(true),
+            None,
+        ));
     }
     if dmed < 0.2 || dmed > 0.8 {
         let summary = format!("Pulse train {}, width {}, {}", si(freq, "Hz"), si(width, "s"), levels);
-        return Some(finding(&id, SignalKind::PulseTrain { freq, width, positive, anomalies: 0 }, 0.85, summary, c.edge_trigger(positive), None));
+        return Some(finding(
+            &id,
+            SignalKind::PulseTrain { freq, width, positive, anomalies: 0 },
+            0.85,
+            summary,
+            c.edge_trigger(positive),
+            None,
+        ));
     }
     let summary = format!("Clock {}, duty {:.1} %, {}", si(freq, "Hz"), dmed * 100.0, levels);
-    Some(finding(&id, SignalKind::Clock { freq, duty: dmed, lo: c.lo, hi: c.hi }, 0.9, summary, c.edge_trigger(true), None))
+    Some(finding(
+        &id,
+        SignalKind::Clock { freq, duty: dmed, lo: c.lo, hi: c.hi },
+        0.9,
+        summary,
+        c.edge_trigger(true),
+        None,
+    ))
 }
 
 /// 1-Wire: starts high (idle), a reset pulse (low 400 µs .. 1 ms) and short low slots (< 120 µs).
 fn one_wire(c: &Chan) -> Option<Finding> {
-    if c.e.first().map_or(true, |e| e.rising) {
+    if c.e.first().is_none_or(|e| e.rising) {
         return None;
     }
     let lows = c.widths(false);
@@ -392,8 +585,21 @@ fn one_wire(c: &Chan) -> Option<Finding> {
         return None;
     }
     let summary = format!("1-Wire, {} reset{}, {} slots", resets, if resets == 1 { "" } else { "s" }, slots);
-    let trig = TriggerHint::PulseWidth { source: c.idx, level: c.thr, positive: false, less_than: None, greater_than: Some(400e-6) };
-    Some(finding(&[c.idx], SignalKind::OneWire, 0.8, summary, trig, Some(DecoderHint::OneWire { ch: c.idx, thr: c.thr })))
+    let trig = TriggerHint::PulseWidth {
+        source: c.idx,
+        level: c.thr,
+        positive: false,
+        less_than: None,
+        greater_than: Some(400e-6),
+    };
+    Some(finding(
+        &[c.idx],
+        SignalKind::OneWire,
+        0.8,
+        summary,
+        trig,
+        Some(DecoderHint::OneWire { ch: c.idx, thr: c.thr }),
+    ))
 }
 
 /// Serial data with a unit interval: (CAN / LIN / UART confirmed by the decoders, else Manchester or unknown data).
@@ -418,16 +624,42 @@ fn serial(c: &Chan) -> (Option<Finding>, Option<Finding>) {
     let crcs = can.iter().filter(|p| p.kind == Kind::Crc).count();
     if crc_ok >= 1 && 2 * crc_ok >= crcs {
         let summary = format!("CAN {}, {} frame{}", si(baud, "bit/s"), crc_ok, if crc_ok == 1 { "" } else { "s" });
-        return (Some(finding(&id, SignalKind::Can { bitrate: baud, dominant_low: idle_high }, 0.95, summary, c.edge_trigger(!idle_high), Some(DecoderHint::Can { ch: c.idx, bitrate: baud, thr, invert: !idle_high }))), None);
+        return (
+            Some(finding(
+                &id,
+                SignalKind::Can { bitrate: baud, dominant_low: idle_high },
+                0.95,
+                summary,
+                c.edge_trigger(!idle_high),
+                Some(DecoderHint::Can { ch: c.idx, bitrate: baud, thr, invert: !idle_high }),
+            )),
+            None,
+        );
     }
     // LIN: break + sync + protected ID with good parity
     if idle_high {
         let lin = decode::lin(c.v, c.dt, baud, thr, hyst);
         let pid_ok = lin.iter().filter(|p| matches!(p.kind, Kind::Id { .. }) && p.ok).count();
         if pid_ok >= 1 && lin.iter().any(|p| p.kind == Kind::Break) {
-            let trig = TriggerHint::PulseWidth { source: c.idx, level: thr, positive: false, less_than: None, greater_than: Some(10.0 / baud) };
+            let trig = TriggerHint::PulseWidth {
+                source: c.idx,
+                level: thr,
+                positive: false,
+                less_than: None,
+                greater_than: Some(10.0 / baud),
+            };
             let summary = format!("LIN {} Bd, {} frame{}", si(baud, ""), pid_ok, if pid_ok == 1 { "" } else { "s" });
-            return (Some(finding(&id, SignalKind::Lin { baud }, 0.95, summary, trig, Some(DecoderHint::Lin { ch: c.idx, baud, thr }))), None);
+            return (
+                Some(finding(
+                    &id,
+                    SignalKind::Lin { baud },
+                    0.95,
+                    summary,
+                    trig,
+                    Some(DecoderHint::Lin { ch: c.idx, baud, thr }),
+                )),
+                None,
+            );
         }
     }
     // UART 8N1: stop bits must be high
@@ -435,17 +667,51 @@ fn serial(c: &Chan) -> (Option<Finding>, Option<Finding>) {
     let ok = uart.iter().filter(|p| p.ok).count();
     if uart.len() >= 2 && ok as f64 >= 0.9 * uart.len() as f64 {
         let conf = 0.6 + 0.3 * (uart.len().min(10) as f32 / 10.0);
-        let summary = format!("UART {} Bd 8N1, idle {}, {} characters", si(baud, "").trim_end(), if idle_high { "high" } else { "low (inverted)" }, uart.len());
-        return (Some(finding(&id, SignalKind::Uart { baud, idle_high }, conf, summary, c.edge_trigger(!idle_high), Some(DecoderHint::Uart { ch: c.idx, baud, bits: 8, parity: Parity::None, thr, invert: !idle_high }))), None);
+        let summary = format!(
+            "UART {} Bd 8N1, idle {}, {} characters",
+            si(baud, "").trim_end(),
+            if idle_high { "high" } else { "low (inverted)" },
+            uart.len()
+        );
+        return (
+            Some(finding(
+                &id,
+                SignalKind::Uart { baud, idle_high },
+                conf,
+                summary,
+                c.edge_trigger(!idle_high),
+                Some(DecoderHint::Uart { ch: c.idx, baud, bits: 8, parity: Parity::None, thr, invert: !idle_high }),
+            )),
+            None,
+        );
     }
     // Manchester / biphase: inside the active part only runs of 1 and 2 half-bits (3 rarely: MIL-STD-1553 sync)
     let runs: Vec<i64> = short.iter().map(|x| x.round() as i64).collect();
-    let (r1, r2, r3) = (runs.iter().filter(|&&r| r == 1).count(), runs.iter().filter(|&&r| r == 2).count(), runs.iter().filter(|&&r| r == 3).count());
+    let (r1, r2, r3) = (
+        runs.iter().filter(|&&r| r == 1).count(),
+        runs.iter().filter(|&&r| r == 2).count(),
+        runs.iter().filter(|&&r| r == 3).count(),
+    );
     let long_in_burst = runs.iter().filter(|&&r| r > 3 && r < 8).count();
-    if r1 + r2 + r3 + long_in_burst >= runs.len() && long_in_burst == 0 && r1 * 10 >= runs.len() && r2 * 10 >= runs.len() && r3 * 20 <= runs.len() {
+    if r1 + r2 + r3 + long_in_burst >= runs.len()
+        && long_in_burst == 0
+        && r1 * 10 >= runs.len()
+        && r2 * 10 >= runs.len()
+        && r3 * 20 <= runs.len()
+    {
         let bitrate = snap_rate(0.5 / u);
         let summary = format!("Manchester {}", si(bitrate, "bit/s"));
-        return (None, Some(finding(&id, SignalKind::Manchester { bitrate }, 0.75, summary, c.edge_trigger(true), Some(DecoderHint::Manchester { ch: c.idx, bitrate, thr }))));
+        return (
+            None,
+            Some(finding(
+                &id,
+                SignalKind::Manchester { bitrate },
+                0.75,
+                summary,
+                c.edge_trigger(true),
+                Some(DecoderHint::Manchester { ch: c.idx, bitrate, thr }),
+            )),
+        );
     }
     let summary = format!("Serial data, unit interval {} ({} bit/s)", si(u, "s"), si(1.0 / u, "").trim_end());
     (None, Some(finding(&id, SignalKind::Data { rate: 1.0 / u }, 0.4, summary, c.edge_trigger(!idle_high), None)))
@@ -457,7 +723,9 @@ fn burst_clock(c: &Chan) -> Option<Finding> {
     let m = median(&mut d.clone());
     let inner: Vec<f64> = d.iter().copied().filter(|&x| x <= 3.0 * m).collect();
     let gaps: Vec<usize> = (0..d.len()).filter(|&k| d[k] > 3.0 * m).collect();
-    if gaps.is_empty() || (inner.iter().filter(|&&x| (x / m - 1.0).abs() < 0.15).count() as f64) < 0.9 * inner.len() as f64 {
+    if gaps.is_empty()
+        || (inner.iter().filter(|&&x| (x / m - 1.0).abs() < 0.15).count() as f64) < 0.9 * inner.len() as f64
+    {
         return None;
     }
     let (freq, length, period) = burst_stats(&c.e, &gaps, c.dt, 0.5 / m);
@@ -478,7 +746,11 @@ fn burst_stats(e: &[Edge], gaps: &[usize], dt: f64, freq: f64) -> (f64, f64, f64
     }
     lens.push((e[e.len() - 1].t - s) * dt);
     let length = lens.iter().sum::<f64>() / lens.len() as f64;
-    let period = if starts.len() >= 2 { (starts[starts.len() - 1] - starts[0]) * dt / (starts.len() - 1) as f64 } else { f64::NAN };
+    let period = if starts.len() >= 2 {
+        (starts[starts.len() - 1] - starts[0]) * dt / (starts.len() - 1) as f64
+    } else {
+        f64::NAN
+    };
     (freq, length, period)
 }
 
@@ -489,10 +761,14 @@ fn burst_stats(e: &[Edge], gaps: &[usize], dt: f64, freq: f64) -> (f64, f64, f64
 fn mod_freq(x: &[f32], t: &[f64]) -> f64 {
     let (lo, hi) = x.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
     let mean = x.iter().sum::<f32>() / x.len().max(1) as f32;
-    let r: Vec<f64> = edges(x, mean, 0.2 * (hi - lo)).iter().filter(|e| e.rising).map(|e| {
-        let k = (e.t.floor() as usize).min(t.len().saturating_sub(2));
-        t[k] + (t[k + 1] - t[k]) * (e.t - k as f64)
-    }).collect();
+    let r: Vec<f64> = edges(x, mean, 0.2 * (hi - lo))
+        .iter()
+        .filter(|e| e.rising)
+        .map(|e| {
+            let k = (e.t.floor() as usize).min(t.len().saturating_sub(2));
+            t[k] + (t[k + 1] - t[k]) * (e.t - k as f64)
+        })
+        .collect();
     if r.len() < 2 {
         return f64::NAN;
     }
@@ -537,7 +813,8 @@ fn am(c: &Chan, f: f64) -> (f64, f64) {
 /// FM: frequency per carrier cycle from the rising crossings of the mean; (mean frequency = carrier, peak deviation
 /// Hz, modulation frequency).
 fn fm(c: &Chan) -> (f64, f64, f64) {
-    let r: Vec<f64> = edges(c.v, c.mean as f32, (0.2 * c.std) as f32).iter().filter(|e| e.rising).map(|e| e.t * c.dt).collect();
+    let r: Vec<f64> =
+        edges(c.v, c.mean as f32, (0.2 * c.std) as f32).iter().filter(|e| e.rising).map(|e| e.t * c.dt).collect();
     if r.len() < 16 {
         return (f64::NAN, 0.0, f64::NAN);
     }
@@ -577,7 +854,12 @@ fn analog_burst(c: &Chan) -> Option<Finding> {
     let freq = rising / active_time.max(c.dt);
     let e: Vec<Edge> = act.iter().map(|&k| Edge { t: k as f64, rising: true }).collect();
     let (freq, length, period) = burst_stats(&e, &cuts, c.dt, freq);
-    let summary = format!("Bursts of {}, {} long{}", si(freq, "Hz"), si(length, "s"), if period.is_finite() { format!(", every {}", si(period, "s")) } else { String::new() });
+    let summary = format!(
+        "Bursts of {}, {} long{}",
+        si(freq, "Hz"),
+        si(length, "s"),
+        if period.is_finite() { format!(", every {}", si(period, "s")) } else { String::new() }
+    );
     let trig = TriggerHint::Edge { source: c.idx, level: (med + thr) as f32, rising: true, holdoff: 1.1 * length };
     Some(finding(&[c.idx], SignalKind::Burst { freq, length, period }, 0.7, summary, trig, None))
 }
@@ -585,7 +867,16 @@ fn analog_burst(c: &Chan) -> Option<Finding> {
 fn analog(c: &Chan) -> Finding {
     let id = [c.idx];
     let trig = TriggerHint::Edge { source: c.idx, level: c.mid(), rising: true, holdoff: 0.0 };
-    let noise = || finding(&id, SignalKind::Noise { rms: c.std }, 0.6, format!("Noise, {} rms", si(c.std, "V")), TriggerHint::None, None);
+    let noise = || {
+        finding(
+            &id,
+            SignalKind::Noise { rms: c.std },
+            0.6,
+            format!("Noise, {} rms", si(c.std, "V")),
+            TriggerHint::None,
+            None,
+        )
+    };
     if let Some(b) = analog_burst(c) {
         return b;
     }
@@ -622,13 +913,21 @@ fn analog(c: &Chan) -> Finding {
     // triangle: odd harmonics 1/n² (-19.1, -28.0 dBc); sawtooth: all harmonics 1/n (-6.0, -9.5 dBc)
     if h(2) < -30.0 && (h(3) + 19.08).abs() < 2.0 && (h(5) + 27.96).abs() < 3.0 {
         let a = (c.max - c.min) / 2.0;
-        return finding(&id, SignalKind::Triangle { freq: f, amp: a }, conf, format!("Triangle {}, {} peak", si(f, "Hz"), si(a, "V")), trig, None);
+        return finding(
+            &id,
+            SignalKind::Triangle { freq: f, amp: a },
+            conf,
+            format!("Triangle {}, {} peak", si(f, "Hz"), si(a, "V")),
+            trig,
+            None,
+        );
     }
     if (h(2) + 6.02).abs() < 1.5 && (h(3) + 9.54).abs() < 1.5 {
         // the slow ramp has the sign of most sample-to-sample differences
         let up = c.v.windows(2).filter(|w| w[1] > w[0]).count() * 2 > c.v.len();
         let a = (c.max - c.min) / 2.0;
-        let summary = format!("Sawtooth {} ({}), {} peak", si(f, "Hz"), if up { "rising" } else { "falling" }, si(a, "V"));
+        let summary =
+            format!("Sawtooth {} ({}), {} peak", si(f, "Hz"), if up { "rising" } else { "falling" }, si(a, "V"));
         return finding(&id, SignalKind::Sawtooth { freq: f, amp: a, rising: up }, conf, summary, trig, None);
     }
     let summary = format!("Periodic {}, THD {:.0} %", si(f, "Hz"), d.thd_pct);
@@ -666,16 +965,38 @@ fn find_i2c(ch: &[Chan]) -> Option<(Finding, Vec<usize>)> {
                 continue;
             }
             let acked = p.iter().filter(|x| matches!(x.kind, Kind::Addr { .. }) && x.ok).count();
-            if best.as_ref().map_or(false, |b| b.2 >= p.len()) {
+            if best.as_ref().is_some_and(|b| b.2 >= p.len()) {
                 continue;
             }
             // bit rate from the SCL period (median rising-to-rising spacing)
-            let mut r: Vec<f64> = scl.e.iter().filter(|e| e.rising).map(|e| e.t).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]) * scl.dt).collect();
+            let mut r: Vec<f64> = scl
+                .e
+                .iter()
+                .filter(|e| e.rising)
+                .map(|e| e.t)
+                .collect::<Vec<_>>()
+                .windows(2)
+                .map(|w| (w[1] - w[0]) * scl.dt)
+                .collect();
             let rate = 1.0 / median(&mut r);
-            let summary = format!("I2C {} (SDA CH{}, SCL CH{}), {} address{}", si(snap_rate(rate), "bit/s"), sda.idx + 1, scl.idx + 1, addrs, if addrs == 1 { "" } else { "es" });
+            let summary = format!(
+                "I2C {} (SDA CH{}, SCL CH{}), {} address{}",
+                si(snap_rate(rate), "bit/s"),
+                sda.idx + 1,
+                scl.idx + 1,
+                addrs,
+                if addrs == 1 { "" } else { "es" }
+            );
             let conf = 0.85 + 0.1 * acked as f32 / addrs as f32;
             let trig = TriggerHint::Edge { source: sda.idx, level: thr, rising: false, holdoff: 0.0 };
-            let f = finding(&[sda.idx, scl.idx], SignalKind::I2c { rate: snap_rate(rate) }, conf, summary, trig, Some(DecoderHint::I2c { sda: sda.idx, scl: scl.idx, thr }));
+            let f = finding(
+                &[sda.idx, scl.idx],
+                SignalKind::I2c { rate: snap_rate(rate) },
+                conf,
+                summary,
+                trig,
+                Some(DecoderHint::I2c { sda: sda.idx, scl: scl.idx, thr }),
+            );
             best = Some((f, vec![sda.idx, scl.idx], p.len()));
         }
     }
@@ -700,12 +1021,17 @@ fn find_spi(ch: &[Chan], claimed: &[bool]) -> Option<(Finding, Vec<usize>)> {
     let ce: Vec<f64> = clk.e.iter().map(|e| e.t).collect();
     let nearest = |t: f64| -> Option<usize> {
         let i = ce.partition_point(|&x| x < t);
-        [i.checked_sub(1), (i < ce.len()).then_some(i)].into_iter().flatten().min_by(|&a, &b| (ce[a] - t).abs().total_cmp(&(ce[b] - t).abs()))
+        [i.checked_sub(1), (i < ce.len()).then_some(i)]
+            .into_iter()
+            .flatten()
+            .min_by(|&a, &b| (ce[a] - t).abs().total_cmp(&(ce[b] - t).abs()))
     };
     // chip select: few edges, low while the clock runs
     let cs = ch
         .iter()
-        .filter(|c| c.logic && !claimed[c.idx] && c.idx != clk.idx && !c.e.is_empty() && c.e.len() * 8 <= clk.e.len().max(8))
+        .filter(|c| {
+            c.logic && !claimed[c.idx] && c.idx != clk.idx && !c.e.is_empty() && c.e.len() * 8 <= clk.e.len().max(8)
+        })
         .filter_map(|c| {
             let s = states(c.v, c.thr, c.hyst);
             let low = clk.e.iter().filter(|e| state_at(&s, e.t) == Some(false)).count();
@@ -736,7 +1062,8 @@ fn find_spi(ch: &[Chan], claimed: &[bool]) -> Option<(Finding, Vec<usize>)> {
         if c.idx == clk.idx || cs.as_ref().is_some_and(|(x, _)| x.idx == c.idx) {
             continue;
         }
-        let near: Vec<usize> = c.e.iter().filter_map(|e| nearest(e.t).filter(|&k| (ce[k] - e.t).abs() <= 0.3 * half)).collect();
+        let near: Vec<usize> =
+            c.e.iter().filter_map(|e| nearest(e.t).filter(|&k| (ce[k] - e.t).abs() <= 0.3 * half)).collect();
         if near.len() as f64 >= 0.8 * c.e.len() as f64 {
             data.push(c.idx);
             let l = near.iter().filter(|&&k| leading(k)).count();
@@ -791,7 +1118,14 @@ fn find_spi(ch: &[Chan], claimed: &[bool]) -> Option<(Finding, Vec<usize>)> {
         None => TriggerHint::Edge { source: clk.idx, level: thr, rising: !cpol, holdoff: 0.0 },
     };
     let conf = if cs_idx.is_some() { 0.9 } else { 0.75 };
-    let f = finding(&chans, SignalKind::Spi { rate: snap_rate(rate), mode, bits }, conf, summary, trig, Some(DecoderHint::Spi { clk: clk.idx, data: data.clone(), cs: cs_idx, mode, bits, thr }));
+    let f = finding(
+        &chans,
+        SignalKind::Spi { rate: snap_rate(rate), mode, bits },
+        conf,
+        summary,
+        trig,
+        Some(DecoderHint::Spi { clk: clk.idx, data: data.clone(), cs: cs_idx, mode, bits, thr }),
+    );
     Some((f, chans))
 }
 

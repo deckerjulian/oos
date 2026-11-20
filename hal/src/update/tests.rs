@@ -1,18 +1,22 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+//! The tests of the update: packages built and signed here, then checked, installed to a card image in memory, tried
+//! and rolled back, as `update::apply` and the first install do it on a unit. A new case of the update gets its test
+//! here; the made-up keys and boot images come from the helpers at the top.
+
 use super::card::*;
 use super::*;
 use std::path::PathBuf;
 
-const SEED: [u8; 32] = [9; 32];
+pub(super) const SEED: [u8; 32] = [9; 32];
 
-fn pk() -> [u8; 32] {
+pub(super) fn pk() -> [u8; 32] {
     ed25519::public_key(&SEED)
 }
 
 /// A boot image as boot/oos-bootimg.py builds it (tiny sections, distinct content per `tag`).
-fn bootimg(tag: u8) -> Vec<u8> {
+pub(super) fn bootimg(tag: u8) -> Vec<u8> {
     bootimg_dt(tag, tag ^ 0xaa)
 }
 
@@ -22,19 +26,19 @@ fn bootimg_dt(tag: u8, dt: u8) -> Vec<u8> {
 }
 
 /// `bootimg` with this device tree section.
-fn bootimg_second(tag: u8, second: Vec<u8>) -> Vec<u8> {
+pub(super) fn bootimg_second(tag: u8, second: Vec<u8>) -> Vec<u8> {
     bootimg_parts(tag, vec![tag ^ 0x55; 1000], second)
 }
 
 /// `bootimg` whose initramfs names its build (gzip of a newc archive with etc/oos-build, as a real image).
-fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
+pub(super) fn bootimg_build(tag: u8, build: &str) -> Vec<u8> {
     let cpio = kexec::newc(&[("etc/oos-build", 0o100644, format!("{}\n", build).as_bytes())]);
     let mut rd = inflate::tests::gzip_stored(&cpio);
     rd.resize(rd.len().div_ceil(4) * 4, 0);
     bootimg_parts(tag, rd, vec![tag ^ 0xaa; 300])
 }
 
-fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
+pub(super) fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     let page = 2048usize;
     let mut kernel = vec![tag; 4096 + 512];
     kernel[0x38..0x3c].copy_from_slice(b"ARM\x64");
@@ -66,7 +70,7 @@ fn bootimg_parts(tag: u8, ramdisk: Vec<u8>, second: Vec<u8>) -> Vec<u8> {
     out
 }
 
-fn package(tag: u8, build: &str) -> Vec<u8> {
+pub(super) fn package(tag: u8, build: &str) -> Vec<u8> {
     pkg::build(&SEED, build, "6.12.115+", &bootimg(tag)).unwrap()
 }
 
@@ -338,7 +342,6 @@ fn force_with_the_same_image_keeps_the_slot() {
 }
 
 #[test]
-#[cfg(unix)] // the lock is flock(2): the scope only
 fn mode_and_lock() {
     let f = Fake::new("mode", None);
     set_mode(&f.state(), true).unwrap();
@@ -437,7 +440,6 @@ fn persist_arm_needs_a_good_image_and_no_trial() {
 }
 
 #[test]
-#[cfg(unix)] // the lock is flock(2): the scope only
 fn busy_follows_the_lock() {
     let f = Fake::new("busy", Some(1));
     assert!(!busy(&f.state()), "no lock file yet");
@@ -470,7 +472,8 @@ fn stock_card(name: &str) -> Fake {
 fn run(fk: &Fake, p: &[u8], o: &first::FirstOpt) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     let mut c = Card::open(&fk.dir.join("card"), o.execute).unwrap();
-    first::first_install(&mut c, p, &[pk()], &fk.dir.join("save"), None, o, &mut |l| lines.push(l.to_string())).map(|_| lines)
+    first::first_install(&mut c, p, &[pk()], &fk.dir.join("save"), None, o, &mut |l| lines.push(l.to_string()))
+        .map(|_| lines)
 }
 
 fn card_bytes(fk: &Fake) -> Vec<u8> {
@@ -503,8 +506,13 @@ fn first_install_writes_only_its_regions() {
     run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
     let after = card_bytes(&fk);
     let s = SECTOR as usize;
-    let ok = [(BOOT_LBA as usize * s, BOOT_LBA as usize * s + 4), (RECOVERY_LBA as usize * s, (RECOVERY_LBA as usize) * s + IMAGE_MAX), (BACKUP_LBA as usize * s, BACKUP_LBA as usize * s + first::BOOT_BYTES)];
-    let bad = before.iter().zip(&after).enumerate().find(|(i, (a, b))| a != b && !ok.iter().any(|r| (r.0..r.1).contains(i)));
+    let ok = [
+        (BOOT_LBA as usize * s, BOOT_LBA as usize * s + 4),
+        (RECOVERY_LBA as usize * s, (RECOVERY_LBA as usize) * s + IMAGE_MAX),
+        (BACKUP_LBA as usize * s, BACKUP_LBA as usize * s + first::BOOT_BYTES),
+    ];
+    let bad =
+        before.iter().zip(&after).enumerate().find(|(i, (a, b))| a != b && !ok.iter().any(|r| (r.0..r.1).contains(i)));
     assert!(bad.is_none(), "byte {:?} changed", bad.map(|b| b.0));
 }
 
@@ -526,7 +534,12 @@ fn first_install_again_keeps_the_rescue_set() {
     // OOS started once: the one-shot put KRNL back. The same file selects it again and writes nothing else
     fk.card().disarm_oos().unwrap();
     let l = run(&fk, &package(1, "20260101-000000 kernel x"), &opt(true)).unwrap();
-    assert!(l.iter().any(|x| x.contains("already holds this image")) && l.iter().any(|x| x.contains("already holds the stock copy")), "{:?}", l);
+    assert!(
+        l.iter().any(|x| x.contains("already holds this image"))
+            && l.iter().any(|x| x.contains("already holds the stock copy")),
+        "{:?}",
+        l
+    );
     assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
     // a newer build, with OOS selected, and oos-reinstall.txt: same fallback, stock recovery still on the stick
     run(&fk, &package(2, "20260102-000000 kernel x"), &reinstall()).unwrap();
@@ -549,8 +562,12 @@ fn the_stick_again_keeps_a_newer_build_and_only_selects_it() {
     assert_eq!(fk.card().read(RECOVERY_LBA, bootimg(3).len()).unwrap(), bootimg(3), "the newer build stays");
     let after = card_bytes(&fk);
     let s = SECTOR as usize;
-    let changed: Vec<usize> = before.iter().zip(&after).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
-    assert!(changed.iter().all(|&i| (BOOT_LBA as usize * s..BOOT_LBA as usize * s + 4).contains(&i)), "only the magic changes");
+    let changed: Vec<usize> =
+        before.iter().zip(&after).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
+    assert!(
+        changed.iter().all(|&i| (BOOT_LBA as usize * s..BOOT_LBA as usize * s + 4).contains(&i)),
+        "only the magic changes"
+    );
     assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
 }
 
@@ -563,13 +580,19 @@ fn the_stick_updates_an_older_build() {
     // a newer build on the stick goes over the older one, without oos-reinstall.txt
     let l = run(&fk, &pk_of(2, "20261112-121847 kernel 6.12.115+"), &opt(true)).unwrap();
     assert!(l.iter().any(|x| x.contains("the stick has the newer 20261112-121847")), "{:?}", l);
-    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(), bootimg_build(2, "20261112-121847 kernel 6.12.115+"));
+    assert_eq!(
+        fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(),
+        bootimg_build(2, "20261112-121847 kernel 6.12.115+")
+    );
     assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
     // an older one does not
     fk.card().disarm_oos().unwrap();
     let l = run(&fk, &pk_of(1, "20261111-125214 kernel 6.12.115+"), &opt(true)).unwrap();
     assert!(l.iter().any(|x| x.contains("kept, only selected") && x.contains("20261112-121847")), "{:?}", l);
-    assert_eq!(fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(), bootimg_build(2, "20261112-121847 kernel 6.12.115+"));
+    assert_eq!(
+        fk.card().read(RECOVERY_LBA, bootimg_build(2, "x").len()).unwrap(),
+        bootimg_build(2, "20261112-121847 kernel 6.12.115+")
+    );
 }
 
 #[test]
@@ -662,7 +685,15 @@ fn a_rescue_set_from_another_unit_stops_the_install() {
     let vendor = |sn: &str| crate::model::encode_vendor(&[(5, "DHO924S"), (7, sn), (9, "00:19:AF:00:00:01")]);
     let go = |sn: &str, build: &str, n: u8| {
         let mut c = fk.card();
-        first::first_install(&mut c, &package(n, build), &[pk()], &fk.dir.join("save"), Some(&vendor(sn)), &opt(true), &mut |_| {})
+        first::first_install(
+            &mut c,
+            &package(n, build),
+            &[pk()],
+            &fk.dir.join("save"),
+            Some(&vendor(sn)),
+            &opt(true),
+            &mut |_| {},
+        )
     };
     go("DHO9A", "20260101-000000 kernel x", 1).unwrap();
     assert_eq!(std::fs::read_to_string(fk.dir.join("save").join(first::UNIT)).unwrap(), "DHO9A");
@@ -688,19 +719,30 @@ fn only_verified_models_by_default() {
 /// a DHO824, as seen in a user report). The refusal names the model, the verified models, the risk and the way on.
 #[test]
 fn models_are_verified_per_hardware_variant() {
-    let check = |m: &str, any: bool| first::check_model(Some(&crate::model::encode_vendor(&[(5, m), (7, "DHO8A000000001")])), any);
+    let check = |m: &str, any: bool| {
+        first::check_model(Some(&crate::model::encode_vendor(&[(5, m), (7, "DHO8A000000001")])), any)
+    };
     assert_eq!(check("DHO924S", false).unwrap(), "DHO924S");
     assert_eq!(check("DHO804", false).unwrap(), "DHO804");
-    for (m, ran) in [("DHO824", "DHO804"), ("DHO814", "DHO804"), ("DHO914S", "DHO924S")] {
+    assert_eq!(check("DHO802", false).unwrap(), "DHO802");
+    for (m, ran) in [("DHO824", "DHO804"), ("DHO814", "DHO804"), ("DHO812", "DHO802"), ("DHO914S", "DHO924S")] {
         let ok = check(m, false).unwrap();
         assert!(ok.starts_with(m) && ok.contains(ran) && ok.contains("same hardware"), "{}", ok);
     }
-    assert_eq!(first::verified_models(), ["DHO804", "DHO814", "DHO824", "DHO914S", "DHO924S"]);
-    for m in ["DHO802", "DHO812", "DHO914", "DHO924", "DHO914-EDU", "DHO924-EDU"] {
+    assert_eq!(first::verified_models(), ["DHO804", "DHO814", "DHO824", "DHO802", "DHO812", "DHO914S", "DHO924S"]);
+    for m in ["DHO914", "DHO924", "DHO914-EDU", "DHO924-EDU"] {
         let e = check(m, false).unwrap_err();
         assert!(e.contains(&format!("OOS has not run on a {} yet", m)), "{}", e);
-        assert!(e.contains("Nothing written") && e.contains("DHO804, DHO814, DHO824, DHO914S, DHO924S"), "{}", e);
-        assert!(e.contains(first::ANY_MODEL_FILE) && e.contains(first::ANY_MODEL_FLAG) && e.contains("open the scope"), "{}", e);
+        assert!(
+            e.contains("Nothing written") && e.contains("DHO804, DHO814, DHO824, DHO802, DHO812, DHO914S, DHO924S"),
+            "{}",
+            e
+        );
+        assert!(
+            e.contains(first::ANY_MODEL_FILE) && e.contains(first::ANY_MODEL_FLAG) && e.contains("open the scope"),
+            "{}",
+            e
+        );
         let ok = check(m, true).unwrap();
         assert!(ok.starts_with(m) && ok.contains("accepted by request"), "{}", ok);
     }
@@ -726,12 +768,30 @@ fn hardware_variants_differ_only_in_bandwidth() {
             assert!(!seen.contains(m), "{} in two variants", m);
             seen.push(*m);
             let c = crate::model::lookup(m).unwrap();
-            assert_eq!((c.series, c.channels, c.la, c.generators, c.ext_trig, c.edu), (c0.series, c0.channels, c0.la, c0.generators, c0.ext_trig, c0.edu), "{} vs {}", m, v.models[0]);
+            assert_eq!(
+                (c.series, c.channels, c.la, c.generators, c.ext_trig, c.edu),
+                (c0.series, c0.channels, c0.la, c0.generators, c0.ext_trig, c0.edu),
+                "{} vs {}",
+                m,
+                v.models[0]
+            );
             assert_eq!(t.variant(&m.to_ascii_lowercase()).map(|x| x.name), Some(v.name));
         }
     }
     // every real model has a variant, verified or not
-    for m in ["DHO802", "DHO804", "DHO812", "DHO814", "DHO824", "DHO914", "DHO914S", "DHO914-EDU", "DHO924", "DHO924S", "DHO924-EDU"] {
+    for m in [
+        "DHO802",
+        "DHO804",
+        "DHO812",
+        "DHO814",
+        "DHO824",
+        "DHO914",
+        "DHO914S",
+        "DHO914-EDU",
+        "DHO924",
+        "DHO924S",
+        "DHO924-EDU",
+    ] {
         assert!(t.variant(m).is_some(), "{}", m);
     }
     assert!(t.variant("DHO900").is_none());
@@ -909,7 +969,11 @@ fn rsce(dtb: &[u8]) -> Vec<u8> {
 }
 
 fn dtb(props: &[(&str, &[u8])], kids: Vec<fdt::Node>) -> Vec<u8> {
-    let root = fdt::Node { name: String::new(), props: props.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(), kids };
+    let root = fdt::Node {
+        name: String::new(),
+        props: props.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        kids,
+    };
     fdt::Fdt { rsv: vec![], boot_cpu: 0, root }.to_bytes()
 }
 
@@ -928,7 +992,8 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     // a build without kexec-tools (no running tree given): refused as before
     let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, None).unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
-    let (r, staged) = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
+    let (r, staged) =
+        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
     let staged = staged.expect("a kexec start");
     assert!(r.lines.iter().any(|l| l.contains("another one")), "{:?}", r.lines);
     let t = fdt::Fdt::parse(staged.tree.as_deref().expect("the tree to start with")).unwrap();
@@ -943,4 +1008,29 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&odd)).unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
     assert_eq!(f.st().kexec, None);
+}
+
+/// The same tree with kexec-tools there: the start goes through kexec-tools too (kexec_file_load put a 68 MB initramfs
+/// over the loader's reserved ramdisk area on the unit), with the running tree as the loader left it, without the old
+/// ramdisk's place.
+#[test]
+fn kexec_stage_takes_kexec_tools_for_the_same_tree_too() {
+    let f = Fake::new("kexec-sametree", None);
+    let old = rsce(&dtb(&[("model", b"DHO\0")], vec![chosen(b"a\0")]));
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let p = pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_second(2, old.clone()), &[kexec::LINE]).unwrap();
+    let mut loader = chosen(b"a loader\0");
+    loader.props.push(("linux,initrd-start".into(), vec![0, 0, 0, 0, 0x0a, 0, 0, 0]));
+    let running = dtb(&[("model", b"DHO\0")], vec![loader]);
+    let (r, staged) =
+        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
+    assert!(r.lines.iter().any(|l| l.contains("device tree: the same")), "{:?}", r.lines);
+    let t = fdt::Fdt::parse(staged.expect("a kexec start").tree.as_deref().expect("through kexec-tools")).unwrap();
+    assert_eq!(t.root.kids[0].prop("bootargs"), Some(&b"a loader\0"[..]), "the running tree");
+    assert_eq!(t.root.kids[0].prop("linux,initrd-start"), None, "without the old ramdisk");
+    // a build without kexec-tools: kexec_file_load, as before
+    let f = Fake::new("kexec-sametree-notool", None);
+    f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
+    let (_, staged) = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, None).unwrap();
+    assert!(staged.expect("a kexec start").tree.is_none());
 }

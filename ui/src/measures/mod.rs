@@ -76,7 +76,7 @@ pub enum Mark {
 pub enum Kind {
     /// a standard measurement of the scope (strip, statistics, per-measurement settings)
     Standard(Meas),
-    /// a two-source variant of the scope (`tools::PAIRS` index)
+    /// a two-source variant of the scope (`pairs::PAIRS` index)
     Pair(usize),
     /// the module's [`MeasModule::compute`]; stored as a `cat` row with its `id`
     Module,
@@ -105,17 +105,41 @@ pub struct Def {
 }
 
 /// A measurement the module computes.
-pub const fn module(id: u16, name: &'static str, unit: &'static str, mark: Mark, roles: &'static [usize], places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn module(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    roles: &'static [usize],
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Module, roles, places }
 }
 
 /// A standard measurement of the scope on source A.
-pub const fn standard(id: u16, name: &'static str, unit: &'static str, mark: Mark, k: Meas, places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn standard(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    k: Meas,
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Standard(k), roles: &[0], places }
 }
 
 /// A two-source variant of the scope from source A to source B.
-pub const fn pair(id: u16, name: &'static str, unit: &'static str, mark: Mark, k: usize, places: &'static [Place], blurb: &'static str) -> Def {
+pub const fn pair(
+    id: u16,
+    name: &'static str,
+    unit: &'static str,
+    mark: Mark,
+    k: usize,
+    places: &'static [Place],
+    blurb: &'static str,
+) -> Def {
     Def { id, name, blurb, mark, unit, kind: Kind::Pair(k), roles: &[0, 1], places }
 }
 
@@ -144,20 +168,71 @@ pub const DPT: u8 = 7;
 const AB: [&str; 4] = ["Source A", "Source B", "Source C", "Source D"];
 
 pub const CATEGORIES: [Category; 8] = [
-    Category { name: "Basic", slots: AB, one: "Source", min: 1, groups: &["AMPLITUDE", "AVERAGE & STATISTICS", "TIMING", "EDGES & COUNTS", "PER CYCLE"] },
-    Category { name: "Two sources", slots: AB, one: "Source", min: 2, groups: &["DELAY", "PHASE", "SKEW", "SETUP & HOLD"] },
-    Category { name: "Serial & PAM", slots: AB, one: "Source", min: 1, groups: &["CLOCK & UNIT INTERVAL", "PAM LEVELS"] },
-    Category { name: "Jitter & eye", slots: AB, one: "Source", min: 1, groups: &["JITTER", "EYE", "AMPLITUDE", "TIMING"] },
+    Category {
+        name: "Basic",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["AMPLITUDE", "AVERAGE & STATISTICS", "TIMING", "EDGES & COUNTS", "PER CYCLE"],
+    },
+    Category {
+        name: "Two sources",
+        slots: AB,
+        one: "Source",
+        min: 2,
+        groups: &["DELAY", "PHASE", "SKEW", "SETUP & HOLD"],
+    },
+    Category {
+        name: "Serial & PAM",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["CLOCK & UNIT INTERVAL", "PAM LEVELS"],
+    },
+    Category {
+        name: "Jitter & eye",
+        slots: AB,
+        one: "Source",
+        min: 1,
+        groups: &["JITTER", "EYE", "AMPLITUDE", "TIMING"],
+    },
     Category {
         name: "Power",
         slots: ["Voltage source", "Current source", "Source C", "Source D"],
         one: "Voltage source",
         min: 2,
-        groups: &["INPUT", "AMPLITUDE", "TIMING", "SWITCHING", "MAGNETICS", "OUTPUT", "PSRR & IMPEDANCE", "POWER FACTOR"],
+        groups: &[
+            "INPUT",
+            "AMPLITUDE",
+            "TIMING",
+            "SWITCHING",
+            "MAGNETICS",
+            "OUTPUT",
+            "PSRR & IMPEDANCE",
+            "POWER FACTOR",
+        ],
     },
-    Category { name: "Motor drive", slots: ["Phase A", "Phase B", "Phase C", "Torque"], one: "Phase A", min: 3, groups: &["DQ0 TRANSFORM", "SHAFT & EFFICIENCY"] },
-    Category { name: "Power rails", slots: ["Rail", "Input", "Source C", "Source D"], one: "Rail", min: 2, groups: &["RAIL SEQUENCING"] },
-    Category { name: "Double pulse", slots: ["Voltage", "Current", "Gate", "Source D"], one: "Voltage", min: 3, groups: &["SWITCHING", "DIODE RECOVERY"] },
+    Category {
+        name: "Motor drive",
+        slots: ["Phase A", "Phase B", "Phase C", "Torque"],
+        one: "Phase A",
+        min: 3,
+        groups: &["DQ0 TRANSFORM", "SHAFT & EFFICIENCY"],
+    },
+    Category {
+        name: "Power rails",
+        slots: ["Rail", "Input", "Source C", "Source D"],
+        one: "Rail",
+        min: 2,
+        groups: &["RAIL SEQUENCING"],
+    },
+    Category {
+        name: "Double pulse",
+        slots: ["Voltage", "Current", "Gate", "Source D"],
+        one: "Voltage",
+        min: 3,
+        groups: &["SWITCHING", "DIODE RECOVERY"],
+    },
 ];
 
 /// The sources of one computation, on one common time grid (the slowest source's sample spacing over the time all of
@@ -193,11 +268,16 @@ pub struct Values {
 /// The quality line of a value that is derived directly from the sources.
 pub const DERIVED: &str = "Derived from scaled source roles";
 
+/// The values of the measurements `ids`, each `value(id)`, derived directly from the sources.
+pub fn derived(ids: &[u16], value: impl Fn(u16) -> f64) -> Values {
+    Values { values: ids.iter().map(|&id| (id, value(id))).collect(), quality: DERIVED }
+}
+
 /// A measurement module. Only `key` and `defs` are required; a module of [`Kind::Module`] measurements also needs
 /// `compute`.
 pub trait MeasModule: Sync {
     /// Stable name of the module (tests, docs): letters, digits and '_' only.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))] // only the registry's tests read it; every module still names itself
     fn key(&self) -> &'static str;
 
     /// Its measurements.
@@ -215,7 +295,7 @@ pub trait MeasModule: Sync {
     /// The values of the measurements `ids` (all of this module, all reading the same roles) on these sources. Runs
     /// on the worker thread, never on the render thread; a panic counts as "Catalog analysis failed".
     fn compute(&self, _x: &Ctx, ids: &[u16]) -> Values {
-        Values { values: ids.iter().map(|&id| (id, f64::NAN)).collect(), quality: DERIVED }
+        derived(ids, |_| f64::NAN)
     }
 
     /// The quality line while a value of `id` is still computing.
@@ -269,7 +349,8 @@ pub fn persisted(id: u16) -> bool {
 
 /// The groups of category `cat` with their tiles, in the order of the page.
 pub fn groups(cat: u8) -> &'static [(&'static str, Vec<&'static Def>)] {
-    static G: std::sync::OnceLock<Vec<Vec<(&'static str, Vec<&'static Def>)>>> = std::sync::OnceLock::new();
+    type Groups = Vec<(&'static str, Vec<&'static Def>)>;
+    static G: std::sync::OnceLock<Vec<Groups>> = std::sync::OnceLock::new();
     let all = G.get_or_init(|| {
         (0..CATEGORIES.len() as u8)
             .map(|c| {
@@ -298,7 +379,7 @@ pub fn std_id(k: Meas) -> u16 {
 }
 
 /// The number of the tile of pair variant `k`.
-#[cfg_attr(not(test), allow(dead_code))] // the tests name pair tiles with it
+#[cfg(test)]
 pub fn pair_id(k: usize) -> u16 {
     all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(0, |(_, d)| d.id)
 }
@@ -310,7 +391,81 @@ pub fn meas_name(k: Meas) -> &'static str {
 
 /// The name a pair variant has on the page.
 pub fn pair_name(k: usize) -> &'static str {
-    all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(crate::ui::pair_short_name(k), |(_, d)| d.name)
+    all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(pairs::pair_short_name(k), |(_, d)| d.name)
+}
+
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
+pub fn catalog_id_valid(id: u16) -> bool {
+    persisted(id)
+}
+
+// Which catalog rows the model may keep is the registry's to say (ADR 0049)
+impl crate::model::Model {
+    /// `fit_platform` for the measurement, catalogue, analyser and math sources on a missing input.
+    pub(crate) fn fit_meas_sources(&mut self, n: usize, mut changed: bool) -> bool {
+        for e in &mut self.meas {
+            if let WaveId::Ch(c) = e.1 {
+                if c >= n {
+                    e.1 = WaveId::Ch(0);
+                    changed = true;
+                }
+            }
+        }
+        for e in &mut self.meas2 {
+            for id in [&mut e.1, &mut e.2] {
+                if let WaveId::Ch(c) = *id {
+                    if c >= n {
+                        *id = WaveId::Ch(0);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let previous_cat = self.cat.len();
+        self.cat.retain(|row| catalog_id_valid(row.0));
+        self.cat.truncate(crate::model::MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
+        changed |= previous_cat != self.cat.len();
+        for row in &mut self.cat {
+            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
+                if let WaveId::Ch(c) = *source {
+                    if c >= n {
+                        *source = WaveId::Ch(0);
+                        changed = true;
+                    }
+                } else if matches!(*source, WaveId::Ref(i) if i >= crate::model::NREF) {
+                    *source = WaveId::Ref(0);
+                    changed = true;
+                }
+            }
+        }
+        for s in [
+            &mut self.inv_tq,
+            &mut self.inv_ev,
+            &mut self.inv_ei,
+            &mut self.eye_b,
+            &mut self.eye_rail,
+            &mut self.pw_vin,
+            &mut self.pw_clk,
+        ] {
+            if let Some(WaveId::Ch(c)) = *s {
+                if c >= n {
+                    *s = None;
+                    changed = true;
+                }
+            }
+        }
+        // math sources: channels 0..NCH, then math channels (always there)
+        for s in [&mut self.math_a, &mut self.math_b]
+            .into_iter()
+            .chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b]))
+        {
+            if !crate::model::src_ok(*s) {
+                *s = 0;
+                changed = true;
+            }
+        }
+        changed
+    }
 }
 
 #[cfg(test)]
@@ -324,13 +479,21 @@ mod tests {
     fn modules_are_well_formed() {
         let (mut ids, mut names, mut keys) = (HashSet::new(), HashSet::new(), HashSet::new());
         for m in MODULES {
-            assert!(!m.key().is_empty() && m.key().chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "key {:?}", m.key());
+            assert!(
+                !m.key().is_empty() && m.key().chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "key {:?}",
+                m.key()
+            );
             assert!(keys.insert(m.key()), "key {} twice", m.key());
             assert!(!m.defs().is_empty(), "{}: no measurements", m.key());
             for d in m.defs() {
                 assert!(ids.insert(d.id), "{}: id {} twice", m.key(), d.id);
                 assert!(names.insert(d.name), "{}: name {} twice", m.key(), d.name);
-                assert!(!d.places.is_empty() && d.places.iter().all(|p| (p.0 as usize) < CATEGORIES.len()), "{}: place", d.name);
+                assert!(
+                    !d.places.is_empty() && d.places.iter().all(|p| (p.0 as usize) < CATEGORIES.len()),
+                    "{}: place",
+                    d.name
+                );
                 assert!(!d.roles.is_empty() && d.roles.iter().all(|&r| r < 4), "{}: roles", d.name);
                 assert!(d.blurb.ends_with('.'), "{}: description", d.name);
             }
@@ -338,21 +501,21 @@ mod tests {
         for &k in oos_dsp::measure::ALL.iter() {
             assert_eq!(all().filter(|(_, d)| d.kind == Kind::Standard(k)).count(), 1, "{k:?}");
         }
-        for k in 0..crate::ui::PAIRS_N {
+        for k in 0..crate::model::PAIRS_N {
             assert_eq!(all().filter(|(_, d)| d.kind == Kind::Pair(k)).count(), 1, "pair {k}");
         }
         // what setups store is what the setup reader takes
         for id in 0..=u16::MAX {
-            assert_eq!(crate::model::catalog_id_valid(id), persisted(id), "id {id}");
+            assert_eq!(catalog_id_valid(id), persisted(id), "id {id}");
         }
     }
 
     /// A pair tile shows the unit its strip row and SCPI readout carry (Setup + Hold is a count of violations).
     #[test]
     fn pair_tiles_have_the_unit_of_their_value() {
-        for k in 0..crate::ui::PAIRS_N {
+        for k in 0..crate::model::PAIRS_N {
             let d = all().find(|(_, d)| d.kind == Kind::Pair(k)).unwrap().1;
-            assert_eq!(d.unit, crate::ui::pair_unit(k), "{}", d.name);
+            assert_eq!(d.unit, pairs::pair_unit(k), "{}", d.name);
         }
     }
 
@@ -384,7 +547,49 @@ mod tests {
                 continue;
             }
             let v = md.compute(&x, &ids);
-            assert_eq!(v.values.iter().map(|x| x.0).collect::<Vec<_>>(), ids, "{}: one value per id, in order", md.key());
+            assert_eq!(
+                v.values.iter().map(|x| x.0).collect::<Vec<_>>(),
+                ids,
+                "{}: one value per id, in order",
+                md.key()
+            );
         }
+    }
+
+    /// The groups the table of docs/reference-analysis.md lists for category `cat`, in lower case.
+    fn documented_groups(doc: &str, cat: &str) -> Vec<String> {
+        let row = doc.lines().find(|l| l.starts_with(&format!("| {} |", cat))).unwrap_or("");
+        let cell = row.split('|').nth(2).unwrap_or("");
+        cell.split(',').map(|g| g.split('(').next().unwrap_or("").trim().to_lowercase()).collect()
+    }
+
+    /// What a measurement needs besides its `Def`, each failure with its name and the part that is missing: a name
+    /// and a description, its group in the table of docs/reference-analysis.md, and, when setups store its number,
+    /// its line in ui/tests/golden/measurement-ids.txt (number, module key, name). The numbers of that list never
+    /// change: `OOS_BLESS=1 cargo test --locked -q measures::tests` adds the line of a new measurement and no other.
+    #[test]
+    fn every_measurement_is_complete() {
+        let doc = crate::ui::testkit::document("docs/reference-analysis.md");
+        let mut stored = Vec::new();
+        // the example module is compiled in the tests only
+        for m in MODULES.iter().filter(|m| m.key() != "example") {
+            for d in m.defs() {
+                assert!(!d.name.is_empty() && d.blurb.len() > 1, "{} {}: a name and a description", m.key(), d.id);
+                for &(c, group) in d.places {
+                    let cat = CATEGORIES[c as usize].name;
+                    assert!(
+                        documented_groups(&doc, cat).contains(&group.to_lowercase()),
+                        "{}: its group {} is not in the row of {} in docs/reference-analysis.md",
+                        d.name,
+                        group,
+                        cat
+                    );
+                }
+                if d.kind == Kind::Module {
+                    stored.push(format!("{} {} {}", d.id, m.key(), d.name));
+                }
+            }
+        }
+        crate::ui::testkit::stored_names("measurement-ids.txt", &stored);
     }
 }

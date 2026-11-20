@@ -16,7 +16,7 @@
 //! last bits (the running sum starts at another sample, the window offset is added in another order), far below 1e-6
 //! sample.
 
-use crate::fastdraw::edge_smooth;
+use crate::fastdraw::{edge_smooth, smoothed, EdgeSeek};
 use oos_dsp::edges::Edge;
 
 /// Half width of the near search in screen columns (plus `NEAR_PAD` samples).
@@ -24,16 +24,23 @@ pub const NEAR_COLS: usize = 16;
 pub const NEAR_PAD: usize = 64;
 
 /// `fastdraw::edge_smooth` with the same arguments and the same result, searched near `pre` first.
-#[allow(clippy::too_many_arguments)]
-pub fn edge_smooth_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: impl Fn(f64) -> bool) -> (Option<f64>, Option<Edge>) {
-    let l = l.max(1);
-    let near = NEAR_COLS * l + NEAR_PAD;
-    if near < span {
-        if let Some(r) = near_only(v, 0, v.len(), pre, level, hyst, rising, either, near, l, &fits) {
-            return r;
-        }
+#[allow(clippy::too_many_arguments)] // the arguments of `fastdraw::edge_smooth`, so either can stand for the other
+pub fn edge_smooth_near(
+    v: &[f32],
+    pre: usize,
+    level: f32,
+    hyst: f32,
+    rising: bool,
+    either: bool,
+    span: usize,
+    l: usize,
+    fits: impl Fn(f64) -> bool,
+) -> (Option<f64>, Option<Edge>) {
+    let seek = EdgeSeek::new(level, hyst, rising, either, span, l);
+    if let Some(r) = edge_near_window(v, 0, v.len(), pre, seek, &fits) {
+        return r;
     }
-    edge_smooth(v, pre, level, hyst, rising, either, span, l, fits)
+    edge_smooth(v, pre, seek, fits)
 }
 
 /// Samples `edge_near_window` needs of a frame of `len` samples: `near_window(pre, len, l)` = start..end.
@@ -46,24 +53,26 @@ pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
 /// The near search of `edge_smooth_near` alone, on a window of the samples: `v` holds samples `base..` of a frame of
 /// `len` samples and covers `near_window`. Some where `edge_smooth_near` answers from the near search (the same
 /// answer, the same arithmetic), None where it runs the wide search (then call it on all samples).
-#[allow(clippy::too_many_arguments)]
-pub fn edge_near_window(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: impl Fn(f64) -> bool) -> Option<(Option<f64>, Option<Edge>)> {
+pub fn edge_near_window(
+    v: &[f32],
+    base: usize,
+    len: usize,
+    pre: usize,
+    seek: EdgeSeek,
+    fits: impl Fn(f64) -> bool,
+) -> Option<(Option<f64>, Option<Edge>)> {
+    let EdgeSeek { level, hyst, rising, either, span, l } = seek;
     let l = l.max(1);
     let near = NEAR_COLS * l + NEAR_PAD;
     if near >= span {
         return None;
     }
-    near_only(v, base, len, pre, level, hyst, rising, either, near, l, &fits)
-}
-
-/// The near search: Some only when its answer is the wide search's (module comment). `v` holds samples `base..` of
-/// `len`.
-#[allow(clippy::too_many_arguments)]
-fn near_only(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: &dyn Fn(f64) -> bool) -> Option<(Option<f64>, Option<Edge>)> {
-    let (a, s) = smoothed(v, base, len, pre, span, l, level)?;
+    let (a, s) = smoothed(v, base, len, pre, near, l, level)?;
     let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
     let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
+    let near = |ok: &dyn Fn(&Edge) -> bool| {
+        edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
+    };
     let want = near(&|e| either || e.rising == rising)?;
     let dist = d(&want);
     // out-of-band samples (they set both comparators) on both sides beyond the result (absolute indices)
@@ -76,35 +85,6 @@ fn near_only(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f
     }
     let any = near(&|_| true).map(|e| Edge { t: a as f64 + e.t, ..e });
     Some((Some(a as f64 + want.t), any))
-}
-
-/// The samples around `pre` (+-`span`, plus `l` for the average) smoothed by a centred moving average of `l` samples,
-/// as `edge_smooth` computes them: the first index and the smoothed values (NaN where the window is incomplete).
-fn smoothed(v: &[f32], base: usize, len: usize, pre: usize, span: usize, l: usize, level: f32) -> Option<(usize, Vec<f32>)> {
-    let a = pre.saturating_sub(span + l);
-    let b = (pre + span + l).min(len);
-    if b <= a + 2 * l {
-        return None;
-    }
-    let x = |i: usize| {
-        let y = v[i - base];
-        if y.is_finite() { y as f64 } else { level as f64 }
-    };
-    let half = l / 2;
-    let mut s = Vec::with_capacity(b - a);
-    let mut sum: f64 = (a..(a + l).min(b)).map(x).sum();
-    for j in 0..(b - a) {
-        let lo = a + j;
-        if j >= half && lo + l - half <= b {
-            s.push((sum / l as f64) as f32);
-            if lo + l - half < b {
-                sum += x(lo + l - half) - x(lo - half);
-            }
-        } else {
-            s.push(f32::NAN);
-        }
-    }
-    Some((a, s))
 }
 
 #[cfg(test)]
@@ -142,7 +122,13 @@ mod tests {
         sim::add_noise(&mut ring, 0.4, 13);
         out.push(("ringing logic noise 0.4".into(), ring));
         // runts: pulses to half height between full pulses
-        let runt: Vec<f32> = (0..n).map(|k| match (k / 500) % 4 { 0 => 1.0, 2 => 0.1, _ => -1.0 }).collect();
+        let runt: Vec<f32> = (0..n)
+            .map(|k| match (k / 500) % 4 {
+                0 => 1.0,
+                2 => 0.1,
+                _ => -1.0,
+            })
+            .collect();
         out.push(("runts".into(), runt));
         let mut rp = sim::PulseTrain::square(1e5, -1.0, 1.0, 5e-8);
         (rp.every, rp.special) = (3, sim::Pulse { width: 5e-6, height: 0.45 });
@@ -176,8 +162,14 @@ mod tests {
         let (mut cases, mut hits) = (0, 0);
         for (name, v) in corpus() {
             // anywhere, and where the hardware puts it: on or next to an edge
-            let at_edges = oos_dsp::edges::trigger_edges(&v, 0.0, 0.1).into_iter().map(|e| e.t as usize).filter(|&t| t > 300 && t < v.len() - 300).step_by(7).take(12);
-            let pres: Vec<usize> = (300..v.len() - 300).step_by(4999).chain(at_edges.flat_map(|t| [t, t + 3, t - 40])).collect();
+            let at_edges = oos_dsp::edges::trigger_edges(&v, 0.0, 0.1)
+                .into_iter()
+                .map(|e| e.t as usize)
+                .filter(|&t| t > 300 && t < v.len() - 300)
+                .step_by(7)
+                .take(12);
+            let pres: Vec<usize> =
+                (300..v.len() - 300).step_by(4999).chain(at_edges.flat_map(|t| [t, t + 3, t - 40])).collect();
             for pre in pres {
                 for (l, span) in [(1, 600), (4, 2000), (16, 9000), (62, 19_000)] {
                     for hyst in [0.0f32, 0.06, 0.3] {
@@ -187,14 +179,40 @@ mod tests {
                                 let fits_all = |_: f64| true;
                                 let lo = pre as f64 - 50.0;
                                 let fits_some = |t: f64| t >= lo;
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_all);
+                                let w =
+                                    edge_smooth(&v, pre, EdgeSeek::new(level, hyst, rising, either, span, l), fits_all);
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_all);
-                                assert!(same(w, n), "{} pre {} l {} hyst {} level {} {:?}/{}: wide {:?} near {:?}", name, pre, l, hyst, level, rising, either, w, n);
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_some);
+                                assert!(
+                                    same(w, n),
+                                    "{} pre {} l {} hyst {} level {} {:?}/{}: wide {:?} near {:?}",
+                                    name,
+                                    pre,
+                                    l,
+                                    hyst,
+                                    level,
+                                    rising,
+                                    either,
+                                    w,
+                                    n
+                                );
+                                let w = edge_smooth(
+                                    &v,
+                                    pre,
+                                    EdgeSeek::new(level, hyst, rising, either, span, l),
+                                    fits_some,
+                                );
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_some);
                                 assert!(same(w, n), "{} (fits) pre {} l {}: wide {:?} near {:?}", name, pre, l, w, n);
                                 cases += 2;
-                                hits += near_only(&v, 0, v.len(), pre, level, hyst, rising, either, NEAR_COLS * l + NEAR_PAD, l, &fits_all).is_some() as usize;
+                                hits += edge_near_window(
+                                    &v,
+                                    0,
+                                    v.len(),
+                                    pre,
+                                    EdgeSeek::new(level, hyst, rising, either, span, l),
+                                    fits_all,
+                                )
+                                .is_some() as usize;
                             }
                         }
                     }
@@ -213,14 +231,44 @@ mod tests {
         let pre = 1000;
         // +1 long before, then just above the level (inside the band) into the near window, a falling crossing at
         // pre - 20 that only the history armed, -1 from pre + 5, a rising edge far away at pre + 200
-        let armed_before: Vec<f32> = (0..6000).map(|k| if k < pre - 300 { 1.0 } else if k < pre - 20 { 0.05 } else if k < pre + 5 { -0.05 } else if k < pre + 200 { -1.0 } else { 1.0 }).collect();
+        let armed_before: Vec<f32> = (0..6000)
+            .map(|k| {
+                if k < pre - 300 {
+                    1.0
+                } else if k < pre - 20 {
+                    0.05
+                } else if k < pre + 5 {
+                    -0.05
+                } else if k < pre + 200 {
+                    -1.0
+                } else {
+                    1.0
+                }
+            })
+            .collect();
         // -1, then just below the level from pre - 200, a rising crossing at pre - 75 inside the band, +1 from pre - 60,
         // falling at pre + 79
-        let early: Vec<f32> = (0..6000).map(|k| if k < pre - 200 { -1.0 } else if k < pre - 75 { -0.05 } else if k < pre - 60 { 0.05 } else if k < pre + 79 { 1.0 } else { -1.0 }).collect();
+        let early: Vec<f32> = (0..6000)
+            .map(|k| {
+                if k < pre - 200 {
+                    -1.0
+                } else if k < pre - 75 {
+                    -0.05
+                } else if k < pre - 60 {
+                    0.05
+                } else if k < pre + 79 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            })
+            .collect();
         for (v, rising) in [(armed_before, false), (early, true)] {
-            let wide = edge_smooth(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true);
+            let wide = edge_smooth(&v, pre, EdgeSeek::new(0.0, 0.3, true, true, 4000, 1), |_| true);
             assert!(wide.1.is_some_and(|e| e.rising == rising), "{:?}", wide);
-            assert!(near_only(&v, 0, v.len(), pre, 0.0, 0.3, true, true, NEAR_COLS + NEAR_PAD, 1, &|_| true).is_none());
+            assert!(
+                edge_near_window(&v, 0, v.len(), pre, EdgeSeek::new(0.0, 0.3, true, true, 4000, 1), |_| true).is_none()
+            );
             assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
         }
     }
@@ -239,16 +287,30 @@ mod tests {
             let t0 = std::time::Instant::now();
             let mut acc = 0.0;
             for _ in 0..reps {
-                acc += edge_smooth(std::hint::black_box(&v), pre, 0.0, 0.06, true, false, span, l, |_| true).0.unwrap_or(0.0);
+                acc +=
+                    edge_smooth(std::hint::black_box(&v), pre, EdgeSeek::new(0.0, 0.06, true, false, span, l), |_| {
+                        true
+                    })
+                    .0
+                    .unwrap_or(0.0);
             }
             let wide = t0.elapsed();
             let t0 = std::time::Instant::now();
             for _ in 0..reps {
-                acc -= edge_smooth_near(std::hint::black_box(&v), pre, 0.0, 0.06, true, false, span, l, |_| true).0.unwrap_or(0.0);
+                acc -= edge_smooth_near(std::hint::black_box(&v), pre, 0.0, 0.06, true, false, span, l, |_| true)
+                    .0
+                    .unwrap_or(0.0);
             }
             let near = t0.elapsed();
             let r = near.as_secs_f64() / wide.as_secs_f64();
-            println!("{} points: wide {:?}, near-first {:?} per frame, ratio {:.3} ({})", n, wide / reps, near / reps, r, acc);
+            println!(
+                "{} points: wide {:?}, near-first {:?} per frame, ratio {:.3} ({})",
+                n,
+                wide / reps,
+                near / reps,
+                r,
+                acc
+            );
             assert!(r <= 0.2, "near/wide {:.3}", r);
         }
     }

@@ -13,6 +13,20 @@ kexec-tools      2.0.32   8f81422a5fd2362cf6cb001b511e535565ed0f32c2f4451fb5eb68
 e2fsprogs        1.47.2   08242e64ca0e8194d9c1caad49762b19209a06318199b63ce74ae4ef2d74e63c  https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.2/e2fsprogs-1.47.2.tar.xz
 wpa_supplicant   2.11     912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a  https://w1.fi/releases/wpa_supplicant-2.11.tar.gz
 mesa             26.0.8   caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc  https://archive.mesa3d.org/mesa-26.0.8.tar.xz
+dbus             1.16.2   0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2  https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz
+bluez            5.82     0739fa608a837967ee6d5572b43fb89946a938d1c6c26127158aaefd743a790b  https://www.kernel.org/pub/linux/bluetooth/bluez-5.82.tar.xz
+# expat, glib, pcre2 and gettext (libintl) are not built here: dbus-daemon and bluetoothd link Alpine 3.22's static
+# packages of them. These are the files Alpine builds those packages from (aports 3.22-stable); rootfs/build-bluez.sh
+# fetches them for the release and stops when Alpine's versions differ.
+expat            2.10.0   c624ba2998fc65df1163a49641ff3f9ab73138b11641d92c86bee0fb01b1bc7f  https://github.com/libexpat/libexpat/releases/download/R_2_10_0/expat-2.10.0.tar.xz
+glib             2.84.4   8a9ea10943c36fc117e253f80c91e477b673525ae45762942858aef57631bb90  https://download.gnome.org/sources/glib/2.84/glib-2.84.4.tar.xz
+glib-patch-1     2.84.4   6ac737106a5b502362962d1c1ebd93710b665d5058c5487ef0ce139780fa1b6e  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/glib/tests-machine-id.patch
+glib-patch-2     2.84.4   ba04498c44a43f7370041ad9414824fb97f259f98f58cc6200220089c097ebbd  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/glib/flaky-tests.patch
+pcre2            10.46    15fbc5aba6beee0b17aecb04602ae39432393aba1ebd8e39b7cabf7db883299f  https://github.com/PhilipHazel/pcre2/releases/download/pcre2-10.46/pcre2-10.46.tar.bz2
+gettext          0.24.1   6164ec7aa61653ac9cdfb41d5c2344563b21f707da1562712e48715f1d2052a6  https://ftp.gnu.org/gnu/gettext/gettext-0.24.1.tar.xz
+gettext-patch-1  0.24.1   26346ac90ef96e419b76a9540aac5918ddbb82c841480047c10276308d35895a  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/gettext/cwd.patch
+gettext-patch-2  0.24.1   8cf472a6fb37da956fc016e018f1559136e164d48c865b5ca98ed838755557a0  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/gettext/skip-tests-musl.patch
+gettext-patch-3  0.24.1   37cbe713974f29740c46b8b0e02c8e9144bb98ccda4ae4c36dac337b9e964eeb  https://raw.githubusercontent.com/alpinelinux/aports/3.22-stable/main/gettext/skip-meaningless-pthread-rwlock-test.patch
 # not in the image: hostapd is built by tools/wlan-sim.sh for the access points of its test
 hostapd          2.11     2b3facb632fd4f65e32f4bf82a76b4b72c501f995a4f62e330219fe7aed1747a  https://w1.fi/releases/hostapd-2.11.tar.gz
 # libnl is not built here: wpa_supplicant links Alpine 3.22's libnl3-static. These are the two files Alpine builds

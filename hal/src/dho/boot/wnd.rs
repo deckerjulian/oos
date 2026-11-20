@@ -61,7 +61,7 @@ pub fn reference_window(err: &[u32; 32], lane: u32) -> Option<RefWnd> {
     if len < min + 1 {
         return None;
     }
-    let c = e - (len + 1) / 2;
+    let c = e - len.div_ceil(2);
     Some(RefWnd { c, p: bit(c), s: e - len + 1, end: e - 1, len, e })
 }
 
@@ -177,10 +177,11 @@ mod tests {
     #[test]
     fn window_branches() {
         let reference = "11100000000000000000000011111111"; // C = 13, S = 4, E-1 = 23, L = 21
-        // lane 0: error at C, error-free at S -> run from S up (4..=9), delay = 9 - 21/2 = max(0, -1) = 0
-        // lane 1: errors at C and S, error-free at E-1 -> run from C+1 up: 14..=23, n = 10, delay 23 - 5 = 18
-        // lane 3: errors at C, S and E-1 -> fails
-        let e = eye(&[(2, reference), (0, "11110000001111111111111111111111"), (1, "11111111111111000000000011111111")]);
+                                                            // lane 0: error at C, error-free at S -> run from S up (4..=9), delay = 9 - 21/2 = max(0, -1) = 0
+                                                            // lane 1: errors at C and S, error-free at E-1 -> run from C+1 up: 14..=23, n = 10, delay 23 - 5 = 18
+                                                            // lane 3: errors at C, S and E-1 -> fails
+        let e =
+            eye(&[(2, reference), (0, "11110000001111111111111111111111"), (1, "11111111111111000000000011111111")]);
         let r = reference_window(&e, 2).unwrap();
         let d = lane_windows(&e, 0, &r).unwrap();
         assert_eq!((d[0], d[1], d[2]), (0, 18, 13));

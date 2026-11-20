@@ -9,7 +9,7 @@
 #   oos-ssh restart   oos-ui after a change of `remote.ssh` or `ssh.password`: a new listener, sessions stay
 #   oos-ssh stop      oos-ui when SSH is switched off: the listener and every session end
 #
-# Keys (oos-conf): `remote.ssh` (off by default), `ssh.password` (on by default). It only listens when `net.allow` names
+# Keys (oos-conf): `remote.ssh` (off by default), `ssh.password` (on by default), `net.ipv6` (off: IPv4 only). It only listens when `net.allow` names
 # who may connect and the firewall (oos-firewall) is loaded: port 22 never opens to anyone else. Password login is
 # only switched off while at least one trusted key is there, so a key file emptied by hand cannot lock root out.
 # One line of state for System > Network > Remote services > SSH settings in /tmp/oos-ssh.state.
@@ -89,7 +89,13 @@ start() {
 	[ -n "$(conf net.allow)" ] || { state "off: needs net.allow"; return 0; }
 	"$bin/nft" list table inet oos_fw > /dev/null 2>&1 || { state "off: firewall not loaded"; return 1; }
 	prepare || { state "off: failed, see /tmp/oos-ssh.log"; return 1; }
-	set -- -F -E -p 22 -P $pidfile -D "$dir" -r "$dir/dropbear_ed25519_host_key" -r "$dir/dropbear_ecdsa_host_key"
+	# `net.ipv6 = off` (the default): IPv4 only, as the web remote, SCPI and VXI-11 (docs/network.md 8); a bare
+	# `-p 22` binds the IPv6 wildcard as well, and only the firewall stood between it and the network (#330)
+	case "$(conf net.ipv6 off)" in
+	on|true|1) port=22;;
+	*) port=0.0.0.0:22;;
+	esac
+	set -- -F -E -p "$port" -P $pidfile -D "$dir" -r "$dir/dropbear_ed25519_host_key" -r "$dir/dropbear_ecdsa_host_key"
 	# lines that carry a key of a type Dropbear takes (a comment or a stray line is no way in)
 	keys=$(grep -cE '^([^#].*[[:space:]])?(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)[[:space:]]+AAAA' "$dir/authorized_keys")
 	how="password and keys"

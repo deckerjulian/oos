@@ -38,35 +38,243 @@ pub const SSC_DEV: u16 = 81;
 pub const SSC_RATE: u16 = 82;
 
 static DEFS: [Def; 29] = [
-    module(JITTER_SUMMARY, "Jitter Summary", "s", Eye, &[0], &[(JITTER, "JITTER")], "Total jitter at the selected bit-error rate."),
-    module(TIE, "TIE", "s", Eye, &[0], &[(JITTER, "JITTER")], "Peak-to-peak time-interval error against the recovered clock."),
-    module(PHASE_NOISE, "Phase Noise", "s", Bars, &[0], &[(JITTER, "JITTER")], "RMS jitter integrated between the two offset frequencies."),
-    module(TJ_BER, "TJ@BER", "s", Eye, &[0], &[(JITTER, "JITTER")], "Total jitter extrapolated to the selected bit-error rate."),
-    module(RJ_DD, "RJ-dd", "s", Eye, &[0], &[(JITTER, "JITTER")], "Random jitter from the dual-Dirac fit of the tails."),
-    module(DJ_DD, "DJ-dd", "s", Eye, &[0], &[(JITTER, "JITTER")], "Deterministic jitter from the dual-Dirac fit of the tails."),
-    module(SJ_FREQ, "SJ@Freq", "s", Bars, &[0], &[(JITTER, "JITTER")], "Largest periodic tone in the time-interval error."),
-    module(PJ, "PJ", "s", Bars, &[0], &[(JITTER, "JITTER")], "Combined size of the periodic tones in the time-interval error."),
-    module(DDJ, "DDJ", "s", Eye, &[0], &[(JITTER, "JITTER")], "Spread of the mean edge error across the run lengths before an edge."),
-    module(DCD, "DCD", "s", Eye, &[0], &[(JITTER, "JITTER")], "Difference between the mean rising-edge error and the falling-edge error."),
-    module(SRJ, "SRJ", "s", Bars, &[0], &[(JITTER, "JITTER")], "Peak-to-peak of the half-rate, quarter-rate and eighth-rate tones added together."),
+    module(
+        JITTER_SUMMARY,
+        "Jitter Summary",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Total jitter at the selected bit-error rate.",
+    ),
+    module(
+        TIE,
+        "TIE",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Peak-to-peak time-interval error against the recovered clock.",
+    ),
+    module(
+        PHASE_NOISE,
+        "Phase Noise",
+        "s",
+        Bars,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "RMS jitter integrated between the two offset frequencies.",
+    ),
+    module(
+        TJ_BER,
+        "TJ@BER",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Total jitter extrapolated to the selected bit-error rate.",
+    ),
+    module(
+        RJ_DD,
+        "RJ-dd",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Random jitter from the dual-Dirac fit of the tails.",
+    ),
+    module(
+        DJ_DD,
+        "DJ-dd",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Deterministic jitter from the dual-Dirac fit of the tails.",
+    ),
+    module(
+        SJ_FREQ,
+        "SJ@Freq",
+        "s",
+        Bars,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Largest periodic tone in the time-interval error.",
+    ),
+    module(
+        PJ,
+        "PJ",
+        "s",
+        Bars,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Combined size of the periodic tones in the time-interval error.",
+    ),
+    module(
+        DDJ,
+        "DDJ",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Spread of the mean edge error across the run lengths before an edge.",
+    ),
+    module(
+        DCD,
+        "DCD",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Difference between the mean rising-edge error and the falling-edge error.",
+    ),
+    module(
+        SRJ,
+        "SRJ",
+        "s",
+        Bars,
+        &[0],
+        &[(JITTER, "JITTER")],
+        "Peak-to-peak of the half-rate, quarter-rate and eighth-rate tones added together.",
+    ),
     module(J2, "J2", "s", Eye, &[0], &[(JITTER, "JITTER")], "Total jitter at a bit-error rate of 2.5e-3."),
-    module(EYE_HEIGHT, "Eye Height", "V", Eye, &[0], &[(JITTER, "EYE")], "Vertical opening inside three standard deviations of the two levels."),
-    module(EYE_WIDTH, "Eye Width", "s", Eye, &[0], &[(JITTER, "EYE")], "Horizontal opening inside three standard deviations of the crossing."),
+    module(
+        EYE_HEIGHT,
+        "Eye Height",
+        "V",
+        Eye,
+        &[0],
+        &[(JITTER, "EYE")],
+        "Vertical opening inside three standard deviations of the two levels.",
+    ),
+    module(
+        EYE_WIDTH,
+        "Eye Width",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "EYE")],
+        "Horizontal opening inside three standard deviations of the crossing.",
+    ),
     module(EYE_HIGH, "Eye High", "V", Eye, &[0], &[(JITTER, "EYE")], "Upper edge of that three-sigma opening."),
-    module(EYE_HEIGHT_BER, "Eye Height@BER", "V", Eye, &[0], &[(JITTER, "EYE")], "Vertical opening extrapolated to the selected bit-error rate."),
-    module(EYE_WIDTH_BER, "Eye Width@BER", "s", Eye, &[0], &[(JITTER, "EYE")], "Time left in the unit interval after total jitter at that rate."),
+    module(
+        EYE_HEIGHT_BER,
+        "Eye Height@BER",
+        "V",
+        Eye,
+        &[0],
+        &[(JITTER, "EYE")],
+        "Vertical opening extrapolated to the selected bit-error rate.",
+    ),
+    module(
+        EYE_WIDTH_BER,
+        "Eye Width@BER",
+        "s",
+        Eye,
+        &[0],
+        &[(JITTER, "EYE")],
+        "Time left in the unit interval after total jitter at that rate.",
+    ),
     module(EYE_LOW, "Eye Low", "V", Eye, &[0], &[(JITTER, "EYE")], "Lower edge of the three-sigma opening."),
-    module(Q_FACTOR, "Q-Factor", "", Eye, &[0], &[(JITTER, "EYE")], "Eye amplitude divided by the noise on the two levels."),
-    module(BIT_HIGH, "Bit High", "V", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "Mean level of a high bit in the middle of the eye."),
-    module(BIT_LOW, "Bit Low", "V", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "Mean level of a low bit in the middle of the eye."),
-    module(BIT_AMPLITUDE, "Bit Amplitude", "V", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "High bit level minus the low bit level."),
-    module(DC_COMMON, "DC Common Mode", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Mean of the two sources added together and halved."),
-    module(AC_COMMON, "AC Common Mode (Pk-Pk)", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Peak-to-peak of the common mode after the high-pass."),
-    module(DIFF_CROSS, "Differential Crossover", "V", Pulse, &[0, 1], &[(JITTER, "AMPLITUDE")], "Mean voltage where the two sources cross."),
-    module(TNT, "T/nT Ratio", "dB", Pulse, &[0], &[(JITTER, "AMPLITUDE")], "Mid-interval level of a steady bit against the last transition, in dB."),
-    module(BIT_RATE, "NRZ Clock Rate", "b/s", Square, &[0], &[(JITTER, "TIMING")], "Rate of the recovered NRZ clock. Assumes one bit per symbol; not PAM or C-PHY throughput."),
-    module(SSC_DEV, "SSC Freq Dev", "ppm", Slope, &[0], &[(JITTER, "TIMING")], "Peak-to-peak spread of the cycle frequency, in parts per million."),
-    module(SSC_RATE, "SSC Modulation Rate", "Hz", Slope, &[0], &[(JITTER, "TIMING")], "How fast that frequency spread repeats."),
+    module(
+        Q_FACTOR,
+        "Q-Factor",
+        "",
+        Eye,
+        &[0],
+        &[(JITTER, "EYE")],
+        "Eye amplitude divided by the noise on the two levels.",
+    ),
+    module(
+        BIT_HIGH,
+        "Bit High",
+        "V",
+        Pulse,
+        &[0],
+        &[(JITTER, "AMPLITUDE")],
+        "Mean level of a high bit in the middle of the eye.",
+    ),
+    module(
+        BIT_LOW,
+        "Bit Low",
+        "V",
+        Pulse,
+        &[0],
+        &[(JITTER, "AMPLITUDE")],
+        "Mean level of a low bit in the middle of the eye.",
+    ),
+    module(
+        BIT_AMPLITUDE,
+        "Bit Amplitude",
+        "V",
+        Pulse,
+        &[0],
+        &[(JITTER, "AMPLITUDE")],
+        "High bit level minus the low bit level.",
+    ),
+    module(
+        DC_COMMON,
+        "DC Common Mode",
+        "V",
+        Pulse,
+        &[0, 1],
+        &[(JITTER, "AMPLITUDE")],
+        "Mean of the two sources added together and halved.",
+    ),
+    module(
+        AC_COMMON,
+        "AC Common Mode (Pk-Pk)",
+        "V",
+        Pulse,
+        &[0, 1],
+        &[(JITTER, "AMPLITUDE")],
+        "Peak-to-peak of the common mode after the high-pass.",
+    ),
+    module(
+        DIFF_CROSS,
+        "Differential Crossover",
+        "V",
+        Pulse,
+        &[0, 1],
+        &[(JITTER, "AMPLITUDE")],
+        "Mean voltage where the two sources cross.",
+    ),
+    module(
+        TNT,
+        "T/nT Ratio",
+        "dB",
+        Pulse,
+        &[0],
+        &[(JITTER, "AMPLITUDE")],
+        "Mid-interval level of a steady bit against the last transition, in dB.",
+    ),
+    module(
+        BIT_RATE,
+        "NRZ Clock Rate",
+        "b/s",
+        Square,
+        &[0],
+        &[(JITTER, "TIMING")],
+        "Rate of the recovered NRZ clock. Assumes one bit per symbol; not PAM or C-PHY throughput.",
+    ),
+    module(
+        SSC_DEV,
+        "SSC Freq Dev",
+        "ppm",
+        Slope,
+        &[0],
+        &[(JITTER, "TIMING")],
+        "Peak-to-peak spread of the cycle frequency, in parts per million.",
+    ),
+    module(
+        SSC_RATE,
+        "SSC Modulation Rate",
+        "Hz",
+        Slope,
+        &[0],
+        &[(JITTER, "TIMING")],
+        "How fast that frequency spread repeats.",
+    ),
 ];
 
 /// The measurements on two sources (common mode); the rest read one source through the eye.
@@ -94,7 +302,11 @@ impl MeasModule for Jitter {
         let nan = f64::NAN;
         let (a, b) = (x.row[0], x.row[1]);
         let m = x.model;
-        let eye = ids.iter().any(|id| !COMMON.contains(id)).then(|| x.wave(a).and_then(|v| eye_of(v, x.dt, m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, m.eye_rate))).flatten();
+        let eye = ids
+            .iter()
+            .any(|id| !COMMON.contains(id))
+            .then(|| x.wave(a).and_then(|v| eye_of(v, x.dt, m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, m.eye_rate)))
+            .flatten();
         let e = |f: fn(&EyeSnap) -> f64| eye.as_ref().map_or(nan, f);
         let values = ids
             .iter()
@@ -126,8 +338,12 @@ impl MeasModule for Jitter {
                     SSC_DEV => e(|e| e.ssc_ppm),
                     SSC_RATE => e(|e| e.ssc_hz),
                     DC_COMMON if a != b => x.align(&[a, b]).map_or(nan, |v| oos_dsp::eye::dc_common(v[0], v[1])),
-                    AC_COMMON if a == b => x.wave(a).map_or(nan, |v| oos_dsp::eye::ac_common_pp(v, None, x.dt, m.eye_hp)),
-                    AC_COMMON => x.align(&[a, b]).map_or(nan, |v| oos_dsp::eye::ac_common_pp(v[0], Some(v[1]), x.dt, m.eye_hp)),
+                    AC_COMMON if a == b => {
+                        x.wave(a).map_or(nan, |v| oos_dsp::eye::ac_common_pp(v, None, x.dt, m.eye_hp))
+                    }
+                    AC_COMMON => {
+                        x.align(&[a, b]).map_or(nan, |v| oos_dsp::eye::ac_common_pp(v[0], Some(v[1]), x.dt, m.eye_hp))
+                    }
                     DIFF_CROSS if a != b => x.align(&[a, b]).map_or(nan, |v| oos_dsp::eye::diff_crossover(v[0], v[1])),
                     _ => nan,
                 };
@@ -197,7 +413,8 @@ fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Op
     if !(hi > lo) {
         return None;
     }
-    let (summary, clk) = crate::ui::eye_infer(v, dt, (rate > 0.0).then_some(rate)).ok()?;
+    let (summary, clk) =
+        oos_dsp::eye::infer(v, dt, (rate > 0.0).then_some(rate), false).map(|(s, clk)| (s.samples_per_ui, clk)).ok()?;
     let tie = oos_dsp::eye::tie(&clk.edges, &clk);
     let j = oos_dsp::eye::jitter(&tie);
     let mut means = oos_dsp::eye::EdgeMeans::default();

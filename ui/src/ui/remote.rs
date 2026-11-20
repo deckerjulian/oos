@@ -3,9 +3,9 @@
 
 //! System > Network > Remote services: which of the network services run, each switch next to the line that says
 //! where to reach it. The choice is a setting of the scope (`/oos/system.conf`, `remote.*`); `main.rs` opens and closes
-//! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default,
-//! telnet (a shell without password, for bring-up on the bench LAN) is on by default as before; SSH, the
-//! authenticated shell, is off unless the image or the user switches it on.
+//! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default;
+//! SSH, the only shell on the network (there is no telnet, ADR 0054), is off unless the image or the user switches it
+//! on.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
 //! scope's name on the network, `dho924s-123456.local` (`net.name`). The name is also the kernel's host name, which
@@ -19,13 +19,14 @@
 //! toast says when that is done, or what failed. A computer has no firewall: there only the list changes. An entry is
 //! checked by `netacl::canonical` and refused whole when a word is not a prefix: nothing is written then.
 
+use super::worker::Worker;
 use super::*;
-use crate::remote::Runner;
+use crate::remote::{Runner, Step};
 use crate::{mdns, netacl};
-use std::sync::{mpsc, Mutex, PoisonError};
+use std::sync::mpsc::{TryRecvError, TrySendError};
 
-/// One run of the firewall at a time, in the order of the changes: each reads the settings file as it is then.
-static ALLOW_RUN: Mutex<()> = Mutex::new(());
+/// A run of the firewall and SSH after a change, and what it answered (Err: what failed).
+type AllowRuns = Worker<(Runner, Vec<Step>), Result<(), String>>;
 
 /// Remote services > Allowed.
 #[derive(Default)]
@@ -35,8 +36,12 @@ pub(super) struct RemoteUi {
     /// runs the firewall and SSH after a change (`crate::remote::script_runner` on the scope); none on a computer,
     /// which has no firewall, and in tests unless one is given
     pub runner: Option<Runner>,
-    /// the run of the last change, until it answered (Err: what failed)
-    pub job: Option<mpsc::Receiver<Result<(), String>>>,
+    /// the thread of the runs, one at a time, from the first change on
+    runs: Option<AllowRuns>,
+    /// the run of a change made while another ran: it goes when that one answered, whose answer is then old. Of
+    /// several such changes the newest is kept; each run reads the settings file as it is then, so it is the one
+    /// that counts.
+    waiting: Option<(Runner, Vec<Step>)>,
     /// the last run failed: the Firewall row says so
     pub failed: bool,
     /// the networks the scope is on, `192.168.1.0/24` (every IPv4 address with its netmask, `netacl::lans`), read
@@ -62,14 +67,12 @@ impl Ui {
             Item::RemWeb,
             Item::RemScpi,
             Item::RemVxi,
-            Item::RemTelnet,
             Item::RemSsh,
             Item::RemMdns,
             Item::RemAllow,
             Item::NetWeb,
             Item::RemScpiInfo,
             Item::RemVxiInfo,
-            Item::RemTelnetInfo,
             Item::Open(MenuId::Ssh),
             Item::RemName,
             Item::RemFirewall,
@@ -78,7 +81,13 @@ impl Ui {
 
     pub(super) fn remote_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemSsh | Item::RemMdns | Item::RemName | Item::RemAllow => Some(Kind::Choice),
+            Item::RemWeb
+            | Item::RemScpi
+            | Item::RemVxi
+            | Item::RemSsh
+            | Item::RemMdns
+            | Item::RemName
+            | Item::RemAllow => Some(Kind::Choice),
             _ => Self::ssh_kind(it),
         }
     }
@@ -116,7 +125,11 @@ impl Ui {
         let mut services = Vec::new();
         let mut add = |on: bool, kind: &str, port: u16, txt: &[&str]| {
             if on {
-                services.push(mdns::Service { kind: kind.into(), port, txt: txt.iter().map(|t| t.to_string()).collect() });
+                services.push(mdns::Service {
+                    kind: kind.into(),
+                    port,
+                    txt: txt.iter().map(|t| t.to_string()).collect(),
+                });
             }
         };
         add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
@@ -124,7 +137,13 @@ impl Ui {
         add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
         // SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
         add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
-        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services, v6: crate::net6::enabled() }
+        mdns::Config {
+            on: s.remote_mdns,
+            instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name),
+            name,
+            services,
+            v6: crate::net6::enabled(),
+        }
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.
@@ -137,7 +156,9 @@ impl Ui {
         let suffix = if self.sys.remote_mdns { ".local" } else { "" };
         let full = format!("{}{}", n, suffix);
         // a long name: as much as its row has room for, `.local` kept
-        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let room = self
+            .dlg_layout()
+            .and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
         let f = &self.fonts().mb;
         let Some(room) = room.filter(|&w| f.width(&full) > w) else { return full };
         let mut c: Vec<char> = n.chars().collect();
@@ -240,7 +261,7 @@ impl Ui {
         }
     }
 
-    /// The address list the network servers check (main.rs, desktop.rs hand it to them); Allowed sets it.
+    /// The address list the network servers check (main.rs hands it to them); Allowed sets it.
     pub fn acl(&self) -> netacl::Shared {
         self.remote.acl.clone()
     }
@@ -270,53 +291,90 @@ impl Ui {
         }
     }
 
-    /// The firewall and SSH for the list `now`, in a thread: the scripts take a moment, the frame loop does not wait.
+    /// The firewall and SSH for the list `now`, on the thread of the runs: the scripts take a moment, the frame loop
+    /// does not wait. A change made while a run is out waits for its answer.
     fn allow_run(&mut self, run: Runner, now: &str) {
         let steps = crate::remote::allow_steps(self.sys.remote_ssh, !now.is_empty());
-        let (tx, rx) = mpsc::channel();
-        let job = move || {
-            let _one = ALLOW_RUN.lock().unwrap_or_else(PoisonError::into_inner);
-            let mut r = Ok(());
-            for s in &steps {
-                if let Err(e) = run(s) {
-                    eprintln!("oos-ui: net.allow: {}", e);
-                    r = r.and(Err(e));
+        self.remote.failed = false;
+        self.allow_submit((run, steps));
+    }
+
+    /// Hands a run to the thread of the runs, which it starts first when there is none; while one is out, the run
+    /// waits in its place.
+    fn allow_submit(&mut self, job: (Runner, Vec<Step>)) {
+        if self.remote.runs.is_none() {
+            match Worker::spawn("net-allow", |(run, steps): (Runner, Vec<Step>)| {
+                let mut r = Ok(());
+                for s in &steps {
+                    if let Err(e) = run(s) {
+                        eprintln!("oos-ui: net.allow: {}", e);
+                        r = r.and(Err(e));
+                    }
                 }
+                r
+            }) {
+                Ok(w) => self.remote.runs = Some(w),
+                Err(e) => return self.allow_done(Err(format!("no thread for the firewall: {}", e))),
             }
-            let _ = tx.send(r);
-        };
-        match std::thread::Builder::new().name("net-allow".into()).spawn(job) {
-            Ok(_) => {
-                self.remote.job = Some(rx);
-                self.remote.failed = false;
-            }
-            Err(e) => self.allow_done(Err(format!("no thread for the firewall: {}", e))),
         }
+        let Some(runs) = self.remote.runs.as_mut() else { return };
+        match runs.submit(job) {
+            Ok(()) => {}
+            Err(TrySendError::Full(job)) => self.remote.waiting = Some(job),
+            Err(TrySendError::Disconnected(job)) => {
+                self.remote.waiting = Some(job);
+                self.allow_gone();
+            }
+        }
+    }
+
+    /// The thread of the runs ended without an answer: the run that waited goes on a new thread, so the newest
+    /// change is still put in force; without one the change that was out failed.
+    fn allow_gone(&mut self) {
+        self.remote.runs = None;
+        match self.remote.waiting.take() {
+            Some(job) => self.allow_submit(job),
+            None => self.allow_done(Err("the firewall's run ended without an answer".into())),
+        }
+    }
+
+    /// A run of a change is out or waiting: the Firewall row says "applying".
+    fn allow_applying(&self) -> bool {
+        self.remote.runs.as_ref().is_some_and(Worker::busy) || self.remote.waiting.is_some()
     }
 
     /// The answer of the firewall's run, once it is there (every frame, `step`).
     pub(super) fn allow_poll(&mut self) {
-        let Some(rx) = &self.remote.job else { return };
-        let r = match rx.try_recv() {
-            Ok(r) => r,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err("the firewall's run ended without an answer".into()),
-        };
-        self.allow_done(r);
+        let Some(runs) = self.remote.runs.as_mut().filter(|w| w.busy()) else { return };
+        match runs.poll() {
+            Ok(r) => self.allow_answer(r),
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.allow_gone(),
+        }
     }
 
-    /// Tests: waits for the answer of the firewall's run.
+    /// A run answered: the change that waited goes now, and the answer is old; else it is the answer.
+    fn allow_answer(&mut self, r: Result<(), String>) {
+        match self.remote.waiting.take() {
+            Some(job) => self.allow_submit(job),
+            None => self.allow_done(r),
+        }
+    }
+
+    /// Tests: waits for the answer of the firewall's run, and of the change that waited for it.
     #[cfg(test)]
     fn allow_wait(&mut self) {
-        if let Some(rx) = &self.remote.job {
-            let r = rx.recv().unwrap_or_else(|_| Err("the firewall's run ended without an answer".into()));
-            self.allow_done(r);
+        while let Some(runs) = self.remote.runs.as_mut().filter(|w| w.busy()) {
+            match runs.wait(std::time::Duration::from_secs(60)) {
+                Ok(r) => self.allow_answer(r),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => self.allow_gone(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("the firewall's run did not answer in 60 s"),
+            }
         }
     }
 
     /// The change is in force, or what failed: the toast and the Firewall row.
     fn allow_done(&mut self, r: Result<(), String>) {
-        self.remote.job = None;
         self.remote.failed = r.is_err();
         let now = self.sys.net_allow();
         let what = if now.is_empty() { "No address list: everyone".to_string() } else { format!("Allowed: {}", now) };
@@ -332,7 +390,9 @@ impl Ui {
         if now.is_empty() {
             return "everyone".into();
         }
-        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemAllow).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let room = self
+            .dlg_layout()
+            .and_then(|d| d.rows.iter().find(|r| r.it == Item::RemAllow).map(|r| Self::value_parts(r.ctrl).1.w - 44));
         let f = &self.fonts().mb;
         let Some(room) = room.filter(|&w| f.width(&now) > w) else { return now };
         let mut c: Vec<char> = now.chars().collect();
@@ -347,7 +407,7 @@ impl Ui {
 
     /// Firewall's row: the state in force, or the run of a change that has not answered yet or failed.
     fn firewall_value(&self) -> String {
-        if self.remote.job.is_some() {
+        if self.allow_applying() {
             "applying".into()
         } else if self.remote.failed {
             "failed: see the log".into()
@@ -360,7 +420,7 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall) || Self::ssh_text(it)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemFirewall) || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -369,14 +429,13 @@ impl Ui {
             Item::RemWeb => "Web remote",
             Item::RemScpi => "SCPI",
             Item::RemVxi => "VXI-11",
-            Item::RemTelnet => "telnet",
             Item::RemSsh => "SSH",
             Item::RemMdns => "mDNS",
             Item::RemName => "Name",
             Item::RemAllow => "Allowed",
             Item::RemFirewall => "Firewall",
             Item::NetWeb => "Address",
-            Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo => "Port",
+            Item::RemScpiInfo | Item::RemVxiInfo => "Port",
             _ => return Self::ssh_label(it),
         })
     }
@@ -389,18 +448,16 @@ impl Ui {
             Item::RemWeb => onoff(s.remote_web),
             Item::RemScpi => onoff(s.remote_scpi),
             Item::RemVxi => onoff(s.remote_vxi11),
-            Item::RemTelnet => onoff(s.remote_telnet),
             Item::RemSsh => onoff(s.remote_ssh),
             Item::RemMdns => onoff(s.remote_mdns),
             Item::RemName => self.name_value(),
             Item::RemAllow => self.allow_value(),
             Item::RemFirewall => self.firewall_value(),
             Item::NetWeb if !s.remote_web => "off".into(),
-            Item::NetWeb if self.net.is_empty() => "not connected".into(),
-            Item::NetWeb => format!("http://{}:8080", self.net),
+            Item::NetWeb if self.net.addr.is_empty() => "not connected".into(),
+            Item::NetWeb => format!("http://{}:8080", self.net.addr),
             Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
-            Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
-            Item::RemTelnetInfo => port(s.remote_telnet, "23, a shell without password".into()),
+            Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::net::VXI11_CORE_PORT)),
             _ => return self.ssh_value(it),
         })
     }
@@ -422,7 +479,6 @@ impl Ui {
             Item::RemWeb => (&mut s.remote_web, "Web remote"),
             Item::RemScpi => (&mut s.remote_scpi, "SCPI"),
             Item::RemVxi => (&mut s.remote_vxi11, "VXI-11"),
-            Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
             // the name and the address list change in their pickers only
@@ -435,7 +491,6 @@ impl Ui {
         // what is lost with it
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
-            (Item::RemTelnet, false) => self.toast("telnet off: no remote shell without password"),
             (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
@@ -446,15 +501,23 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn switches_stand_next_to_what_they_open() {
         let mut u = crate::ui::testkit::demo_ui();
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of six: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
-        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemTelnet, Item::RemTelnetInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName), (Item::RemAllow, Item::RemFirewall)] {
+        for (sw, info) in [
+            (Item::RemWeb, Item::NetWeb),
+            (Item::RemScpi, Item::RemScpiInfo),
+            (Item::RemVxi, Item::RemVxiInfo),
+            (Item::RemSsh, Item::Open(MenuId::Ssh)),
+            (Item::RemMdns, Item::RemName),
+            (Item::RemAllow, Item::RemFirewall),
+        ] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
             let b = d.rows.iter().find(|r| r.it == info).unwrap().ctrl;
             assert!(a.y == b.y && a.x < b.x, "{:?} {:?}", sw, info);
@@ -464,9 +527,9 @@ mod tests {
     #[test]
     fn a_service_switched_off_says_so() {
         let mut u = crate::ui::testkit::demo_ui();
-        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11 && u.sys.remote_telnet, "on by default");
+        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
         assert!(!u.sys.remote_ssh, "SSH off by default");
-        u.net = "192.168.1.9".into();
+        u.net.addr = "192.168.1.9".into();
         assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
         u.select_option(Item::RemWeb, "Off");
         assert!(!u.sys.remote_web);
@@ -538,7 +601,10 @@ mod tests {
         u.open_menu(MenuId::Remote);
         // the row is there, with no list: everyone, no firewall
         assert!(u.dlg_layout().unwrap().rows.iter().any(|r| r.it == Item::RemAllow));
-        assert_eq!((u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()), ("everyone", "off: everyone"));
+        assert_eq!(
+            (u.value(Item::RemAllow).as_str(), u.value(Item::RemFirewall).as_str()),
+            ("everyone", "off: everyone")
+        );
         // the network the scope is on is offered and starts the keyboard
         u.remote.lans = vec!["192.0.2.0/24".into()];
         assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24".to_string(), OTHER.into()]);
@@ -570,7 +636,15 @@ mod tests {
         assert!(!servers.permits(ip("198.51.100.1")));
         // the list in use (cut as a name is) and the network are offered; the network sets the list from the picker
         u.remote.lans = vec!["198.51.100.0/24".into(), "203.0.113.0/24".into()];
-        assert_eq!(u.options(Item::RemAllow), vec!["192.0.2.0/24 fd00\u{2026}".to_string(), "198.51.100.0/24".into(), "203.0.113.0/24".into(), OTHER.into()]);
+        assert_eq!(
+            u.options(Item::RemAllow),
+            vec![
+                "192.0.2.0/24 fd00\u{2026}".to_string(),
+                "198.51.100.0/24".into(),
+                "203.0.113.0/24".into(),
+                OTHER.into()
+            ]
+        );
         u.open_menu(MenuId::Remote);
         u.open_picker(Item::RemAllow);
         u.activate(Item::PickOpt(1));
@@ -626,7 +700,7 @@ mod tests {
         u.open_menu(MenuId::Remote);
         // SSH off: the firewall alone; the row says so until the run answered, then the state in force
         assert!(u.allow_osk_done("192.0.2.0/24"));
-        assert!(u.remote.job.is_some(), "the run is a thread of its own");
+        assert!(u.allow_applying(), "the run is on a thread of its own");
         assert_eq!(u.value(Item::RemFirewall), "applying");
         assert!(!u.acl().permits("198.51.100.1".parse().unwrap()), "the servers' list does not wait for it");
         u.allow_wait();
@@ -649,7 +723,7 @@ mod tests {
         // the answer also comes through the frame loop's poll
         assert!(u.allow_osk_done("192.0.2.0/24"));
         let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while u.remote.job.is_some() {
+        while u.allow_applying() {
             assert!(std::time::Instant::now() < until, "no answer");
             std::thread::sleep(std::time::Duration::from_millis(1));
             u.allow_poll();
@@ -666,5 +740,67 @@ mod tests {
         assert_eq!(u.toast.as_ref().unwrap().0, toast);
         assert_eq!(u.value(Item::RemFirewall), "failed: see the log");
         assert!(u.acl().permits("203.0.113.9".parse().unwrap()) && !u.acl().permits("192.0.2.9".parse().unwrap()));
+    }
+
+    /// A runner that keeps what it ran and waits for a release before each step, so a test can make changes while a
+    /// run is out; `panic_first` makes the first step end the thread.
+    fn gated(panic_first: bool) -> (Runner, std::sync::Arc<Mutex<Vec<String>>>, std::sync::mpsc::Sender<()>) {
+        let ran = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let first = std::sync::atomic::AtomicBool::new(panic_first);
+        let r = ran.clone();
+        let run: Runner = std::sync::Arc::new(move |s: &crate::remote::Step| {
+            let _ = gate.lock().unwrap().recv();
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                panic!("the test ends the thread of the runs");
+            }
+            r.lock().unwrap().push(format!("{} {}", s.prog, s.arg));
+            Ok(())
+        });
+        (run, ran, release)
+    }
+
+    // Break it catches: changes made while a run is out that each run again (stale lists, SSH stopped and started for
+    // nothing), the answer of an old run shown as the new one's, the newest change lost when the thread ends
+    #[test]
+    fn changes_while_a_run_is_out_wait_and_only_the_newest_runs() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let (run, ran, release) = gated(false);
+        u.set_allow_runner(run);
+        u.open_menu(MenuId::Remote);
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        assert!(u.allow_osk_done("198.51.100.0/24"));
+        u.sys.remote_ssh = true;
+        assert!(u.allow_osk_done(""));
+        assert!(u.allow_applying());
+        assert_eq!(u.value(Item::RemFirewall), "applying");
+        // the first run (the firewall), then the newest change alone (the firewall, SSH stopped and started)
+        for _ in 0..4 {
+            release.send(()).unwrap();
+        }
+        u.allow_wait();
+        let fw = "/bin/oos-firewall reload".to_string();
+        let ssh = |a: &str| format!("/bin/oos-ssh {}", a);
+        assert_eq!(*ran.lock().unwrap(), vec![fw.clone(), fw, ssh("stop"), ssh("start")]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert!(!u.allow_applying());
+    }
+
+    #[test]
+    fn the_newest_change_still_runs_when_the_thread_of_the_runs_ends() {
+        let mut u = crate::ui::testkit::demo_ui();
+        let (run, ran, release) = gated(true);
+        u.set_allow_runner(run);
+        u.open_menu(MenuId::Remote);
+        assert!(u.allow_osk_done("192.0.2.0/24"));
+        assert!(u.allow_osk_done("198.51.100.0/24"));
+        // the first run ends its thread; the change that waited goes on a new one
+        release.send(()).unwrap();
+        release.send(()).unwrap();
+        u.allow_wait();
+        assert_eq!(*ran.lock().unwrap(), vec!["/bin/oos-firewall reload".to_string()]);
+        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 198.51.100.0/24, in force");
+        assert_eq!(u.value(Item::RemFirewall), "on");
     }
 }

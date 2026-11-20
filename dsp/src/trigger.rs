@@ -6,8 +6,8 @@
 //! pulse, the end of a transition, the moment a timeout expires, the edge that completes a pattern, ...
 
 use crate::edges::{edges, Edge};
-use crate::CHANNELS;
 use crate::sim::VideoStd;
+use crate::CHANNELS;
 
 /// Time condition (seconds), as in the scope's "When" setting.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,28 +82,93 @@ pub enum WinWhen {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Trigger {
-    Edge { src: usize, slope: Slope, level: f32 },
+    Edge {
+        src: usize,
+        slope: Slope,
+        level: f32,
+    },
     /// pulse width (between the two crossings of `level`) satisfies `when`; trigger on the closing edge
-    Pulse { src: usize, pol: Pol, level: f32, when: When },
+    Pulse {
+        src: usize,
+        pol: Pol,
+        level: f32,
+        when: When,
+    },
     /// transition time between `lo` and `hi` satisfies `when`; trigger at the end of the transition
-    Slope { src: usize, slope: Slope, lo: f32, hi: f32, when: When },
+    Slope {
+        src: usize,
+        slope: Slope,
+        lo: f32,
+        hi: f32,
+        when: When,
+    },
     /// composite video with negative sync, `level` between sync tip and blanking
-    Video { src: usize, std: VideoStd, sync: VideoSync, level: f32 },
+    Video {
+        src: usize,
+        std: VideoStd,
+        sync: VideoSync,
+        level: f32,
+    },
     /// trigger when the pattern becomes true (or on its edge bit while the levels match)
-    Pattern { bits: [Bit; CHANNELS], levels: [f32; CHANNELS] },
+    Pattern {
+        bits: [Bit; CHANNELS],
+        levels: [f32; CHANNELS],
+    },
     /// the pattern (H/L/X) holds for a time satisfying `when`; trigger when it ends
-    Duration { bits: [Bit; CHANNELS], levels: [f32; CHANNELS], when: When },
+    Duration {
+        bits: [Bit; CHANNELS],
+        levels: [f32; CHANNELS],
+        when: When,
+    },
     /// no edge of `slope` for `time` after an edge; trigger when the time has elapsed
-    Timeout { src: usize, slope: Slope, level: f32, time: f64 },
+    Timeout {
+        src: usize,
+        slope: Slope,
+        level: f32,
+        time: f64,
+    },
     /// pulse that crosses one threshold but not the other before returning; optional width condition
-    Runt { src: usize, pol: Pol, lo: f32, hi: f32, when: Option<When> },
-    Window { src: usize, lo: f32, hi: f32, when: WinWhen },
+    Runt {
+        src: usize,
+        pol: Pol,
+        lo: f32,
+        hi: f32,
+        when: Option<When>,
+    },
+    Window {
+        src: usize,
+        lo: f32,
+        hi: f32,
+        when: WinWhen,
+    },
     /// time from an edge on A to the next edge on B satisfies `when`; trigger on the B edge
-    Delay { a: usize, slope_a: Slope, level_a: f32, b: usize, slope_b: Slope, level_b: f32, when: When },
+    Delay {
+        a: usize,
+        slope_a: Slope,
+        level_a: f32,
+        b: usize,
+        slope_b: Slope,
+        level_b: f32,
+        when: When,
+    },
     /// data changes less than `setup` before or `hold` after a clock edge
-    SetupHold { data: usize, clk: usize, clk_slope: Slope, data_level: f32, clk_level: f32, setup: f64, hold: f64 },
+    SetupHold {
+        data: usize,
+        clk: usize,
+        clk_slope: Slope,
+        data_level: f32,
+        clk_level: f32,
+        setup: f64,
+        hold: f64,
+    },
     /// the n-th edge after an idle time of at least `idle`
-    NthEdge { src: usize, slope: Slope, level: f32, idle: f64, n: u32 },
+    NthEdge {
+        src: usize,
+        slope: Slope,
+        level: f32,
+        idle: f64,
+        n: u32,
+    },
 }
 
 /// Trigger input: up to 4 channels (empty slice = off), sample period, comparator hysteresis per channel (volts).
@@ -140,89 +205,9 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
             }
         }
-        Trigger::Slope { src, slope, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new(); // (t, is_hi, rising)
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            let (mut up, mut down) = (None, None);
-            for (t, is_hi, rising) in ev {
-                match (is_hi, rising) {
-                    (false, true) => up = Some(t),
-                    (false, false) => {
-                        up = None;
-                        if let Some(s) = down.take() {
-                            if slope.matches(false) && when.ok((t - s) * dt) {
-                                out.push(t);
-                            }
-                        }
-                    }
-                    (true, false) => down = Some(t),
-                    (true, true) => {
-                        down = None;
-                        if let Some(s) = up.take() {
-                            if slope.matches(true) && when.ok((t - s) * dt) {
-                                out.push(t);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Trigger::Runt { src, pol, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new();
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            // positive runt: rises through lo, never reaches hi, falls back through lo (negative: mirrored)
-            let (open_hi, start_rising) = if pol == Pol::Pos { (false, true) } else { (true, false) };
-            let mut start: Option<f64> = None;
-            let mut spoiled = false;
-            for (t, is_hi, rising) in ev {
-                if is_hi == open_hi {
-                    if rising == start_rising {
-                        start = Some(t);
-                        spoiled = false;
-                    } else if let Some(s) = start.take() {
-                        if !spoiled && when.map_or(true, |w| w.ok((t - s) * dt)) {
-                            out.push(t);
-                        }
-                    }
-                } else if start.is_some() && rising == start_rising {
-                    spoiled = true; // reached the other threshold: a full pulse
-                }
-            }
-        }
-        Trigger::Window { src, lo, hi, when } => {
-            let mut ev: Vec<(f64, bool, bool)> = Vec::new();
-            ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
-            ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
-            ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            let mut entered: Option<f64> = None;
-            for (t, is_hi, rising) in ev {
-                // entering: up through lo or down through hi; leaving: the opposite
-                let enter = (!is_hi && rising) || (is_hi && !rising);
-                if enter {
-                    entered = Some(t);
-                    if when == WinWhen::Enter {
-                        out.push(t);
-                    }
-                } else {
-                    match when {
-                        WinWhen::Exit => out.push(t),
-                        WinWhen::Inside(w) => {
-                            if let Some(s) = entered {
-                                if w.ok((t - s) * dt) {
-                                    out.push(t);
-                                }
-                            }
-                        }
-                        WinWhen::Enter => {}
-                    }
-                    entered = None;
-                }
-            }
-        }
+        Trigger::Slope { src, slope, lo, hi, when } => out = transition(inp, src, slope, lo, hi, when),
+        Trigger::Runt { src, pol, lo, hi, when } => out = runt(inp, src, pol, lo, hi, when),
+        Trigger::Window { src, lo, hi, when } => out = window(inp, src, lo, hi, when),
         Trigger::Timeout { src, slope, level, time } => {
             let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
             let n = inp.ch[src].len() as f64;
@@ -235,8 +220,10 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
             }
         }
         Trigger::Delay { a, slope_a, level_a, b, slope_b, level_b, when } => {
-            let ea: Vec<f64> = inp.edges(a, level_a).iter().filter(|e| slope_a.matches(e.rising)).map(|e| e.t).collect();
-            let eb: Vec<f64> = inp.edges(b, level_b).iter().filter(|e| slope_b.matches(e.rising)).map(|e| e.t).collect();
+            let ea: Vec<f64> =
+                inp.edges(a, level_a).iter().filter(|e| slope_a.matches(e.rising)).map(|e| e.t).collect();
+            let eb: Vec<f64> =
+                inp.edges(b, level_b).iter().filter(|e| slope_b.matches(e.rising)).map(|e| e.t).collect();
             let mut j = 0;
             for &ta in &ea {
                 while j < eb.len() && eb[j] <= ta {
@@ -250,7 +237,8 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
             }
         }
         Trigger::SetupHold { data, clk, clk_slope, data_level, clk_level, setup, hold } => {
-            let ec: Vec<f64> = inp.edges(clk, clk_level).iter().filter(|e| clk_slope.matches(e.rising)).map(|e| e.t).collect();
+            let ec: Vec<f64> =
+                inp.edges(clk, clk_level).iter().filter(|e| clk_slope.matches(e.rising)).map(|e| e.t).collect();
             let ed: Vec<f64> = inp.edges(data, data_level).iter().map(|e| e.t).collect();
             let mut j = 0;
             for &tc in &ec {
@@ -259,7 +247,7 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
                 let before = if j > 0 { Some(ed[j - 1]) } else { None };
                 let after = ed.get(j).copied();
-                if before.map_or(false, |td| (tc - td) * dt < setup) {
+                if before.is_some_and(|td| (tc - td) * dt < setup) {
                     out.push(tc);
                 } else if let Some(td) = after {
                     if (td - tc) * dt < hold {
@@ -268,20 +256,7 @@ pub fn find_all(trig: &Trigger, inp: &Input) -> Vec<f64> {
                 }
             }
         }
-        Trigger::NthEdge { src, slope, level, idle, n } => {
-            let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
-            let lim = idle / dt;
-            let mut count = 0u32;
-            let mut prev: Option<f64> = None;
-            for &t in &e {
-                let gap = prev.map_or(t, |p| t - p);
-                count = if gap >= lim { 1 } else if count > 0 { count + 1 } else { 0 };
-                if count == n {
-                    out.push(t);
-                }
-                prev = Some(t);
-            }
-        }
+        Trigger::NthEdge { src, slope, level, idle, n } => out = nth_edge(inp, src, slope, level, idle, n),
         Trigger::Pattern { bits, levels } | Trigger::Duration { bits, levels, .. } => {
             let duration = if let Trigger::Duration { when, .. } = *trig { Some(when) } else { None };
             out = pattern(inp, bits, levels, duration);
@@ -296,6 +271,129 @@ pub fn find_first(trig: &Trigger, inp: &Input, from: f64) -> Option<f64> {
     find_all(trig, inp).into_iter().find(|&t| t > from)
 }
 
+/// Ends of transitions between `lo` and `hi` whose time satisfies `when`.
+fn transition(inp: &Input, src: usize, slope: Slope, lo: f32, hi: f32, when: When) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new(); // (t, is_hi, rising)
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    in_time_order(&mut ev);
+    let (mut up, mut down) = (None, None);
+    for (t, is_hi, rising) in ev {
+        match (is_hi, rising) {
+            (false, true) => up = Some(t),
+            (false, false) => {
+                up = None;
+                if let Some(s) = down.take() {
+                    if slope.matches(false) && when.ok((t - s) * dt) {
+                        out.push(t);
+                    }
+                }
+            }
+            (true, false) => down = Some(t),
+            (true, true) => {
+                down = None;
+                if let Some(s) = up.take() {
+                    if slope.matches(true) && when.ok((t - s) * dt) {
+                        out.push(t);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Closing edges of runt pulses: through one threshold and back without the other, width within `when`.
+fn runt(inp: &Input, src: usize, pol: Pol, lo: f32, hi: f32, when: Option<When>) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new();
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    in_time_order(&mut ev);
+    // positive runt: rises through lo, never reaches hi, falls back through lo (negative: mirrored)
+    let (open_hi, start_rising) = if pol == Pol::Pos { (false, true) } else { (true, false) };
+    let mut start: Option<f64> = None;
+    let mut spoiled = false;
+    for (t, is_hi, rising) in ev {
+        if is_hi == open_hi {
+            if rising == start_rising {
+                start = Some(t);
+                spoiled = false;
+            } else if let Some(s) = start.take() {
+                if !spoiled && when.is_none_or(|w| w.ok((t - s) * dt)) {
+                    out.push(t);
+                }
+            }
+        } else if start.is_some() && rising == start_rising {
+            spoiled = true; // reached the other threshold: a full pulse
+        }
+    }
+    out
+}
+
+/// Entries into or exits from the window between `lo` and `hi`, as `when` asks.
+fn window(inp: &Input, src: usize, lo: f32, hi: f32, when: WinWhen) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let mut ev: Vec<(f64, bool, bool)> = Vec::new();
+    ev.extend(inp.edges(src, lo).iter().map(|e| (e.t, false, e.rising)));
+    ev.extend(inp.edges(src, hi).iter().map(|e| (e.t, true, e.rising)));
+    in_time_order(&mut ev);
+    let mut entered: Option<f64> = None;
+    for (t, is_hi, rising) in ev {
+        // entering: up through lo or down through hi; leaving: the opposite
+        let enter = (!is_hi && rising) || (is_hi && !rising);
+        if enter {
+            entered = Some(t);
+            if when == WinWhen::Enter {
+                out.push(t);
+            }
+        } else {
+            match when {
+                WinWhen::Exit => out.push(t),
+                WinWhen::Inside(w) => {
+                    if let Some(s) = entered {
+                        if w.ok((t - s) * dt) {
+                            out.push(t);
+                        }
+                    }
+                }
+                WinWhen::Enter => {}
+            }
+            entered = None;
+        }
+    }
+    out
+}
+
+/// The n-th edge of `slope` after an idle time of at least `idle`.
+fn nth_edge(inp: &Input, src: usize, slope: Slope, level: f32, idle: f64, n: u32) -> Vec<f64> {
+    let dt = inp.dt;
+    let mut out = Vec::new();
+    let e: Vec<f64> = inp.edges(src, level).iter().filter(|e| slope.matches(e.rising)).map(|e| e.t).collect();
+    let lim = idle / dt;
+    let mut count = 0u32;
+    let mut prev: Option<f64> = None;
+    for &t in &e {
+        let gap = prev.map_or(t, |p| t - p);
+        count = if gap >= lim {
+            1
+        } else if count > 0 {
+            count + 1
+        } else {
+            0
+        };
+        if count == n {
+            out.push(t);
+        }
+        prev = Some(t);
+    }
+    out
+}
+
 fn pattern(inp: &Input, bits: [Bit; CHANNELS], levels: [f32; CHANNELS], duration: Option<When>) -> Vec<f64> {
     let mut ev: Vec<(f64, usize, bool)> = Vec::new();
     let mut state = [None; CHANNELS];
@@ -308,7 +406,7 @@ fn pattern(inp: &Input, bits: [Bit; CHANNELS], levels: [f32; CHANNELS], duration
         state[c] = Some(e.first().map_or(inp.ch[c][0] > levels[c], |f| !f.rising));
         ev.extend(e.iter().map(|x| (x.t, c, x.rising)));
     }
-    ev.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    in_time_order(&mut ev);
     let level_ok = |s: &[Option<bool>; CHANNELS], skip: Option<usize>| {
         (0..4).all(|c| {
             Some(c) == skip
@@ -428,6 +526,14 @@ fn video(inp: &Input, src: usize, std: VideoStd, sync: VideoSync, level: f32) ->
         }
         prev = k;
     }
-    out.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    out.retain(|t| t.is_finite());
+    out.sort_by(f64::total_cmp);
     out
+}
+
+/// Edge events in time order. A time that is not finite (the interpolation of `crate::edges` overflows f32 near the
+/// ends of its range) is no real crossing and is dropped: `total_cmp` would put a NaN with its sign bit set first.
+fn in_time_order<A, B>(ev: &mut Vec<(f64, A, B)>) {
+    ev.retain(|e| e.0.is_finite());
+    ev.sort_by(|a, b| a.0.total_cmp(&b.0));
 }

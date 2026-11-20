@@ -25,7 +25,14 @@ pub(super) struct SshUi {
 
 impl Default for SshUi {
     fn default() -> Self {
-        SshUi { dir: None, stick: "/mnt/usb".into(), keys: Vec::new(), state: String::new(), host_fp: None, read_at: None }
+        SshUi {
+            dir: None,
+            stick: "/mnt/usb".into(),
+            keys: Vec::new(),
+            state: String::new(),
+            host_fp: None,
+            read_at: None,
+        }
     }
 }
 
@@ -59,7 +66,16 @@ impl Ui {
     }
 
     pub(super) fn ssh_items(&self) -> Vec<Item> {
-        vec![Item::SshState, Item::SshPassword, Item::SshShowPass, Item::SshHostKey, Item::SshKeys, Item::SshKeyList, Item::SshImport, Item::SshRemove]
+        vec![
+            Item::SshState,
+            Item::SshPassword,
+            Item::SshShowPass,
+            Item::SshHostKey,
+            Item::SshKeys,
+            Item::SshKeyList,
+            Item::SshImport,
+            Item::SshRemove,
+        ]
     }
 
     pub(super) fn ssh_kind(it: Item) -> Option<Kind> {
@@ -96,7 +112,9 @@ impl Ui {
             Item::SshState if s.state.is_empty() => "not started".into(),
             Item::SshState => s.state.clone(),
             Item::SshPassword => if self.sys.ssh_password { "On" } else { "Off" }.into(),
-            Item::SshHostKey => s.host_fp.as_ref().map_or("not made yet".into(), |f| format!("{}\u{2026}", &f[..f.len().min(19)])),
+            Item::SshHostKey => {
+                s.host_fp.as_ref().map_or("not made yet".into(), |f| format!("{}\u{2026}", &f[..f.len().min(19)]))
+            }
             Item::SshKeys if s.keys.is_empty() => "none".into(),
             Item::SshKeys => s.keys.len().to_string(),
             Item::SshRemoveKey => String::new(),
@@ -149,10 +167,10 @@ impl Ui {
     }
 
     fn ssh_login(&self) -> String {
-        if self.net.is_empty() {
+        if self.net.addr.is_empty() {
             "ssh root@<address of the scope>".into()
         } else {
-            format!("ssh root@{}", self.net)
+            format!("ssh root@{}", self.net.addr)
         }
     }
 
@@ -301,7 +319,7 @@ mod tests {
         let (mut u, d) = with_dir("show");
         std::fs::create_dir_all(d.join("ssh")).unwrap();
         std::fs::write(d.join("ssh").join("password"), "abcd-efgh-jkmn-pqrs\n").unwrap();
-        u.net = "192.0.2.10".into();
+        u.net.addr = "192.0.2.10".into();
         let d_items = u.dlg_layout().unwrap();
         for r in &d_items.rows {
             assert!(!u.value(r.it).contains("abcd"), "{:?} shows the password", r.it);

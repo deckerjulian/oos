@@ -69,7 +69,7 @@ fn gcd(a: u64, b: u64) -> u64 {
 pub fn params(mask: u32, tdiv_fs: i128, depth: i128, p: &hz::Params) -> Params {
     let dot = p.dot_fs.max(1);
     let s = ((tdiv_fs / 100) as u64 / dot).max(1); // column = time/div / 100, in sample periods
-    let k = (1..=s).find(|&k| s % k == 0 && s / k <= 1000).unwrap_or(s);
+    let k = (1..=s).find(|&k| s.is_multiple_of(k) && s / k <= 1000).unwrap_or(s);
     let (mut num, mut den) = (1u64, 1u64);
     if 1000 * s / k < 1_000_000 {
         let req = hz::requested_rate(mask, tdiv_fs, depth) as u64;
@@ -115,7 +115,7 @@ pub fn config(sh: &mut Shadows, rp: &Params, memsel: u32) -> Vec<Write> {
         (0x1160, 0),
         (0x1164, 0xffff_ffff),
         (0x11fc, 100 / r),
-        (0x11f0, (rp.len + 7) / 8 * 8),
+        (0x11f0, rp.len.div_ceil(8) * 8),
         (0x1170, 0xc000_0000 | (10 * r * rp.k)),
         (0x1174, 0x4000_0001),
     ];
@@ -218,7 +218,11 @@ pub fn la_compress(rp: &Params, m: u32) -> u32 {
 /// alternate and share the counter (seen on the unit: LA 1, analog 2, LA 3, ...), so analog chunk n has the counter 2n.
 pub fn scan_column(counter: u16, la: bool) -> usize {
     let c = counter.max(1) as usize;
-    if la { (c / 2).max(1) - 1 } else { c - 1 }
+    if la {
+        (c / 2).max(1) - 1
+    } else {
+        c - 1
+    }
 }
 
 /// Time between two LA words of the stream (fs). An LA chunk of 100 words spans the time of an analog chunk of
@@ -238,7 +242,7 @@ pub fn la_config(rp: &Params, t: &crate::dho::la::Timing) -> Vec<Write> {
     let lin_on = rp.f_num != rp.f_den;
     vec![
         (0x12cc, r * (100 / r)),
-        (0x12c0, (rp.len + 7) / 8 * 8),
+        (0x12c0, rp.len.div_ceil(8) * 8),
         (0x1298, 0xc000_0000 | (la_compress(rp, t.m) & 0x0fff_ffff)),
         (0x129c, 0x4000_0001),
         (0x1280, if lin_on { 0x08 } else { 0x0c }),
@@ -265,9 +269,9 @@ pub fn is_la_chunk(chunk: &[u8]) -> bool {
 pub fn split_la(bytes: &[u8], mask: u32) -> ([Vec<u16>; 4], Vec<u16>) {
     let mut analog = Vec::with_capacity(bytes.len());
     let mut la = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(CHUNK_BYTES) {
+    for chunk in bytes.as_chunks::<CHUNK_BYTES>().0 {
         if is_la_chunk(chunk) {
-            la.extend(chunk[16..].chunks_exact(2).map(|w| u16::from_le_bytes([w[0], w[1]])));
+            la.extend(chunk[16..].as_chunks::<2>().0.iter().map(|w| u16::from_le_bytes([w[0], w[1]])));
         } else {
             analog.extend_from_slice(chunk);
         }
@@ -289,7 +293,7 @@ pub fn split(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
     if mask & 0xf == 0 {
         return out;
     }
-    for chunk in bytes.chunks_exact(CHUNK_BYTES) {
+    for chunk in bytes.as_chunks::<CHUNK_BYTES>().0 {
         for (o, c) in out.iter_mut().zip(crate::dho::seq::deinterleave(&chunk[16..], mask)) {
             o.extend(c);
         }
@@ -329,7 +333,10 @@ mod tests {
         assert_eq!(rp.spacing_fs, 10_000_000_000);
         let w = config(&mut Shadows { ..Shadows::HANDOVER }, &rp, hp.memsel);
         let get = |r: u32| w.iter().find(|x| x.0 == r).unwrap().1;
-        assert_eq!((get(0x1170), get(0x11fc), get(0x11f0), get(0x1100), get(0x115c)), (0xc000_03e8, 100, 0xf4240, 0x3b9_af4c, 0x9fff_ffff));
+        assert_eq!(
+            (get(0x1170), get(0x11fc), get(0x11f0), get(0x1100), get(0x115c)),
+            (0xc000_03e8, 100, 0xf4240, 0x3b9_af4c, 0x9fff_ffff)
+        );
         assert_eq!(get(0x1154), 2);
         assert_eq!(w.last().unwrap().1 & (1 << 17), 1 << 17);
     }
@@ -418,7 +425,10 @@ mod tests {
         let s = split(&b, 0b1011);
         assert_eq!((s[0].len(), s[1].len(), s[2].len(), s[3].len()), (25, 25, 0, 25));
         assert_eq!((s[0][1], s[1][1], s[3][1]), (4, 5, 7));
-        assert_eq!((points_per_chunk(0b1011), points_per_chunk(0b1111), points_per_chunk(0b0101), points_per_chunk(0b0100)), (25, 25, 50, 100));
+        assert_eq!(
+            (points_per_chunk(0b1011), points_per_chunk(0b1111), points_per_chunk(0b0101), points_per_chunk(0b0100)),
+            (25, 25, 50, 100)
+        );
         assert!(split(&b, 0).iter().all(|c| c.is_empty()));
     }
 }
@@ -455,7 +465,8 @@ mod la_tests {
         let w = la_config(&rp(4, 8), &Timing { m: 4, rate: 1, n: 0, pre: 0 });
         assert!(w.contains(&(0x12cc, 100)) && w.contains(&(0x12c0, 1000)) && w.contains(&(0x1298, 0xc000_00a0)));
         assert!(w.contains(&(0x1280, 0x0c)) && w.contains(&(0x12b4, 0xffff_ffff)));
-        let w = la_config(&Params { f_num: 2, f_den: 1, ratio: 3, ..rp(1, 1) }, &Timing { m: 1, rate: 1, n: 0, pre: 0 });
+        let w =
+            la_config(&Params { f_num: 2, f_den: 1, ratio: 3, ..rp(1, 1) }, &Timing { m: 1, rate: 1, n: 0, pre: 0 });
         assert!(w.contains(&(0x12cc, 99)), "ratio x (n / ratio)");
         assert!(w.contains(&(0x1280, 0x08)) && w.contains(&(0x12b4, u32::MAX / 2)));
     }
@@ -465,7 +476,7 @@ mod la_tests {
         let chunk = |la: bool, v: u16| {
             let mut c = vec![0u8; CHUNK_BYTES];
             c[2] = if la { 2 } else { 0 };
-            for w in c[16..].chunks_exact_mut(2) {
+            for w in c[16..].as_chunks_mut::<2>().0 {
                 w.copy_from_slice(&v.to_le_bytes());
             }
             c

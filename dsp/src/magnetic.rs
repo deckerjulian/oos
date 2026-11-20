@@ -4,8 +4,7 @@
 //! Magnetic measurements on a winding: inductance from the ψ–i slope, B / H / μr when the core geometry is set,
 //! cycle loss, and the I vs ∫V loop. ψ is the flux linkage ∫v dt (V·s), restarted at each voltage cycle.
 
-use crate::edges::edges;
-use crate::power::{integrate, quality};
+use crate::power::{integrate, mean_crossings, quality};
 use std::f64::consts::{PI, SQRT_2};
 
 /// Permeability of free space, H/m.
@@ -104,7 +103,7 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
         return out;
     }
     let g = clean_geom(geom);
-    let Some((freq, rises)) = voltage_cycles(v, dt) else {
+    let Some((freq, rises)) = mean_crossings(v, dt).filter(|(freq, _)| *freq > 0.0) else {
         out.partial = true;
         out.note = "under one cycle";
         out.loops = vec![partial_loop(v, i, dt)];
@@ -174,7 +173,7 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
     if out.dropped > 0 && out.note.is_empty() {
         out.note = "cycle did not close";
     }
-    if slopes.len() >= 1 {
+    if !slopes.is_empty() {
         out.l = Some(slopes.iter().sum::<f64>() / slopes.len() as f64);
         out.i_lo = lo_s.iter().sum::<f64>() / lo_s.len() as f64;
         out.i_hi = hi_s.iter().sum::<f64>() / hi_s.len() as f64;
@@ -218,25 +217,6 @@ fn clean_geom(g: Geom) -> Geom {
     }
 }
 
-/// Rising crossings of the voltage mean, and the frequency, the same rule as `power::freq_of`.
-fn voltage_cycles(v: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
-    let f: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
-    if f.len() < 4 {
-        return None;
-    }
-    let mean = f.iter().map(|&x| x as f64).sum::<f64>() / f.len() as f64;
-    let (lo, hi) = f.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
-    if !(hi > lo) {
-        return None;
-    }
-    let r: Vec<f64> = edges(v, mean as f32, 0.1 * (hi - lo)).into_iter().filter(|e| e.rising).map(|e| e.t).collect();
-    if r.len() < 2 {
-        return None;
-    }
-    let freq = (r.len() - 1) as f64 / ((r[r.len() - 1] - r[0]) * dt);
-    (freq > 0.0).then_some((freq, r))
-}
-
 fn mean_finite(x: &[f32]) -> f64 {
     crate::power::mean_finite(x).unwrap_or(f64::NAN)
 }
@@ -251,7 +231,11 @@ fn at(x: &[f32], t: f64) -> f64 {
         return v;
     }
     let w = x[k + 1] as f64;
-    if v.is_finite() && w.is_finite() { v + (w - v) * (t - k as f64) } else { f64::NAN }
+    if v.is_finite() && w.is_finite() {
+        v + (w - v) * (t - k as f64)
+    } else {
+        f64::NAN
+    }
 }
 
 /// (ψ, i) from t0 to t1, ψ at t1, and the peak |ψ|. NaN voltage holds ψ; NaN current is left out of the trace.
@@ -264,24 +248,24 @@ fn flux_loop(v: &[f32], i: &[f32], mean: f64, t0: f64, t1: f64, dt: f64) -> (Vec
     let k0 = (t0.ceil() as usize).min(n);
     let k1 = (t1.floor() as usize).min(n.saturating_sub(1));
     if k0 <= k1 && k1 < n {
-    for k in k0..=k1 {
-        let tk = k as f64;
-        if tk + 1e-9 < t0 {
-            continue;
-        }
-        let vk = v[k] as f64 - mean;
-        if let Some((pt, pv)) = prev {
-            if pv.is_finite() && vk.is_finite() && tk > pt {
-                psi += 0.5 * (pv + vk) * (tk - pt) * dt;
+        for k in k0..=k1 {
+            let tk = k as f64;
+            if tk + 1e-9 < t0 {
+                continue;
+            }
+            let vk = v[k] as f64 - mean;
+            if let Some((pt, pv)) = prev {
+                if pv.is_finite() && vk.is_finite() && tk > pt {
+                    psi += 0.5 * (pv + vk) * (tk - pt) * dt;
+                }
+            }
+            prev = if vk.is_finite() { Some((tk, vk)) } else { None };
+            peak = peak.max(psi.abs());
+            let y = i[k] as f64;
+            if y.is_finite() && tk <= t1 + 1e-9 {
+                pts.push((psi, y));
             }
         }
-        prev = if vk.is_finite() { Some((tk, vk)) } else { None };
-        peak = peak.max(psi.abs());
-        let y = i[k] as f64;
-        if y.is_finite() && tk <= t1 + 1e-9 {
-            pts.push((psi, y));
-        }
-    }
     }
     if let Some((pt, pv)) = prev {
         let vend = at(v, t1) - mean;
@@ -318,7 +302,8 @@ fn branch_fit(pts: &[(f64, f64)], i_peak_hint: f64) -> Option<(f64, f64, f64, bo
             imax = k;
         }
     }
-    let rising: Vec<usize> = if imax >= imin { (imin..=imax).collect() } else { (imin..pts.len()).chain(0..=imax).collect() };
+    let rising: Vec<usize> =
+        if imax >= imin { (imin..=imax).collect() } else { (imin..pts.len()).chain(0..=imax).collect() };
     if rising.len() < 8 {
         return None;
     }
@@ -347,10 +332,8 @@ fn branch_fit(pts: &[(f64, f64)], i_peak_hint: f64) -> Option<(f64, f64, f64, bo
             yu.push(psi);
         }
     }
-    let sat = match (lin_slope(&xl, &yl), lin_slope(&xu, &yu)) {
-        (Some(a), Some(b)) if a > 0.0 && b > 0.0 && (b > 2.0 * a || a > 2.0 * b) => true,
-        _ => false,
-    };
+    let sat = matches!((lin_slope(&xl, &yl), lin_slope(&xu, &yu)),
+        (Some(a), Some(b)) if a > 0.0 && b > 0.0 && (b > 2.0 * a || a > 2.0 * b));
     Some((slope, lo, hi, sat))
 }
 
@@ -361,7 +344,11 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     let x = p.clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
     let i = x.floor() as usize;
     let f = x - i as f64;
-    if i + 1 >= sorted.len() { sorted[i] } else { sorted[i] * (1.0 - f) + sorted[i + 1] * f }
+    if i + 1 >= sorted.len() {
+        sorted[i]
+    } else {
+        sorted[i] * (1.0 - f) + sorted[i + 1] * f
+    }
 }
 
 /// Least-squares slope of y against x.

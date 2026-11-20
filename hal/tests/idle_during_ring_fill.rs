@@ -7,8 +7,8 @@
 //! flag, so the counts say what happened on any computer. A sleep between two calls with work does not show in them.
 
 use oos_hal::dho::bus::{Bus, DmaBuf};
-use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::{acquire_batch_idle, Settings, State};
+use oos_hal::dho::sim::{engine, Engine};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -21,16 +21,28 @@ fn idle_runs_while_the_ring_fills_and_never_after() {
     let mut dma = DmaBuf::new();
     let (mut calls, mut full_at) = (0u32, None);
     // a wait of a minute: the batch ends when the ring is full, so a slow computer cannot end it first
-    let r = acquire_batch_idle(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 60_000, |_| {}, || false, || {
-        calls += 1;
-        // the caller's work takes time; meanwhile the FPGA records the next frame
-        let mut e = eng.borrow_mut();
-        e.rd(0x4080);
-        if e.rd(0x4010) + 1 >= 10 && full_at.is_none() {
-            full_at = Some(calls);
-        }
-        true
-    });
+    let r = acquire_batch_idle(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        60_000,
+        |_| {},
+        || false,
+        || {
+            calls += 1;
+            // the caller's work takes time; meanwhile the FPGA records the next frame
+            let mut e = eng.borrow_mut();
+            e.rd(0x4080);
+            if e.rd(0x4010) + 1 >= 10 && full_at.is_none() {
+                full_at = Some(calls);
+            }
+            true
+        },
+    );
     assert_eq!(r, Ok(10));
     // the arm's poll of the done flag recorded frame 1, each call one more: nine calls fill the ring of ten
     assert_eq!(calls, 9);
@@ -48,10 +60,22 @@ fn without_work_the_wait_is_unchanged() {
     let mut dma = DmaBuf::new();
     let mut calls = 0u32;
     let t = Instant::now();
-    let r = acquire_batch_idle(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || false, || {
-        calls += 1;
-        false
-    });
+    let r = acquire_batch_idle(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || false,
+        || {
+            calls += 1;
+            false
+        },
+    );
     // only the frame of the arm's poll: nothing looked at the done flag while waiting
     assert_eq!(r, Ok(1));
     assert!(calls > 0, "the hook was never called");

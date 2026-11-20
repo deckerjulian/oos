@@ -62,7 +62,8 @@ The `misc` boot request is not on the power-on path.
 **Switch used by OOS:** replace the magic `KRNL` at the start of `boot` (LBA 122880) with `OOSK`. The loader then
 boots `recovery`, and if it refuses that image it boots `backup`, which holds a copy of the stock boot image
 (`card-install.py --fallback-stock`), in its first 32 MiB. Back to stock: write `KRNL` again. `boot/switch.py` does this
-on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-shot), and `oos-boot-oos-again` sets `OOSK`.
+on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-shot), and `oos-boot-oos-again` sets `OOSK`
+(on the screen: System > Start OOS again; both run `oos-update arm`, docs/update.md).
 
 ### Ramdisk length must be a multiple of 4
 
@@ -135,6 +136,8 @@ from `/etc/oos-board` ([porting.md](porting.md)):
    without confirmation is rolled back here. After oos-ui: `oos-update watch` in the background confirms the trial
    (oos-ui 20 s stable + start-up finished) or writes the previous image back.
 4d. `oos-wlan` in the background: waits for the end of the start-up, then WLAN through a USB stick (`wlan.md`).
+   `oos-bt` beside it: Bluetooth through a USB stick, the system bus and bluetoothd while one is there
+   (`bluetooth.md`).
 5. In the background: `oos-mount-rigol`, then **`oos-fpgad cold-boot --execute --power-on --booted --progress`**:
    calibration files check (warn if one is missing or damaged), sample clock and AFEs during the FPGA wait (GPIO
    only, no FPGA needed), the rest of the wait, PCIe polled every 20 ms, the cold-boot steps grouped into the screen's stages (`boot::stage`: FPGA image, sample clock, analog front ends,

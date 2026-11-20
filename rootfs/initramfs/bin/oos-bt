@@ -1,0 +1,74 @@
+#!/bin/sh
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Bluetooth through a USB stick in the front port (docs/bluetooth.md), started by rcS in the background, log in
+# /tmp/oos-bt.log. Waits for the end of the start-up, then every 2 s: a stick in its driver-CD mode -> switch it
+# (oos-usbmode); a Bluetooth interface there -> load the modules; hci0 there -> the system bus and bluetoothd. A stick can
+# come and go at any time. The GUI (System > Bluetooth) talks to bluetoothd on the system bus.
+ST=/tmp/oos-boot.status
+DIR=/oos/bluetooth
+[ -d /oos/setups ] || DIR=/tmp/bluetooth
+K=/lib/modules/$(uname -r)/kernel
+BUS=/run/dbus/pid
+BTD=/run/bluetoothd.pid
+
+n=0
+while [ $n -lt 60 ] && ! grep -qE '^[^	]*	(end|abort)	' $ST 2>/dev/null; do
+	sleep 1
+	n=$((n + 1))
+done
+
+running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+# a Bluetooth controller on USB: interface class e0 (wireless), subclass 01 (RF), protocol 01 (Bluetooth)
+bt_interface() {
+	for i in /sys/bus/usb/devices/[0-9]*-[1-9]*:*; do
+		[ "$(cat "$i/bInterfaceClass" 2>/dev/null)$(cat "$i/bInterfaceSubClass" 2>/dev/null)$(cat "$i/bInterfaceProtocol" 2>/dev/null)" = e00101 ] && return 0
+	done
+	return 1
+}
+
+load() {
+	[ -e /sys/module/btusb ] && return
+	for m in net/bluetooth/bluetooth net/bluetooth/hidp/hidp drivers/bluetooth/btrtl drivers/bluetooth/btintel \
+		drivers/bluetooth/btbcm drivers/bluetooth/btusb; do
+		insmod $K/$m.ko 2>&1 | grep -v 'File exists'
+	done
+	echo "oos-bt: driver loaded"
+}
+
+start() {
+	mkdir -p "$DIR" /run/dbus /var/lib
+	chmod 700 "$DIR"
+	# the pairings (link keys) live on the data partition, so a paired mouse stays paired
+	[ -L /var/lib/bluetooth ] || ln -sfn "$DIR" /var/lib/bluetooth
+	[ -s /etc/machine-id ] || tr -d '-' < /proc/sys/kernel/random/uuid > /etc/machine-id
+	if ! running $BUS; then
+		rm -f /run/dbus/system_bus_socket $BUS
+		dbus-daemon --config-file=/etc/oos-bt/dbus.conf --fork && echo "oos-bt: system bus runs"
+	fi
+	# the scope's name (net.name, the kernel's host name) as the adapter's: bluetoothd itself takes "%h" literally
+	sed "s/%h/$(cat /proc/sys/kernel/hostname)/" /etc/bluetooth/main.conf > /run/bluetooth-main.conf
+	bluetoothd -n -f /run/bluetooth-main.conf >> /tmp/bluetoothd.log 2>&1 &
+	echo $! > $BTD
+	echo "oos-bt: bluetoothd runs"
+}
+
+stop() {
+	running $BTD && kill "$(cat $BTD)"
+	rm -f $BTD
+}
+
+while :; do
+	[ -n "$(oos-usbmode list 2>/dev/null)" ] && oos-usbmode
+	if [ -e /sys/class/bluetooth/hci0 ]; then
+		running $BTD || start
+	else
+		bt_interface && load
+		if running $BTD; then
+			echo "oos-bt: stick gone"
+			stop
+		fi
+	fi
+	sleep 2
+done

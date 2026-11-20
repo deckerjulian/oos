@@ -10,7 +10,8 @@ use super::*;
 use oos_dsp::bandwidth;
 
 /// Frequency hints: 0 = Auto (the signal is below Nyquist, its tone is taken as it is).
-const HINTS: [f64; 16] = [0.0, 1e6, 2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 150e6, 200e6, 250e6, 300e6, 400e6, 500e6, 750e6, 1e9];
+const HINTS: [f64; 16] =
+    [0.0, 1e6, 2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 150e6, 200e6, 250e6, 300e6, 400e6, 500e6, 750e6, 1e9];
 /// Bins per period of the folded picture.
 const BINS: [usize; 5] = [250, 500, 1000, 2000, 5000];
 
@@ -48,7 +49,13 @@ impl Ui {
     pub(super) fn bw_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::BwOn => if m.view == AView::Step { "On".into() } else { "Off".into() },
+            Item::BwOn => {
+                if m.view == AView::Step {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::BwSrc => format!("CH{}", m.bw_src + 1),
             Item::BwHint => Self::hint_name(m.bw_hint),
             Item::BwBins => m.bw_bins.to_string(),
@@ -110,7 +117,13 @@ impl Ui {
         });
         match res {
             Some((f, step, r)) => {
-                self.azr.bw_info = format!("{} at {}, {} points, picture step {}", si(f, "Hz"), si_short(fs, "Sa/s"), fmt_count(v.len() as f64), si(step, "s"));
+                self.azr.bw_info = format!(
+                    "{} at {}, {} points, picture step {}",
+                    si(f, "Hz"),
+                    si_short(fs, "Sa/s"),
+                    fmt_count(v.len() as f64),
+                    si(step, "s")
+                );
                 self.azr.bw = Some(r);
             }
             None => {
@@ -125,7 +138,8 @@ impl Ui {
         let f = self.fonts();
         let col = CH_COLORS[self.m.bw_src.min(NCH - 1)];
         let Some(r) = &self.azr.bw else {
-            let msg = if self.azr.bw_info.is_empty() { "waiting for a record".to_string() } else { self.azr.bw_info.clone() };
+            let msg =
+                if self.azr.bw_info.is_empty() { "waiting for a record".to_string() } else { self.azr.bw_info.clone() };
             cv.text_in(&f.m, a, 1, &msg, DIM);
             return;
         };
@@ -223,10 +237,6 @@ impl super::analysers::Analyser for BandwidthPage {
 
     fn menu(&self) -> MenuId {
         MenuId::BwTest
-    }
-
-    fn stored(&self) -> bool {
-        false
     }
 
     /// Identify (what is connected to the inputs) sits beside it in the start menu.

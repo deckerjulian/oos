@@ -9,8 +9,29 @@
 
 use super::*;
 use oos_dsp::decode::{uart, Kind, Parity};
+use oos_dsp::protocols::BusWhat;
 
 pub struct Example;
+
+/// What a decoder is: a module of the scope declares it next to its decoder in oos-dsp, in the file of its family
+/// (`decode/<family>.rs`), and lists it in `oos_dsp::protocols::MODULES`; the example keeps it here, out of the scope.
+static INFO: ModuleInfo = ModuleInfo::new("Example", "Example", "serial")
+    .roles([Some("Data"), None, None, None])
+    .trigger(trigger)
+    .starts_on(BusWhat::Data, 0x4f)
+    .bit(|opt, _| 1.0 / RATES[opt[0]])
+    // a frame is ten bits; 200 bit times would be enough, this shows the hook
+    .span(|opt, _| Some(40.0 / RATES[opt[0]]))
+    .decoder(|l| Ok(uart(l.need(0, "data line missing")?, l.dt, RATES[l.opt[0]], 8, Parity::None, l.thr, l.hy, false)));
+
+/// The protocol trigger: Frame = every byte; Data = the byte value; the generic rule for the rest.
+fn trigger(what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
+    match what {
+        BusWhat::Frame => Some(p.kind == Kind::Data),
+        BusWhat::Data => Some(p.kind == Kind::Data && p.value == value),
+        _ => None,
+    }
+}
 
 const RATES: [f64; 3] = [9600.0, 19200.0, 115200.0];
 
@@ -20,41 +41,14 @@ static OPTIONS: [Opt; 2] = [
 ];
 
 impl Protocol for Example {
-    fn key(&self) -> &'static str {
-        "Example"
-    }
-    fn name(&self) -> &'static str {
-        "Example"
-    }
-    fn roles(&self) -> [Option<&'static str>; 4] {
-        [Some("Data"), None, None, None]
+    fn info(&self) -> &'static ModuleInfo {
+        &INFO
     }
     fn options(&self) -> &'static [Opt] {
         &OPTIONS
     }
-    fn bit_time(&self, opt: &[usize; OPTS]) -> f64 {
-        1.0 / RATES[opt[0]]
-    }
-    /// A frame is ten bits; 200 bit times would be enough, this shows the hook.
-    fn frame_span(&self, opt: &[usize; OPTS]) -> Option<f64> {
-        Some(40.0 * self.bit_time(opt))
-    }
-    fn decode(&self, l: &Lines) -> Result<Vec<Packet>, &'static str> {
-        Ok(uart(l.need(0, "data line missing")?, l.dt, RATES[l.opt[0]], 8, Parity::None, l.thr, l.hy, false))
-    }
     fn text(&self, p: &Packet, opt: &[usize; OPTS]) -> Option<String> {
         (p.kind == Kind::Data).then(|| if opt[1] == 1 { format!("{}", p.value) } else { format!("{:02X}", p.value) })
-    }
-    /// Frame = every byte; Data = the byte value.
-    fn trigger_match(&self, what: BusWhat, value: u32, p: &Packet) -> Option<bool> {
-        match what {
-            BusWhat::Frame => Some(p.kind == Kind::Data),
-            BusWhat::Data => Some(p.kind == Kind::Data && p.value == value),
-            _ => None,
-        }
-    }
-    fn trigger_default(&self) -> (BusWhat, u32) {
-        (BusWhat::Data, 0x4f)
     }
     fn start_edge(&self) -> Slope {
         Slope::Fall
@@ -65,7 +59,7 @@ impl Protocol for Example {
     /// "OOS" at 19200 bit/s, 3.3 V.
     fn demo(&self) -> Option<Demo> {
         let baud = RATES[OPTIONS[0].default];
-        let mut w = oos_dsp::decode_ext::gen::Wave::new(0.0, 3.3, 20e-9);
+        let mut w = oos_dsp::decode::gen::Wave::new(0.0, 3.3, 20e-9);
         w.level(true, 5.0 / baud);
         for b in *b"OOS" {
             w.uart(b as u32, 8, Parity::None, 1, baud);
@@ -82,7 +76,8 @@ impl Protocol for Example {
         let total: &mut usize = memory(mem);
         *total += bytes.len();
         let bad = p.iter().any(|x| !x.ok);
-        let status = if bad { ("Framing error".to_string(), Tone::Bad) } else { (format!("{} bytes", total), Tone::Good) };
+        let status =
+            if bad { ("Framing error".to_string(), Tone::Bad) } else { (format!("{} bytes", total), Tone::Good) };
         let last = bytes.iter().rev().take(4).map(|x| self.text(x, opt).unwrap_or_default()).collect();
         Some(View { status: Some(status), sections: vec![Section { title: "Last bytes".into(), rows: last }] })
     }

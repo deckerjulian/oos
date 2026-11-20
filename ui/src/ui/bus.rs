@@ -5,9 +5,10 @@
 //! type is I2C: a clock and a data line. Each line is a channel or a reference slot, with its own threshold.
 //! Decoded words are drawn in hex. The read/write bit can be part of the address byte or left out of it.
 
+use super::worker::Worker;
 use super::{
-    Canvas, Item, Kind, MenuId, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV,
-    LINE, NCH, NREF, RED, TEXT,
+    Canvas, Item, Kind, MenuId, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED,
+    TEXT,
 };
 use crate::gfx::{mix, rgb, scale, Rgb};
 use crate::model::{n_ch, si, BusKind, WaveId};
@@ -24,32 +25,36 @@ const BUS_ERR_FILL: Rgb = rgb(0x70, 0x18, 0x18);
 pub(super) struct Cache {
     key: Option<String>,
     packets: Vec<Packet>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, (String, Vec<Packet>)>>,
     scans: usize,
 }
-struct Job { key: String, data: Vec<f32>, clk: Vec<f32>, t0: f64, dt: f64, thresholds: [f32;4] }
+struct Job {
+    key: String,
+    data: Vec<f32>,
+    clk: Vec<f32>,
+    t0: f64,
+    dt: f64,
+    thresholds: [f32; 4],
+}
 impl Job {
     fn run(&self) -> Vec<Packet> {
         let [data, dh, clk, ch] = self.thresholds;
-        i2c_at(&self.data,&self.clk,data,dh,clk,ch).into_iter().map(|mut packet| {
-            packet.t0=self.t0+packet.t0*self.dt;packet.t1=self.t0+packet.t1*self.dt;packet
-        }).collect()
+        i2c_at(&self.data, &self.clk, data, dh, clk, ch)
+            .into_iter()
+            .map(|mut packet| {
+                packet.t0 = self.t0 + packet.t0 * self.dt;
+                packet.t1 = self.t0 + packet.t1 * self.dt;
+                packet
+            })
+            .collect()
     }
 }
-struct Worker {
-    tx: std::sync::mpsc::SyncSender<Job>,
-    rx: std::sync::mpsc::Receiver<(String,Vec<Packet>)>,
-    busy: bool,
-}
-impl Worker {
-    fn open() -> Self {
-        let (tx,input)=std::sync::mpsc::sync_channel::<Job>(1);
-        let (output,rx)=std::sync::mpsc::channel();
-        std::thread::Builder::new().name("trace-bus".into()).spawn(move || {
-            while let Ok(job)=input.recv() { let packets=job.run();if output.send((job.key,packets)).is_err(){break;} }
-        }).expect("start trace bus worker");
-        Self{tx,rx,busy:false}
-    }
+fn open_worker() -> Worker<Job, (String, Vec<Packet>)> {
+    Worker::spawn("trace-bus", |job: Job| {
+        let packets = job.run();
+        (job.key, packets)
+    })
+    .expect("start trace bus worker")
 }
 
 struct Src<'a> {
@@ -129,11 +134,7 @@ impl Ui {
         Some(match it {
             Item::BusOn => vec!["Off".into(), "On".into()],
             Item::BusRw => vec!["Left out".into(), "Included".into()],
-            Item::BusClk | Item::BusData => self
-                .bus_ids()
-                .iter()
-                .map(|&id| self.wave_name(id))
-                .collect(),
+            Item::BusClk | Item::BusData => self.bus_ids().iter().map(|&id| self.wave_name(id)).collect(),
             _ => return None,
         })
     }
@@ -150,19 +151,13 @@ impl Ui {
                     self.m.bus.addr_rw = !self.m.bus.addr_rw;
                 }
             }
-            Item::BusPos => {
-                self.m.bus.pos = (self.m.bus.pos + 0.1 * d as f32).clamp(BUS_POS_MIN, BUS_POS_MAX)
-            }
+            Item::BusPos => self.m.bus.pos = (self.m.bus.pos + 0.1 * d as f32).clamp(BUS_POS_MIN, BUS_POS_MAX),
             Item::BusClk | Item::BusData => {
                 let ids = self.bus_ids();
                 if ids.is_empty() {
                     return true;
                 }
-                let cur = if it == Item::BusClk {
-                    self.m.bus.clk
-                } else {
-                    self.m.bus.data
-                };
+                let cur = if it == Item::BusClk { self.m.bus.clk } else { self.m.bus.data };
                 let i = ids.iter().position(|&x| x == cur).unwrap_or(0);
                 let next = ids[(i as i32 + d).rem_euclid(ids.len() as i32) as usize];
                 if it == Item::BusClk {
@@ -172,17 +167,9 @@ impl Ui {
                 }
             }
             Item::BusClkThr | Item::BusDataThr => {
-                let id = if it == Item::BusClkThr {
-                    self.m.bus.clk
-                } else {
-                    self.m.bus.data
-                };
+                let id = if it == Item::BusClkThr { self.m.bus.clk } else { self.m.bus.data };
                 let step = self.bus_volt_step(id);
-                let thr = if it == Item::BusClkThr {
-                    &mut self.m.bus.clk_thr
-                } else {
-                    &mut self.m.bus.data_thr
-                };
+                let thr = if it == Item::BusClkThr { &mut self.m.bus.clk_thr } else { &mut self.m.bus.data_thr };
                 *thr = (*thr + step * d as f32).clamp(-40.0, 40.0);
             }
             _ => return false,
@@ -246,11 +233,7 @@ impl Ui {
                 continue;
             }
             let base = if p.ok { BUS } else { RED };
-            let fill = if p.ok {
-                scale(BUS, 70)
-            } else {
-                BUS_ERR_FILL
-            };
+            let fill = if p.ok { scale(BUS, 70) } else { BUS_ERR_FILL };
             cv.fill(Rect::new(x0 + 3, top, (x1 - x0 - 6).max(1), h), fill);
             cv.line(x0, top + h / 2, x0 + 3, top, base);
             cv.line(x0, top + h / 2, x0 + 3, top + h - 1, base);
@@ -263,8 +246,8 @@ impl Ui {
             }
             x_prev = x1;
         }
-        if self.trace_bus.borrow().worker.as_ref().is_some_and(|worker|worker.busy) {
-            cv.text(&f.s,left+4,(y-12).max(a.y+12),"Computing",TEXT);
+        if self.trace_bus.borrow().worker.as_ref().is_some_and(Worker::busy) {
+            cv.text(&f.s, left + 4, (y - 12).max(a.y + 12), "Computing", TEXT);
         }
         if self.touch.drag == super::Drag::Bus {
             cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, BUS);
@@ -282,29 +265,14 @@ impl Ui {
             let Some(y) = self.bus_level_y(id, thr) else {
                 continue;
             };
-            cv.dashed_hline(
-                a.x + 26,
-                a.x + a.w - 26,
-                y,
-                2,
-                6,
-                scale(self.wave_color(id), 170),
-            );
+            cv.dashed_hline(a.x + 26, a.x + a.w - 26, y, 2, 6, scale(self.wave_color(id), 170));
         }
     }
 
     fn bus_level_y(&self, id: WaveId, thr: f32) -> Option<i32> {
         match id {
-            WaveId::Ch(c) if c < n_ch() && self.m.ch[c].on && self.shows(c) => {
-                Some(self.y_of_volts(c, thr))
-            }
-            WaveId::Ref(i)
-                if self
-                    .refs
-                    .get(i)
-                    .and_then(|r| r.as_ref())
-                    .is_some_and(|r| r.on) =>
-            {
+            WaveId::Ch(c) if c < n_ch() && self.m.ch[c].on && self.shows(c) => Some(self.y_of_volts(c, thr)),
+            WaveId::Ref(i) if self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.on) => {
                 Some(self.y_of_wave(id, thr))
             }
             _ => None,
@@ -320,12 +288,7 @@ impl Ui {
     fn bus_volt_step(&self, id: WaveId) -> f32 {
         match id {
             WaveId::Ch(c) => self.m.ch[c.min(NCH - 1)].volts_per_div() / 25.0,
-            WaveId::Ref(i) => self
-                .refs
-                .get(i)
-                .and_then(|r| r.as_ref())
-                .map(|r| r.vpd / 25.0)
-                .unwrap_or(0.05),
+            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).map(|r| r.vpd / 25.0).unwrap_or(0.05),
         }
     }
 
@@ -336,10 +299,16 @@ impl Ui {
                     return None;
                 }
                 let rec = self.last[0].as_ref()?;
-                let (v, dt, t0) = if let Some(raw) = rec.raw.as_ref().filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 2) {
+                let (v, dt, t0) = if let Some(raw) =
+                    rec.raw.as_ref().filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 2)
+                {
                     (&raw.frame.ch[c][..], raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt)
-                } else { (&rec.ch[c][..], rec.dt, rec.t0) };
-                if v.len() < 2 || !dt.is_finite() || dt <= 0.0 { return None; }
+                } else {
+                    (&rec.ch[c][..], rec.dt, rec.t0)
+                };
+                if v.len() < 2 || !dt.is_finite() || dt <= 0.0 {
+                    return None;
+                }
                 Some(Src {
                     t0: self.source_time_origin(id, t0),
                     dt,
@@ -374,51 +343,79 @@ impl Ui {
     }
 
     fn bus_packets(&self) -> Vec<Packet> {
-        if !self.m.bus.on || self.m.bus.kind != BusKind::I2c { return Vec::new(); }
-        let (lo,hi)=self.bus_span();
-        let (Some(data),Some(clk))=(self.bus_src(self.m.bus.data,self.m.bus.data_thr),self.bus_src(self.m.bus.clk,self.m.bus.clk_thr)) else {return Vec::new();};
-        let acquisition = if matches!(self.m.bus.clk,WaveId::Ch(_)) || matches!(self.m.bus.data,WaveId::Ch(_)) { self.wfm_total } else {0};
-        let key=format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}",(self.m.bus.clk,self.m.bus.data,self.m.bus.clk_thr.to_bits(),self.m.bus.data_thr.to_bits()),
-            (data.v.as_ptr() as usize,data.v.len(),data.t0.to_bits(),data.dt.to_bits()),
-            (clk.v.as_ptr() as usize,clk.v.len(),clk.t0.to_bits(),clk.dt.to_bits()),
-            (lo.to_bits(),hi.to_bits()),(data.hyst.to_bits(),clk.hyst.to_bits()),self.workflow_epoch,acquisition,self.replay.sim_revision);
-        let mut cache=self.trace_bus.borrow_mut();
-        let answer=cache.worker.as_mut().and_then(|w|w.rx.try_recv().ok().map(|answer|{w.busy=false;answer}));
-        if let Some((finished,packets))=answer { if finished==key {cache.key=Some(finished);cache.packets=packets;} }
-        if cache.key.as_ref()==Some(&key) {return cache.packets.clone();}
-        if cache.worker.as_ref().is_some_and(|worker|worker.busy) {return Vec::new();}
-        let (Some(sd),Some(sc))=(cut(data.t0,data.dt,data.v,lo,hi),cut(clk.t0,clk.dt,clk.v,lo,hi)) else{return Vec::new();};
-        let background=sd.2.len().max(sc.2.len())>262_144;
+        if !self.m.bus.on || self.m.bus.kind != BusKind::I2c {
+            return Vec::new();
+        }
+        let (lo, hi) = self.bus_span();
+        let (Some(data), Some(clk)) =
+            (self.bus_src(self.m.bus.data, self.m.bus.data_thr), self.bus_src(self.m.bus.clk, self.m.bus.clk_thr))
+        else {
+            return Vec::new();
+        };
+        let acquisition = if matches!(self.m.bus.clk, WaveId::Ch(_)) || matches!(self.m.bus.data, WaveId::Ch(_)) {
+            self.wfm_total
+        } else {
+            0
+        };
+        let key = format!(
+            "{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}",
+            (self.m.bus.clk, self.m.bus.data, self.m.bus.clk_thr.to_bits(), self.m.bus.data_thr.to_bits()),
+            (data.v.as_ptr() as usize, data.v.len(), data.t0.to_bits(), data.dt.to_bits()),
+            (clk.v.as_ptr() as usize, clk.v.len(), clk.t0.to_bits(), clk.dt.to_bits()),
+            (lo.to_bits(), hi.to_bits()),
+            (data.hyst.to_bits(), clk.hyst.to_bits()),
+            self.workflow_epoch,
+            acquisition,
+            self.replay.sim_revision
+        );
+        let mut cache = self.trace_bus.borrow_mut();
+        let answer = cache.worker.as_mut().and_then(|worker| worker.poll().ok());
+        if let Some((finished, packets)) = answer {
+            if finished == key {
+                cache.key = Some(finished);
+                cache.packets = packets;
+            }
+        }
+        if cache.key.as_ref() == Some(&key) {
+            return cache.packets.clone();
+        }
+        if cache.worker.as_ref().is_some_and(Worker::busy) {
+            return Vec::new();
+        }
+        let (Some(sd), Some(sc)) = (cut(data.t0, data.dt, data.v, lo, hi), cut(clk.t0, clk.dt, clk.v, lo, hi)) else {
+            return Vec::new();
+        };
+        let background = sd.2.len().max(sc.2.len()) > 262_144;
         // Alignment is display-bounded to2M points. It does not replace the exact
         // native interval used by the decoder table, Search or software trigger.
-        let Some((sda,scl,t0,dt))=align(sd,sc) else{return Vec::new();};
-        let job=Job{key:key.clone(),data:sda,clk:scl,t0,dt,thresholds:[data.thr,data.hyst,clk.thr,clk.hyst]};
-        cache.scans+=1;
+        let Some((sda, scl, t0, dt)) = align(sd, sc) else {
+            return Vec::new();
+        };
+        let job =
+            Job { key: key.clone(), data: sda, clk: scl, t0, dt, thresholds: [data.thr, data.hyst, clk.thr, clk.hyst] };
+        cache.scans += 1;
         if background {
-            let worker=cache.worker.get_or_insert_with(Worker::open);
-            if worker.tx.try_send(job).is_ok(){worker.busy=true;}
+            let _ = cache.worker.get_or_insert_with(open_worker).submit(job);
             Vec::new()
-        } else {let packets=job.run();cache.key=Some(key);cache.packets=packets.clone();packets}
+        } else {
+            let packets = job.run();
+            cache.key = Some(key);
+            cache.packets = packets.clone();
+            packets
+        }
     }
 
     /// Hex words the plot draws for the bus, in time order.
     #[cfg(test)]
     fn bus_words(&self) -> Vec<String> {
-        self.bus_packets()
-            .iter()
-            .filter_map(|p| bus_word(p, self.m.bus.addr_rw))
-            .collect()
+        self.bus_packets().iter().filter_map(|p| bus_word(p, self.m.bus.addr_rw)).collect()
     }
 }
 
 fn bus_word(p: &Packet, addr_rw: bool) -> Option<String> {
     match p.kind {
         DecKind::Addr { read } => {
-            let v = if addr_rw {
-                (p.value << 1) | u32::from(read)
-            } else {
-                p.value
-            };
+            let v = if addr_rw { (p.value << 1) | u32::from(read) } else { p.value };
             Some(format!("{:02X}", v))
         }
         DecKind::Data => Some(format!("{:02X}", p.value & 0xff)),
@@ -435,7 +432,7 @@ fn bus_tag(kind: DecKind) -> Option<&'static str> {
     }
 }
 
-fn cut<'a>(t0: f64, dt: f64, v: &'a [f32], lo: f64, hi: f64) -> Option<(f64, f64, &'a [f32])> {
+fn cut(t0: f64, dt: f64, v: &[f32], lo: f64, hi: f64) -> Option<(f64, f64, &[f32])> {
     if v.len() < 2 || !(dt > 0.0) || !(hi > lo) {
         return None;
     }
@@ -446,9 +443,7 @@ fn cut<'a>(t0: f64, dt: f64, v: &'a [f32], lo: f64, hi: f64) -> Option<(f64, f64
         return None;
     }
     let i0 = ((lo - t0) / dt).floor().clamp(0.0, (v.len() - 2) as f64) as usize;
-    let i1 = (((hi - t0) / dt).ceil() as usize)
-        .saturating_add(1)
-        .clamp(i0 + 2, v.len());
+    let i1 = (((hi - t0) / dt).ceil() as usize).saturating_add(1).clamp(i0 + 2, v.len());
     Some((t0 + i0 as f64 * dt, dt, &v[i0..i1]))
 }
 
@@ -459,8 +454,8 @@ fn align(a: (f64, f64, &[f32]), b: (f64, f64, &[f32])) -> Option<(Vec<f32>, Vec<
         return None;
     }
     const MAX_N: usize = 2_000_000;
-    let same = av.len() <= MAX_N &&
-        (at0 - bt0).abs() <= adt * 1e-6 && (adt - bdt).abs() <= adt * 1e-6 && av.len() == bv.len();
+    let same =
+        av.len() <= MAX_N && (at0 - bt0).abs() <= adt * 1e-6 && (adt - bdt).abs() <= adt * 1e-6 && av.len() == bv.len();
     if same {
         return Some((av.to_vec(), bv.to_vec(), at0, adt));
     }
@@ -513,46 +508,23 @@ mod tests {
         let dt = 0.25e-6;
         let (sda, scl) = i2c_logic(
             &[
-                I2cXfer {
-                    addr: 0x50,
-                    read: false,
-                    data: vec![0x00, 0x12],
-                    repeated: false,
-                    stop: false,
-                },
-                I2cXfer {
-                    addr: 0x50,
-                    read: true,
-                    data: vec![0xab, 0xcd],
-                    repeated: true,
-                    stop: true,
-                },
+                I2cXfer { addr: 0x50, read: false, data: vec![0x00, 0x12], repeated: false, stop: false },
+                I2cXfer { addr: 0x50, read: true, data: vec![0xab, 0xcd], repeated: true, stop: true },
             ],
             rate,
             0.0,
             3.3,
         );
         let n = 2400;
-        (
-            sample(|t| scl.v(t), 0.0, dt, n),
-            sample(|t| sda.v(t), 0.0, dt, n),
-            dt,
-        )
+        (sample(|t| scl.v(t), 0.0, dt, n), sample(|t| sda.v(t), 0.0, dt, n), dt)
     }
 
     fn put_channels(u: &mut Ui, scl: Vec<f32>, sda: Vec<f32>, dt: f64) {
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
         ch[1] = sda;
-        u.last[0] = Some(Record {
-            t0: 0.0,
-            dt,
-            ch,
-            triggered: true,
-            partial: false,
-            raw: None,
-            la: None, pairs: false
-        });
+        u.last[0] =
+            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
         u.m.bus.data = WaveId::Ch(1);
@@ -570,10 +542,7 @@ mod tests {
         u.m.bus.addr_rw = true;
         assert_eq!(u.bus_words(), ["A0", "00", "12", "A1", "AB", "CD"]);
         u.m.bus.clk_thr = 5.0;
-        assert!(
-            u.bus_words().is_empty(),
-            "a clock threshold above the swing drops the words"
-        );
+        assert!(u.bus_words().is_empty(), "a clock threshold above the swing drops the words");
         u.m.bus.on = false;
         u.m.bus.clk_thr = 1.65;
         assert!(u.bus_words().is_empty());
@@ -585,17 +554,15 @@ mod tests {
         let mut u = ui();
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
-        u.last[0] = Some(Record {
-            t0: 0.0,
-            dt,
-            ch,
-            triggered: true,
-            partial: false,
-            raw: None,
-            la: None, pairs: false
-        });
+        u.last[0] =
+            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
         let slow: Vec<f32> = sda.iter().step_by(2).copied().collect();
-        u.refs[2] = Some(super::super::RefWave { src: 1, color: 2, vpd: 2.0, ..super::super::RefWave::test(slow, dt * 2.0, 0.0) });
+        u.refs[2] = Some(super::super::RefWave {
+            src: 1,
+            color: 2,
+            vpd: 2.0,
+            ..super::super::RefWave::test(slow, dt * 2.0, 0.0)
+        });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
         u.m.bus.data = WaveId::Ref(2);
@@ -609,35 +576,47 @@ mod tests {
 
     #[test]
     fn retained_native_bus_uses_a_bounded_worker_and_reuses_the_same_view_result() {
-        let (scl,sda,dt)=xfer();let mut u=ui();
-        put_channels(&mut u,vec![3.3;3],vec![3.3;3],200e-6);
-        let expand=|v:Vec<f32>|v.into_iter().flat_map(|v|std::iter::repeat_n(v,256)).collect();
-        let mut ch:[Vec<f32>;NCH]=Default::default();ch[0]=expand(scl);ch[1]=expand(sda);
-        let frame=std::sync::Arc::new(crate::board::Frame{dt:dt/256.0,ch,..Default::default()});
-        u.last[0].as_mut().unwrap().raw=Some(crate::wave::Raw{frame:frame.clone(),i0:0,i1:frame.ch[0].len(),t0:0.001,conditioned:true});
-        u.m.delay=0.0013;
-        assert!(u.bus_packets().is_empty());assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
-        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
-        let packets=loop {let packets=u.bus_packets();if !packets.is_empty(){break packets;}
-            assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(1));};
-        assert!(packets.iter().all(|p|p.t0>=0.001));
-        assert_eq!(u.bus_words(),["50","00","12","50","AB","CD"]);
-        assert_eq!(u.trace_bus.borrow().scans,1);
-        u.m.bus.clk_thr=5.0;assert!(u.bus_words().is_empty(),"old-threshold words must not leak");
-        while u.trace_bus.borrow().worker.as_ref().unwrap().busy {
-            let _=u.bus_packets();assert!(std::time::Instant::now()<deadline);std::thread::yield_now();
+        let (scl, sda, dt) = xfer();
+        let mut u = ui();
+        put_channels(&mut u, vec![3.3; 3], vec![3.3; 3], 200e-6);
+        let expand = |v: Vec<f32>| v.into_iter().flat_map(|v| std::iter::repeat_n(v, 256)).collect();
+        let mut ch: [Vec<f32>; NCH] = Default::default();
+        ch[0] = expand(scl);
+        ch[1] = expand(sda);
+        let frame = std::sync::Arc::new(crate::board::Frame { dt: dt / 256.0, ch, ..Default::default() });
+        u.last[0].as_mut().unwrap().raw =
+            Some(crate::wave::Raw { frame: frame.clone(), i0: 0, i1: frame.ch[0].len(), t0: 0.001, conditioned: true });
+        u.m.delay = 0.0013;
+        assert!(u.bus_packets().is_empty());
+        assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let packets = loop {
+            let packets = u.bus_packets();
+            if !packets.is_empty() {
+                break packets;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        assert!(packets.iter().all(|p| p.t0 >= 0.001));
+        assert_eq!(u.bus_words(), ["50", "00", "12", "50", "AB", "CD"]);
+        assert_eq!(u.trace_bus.borrow().scans, 1);
+        u.m.bus.clk_thr = 5.0;
+        assert!(u.bus_words().is_empty(), "old-threshold words must not leak");
+        while u.trace_bus.borrow().worker.as_ref().unwrap().busy() {
+            let _ = u.bus_packets();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
         }
-        assert!(u.bus_words().is_empty());assert_eq!(u.trace_bus.borrow().scans,2);
-        assert_eq!(frame.dt,dt/256.0);
+        assert!(u.bus_words().is_empty());
+        assert_eq!(u.trace_bus.borrow().scans, 2);
+        assert_eq!(frame.dt, dt / 256.0);
     }
 
     #[test]
     fn the_menu_is_one_i2c_bus() {
         let mut u = ui();
-        assert!(u
-            .main_groups()
-            .iter()
-            .any(|(_, items)| items.contains(&Item::Open(MenuId::Bus))));
+        assert!(u.main_groups().iter().any(|(_, items)| items.contains(&Item::Open(MenuId::Bus))));
         assert_eq!(u.menu_title(MenuId::Bus), "Bus · I2C");
         let items = u.bus_items();
         for want in [
@@ -654,13 +633,7 @@ mod tests {
         }
         let text: String = items
             .iter()
-            .map(|&it| {
-                format!(
-                    "{} {}",
-                    Ui::bus_label(it).unwrap_or(""),
-                    u.bus_value(it).unwrap_or_default()
-                )
-            })
+            .map(|&it| format!("{} {}", Ui::bus_label(it).unwrap_or(""), u.bus_value(it).unwrap_or_default()))
             .collect();
         let low = text.to_ascii_lowercase();
         for banned in ["spi", "uart", "can", "rigol", "tek", "keysight", "siglent"] {
@@ -674,10 +647,7 @@ mod tests {
         u.select_option(Item::BusClk, "R4");
         let ch = format!("CH{}", n_ch());
         u.select_option(Item::BusData, &ch);
-        assert_eq!(
-            (u.m.bus.clk, u.m.bus.data),
-            (WaveId::Ref(3), WaveId::Ch(n_ch() - 1))
-        );
+        assert_eq!((u.m.bus.clk, u.m.bus.data), (WaveId::Ref(3), WaveId::Ch(n_ch() - 1)));
         u.m.bus.label.clear();
         u.activate(Item::BusLabel);
         u.osk_type('S');
@@ -702,10 +672,7 @@ mod tests {
         u.m.bus.on = true;
         let mut on = Canvas::new(super::super::W, super::super::H);
         u.render(&mut on);
-        assert!(
-            count(&on, BUS) > 40,
-            "the bus line and its label sit on the plot"
-        );
+        assert!(count(&on, BUS) > 40, "the bus line and its label sit on the plot");
         assert_eq!(u.bus_words(), ["50", "00", "12", "50", "AB", "CD"]);
         let back = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
         assert_eq!(back.bus, u.m.bus);

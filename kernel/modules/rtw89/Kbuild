@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# OOS: the part of rtw89's Makefile for the RTL8851BU (USB) alone, built outside the kernel tree (kernel/README.md)
+obj-m += rtw89_core.o rtw89_usb.o rtw89_8851b.o rtw89_8851bu.o
+rtw89_core-y := core.o mac80211.o mac.o mac_be.o phy.o phy_be.o fw.o cam.o efuse.o efuse_be.o regd.o sar.o coex.o \
+	ps.o chan.o ser.o acpi.o util.o
+rtw89_core-$(CONFIG_PM) += wow.o
+rtw89_usb-y := usb.o
+rtw89_8851b-y := rtw8851b.o rtw8851b_table.o rtw8851b_rfk.o rtw8851b_rfk_table.o
+rtw89_8851bu-y := rtw8851bu.o

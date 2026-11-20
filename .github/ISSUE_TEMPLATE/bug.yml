@@ -1,0 +1,59 @@
+name: Problem report
+description: Something does not work on a scope or on the host
+labels: [type/fix]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`, and no code,
+        listings or files from the stock or a modified firmware.** Describe what the scope does.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options:
+        - DHO802
+        - DHO804
+        - DHO812
+        - DHO814
+        - DHO914
+        - DHO914S
+        - DHO924
+        - DHO924S
+        - another (say which below)
+        - none (on a computer)
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: OOS build
+      description: The line in /etc/oos-build, or System > About.
+    validations:
+      required: true
+  - type: dropdown
+    id: installed
+    attributes:
+      label: How it was installed
+      options: [second card, USB stick, ADB, built from source, does not apply]
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repeat
+    attributes:
+      label: How to repeat it
+      description: The settings and the steps, as far as you know them. "Happens now and then" is an answer too.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        /tmp/oos-boot.status, /tmp/oos-ui.log, /tmp/oos-cold.log, /tmp/oos-update.log, as far as they matter. Take
+        out serial numbers and addresses.
+      render: text

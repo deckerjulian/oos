@@ -38,8 +38,8 @@ DHO924S" below).
 - Active when `zone.hw = on`, the source is live hardware, at least one zone is usable, all usable zones are on one
   channel, that channel is acquired, and the hardware mask test is not running. Else the software filter alone.
 - While active the fast display path stays on (only qualified frames arrive). Live compression stays off with zones
-  (`compress::allowed`). The software filter still runs on every full record that reaches the UI and counts its
-  drops (`sw_drops`).
+  (`board::policy::compress::allowed`). The software filter still runs on every full record that reaches the UI and
+  counts its drops (`sw_drops`).
 - AUX OUT pass/fail (offered with `zone.hw = on`) takes the zone result: 0x119c bit 29 set, 1 us high pulse.
 - Fork-local `:SYSTem:DEBug:ZONE?`: `ch,slot,ctrl,s4030,s4038,frames_lo,frames_hi,fails_lo,fails_hi,armed,pass,
   frames,n`, then `sw_drops,acquired,used,records`. `off,enabled,active,...` without a hardware reading.

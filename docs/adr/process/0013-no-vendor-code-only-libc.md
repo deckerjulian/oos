@@ -1,6 +1,6 @@
 # ADR 0013: No vendor code or data in the tree; `libc` is the only dependency
 
-- Status: accepted, amended by ADR 0021 (`libc` only holds for what runs on the scope, `oos-hal` and `oos-dsp`)
+- Status: accepted (`libc` is the only dependency of every build again, ADR 0033)
 - Date: 2026-11-07 (first public version; the rule from the start)
 - Category: process
 

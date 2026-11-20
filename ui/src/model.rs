@@ -2,13 +2,41 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Scope state (what the user has set), value ladders and number formatting.
+//!
+//! This file holds the `Model` struct, the channel and source counts, the value ladders and the SI formatting. The
+//! types and methods of each area are in a file of `model/`: channels, trigger, decode, acquisition, display,
+//! analysers, math, generator, and the start values in `defaults.rs`. A new setting goes into the struct here, its
+//! type and its methods into the file of its area.
 
-use crate::board::{board, Active, Board};
 use crate::gfx::{rgb, Rgb};
 use crate::math::{MathOp, Window};
 
-/// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`).
-pub const NCH: usize = <Active as Board>::MAX_CHANNELS;
+mod acquisition;
+mod analysers;
+pub mod bode;
+mod channels;
+mod decode;
+mod defaults;
+mod display;
+mod generator;
+pub mod la;
+mod limits;
+mod math;
+mod trigger;
+
+pub use acquisition::*;
+pub use analysers::*;
+pub use channels::*;
+pub use decode::*;
+pub use display::*;
+pub use generator::*;
+pub use limits::*;
+pub use math::*;
+pub use trigger::*;
+
+/// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`). The board
+/// of the build has as many (`platform.rs` holds it to that at compile time).
+pub const NCH: usize = 4;
 /// Reference waveform slots, R1..R10. A slot is waveform memory, not a channel index.
 pub const NREF: usize = 10;
 /// Decoder namespace: CH0..3 and reserved legacy LA4..19 stay unchanged.
@@ -17,9 +45,13 @@ pub const DEC_REF_BASE: usize = NCH + 16;
 pub const DEC_SOURCE_COUNT: usize = DEC_REF_BASE + NREF;
 
 pub fn decode_wave(source: usize) -> Option<WaveId> {
-    if source < NCH { Some(WaveId::Ch(source)) }
-    else if (DEC_REF_BASE..DEC_SOURCE_COUNT).contains(&source) { Some(WaveId::Ref(source - DEC_REF_BASE)) }
-    else { None }
+    if source < NCH {
+        Some(WaveId::Ch(source))
+    } else if (DEC_REF_BASE..DEC_SOURCE_COUNT).contains(&source) {
+        Some(WaveId::Ref(source - DEC_REF_BASE))
+    } else {
+        None
+    }
 }
 
 pub fn decode_source_name(source: usize) -> String {
@@ -31,8 +63,9 @@ pub fn decode_source_name(source: usize) -> String {
 }
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
-/// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`).
-pub const NGEN: usize = <Active as Board>::MAX_GENERATORS;
+/// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`). The board of the
+/// build has as many (`platform.rs`).
+pub const NGEN: usize = 1;
 
 /// Analog inputs of the unit (`oos_hal::model::platform()`), at most NCH.
 pub fn n_ch() -> usize {
@@ -44,9 +77,9 @@ pub fn gen_count() -> usize {
     oos_hal::model::platform().caps.generators.min(NGEN)
 }
 
-/// The memory depths of the board (Acquire menu).
+/// The memory depths of the board (Acquire menu): the table of this build's board (`oos_hal::target::DEPTHS`).
 pub fn mdepths() -> &'static [(&'static str, u64)] {
-    board().depths()
+    oos_hal::target::DEPTHS
 }
 
 /// Channel names of the unit, "CH1".."CHn" (option lists of channel sources).
@@ -66,11 +99,6 @@ pub fn src_ok(s: usize) -> bool {
 
 /// Total selected single, pair and catalog rows, shared by UI and setup validation.
 pub const MEAS_SELECTION_MAX: usize = 1024;
-
-/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats.
-pub fn catalog_id_valid(id: u16) -> bool {
-    crate::measures::persisted(id)
-}
 
 /// A waveform a tool can name. A channel is the live front end. A ref is one stored record, measured at
 /// that record's sample interval. Refs are not packed into the channel/math index.
@@ -215,856 +243,33 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for probe 1x: 500 µV .. 10 V (DHO800/900 range).
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
-pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
+pub const VSCALES: [f32; 16] =
+    [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
 /// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
 pub const HW_MIN_TDIV: f32 = 1e-9;
 
 /// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
 /// `HW_MIN_TDIV` (`hw_time_per_div`).
+/// The step of `ladder` nearest to `v`, by ratio (a 1-2-5 ladder: 0.37 is nearer to 0.5 than to 0.2).
+pub fn nearest_step(ladder: &[f32], v: f32) -> usize {
+    let mut best = 0;
+    for (i, &x) in ladder.iter().enumerate() {
+        if ((x / v).ln()).abs() < ((ladder[best] / v).ln()).abs() {
+            best = i;
+        }
+    }
+    best
+}
+
 pub fn tscales() -> Vec<f32> {
     // from 50 ps/div (stock 5 ns, then 1 ns): below 5 ns/div the live screen holds 12..62 samples, drawn with the
     // windowed sinc of sparse views; the record keeps the margin of `board::dho::hw::screen_margin`
-    decades(-11, 4, false).into_iter().filter(|&x| x >= 0.49e-10 && x <= 1000.1).map(|x| x as f32).collect()
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Coupling {
-    Dc,
-    Ac,
-    Gnd,
-    /// DC into 50 ohms, on boards that offer it (`Board::couplings`)
-    Dc50,
-}
-
-impl Coupling {
-    pub fn name(self) -> &'static str {
-        match self {
-            Coupling::Dc => "DC",
-            Coupling::Ac => "AC",
-            Coupling::Gnd => "GND",
-            Coupling::Dc50 => "DC50",
-        }
-    }
-}
-
-/// Coupling of the edge trigger: a filter in the trigger path only, the trace stays as the channel's coupling shows it
-/// (trigger.md 2.5).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TrigCoup {
-    Dc,
-    Ac,
-    LfReject,
-    HfReject,
-}
-
-pub const TRIG_COUPS: [TrigCoup; 4] = [TrigCoup::Dc, TrigCoup::Ac, TrigCoup::LfReject, TrigCoup::HfReject];
-
-/// What the rear AUX OUT BNC carries (System > AUX out, `:SYSTem:AOUTput`, docs/fork/auxout.md).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AuxOut {
-    /// a pulse per trigger: the FPGA's power-up state, so the default
-    TrigOut,
-    /// constant low
-    Off,
-    /// a pulse per failed acquisition of the hardware mask test (`mask.hw = on`, docs/fork/hwmask.md); without it the
-    /// output stays low
-    PassFail,
-}
-
-pub const AUX_OUTS: [AuxOut; 3] = [AuxOut::TrigOut, AuxOut::Off, AuxOut::PassFail];
-
-impl AuxOut {
-    /// what the menu and SCPI take: pass/fail only where the mask test or the zone trigger can run in hardware
-    /// (`Board::mask_hw`, `Board::zone_hw`); a setup file takes every value
-    pub fn offered(self, hw_mask: bool) -> bool {
-        self != AuxOut::PassFail || hw_mask
-    }
-
-    /// the offered choices in menu order
-    pub fn choices(hw_mask: bool) -> Vec<AuxOut> {
-        AUX_OUTS.iter().copied().filter(|a| a.offered(hw_mask)).collect()
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            AuxOut::TrigOut => "Trigger out",
-            AuxOut::Off => "Off",
-            AuxOut::PassFail => "Pass/fail",
-        }
-    }
-}
-
-impl TrigCoup {
-    pub fn name(self) -> &'static str {
-        match self {
-            TrigCoup::Dc => "DC",
-            TrigCoup::Ac => "AC",
-            TrigCoup::LfReject => "LF reject",
-            TrigCoup::HfReject => "HF reject",
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Slope {
-    Rise,
-    Fall,
-    Either,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TrigMode {
-    Auto,
-    Normal,
-    Single,
-}
-
-/// What the plot area shows: the scope traces, or one of the analysers.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AView {
-    Scope,
-    Spectrum,
-    Eye,
-    Power,
-    Bode,
-    /// bandwidth test: step response of the front end (ui/bwtest.rs)
-    Step,
-    Magnetic,
-    Inverter,
-    Dpt,
-}
-
-impl AView {
-    /// Every view (the tests check each analyser page against it).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [AView; 9] = [AView::Scope, AView::Spectrum, AView::Eye, AView::Power, AView::Bode, AView::Step, AView::Magnetic, AView::Inverter, AView::Dpt];
-}
-
-/// Where the eye is drawn. The full page is the default. Side and Under are extra panes and leave that page available.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EyePlace {
-    /// The eye fills the plot: the figures, the jitter column and the charts.
-    Full,
-    /// A pane to the right of the trace.
-    Side,
-    /// A pane under the trace.
-    Under,
-}
-
-/// Power analysis page.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PowerMode {
-    Quality,
-    Harmonics,
-    Switching,
-    Ripple,
-    /// C = q / v over the turn-on record
-    Capacitance,
-    /// rail overshoot, undershoot, DC and turn-on maximum
-    Rail,
-}
-
-/// Magnetic plot: current against flux linkage, or B against H when the core is set.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum MagPlot {
-    IPsi,
-    BH,
-}
-
-/// Inverter page.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InvPage {
-    Dq0,
-    Mech,
-}
-
-/// Where the inverter takes its angle.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InvAngle {
-    /// θ from the phase trio (DQ0 only)
-    Off,
-    Phase,
-    Analog,
-    Quad,
-    Hall,
-}
-
-/// The optional fourth probe of a double pulse.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DptFourth {
-    Off,
-    Gate,
-    DiodeV,
-    DiodeI,
-}
-
-/// Which edge the double-pulse plot is zoomed to.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DptZoom {
-    Both,
-    TurnOn,
-    TurnOff,
-}
-
-/// Waveform histogram: off, vertical (voltage distribution of the whole screen), horizontal (time distribution in a
-/// band of +-0.5 div around the trigger level).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Hist {
-    Off,
-    Vertical,
-    Horizontal,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RunState {
-    Run,
-    Stop,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TrigStatus {
-    Triggered,
-    Auto,
-    Wait,
-    Stop,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AcqMode {
-    Normal,
-    Peak,
-    Average,
-    HiRes,
+    decades(-11, 4, false).into_iter().filter(|&x| (0.49e-10..=1000.1).contains(&x)).map(|x| x as f32).collect()
 }
 
 pub use oos_dsp::measure::{Meas, ALL as ALL_MEAS};
 pub use oos_dsp::sim::VideoStd;
 pub use oos_dsp::trigger::{Bit, Pol};
-
-/// Protocol of the decoder: a protocol module (`protocols::MODULES[i]`). The core decoders stand first at fixed places
-/// (`Proto::UART` ...), the code that knows them by name uses those.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Proto {
-    Module(u8),
-}
-
-/// Every protocol of the Decode menu, in the order of `protocols::MODULES`.
-pub static PROTOS: std::sync::LazyLock<Vec<Proto>> = std::sync::LazyLock::new(|| (0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
-
-impl Proto {
-    pub const UART: Proto = Proto::Module(0);
-    pub const I2C: Proto = Proto::Module(1);
-    pub const SPI: Proto = Proto::Module(2);
-    pub const CAN: Proto = Proto::Module(3);
-    pub const LIN: Proto = Proto::Module(4);
-    pub const PARALLEL: Proto = Proto::Module(5);
-    pub const CPHY: Proto = Proto::Module(6);
-
-    /// The module behind the protocol.
-    pub fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
-        let Proto::Module(i) = self;
-        Some(crate::protocols::get(i))
-    }
-
-    /// Name in saved setups: the module's key.
-    pub fn key(self) -> String {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).key().to_string()
-    }
-
-    pub fn from_key(k: &str) -> Option<Proto> {
-        PROTOS.iter().copied().find(|p| p.key() == k)
-    }
-
-    pub fn name(self) -> &'static str {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).name()
-    }
-
-    /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
-    pub fn roles(self) -> [Option<&'static str>; 4] {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).roles()
-    }
-
-    /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
-    pub fn diff_ok(self) -> bool {
-        let Proto::Module(i) = self;
-        crate::protocols::get(i).diff_ok()
-    }
-}
-
-/// Trigger types (the software trigger engine of oos-dsp; on the unit later the TPU, docs/protocols/trigger.md).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TrigType {
-    Edge,
-    Pulse,
-    Slope,
-    Video,
-    Pattern,
-    Duration,
-    Timeout,
-    Runt,
-    Window,
-    Delay,
-    SetupHold,
-    NthEdge,
-    /// protocol trigger: the decoder of the Decode menu finds the event (BusWhat, value)
-    Bus,
-}
-
-pub const TRIG_TYPES: [TrigType; 13] = [
-    TrigType::Edge, TrigType::Pulse, TrigType::Slope, TrigType::Video, TrigType::Pattern, TrigType::Duration, TrigType::Timeout,
-    TrigType::Runt, TrigType::Window, TrigType::Delay, TrigType::SetupHold, TrigType::NthEdge, TrigType::Bus,
-];
-
-/// What the protocol trigger looks for in the decoded packets (`trig::find_all`); the trigger point is the end of
-/// the matching field.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BusWhat {
-    /// every frame start (SOF, break, I2C start, 1553 command word, UART / SPI word)
-    Frame,
-    /// identifier / address / 1553 command word equal to the value
-    Id,
-    /// data byte / word / audio sample equal to the value
-    Data,
-    /// any packet with a failed check (CRC, parity, checksum, NACK, missing ACK)
-    Error,
-}
-pub const BUS_WHATS: [BusWhat; 4] = [BusWhat::Frame, BusWhat::Id, BusWhat::Data, BusWhat::Error];
-
-/// How a protocol value compares (`SerialTrig`): with the value (`trig_bus_val`) as min, `max` as the upper limit, all
-/// after the mask. The relations of the TPU's serial receivers (docs/fork/serial-ui.md).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rel {
-    Eq,
-    Ne,
-    /// greater than the value
-    Gt,
-    /// less than max
-    Lt,
-    /// value <= x <= max
-    In,
-    /// x < value or x > max
-    Out,
-}
-pub const RELS: [Rel; 6] = [Rel::Eq, Rel::Ne, Rel::Gt, Rel::Lt, Rel::In, Rel::Out];
-impl Rel {
-    pub fn name(self) -> &'static str {
-        match self {
-            Rel::Eq => "=",
-            Rel::Ne => "\u{2260}",
-            Rel::Gt => ">",
-            Rel::Lt => "<",
-            Rel::In => "In range",
-            Rel::Out => "Out of range",
-        }
-    }
-
-    /// The relation needs the upper limit.
-    pub fn uses_max(self) -> bool {
-        matches!(self, Rel::Lt | Rel::In | Rel::Out)
-    }
-
-    /// `x` against `min`/`max` after `mask`.
-    pub fn test(self, x: u64, min: u64, max: u64, mask: u64) -> bool {
-        let (x, a, b) = (x & mask, min & mask, max & mask);
-        match self {
-            Rel::Eq => x == a,
-            Rel::Ne => x != a,
-            Rel::Gt => x > a,
-            Rel::Lt => x < b,
-            Rel::In => a <= x && x <= b,
-            Rel::Out => x < a || x > b,
-        }
-    }
-}
-
-/// UART stop bits of the trigger.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum StopBits {
-    One,
-    OneHalf,
-    Two,
-}
-pub const STOP_BITS: [StopBits; 3] = [StopBits::One, StopBits::OneHalf, StopBits::Two];
-
-/// Which UART error the Error condition looks for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum UartErr {
-    Either,
-    Parity,
-    Framing,
-}
-pub const UART_ERRS: [UartErr; 3] = [UartErr::Either, UartErr::Parity, UartErr::Framing];
-
-/// I2C transfer direction of the address condition.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum I2cDir {
-    Either,
-    Write,
-    Read,
-}
-pub const I2C_DIRS: [I2cDir; 3] = [I2cDir::Either, I2cDir::Write, I2cDir::Read];
-
-/// The protocol trigger's settings beyond condition and value (Trigger > Protocol, `:TRIGger:RS232|SPI|IIC:*`); the
-/// TPU's receivers take them all (`trig.serial_hw = on`), the software trigger as far as the decoders show it.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct SerialTrig {
-    pub rel: Rel,
-    /// upper limit of `rel` (Lt, In, Out)
-    pub max: u64,
-    /// bits of the value that count (SPI, I2C data)
-    pub mask: u64,
-    /// UART: idle low (the line inverted)
-    pub uart_inv: bool,
-    pub uart_stop: StopBits,
-    pub uart_err: UartErr,
-    /// SPI: chip select active high
-    pub spi_cs_high: bool,
-    /// SPI without chip select: a clock pause longer than this starts a frame, s (0 = the decoder's default)
-    pub spi_timeout: f32,
-    /// I2C address condition: relation and upper limit, direction, 10-bit addresses
-    pub addr_rel: Rel,
-    pub addr_max: u32,
-    pub dir: I2cDir,
-    pub ten_bit: bool,
-    /// I2C data condition: 0 = any data byte of a frame (the software trigger), 1..5 = the first `bytes` data bytes
-    /// after the address, the first the most significant (also the TPU's receiver)
-    pub bytes: u8,
-}
-
-impl Default for SerialTrig {
-    fn default() -> SerialTrig {
-        SerialTrig {
-            rel: Rel::Eq,
-            max: 0xff,
-            mask: u64::MAX,
-            uart_inv: false,
-            uart_stop: StopBits::One,
-            uart_err: UartErr::Either,
-            spi_cs_high: false,
-            spi_timeout: 0.0,
-            addr_rel: Rel::Eq,
-            addr_max: 0x7f,
-            dir: I2cDir::Either,
-            ten_bit: false,
-            bytes: 0,
-        }
-    }
-}
-impl BusWhat {
-    pub fn name(self) -> &'static str {
-        match self {
-            BusWhat::Frame => "Frame",
-            BusWhat::Id => "ID/Addr",
-            BusWhat::Data => "Data",
-            BusWhat::Error => "Error",
-        }
-    }
-}
-
-impl TrigType {
-    pub fn name(self) -> &'static str {
-        match self {
-            TrigType::Edge => "Edge",
-            TrigType::Pulse => "Pulse",
-            TrigType::Slope => "Slope",
-            TrigType::Video => "Video",
-            TrigType::Pattern => "Pattern",
-            TrigType::Duration => "Duration",
-            TrigType::Timeout => "Timeout",
-            TrigType::Runt => "Runt",
-            TrigType::Window => "Window",
-            TrigType::Delay => "Delay",
-            TrigType::SetupHold => "Setup/Hold",
-            TrigType::NthEdge => "Nth edge",
-            TrigType::Bus => "Bus",
-        }
-    }
-
-    /// The types with an upper (`trig_level`) and a lower level (`trig_level2`).
-    pub fn two_level(self) -> bool {
-        matches!(self, TrigType::Slope | TrigType::Runt | TrigType::Window)
-    }
-}
-
-/// Time condition kind of the "When" setting (Off only for runt).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WhenKind {
-    Off,
-    Gt,
-    Lt,
-    In,
-    Out,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WinMode {
-    Enter,
-    Exit,
-    Inside,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum VSync {
-    AllLines,
-    Line,
-    Odd,
-    Even,
-    AllFields,
-}
-
-/// 1-2-5 ladder for trigger times: 1 ns .. 10 s.
-pub fn time_ladder() -> Vec<f32> {
-    decades(-9, 2, false).into_iter().filter(|&x| x <= 10.0).map(|x| x as f32).collect()
-}
-
-/// What the QUICK key (and the Quick button of the top bar) does; set in Utility > Quick key.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Quick {
-    /// PPM of the screen in /tmp (the behaviour before the setting existed)
-    Screenshot,
-    /// PNG in the storage directory (Storage > Save screenshot)
-    SavePng,
-    SaveSetup,
-    SaveCsv,
-    Autoset,
-    Single,
-    RunStop,
-    Clear,
-    /// the next of Display > Views (ui/views.rs)
-    NextView,
-}
-
-pub const QUICKS: [Quick; 9] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear, Quick::NextView];
-
-impl Quick {
-    /// Name in the Utility menu and its picker.
-    pub fn name(self) -> &'static str {
-        match self {
-            Quick::Screenshot => "Screenshot",
-            Quick::SavePng => "Save PNG",
-            Quick::SaveSetup => "Save setup",
-            Quick::SaveCsv => "Save CSV",
-            Quick::Autoset => "Autoset",
-            Quick::Single => "Single",
-            Quick::RunStop => "Run/Stop",
-            Quick::Clear => "Clear",
-            Quick::NextView => "Next view",
-        }
-    }
-
-    /// Label of the Quick button in the top bar.
-    pub fn short(self) -> &'static str {
-        match self {
-            Quick::Screenshot => "Snap",
-            Quick::SavePng => "PNG",
-            Quick::SaveSetup => "Setup",
-            Quick::SaveCsv => "CSV",
-            Quick::Autoset => "Auto",
-            Quick::Single => "Single",
-            Quick::RunStop => "Run/Stop",
-            Quick::Clear => "Clear",
-            Quick::NextView => "View",
-        }
-    }
-}
-
-/// What an HDMI monitor shows. Mirror: the panel picture, scaled. Waveform: a settings line and the waveform area,
-/// scaled. Layout: the whole screen laid out again at the monitor's size, sharp, with the traces stretched; it costs a
-/// second render per monitor frame (about 5 to 10 ms on the unit at 1920 x 1080), so the panel may get fewer frames.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum HdmiMode {
-    Mirror,
-    #[default]
-    Waveform,
-    Layout,
-}
-
-pub const HDMI_MODES: [HdmiMode; 3] = [HdmiMode::Mirror, HdmiMode::Waveform, HdmiMode::Layout];
-
-/// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
-/// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum TextSize {
-    #[default]
-    Normal,
-    Large,
-    Larger,
-}
-
-pub const TEXT_SIZES: [TextSize; 3] = [TextSize::Normal, TextSize::Large, TextSize::Larger];
-
-impl TextSize {
-    pub fn name(self) -> &'static str {
-        match self {
-            TextSize::Normal => "Normal",
-            TextSize::Large => "Large",
-            TextSize::Larger => "Larger",
-        }
-    }
-
-    /// 0, 1, 2: the font set and the layout metrics.
-    pub fn index(self) -> usize {
-        self as usize
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum CursorMode {
-    Off,
-    Time,
-    Volt,
-    /// time cursors that read the active channel where they stand
-    Track,
-    /// time and voltage cursors at once
-    Xy,
-}
-
-/// How the plot is split into waveform windows; every channel and math channel stands in one of them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum WinLayout {
-    #[default]
-    One,
-    /// two side by side
-    Cols,
-    /// two one above the other
-    Rows,
-    /// two by two
-    Quad,
-}
-
-impl WinLayout {
-    pub const ALL: [WinLayout; 4] = [WinLayout::One, WinLayout::Cols, WinLayout::Rows, WinLayout::Quad];
-
-    pub fn count(self) -> usize {
-        match self {
-            WinLayout::One => 1,
-            WinLayout::Cols | WinLayout::Rows => 2,
-            WinLayout::Quad => 4,
-        }
-    }
-}
-
-/// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
-/// and to the waveform on the external display.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Density {
-    /// top bar, plot, measurement strip, cards
-    #[default]
-    Scope,
-    /// plot and measurement strip
-    Full,
-    /// plot, and under it a pane of numbers or two stacked traces
-    Split,
-    /// four equal panes
-    Four,
-}
-
-impl Density {
-    pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Density::Scope => "Scope",
-            Density::Full => "Full",
-            Density::Split => "Split",
-            Density::Four => "Four",
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Grid {
-    Full,
-    Light,
-    None,
-}
-
-/// Where the measurement strip is drawn. Under is below the graticule.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum StripDock {
-    Under,
-    Left,
-    Right,
-    Above,
-}
-
-impl StripDock {
-    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            StripDock::Under => "Under",
-            StripDock::Left => "Left",
-            StripDock::Right => "Right",
-            StripDock::Above => "Above",
-        }
-    }
-}
-
-/// Settings of one decoder (the `dec_*` fields of `Model` are the one the menu edits).
-#[derive(Clone, PartialEq, Debug)]
-pub struct DecCfg {
-    pub on: bool,
-    pub src: usize,
-    pub baud: usize,
-    pub canrate: usize,
-    pub canh: bool,
-    pub fdrate: usize,
-    pub arate: usize,
-    pub tick: usize,
-    pub nibbles: u32,
-    pub uspeed: usize,
-    pub cphy_rate: f64,
-    pub src4: Option<usize>,
-    pub la_in: bool,
-    pub la: [Option<u8>; 4],
-    pub diff: Option<usize>,
-    pub thr: f32,
-    pub ascii: bool,
-    pub proto: Proto,
-    pub src2: usize,
-    pub cs: Option<usize>,
-    pub mode: u8,
-    pub bits: u32,
-    pub parity: oos_dsp::decode::Parity,
-    pub opt: [u8; crate::protocols::OPTS],
-}
-
-/// Decoders at once.
-pub const DECODERS: usize = 4;
-
-/// Deskew range (s).
-pub const SKEW_MAX: f32 = 100e-9;
-
-/// Unit of a channel.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum AmpUnit {
-    V,
-    A,
-    W,
-    U,
-}
-
-impl AmpUnit {
-    pub const ALL: [AmpUnit; 4] = [AmpUnit::V, AmpUnit::A, AmpUnit::W, AmpUnit::U];
-    pub fn name(self) -> &'static str {
-        ["V", "A", "W", "U"][self as usize]
-    }
-    /// A measurement's unit on such a channel: the V in it replaced.
-    pub fn of(self, unit: &'static str) -> &'static str {
-        match (self, unit) {
-            (AmpUnit::A, "V") => "A",
-            (AmpUnit::A, "Vs") => "As",
-            (AmpUnit::A, "V/s") => "A/s",
-            (AmpUnit::W, "V") => "W",
-            (AmpUnit::W, "Vs") => "Ws",
-            (AmpUnit::W, "V/s") => "W/s",
-            (AmpUnit::U, "V") => "U",
-            (AmpUnit::U, "Vs") => "Us",
-            (AmpUnit::U, "V/s") => "U/s",
-            _ => unit,
-        }
-    }
-}
-
-/// What stays put on the screen when the time base changes.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum HExpand {
-    Center,
-    Left,
-    Right,
-    Trigger,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct Channel {
-    pub on: bool,
-    pub vscale: usize, // index into VSCALES
-    /// fine scale: factor on the step of `vscale`, 1.0 = exactly on the step
-    pub vfine: f32,
-    /// what the channel measures: only the unit it shows
-    pub unit: AmpUnit,
-    /// zero correction in V: subtracted from what the channel reads
-    pub bias: f32,
-    /// deskew in s
-    pub skew: f32,
-    pub offset: f32,   // volts added before display (vertical position)
-    pub coupling: Coupling,
-    /// bandwidth limit, index into BWS
-    pub bw: usize,
-    pub probe: f32,
-    pub invert: bool,
-}
-
-impl Channel {
-    pub fn volts_per_div(&self) -> f32 {
-        VSCALES[self.vscale] * self.vfine * self.probe
-    }
-
-    /// Largest offset of the scale at the probe tip: the input gain path has its own range (afe-settings.md 3.2), the
-    /// file's limits vary a little from block to block.
-    pub fn offset_max(&self) -> f32 {
-        let bnc = VSCALES[self.vscale] * self.vfine;
-        self.probe * if bnc < 0.06 { 2.0 } else if bnc < 0.26 { 12.0 } else if bnc < 2.65 { 56.0 } else { 550.0 }
-    }
-}
-
-/// How far a bus may sit from the middle of the grid, in divisions. Positive is up.
-pub const BUS_POS_MIN: f32 = -3.6;
-pub const BUS_POS_MAX: f32 = 3.6;
-
-/// The bus drawn on the plot. Only I2C is defined.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BusKind {
-    I2c,
-}
-
-impl BusKind {
-    pub fn name(self) -> &'static str {
-        match self {
-            BusKind::I2c => "I2C",
-        }
-    }
-}
-
-/// One bus on the waveform: on or off, a label, and a vertical position in divisions.
-#[derive(Clone, PartialEq, Debug)]
-pub struct TraceBus {
-    pub on: bool,
-    pub label: String,
-    /// divisions from the center of the grid, positive up
-    pub pos: f32,
-    pub kind: BusKind,
-    /// clock (SCL) and data (SDA)
-    pub clk: WaveId,
-    pub data: WaveId,
-    pub clk_thr: f32,
-    pub data_thr: f32,
-    /// the address word includes the read/write bit as its least significant bit
-    pub addr_rw: bool,
-}
-
-impl Default for TraceBus {
-    fn default() -> Self {
-        Self { on: false, label: "I2C".into(), pos: -3.0, kind: BusKind::I2c, clk: WaveId::Ch(0), data: WaveId::Ch(1), clk_thr: 1.65, data_thr: 1.65, addr_rw: false }
-    }
-}
-
-impl TraceBus {
-    /// The name drawn on the plot. An empty label falls back to the type.
-    pub fn shown_label(&self) -> String {
-        let t = self.label.trim();
-        if t.is_empty() { self.kind.name().to_string() } else { t.to_string() }
-    }
-}
-
-/// Keeps a bus label to the length of a channel name, without control characters.
-pub fn bus_label(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).take(10).collect::<String>().trim().to_string()
-}
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Model {
@@ -1088,6 +293,8 @@ pub struct Model {
     pub trig_level: f32,
     pub slope: Slope,
     pub trig_mode: TrigMode,
+    /// the sweep (Auto or Normal) before a Single, which Run goes back to (`Model::run_sweep`); not part of a setup
+    pub sweep_before_single: TrigMode,
     /// trigger holdoff, seconds (0 = the shortest there is)
     pub holdoff: f32,
     pub trig_type: TrigType,
@@ -1134,7 +341,7 @@ pub struct Model {
     pub seg_hw: bool,
     /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
     pub seg_ivl: f32,
-    pub mdepth: usize, // index into `mdepths()` (0 = auto)
+    pub mdepth: usize,  // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
     pub grid: Grid,
@@ -1152,7 +359,7 @@ pub struct Model {
     /// Window of each reference trace in a split (not Stacked).
     pub ref_win: [usize; NREF],
     pub meas: Vec<(Meas, WaveId)>,
-    /// delay and phase: entry of `ui::tools::PAIRS`, source A, source B (a channel or a loaded ref)
+    /// delay and phase: entry of `measures::pairs::PAIRS`, source A, source B (a channel or a loaded ref)
     pub meas2: Vec<(usize, WaveId, WaveId)>,
     /// Catalog results that are not a `Meas` row: id, source A, source B, third source, fourth source.
     pub cat: Vec<(u16, WaveId, WaveId, WaveId, WaveId)>,
@@ -1197,7 +404,7 @@ pub struct Model {
     pub log_ivl: usize,
     /// spectrum limit from a trace: dB above it
     pub spec_margin: f32,
-    pub math_offset: f32,  // divisions
+    pub math_offset: f32, // divisions
     pub fft_win: Window,
     /// bandwidth of the math band-pass/band-stop (Hz)
     pub math_bw: f32,
@@ -1262,7 +469,7 @@ pub struct Model {
     /// one bus on the plot
     pub bus: TraceBus,
     /// option settings of a protocol module (`protocols::Opt`), indices into its choices
-    pub dec_opt: [u8; crate::protocols::OPTS],
+    pub dec_opt: [u8; oos_dsp::protocols::OPTS],
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
@@ -1275,9 +482,6 @@ pub struct Model {
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
-    /// Acquire > Draw path: the batch pipeline of PR #7 (`drawpipe`: the deposit workers draw every frame of a batch
-    /// from the read-out words, the default, ADR 0029) instead of the Standard fast path
-    pub draw_batch: bool,
     /// Display > Bottom bar: the compact bar of PR #8 (Menu, Sources, the active source, Overlay/Stacked, time,
     /// trigger) instead of the cards (the default)
     pub bar_compact: bool,
@@ -1289,7 +493,7 @@ pub struct Model {
     /// the one shown (0-based)
     pub view_cur: usize,
     /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
-    pub view_slots: [String; crate::ui::VIEWS_MAX],
+    pub view_slots: [String; VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)
     pub z_src: Option<usize>,
     /// histogram of the active channel from the phosphor map
@@ -1416,7 +620,7 @@ pub struct Model {
     pub dpt_zoom: DptZoom,
     /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
     pub bode_usb: bool,
-    /// Bode with a generator that sweeps on its own (`ui::bode::FREE`, same start/stop): sweep time (s), logarithmic
+    /// Bode with a generator that sweeps on its own (`model::bode::FREE`, same start/stop): sweep time (s), logarithmic
     /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
     /// `bode_ref` dBV)
     pub bode_sw_time: f64,
@@ -1473,7 +677,7 @@ pub struct Model {
     /// size of the text on the screen
     pub text_size: TextSize,
     /// logic analyser D0..D15 (DHO900, ui/la.rs)
-    pub la: crate::ui::la::LaSet,
+    pub la: crate::model::la::LaSet,
     /// SIM menu: which serial preset and which R slot Play writes, plus the knobs that override the preset.
     pub sim_preset: usize,
     pub sim_slot: usize,
@@ -1497,1005 +701,6 @@ pub struct Model {
     pub sim_dcd_pp: f64,
     pub sim_corr_rj: f64,
     pub sim_corr_hz: f64,
-}
-
-pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
-/// Trace colours of M1..M8 (M1 = the classic math colour).
-pub const MATH_COLORS: [Rgb; 8] = [
-    MATH_COLOR, rgb(0xff, 0x8b, 0xd0), rgb(0x8b, 0xe9, 0xff), rgb(0xff, 0xc8, 0x6b), rgb(0x9b, 0xff, 0x8b), rgb(0xff, 0x9b, 0x8b), rgb(0xd8, 0xd8, 0xd8), rgb(0x8b, 0xa8, 0xff),
-];
-/// FFT vertical scale in dB/div.
-pub const FFT_DB: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
-
-/// Bandwidth limits of a channel (AFE low-pass): Auto = filter ~ fs / 4 as the
-/// default, Full = widest filter (stock "OFF", 3150 MHz in the AFE), GND = no signal through the AFE; then the AFE
-/// filter frequency in MHz (`board::dho::hw::bw_code`).
-pub const BWS: [(&str, u32); 31] = [
-    ("Auto", 0), ("Full", 0), ("20 MHz", 20), ("GND", 0),
-    ("5 MHz", 5), ("10 MHz", 10), ("15 MHz", 15), ("25 MHz", 25), ("30 MHz", 30), ("35 MHz", 35), ("40 MHz", 40),
-    ("50 MHz", 50), ("60 MHz", 60), ("70 MHz", 70), ("75 MHz", 75), ("80 MHz", 80), ("90 MHz", 90), ("100 MHz", 100),
-    ("125 MHz", 125), ("150 MHz", 150), ("175 MHz", 175), ("200 MHz", 200), ("250 MHz", 250), ("300 MHz", 300),
-    ("310 MHz", 310), ("400 MHz", 400), ("600 MHz", 600), ("800 MHz", 800), ("1 GHz", 1000), ("1.5 GHz", 1500),
-    ("2 GHz", 2000),
-];
-/// Index of "20 MHz" in BWS (old setups, SCPI 20M).
-pub const BW_20M: usize = 2;
-/// Index of "Full" in BWS.
-pub const BW_FULL: usize = 1;
-/// Index of "Auto" in BWS: the filter follows the sample rate (the default, as on the stock system; with Full the
-/// noise at slow time bases can exceed the trigger hysteresis, trigger.md 7).
-pub const BW_AUTO: usize = 0;
-
-/// The settings of one built-in generator. The selected one is in the `afg_*` fields of the model, the others in
-/// `Model::gen_bank` (`Model::gen_select`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GenCh {
-    pub on: bool,
-    pub arb: u32,
-    pub arb_src: usize,
-    pub freq: f64,
-    pub ampl: f64,
-    pub offset: f64,
-    pub wave: usize,
-    pub duty: f64,
-    pub symmetry: f64,
-    pub modulation: usize,
-    pub mod_rate: f64,
-    pub mod_depth: f64,
-    pub fm_dev: f64,
-    pub pm_dev: f64,
-    pub mod_shape: usize,
-}
-
-impl GenCh {
-    pub const STANDARD: GenCh = GenCh {
-        on: false,
-        arb: 0,
-        arb_src: 0,
-        freq: 1000.0,
-        ampl: 1.0,
-        offset: 0.0,
-        wave: 0,
-        duty: 50.0,
-        symmetry: 50.0,
-        modulation: 0,
-        mod_rate: 100.0,
-        mod_depth: 100.0,
-        fm_dev: 100.0,
-        pm_dev: 90.0,
-        mod_shape: 0,
-    };
-}
-
-/// Wave shapes of the built-in generator (`Board::gen`).
-pub const AFG_WAVES: [&str; 7] = ["Sine", "Square", "Ramp", "Pulse", "Noise", "DC", "Arb"];
-/// Indices into AFG_WAVES the generator page treats apart.
-pub const AFG_NOISE: usize = 4;
-pub const AFG_DC: usize = 5;
-/// Modulations and modulating shapes of the built-in generator (`Board::gen`).
-pub const AFG_MODS: [&str; 4] = ["Off", "AM", "FM", "PM"];
-pub const AFG_MOD_SHAPES: [&str; 6] = ["Sine", "Square", "Triangle", "Up ramp", "Down ramp", "Noise"];
-
-/// Persistence: name, seconds (0 = minimum, <0 = infinite).
-pub const PERSIST: [(&str, f32); 7] = [("Min", 0.0), ("100 ms", 0.1), ("500 ms", 0.5), ("1 s", 1.0), ("5 s", 5.0), ("10 s", 10.0), ("Infinite", -1.0)];
-
-impl Default for Model {
-    fn default() -> Model {
-        let c = |on| Channel { on, vscale: 12, vfine: 1.0, unit: AmpUnit::V, bias: 0.0, skew: 0.0, offset: 0.0, coupling: Coupling::Dc, bw: BW_AUTO, probe: 1.0, invert: false };
-        let ts = tscales();
-        let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
-        let mut m = Model {
-            ch: std::array::from_fn(|i| c(i == 0)),
-            deskew_ch: [0.0; NCH],
-            deskew_ref: [0.0; NREF],
-            active: 0,
-            cur_b_source: None,
-            tscale: t200u,
-            delay: 0.0,
-            trig_src: 0,
-            trig_ref: None,
-            trig_la: None,
-            pat_la: [Bit::X; 16],
-            trig_level: 0.0,
-            slope: Slope::Rise,
-            trig_mode: TrigMode::Auto,
-            holdoff: 0.0,
-            trig_type: TrigType::Edge,
-            trig_level2: 0.5,
-            trig_nrej: false,
-            auto_nrej: false,
-            trig_coup: TrigCoup::Dc,
-            trig_src2: 3,
-            trig_ref2: None,
-            trig_slope2: Slope::Rise,
-            trig_pol: Pol::Pos,
-            trig_when: WhenKind::Lt,
-            trig_t1: 20e-6,
-            trig_t2: 40e-6,
-            video_std: VideoStd::Pal,
-            video_sync: VSync::AllFields,
-            video_line: 10,
-            pat: std::array::from_fn(|i| if i == 0 || i == NCH - 1 { Bit::H } else { Bit::X }),
-            pat_levels: std::array::from_fn(|i| [1.25, 0.0, 1.65, 1.65][i.min(3)]),
-            win_mode: WinMode::Enter,
-            nth_idle: 50e-6,
-            nth_n: 1,
-            setup: 1e-6,
-            hold: 1e-6,
-            run: RunState::Run,
-            status: TrigStatus::Wait,
-            acq: AcqMode::Normal,
-            cores: true,
-            avg_count: 16,
-            avg_hw: false,
-            segments: 0,
-            seg_hw: false,
-            seg_ivl: 0.0,
-            mdepth: 0,
-            persist: 0,
-            intensity: 60,
-            grid: Grid::Full,
-            meas: Vec::new(),
-            meas2: Vec::new(),
-            cat: Vec::new(),
-            dvm_on: false,
-            dvm_src: 0,
-            dvm_mode: 0,
-            cnt_on: false,
-            cnt_src: 0,
-            cnt_mode: 0,
-            cnt_digits: 5,
-            ch_label: Default::default(),
-            cursor: CursorMode::Off,
-            cur_a: 0.3,
-            cur_b: 0.7,
-            cur_c: 0.3,
-            cur_d: 0.7,
-            touch_lock: false,
-            aux_out: AuxOut::TrigOut,
-            fine_v: false,
-            fine_t: false,
-            tfine: 1.0,
-            v_expand_gnd: false,
-            h_expand: HExpand::Center,
-            math: MathOp::Off,
-            math_a: 0,
-            math_b: 1,
-            math_scale: 3,
-            math_offset: 0.0,
-            fft_win: Window::Hann,
-            math_bw: 2e3,
-            math_sel: 0,
-            maths: [crate::math::MathCh::default(); crate::math::NMATH],
-            math_fc: 10e3,
-            math_lin: (1.0, 0.0),
-            math_expr: Default::default(),
-            log_ivl: 0,
-            spec_margin: 10.0,
-            decs: Default::default(),
-            dec_sel: 0,
-            pane: 0,
-            split_pane: 0,
-            meas_labels: false,
-            strip_dock: StripDock::Under,
-            trend_sel: [0, 0],
-            dec_on: false,
-            dec_src: 2,
-            dec_baud: 7,
-            dec_canrate: 2,
-            dec_canh: false,
-            dec_fdrate: 1,
-            dec_arate: 0,
-            dec_tick: 0,
-            dec_nibbles: 6,
-            dec_uspeed: 0,
-            dec_cphy_rate: 0.0,
-            dec_src4: None,
-            dec_la_in: false,
-            dec_la: [Some(8), Some(10), None, None],
-            dec_diff: None,
-            trig_bus: BusWhat::Id,
-            trig_bus_val: 0x123,
-            ser: SerialTrig::default(),
-            dec_thr: 1.65,
-            dec_ascii: true,
-            dec_proto: Proto::UART,
-            dec_src2: 3,
-            dec_cs: Some(1),
-            dec_mode: 0,
-            dec_bits: 8,
-            dec_parity: oos_dsp::decode::Parity::None,
-            bus: TraceBus::default(),
-            dec_opt: [0; crate::protocols::OPTS],
-            zoom: false,
-            auto_roll: true,
-            zscale: 0,
-            zdelay: 0.0,
-            color_grade: false,
-            // samples as dots by default
-            dots: true,
-            hdmi: HdmiMode::Waveform,
-            bar_compact: false,
-            draw_batch: true,
-            hdmi_view: 0,
-            views: 1,
-            view_cur: 0,
-            view_slots: Default::default(),
-            z_src: None,
-            hist: Hist::Off,
-            view: AView::Scope,
-            spec_src: WaveId::Ch(0),
-            spec_center: 0.0,
-            spec_span: 0.0,
-            spec_rbw: 0.0,
-            // low side lobes at nearly half the resolution bandwidth of Flattop; the padding removes the scalloping
-            spec_win: Window::Blackman,
-            spec_sort: 0,
-            spec_harm: 2,
-            spec_trace: 0,
-            spec_ref: 10.0,
-            spec_wf: false,
-            spec_dist: false,
-            eye_src: WaveId::Ch(0),
-            eye_rate: 0.0,
-            eye_from_record: false,
-            eye_place: EyePlace::Full,
-            eye_ber: 1e-12,
-            eye_pn_lo: 1e3,
-            eye_pn_hi: 1e6,
-            eye_npj: false,
-            eye_b: None,
-            eye_rail: None,
-            eye_notch: 0.0,
-            eye_hp: true,
-            pw_v: WaveId::Ch(0),
-            pw_i: WaveId::Ch(1),
-            pw_mode: PowerMode::Quality,
-            pw_fline: 0.0,
-            pw_fsw: 0.0,
-            pw_vin: None,
-            pw_clk: None,
-            pw_ref: None,
-            bode_start: 100.0,
-            bode_stop: 1e6,
-            bode_points: 40,
-            bode_amp: 1.0,
-            bode_in: WaveId::Ch(0),
-            bode_out: WaveId::Ch(1),
-            bode_gen: 0,
-            hw_stamp: 0,
-            hw_avg_clear: 0,
-            auto_fast: false,
-            bode_addr: "192.168.1.100:5555".into(),
-            bode_mode: oos_dsp::bode::Mode::Loop,
-            meas_idle: 0.0,
-            meas_out: oos_dsp::measure::Outside::Both,
-            meas_n: 2,
-            meas_data: false,
-            meas_lpct: 0.1,
-            meas_hpct: 0.9,
-            meas_full_record: false,
-            meas_tsetup: 0.0,
-            meas_thold: 0.0,
-            spec_acpr_w: 1e6,
-            spec_acpr_s: 2e6,
-            mag_v: WaveId::Ch(0),
-            mag_i: WaveId::Ch(1),
-            mag_n: 1.0,
-            mag_ae: 0.0,
-            mag_le: 0.0,
-            mag_rcu: 0.0,
-            mag_plot: MagPlot::IPsi,
-            mag_cur: 0,
-            inv_page: InvPage::Dq0,
-            inv_a: WaveId::Ch(0),
-            inv_b: WaveId::Ch(1),
-            inv_c: WaveId::Ch(2),
-            inv_ang: InvAngle::Off,
-            inv_poles: 1,
-            inv_an: WaveId::Ch(3),
-            inv_volt: true,
-            inv_tq: None,
-            inv_ev: None,
-            inv_ei: None,
-            inv_scale: 1.0,
-            inv_degv: 1.0,
-            inv_off: 0.0,
-            inv_elec: false,
-            inv_qa: 0,
-            inv_qb: 1,
-            inv_qi: None,
-            inv_cpr: 1024.0,
-            inv_swap: false,
-            inv_ha: 0,
-            inv_hb: 1,
-            inv_hc: 2,
-            dpt_v: WaveId::Ch(0),
-            dpt_i: WaveId::Ch(1),
-            dpt_g: WaveId::Ch(2),
-            dpt_4th: DptFourth::Off,
-            dpt_4ch: WaveId::Ch(3),
-            dpt_pct: 10.0,
-            dpt_zoom: DptZoom::Both,
-            bode_usb: false,
-            bode_sw_time: 1.0,
-            bode_sw_log: true,
-            bode_sync: NCH - 1,
-            bode_sync_slope: Slope::Rise,
-            bode_sync_level: 1.0,
-            bode_sw_in: 1,
-            bode_ref: 0.0,
-            bw_src: 0,
-            bw_hint: 0.0,
-            bw_bins: 2000,
-            gen_sel: 0,
-            gen_bank: [GenCh::STANDARD; NGEN],
-            afg_on: false,
-            afg_arb: 0,
-            grid_bright: 100,
-            grid_frame: true,
-            win_layout: WinLayout::One,
-            density: Density::Scope,
-            ch_win: [0; NCH],
-            math_win: [0; crate::math::NMATH],
-            la_win: 0,
-            ref_win: [0; NREF],
-            afg_arb_src: 0,
-            afg_freq: 1000.0,
-            afg_ampl: 1.0,
-            afg_offset: 0.0,
-            afg_wave: 0,
-            afg_duty: 50.0,
-            afg_symmetry: 50.0,
-            afg_mod: 0,
-            afg_mod_rate: 100.0,
-            afg_mod_depth: 100.0,
-            afg_fm_dev: 100.0,
-            afg_pm_dev: 90.0,
-            afg_mod_shape: 0,
-            mask_on: false,
-            zones: Default::default(),
-            mask_src: 0,
-            mask_x: 0.2,
-            mask_y: 0.4,
-            mask_stop: false,
-            mask_inv: false,
-            quick: Quick::Screenshot,
-            text_size: TextSize::Normal,
-            la: Default::default(),
-            sim_preset: 3,
-            sim_slot: 0,
-            sim_rate: 0.0,
-            sim_prbs: 31,
-            sim_vhigh: 0.0,
-            sim_vlow: 0.0,
-            sim_rise: 0.0,
-            sim_noise: 0.0,
-            sim_bw: 0.0,
-            sim_deemph: 0.0,
-            sim_ssc: false,
-            sim_ssc_center: false,
-            sim_ssc_deviation: 0.005,
-            sim_ssc_hz: 33e3,
-            sim_rj: 0.0,
-            sim_pj: 0.0,
-            sim_pjhz: 0.0,
-            sim_dcd_pp: 0.0,
-            sim_corr_rj: 0.0,
-            sim_corr_hz: 1e6,
-        };
-        m.apply_sim_preset();
-        m.ch[0].offset = -1.5;
-        m.trig_level = 1.5;
-        m
-    }
-}
-
-impl Model {
-    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
-    pub fn apply_sim_preset(&mut self) {
-        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
-        self.sim_rate = l.bits_per_s;
-        self.sim_prbs = l.prbs;
-        self.sim_vhigh = l.v_high;
-        self.sim_vlow = l.v_low;
-        self.sim_rise = l.rise;
-        self.sim_noise = l.noise_rms;
-        self.sim_bw = l.bw;
-        self.sim_deemph = l.deemph_db;
-        self.sim_ssc = l.ssc;
-        self.sim_ssc_center = l.ssc_center;
-        self.sim_ssc_deviation = l.ssc_deviation;
-        self.sim_ssc_hz = l.ssc_hz;
-        self.sim_rj = l.rj_rms;
-        self.sim_pj = l.pj_peak;
-        self.sim_pjhz = l.pj_hz;
-        self.sim_dcd_pp = l.dcd_pp;
-        self.sim_corr_rj = l.corr_rj_rms;
-        self.sim_corr_hz = l.corr_rj_hz;
-    }
-
-    /// The settings of the selected generator.
-    pub fn gen_read(&self) -> GenCh {
-        GenCh {
-            on: self.afg_on,
-            arb: self.afg_arb,
-            arb_src: self.afg_arb_src,
-            freq: self.afg_freq,
-            ampl: self.afg_ampl,
-            offset: self.afg_offset,
-            wave: self.afg_wave,
-            duty: self.afg_duty,
-            symmetry: self.afg_symmetry,
-            modulation: self.afg_mod,
-            mod_rate: self.afg_mod_rate,
-            mod_depth: self.afg_mod_depth,
-            fm_dev: self.afg_fm_dev,
-            pm_dev: self.afg_pm_dev,
-            mod_shape: self.afg_mod_shape,
-        }
-    }
-
-    fn gen_write(&mut self, g: GenCh) {
-        (self.afg_on, self.afg_arb, self.afg_arb_src) = (g.on, g.arb, g.arb_src);
-        (self.afg_freq, self.afg_ampl, self.afg_offset) = (g.freq, g.ampl, g.offset);
-        (self.afg_wave, self.afg_duty, self.afg_symmetry) = (g.wave, g.duty, g.symmetry);
-        (self.afg_mod, self.afg_mod_rate, self.afg_mod_depth) = (g.modulation, g.mod_rate, g.mod_depth);
-        (self.afg_fm_dev, self.afg_pm_dev, self.afg_mod_shape) = (g.fm_dev, g.pm_dev, g.mod_shape);
-    }
-
-    /// The settings of generator `i`.
-    pub fn gen_ch(&self, i: usize) -> GenCh {
-        if i == self.gen_sel {
-            self.gen_read()
-        } else {
-            self.gen_bank[i]
-        }
-    }
-
-    /// Makes generator `i` the one the page and the `afg_*` fields work on.
-    pub fn gen_select(&mut self, i: usize) {
-        if i != self.gen_sel && i < NGEN {
-            self.gen_bank[self.gen_sel] = self.gen_read();
-            self.gen_write(self.gen_bank[i]);
-            self.gen_sel = i;
-        }
-    }
-
-    /// Highest frequency (Hz) of the selected generator's wave shape.
-    pub fn gen_max_hz(&self) -> f64 {
-        board().gen_max_hz(&self.gen_read())
-    }
-
-    fn dsp_slope(s: Slope) -> oos_dsp::trigger::Slope {
-        match s {
-            Slope::Rise => oos_dsp::trigger::Slope::Rising,
-            Slope::Fall => oos_dsp::trigger::Slope::Falling,
-            Slope::Either => oos_dsp::trigger::Slope::Either,
-        }
-    }
-
-    /// The time condition of the "When" setting (None = Off).
-    pub fn when(&self) -> Option<oos_dsp::trigger::When> {
-        use oos_dsp::trigger::When;
-        let (a, b) = (self.trig_t1 as f64, self.trig_t2 as f64);
-        match self.trig_when {
-            WhenKind::Off => None,
-            WhenKind::Gt => Some(When::Gt(a)),
-            WhenKind::Lt => Some(When::Lt(a)),
-            WhenKind::In => Some(When::In(a.min(b), a.max(b))),
-            WhenKind::Out => Some(When::Out(a.min(b), a.max(b))),
-        }
-    }
-
-    pub fn trigger_wave(&self) -> WaveId {
-        self.trig_ref.map_or(WaveId::Ch(self.trig_src), WaveId::Ref)
-    }
-
-    pub fn trigger_wave2(&self) -> WaveId {
-        self.trig_ref2.map_or(WaveId::Ch(self.trig_src2), WaveId::Ref)
-    }
-
-    pub fn set_trigger_wave(&mut self, source: WaveId, secondary: bool) {
-        let (channel, reference) = if secondary { (&mut self.trig_src2, &mut self.trig_ref2) } else { (&mut self.trig_src, &mut self.trig_ref) };
-        match source {
-            WaveId::Ch(c) => { *channel = c.min(NCH - 1); *reference = None; }
-            WaveId::Ref(i) => { *reference = Some(i.min(NREF - 1)); }
-        }
-        if !secondary { self.trig_la = None; }
-    }
-
-    /// Keeps the lower level of a two-level type at or below the upper one. The lower level gives way: the upper is
-    /// the level every type shares, the lower one is also Delay's level B and Setup/Hold's clock level.
-    pub fn order_trigger_levels(&mut self) {
-        if self.trig_type.two_level() && self.trig_level2 > self.trig_level {
-            self.trig_level2 = self.trig_level;
-        }
-    }
-
-    /// The configured trigger for the software trigger engine.
-    pub fn trigger(&self) -> oos_dsp::trigger::Trigger {
-        use oos_dsp::trigger::{Trigger, VideoSync, WinWhen};
-        let (src, lv, lv2) = (self.trig_src, self.trig_level, self.trig_level2);
-        let (hi, lo) = (lv.max(lv2), lv.min(lv2));
-        let when = self.when().unwrap_or(oos_dsp::trigger::When::Gt(0.0));
-        let sl = Self::dsp_slope(self.slope);
-        match self.trig_type {
-            TrigType::Edge => Trigger::Edge { src, slope: sl, level: lv },
-            // the protocol trigger is evaluated by trig::find_all; this edge only stands for it elsewhere
-            TrigType::Bus => Trigger::Edge { src: self.dec_src, slope: oos_dsp::trigger::Slope::Falling, level: self.dec_thr },
-            TrigType::Pulse => Trigger::Pulse { src, pol: self.trig_pol, level: lv, when },
-            TrigType::Slope => Trigger::Slope { src, slope: sl, lo, hi, when },
-            TrigType::Video => Trigger::Video {
-                src,
-                std: self.video_std,
-                level: lv,
-                sync: match self.video_sync {
-                    VSync::AllLines => VideoSync::AllLines,
-                    VSync::Line => VideoSync::Line(self.video_line),
-                    VSync::Odd => VideoSync::OddField,
-                    VSync::Even => VideoSync::EvenField,
-                    VSync::AllFields => VideoSync::AllFields,
-                },
-            },
-            TrigType::Pattern => Trigger::Pattern { bits: self.pat, levels: self.pat_levels },
-            TrigType::Duration => Trigger::Duration { bits: self.pat.map(|b| if matches!(b, Bit::R | Bit::F) { Bit::X } else { b }), levels: self.pat_levels, when },
-            TrigType::Timeout => Trigger::Timeout { src, slope: sl, level: lv, time: self.trig_t1 as f64 },
-            TrigType::Runt => Trigger::Runt { src, pol: self.trig_pol, lo, hi, when: self.when() },
-            TrigType::Window => Trigger::Window {
-                src,
-                lo,
-                hi,
-                when: match self.win_mode {
-                    WinMode::Enter => WinWhen::Enter,
-                    WinMode::Exit => WinWhen::Exit,
-                    WinMode::Inside => WinWhen::Inside(when),
-                },
-            },
-            TrigType::Delay => Trigger::Delay { a: src, slope_a: sl, level_a: lv, b: self.trig_src2, slope_b: Self::dsp_slope(self.trig_slope2), level_b: lv2, when },
-            TrigType::SetupHold => Trigger::SetupHold {
-                data: src,
-                clk: self.trig_src2,
-                clk_slope: Self::dsp_slope(self.trig_slope2),
-                data_level: lv,
-                clk_level: lv2,
-                setup: self.setup as f64,
-                hold: self.hold as f64,
-            },
-            TrigType::NthEdge => Trigger::NthEdge { src, slope: sl, level: lv, idle: self.nth_idle as f64, n: self.nth_n },
-        }
-    }
-
-    /// Channels the trigger reads.
-    pub fn trig_channels(&self) -> [bool; NCH] {
-        let mut u = [false; NCH];
-        if self.trig_line().is_some() || self.bus_on_la() {
-            return u;
-        }
-        match self.trig_type {
-            TrigType::Pattern | TrigType::Duration => {
-                for c in 0..NCH {
-                    u[c] = self.pat[c] != Bit::X;
-                }
-            }
-            TrigType::Delay | TrigType::SetupHold => {
-                u[self.trig_src] = true;
-                u[self.trig_src2] = true;
-            }
-            TrigType::Bus => {
-                let r = self.dec_proto.roles();
-                if let Some(v) = u.get_mut(self.dec_src) { *v = true; }
-                if r[1].is_some() {
-                    if let Some(v) = u.get_mut(self.dec_src2) { *v = true; }
-                }
-                if let (Some(_), Some(c)) = (r[2], self.dec_cs) {
-                    if let Some(v) = u.get_mut(c) { *v = true; }
-                }
-                if let (Some(_), Some(c)) = (r[3], self.dec_src4) {
-                    if let Some(v) = u.get_mut(c) { *v = true; }
-                }
-                if let (true, Some(c)) = (self.dec_proto.diff_ok(), self.dec_diff) {
-                    if let Some(v) = u.get_mut(c) { *v = true; }
-                }
-            }
-            _ => u[self.trig_src] = true,
-        }
-        u
-    }
-
-    /// Time scale of the trigger condition (s): the search resolution must resolve it.
-    pub fn trig_feature(&self) -> f64 {
-        let t = |x: f32| x as f64;
-        match self.trig_type {
-            TrigType::Edge | TrigType::Pattern => f64::INFINITY,
-            TrigType::Bus => self.bus_bit() / 20.0,
-            TrigType::Video => 0.25e-6,
-            TrigType::SetupHold => t(self.setup.min(self.hold)) / 4.0,
-            TrigType::Timeout => t(self.trig_t1) / 20.0,
-            TrigType::NthEdge => t(self.nth_idle) / 20.0,
-            TrigType::Runt if self.trig_when == WhenKind::Off => f64::INFINITY,
-            TrigType::Window if self.win_mode != WinMode::Inside => f64::INFINITY,
-            _ => t(self.trig_t1.min(if matches!(self.trig_when, WhenKind::In | WhenKind::Out) { self.trig_t2 } else { f32::MAX })) / 20.0,
-        }
-    }
-
-    /// Record length the trigger needs to decide (s).
-    pub fn trig_span(&self) -> f64 {
-        let t = |x: f32| x as f64;
-        match self.trig_type {
-            TrigType::Video => match self.video_sync {
-                VSync::AllLines => 4.0 * self.video_std.line(),
-                _ => 1.1 * self.video_std.lines() as f64 * self.video_std.line(),
-            },
-            TrigType::Timeout | TrigType::Duration => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 6e-3,
-            TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
-            // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
-            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))).unwrap_or(200.0 * self.bus_bit()),
-            TrigType::Edge | TrigType::Pattern => 0.0,
-            _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
-        }
-    }
-
-    /// Switches the decoder's protocol and nothing else (SCPI configures an instrument, not the demo's sources); a
-    /// module that is newly chosen starts from its default options.
-    pub fn set_dec_proto_only(&mut self, p: Proto) {
-        if let (Proto::Module(i), true) = (p, self.dec_proto != p) {
-            self.dec_opt = crate::protocols::opt_default(i);
-        }
-        self.dec_proto = p;
-    }
-
-    /// The option settings of the decoder's protocol module, in range.
-    pub fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
-        let Proto::Module(i) = self.dec_proto;
-        crate::protocols::opt_fit(i, self.dec_opt)
-    }
-
-    /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
-    pub fn bus_bit(&self) -> f64 {
-        let Proto::Module(i) = self.dec_proto;
-        crate::protocols::get(i).bit_time_sh(&self.dec_opts(), &crate::protocols::Shared::of(self))
-    }
-
-    pub fn time_per_div(&self) -> f32 {
-        tscales()[self.tscale] * self.tfine
-    }
-
-    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
-    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
-    pub fn hw_time_per_div(&self) -> f32 {
-        tscales()[self.tscale].max(HW_MIN_TDIV)
-    }
-
-    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
-    pub fn floor_live_tdiv(&mut self) {
-        if tscales()[self.tscale] < HW_MIN_TDIV {
-            self.tscale = tscales().iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
-            self.tfine = 1.0;
-        }
-    }
-
-    /// Keeps every offset within what the AFE of its scale can do.
-    pub fn clamp_offsets(&mut self) {
-        for ch in &mut self.ch {
-            let m = ch.offset_max();
-            ch.offset = ch.offset.clamp(-m, m);
-        }
-    }
-
-    /// Unit of channel `c`.
-    pub fn unit(&self, c: usize) -> &'static str {
-        self.ch[c.min(NCH - 1)].unit.name()
-    }
-
-    /// Settings of math channel `k` (the selected one from the edit fields).
-    pub fn math_ch(&self, k: usize) -> crate::math::MathCh {
-        if k == self.math_sel {
-            crate::math::MathCh { lin: self.math_lin, op: self.math, a: self.math_a, b: self.math_b, scale: self.math_scale, fc: self.math_fc, bw: self.math_bw, offset: self.math_offset, win: self.fft_win }
-        } else {
-            self.maths[k]
-        }
-    }
-
-    /// The settings of the decoder the menu edits.
-    pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), cphy_rate: self.dec_cphy_rate, src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
-    }
-
-    fn dec_load(&mut self, c: &DecCfg) {
-        self.dec_on = c.on.clone();
-        self.dec_src = c.src.clone();
-        self.dec_baud = c.baud.clone();
-        self.dec_canrate = c.canrate.clone();
-        self.dec_canh = c.canh.clone();
-        self.dec_fdrate = c.fdrate.clone();
-        self.dec_arate = c.arate.clone();
-        self.dec_tick = c.tick.clone();
-        self.dec_nibbles = c.nibbles.clone();
-        self.dec_uspeed = c.uspeed.clone();
-        self.dec_cphy_rate = c.cphy_rate;
-        self.dec_src4 = c.src4.clone();
-        self.dec_la_in = c.la_in.clone();
-        self.dec_la = c.la.clone();
-        self.dec_diff = c.diff.clone();
-        self.dec_thr = c.thr.clone();
-        self.dec_ascii = c.ascii.clone();
-        self.dec_proto = c.proto.clone();
-        self.dec_src2 = c.src2.clone();
-        self.dec_cs = c.cs.clone();
-        self.dec_mode = c.mode.clone();
-        self.dec_bits = c.bits.clone();
-        self.dec_parity = c.parity.clone();
-        self.dec_opt = c.opt;
-    }
-
-    /// Settings of decoder `k`.
-    pub fn dec_slot(&self, k: usize) -> DecCfg {
-        if k == self.dec_sel {
-            self.dec_cfg()
-        } else {
-            self.decs[k].clone().unwrap_or_else(|| Model::default().dec_cfg())
-        }
-    }
-
-    pub fn dec_is_on(&self, k: usize) -> bool {
-        if k == self.dec_sel {
-            self.dec_on
-        } else {
-            self.decs[k].as_ref().is_some_and(|c| c.on)
-        }
-    }
-
-    /// The model as decoder `k` sees it, for the code that reads the `dec_*` fields.
-    pub fn dec_view(&self, k: usize) -> Model {
-        let mut m = self.clone();
-        if k != self.dec_sel {
-            m.dec_load(&self.dec_slot(k));
-        }
-        m
-    }
-
-    /// Makes decoder `k` the one the menu edits.
-    pub fn dec_select(&mut self, k: usize) {
-        let k = k.min(DECODERS - 1);
-        if k != self.dec_sel {
-            let c = self.dec_slot(k);
-            self.decs[self.dec_sel] = Some(self.dec_cfg());
-            self.dec_load(&c);
-            self.dec_sel = k;
-        }
-    }
-
-    /// Writes `c` into slot `k` (setups).
-    pub fn dec_store(&mut self, k: usize, c: DecCfg) {
-        if k == self.dec_sel {
-            self.dec_load(&c);
-        } else {
-            self.decs[k] = Some(c);
-        }
-    }
-
-    /// Makes math channel `k` the one the menu edits.
-    pub fn math_select(&mut self, k: usize) {
-        self.maths[self.math_sel] = self.math_ch(self.math_sel);
-        self.math_sel = k.min(crate::math::NMATH - 1);
-        let c = self.maths[self.math_sel];
-        self.math_lin = c.lin;
-        (self.math, self.math_a, self.math_b, self.math_scale, self.math_fc, self.math_bw, self.math_offset, self.fft_win) = (c.op, c.a, c.b, c.scale, c.fc, c.bw, c.offset, c.win);
-    }
-
-    pub fn n_on(&self) -> usize {
-        self.ch.iter().take(n_ch()).filter(|c| c.on).count()
-    }
-    /// Switches off the inputs the model does not have (2-channel models: CH3/CH4), whatever turned them on
-    /// (setups, autoset, demos, SCPI). Returns true if something changed.
-    pub fn fit_platform(&mut self) -> bool {
-        let n = n_ch();
-        let mut changed = false;
-        // what this board does not have: a coupling from a setup of another board, a generator it lacks
-        for ch in &mut self.ch {
-            if !board().couplings().contains(&ch.coupling) {
-                ch.coupling = Coupling::Dc;
-                changed = true;
-            }
-        }
-        if self.gen_sel >= gen_count().max(1) {
-            self.gen_select(0);
-            changed = true;
-        }
-        for c in n..NCH {
-            changed |= std::mem::replace(&mut self.ch[c].on, false);
-        }
-        if self.active >= n {
-            self.active = 0;
-            changed = true;
-        }
-        // models without the LA port: no logic analyser
-        if self.la.on && !crate::ui::la::available() {
-            self.la.on = false;
-            changed = true;
-        }
-        if n >= NCH {
-            return changed;
-        }
-        // the Bode sync channel goes to the last input (CH4 by default, CH2 on a 2-channel model), its input to none
-        if self.bode_sync >= n {
-            self.bode_sync = n - 1;
-            changed = true;
-        }
-        if self.bode_sw_in > n {
-            self.bode_sw_in = 0;
-            changed = true;
-        }
-        // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.mask_src, &mut self.bw_src, &mut self.afg_arb_src]
-            .into_iter()
-            .chain(self.zones.iter_mut().map(|z| &mut z.src))
-        {
-            if *s >= n {
-                *s = 0;
-                changed = true;
-            }
-        }
-        for s in [&mut self.mag_v, &mut self.mag_i, &mut self.inv_a, &mut self.inv_b, &mut self.inv_c, &mut self.inv_an, &mut self.dpt_v, &mut self.dpt_i, &mut self.dpt_g, &mut self.dpt_4ch, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out] {
-            if let WaveId::Ch(c) = *s {
-                if c >= n {
-                    *s = WaveId::Ch(0);
-                    changed = true;
-                }
-            }
-        }
-        for s in [&mut self.dec_src, &mut self.dec_src2] {
-            if decode_wave(*s).is_none() || (*s < NCH && *s >= n) { *s = 0; changed = true; }
-        }
-        for s in [&mut self.dec_src4, &mut self.dec_diff, &mut self.dec_cs] {
-            if s.is_some_and(|c| decode_wave(c).is_none() || (c < NCH && c >= n)) { *s = None; changed = true; }
-        }
-        for s in [&mut self.z_src] {
-            if s.is_some_and(|c| c >= n) {
-                *s = None;
-                changed = true;
-            }
-        }
-        for e in &mut self.meas {
-            if let WaveId::Ch(c) = e.1 {
-                if c >= n {
-                    e.1 = WaveId::Ch(0);
-                    changed = true;
-                }
-            }
-        }
-        for e in &mut self.meas2 {
-            for id in [&mut e.1, &mut e.2] {
-                if let WaveId::Ch(c) = *id {
-                    if c >= n {
-                        *id = WaveId::Ch(0);
-                        changed = true;
-                    }
-                }
-            }
-        }
-        let previous_cat = self.cat.len();
-        self.cat.retain(|row| catalog_id_valid(row.0));
-        self.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(self.meas.len() + self.meas2.len()));
-        changed |= previous_cat != self.cat.len();
-        for row in &mut self.cat {
-            for source in [&mut row.1, &mut row.2, &mut row.3, &mut row.4] {
-                if let WaveId::Ch(c) = *source {
-                    if c >= n { *source = WaveId::Ch(0); changed = true; }
-                } else if matches!(*source, WaveId::Ref(i) if i >= NREF) {
-                    *source = WaveId::Ref(0); changed = true;
-                }
-            }
-        }
-        for s in [&mut self.inv_tq, &mut self.inv_ev, &mut self.inv_ei, &mut self.eye_b, &mut self.eye_rail, &mut self.pw_vin, &mut self.pw_clk] {
-            if let Some(WaveId::Ch(c)) = *s {
-                if c >= n {
-                    *s = None;
-                    changed = true;
-                }
-            }
-        }
-        // math sources: channels 0..NCH, then math channels (always there)
-        for s in [&mut self.math_a, &mut self.math_b].into_iter().chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b])) {
-            if !src_ok(*s) {
-                *s = 0;
-                changed = true;
-            }
-        }
-        changed
-    }
-    /// Maximum sample rate for the number of enabled channels (1.25 GSa/s shared by the ADC cores; platform limits,
-    /// `oos_hal::model`).
-    pub fn max_srate(&self) -> f64 {
-        let r = oos_hal::model::platform().limits.srate(self.n_on());
-        // the analog rate is halved while the LA is on and a channel is shown (la.md 3.1)
-        if self.la_on() && self.n_on() > 0 {
-            r / 2.0
-        } else {
-            r
-        }
-    }
-    /// The logic analyser is on (and the model has it).
-    /// Comparator hysteresis of the trigger in divisions, as the hardware gets it (trigger.md 2.3): 0.3, 0.7 with
-    /// noise reject, more at 2 mV/div and below (the table of the trigger source's scale at the BNC).
-    pub fn trig_hyst_div(&self) -> f32 {
-        let c = &self.ch[self.trig_src.min(NCH - 1)];
-        crate::board::board().trig_hyst_div(c.volts_per_div() as f64 / c.probe as f64, self.trig_nrej) as f32
-    }
-
-    /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
-    /// for an LA line.
-    pub fn trig_coupling(&self) -> TrigCoup {
-        if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
-    }
-
-    pub fn la_on(&self) -> bool {
-        self.la.on && crate::ui::la::available()
-    }
-    /// The trigger types that can use an LA line (the stock system also has them for D0..D15; trigger.md 5).
-    pub fn trig_la_ok(&self) -> bool {
-        self.la_on() && matches!(self.trig_type, TrigType::Edge | TrigType::Pulse)
-    }
-    /// The pattern or duration trigger looks at LA lines.
-    pub fn pat_on_la(&self) -> bool {
-        self.la_on() && matches!(self.trig_type, TrigType::Pattern | TrigType::Duration) && self.pat_la.iter().any(|&b| b != Bit::X)
-    }
-    /// The protocol trigger on LA lines (the decoder's input is the LA).
-    pub fn bus_on_la(&self) -> bool {
-        self.trig_type == TrigType::Bus && self.dec_on_la()
-    }
-    /// The hardware trigger cannot be refined on the analog samples (it is on LA lines).
-    pub fn trig_on_la(&self) -> bool {
-        self.trig_line().is_some() || self.pat_on_la() || self.bus_on_la()
-    }
-    /// The LA line the trigger is on: only while the LA is on and with a type that can use one.
-    pub fn trig_line(&self) -> Option<u8> {
-        self.trig_la.filter(|_| self.trig_la_ok())
-    }
-    /// The decoder reads logic analyser lines (the choice only counts while the LA is on).
-    pub fn dec_on_la(&self) -> bool {
-        self.dec_la_in && self.la_on() && self.dec_proto != Proto::CPHY
-    }
-    pub fn max_mem(&self) -> u64 {
-        // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap
-        // (`hal::dho::hz::MEM_BURSTS`); overridable in limits.conf (`mem.1ch` ...)
-        // with the LA on: 31.25 / 12.5 / 10 M (`max_mem_la`, la.md 3.2)
-        oos_hal::model::platform().limits.mem(self.n_on(), self.la_on())
-    }
-    /// (sample rate, memory depth) as the acquisition would use them.
-    pub fn srate_depth(&self) -> (f64, u64) {
-        let window = self.hw_time_per_div() as f64 * HDIV as f64;
-        let want = mdepths()[self.mdepth].1;
-        let maxsr = self.max_srate();
-        if want == 0 {
-            let depth_cap = 1_000_000u64.min(self.max_mem());
-            let sr = maxsr.min(depth_cap as f64 / window);
-            let sr = quantize_srate(sr, maxsr);
-            (sr, ((sr * window).round() as u64).max(1000).min(depth_cap))
-        } else {
-            let depth = want.min(self.max_mem());
-            let sr = quantize_srate(maxsr.min(depth as f64 / window), maxsr);
-            (sr, depth)
-        }
-    }
-}
-
-/// Sample rates are the ADC rate divided by an integer decimation (1-2-5 steps here).
-fn quantize_srate(sr: f64, max: f64) -> f64 {
-    let mut best = max;
-    let mut d = 1.0;
-    while best > sr * 1.0001 && d < 1e12 {
-        for m in [1.0, 2.0, 5.0] {
-            let c = max / (d * m);
-            if c <= sr * 1.0001 {
-                return c;
-            }
-        }
-        d *= 10.0;
-        best = max / d;
-    }
-    best
 }
 
 /// Engineering format: 3 significant digits by default, SI prefix, unit.
@@ -2532,7 +737,13 @@ pub fn si_digits(v: f64, unit: &str, digits: usize) -> String {
     let (mult, p) = si_prefix(v.abs(), 0);
     let x = v / mult;
     let ax = x.abs();
-    let dec = if ax >= 100.0 { digits.saturating_sub(3) } else if ax >= 10.0 { digits.saturating_sub(2) } else { digits.saturating_sub(1) };
+    let dec = if ax >= 100.0 {
+        digits.saturating_sub(3)
+    } else if ax >= 10.0 {
+        digits.saturating_sub(2)
+    } else {
+        digits.saturating_sub(1)
+    };
     format!("{:.*} {}{}", dec, x, p, unit)
 }
 
@@ -2598,26 +809,5 @@ mod platform_tests {
         m.gen_select(0);
         assert!(m.afg_freq == 5e3 && m.afg_on);
         assert_eq!(m.gen_ch(1).freq, 7e3);
-    }
-
-    #[test]
-    fn a_setup_of_another_board_fits_this_one() {
-        let mut m = Model::default();
-        assert!(!m.fit_platform());
-        if !board().couplings().contains(&Coupling::Dc50) {
-            m.ch[1].coupling = Coupling::Dc50;
-            assert!(m.fit_platform());
-            assert_eq!(m.ch[1].coupling, Coupling::Dc);
-        }
-    }
-
-    #[test]
-    fn the_boards_lists_are_usable() {
-        let d = mdepths();
-        assert_eq!(d[0].1, 0, "Auto first");
-        assert!(d.windows(2).all(|w| w[0].1 < w[1].1), "ascending");
-        assert_eq!(d[d.len() - 1].1, oos_hal::model::Limits::standard().max_mem[0], "the list ends at the largest depth");
-        assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
-        assert!(n_ch() <= NCH && gen_count() <= NGEN);
     }
 }

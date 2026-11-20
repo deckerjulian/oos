@@ -372,7 +372,8 @@ within +-0.2 dB to 2.6 MHz, then +0.3 dB at 7.2 MHz, +0.9 dB at 12 MHz, +1.3 dB 
 direct reading at 12 MHz agrees). The roll-off above 25 MHz is not yet measured.
 
 oos-ui owns the AFG GPIO lines from its first generator request on (at start: "off", which also switches off an
-output left running), so `oos-fpgad afg` then fails with EBUSY instead of fighting over the lines.
+output left running), so `oos-fpgad afg` then fails with EBUSY instead of fighting over the lines. In its acquisition
+thread the generator is `AfgRun` in `ui/src/board/dho/hw/afg.rs`.
 
 Open observation: with the output switched off (relays 0x00) and the cable still on CH1, CH1 shows a recurring
 disturbance of about +-10 mV at ~5 MHz (the edge trigger at 0 V fires on it, so every frame shows it right after the

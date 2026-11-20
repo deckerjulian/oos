@@ -1,6 +1,6 @@
 # ADR 0021: What runs on the scope depends on `libc` only; a desktop build may use its platform's crates
 
-- Status: accepted
+- Status: superseded by ADR 0033 (there is no desktop build with platform crates any more)
 - Date: 2026-11-15
 - Category: process
 

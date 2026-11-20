@@ -1,6 +1,6 @@
 # ADR 0017: Clippy runs in CI; its warnings are errors, with a short list of allowed lints that says why
 
-- Status: proposed (accepted when CI runs Clippy with `-D warnings`, see Consequences)
+- Status: accepted (2026-11-17, with the last lint pull request; the layer `clippy` is enforced in CI), amended by ADR 0045 (the tool chain is pinned) and ADR 0048 (`too_many_arguments` in hal)
 - Date: 2026-11-15
 - Category: process
 

@@ -1,0 +1,50 @@
+name: Report from a scope
+description: OOS on another model, or how the hardware behaves, measured or observed
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not post serial numbers, MAC addresses, licence keys, calibration files or `vendor.bin`, and no code,
+        listings or files from the stock or a modified firmware.** Describe what the scope does.
+
+        OOS has run on few units so far. A report from any other scope helps a lot.
+  - type: input
+    id: model
+    attributes:
+      label: Model and hardware revision
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: OOS build
+      description: The line in /etc/oos-build, or System > About.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What was tried
+      description: Start-up, acquisition, trigger, generator, logic analyser, WLAN ...
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What worked, what did not
+    validations:
+      required: true
+  - type: dropdown
+    id: known
+    attributes:
+      label: How it is known
+      description: The documents of OOS say this for every statement about the hardware.
+      options: [seen on my unit, measured with another instrument, assumed, read in a public document (say which)]
+    validations:
+      required: true
+  - type: textarea
+    id: info
+    attributes:
+      label: System > System info
+      description: A screenshot is fine. Hide the serial number.

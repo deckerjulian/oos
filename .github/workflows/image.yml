@@ -1,38 +1,76 @@
 # The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
-# Twice: on an arm64 runner (natively, the same compiler as on an arm64 host) and on an x86-64 runner (cross
-# compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
-# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
-# the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
-# The package is signed with the community key of the repository (keys/), as every build without a key of its own.
+# One build, on an arm64 runner (natively, the same compiler as on an arm64 host): for a tag, by hand, and when this
+# file changes. The package is signed with the community key of the repository (keys/), as every build without a key
+# of its own.
+#
+# By hand with `both_hosts`: also on an x86-64 runner (cross compiler for the kernel, oos-hw and oos-usbmode, QEMU for
+# the arm64 containers, which takes hours), and a last job compares what the two put into the image
+# (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from the
+# programs built from the OOS source (see the job). That is a check of the build, not a part of a release: a release
+# needs one image.
+#
+# With `sims` (the weekly run asks for it): the simulations run on what was built (tools/check.sh sim).
+#
+# For a tag `vX.Y.Z` the last job drafts the release: the image, the update package, the install file, SHA256SUMS
+# and the changelog of that version. A draft, not a publication.
 name: Image
 on:
   workflow_dispatch:
+    inputs:
+      both_hosts:
+        description: Also build on x86-64 and compare the two images (takes hours)
+        type: boolean
+        default: false
+      sims:
+        description: Run the simulations on what was built (tools/check.sh sim)
+        type: boolean
+        default: false
+  # the weekly run
+  workflow_call:
+    inputs:
+      both_hosts:
+        type: boolean
+        default: false
+      sims:
+        type: boolean
+        default: false
   push:
     tags: ['v*']
     # by hand only works from the default branch: on any branch it runs when this file changes (tags ignore paths)
     branches: ['**']
     paths: ['.github/workflows/image.yml']
+# the token can only read (it fetches the kernel source from a release); actions are named by their commit
+permissions:
+  contents: read
 jobs:
   image:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04-arm, ubuntu-24.04]
+        # one build; a second one on x86-64 only when it was asked for
+        runner: ${{ fromJSON(inputs.both_hosts && '["ubuntu-24.04-arm","ubuntu-24.04"]' || '["ubuntu-24.04-arm"]') }}
     runs-on: ${{ matrix.runner }}
     # x86-64: the arm64 containers (busybox, kexec-tools, Mesa for the GPU helper) run through QEMU, which takes hours
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: QEMU for the arm64 containers
         if: runner.arch != 'ARM64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
       - name: Rust
         run: |
-          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
+          # rustup without a Rust of its own: the tree's is the one rust-toolchain.toml names, with the scope's target
+          # (ADR 0045)
+          if ! command -v rustup >/dev/null; then
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+          rustup toolchain install --no-self-update
       - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,7 +80,7 @@ jobs:
       # the downloads of rootfs/deps.lock and Mesa's build (hours under QEMU). The key follows what they are made from;
       # an older cache is a start, its stamps (rootfs/deps.sh) say which part is built again
       - name: Cache of the downloads and Mesa
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             rootfs/out/*.tar.*
@@ -62,11 +100,11 @@ jobs:
             grep '  kernel/' manifest.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: manifest-${{ runner.arch }}
           path: manifest.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oos-image-${{ runner.arch }}
           path: |
@@ -78,20 +116,33 @@ jobs:
             kernel/out/base/SHA256SUMS
             kernel/out/base/config
           if-no-files-found: error
+      # After the image: its scripts and programs in containers and virtual machines, without a scope. From the
+      # weekly run or by hand with `sims`, and when this file changes on a branch (a test of this step); never for a
+      # tag: a release is not held up by them.
+      - name: Simulations (tools/check.sh sim)
+        if: >-
+          runner.arch == 'ARM64' &&
+          (inputs.sims || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')))
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-arm
+          tools/check.sh sim
   compare:
     needs: image
+    if: inputs.both_hosts
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: manifest-*
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
       # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
       # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
-      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
+      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw, oos-usbmode).
       - name: arm64 and x86-64 builds the same
         run: |
-          own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'
+          own='  initramfs/bin/oos-(hw|ui|fpgad|update|usbmode)$'
           for a in ARM64 X64; do
             grep -Ev "$own" manifest-$a/manifest.txt > strict-$a.txt
             grep -E "$own" manifest-$a/manifest.txt > own-$a.txt || true
@@ -107,3 +158,68 @@ jobs:
             cat strict.txt
             exit 1
           fi
+  # For a tag `vX.Y.Z`: a DRAFT of the release with what was built here, its checksums and the changelog of that
+  # version. Nothing is published: the maintainer looks at the draft, adds the sources that a release carries
+  # (tools/release-sources.sh names them, and the notes of the draft list them), and publishes it.
+  draft-release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oos-image-ARM64
+          path: built
+      - name: The files of the release, their checksums, the notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          # the tag is the version of the crates
+          # the changes not yet released are in CHANGELOG.md now (tools/changelog.py --release, ADR 0065)
+          if ls changelog.d/*.md 2>/dev/null | grep -qv '/README.md$'; then
+            echo "::error::changelog.d/ still holds changes: run tools/changelog.py --release $version first"
+            exit 1
+          fi
+          for c in hal dsp ui fpgad; do
+            grep -qx "version = \"$version\"" "$c/Cargo.toml" || {
+              echo "::error::$c/Cargo.toml is not at version $version"
+              exit 1
+            }
+          done
+          mkdir release
+          cp built/boot/out/oos-dev.img "release/oos-$version.img"
+          cp built/boot/out/oos-dev.oosupd "release/oos-$version.oosupd"
+          cp built/boot/out/*.GEL release/
+          (cd release && sha256sum -- * > SHA256SUMS)
+          {
+            # the section of this version in the changelog
+            awk -v v="## $version" '$0 == v { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md
+            echo
+            echo "---"
+            echo
+            echo "Built by CI from the tag, on arm64, signed with the community key of the repository."
+            echo "Still to add before this draft is published, the sources a release carries:"
+            echo
+            echo '```'
+            tools/release-sources.sh list
+            echo '```'
+          } > notes.md
+          cat release/SHA256SUMS
+      - name: The draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::the release $TAG exists already: nothing is changed; the files are in the artifact"
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "OOS ${TAG#v}" --notes-file notes.md release/*

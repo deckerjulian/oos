@@ -10,7 +10,17 @@ use super::*;
 impl Ui {
     /// Every menu the start menu and the top bar open, with the start menu itself.
     fn script_menus(&self) -> Vec<MenuId> {
-        let mut v = vec![MenuId::Main, MenuId::Display, MenuId::Utility, MenuId::Storage, MenuId::Measure, MenuId::Cursor, MenuId::Horizontal, MenuId::Trigger, MenuId::Acquire];
+        let mut v = vec![
+            MenuId::Main,
+            MenuId::Display,
+            MenuId::Utility,
+            MenuId::Storage,
+            MenuId::Measure,
+            MenuId::Cursor,
+            MenuId::Horizontal,
+            MenuId::Trigger,
+            MenuId::Acquire,
+        ];
         v.extend((0..NCH).map(MenuId::Channel));
         for (_, items) in self.main_groups() {
             for it in items {
@@ -28,7 +38,10 @@ impl Ui {
         let id = self
             .script_menus()
             .into_iter()
-            .find(|&id| self.menu_title(id).eq_ignore_ascii_case(name) || self.item_label(Item::Open(id)).eq_ignore_ascii_case(name))
+            .find(|&id| {
+                self.menu_title(id).eq_ignore_ascii_case(name)
+                    || self.item_label(Item::Open(id)).eq_ignore_ascii_case(name)
+            })
             .ok_or_else(|| format!("no menu {:?}", name))?;
         self.open_menu(id);
         Ok(())
@@ -40,7 +53,10 @@ impl Ui {
             return Err("no menu open".into());
         }
         let label = label.trim();
-        self.items(self.menu).into_iter().find(|&it| self.item_label(it).eq_ignore_ascii_case(label)).ok_or_else(|| format!("no item {:?} in {}", label, self.menu_title(self.menu)))
+        self.items(self.menu)
+            .into_iter()
+            .find(|&it| self.item_label(it).eq_ignore_ascii_case(label))
+            .ok_or_else(|| format!("no item {:?} in {}", label, self.menu_title(self.menu)))
     }
 
     /// Sets the item `label` of the open menu to the option `value` (as shown on its button).

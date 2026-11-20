@@ -230,16 +230,31 @@ mod tests {
         let mut errs = Vec::new();
         for f in files {
             let name = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
-            // the definition, and a module that is test code as a whole
-            if name == "layout.rs" || name == "ui/lint.rs" {
+            // the definition, and the modules that are test code as a whole
+            if name == "layout.rs"
+                || name == "ui/lint.rs"
+                || name.starts_with("ui/lint/")
+                || name == "site/tests.rs"
+                || name == "ui/tests.rs"
+                || name == "ui/menu_tests.rs"
+                || name == "ui/eyepage/tests.rs"
+                || name == "ui/analysis/measurement_gate_tests.rs"
+                || name == "store/tests.rs"
+            {
                 continue;
             }
             let n = panel_uses(&production(&std::fs::read_to_string(&f).unwrap()));
             let budget = PANEL_BUDGET.iter().find(|b| b.0 == name).map_or(0, |b| b.1);
             if n > budget {
-                errs.push(format!("{}: {} uses of PANEL_W/PANEL_H, at most {}: lay it out from Ui::scr / Ui::frame", name, n, budget));
+                errs.push(format!(
+                    "{}: {} uses of PANEL_W/PANEL_H, at most {}: lay it out from Ui::scr / Ui::frame",
+                    name, n, budget
+                ));
             } else if n < budget {
-                errs.push(format!("{}: {} uses of PANEL_W/PANEL_H, fewer than {}: lower its PANEL_BUDGET", name, n, budget));
+                errs.push(format!(
+                    "{}: {} uses of PANEL_W/PANEL_H, fewer than {}: lower its PANEL_BUDGET",
+                    name, n, budget
+                ));
             }
         }
         assert!(errs.is_empty(), "{}", errs.join("\n"));

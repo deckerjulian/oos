@@ -126,7 +126,9 @@ pub fn try_sample_grid(s: &Settings) -> Result<(f64, usize), String> {
         None => PLAIN_LEN as f64,
     };
     if !count.is_finite() || count > MAX_SAMPLES as f64 {
-        return Err(format!("SSC record exceeds the {MAX_SAMPLES}-sample limit; increase SSC frequency or reduce data rate"));
+        return Err(format!(
+            "SSC record exceeds the {MAX_SAMPLES}-sample limit; increase SSC frequency or reduce data rate"
+        ));
     }
     let n = (count as usize).max(SAMPLES_PER_UI);
     validate_render_grid(s, dt, n)?;
@@ -135,9 +137,12 @@ pub fn try_sample_grid(s: &Settings) -> Result<(f64, usize), String> {
 
 fn validate_settings(s: &Settings) -> Result<(), String> {
     for (name, value) in [
-        ("data rate", s.data_rate_gbps), ("high level", s.v_high_mv),
-        ("low level", s.v_low_mv), ("rise time", s.rise_time_ps),
-        ("noise RMS", s.noise_rms_mv), ("bandwidth", s.bandwidth_ghz),
+        ("data rate", s.data_rate_gbps),
+        ("high level", s.v_high_mv),
+        ("low level", s.v_low_mv),
+        ("rise time", s.rise_time_ps),
+        ("noise RMS", s.noise_rms_mv),
+        ("bandwidth", s.bandwidth_ghz),
         ("de-emphasis", s.deemph_db),
     ] {
         if !value.is_finite() {
@@ -212,24 +217,27 @@ fn validate_render_grid(s: &Settings, dt: f64, n: usize) -> Result<usize, String
     if !fc.is_finite() || fc >= 0.5 / dt {
         return Err("Butterworth cutoff is at or above the Nyquist frequency".into());
     }
-    let max_spread = s.ssc.as_ref().map_or(0.0, |ssc| {
-        ssc.deviation_percent / if ssc.profile == "Down-spread only" { 200.0 } else { 100.0 }
-    });
+    let max_spread = s
+        .ssc
+        .as_ref()
+        .map_or(0.0, |ssc| ssc.deviation_percent / if ssc.profile == "Down-spread only" { 200.0 } else { 100.0 });
     // This conservative margin also covers a requested partial SSC period on an
     // arbitrary external grid, rather than assuming the usual full-cycle grid.
-    let jitter_margin: f64 = s.jitter.iter().map(|j| match *j {
-        Jitter::Rj { ps_rms } | Jitter::CorrRj { ps_rms, .. } => 10.0 * ps_rms * 1e-12,
-        Jitter::Pj { ps_peak, .. } => ps_peak * 1e-12,
-        Jitter::Dcd { ps } => 0.5 * ps * 1e-12,
-    }).sum();
+    let jitter_margin: f64 = s
+        .jitter
+        .iter()
+        .map(|j| match *j {
+            Jitter::Rj { ps_rms } | Jitter::CorrRj { ps_rms, .. } => 10.0 * ps_rms * 1e-12,
+            Jitter::Pj { ps_peak, .. } => ps_peak * 1e-12,
+            Jitter::Dcd { ps } => 0.5 * ps * 1e-12,
+        })
+        .sum();
     let symbols = ((n as f64 * dt + jitter_margin) * symbol_rate / (1.0 - max_spread)).ceil() + 8.0;
     if !symbols.is_finite() || symbols > MAX_SAMPLES as f64 {
         return Err("serial edge grid exceeds the bounded allocation limit".into());
     }
     let rise = s.rise_time_ps * 1e-12;
-    let shaping_window = if rise == 0.0 { 0.0 } else {
-        (8.0 * rise / (2.0 * 0.6f64.atanh()) / dt + 2.0).min(n as f64)
-    };
+    let shaping_window = if rise == 0.0 { 0.0 } else { (8.0 * rise / (2.0 * 0.6f64.atanh()) / dt + 2.0).min(n as f64) };
     // Every symbol is conservatively counted as a potential transition. This
     // makes the CPU guard allocation-free and consistent for UI/SCPI preflight.
     if !shaping_window.is_finite() || symbols * shaping_window > MAX_SHAPING_WORK {
@@ -355,11 +363,8 @@ pub fn ssc_edge_times(num_symbols: usize, symbol_rate: f64, deviation: f64, f_mo
         let t_nom = i as f64 / symbol_rate;
         let phase = (t_nom * f_mod) % 1.0;
         let tri01 = 1.0 - (2.0 * phase - 1.0).abs();
-        let frac_dev = if profile == "Down-spread only" {
-            -deviation * (tri01 - 0.5)
-        } else {
-            deviation * (2.0 * tri01 - 1.0)
-        };
+        let frac_dev =
+            if profile == "Down-spread only" { -deviation * (tri01 - 0.5) } else { deviation * (2.0 * tri01 - 1.0) };
         let delta_t_step = -frac_dev / symbol_rate;
         acc += delta_t_step;
         edges.push(t_nom + acc);
@@ -419,12 +424,21 @@ fn apply_jitter(et: &mut [f64], symbols: &[u8], comps: &[Jitter], symbol_rate: f
                 // the corner and silently clamped low frequencies.
                 let a = correlated_alpha(corner_khz * 1e3, symbol_rate);
                 let mut prev = 0.0;
-                let filtered: Vec<f64> = (0..et.len()).map(|_| {
-                    prev += a * (rng.normal(1.0) - prev);
-                    prev
-                }).collect();
+                let filtered: Vec<f64> = (0..et.len())
+                    .map(|_| {
+                        prev += a * (rng.normal(1.0) - prev);
+                        prev
+                    })
+                    .collect();
                 let mean = filtered.iter().sum::<f64>() / filtered.len() as f64;
-                let var = filtered.iter().map(|v| { let d = v - mean; d * d }).sum::<f64>() / filtered.len() as f64;
+                let var = filtered
+                    .iter()
+                    .map(|v| {
+                        let d = v - mean;
+                        d * d
+                    })
+                    .sum::<f64>()
+                    / filtered.len() as f64;
                 let rms = var.sqrt();
                 if rms > 0.0 {
                     let scale = sigma / rms;
@@ -578,13 +592,13 @@ mod tests {
         let mut state = (1u64 << 7) - 1;
         for _ in 0..127 {
             assert!(seen.insert(state));
-            let feedback = ((state >> 0) & 1) ^ ((state >> 1) & 1);
+            let feedback = (state & 1) ^ ((state >> 1) & 1);
             state = ((state >> 1) | (feedback << 6)) & 127;
         }
         let bits = prbs_bits(31, 4).unwrap();
         assert_eq!(bits, vec![1, 1, 1, 1]);
         let state = (1u64 << 31) - 1;
-        let feedback = ((state >> 0) & 1) ^ ((state >> 3) & 1);
+        let feedback = (state & 1) ^ ((state >> 3) & 1);
         assert_eq!(feedback, 0);
     }
 
@@ -631,10 +645,9 @@ mod tests {
         let depth = 0.005;
         let ui = 1.0 / rate;
         let period = 1.0 / hz;
-        for (profile, span, quarter_tie) in [
-            ("Down-spread only", depth, -depth * period / 16.0),
-            ("Center-spread", 2.0 * depth, depth * period / 8.0),
-        ] {
+        for (profile, span, quarter_tie) in
+            [("Down-spread only", depth, -depth * period / 16.0), ("Center-spread", 2.0 * depth, depth * period / 8.0)]
+        {
             let edges = ssc_edge_times(1001, rate, depth, hz, profile);
             let periods: Vec<f64> = edges.windows(2).map(|p| p[1] - p[0]).collect();
             let low = periods.iter().copied().fold(f64::INFINITY, f64::min);
@@ -658,10 +671,12 @@ mod tests {
         let levels = [-0.5, 0.5, -0.5, 0.5, -0.5];
         let dt = 1e-12;
         let wave = render(&edges, &levels, dt, 4500, 10e-12, -0.5, 0.5);
-        let crossings: Vec<f64> = wave.windows(2).enumerate().filter_map(|(i, p)| {
-            ((p[0] < 0.0 && p[1] >= 0.0) || (p[0] > 0.0 && p[1] <= 0.0))
-                .then(|| (i as f64 - p[0] / (p[1] - p[0])) * dt)
-        }).collect();
+        let crossings: Vec<f64> = wave
+            .windows(2)
+            .enumerate()
+            .filter(|&(_i, p)| (p[0] < 0.0 && p[1] >= 0.0) || (p[0] > 0.0 && p[1] <= 0.0))
+            .map(|(i, p)| (i as f64 - p[0] / (p[1] - p[0])) * dt)
+            .collect();
         assert_eq!(crossings.len(), 4);
         assert!((crossings[1] - crossings[0] - 960e-12).abs() < dt);
         assert!((crossings[2] - crossings[1] - 1040e-12).abs() < dt);
@@ -676,7 +691,13 @@ mod tests {
         let sigma = 2e-12;
         let mut edges: Vec<f64> = (0..n).map(|i| i as f64 / rate).collect();
         let mut rng = Rng::new(9);
-        apply_jitter(&mut edges, &vec![0; n], &[Jitter::CorrRj { ps_rms: sigma * 1e12, corner_khz: corner / 1e3 }], rate, &mut rng);
+        apply_jitter(
+            &mut edges,
+            &vec![0; n],
+            &[Jitter::CorrRj { ps_rms: sigma * 1e12, corner_khz: corner / 1e3 }],
+            rate,
+            &mut rng,
+        );
         let jitter: Vec<f64> = edges.iter().enumerate().map(|(i, t)| t - i as f64 / rate).collect();
         let mean = jitter.iter().sum::<f64>() / n as f64;
         let variance = jitter.iter().map(|x| x * x).sum::<f64>() / n as f64;
@@ -689,7 +710,7 @@ mod tests {
         // formula, and distinguishes the old approximately doubled corner.
         let power = |bins: &[usize]| -> f64 {
             let mut sum = 0.0;
-            for block in jitter.chunks_exact(1024) {
+            for block in jitter.as_chunks::<1024>().0 {
                 for &bin in bins {
                     let mut real = 0.0;
                     let mut imag = 0.0;

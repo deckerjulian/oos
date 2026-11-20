@@ -18,9 +18,9 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
   before the next arm, as the live compression's raw newest frame does. Window: `screen_window`'s rule (screen and a
   quarter screen each side, at least 4096 points, the trigger point inside), or the whole record when that reaches
-  past its end; at most `deepmeas::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The C2H path
-  splits it into reads of at most 4 MiB.
-- Rate: once per `deepmeas::PERIOD` = 1 s while running; every batch in Single.
+  past its end; at most `board::policy::deep::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The
+  C2H path splits it into reads of at most 4 MiB.
+- Rate: once per `board::policy::deep::PERIOD` = 1 s while running; every batch in Single.
 - The raw frame replaces the newest frame of its batch, so its record is an ordinary raw record: measurements,
   cursors, FFT, decode and history get samples. The picture of that record goes through the record path like the
   pair records (same style).
@@ -31,8 +31,8 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 - The raw record measured is the newest raw one of the UI step, not the newest record: at 2 ms/div and up (10 M) a
   batch is one frame, so the next pair frame is often queued behind the raw one. The UI drew the raw frame on the fast
   path (or replaced it as the record) and the value stayed at the last raw record's for good (unit round 5). A raw
-  record that comes while the background worker is busy waits for it (`meas_pending`); Clear drops it with the record
-  it belongs to.
+  record that comes while the background worker is busy waits for it (`MeasBackground::pending`); Clear drops it with
+  the record it belongs to.
 - Off, in Peak (the memory holds peak pairs), above the budget, or with the deep screen-window read (short time base,
   already raw): as before.
 
@@ -68,7 +68,7 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
 - `ui/src/deepmeas.rs`: opt-in parsing, `want` (Max alone needs nothing, Single sets `every`, Peak and channel off
   refuse, the software DVM asks), `hold` (only running, not Single, pair records of deep frames within the budget),
   budget and rate.
-- `ui/src/board/dho/hw.rs` `deep_raw_window_for_the_measurements`: 10 M at 1 ms/div: window holds screen and trigger
+- `ui/src/board/dho/hw/tests.rs` `deep_raw_window_for_the_measurements`: 10 M at 1 ms/div: window holds screen and trigger
   point, within 24 MiB, decodes to a raw frame with the right trigger point; none for 2 channels at 10 M, 25 M, the
   short-time-base window read, 1 M, Peak.
 - `ui/src/ui.rs` `deep_raw_records_carry_the_measurements_between_pair_records`: nothing on pairs before the first
@@ -76,8 +76,8 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
   records measured with Mean NaN. Mutation check: without the hold the test fails.
 - `ui/src/ui.rs` `live_raw_deep_records_are_measured_while_the_worker_is_busy`: at 1, 2 and 5 ms/div, a new value
   each round, the worker busy when the raw record comes, pair records after it (at 2 and 5 ms/div one already queued
-  behind it in the same step). Fails without `meas_pending` (Mean NaN) and without the step's raw record (NaN at
-  2 ms/div).
+  behind it in the same step). Fails without `MeasBackground::pending` (Mean NaN) and without the step's raw record
+  (NaN at 2 ms/div).
 - `ui/src/ui.rs` `clear_drops_the_record_waiting_for_the_worker`: a raw deep record waits for the busy worker, Clear,
   a shallow record is measured, a pair record after it keeps that record's Mean, not the one cleared away.
 
@@ -115,7 +115,7 @@ Record the results here.
   - While the worker measured a raw window (more than 262 k points) the row showed "not available" for that time,
     once a raw read: the last value now stays until the new one is there.
 - Rate: a raw read costs about 3 % of the records per MiB read once a second. The period grows with the window
-  (`deepmeas::period`: 1 s per 2 MiB), so the cost stays near 5 %:
+  (`board::policy::deep::period`: 1 s per 2 MiB), so the cost stays near 5 %:
 
   | channels | depth, time base | records/s off / on | fps off / on |
   |---|---|---|---|

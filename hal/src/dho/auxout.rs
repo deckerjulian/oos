@@ -85,20 +85,15 @@ impl PassFail {
 }
 
 /// What the AUX OUT BNC carries.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum AuxOut {
     /// a pulse per trigger (power-up state)
+    #[default]
     TriggerOut,
     /// constant low
     Off,
     /// the pass/fail pulse; needs the hardware mask unit (or the zone trigger) to produce results
     PassFail(PassFail),
-}
-
-impl Default for AuxOut {
-    fn default() -> AuxOut {
-        AuxOut::TriggerOut
-    }
 }
 
 /// The writes that put `a` on the BNC: the pulse configuration before the select, so the output never runs on the
@@ -137,7 +132,10 @@ mod tests {
         assert_eq!(PassFail { event: Event::Pass, ..p }.word(), 156 | 1 << 31);
         assert_eq!(PassFail { source: Source::Zone, ..p }.word(), 156 | 1 << 29);
         // the zone trigger's own set-up: 68 clocks, zone, idle high, on fail
-        assert_eq!(PassFail { width: 68.0 * 6.4e-9, source: Source::Zone, event: Event::Fail, idle_high: true }.word(), 0x6000_0044);
+        assert_eq!(
+            PassFail { width: 68.0 * 6.4e-9, source: Source::Zone, event: Event::Fail, idle_high: true }.word(),
+            0x6000_0044
+        );
         let all = PassFail { width: 1.0, source: Source::Zone, event: Event::Pass, idle_high: true };
         assert_eq!(all.word(), 0xe0ff_ffff);
     }

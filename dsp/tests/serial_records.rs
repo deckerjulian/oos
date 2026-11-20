@@ -13,7 +13,7 @@ use oos_dsp::power;
 fn load(name: &str) -> Vec<f32> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     let b = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    b.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect()
+    b.as_chunks::<4>().0.iter().map(|&c| f32::from_le_bytes(c)).collect()
 }
 
 fn close(x: f64, want: f64, rel: f64) -> bool {
@@ -83,7 +83,9 @@ fn serial_clock_fills_the_single_channel_list() {
     check(Meas::CycTop, 0.5, 0.02, 1e-3);
     check(Meas::CycBase, -0.5, 0.02, 1e-3);
     let pulses = a.rises.len().min(a.falls.len());
-    for (m, n) in [(Meas::PPulses, pulses), (Meas::NPulses, pulses), (Meas::PEdges, a.rises.len()), (Meas::NEdges, a.falls.len())] {
+    for (m, n) in
+        [(Meas::PPulses, pulses), (Meas::NPulses, pulses), (Meas::PEdges, a.rises.len()), (Meas::NEdges, a.falls.len())]
+    {
         let got = a.get(m);
         assert!((got - n as f64).abs() <= 2.0, "{m:?} {got} vs {n}");
     }
@@ -154,13 +156,11 @@ fn serial_ssc_rate_and_spread() {
     let rate = eye::ssc_rate(&c);
     let (ppm, _) = eye::ssc_deviation(&c);
     assert!(close(rate, 33e3, 0.02), "ssc rate {}", rate);
-    // Independently interpolated rising edges in this binary fixture span
-    // 4,976,627.20..5,023,584.90 Hz about 5,000,021.24 Hz: 9,391.5 ppm.
-    // The former 5,000 ppm assertion divided by the 10 MHz UI hint instead of
-    // the measured 5 MHz cycle rate, masking the fixture's actual spread.
-    // This measured span includes crossing-interpolation error on its coarse
-    // sample grid; it does not establish the generator's injected depth.
-    assert!(close(ppm, 9_391.5, 0.01), "ssc ppm {}", ppm);
+    // The generator's 0.5 % down-spread triangle spans 5,000 ppm. The rates of single cycles of this fixture span
+    // 9,391.5 ppm (4,976,627.20..5,023,584.90 Hz about 5,000,021.24 Hz), most of it crossing-interpolation error on
+    // the coarse sample grid; that span was the reading before the average over 1/32 of the modulation period
+    // (issue #196). The average reads a triangle 3 % under its span and leaves part of the interpolation error.
+    assert!(close(ppm, 5_000.0, 0.12), "ssc ppm {}", ppm);
     assert!(eye::is_clock(&c));
 }
 
@@ -197,7 +197,11 @@ fn serial_differential_pair_carries_a_planted_common_mode() {
         *y += cm;
     }
     assert!(close(eye::dc_common(&a, &b), vcm, 0.02), "dc {}", eye::dc_common(&a, &b));
-    assert!(close(eye::ac_common_pp(&a, Some(&b), dt, false), 2.0 * amp, 0.02), "ac {}", eye::ac_common_pp(&a, Some(&b), dt, false));
+    assert!(
+        close(eye::ac_common_pp(&a, Some(&b), dt, false), 2.0 * amp, 0.02),
+        "ac {}",
+        eye::ac_common_pp(&a, Some(&b), dt, false)
+    );
     assert!(close(eye::diff_crossover(&a, &b), vcm, 0.05), "x {}", eye::diff_crossover(&a, &b));
 }
 
@@ -275,7 +279,12 @@ fn serial_pcie4_nominal_opens_an_eye() {
     assert!(close(a.get(Meas::Vtop), settled, 0.03), "top {}", a.get(Meas::Vtop));
     assert!(close(a.get(Meas::Vbase), -settled, 0.03), "base {}", a.get(Meas::Vbase));
     // transition bits still reach the rails; the 12 GHz filter leaves an edge near 30 ps
-    assert!(a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45, "levels {} {}", a.get(Meas::Vmax), a.get(Meas::Vmin));
+    assert!(
+        a.get(Meas::Vmax) > 0.45 && a.get(Meas::Vmin) < -0.45,
+        "levels {} {}",
+        a.get(Meas::Vmax),
+        a.get(Meas::Vmin)
+    );
     assert!(a.get(Meas::Rise) > 20e-12 && a.get(Meas::Rise) < 45e-12, "rise {}", a.get(Meas::Rise));
     assert!(a.get(Meas::Fall) > 20e-12 && a.get(Meas::Fall) < 45e-12, "fall {}", a.get(Meas::Fall));
     for m in oos_dsp::measure::ALL {

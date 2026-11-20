@@ -1,0 +1,60 @@
+# Asks GitHub to merge a pull request by itself once every required check has passed (docs/adr/process/0038), for
+# pull requests from branches of this repository by the maintainer, by the maintainer's development agent (the App
+# dekajoule-oos-agent, ADR 0039) and by Dependabot. A pull request from a fork never gets it here: the maintainer
+# merges those.
+#
+# It does nothing until the repository allows auto-merge, the variable AUTO_MERGE is `on`, the variable
+# AGENT_APP_CLIENT_ID and the secret AGENT_APP_KEY name the App and hold its private key. The merge is asked for with
+# a token of the App, because a merge made with the workflow's own token would start no workflow on main; the App
+# can write contents and pull requests of this one repository and nothing else. The required checks `test`,
+# `compare`, `waited`, `owner`, `unit` and `review` decide when the merge happens.
+#
+# No code of the pull request runs here; the job reads its title and commit messages.
+name: Auto-merge
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions: {}
+jobs:
+  enable:
+    if: >-
+      github.repository == 'dekajoule/oos' && vars.AUTO_MERGE == 'on' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      contains(fromJSON('["dekajoule", "dekajoule-oos-agent[bot]", "dependabot[bot]"]'),
+        github.event.pull_request.user.login)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: A token of the App
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Ask for the merge
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          # the sign-off of the person who answers for the merge (ADR 0026, ADR 0038): "Name <address>"
+          SIGNOFF: ${{ vars.MAINTAINER_SIGNOFF }}
+        run: |
+          if [ -z "$SIGNOFF" ]; then
+            echo "::notice::no MAINTAINER_SIGNOFF: nothing asked"
+            exit 0
+          fi
+          # the squashed commit: the title, the messages of the commits, and the sign-off if none of them has it
+          body=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json commits \
+            --jq '[.commits[] | if .messageBody == "" then .messageHeadline else .messageBody end] | join("\n\n")')
+          case $body in
+            *"Signed-off-by: $SIGNOFF"*) ;;
+            *) body="$body
+
+          Signed-off-by: $SIGNOFF" ;;
+          esac
+          # a new push: ask again, with the messages as they are now
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --disable-auto 2>/dev/null || true
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --auto --squash --subject "$TITLE (#$PR)" --body "$body"

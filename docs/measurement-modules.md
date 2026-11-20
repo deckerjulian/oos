@@ -40,7 +40,11 @@ come in the order of `MODULES` and then of each module's `defs`.
    valid, descriptions present, the stored numbers exactly the ones the setup reader takes, and every module computes
    a value (or NaN) for each of its measurements on a plain square wave without panicking (`measures::tests`). Add the
    module's own tests next to it: known inputs, known numbers.
-5. **Try it** on the host: `cargo run` in `ui/` (or `--serve` and the web remote), Measure, the category, tap the tile.
+5. **What is around it**: `ui/src/measures/mod.rs::every_measurement_is_complete` names what a measurement still
+   lacks. Its line in `ui/tests/golden/measurement-ids.txt` (`OOS_BLESS=1 cargo test --locked -q measures::tests` in
+   `ui/` adds it; the list only gains lines), and its group in the row of its category in the table of
+   [reference-analysis.md](reference-analysis.md).
+6. **Try it** on the host: `cargo run` in `ui/` (or `--serve` and the web remote), Measure, the category, tap the tile.
 
 ## How a value is computed
 

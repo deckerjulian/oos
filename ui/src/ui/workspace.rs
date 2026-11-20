@@ -7,17 +7,47 @@ const MOVE: i32 = 8;
 pub(super) const HEADER: i32 = 26;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(super) enum Trace { Channel(usize), Reference(usize), Math(usize) }
+pub(super) enum Trace {
+    Channel(usize),
+    Reference(usize),
+    Math(usize),
+}
 #[derive(Clone, Copy, PartialEq)]
-enum Panel { Plot, Eye, Measurements }
+enum Panel {
+    Plot,
+    Eye,
+    Measurements,
+}
 #[derive(Clone, Copy)]
-struct Gesture { panel: Panel, origin: Rect, x: i32, y: i32, at: f64, moved: bool, held: bool }
+struct Gesture {
+    panel: Panel,
+    origin: Rect,
+    x: i32,
+    y: i32,
+    at: f64,
+    moved: bool,
+    held: bool,
+}
 #[derive(Clone)]
 pub(super) enum Action {
-    Overlay, Stacked, Sources, Source(WaveId), Trigger(WaveId), Menu(MenuId),
-    ZoomReset, ZoomClose, FitRecord, Single, Run,
-    EyeRight, EyeLeft, EyeBelow, EyeFloat, EyeClose,
-    MeasureFloat, MeasureDock(StripDock),
+    Overlay,
+    Stacked,
+    Sources,
+    Source(WaveId),
+    Trigger(WaveId),
+    Menu(MenuId),
+    ZoomReset,
+    ZoomClose,
+    FitRecord,
+    Single,
+    Run,
+    EyeRight,
+    EyeLeft,
+    EyeBelow,
+    EyeFloat,
+    EyeClose,
+    MeasureFloat,
+    MeasureDock(StripDock),
 }
 
 #[cfg(test)]
@@ -30,7 +60,16 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&t| t >= 1e-9).unwrap();
         ui.m.delay = 4e-9;
         for i in 0..3 {
-            ui.refs[i] = Some(RefWave { color: i, label: format!("source-{i}"), vpd: 0.1, ..RefWave::test((0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(), 1e-10, -2e-9) });
+            ui.refs[i] = Some(RefWave {
+                color: i,
+                label: format!("source-{i}"),
+                vpd: 0.1,
+                ..RefWave::test(
+                    (0..128).map(|k| ((k as f32 + i as f32) * 0.2).sin() * 0.2).collect::<Vec<_>>(),
+                    1e-10,
+                    -2e-9,
+                )
+            });
         }
         ui
     }
@@ -58,7 +97,9 @@ mod tests {
         // Overview draws all references even when its current detail lane is CH1.
         for i in 0..3 {
             let color = REF_COLORS[i].1;
-            assert!((overview.y..overview.y + overview.h).any(|y| cv.px[(y * W + overview.x) as usize..(y * W + overview.x + overview.w) as usize].contains(&color)));
+            assert!((overview.y..overview.y + overview.h)
+                .any(|y| cv.px[(y * W + overview.x) as usize..(y * W + overview.x + overview.w) as usize]
+                    .contains(&color)));
         }
         ui.trace_mode(false);
         assert!(ui.m.zoom && !ui.stacked());
@@ -89,8 +130,16 @@ mod tests {
         let mut ui = mixed();
         for panel in [Panel::Measurements, Panel::Eye] {
             let origin = match panel {
-                Panel::Measurements => { ui.workspace_action(Action::MeasureFloat); ui.results_rects().unwrap().0 },
-                Panel::Eye => { ui.m.view = AView::Eye; ui.workspace.eye_float = Some(Rect::new(360, 100, 620, 360)); ui.relayout(); ui.eye_pane_rect() },
+                Panel::Measurements => {
+                    ui.workspace_action(Action::MeasureFloat);
+                    ui.results_rects().unwrap().0
+                }
+                Panel::Eye => {
+                    ui.m.view = AView::Eye;
+                    ui.workspace.eye_float = Some(Rect::new(360, 100, 620, 360));
+                    ui.relayout();
+                    ui.eye_pane_rect()
+                }
                 _ => unreachable!(),
             };
             let (x, y) = (origin.x + 20, origin.y + 12);
@@ -103,7 +152,11 @@ mod tests {
             assert!(ui.workspace.popup.is_none());
             assert!(ui.workspace.gesture.is_some_and(|gesture| gesture.moved && !gesture.held));
             assert!(ui.workspace_touch(Phase::Up, x - 200, y + 40));
-            let moved = match panel { Panel::Measurements => ui.results_rects().unwrap().0, Panel::Eye => ui.eye_pane_rect(), _ => unreachable!() };
+            let moved = match panel {
+                Panel::Measurements => ui.results_rects().unwrap().0,
+                Panel::Eye => ui.eye_pane_rect(),
+                _ => unreachable!(),
+            };
             assert_eq!((moved.x, moved.y), (origin.x - 200, origin.y + 40));
         }
     }
@@ -117,11 +170,11 @@ mod tests {
         assert!(ui.results_name(0, &rows[0]).starts_with("R1 "));
         assert!(ui.results_name(73, &rows[73]).starts_with("R1-R2 "), "both pair sources precede any clipped label");
         ui.workspace_action(Action::MeasureFloat);
-        ui.meas_page = 2;
+        ui.meas_pages.readouts = 2;
         for dock in StripDock::ALL {
             ui.workspace_action(Action::MeasureDock(dock));
             assert!(ui.stats_on && ui.results_panel());
-            assert_eq!(ui.meas_page, 2);
+            assert_eq!(ui.meas_pages.readouts, 2);
             let (header, body) = ui.results_rects().unwrap();
             assert!(header.x >= 0 && header.x + header.w <= W);
             assert!(header.y >= TOP.h && body.y + body.h <= BOTTOM.y);
@@ -191,8 +244,11 @@ mod tests {
                 let r = ui.refs[1].as_ref().unwrap();
                 let delta_y = ui.zoom_y_of_divs(lane, r.offset / r.vpd) - screen_before;
                 assert!((delta_y - 24.0).abs() < 0.1, "zoom {zoom} stacked {stacked}: content moved {delta_y}px");
-                if zoom { assert_eq!(r.offset, before, "zoom pans the display, not source settings"); }
-                else { assert!(r.offset < before); }
+                if zoom {
+                    assert_eq!(r.offset, before, "zoom pans the display, not source settings");
+                } else {
+                    assert!(r.offset < before);
+                }
             }
         }
     }
@@ -239,7 +295,9 @@ mod tests {
             let mut ui = mixed();
             ui.stats_on = true;
             ui.results_min = false;
-            if panel == Panel::Eye { ui.m.view = AView::Eye; }
+            if panel == Panel::Eye {
+                ui.m.view = AView::Eye;
+            }
             ui.open_meas_list();
             ui.activate(Item::Open(MenuId::Measure));
             for back in [true, false] {
@@ -269,7 +327,9 @@ mod tests {
                 if back {
                     assert!(ui.menu_open && ui.menu == MenuId::MeasAdd, "native Back must return to the chooser");
                     ui.activate(Item::Open(MenuId::Measure));
-                } else { assert!(!ui.menu_open, "native Close must dismiss the menu"); }
+                } else {
+                    assert!(!ui.menu_open, "native Close must dismiss the menu");
+                }
             }
         }
     }
@@ -294,9 +354,15 @@ mod tests {
             assert!(!ui.results_min);
             assert_eq!(ui.workspace.measure_float, position);
             assert!(ui.workspace.gesture.is_none() && ui.workspace.popup.is_none());
-            if modal == 0 { assert!(ui.dialog.is_none(), "the modal receives the dismiss tap"); }
-            if modal == 1 { assert!(!ui.power_dlg, "the power dialog receives its cancel tap"); }
-            if modal == 2 { assert!(ui.wlan.osk.is_some(), "an outside keyboard tap must not reach the panel"); }
+            if modal == 0 {
+                assert!(ui.dialog.is_none(), "the modal receives the dismiss tap");
+            }
+            if modal == 1 {
+                assert!(!ui.power_dlg, "the power dialog receives its cancel tap");
+            }
+            if modal == 2 {
+                assert!(ui.wlan.osk.is_some(), "an outside keyboard tap must not reach the panel");
+            }
         }
     }
 
@@ -306,7 +372,9 @@ mod tests {
             for live in [false, true] {
                 let mut ui = mixed();
                 ui.refs[3] = ui.refs[0].clone();
-                if !live { ui.set_offline(true); }
+                if !live {
+                    ui.set_offline(true);
+                }
                 ui.offline_ref = 3;
                 ui.m.set_trigger_wave(WaveId::Ref(0), false);
                 ui.select_workspace_source(WaveId::Ref(3));
@@ -320,8 +388,12 @@ mod tests {
                 }
                 assert_eq!(ui.selected_workspace_source(), Some(WaveId::Ref(1)));
                 assert_eq!(ui.ref_sel, 1);
-                if zoom { assert_eq!(ui.refs[1].as_ref().unwrap().offset, before); assert!(ui.zoom_vcenter > 0.0); }
-                else { assert!(ui.refs[1].as_ref().unwrap().offset < before); }
+                if zoom {
+                    assert_eq!(ui.refs[1].as_ref().unwrap().offset, before);
+                    assert!(ui.zoom_view.vcenter > 0.0);
+                } else {
+                    assert!(ui.refs[1].as_ref().unwrap().offset < before);
+                }
                 let scale = ui.refs[1].as_ref().unwrap().vpd;
                 let other = ui.refs[3].as_ref().unwrap().vpd;
                 ui.key(0xda);
@@ -358,7 +430,11 @@ mod tests {
         }
         assert_eq!(ui.meas_src, WaveId::Ref(0));
         assert_eq!(ui.meas_src_b, WaveId::Ref(2));
-        assert_eq!(ui.selected_workspace_source(), Some(WaveId::Ref(1)), "analysis A/B choices do not redirect workspace knobs");
+        assert_eq!(
+            ui.selected_workspace_source(),
+            Some(WaveId::Ref(1)),
+            "analysis A/B choices do not redirect workspace knobs"
+        );
         assert!(ui.parent.is_some());
         assert_eq!(ui.item_label(Item::RefSrc), "Save from");
         assert!(ui.menu_title(MenuId::Ref).contains("R2"));
@@ -409,7 +485,9 @@ mod tests {
     fn reference_cursor_modes_render_only_in_selected_lane_and_read_its_physical_samples() {
         for live in [false, true] {
             let mut ui = mixed();
-            if !live { ui.set_offline(true); }
+            if !live {
+                ui.set_offline(true);
+            }
             let r = ui.refs[1].as_mut().unwrap();
             r.t0 = -7e-6;
             r.dt = 2e-9;
@@ -436,7 +514,9 @@ mod tests {
                 }
                 let selected = ui.source_area(WaveId::Ref(1)).unwrap();
                 for &area in &ui.wins {
-                    let marked = (area.y..area.y + area.h).any(|y| cv.px[(y * W + area.x) as usize..(y * W + area.x + area.w) as usize].contains(&CURSOR));
+                    let marked = (area.y..area.y + area.h).any(|y| {
+                        cv.px[(y * W + area.x) as usize..(y * W + area.x + area.w) as usize].contains(&CURSOR)
+                    });
                     assert_eq!(marked, area == selected, "{mode:?}: cursor must stay in the selected source lane");
                 }
                 if mode == CursorMode::Volt || mode == CursorMode::Xy {
@@ -469,14 +549,25 @@ mod tests {
             let (x, y) = if horizontal {
                 (area.x + (area.w as f32 * ui.m.cur_a) as i32, area.y + area.h * 4 / 5)
             } else {
-                (area.x + area.w / 2, area.y + (area.h as f32 * if mode == CursorMode::Xy { ui.m.cur_c } else { ui.m.cur_a }) as i32)
+                (
+                    area.x + area.w / 2,
+                    area.y + (area.h as f32 * if mode == CursorMode::Xy { ui.m.cur_c } else { ui.m.cur_a }) as i32,
+                )
             };
             let delta = if horizontal { 40 } else { 16 };
             for (phase, shift) in [(Phase::Down, 0), (Phase::Move, delta), (Phase::Up, delta)] {
-                ui.handle(Ev::Touch { id: 0, phase, x: x + if horizontal { shift } else { 0 }, y: y + if horizontal { 0 } else { shift } });
+                ui.handle(Ev::Touch {
+                    id: 0,
+                    phase,
+                    x: x + if horizontal { shift } else { 0 },
+                    y: y + if horizontal { 0 } else { shift },
+                });
             }
-            if mode == CursorMode::Xy { assert!(ui.m.cur_c > 0.3); }
-            else { assert!(ui.m.cur_a > 0.25, "{mode:?}: the selected cursor must move"); }
+            if mode == CursorMode::Xy {
+                assert!(ui.m.cur_c > 0.3);
+            } else {
+                assert!(ui.m.cur_a > 0.25, "{mode:?}: the selected cursor must move");
+            }
             assert_eq!(ui.refs[1].as_ref().unwrap().offset, offset, "cursor gestures do not drag the waveform");
             assert_eq!(ui.m.run, RunState::Stop);
             assert_eq!(ui.replay.captures, 0);
@@ -498,7 +589,11 @@ mod tests {
             assert_eq!(lines[0].pill, Some(("R2".into(), color)));
             let mut cv = Canvas::new(W, H);
             ui.draw_strip_band(&mut cv, 100);
-            assert_eq!(cv.px[(105 * W + 10) as usize], color, "{mode:?}: the horizontal source pill uses the reference color");
+            assert_eq!(
+                cv.px[(105 * W + 10) as usize],
+                color,
+                "{mode:?}: the horizontal source pill uses the reference color"
+            );
         }
         ui.m.meas = ALL_MEAS.iter().map(|&kind| (kind, WaveId::Ref(1))).collect();
         ui.m.strip_dock = StripDock::Under;
@@ -516,19 +611,31 @@ mod tests {
 
     #[test]
     fn fit_record_context_action_stays_on_screen_with_all_sources() {
-        let mut ui=mixed();
-        for i in 0..NREF {if ui.refs[i].is_none(){ui.refs[i]=ui.refs[0].clone();}}
-        ui.select_workspace_source(WaveId::Ref(1));ui.m.delay=1.0;ui.set_zoom(true);
-        ui.context_menu(900,550);let popup=ui.workspace.popup.as_ref().unwrap();
-        assert!(popup.rect.y>=0 && popup.rect.y+popup.rect.h<=H);
-        let index=popup.rows.iter().position(|(label,_)|label=="Fit record").unwrap();
-        let (x,y)=(popup.rect.x+30,popup.rect.y+4+index as i32*30+15);
-        for phase in [Phase::Down,Phase::Up]{ui.handle(Ev::Touch{id:0,phase,x,y});}
-        assert!(!ui.m.zoom && ui.m.delay.abs()<1e-3);
-        assert_eq!((ui.m.run,ui.replay.captures),(RunState::Stop,0));
+        let mut ui = mixed();
+        for i in 0..NREF {
+            if ui.refs[i].is_none() {
+                ui.refs[i] = ui.refs[0].clone();
+            }
+        }
+        ui.select_workspace_source(WaveId::Ref(1));
+        ui.m.delay = 1.0;
+        ui.set_zoom(true);
+        ui.context_menu(900, 550);
+        let popup = ui.workspace.popup.as_ref().unwrap();
+        assert!(popup.rect.y >= 0 && popup.rect.y + popup.rect.h <= H);
+        let index = popup.rows.iter().position(|(label, _)| label == "Fit record").unwrap();
+        let (x, y) = (popup.rect.x + 30, popup.rect.y + 4 + index as i32 * 30 + 15);
+        for phase in [Phase::Down, Phase::Up] {
+            ui.handle(Ev::Touch { id: 0, phase, x, y });
+        }
+        assert!(!ui.m.zoom && ui.m.delay.abs() < 1e-3);
+        assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
     }
 }
-pub(super) struct Popup { pub(super) rect: Rect, pub(super) rows: Vec<(String, Action)> }
+pub(super) struct Popup {
+    pub(super) rect: Rect,
+    pub(super) rows: Vec<(String, Action)>,
+}
 #[derive(Default)]
 pub(super) struct Workspace {
     selected_source: Option<WaveId>,
@@ -549,20 +656,27 @@ impl Ui {
             WaveId::Ch(c) => c < n_ch() && self.m.ch[c].on,
             WaveId::Ref(i) => self.refs.get(i).is_some_and(Option::is_some),
         };
-        if let Some(id) = self.workspace.selected_source { return available(id).then_some(id); }
+        if let Some(id) = self.workspace.selected_source {
+            return available(id).then_some(id);
+        }
         let id = if self.record_mode() { WaveId::Ref(self.ref_sel) } else { WaveId::Ch(self.m.active) };
         available(id).then_some(id)
     }
     pub(super) fn select_workspace_source(&mut self, id: WaveId) {
         self.workspace.selected_source = Some(id);
-        match id { WaveId::Ch(c) => self.m.active = c, WaveId::Ref(i) => self.ref_sel = i }
+        match id {
+            WaveId::Ch(c) => self.m.active = c,
+            WaveId::Ref(i) => self.ref_sel = i,
+        }
         self.meas_src = id;
     }
     pub(super) fn workspace_source_visible_here(&self, id: WaveId) -> bool {
         match id {
             WaveId::Ch(c) => self.m.ch[c].on && self.shows(c),
-            WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on)
-                && (!self.stacked() || self.trace_sources().get(self.cur_win) == Some(&Trace::Reference(i))),
+            WaveId::Ref(i) => {
+                self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on)
+                    && (!self.stacked() || self.trace_sources().get(self.cur_win) == Some(&Trace::Reference(i)))
+            }
         }
     }
     pub(super) fn cursor_badge(&self) -> Option<(String, Rgb)> {
@@ -572,7 +686,10 @@ impl Ui {
         let id = self.selected_workspace_source()?;
         let (scale, offset, unit) = match id {
             WaveId::Ch(c) => (self.m.ch[c].volts_per_div(), self.m.ch[c].offset, self.m.unit(c)),
-            WaveId::Ref(i) => { let r = self.refs[i].as_ref()?; (r.vpd, r.offset, "V") },
+            WaveId::Ref(i) => {
+                let r = self.refs[i].as_ref()?;
+                (r.vpd, r.offset, "V")
+            }
         };
         Some((id, scale, offset, unit))
     }
@@ -589,8 +706,10 @@ impl Ui {
         let start = dialog.r.x + 70;
         let end = dialog.back.unwrap_or(dialog.close).x - 8;
         let width = ((end - start - 26) / 2).max(44);
-        [(Item::MeasSrc, Rect::new(start, dialog.r.y + 6, width, DLG_CTRL)),
-         (Item::MeasSrcB, Rect::new(start + width + 26, dialog.r.y + 6, width, DLG_CTRL))]
+        [
+            (Item::MeasSrc, Rect::new(start, dialog.r.y + 6, width, DLG_CTRL)),
+            (Item::MeasSrcB, Rect::new(start + width + 26, dialog.r.y + 6, width, DLG_CTRL)),
+        ]
     }
     pub(super) fn draw_pair_header(&self, cv: &mut Canvas, dialog: &Dlg) {
         cv.text(&self.fonts().mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
@@ -598,7 +717,13 @@ impl Ui {
         for ((_, rect), id) in targets.into_iter().zip([self.meas_src, self.meas_src_b]) {
             btn(cv, rect, BTN, BTN_BORDER);
             cv.set_clip(Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h));
-            cv.text_in(&self.fonts().sb, Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h), 1, &self.pair_source_caption(id), self.wave_color(id));
+            cv.text_in(
+                &self.fonts().sb,
+                Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h),
+                1,
+                &self.pair_source_caption(id),
+                self.wave_color(id),
+            );
             cv.no_clip();
             chevron_down(cv, rect.x + rect.w - 16, rect.y + rect.h / 2 - 3, DIM);
         }
@@ -610,7 +735,8 @@ impl Ui {
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
         // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
-        let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
+        let mut sources: Vec<_> =
+            (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Trace::Reference));
         sources.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Trace::Math));
         sources
@@ -618,17 +744,25 @@ impl Ui {
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {
         if !self.stacked() {
             if let WaveId::Ref(i) = id {
-                if self.wins.len() > 1 { return self.wins.get(self.ref_win_of(i)).copied(); }
+                if self.wins.len() > 1 {
+                    return self.wins.get(self.ref_win_of(i)).copied();
+                }
             }
             return Some(self.wave_area());
         }
-        let wanted = match id { WaveId::Ch(c) => Trace::Channel(c), WaveId::Ref(i) => Trace::Reference(i) };
+        let wanted = match id {
+            WaveId::Ch(c) => Trace::Channel(c),
+            WaveId::Ref(i) => Trace::Reference(i),
+        };
         let index = self.trace_sources().iter().position(|source| *source == wanted)?;
         self.wins.get(index).copied()
     }
     pub(super) fn drag_reference(&self) -> Option<usize> {
         if self.stacked() {
-            return match self.trace_sources().get(self.cur_win) { Some(Trace::Reference(i)) => Some(*i), _ => None };
+            return match self.trace_sources().get(self.cur_win) {
+                Some(Trace::Reference(i)) => Some(*i),
+                _ => None,
+            };
         }
         match self.selected_workspace_source() {
             Some(WaveId::Ref(i)) if self.refs[i].as_ref().is_some_and(|reference| reference.on) => Some(i),
@@ -638,7 +772,10 @@ impl Ui {
     pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.popup = None;
         // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
-        if !stacked && self.m.win_layout != WinLayout::One { self.workspace.stacked = false; return; }
+        if !stacked && self.m.win_layout != WinLayout::One {
+            self.workspace.stacked = false;
+            return;
+        }
         self.workspace.stacked = stacked;
         if stacked && matches!(self.m.density, Density::Split | Density::Four) {
             self.m.density = Density::Scope;
@@ -651,9 +788,19 @@ impl Ui {
     pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
         let mut right = W - 4;
-        let panel = self.desktop_panel.map(|_| { right -= 48; let r = Rect::new(right, y, 46, 30); right -= 4; r });
+        let panel = self.desktop_panel.map(|_| {
+            right -= 48;
+            let r = Rect::new(right, y, 46, 30);
+            right -= 4;
+            r
+        });
         let top_live = !self.full_on() && self.top_buttons().iter().any(|button| button.0 == TopBtn::Live);
-        let live = (self.record_mode() && !top_live).then(|| { right -= 44; let r = Rect::new(right, y, 42, 30); right -= 4; r });
+        let live = (self.record_mode() && !top_live).then(|| {
+            right -= 44;
+            let r = Rect::new(right, y, 42, 30);
+            right -= 4;
+            r
+        });
         right -= 222;
         let trigger = Rect::new(right, y, 222, 30);
         right -= 128;
@@ -666,13 +813,21 @@ impl Ui {
     /// Sources that get a pill: every live channel and every loaded or selected reference.
     fn pill_sources(&self) -> Vec<WaveId> {
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch).collect();
-        sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_sel == i)).map(WaveId::Ref));
+        sources.extend(
+            (0..NREF)
+                .filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_sel == i))
+                .map(WaveId::Ref),
+        );
         sources
     }
     /// How many pills fit, and whether the rest goes behind a "+N" pill.
     fn pill_count(&self, total: usize) -> (usize, bool) {
         let fit = (self.footer_rects().6.w / 42).max(1) as usize;
-        if total > fit && fit > 1 { (fit - 1, true) } else { (total.min(fit), false) }
+        if total > fit && fit > 1 {
+            (fit - 1, true)
+        } else {
+            (total.min(fit), false)
+        }
     }
     pub(super) fn source_pills(&self) -> Vec<(WaveId, Rect)> {
         let r = self.footer_rects().6;
@@ -680,23 +835,36 @@ impl Ui {
         let (count, more) = self.pill_count(sources.len());
         let active = self.selected_workspace_source();
         if let Some(index) = sources.iter().position(|id| Some(*id) == active) {
-            if index >= count && count > 0 { sources.swap(index, count - 1); }
+            if index >= count && count > 0 {
+                sources.swap(index, count - 1);
+            }
         }
         let width = (r.w / (count + more as usize).max(1) as i32).clamp(38, 78);
-        sources.into_iter().take(count).enumerate().map(|(i, id)| (id, Rect::new(r.x + i as i32 * width, r.y, width - 4, r.h))).collect()
+        sources
+            .into_iter()
+            .take(count)
+            .enumerate()
+            .map(|(i, id)| (id, Rect::new(r.x + i as i32 * width, r.y, width - 4, r.h)))
+            .collect()
     }
     /// The "+N" pill after the last source pill that opens the Sources popup, when not every source has a pill.
     pub(super) fn source_overflow(&self) -> Option<(usize, Rect)> {
         let r = self.footer_rects().6;
         let total = self.pill_sources().len();
         let (count, more) = self.pill_count(total);
-        if !more { return None; }
+        if !more {
+            return None;
+        }
         let width = (r.w / (count + 1) as i32).clamp(38, 78);
         Some((total - count, Rect::new(r.x + count as i32 * width, r.y, width - 4, r.h)))
     }
     pub(super) fn compact_cards(&self) -> Cards {
         let mut ch = [Rect::new(0, BOTTOM.y, 0, 30); NCH];
-        for (id, rect) in self.source_pills() { if let WaveId::Ch(c) = id { ch[c] = rect; } }
+        for (id, rect) in self.source_pills() {
+            if let WaveId::Ch(c) = id {
+                ch[c] = rect;
+            }
+        }
         let (_, _, time, trig, _, _, _) = self.footer_rects();
         Cards { ch, la: None, gen: None, time, trig }
     }
@@ -719,25 +887,42 @@ impl Ui {
             btn(cv, rect, if selected { color } else { BAR }, if selected { color } else { BTN_BORDER });
             cv.text_in(&self.fonts().sb, rect, 1, &label, if selected { BAR } else { color });
         }
-        if let Some((n, rect)) = self.source_overflow() { draw(cv, rect, &format!("+{n}"), false); }
+        if let Some((n, rect)) = self.source_overflow() {
+            draw(cv, rect, &format!("+{n}"), false);
+        }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);
         draw(cv, stacked, "Stacked", self.workspace.stacked);
         let (scale, _) = self.view();
         draw(cv, time, &format!("Time {}/div", si_short(scale as f64, "s")), false);
         self.draw_compact_trigger(cv, trigger);
-        if let Some(r) = live { draw(cv, r, "Live", false); }
-        if let Some(r) = panel { draw(cv, r, "Panel", self.desktop_panel == Some(true)); }
+        if let Some(r) = live {
+            draw(cv, r, "Live", false);
+        }
+        if let Some(r) = panel {
+            draw(cv, r, "Panel", self.desktop_panel == Some(true));
+        }
     }
     pub(super) fn workspace_footer_tap(&mut self, x: i32, y: i32) -> bool {
-        if !BOTTOM.contains(x, y) { return false; }
+        if !BOTTOM.contains(x, y) {
+            return false;
+        }
         if Self::MENU_BTN.contains(x, y) {
-            if self.m.touch_lock { self.key(key::TOUCHLOCK); } else { self.toggle_menu(MenuId::Main); }
+            if self.m.touch_lock {
+                self.key(key::TOUCHLOCK);
+            } else {
+                self.toggle_menu(MenuId::Main);
+            }
             return true;
         }
-        if Rect::new(56, BOTTOM.y + 3, 64, 30).contains(x, y) { self.open_sources(x, BOTTOM.y); return true; }
+        if Rect::new(56, BOTTOM.y + 3, 64, 30).contains(x, y) {
+            self.open_sources(x, BOTTOM.y);
+            return true;
+        }
         for (id, rect) in self.source_pills() {
-            if !rect.contains(x, y) { continue; }
+            if !rect.contains(x, y) {
+                continue;
+            }
             self.select_workspace_source(id);
             match id {
                 WaveId::Ch(c) => self.toggle_menu(MenuId::Channel(c)),
@@ -745,14 +930,26 @@ impl Ui {
             }
             return true;
         }
-        if let Some((_, rect)) = self.source_overflow() { if rect.contains(x, y) { self.open_sources(rect.x, BOTTOM.y); return true; } }
+        if let Some((_, rect)) = self.source_overflow() {
+            if rect.contains(x, y) {
+                self.open_sources(rect.x, BOTTOM.y);
+                return true;
+            }
+        }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
-        if overlay.contains(x, y) { self.trace_mode(false); }
-        else if stacked.contains(x, y) { self.trace_mode(true); }
-        else if time.contains(x, y) { self.toggle_menu(MenuId::Horizontal); }
-        else if live.is_some_and(|r| r.contains(x, y)) { self.return_to_live(); }
-        else if panel.is_some_and(|r| r.contains(x, y)) { self.desktop_panel = self.desktop_panel.map(|open| !open); }
-        else { self.compact_trigger_tap(x, y, trigger); }
+        if overlay.contains(x, y) {
+            self.trace_mode(false);
+        } else if stacked.contains(x, y) {
+            self.trace_mode(true);
+        } else if time.contains(x, y) {
+            self.toggle_menu(MenuId::Horizontal);
+        } else if live.is_some_and(|r| r.contains(x, y)) {
+            self.return_to_live();
+        } else if panel.is_some_and(|r| r.contains(x, y)) {
+            self.desktop_panel = self.desktop_panel.map(|open| !open);
+        } else {
+            self.compact_trigger_tap(x, y, trigger);
+        }
         true
     }
     fn popup(&mut self, x: i32, y: i32, rows: Vec<(String, Action)>) {
@@ -761,14 +958,29 @@ impl Ui {
         // inside the plot, so the popup never covers the bars or runs off the screen
         let g = self.grid;
         let (x0, y0) = (g.x + 4, g.y.max(TOP.h));
-        let rect = Rect::new(x.clamp(x0, (g.right() - width - 4).max(x0)), y.clamp(y0, (g.bottom() - height).max(y0)), width, height);
+        let rect = Rect::new(
+            x.clamp(x0, (g.right() - width - 4).max(x0)),
+            y.clamp(y0, (g.bottom() - height).max(y0)),
+            width,
+            height,
+        );
         self.workspace.popup = Some(Popup { rect, rows });
     }
     fn open_sources(&mut self, x: i32, y: i32) {
         let mut rows = Vec::new();
-        for c in 0..n_ch() { rows.push((format!("CH{}  {}", c + 1, if self.m.ch[c].on { "On" } else { "Off" }), Action::Source(WaveId::Ch(c)))); }
+        for c in 0..n_ch() {
+            rows.push((
+                format!("CH{}  {}", c + 1, if self.m.ch[c].on { "On" } else { "Off" }),
+                Action::Source(WaveId::Ch(c)),
+            ));
+        }
         for i in 0..NREF {
-            if let Some(reference) = &self.refs[i] { rows.push((format!("R{}  {}  {}", i + 1, if reference.on { "On" } else { "Off" }, reference.label), Action::Source(WaveId::Ref(i)))); }
+            if let Some(reference) = &self.refs[i] {
+                rows.push((
+                    format!("R{}  {}  {}", i + 1, if reference.on { "On" } else { "Off" }, reference.label),
+                    Action::Source(WaveId::Ref(i)),
+                ));
+            }
         }
         rows.push(("Logic analyser".into(), Action::Menu(MenuId::La)));
         rows.push(("Generator".into(), Action::Menu(MenuId::Afg)));
@@ -776,25 +988,56 @@ impl Ui {
     }
     /// Mouse right-click and a stationary touch hold take the exact same path.
     pub fn context_menu(&mut self, x: i32, y: i32) {
-        if self.m.touch_lock { return; }
-        let eye = self.eye_open() && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y);
+        if self.m.touch_lock {
+            return;
+        }
+        let eye = self.eye_open()
+            && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y);
         let measurements = self.results_rects().is_some_and(|(head, _)| head.contains(x, y));
         let rows = if eye {
-            vec![("Dock Eye right".into(), Action::EyeRight), ("Dock Eye left".into(), Action::EyeLeft), ("Dock Eye below".into(), Action::EyeBelow),
-                 ("Float Eye".into(), Action::EyeFloat), ("Eye settings".into(), Action::Menu(MenuId::Eye)), ("Close Eye".into(), Action::EyeClose)]
+            vec![
+                ("Dock Eye right".into(), Action::EyeRight),
+                ("Dock Eye left".into(), Action::EyeLeft),
+                ("Dock Eye below".into(), Action::EyeBelow),
+                ("Float Eye".into(), Action::EyeFloat),
+                ("Eye settings".into(), Action::Menu(MenuId::Eye)),
+                ("Close Eye".into(), Action::EyeClose),
+            ]
         } else if measurements {
-            vec![("Float measurements".into(), Action::MeasureFloat), ("Dock right".into(), Action::MeasureDock(StripDock::Right)),
-                 ("Dock below".into(), Action::MeasureDock(StripDock::Under)), ("Dock left".into(), Action::MeasureDock(StripDock::Left)),
-                 ("Add measurements".into(), Action::Menu(MenuId::MeasAdd))]
+            vec![
+                ("Float measurements".into(), Action::MeasureFloat),
+                ("Dock right".into(), Action::MeasureDock(StripDock::Right)),
+                ("Dock below".into(), Action::MeasureDock(StripDock::Under)),
+                ("Dock left".into(), Action::MeasureDock(StripDock::Left)),
+                ("Add measurements".into(), Action::Menu(MenuId::MeasAdd)),
+            ]
         } else {
-            let mut rows = vec![("Overlay traces".into(), Action::Overlay), ("Stacked traces".into(), Action::Stacked),
+            let mut rows = vec![
+                ("Overlay traces".into(), Action::Overlay),
+                ("Stacked traces".into(), Action::Stacked),
                 ("Fit record".into(), Action::FitRecord),
-                ("Reset zoom".into(), Action::ZoomReset), ("Close zoom".into(), Action::ZoomClose),
-                ("Single acquisition".into(), Action::Single), ("Run / Stop".into(), Action::Run),
-                ("Float measurements".into(), Action::MeasureFloat)];
+                ("Reset zoom".into(), Action::ZoomReset),
+                ("Close zoom".into(), Action::ZoomClose),
+                ("Single acquisition".into(), Action::Single),
+                ("Run / Stop".into(), Action::Run),
+                ("Float measurements".into(), Action::MeasureFloat),
+            ];
             for source in self.trace_sources().into_iter().take(5) {
-                let id = match source { Trace::Channel(c) => WaveId::Ch(c), Trace::Reference(i) => WaveId::Ref(i), Trace::Math(_) => continue };
-                rows.push((format!("Trigger on {}", match id { WaveId::Ch(c) => format!("CH{}", c + 1), WaveId::Ref(i) => format!("R{}", i + 1) }), Action::Trigger(id)));
+                let id = match source {
+                    Trace::Channel(c) => WaveId::Ch(c),
+                    Trace::Reference(i) => WaveId::Ref(i),
+                    Trace::Math(_) => continue,
+                };
+                rows.push((
+                    format!(
+                        "Trigger on {}",
+                        match id {
+                            WaveId::Ch(c) => format!("CH{}", c + 1),
+                            WaveId::Ref(i) => format!("R{}", i + 1),
+                        }
+                    ),
+                    Action::Trigger(id),
+                ));
             }
             rows.push(("Trigger settings".into(), Action::Menu(MenuId::Trigger)));
             rows.push(("Sources".into(), Action::Sources));
@@ -806,49 +1049,102 @@ impl Ui {
         let Some(popup) = self.workspace.popup.take() else { return false };
         if popup.rect.contains(x, y) {
             let index = ((y - popup.rect.y - 4).max(0) / 30) as usize;
-            if let Some((_, action)) = popup.rows.get(index) { self.workspace_action(action.clone()); }
+            if let Some((_, action)) = popup.rows.get(index) {
+                self.workspace_action(action.clone());
+            }
         }
         true
     }
     pub(super) fn workspace_action(&mut self, action: Action) {
         match action {
-            Action::Overlay => self.trace_mode(false), Action::Stacked => self.trace_mode(true),
+            Action::Overlay => self.trace_mode(false),
+            Action::Stacked => self.trace_mode(true),
             Action::Sources => self.open_sources(56, BOTTOM.y),
             Action::Source(WaveId::Ch(c)) => {
-                if self.m.ch[c].on && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
-                if self.m.ch[c].on { self.m.ch[c].on = false; self.settings_changed(); }
-                else if self.record_mode() { self.activate_live_channel(c); }
-                else {
+                if self.m.ch[c].on && self.trace_sources().len() <= 1 {
+                    self.toast("Keep one source on");
+                    return;
+                }
+                if self.m.ch[c].on {
+                    self.m.ch[c].on = false;
+                    self.settings_changed();
+                } else if self.record_mode() {
+                    self.activate_live_channel(c);
+                } else {
                     // in Live as the channel key: the channel goes on, the trigger and Run/Stop stay
                     self.m.ch[c].on = true;
                     self.select_workspace_source(WaveId::Ch(c));
-                    if self.m.run == RunState::Run { self.m.floor_live_tdiv(); }
+                    if self.m.run == RunState::Run {
+                        self.m.floor_live_tdiv();
+                    }
                     self.settings_changed();
                 }
                 self.relayout();
             }
             Action::Source(WaveId::Ref(i)) => {
-                if self.refs[i].as_ref().is_some_and(|r| r.on) && self.trace_sources().len() <= 1 { self.toast("Keep one source on"); return; }
-                if let Some(reference) = &mut self.refs[i] { reference.on = !reference.on; }
+                if self.refs[i].as_ref().is_some_and(|r| r.on) && self.trace_sources().len() <= 1 {
+                    self.toast("Keep one source on");
+                    return;
+                }
+                if let Some(reference) = &mut self.refs[i] {
+                    reference.on = !reference.on;
+                }
                 self.select_workspace_source(WaveId::Ref(i));
                 self.relayout();
             }
-            Action::Trigger(id) => { self.set_trigger_source(id, false); }
+            Action::Trigger(id) => {
+                self.set_trigger_source(id, false);
+            }
             Action::Menu(MenuId::La) => self.key(key::LA),
             Action::Menu(menu) => self.open_menu(menu),
-            Action::ZoomReset => { self.zoom_arm = false; self.zoom_path.clear(); self.reset_zoom(); }
-            Action::ZoomClose => { self.zoom_arm = false; self.zoom_path.clear(); self.set_zoom(false); }
-            Action::FitRecord => { self.fit_selected_record(); }
-            Action::Single => self.key(key::SINGLE), Action::Run => self.key(key::RUNSTOP),
-            Action::EyeRight => { self.workspace.eye_float = None; self.workspace.eye_left = false; self.eye_set_place(EyePlace::Side); self.relayout(); }
-            Action::EyeLeft => { self.workspace.eye_float = None; self.workspace.eye_left = true; self.eye_set_place(EyePlace::Side); self.relayout(); }
-            Action::EyeBelow => { self.workspace.eye_float = None; self.workspace.eye_left = false; self.eye_set_place(EyePlace::Under); self.relayout(); }
-            Action::EyeFloat => { self.workspace.eye_float = Some(Rect::new(360, 100, 620, 360)); self.relayout(); }
-            Action::EyeClose => { self.m.view = AView::Scope; self.workspace.eye_float = None; self.relayout(); }
+            Action::ZoomReset => {
+                self.zoom_box.arm = false;
+                self.zoom_box.path.clear();
+                self.reset_zoom();
+            }
+            Action::ZoomClose => {
+                self.zoom_box.arm = false;
+                self.zoom_box.path.clear();
+                self.set_zoom(false);
+            }
+            Action::FitRecord => {
+                self.fit_selected_record();
+            }
+            Action::Single => self.key(key::SINGLE),
+            Action::Run => self.key(key::RUNSTOP),
+            Action::EyeRight => {
+                self.workspace.eye_float = None;
+                self.workspace.eye_left = false;
+                self.eye_set_place(EyePlace::Side);
+                self.relayout();
+            }
+            Action::EyeLeft => {
+                self.workspace.eye_float = None;
+                self.workspace.eye_left = true;
+                self.eye_set_place(EyePlace::Side);
+                self.relayout();
+            }
+            Action::EyeBelow => {
+                self.workspace.eye_float = None;
+                self.workspace.eye_left = false;
+                self.eye_set_place(EyePlace::Under);
+                self.relayout();
+            }
+            Action::EyeFloat => {
+                self.workspace.eye_float = Some(Rect::new(360, 100, 620, 360));
+                self.relayout();
+            }
+            Action::EyeClose => {
+                self.m.view = AView::Scope;
+                self.workspace.eye_float = None;
+                self.relayout();
+            }
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
                 self.workspace.measure_docked = false;
-                self.stats_on = true; self.results_min = false; self.relayout();
+                self.stats_on = true;
+                self.results_min = false;
+                self.relayout();
             }
             Action::MeasureDock(dock) => {
                 self.workspace.measure_float = None;
@@ -864,21 +1160,30 @@ impl Ui {
             cv.framed(popup.rect, 5, 1, BTN_BORDER, 4, BAR);
             for (index, (label, action)) in popup.rows.iter().enumerate() {
                 let r = Rect::new(popup.rect.x + 5, popup.rect.y + 4 + index as i32 * 30, popup.rect.w - 10, 30);
-                cv.set_clip(r); cv.text(&self.fonts().s, r.x + 7, r.y + 20, label, TEXT); cv.no_clip();
-                let current = match action { Action::Overlay => !self.workspace.stacked, Action::Stacked => self.workspace.stacked, _ => false };
+                cv.set_clip(r);
+                cv.text(&self.fonts().s, r.x + 7, r.y + 20, label, TEXT);
+                cv.no_clip();
+                let current = match action {
+                    Action::Overlay => !self.workspace.stacked,
+                    Action::Stacked => self.workspace.stacked,
+                    _ => false,
+                };
                 if current {
                     // a check at the right end marks the mode in force
                     let (cx, cy) = (r.x + r.w - 18, r.y + 15);
-                    cv.line(cx, cy, cx + 4, cy + 4, ACCENT); cv.line(cx + 4, cy + 4, cx + 11, cy - 5, ACCENT);
+                    cv.line(cx, cy, cx + 4, cy + 4, ACCENT);
+                    cv.line(cx + 4, cy + 4, cx + 11, cy - 5, ACCENT);
                 }
             }
         }
         if self.workspace.gesture.is_some_and(|gesture| gesture.moved && gesture.panel != Panel::Plot) {
             let (left, width) = self.plot_span();
             let (top, bottom) = (self.plot_top(), self.plot_bottom());
-            for r in [Rect::new(left + 4, top, 68, (bottom - top).max(1)),
-                      Rect::new(left + width - 72, top, 68, (bottom - top).max(1)),
-                      Rect::new(left + 76, bottom - 52, (width - 152).max(1), 48)] {
+            for r in [
+                Rect::new(left + 4, top, 68, (bottom - top).max(1)),
+                Rect::new(left + width - 72, top, 68, (bottom - top).max(1)),
+                Rect::new(left + 76, bottom - 52, (width - 152).max(1), 48),
+            ] {
                 cv.round_outline(r, 4, ACCENT);
                 cv.text_in(&self.fonts().s, Rect::new(r.x, r.y + 8, r.w, 24), 1, "Dock", ACCENT);
             }
@@ -891,8 +1196,12 @@ impl Ui {
     }
     pub(super) fn workspace_hold_tick(&mut self) {
         let Some(mut gesture) = self.workspace.gesture else { return };
-        if gesture.moved || gesture.held || self.now - gesture.at < HOLD { return; }
-        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock { return; }
+        if gesture.moved || gesture.held || self.now - gesture.at < HOLD {
+            return;
+        }
+        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock {
+            return;
+        }
         gesture.held = true;
         self.workspace.gesture = Some(gesture);
         self.context_menu(gesture.x, gesture.y);
@@ -905,52 +1214,95 @@ impl Ui {
             return false;
         }
         if self.workspace.popup.is_some() && !self.workspace.gesture.is_some_and(|gesture| gesture.held) {
-            if phase == Phase::Up { self.workspace_popup_tap(x, y); }
+            if phase == Phase::Up {
+                self.workspace_popup_tap(x, y);
+            }
             return true;
         }
-        if phase == Phase::Down && (self.full_btn().1.contains(x, y) || self.zoom_btn().1.contains(x, y)
-            || (self.m.zoom && self.zoom_readout().contains(x, y))) {
+        if phase == Phase::Down
+            && (self.full_btn().1.contains(x, y)
+                || self.zoom_btn().1.contains(x, y)
+                || self.win_btn().1.contains(x, y)
+                || (self.m.zoom && self.zoom_readout().contains(x, y)))
+        {
             self.workspace.gesture = None;
             return false;
         }
         match phase {
             Phase::Down => {
-                if self.workspace.popup.is_some() { return false; }
-                let panel = if self.eye_open() && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER).contains(x, y)
-                    && !self.eye_pane_close().contains(x, y) { Panel::Eye }
-                else if self.results_rects().is_some_and(|(header, _)| header.contains(x, y)) { Panel::Measurements }
-                else if self.grid.contains(x, y) && !self.menu_open { Panel::Plot }
-                else { return false };
-                let origin = match panel { Panel::Eye => self.eye_pane_rect(), Panel::Measurements => { let (head, body) = self.results_rects().unwrap(); Rect::new(head.x, head.y, head.w, head.h + body.h) }, Panel::Plot => self.grid };
+                if self.workspace.popup.is_some() {
+                    return false;
+                }
+                let panel = if self.eye_open()
+                    && Rect::new(self.eye_pane_rect().x, self.eye_pane_rect().y, self.eye_pane_rect().w, HEADER)
+                        .contains(x, y)
+                    && !self.eye_pane_close().contains(x, y)
+                {
+                    Panel::Eye
+                } else if self.results_rects().is_some_and(|(header, _)| header.contains(x, y)) {
+                    Panel::Measurements
+                } else if self.grid.contains(x, y) && !self.menu_open {
+                    Panel::Plot
+                } else {
+                    return false;
+                };
+                let origin = match panel {
+                    Panel::Eye => self.eye_pane_rect(),
+                    Panel::Measurements => match self.results_rects() {
+                        Some((head, body)) => Rect::new(head.x, head.y, head.w, head.h + body.h),
+                        None => return false,
+                    },
+                    Panel::Plot => self.grid,
+                };
                 self.workspace.gesture = Some(Gesture { panel, origin, x, y, at: self.now, moved: false, held: false });
                 panel != Panel::Plot
             }
             Phase::Move => {
                 let Some(mut gesture) = self.workspace.gesture else { return false };
-                if (x - gesture.x).abs().max((y - gesture.y).abs()) > MOVE { gesture.moved = true; }
+                if (x - gesture.x).abs().max((y - gesture.y).abs()) > MOVE {
+                    gesture.moved = true;
+                }
                 if gesture.held {
-                    if !gesture.moved || gesture.panel == Panel::Plot { return true; }
+                    if !gesture.moved || gesture.panel == Panel::Plot {
+                        return true;
+                    }
                     // A stationary hold opens context actions, but moving the same
                     // finger can still take the header into a drag.
                     gesture.held = false;
                     self.workspace.popup = None;
                 }
                 self.workspace.gesture = Some(gesture);
-                if !gesture.moved || gesture.panel == Panel::Plot { return gesture.panel != Panel::Plot; }
+                if !gesture.moved || gesture.panel == Panel::Plot {
+                    return gesture.panel != Panel::Plot;
+                }
                 let r = gesture.origin;
                 let left = (r.x + x - gesture.x).clamp(0, W - r.w.min(W));
                 let top = (r.y + y - gesture.y).clamp(TOP.h, (BOTTOM.y - r.h.min(BOTTOM.y - TOP.h)).max(TOP.h));
                 match gesture.panel {
-                    Panel::Eye => { self.workspace.eye_float = Some(Rect::new(left, top, r.w.max(320).min(W), r.h.max(180).min(BOTTOM.y - top))); self.relayout(); }
-                    Panel::Measurements => { self.workspace.measure_float = Some((left, top)); self.workspace.measure_docked = false; self.relayout(); }
-                    _ => {},
+                    Panel::Eye => {
+                        self.workspace.eye_float =
+                            Some(Rect::new(left, top, r.w.clamp(320, W), r.h.max(180).min(BOTTOM.y - top)));
+                        self.relayout();
+                    }
+                    Panel::Measurements => {
+                        self.workspace.measure_float = Some((left, top));
+                        self.workspace.measure_docked = false;
+                        self.relayout();
+                    }
+                    _ => {}
                 }
                 true
             }
             Phase::Up => {
                 let Some(gesture) = self.workspace.gesture.take() else { return false };
-                if gesture.held { self.touch.down = false; self.touch.drag = Drag::None; return true; }
-                if gesture.panel == Panel::Plot { return false; }
+                if gesture.held {
+                    self.touch.down = false;
+                    self.touch.drag = Drag::None;
+                    return true;
+                }
+                if gesture.panel == Panel::Plot {
+                    return false;
+                }
                 if gesture.moved {
                     let right = x >= self.plot_span().0 + self.plot_span().1 - 76;
                     let left = x <= self.plot_span().0 + 76;
@@ -964,71 +1316,104 @@ impl Ui {
                         Panel::Measurements if left => self.workspace_action(Action::MeasureDock(StripDock::Left)),
                         Panel::Measurements if bottom => self.workspace_action(Action::MeasureDock(StripDock::Under)),
                         Panel::Measurements if top => self.workspace_action(Action::MeasureDock(StripDock::Above)),
-                        _ => {},
+                        _ => {}
                     }
-                } else if gesture.panel == Panel::Measurements { self.results_min = !self.results_min; }
-                else if gesture.panel == Panel::Eye { self.eye_header_tap(x, y); }
+                } else if gesture.panel == Panel::Measurements {
+                    self.results_min = !self.results_min;
+                } else if gesture.panel == Panel::Eye {
+                    self.eye_header_tap(x, y);
+                }
                 true
             }
         }
     }
-    /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop window
+    /// Escape (of a keyboard, ui/pointer.rs) closes transient surfaces and leaves box/zoom modes immediately.
     pub fn dismiss_context(&mut self) {
-        if self.load_slot_ask { self.cancel_load_slot(); return; }
-        let was_drawing = self.zoom_arm;
-        self.workspace.popup = None; self.workspace.gesture = None;
-        self.zoom_arm = false; self.zoom_path.clear(); self.zoom_map = None;
-        self.touch.down = false; self.touch.drag = Drag::None;
-        if self.menu_open { self.close_menu(); }
-        else if self.m.zoom && !was_drawing { self.set_zoom(false); }
+        if self.load_slot_ask {
+            self.cancel_load_slot();
+            return;
+        }
+        let was_drawing = self.zoom_box.arm;
+        self.workspace.popup = None;
+        self.workspace.gesture = None;
+        self.zoom_box.cancel();
+        self.touch.down = false;
+        self.touch.drag = Drag::None;
+        if self.menu_open {
+            self.close_menu();
+        } else if self.m.zoom && !was_drawing {
+            self.set_zoom(false);
+        }
     }
     pub fn cancel_pointer(&mut self) {
         self.workspace.gesture = None;
-        self.touch.down = false; self.touch.held = false; self.touch.drag = Drag::None;
-        self.pinch.active = false;
+        self.touch.down = false;
+        self.touch.held = false;
+        self.touch.drag = Drag::None;
+        self.input.pinch.active = false;
     }
 
     pub(super) fn fit_selected_record(&mut self) -> bool {
-        let Some(source) = self.selected_workspace_source() else { self.toast("No retained waveform to fit"); return false };
+        let Some(source) = self.selected_workspace_source() else {
+            self.toast("No retained waveform to fit");
+            return false;
+        };
         let metadata = match source {
             WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.len(), r.dt, self.source_time_origin(source, r.t0))),
-            WaveId::Ch(c) => self.raw_info(c).or_else(|| self.last[0].as_ref().map(|r| (r.ch[c].len(), r.dt, r.t0)))
+            WaveId::Ch(c) => self
+                .raw_info(c)
+                .or_else(|| self.last[0].as_ref().map(|r| (r.ch[c].len(), r.dt, r.t0)))
                 .map(|(n, dt, t0)| (n, dt, self.source_time_origin(source, t0))),
         };
-        let Some((points, dt, t0)) = metadata.filter(|&(n, dt, t0)| n >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite()) else {
-            self.toast("No retained waveform to fit"); return false;
+        let Some((points, dt, t0)) =
+            metadata.filter(|&(n, dt, t0)| n >= 2 && dt.is_finite() && dt > 0.0 && t0.is_finite())
+        else {
+            self.toast("No retained waveform to fit");
+            return false;
         };
-        if let WaveId::Ref(i) = source {
-            let r = self.refs[i].as_ref().unwrap();
+        let shown = match source {
+            WaveId::Ref(i) => self.refs[i].as_mut(),
+            _ => None,
+        };
+        if let Some(r) = shown {
             let summary = crate::wave::autoset_summary(&r.v, r.dt);
             if summary.valid {
                 let want = ((summary.vmax - summary.vmin) / (VDIV * 0.8)).max(VSCALES[0]);
-                let vpd = VSCALES.iter().copied().find(|&scale| scale >= want).unwrap_or(VSCALES[VSCALES.len()-1]);
+                let vpd = VSCALES.iter().copied().find(|&scale| scale >= want).unwrap_or(VSCALES[VSCALES.len() - 1]);
                 let offset = -0.5 * (summary.vmax + summary.vmin);
-                let r = self.refs[i].as_mut().unwrap(); r.vpd = vpd; r.offset = offset;
+                r.vpd = vpd;
+                r.offset = offset;
             }
         }
         let end = t0 + points.saturating_sub(1) as f64 * dt;
         let center = (t0 + (end - t0) * 0.5) as f32;
         let required = 2.0 * (center as f64 - t0).max(end - center as f64) / HDIV as f64;
         let scales = tscales();
-        self.m.tscale = scales.iter().position(|&scale| scale as f64 >= required).unwrap_or(scales.len()-1);
-        self.m.tfine = if required > scales[self.m.tscale] as f64 { (required / scales[self.m.tscale] as f64) as f32 } else { 1.0 };
+        self.m.tscale = scales.iter().position(|&scale| scale as f64 >= required).unwrap_or(scales.len() - 1);
+        self.m.tfine = if required > scales[self.m.tscale] as f64 {
+            (required / scales[self.m.tscale] as f64) as f32
+        } else {
+            1.0
+        };
         self.m.delay = center;
         self.set_zoom(false);
-        self.zoom_vfactor = 1.0; self.zoom_vcenter = 0.0;
+        self.zoom_view.vfactor = 1.0;
+        self.zoom_view.vcenter = 0.0;
         self.dirty_map = true;
         self.toast("Fit record");
         true
     }
     pub(crate) fn reset_workspace_for_import(&mut self) {
-        self.cancel_pointer(); self.workspace.popup = None;
-        self.workspace.eye_float = None; self.workspace.eye_left = false;
+        self.cancel_pointer();
+        self.workspace.popup = None;
+        self.workspace.eye_float = None;
+        self.workspace.eye_left = false;
         self.workspace.measure_docked = false;
-        self.workspace.measure_float = None; self.stats_on = false;
-        self.m.pane = 0; self.m.win_layout = WinLayout::One;
+        self.workspace.measure_float = None;
+        self.stats_on = false;
+        self.m.pane = 0;
+        self.m.win_layout = WinLayout::One;
         self.m.density = if self.full_on() { Density::Full } else { Density::Scope };
-        self.zoom_arm = false; self.zoom_path.clear(); self.zoom_map = None;
+        self.zoom_box.cancel();
     }
 }

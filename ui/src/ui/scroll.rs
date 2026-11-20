@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Scrolling lists by touch: a scroll bar beside the list (drag its thumb, or tap the track to jump there) and a
-//! finger drawn over the list itself. Used by the measurement page, the Results pane and the event tables. A list
-//! keeps its position in its own units (pixels or rows); every read goes through [`Bar::top`], which keeps it in range,
-//! so a list that became shorter (a group folded, rows removed) can never be left scrolled past its end.
+//! finger drawn over the list itself. Used by the measurement page, the Results pane, the event tables and a picker
+//! longer than the screen (the networks of a WLAN scan, Bluetooth devices). A list keeps its position in its own units
+//! (pixels or rows); every read goes through [`Bar::top`], which keeps it in range, so a list that became shorter (a
+//! group folded, rows removed) can never be left scrolled past its end.
 
 use super::*;
 
@@ -25,6 +26,8 @@ pub(super) enum List {
     Results,
     /// the event / search / segment table over the plot (rows)
     Table,
+    /// a picker with more options than fit on the screen (lines of options)
+    Pick,
 }
 
 /// A scroll bar: where it is, how much there is, how much shows, and where the list stands. Units are the list's own.
@@ -96,6 +99,7 @@ impl Ui {
             List::Catalog => self.catalog_bar(),
             List::Results => self.results_bar(),
             List::Table => self.table_bar(),
+            List::Pick => self.dlg_layout().and_then(|d| d.bar),
         }
     }
 
@@ -104,16 +108,17 @@ impl Ui {
         let Some((bar, _)) = self.scroll_bar(l) else { return };
         let p = pos.clamp(0, bar.max());
         match l {
-            List::Catalog => self.cat_scroll = p,
+            List::Catalog => self.cat.scroll = p,
             List::Results => self.pn.top = p as usize,
-            List::Table => self.table_top = p as usize,
+            List::Table => self.table.top = p as usize,
+            List::Pick => self.pick_scroll_to(bar, p),
         }
     }
 
     /// The list a finger went down on, and how it holds it. A press on the track outside the thumb jumps there.
     pub(super) fn scroll_grip(&mut self, x: i32, y: i32) -> Option<(List, Grip)> {
         // the topmost first: the measurement page covers the table, the table covers the pane
-        let order: &[List] = if self.menu_open { &[List::Catalog] } else { &[List::Table, List::Results] };
+        let order: &[List] = if self.menu_open { &[List::Catalog, List::Pick] } else { &[List::Table, List::Results] };
         for &l in order {
             let Some((bar, area)) = self.scroll_bar(l) else { continue };
             if !bar.needed() {
@@ -154,11 +159,28 @@ impl Ui {
                     List::Catalog => dy,
                     List::Results => dy / self.results_row_pitch().max(1),
                     List::Table => dy / tables::ROW_H,
+                    List::Pick => dy / (bar.track.h / bar.shown.max(1)).max(1),
                 };
                 self.scroll_to(l, pos - units);
                 true
             }
         }
+    }
+}
+
+impl Ui {
+    /// A long picker scrolled to line `top`: the focus stays on an option that shows (or the window would follow it
+    /// back).
+    fn pick_scroll_to(&mut self, bar: Bar, top: i32) {
+        let Some(d) = self.dlg_layout() else { return };
+        let n = d.rows.len();
+        // the options per line: those beside the first one that shows
+        let y0 = d.rows.iter().find(|r| r.ctrl.w > 0).map_or(0, |r| r.ctrl.y);
+        let cols = d.rows.iter().filter(|r| r.ctrl.w > 0 && r.ctrl.y == y0).count().max(1) as i32;
+        let Some(p) = self.pick.as_mut() else { return };
+        p.top = top;
+        let line = (self.focus as i32 / cols).clamp(top, top + bar.shown - 1);
+        self.focus = ((line * cols + self.focus as i32 % cols) as usize).min(n.saturating_sub(1));
     }
 }
 
@@ -201,10 +223,13 @@ mod tests {
             ui.tap(g.x + 20, g.y + g.h / 2);
             let _ = y;
         }
-        assert_eq!(ui.cat_open[0], 0, "folded again");
+        assert_eq!(ui.cat.open[0], 0, "folded again");
         let view = ui.catalog_view();
         let first = ui.catalog_group_rect(0).unwrap();
-        assert!(first.y >= view.y && first.y + first.h <= view.y + view.h, "the first header is in view: {first:?} in {view:?}");
+        assert!(
+            first.y >= view.y && first.y + first.h <= view.y + view.h,
+            "the first header is in view: {first:?} in {view:?}"
+        );
         let (bar, _) = ui.catalog_bar().unwrap();
         assert!(!bar.needed() || bar.top() <= bar.max());
     }
@@ -233,9 +258,9 @@ mod tests {
         let (bar, rows) = ui.table_bar().expect("table open");
         let th = bar.thumb();
         press(&mut ui, th.x + 20, th.y + 5, (th.x + 20, bar.track.y + bar.track.h + 50));
-        assert_eq!(ui.table_top as i32, bar.max());
+        assert_eq!(ui.table.top as i32, bar.max());
         press(&mut ui, rows.x + 100, rows.y + rows.h - 10, (rows.x + 100, rows.y + rows.h - 10 + 3 * tables::ROW_H));
-        assert_eq!(ui.table_top as i32, bar.max() - 3, "three rows back by a finger");
+        assert_eq!(ui.table.top as i32, bar.max() - 3, "three rows back by a finger");
         ui.m.run = RunState::Stop;
         let d0 = ui.m.delay;
         press(&mut ui, rows.x + 100, rows.y + 10, (rows.x + 101, rows.y + 12));
@@ -246,7 +271,7 @@ mod tests {
     #[test]
     fn a_finger_scrolls_the_page_and_a_press_still_taps() {
         let mut ui = page();
-        ui.cat_open[0] = 0b11111;
+        ui.cat.open[0] = 0b11111;
         let (bar, view) = ui.catalog_bar().unwrap();
         assert!(bar.needed());
         let (x, y) = (view.x + 60, view.y + view.h - 30);

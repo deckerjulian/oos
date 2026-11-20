@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Linux inputs: touch screen (evdev, multi-touch protocol B), front-panel MCU (UART0, frames FA cmd data crc7 AF),
-//! control FIFO /tmp/oos-ui.ctl (text commands, see cmd.rs).
+//! control FIFO /tmp/oos-ui.ctl (text commands, see cmd.rs), mice and keyboards (evdev, USB or Bluetooth: hid.rs).
 
 use crate::ui::{Ev, Phase};
 use std::ffi::CString;
@@ -29,6 +29,43 @@ pub fn stop_requested() -> bool {
 pub enum In {
     Ev(Ev),
     Cmd(String),
+    /// a mouse or keyboard (hid.rs)
+    Hid(crate::hid::Event),
+}
+
+/// How often the list of mice and keyboards is read again: a Bluetooth device comes and goes at any time.
+const HID_SCAN_S: u64 = 2;
+
+/// EVIOCGRAB = _IOW('E', 0x90, int), in the generic ioctl numbering that aarch64 (the scope) and x86_64 use.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+const EVIOCGRAB: libc::c_ulong =
+    (1 << 30) | ((std::mem::size_of::<libc::c_int>() as libc::c_ulong) << 16) | ((b'E' as libc::c_ulong) << 8) | 0x90;
+
+/// Takes a mouse or keyboard for oos-ui alone. Without the grab the kernel's console keyboard gets its keys as well:
+/// they would type into the root shell on tty1 behind the UI (a WLAN password into its history, Ctrl+Alt+Del a
+/// reboot). The grab goes with the file descriptor.
+fn grab(fd: i32) -> std::io::Result<()> {
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    {
+        if unsafe { libc::ioctl(fd, EVIOCGRAB as _, 1 as libc::c_int) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = fd;
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "EVIOCGRAB unknown on this architecture"))
+    }
+}
+
+/// An open mouse or keyboard.
+struct HidDev {
+    fd: i32,
+    event: String,
+    /// its buttons and modifiers that are down, released when it goes
+    held: crate::hid::Held,
 }
 
 const CTL: &str = "/tmp/oos-ui.ctl";
@@ -61,10 +98,23 @@ pub struct Inputs {
     panel_buf: Vec<u8>,
     ctl: i32,
     ctl_buf: Vec<u8>,
+    hid: Vec<HidDev>,
+    hid_scan: Option<std::time::Instant>,
+    /// mice and keyboards that could not be grabbed, left out until they come again under another node
+    refused: Vec<String>,
+}
+
+/// A read of a non-blocking descriptor into `buf`: the bytes read, or -1 with errno (EAGAIN when nothing waits).
+fn read_fd(fd: i32, buf: &mut [u8]) -> isize {
+    unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) }
+}
+
+fn close_fd(fd: i32) {
+    unsafe { libc::close(fd) };
 }
 
 fn open_nb(path: &str, flags: i32) -> i32 {
-    let c = CString::new(path).unwrap();
+    let Ok(c) = CString::new(path) else { return -1 };
     unsafe { libc::open(c.as_ptr(), flags | libc::O_NONBLOCK | libc::O_CLOEXEC) }
 }
 
@@ -128,30 +178,53 @@ impl Inputs {
                 let mut info = [0i32; 6];
                 let req = ((2u32 << 30) | (24u32 << 16) | ((b'E' as u32) << 8) | (0x40 + code)) as libc::c_ulong;
                 let r = unsafe { libc::ioctl(fd, req as _, info.as_mut_ptr()) };
-                if r == 0 { info[2] } else { 0 }
+                if r == 0 {
+                    info[2]
+                } else {
+                    0
+                }
             };
             let max_x = absmax(0x35);
             let max_y = absmax(0x36);
             eprintln!("oos-ui: touch range {} x {}", max_x, max_y);
             let idle = Slot { id: -1, ..Default::default() };
-            Some(Touch { fd, slot: 0, s: [idle, idle], swap: has("--touch-swap"), inv_x: has("--touch-invx"), inv_y: has("--touch-invy"), max_x, max_y })
+            Some(Touch {
+                fd,
+                slot: 0,
+                s: [idle, idle],
+                swap: has("--touch-swap"),
+                inv_x: has("--touch-invx"),
+                inv_y: has("--touch-invy"),
+                max_x,
+                max_y,
+            })
         });
         // the board's panel port (frontpanel.md on the DHO800/DHO900); --panel overrides the device
         let (port, baud) = {
             use crate::board::Board;
             crate::board::board().panel_port()
         };
-        let panel = if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| port.into()), baud) };
+        let panel =
+            if has("--no-panel") { -1 } else { open_panel(&arg("--panel").unwrap_or_else(|| port.into()), baud) };
         if panel < 0 {
             eprintln!("oos-ui: no front panel");
         }
-        let c = CString::new(CTL).unwrap();
+        let c = CString::new(CTL).unwrap_or_default();
         unsafe {
             libc::unlink(c.as_ptr());
             libc::mkfifo(c.as_ptr(), 0o666);
         }
         let ctl = open_nb(CTL, libc::O_RDWR);
-        Inputs { touch, panel, panel_buf: Vec::new(), ctl, ctl_buf: Vec::new() }
+        Inputs {
+            touch,
+            panel,
+            panel_buf: Vec::new(),
+            ctl,
+            ctl_buf: Vec::new(),
+            hid: Vec::new(),
+            hid_scan: None,
+            refused: Vec::new(),
+        }
     }
 
     /// Sets the front-panel LEDs. `mask` is in panel LED order (see `Ui::leds`); it is translated to the MCU's
@@ -185,23 +258,102 @@ impl Inputs {
         if self.ctl >= 0 {
             fds.push(libc::pollfd { fd: self.ctl, events: libc::POLLIN, revents: 0 });
         }
+        self.hid_rescan();
+        for d in &self.hid {
+            fds.push(libc::pollfd { fd: d.fd, events: libc::POLLIN, revents: 0 });
+        }
         unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         let mut out = Vec::new();
         self.read_touch(&mut out);
         self.read_panel(&mut out);
         self.read_ctl(&mut out);
+        self.read_hid(&mut out);
         out
+    }
+
+    /// Opens the mice and keyboards that came, every `HID_SCAN_S`; one that went is closed by `read_hid`. What a node
+    /// is comes from sysfs, which the kernel writes (`hid::classify`). A device that cannot be grabbed is left out:
+    /// its keys would reach the console shell as well.
+    fn hid_rescan(&mut self) {
+        if self.hid_scan.is_some_and(|t| t.elapsed().as_secs() < HID_SCAN_S) {
+            return;
+        }
+        self.hid_scan = Some(std::time::Instant::now());
+        let Ok(dir) = std::fs::read_dir("/sys/class/input") else { return };
+        for e in dir.flatten() {
+            let event = e.file_name().to_string_lossy().into_owned();
+            if !crate::hid::is_event(&event)
+                || self.hid.iter().any(|h| h.event == event)
+                || self.refused.contains(&event)
+            {
+                continue;
+            }
+            let read = |f: &str| std::fs::read_to_string(e.path().join("device").join(f)).unwrap_or_default();
+            let caps = |c: &str| read(&format!("capabilities/{c}"));
+            let Some(d) = crate::hid::classify(&event, &read("name"), &caps("ev"), &caps("rel"), &caps("key")) else {
+                continue;
+            };
+            let fd = open_nb(&format!("/dev/input/{}", d.event), libc::O_RDONLY);
+            if fd < 0 {
+                continue;
+            }
+            let what = match (d.mouse, d.keyboard) {
+                (true, true) => "mouse and keyboard",
+                (true, false) => "mouse",
+                _ => "keyboard",
+            };
+            if let Err(err) = grab(fd) {
+                eprintln!("oos-ui: {} {} ({}) not taken: not grabbed ({})", what, d.event, d.name, err);
+                close_fd(fd);
+                self.refused.push(d.event);
+                continue;
+            }
+            eprintln!("oos-ui: {} {} ({})", what, d.event, d.name);
+            self.hid.push(HidDev { fd, event: d.event, held: crate::hid::Held::default() });
+        }
+    }
+
+    fn read_hid(&mut self, out: &mut Vec<In>) {
+        let mut buf = [0u8; 24 * 64];
+        let mut gone = Vec::new();
+        self.hid.retain_mut(|d| loop {
+            let n = read_fd(d.fd, &mut buf);
+            if n < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENODEV) || n == 0 {
+                // unplugged, or the Bluetooth link went: its node is gone, and what it held is let go
+                eprintln!("oos-ui: input {} gone", d.event);
+                close_fd(d.fd);
+                gone.push(std::mem::take(&mut d.held));
+                break false;
+            }
+            if n < 0 {
+                break true;
+            }
+            for ev in buf[..n as usize].as_chunks::<24>().0 {
+                let ty = u16::from_ne_bytes([ev[16], ev[17]]);
+                let code = u16::from_ne_bytes([ev[18], ev[19]]);
+                let value = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);
+                if let Some(e) = crate::hid::decode(ty, code, value) {
+                    d.held.track(&e);
+                    out.push(In::Hid(e));
+                }
+            }
+        });
+        // what a device that went held is let go, unless a device still there holds it too
+        let others: Vec<&crate::hid::Held> = self.hid.iter().map(|d| &d.held).collect();
+        for h in gone {
+            out.extend(h.release(&others).into_iter().map(In::Hid));
+        }
     }
 
     fn read_touch(&mut self, out: &mut Vec<In>) {
         let Some(t) = &mut self.touch else { return };
         let mut buf = [0u8; 24 * 64];
         loop {
-            let n = unsafe { libc::read(t.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            let n = read_fd(t.fd, &mut buf);
             if n <= 0 {
                 break;
             }
-            for ev in buf[..n as usize].chunks_exact(24) {
+            for ev in buf[..n as usize].as_chunks::<24>().0 {
                 let typ = u16::from_ne_bytes([ev[16], ev[17]]);
                 let code = u16::from_ne_bytes([ev[18], ev[19]]);
                 let val = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);
@@ -274,7 +426,7 @@ impl Inputs {
         }
         let mut buf = [0u8; 256];
         loop {
-            let n = unsafe { libc::read(self.panel, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            let n = read_fd(self.panel, &mut buf);
             if n <= 0 {
                 break;
             }
@@ -292,7 +444,7 @@ impl Inputs {
         }
         let mut buf = [0u8; 1024];
         loop {
-            let n = unsafe { libc::read(self.ctl, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            let n = read_fd(self.ctl, &mut buf);
             if n <= 0 {
                 break;
             }
@@ -302,5 +454,14 @@ impl Inputs {
             let line: Vec<u8> = self.ctl_buf.drain(..=p).collect();
             out.push(In::Cmd(String::from_utf8_lossy(&line).trim().to_string()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    fn the_grab_has_the_number_of_linux_input_h() {
+        assert_eq!(super::EVIOCGRAB, 0x4004_4590);
     }
 }

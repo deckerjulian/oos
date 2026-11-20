@@ -109,7 +109,17 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { center: 0.0, span: 0.0, rbw: 0.0, window: Window::Flattop, averaging: 16, trace: Trace::Normal, detector: Detector::Peak, points: 0, ref_level_dbv: 0.0 }
+        Settings {
+            center: 0.0,
+            span: 0.0,
+            rbw: 0.0,
+            window: Window::Flattop,
+            averaging: 16,
+            trace: Trace::Normal,
+            detector: Detector::Peak,
+            points: 0,
+            ref_level_dbv: 0.0,
+        }
     }
 }
 
@@ -177,7 +187,11 @@ pub fn analyze(v: &[f32], dt: f64, s: &Settings, state: &mut Option<Avg>) -> Spe
     }
     let fs0 = 1.0 / dt;
     let nyq = fs0 / 2.0;
-    let (mut start, mut stop) = if s.span > 0.0 && s.center.is_finite() { ((s.center - s.span / 2.0).max(0.0), (s.center + s.span / 2.0).min(nyq)) } else { (0.0, nyq) };
+    let (mut start, mut stop) = if s.span > 0.0 && s.center.is_finite() {
+        ((s.center - s.span / 2.0).max(0.0), (s.center + s.span / 2.0).min(nyq))
+    } else {
+        (0.0, nyq)
+    };
     if !(stop > start) {
         (start, stop) = (0.0, nyq);
     }
@@ -295,7 +309,16 @@ pub fn analyze(v: &[f32], dt: f64, s: &Settings, state: &mut Option<Avg>) -> Spe
     };
     let (lines, floor) = found.unwrap_or_else(|| find_lines(out, start, ddf, mean * mean, s.window, fs / l as f64));
     let dbv = out.iter().map(|&p| (10.0 * p.max(1e-30).log10()) as f32).collect();
-    Spectrum { f0: start, df: ddf, dbv, rbw, ref_level_dbv: s.ref_level_dbv, lines, lobe, floor_dbv: 10.0 * floor.max(1e-30).log10() }
+    Spectrum {
+        f0: start,
+        df: ddf,
+        dbv,
+        rbw,
+        ref_level_dbv: s.ref_level_dbv,
+        lines,
+        lobe,
+        floor_dbv: 10.0 * floor.max(1e-30).log10(),
+    }
 }
 
 /// Lines kept by the search.
@@ -349,7 +372,12 @@ fn find_lines(p: &[f64], f0: f64, df: f64, dc: f64, w: Window, bin: f64) -> (Vec
         .iter()
         .filter_map(|&i| {
             let (a, b) = (i.saturating_sub(half), (i + half + 1).min(p.len()));
-            let part = Spectrum { f0: f0 + a as f64 * df, df, dbv: p[a..b].iter().map(|&x| (10.0 * x.max(1e-30).log10()) as f32).collect(), ..Default::default() };
+            let part = Spectrum {
+                f0: f0 + a as f64 * df,
+                df,
+                dbv: p[a..b].iter().map(|&x| (10.0 * x.max(1e-30).log10()) as f32).collect(),
+                ..Default::default()
+            };
             interpolate_peak(&part, i - a)
         })
         .collect();
@@ -360,7 +388,8 @@ fn find_lines(p: &[f64], f0: f64, df: f64, dc: f64, w: Window, bin: f64) -> (Vec
 /// the strongest line. The fundamental is the line at the measured frequency `f1`, else the strongest line.
 pub fn rank_lines(s: &Spectrum, f1: Option<f64>, n: usize) -> Vec<Marker> {
     let Some(top) = s.lines.first().copied() else { return Vec::new() };
-    let near = f1.filter(|f| f.is_finite() && *f > 0.0).and_then(|f| s.lines.iter().find(|m| (m.f - f).abs() <= s.lobe));
+    let near =
+        f1.filter(|f| f.is_finite() && *f > 0.0).and_then(|f| s.lines.iter().find(|m| (m.f - f).abs() <= s.lobe));
     let base = near.map_or(top.f, |m| m.f);
     let harmonic = |m: &Marker| {
         let k = (m.f / base).round().max(1.0);
@@ -380,7 +409,11 @@ pub fn auto_stop(f1: f64, harmonics: usize, cur: f64) -> f64 {
         return cur;
     }
     let d = 10f64.powf(want.log10().floor());
-    [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0].iter().map(|k| k * d).find(|&x| x >= want * (1.0 - 1e-9)).unwrap_or(10.0 * d)
+    [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0]
+        .iter()
+        .map(|k| k * d)
+        .find(|&x| x >= want * (1.0 - 1e-9))
+        .unwrap_or(10.0 * d)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -547,7 +580,11 @@ pub fn acpr(s: &Spectrum, width: f64, spacing: f64) -> Acpr {
     let band = |centre: f64| {
         let a = (centre - half).max(lo);
         let b = (centre + half).min(hi);
-        if b > a { channel_power(s, a, b) } else { 0.0 }
+        if b > a {
+            channel_power(s, a, b)
+        } else {
+            0.0
+        }
     };
     let pch = band(peak.f);
     if !(pch > 0.0) {
@@ -578,7 +615,11 @@ pub fn occupied_bw(s: &Spectrum, pct: f64) -> Option<(f64, f64)> {
             }
             acc += p[i];
         }
-        if rev { 0.0 } else { (p.len() - 1) as f64 }
+        if rev {
+            0.0
+        } else {
+            (p.len() - 1) as f64
+        }
     };
     let (a, b) = (find(tail, false), find(tail, true));
     Some((s.f0 + a.max(0.0) * s.df, s.f0 + b.min((p.len() - 1) as f64) * s.df))
@@ -611,44 +652,92 @@ pub struct Distortion {
     pub harmonics: Vec<(f64, f64)>,
 }
 
-/// 7-term Blackman-Harris window (side lobes < -160 dB, main lobe ±8 bins), so that leakage of the fundamental does
-/// not limit SNR measurements of 16-bit-class signals.
-fn bh7(i: usize, m: usize) -> f64 {
-    const A: [f64; 7] = [0.271_051_400_693_42, 0.433_297_939_234_48, 0.218_122_999_543_11, 0.065_925_446_388_03, 0.010_811_742_098_37, 0.000_776_584_825_22, 0.000_013_887_217_35];
+/// The windows of `distortion`, as cosine sums: (coefficients, half width of the main lobe in bins with its margin).
+/// 7-term Blackman-Harris (side lobes < -160 dB), so that leakage of the fundamental does not limit SNR measurements
+/// of 16-bit-class signals; it needs about twenty periods in the record, or the lobes of the fundamental and of the
+/// harmonics run into each other and into DC. With fewer periods a narrower window: 4-term Blackman-Harris (-92 dB)
+/// from ten periods, Hann (-31 dB, falling fast) below that.
+const BH7: (&[f64], f64) = (
+    &[
+        0.271_051_400_693_42,
+        0.433_297_939_234_48,
+        0.218_122_999_543_11,
+        0.065_925_446_388_03,
+        0.010_811_742_098_37,
+        0.000_776_584_825_22,
+        0.000_013_887_217_35,
+    ],
+    9.0,
+);
+const BH4: (&[f64], f64) = (&[0.358_75, 0.488_29, 0.141_28, 0.011_68], 5.0);
+const HANN: (&[f64], f64) = (&[0.5, 0.5], 3.0);
+
+fn cos_sum(a: &[f64], i: usize, m: usize) -> f64 {
     let x = 2.0 * PI * i as f64 / m as f64;
-    A.iter().enumerate().map(|(k, a)| if k % 2 == 0 { a * (k as f64 * x).cos() } else { -a * (k as f64 * x).cos() }).sum()
+    a.iter()
+        .enumerate()
+        .map(|(k, a)| if k % 2 == 0 { a * (k as f64 * x).cos() } else { -a * (k as f64 * x).cos() })
+        .sum()
 }
 
-/// THD, THD+N, SNR, SINAD, SFDR and ENOB of a sine record. The fundamental is the largest component (or the largest
-/// near `fundamental` Hz); its frequency is the power centroid of its main lobe. Each component's power is the sum of
-/// its main-lobe bins / ENBW (7-term Blackman-Harris window, mean removed). DC and the main lobes of the fundamental
-/// and the harmonics are excluded from the noise; the noise of the excluded bins is replaced by the mean noise per bin.
-/// Harmonics are searched at their aliased frequency. Returns `None` for records shorter than 64 samples or without a
-/// fundamental.
+/// THD, THD+N, SNR, SINAD, SFDR and ENOB of a record with one fundamental. The fundamental is the largest component
+/// (or the largest near `fundamental` Hz); its frequency is the power centroid of its main lobe. Each component's
+/// power is the sum of its main-lobe bins / ENBW (mean removed). DC and the main lobes of the fundamental and the
+/// harmonics are excluded from the noise; the noise of the excluded bins is replaced by the mean noise per bin.
+/// Harmonics are searched at their aliased frequency. The window follows the number of periods in the record (`BH7`):
+/// with the widest one on a record of five periods the lobe of the fundamental held the third harmonic, and a 10 kHz
+/// square read 16.2 kHz (verified on the unit, a DHO924S). Returns `None` for records shorter than 64 samples or without a
+/// fundamental. A record needs four periods or more: below that the fundamental lies in the bins left to DC.
 pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize) -> Option<Distortion> {
     let x: Vec<f64> = v.iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
-    let m = x.len();
-    if m < 64 || !(dt > 0.0) {
+    if x.len() < 64 || !(dt > 0.0) {
         return None;
     }
+    // the periods in the record: from the frequency given when it lies below Nyquist (where `distortion_with` uses
+    // it), else from a first look through the narrowest window
+    let span = x.len() as f64 * dt;
+    let periods = match fundamental {
+        Some(f) if f > 0.0 && f < 0.5 / dt => f * span,
+        _ => distortion_with(&x, dt, None, 1, HANN)?.f1 * span,
+    };
+    let window = if periods >= 20.0 {
+        BH7
+    } else if periods >= 10.0 {
+        BH4
+    } else {
+        HANN
+    };
+    distortion_with(&x, dt, fundamental, harmonics, window)
+}
+
+/// `distortion` through one window of `BH7`, `BH4` and `HANN`, on the finite samples `x`.
+fn distortion_with(
+    x: &[f64],
+    dt: f64,
+    fundamental: Option<f64>,
+    harmonics: usize,
+    window: (&[f64], f64),
+) -> Option<Distortion> {
+    let m = x.len();
     let mean = x.iter().sum::<f64>() / m as f64;
     let n = m.next_power_of_two();
     let (mut re, mut im) = (vec![0.0; n], vec![0.0; n]);
     let (mut ws, mut ws2) = (0.0, 0.0);
     for i in 0..m {
-        let w = bh7(i, m);
+        let w = cos_sum(window.0, i, m);
         re[i] = (x[i] - mean) * w;
         ws += w;
         ws2 += w * w;
     }
     fft(&mut re, &mut im);
     let nb = n / 2 + 1;
-    let p: Vec<f64> = (0..nb).map(|k| (re[k] * re[k] + im[k] * im[k]) / (ws * ws) * if k == 0 { 1.0 } else { 2.0 }).collect();
+    let p: Vec<f64> =
+        (0..nb).map(|k| (re[k] * re[k] + im[k] * im[k]) / (ws * ws) * if k == 0 { 1.0 } else { 2.0 }).collect();
     let e = n as f64 * ws2 / (ws * ws);
     let fs = 1.0 / dt;
     let df = fs / n as f64;
     let r = n as f64 / m as f64;
-    let hw = (9.0 * r).ceil() as usize;
+    let hw = (window.1 * r).ceil() as usize;
     if nb <= 2 * hw + 2 {
         return None;
     }
@@ -680,7 +769,9 @@ pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize
         }
         let c = (fa / df).round() as usize;
         let sr = (2.0 * r).ceil() as usize + 1;
-        let Some(kh) = (c.saturating_sub(sr)..=(c + sr).min(nb - 1)).max_by(|&a, &b| p[a].total_cmp(&p[b])) else { continue };
+        let Some(kh) = (c.saturating_sub(sr)..=(c + sr).min(nb - 1)).max_by(|&a, &b| p[a].total_cmp(&p[b])) else {
+            continue;
+        };
         let mut ph = 0.0;
         for k in lobe(kh) {
             if !used[k] {
@@ -749,7 +840,17 @@ impl Waterfall {
 /// Colour of a level for the waterfall: a viridis-like perceptual map from `reference - range` (dark violet) to
 /// `reference` (yellow); NaN maps to the bottom colour.
 pub fn color(db: f32, reference: f32, range: f32) -> (u8, u8, u8) {
-    const MAP: [(f32, f32, f32); 9] = [(68.0, 1.0, 84.0), (71.0, 44.0, 122.0), (59.0, 81.0, 139.0), (44.0, 113.0, 142.0), (33.0, 144.0, 141.0), (39.0, 173.0, 129.0), (92.0, 200.0, 99.0), (170.0, 220.0, 50.0), (253.0, 231.0, 37.0)];
+    const MAP: [(f32, f32, f32); 9] = [
+        (68.0, 1.0, 84.0),
+        (71.0, 44.0, 122.0),
+        (59.0, 81.0, 139.0),
+        (44.0, 113.0, 142.0),
+        (33.0, 144.0, 141.0),
+        (39.0, 173.0, 129.0),
+        (92.0, 200.0, 99.0),
+        (170.0, 220.0, 50.0),
+        (253.0, 231.0, 37.0),
+    ];
     let x = ((db - (reference - range)) / range.max(1e-6)).clamp(0.0, 1.0);
     let x = if x.is_finite() { x } else { 0.0 };
     let k = x * (MAP.len() - 1) as f32;

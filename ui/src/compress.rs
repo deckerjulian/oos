@@ -10,6 +10,7 @@
 //! (`deposit_pairs`, from `drawpipe::draw_frame`). Where even that is not the same picture, compression stays off
 //! (`allowed`).
 
+use crate::board::policy::compress::MAX_DEPTH;
 use crate::board::Frame;
 use crate::fastdraw::Map;
 use crate::model::*;
@@ -18,87 +19,11 @@ use crate::model::*;
 /// and the samples it stands for are the board's (`oos_hal::dho::pairs` for the DHO); the drawing needs neither.
 pub const PAIR: usize = 2;
 
-/// Compressed points per screen column the factor aims at: two min/max pairs, so a pair never stands for more than
-/// half a column and the column boundaries cut at most a quarter column of samples into the wrong column.
-pub const POINTS_PER_COLUMN: f64 = 4.0;
-/// Screen columns the factor is computed for (the stock 1000; the trace map is at most this wide).
-pub const SCREEN_COLUMNS: f64 = 1000.0;
-/// Smallest factor worth a compressed read; below it every sample is read.
-pub const K_MIN: u32 = 2;
-/// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; larger values wrap, assumed).
-pub const K_MAX: u32 = 16383;
-/// Least time between two raw reads of a compressed batch's newest frame (`seq::read_raw_again`). A read after every
-/// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round 2); between the raw records the UI
-/// keeps the measurement of the last one (`hold`), so measurements follow at up to 5 a second.
-pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
-/// Deepest record compressed this way. Deeper records keep the deep-memory read of `hw::batch_plan` (a screen window
-/// raw, or the whole record compressed to ~625 k points).
-pub const MAX_DEPTH: u32 = 1_000_000;
-
-/// `acq.compress = on` in system.conf, or OOS_COMPRESS set (any value but empty or 0). Off by default until the unit
-/// has passed the procedure in docs/fork/compress.md.
-pub fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| FLAG.get())
-}
-
-const FLAG: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.compress", env: Some("OOS_COMPRESS"), on: "on" };
-
-/// The live-compression factor of the last batch read: 1 for raw frames (`:SYSTem:STATe?` `compress k`).
-static LAST_K: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-
-pub fn note_batch_k(k: u32) {
-    LAST_K.store(k, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn last_k() -> u32 {
-    LAST_K.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-
 /// Whether the UI leaves the newest record unmeasured: running (not Single), and the record is of live-compression
 /// pairs. Its batch's newest frame is read raw only every `RAW_PERIOD`; the measurement shown stays that of the last
 /// raw record, so every value belongs to one record and the statistics count it once.
 pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
     m.run == RunState::Run && m.trig_mode != TrigMode::Single && f.is_some_and(live)
-}
-
-/// The model allows compressed frames: the frames of a batch are only drawn, and drawn by the dense fast path
-/// (`Ui::fast_ok`: plain edge trigger, Normal acquisition, no mask, zones, zoom or Z input, DC coupling without the
-/// 20 MHz limit), not Single (the one record is the answer), no segments, no LA (its own second read of the record), no
-/// Roll and scan are the caller's (`hw::slow_mode`).
-pub fn allowed(m: &Model) -> bool {
-    m.trig_type == TrigType::Edge
-        && m.acq == AcqMode::Normal
-        && m.trig_mode != TrigMode::Single
-        && m.segments == 0
-        && !m.mask_on
-        && !m.zoom
-        && m.z_src.is_none()
-        && !m.zones.iter().any(|z| z.usable())
-        && !m.la_on()
-        && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
-        && raw_consumers_off(m)
-}
-
-/// Nothing reads the record on screen beyond the picture and the measurements (which get raw records, `hold`): no
-/// protocol decoder, no math channel or FFT, the scope view (not spectrum, eye, power, Bode or step), and a DC trigger
-/// path (the software trigger level of AC, LF and HF reject comes from the frame's samples). The UI-only readers
-/// (protocol watch, XY) ask for raw frames through `Shared::needs_raw` instead.
-pub fn raw_consumers_off(m: &Model) -> bool {
-    (0..DECODERS).all(|k| !m.dec_is_on(k))
-        && m.math == crate::math::MathOp::Off
-        && m.maths.iter().all(|x| x.op == crate::math::MathOp::Off)
-        && m.view == AView::Scope
-        && m.trig_coupling() == TrigCoup::Dc
-}
-
-/// The compression factor for a record of `memsel` points at `rate` samples/s per channel and `tdiv` s/div:
-/// `POINTS_PER_COLUMN` points per screen column, 1 (off) below `K_MIN` or above `MAX_DEPTH`.
-pub fn k_for(rate: u64, tdiv: f64, memsel: u32) -> u32 {
-    let per_column = rate as f64 * tdiv * HDIV as f64 / SCREEN_COLUMNS;
-    let k = (per_column / POINTS_PER_COLUMN).floor().min(K_MAX as f64) as u32;
-    if k < K_MIN || memsel > MAX_DEPTH { 1 } else { k }
 }
 
 /// A frame of the live compression (min/max pairs at most `MAX_DEPTH` deep), as opposed to the deep-memory read,
@@ -177,7 +102,11 @@ fn last_before(v: &[f32], m: &Map, c: usize) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::policy::compress::*;
     use oos_hal::dho::pairs;
+
+    /// Read-out bytes and the settings they were read under.
+    type ReadOut = (Vec<u8>, oos_hal::dho::seq::Settings);
 
     /// The FPGA's compressed read of `raw` volts (codes 7500 per volt around 32768) with factor `k`, in volts, in the
     /// assumed layout (`pairs::LAYOUT`).
@@ -209,7 +138,9 @@ mod tests {
 
     /// The same, over the samples from `pad` before to `pad` after the column (`pad` < 0 narrows it).
     fn soft_pad(raw: &[f32], m: &Map, w: usize, pad: f64) -> Vec<Option<(f32, f32)>> {
-        let at = |c: usize, d: f64| ((m.ti + (c as f64 - m.x0) / m.x_per_sample + d).ceil().max(0.0) as usize).min(raw.len());
+        let at = |c: usize, d: f64| {
+            ((m.ti + (c as f64 - m.x0) / m.x_per_sample + d).ceil().max(0.0) as usize).min(raw.len())
+        };
         (0..w)
             .map(|c| {
                 let (a, b) = (at(c, -pad), at(c + 1, pad));
@@ -255,7 +186,11 @@ mod tests {
         for k in [4usize, 16, 64, 256] {
             let per_column = (POINTS_PER_COLUMN as usize * k) as f64;
             let n = (w as f64 * per_column) as usize;
-            for raw in [square(n, 37.3 * per_column, 11.0, 0.0), square(n, 5.7 * per_column, 3.0, 0.2), sine(n, 13.1 * per_column)] {
+            for raw in [
+                square(n, 37.3 * per_column, 11.0, 0.0),
+                square(n, 5.7 * per_column, 3.0, 0.2),
+                sine(n, 13.1 * per_column),
+            ] {
                 let comp = fpga(&raw, k);
                 let mr = Map { ti: 0.0, x_per_sample: 1.0 / per_column, x0: 0.0, y_per_volt: -56.0, y0: 224.0 };
                 let mc = Map { x_per_sample: 1.0 / POINTS_PER_COLUMN, ..mr };
@@ -287,9 +222,25 @@ mod tests {
                 for c in 1..w - 1 {
                     let Some((a, b)) = got[c] else { panic!("k {} column {} empty", k, c) };
                     let (wa, wb) = wide[c].unwrap();
-                    assert!(a >= wa - ONE_CODE && b <= wb + ONE_CODE, "k {} ti {} column {}: {:?} outside {:?}", k, ti, c, got[c], wide[c]);
+                    assert!(
+                        a >= wa - ONE_CODE && b <= wb + ONE_CODE,
+                        "k {} ti {} column {}: {:?} outside {:?}",
+                        k,
+                        ti,
+                        c,
+                        got[c],
+                        wide[c]
+                    );
                     if let Some((na, nb)) = narrow[c] {
-                        assert!(a <= na + ONE_CODE && b >= nb - ONE_CODE, "k {} ti {} column {}: {:?} inside {:?}", k, ti, c, got[c], narrow[c]);
+                        assert!(
+                            a <= na + ONE_CODE && b >= nb - ONE_CODE,
+                            "k {} ti {} column {}: {:?} inside {:?}",
+                            k,
+                            ti,
+                            c,
+                            got[c],
+                            narrow[c]
+                        );
                     }
                 }
             }
@@ -312,7 +263,14 @@ mod tests {
                 let m = Map { ti: 0.0, x_per_sample: 1.0 / POINTS_PER_COLUMN, x0: 0.0, y_per_volt: -56.0, y0: 224.0 };
                 let c = (at as f64 / per_column) as usize;
                 let got = ranges(&comp, &m, w)[c].unwrap();
-                assert!(if up { got.1 >= 2.5 - ONE_CODE } else { got.0 <= -2.5 + ONE_CODE }, "k {} glitch at {}: column {} {:?}", k, at, c, got);
+                assert!(
+                    if up { got.1 >= 2.5 - ONE_CODE } else { got.0 <= -2.5 + ONE_CODE },
+                    "k {} glitch at {}: column {} {:?}",
+                    k,
+                    at,
+                    c,
+                    got
+                );
                 // in the picture: the glitch row lit in its column
                 let (h, mut map) = (448usize, vec![0u16; w * 448]);
                 deposit_pairs(&mut map, w, h, &comp, &m, 24, false);
@@ -370,14 +328,24 @@ mod tests {
     /// 10 us/div, CH1: 100 k points at 625 MSa/s (k = 15), a 40 kHz square of 3 div peak to peak with its rising
     /// edge `jitter` samples after the trigger point and a little noise: the model, the raw read-out bytes and settings,
     /// the compressed ones.
-    #[allow(clippy::type_complexity)]
-    fn square_10us(jitter: f64) -> (Model, oos_hal::dho::hz::Params, (Vec<u8>, oos_hal::dho::seq::Settings), (Vec<u8>, oos_hal::dho::seq::Settings)) {
+    fn square_10us(jitter: f64) -> (Model, oos_hal::dho::hz::Params, ReadOut, ReadOut) {
         use oos_hal::dho::{hz, seq::Settings};
-        let p = hz::Params { ratio: 1, rate: 625_000_000, memsel: 100_000, dot_fs: 1_600_000, seg: 16384, max_frames: 448, pre: 50_000, post: 50_000 };
+        let p = hz::Params {
+            ratio: 1,
+            rate: 625_000_000,
+            memsel: 100_000,
+            dot_fs: 1_600_000,
+            seg: 16384,
+            max_frames: 448,
+            pre: 50_000,
+            post: 50_000,
+        };
         let k = k_for(p.rate, 10e-6, p.memsel) as usize;
         assert_eq!(k, 15);
-        let mut m = Model::default();
-        m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap(),
+            ..Default::default()
+        };
         (m.trig_level, m.ch[0].on, m.ch[0].offset) = (0.0, true, 0.0);
         let vpd = m.ch[0].volts_per_div() as f64;
         let mut x = 7u32;
@@ -390,7 +358,14 @@ mod tests {
                 (32768.0 + v / vpd * 7500.0).round() as u16
             })
             .collect();
-        let raw_s = Settings { mask: 1, window: None, compress: 1, header: false, ch: [oos_hal::dho::seq::Chan { scale: vpd, offset: 0.0, ..Settings::default().ch[0] }; 4], ..Settings::default() };
+        let raw_s = Settings {
+            mask: 1,
+            window: None,
+            compress: 1,
+            header: false,
+            ch: [oos_hal::dho::seq::Chan { scale: vpd, offset: 0.0, ..Settings::default().ch[0] }; 4],
+            ..Settings::default()
+        };
         let comp_s = Settings { compress: k as u32, ..raw_s.clone() };
         let raw_bytes: Vec<u8> = codes.iter().flat_map(|c| c.to_le_bytes()).collect();
         let mut comp = pairs::model(&codes, k, pairs::LAYOUT);
@@ -424,7 +399,14 @@ mod tests {
             // 6.4 periods on screen, 13 edges: an edge may move by one column where the trigger on pairs (good to
             // about a pair, a quarter column) lands on the other side of a column boundary. Host: 0, 2 and 4 columns;
             // the record path drew 8 to 13 columns differently.
-            assert!(off.len() <= 4, "dots {} jitter {}: {} columns differ: {:?}", dots, jitter, off.len(), &off[..off.len().min(40)]);
+            assert!(
+                off.len() <= 4,
+                "dots {} jitter {}: {} columns differ: {:?}",
+                dots,
+                jitter,
+                off.len(),
+                &off[..off.len().min(40)]
+            );
         }
     }
 
@@ -439,28 +421,32 @@ mod tests {
             crate::perfguard::ROUNDS,
             25,
             || {
-                std::hint::black_box(crate::drawpipe::draw_frame(&mut pa, &m, &crate::board::dho::hw::decode(&raw_bytes, &raw_s, &p, 0), None));
+                std::hint::black_box(crate::drawpipe::draw_frame(
+                    &mut pa,
+                    &m,
+                    &crate::board::dho::hw::decode(&raw_bytes, &raw_s, &p, 0),
+                    None,
+                ));
             },
             || {
-                std::hint::black_box(crate::drawpipe::draw_frame(&mut pb, &m, &crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 0), None));
+                std::hint::black_box(crate::drawpipe::draw_frame(
+                    &mut pb,
+                    &m,
+                    &crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 0),
+                    None,
+                ));
             },
         );
         let r = comp.as_secs_f64() / raw.as_secs_f64();
-        println!("10 us/div 100 k pt, k = 15: raw {:?}/frame, compressed {:?}/frame (ratio {:.3}); read {} -> {} bytes", raw, comp, r, raw_bytes.len(), comp_bytes.len());
+        println!(
+            "10 us/div 100 k pt, k = 15: raw {:?}/frame, compressed {:?}/frame (ratio {:.3}); read {} -> {} bytes",
+            raw,
+            comp,
+            r,
+            raw_bytes.len(),
+            comp_bytes.len()
+        );
         assert!(r <= 0.25, "a compressed frame must cost far less than its raw frame: {:.3}", r);
-    }
-
-    #[test]
-    fn factor_by_time_base() {
-        // 1 GSa/s at 10 us/div: 100 samples per column, 4 points per column: k = 25
-        assert_eq!(k_for(1_000_000_000, 10e-6, 100_000), 25);
-        // 1.25 GSa/s at 1 us/div: 12.5 samples per column: k = 3
-        assert_eq!(k_for(1_250_000_000, 1e-6, 12_512), 3);
-        // fewer than 8 samples per column: every sample
-        assert_eq!(k_for(1_250_000_000, 500e-9, 6_256), 1);
-        // deep records keep the deep-memory read
-        assert_eq!(k_for(1_250_000_000, 1e-3, 10_000_000), 1);
-        assert_eq!(k_for(u64::MAX, 1.0, 1000), K_MAX);
     }
 
     #[test]
@@ -488,20 +474,5 @@ mod tests {
         assert!(!hold(&m, Some(&f(true, 100_000))));
         (m.run, m.trig_mode) = (RunState::Run, TrigMode::Single);
         assert!(!hold(&m, Some(&f(true, 100_000))));
-    }
-
-    #[test]
-    fn opt_in_and_the_model_conditions() {
-        FLAG.check_both_files();
-        let mut m = Model::default();
-        m.ch[0].on = true;
-        assert!(allowed(&m));
-        m.dots = false;
-        assert!(allowed(&m));
-        for f in [|m: &mut Model| m.trig_mode = TrigMode::Single, |m: &mut Model| m.acq = AcqMode::Average, |m: &mut Model| m.acq = AcqMode::HiRes, |m: &mut Model| m.acq = AcqMode::Peak, |m: &mut Model| m.zoom = true, |m: &mut Model| m.mask_on = true, |m: &mut Model| m.segments = 4, |m: &mut Model| m.trig_type = TrigType::Pulse, |m: &mut Model| m.ch[0].bw = BW_20M, |m: &mut Model| m.ch[0].coupling = Coupling::Ac] {
-            let mut x = m.clone();
-            f(&mut x);
-            assert!(!allowed(&x));
-        }
     }
 }

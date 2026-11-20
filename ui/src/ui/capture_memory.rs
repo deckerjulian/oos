@@ -2,58 +2,105 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The retained acquisition is independent of the screen's interpolated points.
+use super::worker::Worker;
 use super::*;
-use std::{hash::{Hash, Hasher}, sync::{Arc, mpsc}};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 #[derive(Default)]
-pub(super) struct State { views: Vec<(u64, Arc<Record>)>, demo: Option<DemoWorker> }
+pub(super) struct State {
+    views: Vec<(u64, Arc<Record>)>,
+    demo: Option<DemoWorker>,
+}
 
-struct DemoJob { key: u64, model: Model, time: f64, elapsed: f64, seed: u64 }
-struct DemoResult { key: u64, time: f64, record: Option<Record> }
-struct DemoWorker { tx: mpsc::SyncSender<DemoJob>, rx: mpsc::Receiver<DemoResult>, busy: bool, cancelled: bool }
+struct DemoJob {
+    key: u64,
+    model: Model,
+    time: f64,
+    elapsed: f64,
+    seed: u64,
+}
+struct DemoResult {
+    key: u64,
+    time: f64,
+    record: Option<Record>,
+}
+struct DemoWorker {
+    thread: Worker<DemoJob, DemoResult>,
+    cancelled: bool,
+}
 impl DemoWorker {
     fn new() -> Self {
-        let (tx, input) = mpsc::sync_channel::<DemoJob>(1);
-        let (output, rx) = mpsc::channel();
-        std::thread::Builder::new().name("full-depth-demo".into()).spawn(move || {
-            while let Ok(job) = input.recv() {
-                let mut source = Source::Demo { t: job.time };
-                let mut rng = Rng::new(job.seed);
-                let record = source.acquire_full_demo(&job.model, job.elapsed, &mut rng).map(|mut rec| {
-                    // Retain the signal that was acquired, at native dt. Display,
-                    // math and measurements must share this same conditioning.
-                    for c in 0..NCH { condition(&job.model, c, &mut rec.ch[c], rec.dt); }
-                    let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&rec.ch[c]));
-                    let points = rec.ch.iter().map(Vec::len).max().unwrap_or(0);
-                    let origin = rec.t0;
-                    let ti = -origin / rec.dt;
-                    let frame = Arc::new(crate::board::Frame { seq: job.seed, dt: rec.dt,
-                        pre: ti.round().clamp(0.0, points.saturating_sub(1) as f64) as usize,
-                        ch: std::mem::take(&mut rec.ch), roll: false, envelope: false, scan: false, partial: false,
-                        acq: (1.0 / rec.dt, points), stamp: job.model.hw_stamp, basic, la: rec.la.take(), fixed_ti: None, hw_avg: false });
-                    let window = job.model.time_per_div() as f64 * HDIV as f64;
-                    crate::board::resample_record(&frame, &job.model, 3600, window,
-                        job.model.delay as f64 - window * 0.5, ti, rec.triggered)
-                });
-                let time = match source { Source::Demo { t } => t, _ => job.time };
-                if output.send(DemoResult { key: job.key, time, record }).is_err() { break; }
-            }
-        }).expect("start bounded full-memory demo worker");
-        Self { tx, rx, busy: false, cancelled: false }
+        let thread = Worker::spawn("full-depth-demo", acquire_demo).expect("start bounded full-memory demo worker");
+        Self { thread, cancelled: false }
     }
+}
+fn acquire_demo(job: DemoJob) -> DemoResult {
+    let mut source = Source::Demo { t: job.time };
+    let mut rng = Rng::new(job.seed);
+    let record = source.acquire_full_demo(&job.model, job.elapsed, &mut rng).map(|mut rec| {
+        // Retain the signal that was acquired, at native dt. Display,
+        // math and measurements must share this same conditioning.
+        for c in 0..NCH {
+            condition(&job.model, c, &mut rec.ch[c], rec.dt);
+        }
+        let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&rec.ch[c]));
+        let points = rec.ch.iter().map(Vec::len).max().unwrap_or(0);
+        let origin = rec.t0;
+        let ti = -origin / rec.dt;
+        let frame = Arc::new(crate::board::Frame {
+            seq: job.seed,
+            dt: rec.dt,
+            pre: ti.round().clamp(0.0, points.saturating_sub(1) as f64) as usize,
+            ch: std::mem::take(&mut rec.ch),
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (1.0 / rec.dt, points),
+            stamp: job.model.hw_stamp,
+            basic,
+            la: rec.la.take(),
+            fixed_ti: None,
+            hw_avg: false,
+        });
+        let window = job.model.time_per_div() as f64 * HDIV as f64;
+        crate::wave::resample_record(
+            &frame,
+            &job.model,
+            3600,
+            window,
+            job.model.delay as f64 - window * 0.5,
+            ti,
+            rec.triggered,
+        )
+    });
+    let time = match source {
+        Source::Demo { t } => t,
+        _ => job.time,
+    };
+    DemoResult { key: job.key, time, record }
 }
 
 impl Ui {
     pub(super) fn cancel_demo_acquisition(&mut self) {
         if let Some(worker) = self.capture_views.borrow_mut().demo.as_mut() {
-            if worker.busy { worker.cancelled = true; }
-            if worker.rx.try_recv().is_ok() { worker.busy = false; }
+            if worker.thread.busy() {
+                worker.cancelled = true;
+            }
+            let _ = worker.thread.poll();
         }
     }
 
     pub(super) fn acquire_display_record(&mut self, elapsed: f64) -> Option<Record> {
-        let Source::Demo { t } = &self.src else { return self.src.acquire(&self.m, elapsed, &mut self.rng); };
-        if mdepths()[self.m.mdepth].1 == 0 { return self.src.acquire(&self.m, elapsed, &mut self.rng); }
+        let Source::Demo { t } = &self.src else {
+            return self.src.acquire(&self.m, elapsed, &mut self.rng);
+        };
+        if mdepths()[self.m.mdepth].1 == 0 {
+            return self.src.acquire(&self.m, elapsed, &mut self.rng);
+        }
         let time = *t;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (crate::store::setup_text(&self.m), self.workflow_epoch, self.m.hw_stamp).hash(&mut h);
@@ -62,17 +109,22 @@ impl Ui {
         {
             let mut state = self.capture_views.borrow_mut();
             let worker = state.demo.get_or_insert_with(DemoWorker::new);
-            if let Ok(result) = worker.rx.try_recv() {
-                worker.busy = false;
-                if result.key == key && !worker.cancelled { answer = Some(result); }
+            if let Ok(result) = worker.thread.poll() {
+                if result.key == key && !worker.cancelled {
+                    answer = Some(result);
+                }
             }
-            if answer.is_none() && !worker.busy {
+            if answer.is_none() && !worker.thread.busy() {
                 let job = DemoJob { key, model: self.m.clone(), time, elapsed, seed: self.rng.next() };
-                if worker.tx.try_send(job).is_ok() { worker.busy = true; worker.cancelled = false; }
+                if worker.thread.submit(job).is_ok() {
+                    worker.cancelled = false;
+                }
             }
         }
         if let Some(answer) = answer {
-            if let Source::Demo { t } = &mut self.src { *t = answer.time; }
+            if let Source::Demo { t } = &mut self.src {
+                *t = answer.time;
+            }
             return answer.record;
         }
         None
@@ -85,28 +137,43 @@ impl Ui {
 
     #[cfg(test)]
     pub(super) fn accumulate_basic_summary(&mut self, channel: usize, values: crate::board::BasicStats) {
-        if !values.valid { return; }
+        if !values.valid {
+            return;
+        }
         self.mstat.resize(self.measurement_count(), MStat::default());
         for (row, &(kind, source)) in self.m.meas.iter().enumerate() {
-            if source != WaveId::Ch(channel) { continue; }
-            let Some(value) = values.reading(kind) else { continue; };
-            let stat = &mut self.mstat[row];
-            if stat.n == 0 { stat.min = value; stat.max = value; }
-            stat.n += 1; stat.sum += value; stat.sumsq += value * value;
-            stat.min = stat.min.min(value); stat.max = stat.max.max(value);
+            if source != WaveId::Ch(channel) {
+                continue;
+            }
+            let Some(value) = values.reading(kind) else {
+                continue;
+            };
+            self.mstat[row].add(value);
         }
     }
 
     #[cfg(test)]
     pub(super) fn accumulate_record_basic(&mut self, record: &Record) {
         for c in 0..NCH {
-            if !self.m.ch[c].on || !self.m.meas.iter().any(|&(k, s)| s == WaveId::Ch(c)
-                && matches!(k, Meas::Vmax | Meas::Vmin | Meas::Vpp | Meas::Vavg | Meas::Vrms | Meas::StdDev)) { continue; }
+            if !self.m.ch[c].on
+                || !self.m.meas.iter().any(|&(k, s)| {
+                    s == WaveId::Ch(c)
+                        && matches!(k, Meas::Vmax | Meas::Vmin | Meas::Vpp | Meas::Vavg | Meas::Vrms | Meas::StdDev)
+                })
+            {
+                continue;
+            }
             if let Some((values, _, _)) = self.measurement_channel_samples(record, c) {
-                if let Some(raw) = record.raw.as_ref().filter(|r| !r.frame.envelope && values.len() == r.frame.ch[c].len()
-                    && values.as_ptr() == r.frame.ch[c].as_ptr() && r.frame.basic[c].valid) {
+                if let Some(raw) = record.raw.as_ref().filter(|r| {
+                    !r.frame.envelope
+                        && values.len() == r.frame.ch[c].len()
+                        && values.as_ptr() == r.frame.ch[c].as_ptr()
+                        && r.frame.basic[c].valid
+                }) {
                     self.accumulate_basic_summary(c, raw.frame.basic[c]);
-                } else { self.accumulate_basic_values(c, values); }
+                } else {
+                    self.accumulate_basic_values(c, values);
+                }
             }
         }
     }
@@ -115,26 +182,43 @@ impl Ui {
     pub(super) fn accumulate_fast_basic(&mut self, frame: &crate::board::Frame, trigger: f64) {
         let origin = -trigger * frame.dt;
         for c in 0..NCH {
-            if !self.m.ch[c].on { continue; }
+            if !self.m.ch[c].on {
+                continue;
+            }
             let data = &frame.ch[c];
-            let (a, b) = if self.m.meas_full_record { (0, data.len()) } else {
+            let (a, b) = if self.m.meas_full_record {
+                (0, data.len())
+            } else {
                 let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
                 let bound = |t: f64| (((t - origin) / frame.dt).ceil().max(0.0) as usize).min(data.len());
                 (bound(self.m.delay as f64 - half), bound(self.m.delay as f64 + half))
             };
             if b > a {
-                if !frame.envelope && a == 0 && b == data.len() && frame.basic[c].valid { self.accumulate_basic_summary(c, frame.basic[c]); }
-                else { self.accumulate_basic_values(c, &data[a..b]); }
+                if !frame.envelope && a == 0 && b == data.len() && frame.basic[c].valid {
+                    self.accumulate_basic_summary(c, frame.basic[c]);
+                } else {
+                    self.accumulate_basic_values(c, &data[a..b]);
+                }
             }
         }
     }
     pub(super) fn captured_record_view(&self, rec: &Record, view: (f32, f32)) -> Option<Arc<Record>> {
         let raw = rec.raw.as_ref()?;
-        if !raw.frame.dt.is_finite() || raw.frame.dt <= 0.0 { return None; }
+        if !raw.frame.dt.is_finite() || raw.frame.dt <= 0.0 {
+            return None;
+        }
         let origin = raw.t0 - raw.i0 as f64 * raw.frame.dt;
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (Arc::as_ptr(&raw.frame) as usize, origin.to_bits(), view.0.to_bits(), view.1.to_bits(),
-            format!("{:?}", self.m.acq), rec.triggered, self.src.is_hw()).hash(&mut h);
+        (
+            Arc::as_ptr(&raw.frame) as usize,
+            origin.to_bits(),
+            view.0.to_bits(),
+            view.1.to_bits(),
+            format!("{:?}", self.m.acq),
+            rec.triggered,
+            self.src.is_hw(),
+        )
+            .hash(&mut h);
         for ch in &self.m.ch {
             (ch.invert, format!("{:?}", ch.coupling), ch.bw, ch.offset.to_bits(), ch.vfine.to_bits()).hash(&mut h);
         }
@@ -143,14 +227,25 @@ impl Ui {
             return Some(Arc::clone(cached));
         }
         let window = view.0 as f64 * HDIV as f64;
-        let mut display = crate::board::resample_record(&raw.frame, &self.m, 3600, window,
-            view.1 as f64 - window * 0.5, -origin / raw.frame.dt, rec.triggered);
+        let mut display = crate::wave::resample_record(
+            &raw.frame,
+            &self.m,
+            3600,
+            window,
+            view.1 as f64 - window * 0.5,
+            -origin / raw.frame.dt,
+            rec.triggered,
+        );
         if !self.src.is_hw() && !raw.conditioned {
-            for c in 0..NCH { condition(&self.m, c, &mut display.ch[c], display.dt); }
+            for c in 0..NCH {
+                condition(&self.m, c, &mut display.ch[c], display.dt);
+            }
         }
         let display = Arc::new(display);
         let mut state = self.capture_views.borrow_mut();
-        if state.views.len() >= 2 { state.views.remove(0); }
+        if state.views.len() >= 2 {
+            state.views.remove(0);
+        }
         state.views.push((key, Arc::clone(&display)));
         Some(display)
     }
@@ -161,7 +256,9 @@ impl Ui {
 
     pub(super) fn refresh_capture_view(&mut self) {
         let view = (self.m.time_per_div(), self.m.delay);
-        if let Some(rec) = self.captured_view(view) { self.last[0] = Some(rec.as_ref().clone()); }
+        if let Some(rec) = self.captured_view(view) {
+            self.last[0] = Some(rec.as_ref().clone());
+        }
     }
 }
 
@@ -179,9 +276,23 @@ mod tests {
         let mut data = vec![0.0; 100_000];
         data[1234] = 0.25;
         data[88_888] = 0.75;
-        let frame = Arc::new(crate::board::Frame { seq: 3, dt: 1e-9, pre: 50_000, ch: [data, Vec::new(), Vec::new(), Vec::new()],
-            roll: false, scan: false, partial: false, envelope: false, acq: (0.0, 0), stamp: 0, basic: Default::default(), la: None, fixed_ti: None, hw_avg: false });
-        ui.last[0] = Some(crate::board::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6));
+        let frame = Arc::new(crate::board::Frame {
+            seq: 3,
+            dt: 1e-9,
+            pre: 50_000,
+            ch: [data, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            scan: false,
+            partial: false,
+            envelope: false,
+            acq: (0.0, 0),
+            stamp: 0,
+            basic: Default::default(),
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+        });
+        ui.last[0] = Some(crate::wave::to_record(&frame, &ui.m, 3600, 1e-6, -0.5e-6));
         ui
     }
     #[test]
@@ -226,7 +337,9 @@ mod tests {
     fn each_fast_frame_contributes_all_six_basic_measurements_exactly_once() {
         let mut ui = long_capture();
         ui.m.meas = [Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vavg, Meas::Vrms, Meas::StdDev]
-            .into_iter().map(|k| (k, WaveId::Ch(0))).collect();
+            .into_iter()
+            .map(|k| (k, WaveId::Ch(0)))
+            .collect();
         ui.m.meas_full_record = true;
         let mut frame = ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.as_ref().clone();
         frame.ch[0] = vec![-1.0, 1.0];
@@ -249,7 +362,9 @@ mod tests {
         assert!(ui.acquire_display_record(0.02).is_none(), "full memory is prepared off the event thread");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let rec = loop {
-            if let Some(rec) = ui.acquire_display_record(0.02) { break rec; }
+            if let Some(rec) = ui.acquire_display_record(0.02) {
+                break rec;
+            }
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
@@ -263,7 +378,9 @@ mod tests {
 
     #[test]
     fn full_demo_conditioning_is_native_once_and_shared_by_display_math_and_measurements() {
-        for (coupling, invert, bw) in [(Coupling::Ac, true, BW_20M), (Coupling::Gnd, true, BW_20M), (Coupling::Dc, true, BW_FULL)] {
+        for (coupling, invert, bw) in
+            [(Coupling::Ac, true, BW_20M), (Coupling::Gnd, true, BW_20M), (Coupling::Dc, true, BW_FULL)]
+        {
             let mut ui = crate::ui::testkit::demo_ui();
             ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
             ui.m.ch[0].coupling = coupling;
@@ -277,7 +394,9 @@ mod tests {
             condition(&ui.m, 0, &mut expected.ch[0], expected.dt);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             let record = loop {
-                if let Some(record) = ui.acquire_display_record(0.02) { break record; }
+                if let Some(record) = ui.acquire_display_record(0.02) {
+                    break record;
+                }
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::sleep(std::time::Duration::from_millis(2));
             };
@@ -296,7 +415,10 @@ mod tests {
             ui.m.math_lin = (1.0, 0.0);
             assert_eq!(ui.math_record(0).unwrap().unwrap().v.as_slice(), expected.ch[0].as_slice());
             let display = ui.captured_view((ui.m.time_per_div(), ui.m.delay)).unwrap();
-            assert!(display.ch[0].iter().zip(&original_display).all(|(a,b)| a.to_bits() == b.to_bits()), "pan reconstruction must not apply AC/invert/filter twice");
+            assert!(
+                display.ch[0].iter().zip(&original_display).all(|(a, b)| a.to_bits() == b.to_bits()),
+                "pan reconstruction must not apply AC/invert/filter twice"
+            );
             let original_native = ui.raw_volts(0).unwrap();
             ui.m.delay += ui.m.time_per_div();
             ui.step(0.02);
@@ -310,7 +432,8 @@ mod tests {
     fn replay_conditioning_reaches_the_ui_once_and_keeps_native_measurements_consistent() {
         let words: Vec<u16> = (0..20_000).map(|i| if i % 100 < 30 { 1400 } else { 1000 }).collect();
         for coupling in [Coupling::Ac, Coupling::Gnd, Coupling::Dc] {
-            let mut ui = Ui::new(Source::Replay { words: words.clone(), xinc: 1e-9, yinc: 0.001, yorg: 0.0, yref: 0.0 });
+            let mut ui =
+                Ui::new(Source::Replay { words: words.clone(), xinc: 1e-9, yinc: 0.001, yorg: 0.0, yref: 0.0 });
             ui.m.ch[0].coupling = coupling;
             ui.m.ch[0].invert = true;
             ui.m.ch[0].bw = BW_20M;
@@ -323,7 +446,10 @@ mod tests {
             assert!(record.raw.as_ref().unwrap().conditioned);
             assert_eq!(record.raw.as_ref().unwrap().frame.ch[0], expected);
             let raw = record.raw.as_ref().unwrap();
-            assert_eq!(record.raw.as_ref().unwrap().frame.basic[0].values, crate::board::BasicStats::of(&expected).values);
+            assert_eq!(
+                record.raw.as_ref().unwrap().frame.basic[0].values,
+                crate::board::BasicStats::of(&expected).values
+            );
             let ti = -raw.t0 / raw.frame.dt;
             for (i, &value) in record.ch[0].iter().enumerate().filter(|(_, v)| v.is_finite()) {
                 let at = ti + (record.t0 + i as f64 * record.dt) / raw.frame.dt;
@@ -357,7 +483,9 @@ mod tests {
             }
             assert_eq!((ui.records, ui.m.run, ui.m.hw_stamp), (captures, RunState::Stop, stamp));
             assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.stamp, stamp);
-            if captures == 1 { ui.key(key::SINGLE); }
+            if captures == 1 {
+                ui.key(key::SINGLE);
+            }
         }
     }
 
@@ -369,8 +497,12 @@ mod tests {
         ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
         let native = vec![-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
         let basic = crate::board::BasicStats::of(&native);
-        let frame = Arc::new(crate::board::Frame { dt: 1e-9, ch: [native, Vec::new(), Vec::new(), Vec::new()],
-            basic: [basic, Default::default(), Default::default(), Default::default()], ..Default::default() });
+        let frame = Arc::new(crate::board::Frame {
+            dt: 1e-9,
+            ch: [native, Vec::new(), Vec::new(), Vec::new()],
+            basic: [basic, Default::default(), Default::default(), Default::default()],
+            ..Default::default()
+        });
         let mut record = Ui::blank_record();
         record.dt = 1e-9;
         record.ch[0] = vec![0.25; 8];

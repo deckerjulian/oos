@@ -32,11 +32,6 @@ pub(super) trait Analyser: Sync {
         None
     }
 
-    /// Whether setups keep it as the view (`view = <AView>`). A page that runs a procedure says no.
-    fn stored(&self) -> bool {
-        true
-    }
-
     /// Its entries in the start menu (Analysers group).
     fn start(&self) -> Vec<Item> {
         vec![Item::Open(self.menu())]
@@ -79,12 +74,9 @@ pub(super) fn of(v: AView) -> Option<&'static dyn Analyser> {
 
 /// The views SCPI `:VIEW` sets, with their keywords: the waveform and every page that has one.
 pub(crate) fn scpi_views() -> Vec<(&'static str, AView)> {
-    std::iter::once(("SCOPe", AView::Scope)).chain(ANALYSERS.iter().filter_map(|a| a.scpi().map(|k| (k, a.view())))).collect()
-}
-
-/// The views a setup may keep.
-pub(crate) fn stored_views() -> Vec<AView> {
-    std::iter::once(AView::Scope).chain(ANALYSERS.iter().filter(|a| a.stored()).map(|a| a.view())).collect()
+    std::iter::once(("SCOPe", AView::Scope))
+        .chain(ANALYSERS.iter().filter_map(|a| a.scpi().map(|k| (k, a.view()))))
+        .collect()
 }
 
 #[cfg(test)]
@@ -95,11 +87,15 @@ mod tests {
     /// Every view but the waveform has one page; views, feature ids, names, menus and SCPI keywords are unique.
     #[test]
     fn analysers_are_well_formed() {
-        let (mut views, mut ids, mut fnames, mut names, mut menus, mut scpi) = (HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new());
+        let (mut views, mut ids, mut fnames, mut names, mut menus, mut scpi) =
+            (HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new());
         for a in ANALYSERS {
             assert!(views.insert(format!("{:?}", a.view())), "{:?} twice", a.view());
             let (id, fname) = a.feature();
-            assert!(!id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()), "feature id {id:?}");
+            assert!(
+                !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+                "feature id {id:?}"
+            );
             assert!(ids.insert(id) && fnames.insert(fname), "feature {id} / {fname} twice");
             assert!(names.insert(a.name()), "name {} twice", a.name());
             assert!(menus.insert(format!("{:?}", a.menu())), "menu {:?} twice", a.menu());
@@ -150,12 +146,80 @@ mod tests {
             s.exec_line(&mut ui, &cv, &format!(":VIEW {k}"));
             assert_eq!(ui.m.view, v, ":VIEW {k}");
         }
-        for v in stored_views() {
-            let mut m = Model::default();
-            m.view = v;
+        for v in AView::STORED {
+            let m = Model { view: v, ..Default::default() };
             assert_eq!(crate::store::parse_setup(&crate::store::setup_text(&m)).unwrap().view, v);
         }
         let bw = of(AView::Step).unwrap();
-        assert!(bw.scpi().is_none() && !bw.stored(), "the bandwidth test is a procedure, not a stored view");
+        assert!(bw.scpi().is_none() && !AView::STORED.contains(&AView::Step), "the bandwidth test is a procedure");
+        for a in ANALYSERS.iter().filter(|a| a.view() != AView::Step) {
+            assert!(
+                AView::STORED.contains(&a.view()),
+                "{:?}: a page a setup keeps, missing in AView::STORED",
+                a.view()
+            );
+        }
+    }
+
+    /// Every page with what is stored of it: its feature id (`features.off` in system.conf), the word a setup keeps
+    /// its view as (`view = <word>`, the variant's name) and its keyword of `:VIEW`. What was released never changes:
+    /// system.conf, setups and scripts hold it. A new page gets its row here.
+    const PAGES: [(&str, AView, &str, Option<&str>); 8] = [
+        ("spectrum", AView::Spectrum, "Spectrum", Some("SPECtrum")),
+        ("eye", AView::Eye, "Eye", Some("EYE")),
+        ("power", AView::Power, "Power", Some("POWer")),
+        ("bode", AView::Bode, "Bode", Some("BODE")),
+        ("bwtest", AView::Step, "Step", None),
+        ("magnetic", AView::Magnetic, "Magnetic", Some("MAGnetic")),
+        ("inverter", AView::Inverter, "Inverter", Some("INVerter")),
+        ("dpt", AView::Dpt, "Dpt", Some("DPT")),
+    ];
+
+    /// What a page needs besides its `Analyser`, each failure with its name and the part that is missing: its row
+    /// in `PAGES` with its feature id, the word of its view and its `:VIEW` keyword as they are, the keyword in the
+    /// `:VIEW` rows of docs/scpi.md and of the wiki, its name under Analysers in wiki/Features.md, and its menu in
+    /// the list of the layout check.
+    #[test]
+    fn every_page_is_complete() {
+        use crate::ui::testkit::{document, names, section};
+        let view_row = |path: &str| {
+            let text = document(path);
+            text.lines()
+                .find(|l| l.starts_with("| `:VIEW[?]`"))
+                .unwrap_or_else(|| panic!("{}: no row of :VIEW", path))
+                .to_string()
+        };
+        let (scpi_md, wiki_scpi) = (view_row("docs/scpi.md"), view_row("wiki/SCPI-and-VXI-11.md"));
+        let wiki = section(&document("wiki/Features.md"), "**Analysers**");
+        // the menus the layout check opens (`every_menu_fits`)
+        let fits = include_str!("lint/menu_layout.rs");
+        let fits = fits.split_once("fn menus_fit_at(").expect("the walk of the menus").1;
+        let fits = fits.split_once("for m in [").and_then(|x| x.1.split_once("] {")).expect("its list of menus").0;
+        assert_eq!(ANALYSERS.len(), PAGES.len(), "PAGES lists the pages of ANALYSERS");
+        for a in ANALYSERS {
+            let (id, fname) = a.feature();
+            let row = PAGES.iter().find(|p| p.1 == a.view()).unwrap_or_else(|| panic!("{}: no row in PAGES", a.name()));
+            assert_eq!(id, row.0, "{}: a feature id never changes", a.name());
+            assert_eq!(format!("{:?}", a.view()), row.2, "{}: the word a setup stores never changes", a.name());
+            assert_eq!(a.scpi(), row.3, "{}: its :VIEW keyword", a.name());
+            if let Some(k) = a.scpi() {
+                assert!(names(&scpi_md, k), "{}: {} is not in the :VIEW row of docs/scpi.md", a.name(), k);
+                assert!(names(&wiki_scpi, k), "{}: {} is not in the :VIEW row of wiki/SCPI-and-VXI-11.md", a.name(), k);
+            }
+            assert!(names(&wiki, fname), "{}: {} is not named under Analysers in wiki/Features.md", a.name(), fname);
+            // the layout check opens every page of the table of pages (ADR 0060) and the menus of its own list
+            let menu = format!("{:?},", a.menu());
+            assert!(
+                super::pages::page(a.menu()).is_some() || fits.lines().any(|l| l.trim() == menu),
+                "{}: its menu {} is neither in the table of pages nor in the list of menus_fit_at \
+                 (ui/src/ui/lint/menu_layout.rs)",
+                a.name(),
+                menu
+            );
+        }
+        // the features that are no page keep their ids too
+        let ids: Vec<&str> = features::features().iter().map(|f| f.id).collect();
+        let want: Vec<&str> = PAGES.iter().map(|p| p.0).chain(["sim", "load"]).collect();
+        assert_eq!(ids, want, "the ids of System > Features");
     }
 }

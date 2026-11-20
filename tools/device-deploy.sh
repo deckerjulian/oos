@@ -10,53 +10,26 @@
 #
 # Build first: (cd ui && cargo build --release --target aarch64-unknown-linux-musl), same for fpgad.
 #
-# OOS_SHELL picks the way in, as for tools/device-test.py:
-#   telnet (default)  the telnet shell (OOS_TELNET_PORT, 23); files go through nc to a listener on the scope
-#                     (OOS_NC_PORT, 7777)
-#   ssh               key-authenticated SSH with strict host identity checking (docs/ssh.md): the scope's host key is
-#                     known first; OOS_SSH_PORT (22), OOS_SSH_IDENTITY (a key file on this computer)
-# Either way every file is checked with SHA-256 on the scope after the upload.
+# The way in is SSH with a trusted key and strict host identity checking (docs/ssh.md, "Tools over SSH"): the scope's
+# host key is known first; OOS_SSH_PORT (22), OOS_SSH_IDENTITY (a key file on this computer). Every file is checked
+# with SHA-256 on the scope after the upload.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 host=${1:?usage: device-deploy.sh <ip> [--restore]}
 ui=${OOS_DEPLOY_UI:-$here/ui/target/aarch64-unknown-linux-musl/release/oos-ui}
 fpgad=${OOS_DEPLOY_FPGAD:-$here/fpgad/target/aarch64-unknown-linux-musl/release/oos-fpgad}
 
-# run CMD [WAIT]: one command on the scope's shell, its output on stdout (WAIT: seconds the telnet shell is given)
+# run CMD: one command on the scope's shell, its output on stdout
 # put FILE NAME: FILE to /tmp/NAME on the scope
-case ${OOS_SHELL:-telnet} in
-telnet)
-	port=${OOS_TELNET_PORT:-23}
-	ncport=${OOS_NC_PORT:-7777}
-	# the pauses keep nc from dropping what comes back
-	run() {
-		(sleep 1; echo "$1"; sleep "${2:-2}"; echo exit) | nc -w $((${2:-2} + 5)) "$host" "$port" | LC_ALL=C tr -d '\r'
-	}
-	# the listener holds the file open while its stdin lives ("text file busy" for the program otherwise), so it is
-	# ended once the file is in
-	put() {
-		run "(sleep 120 | nc -l -p $ncport > /tmp/$2) &" 1 >/dev/null
-		sleep 1
-		nc -w 3 "$host" "$ncport" < "$1"
-		run "kill \$(pidof nc) 2>/dev/null" 1 >/dev/null
-	}
-	;;
-ssh)
-	port=${OOS_SSH_PORT:-22}
-	# SSH never accepts a changed or unknown identity silently; the optional identity stays on this computer
-	run() {
-		ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$port" ${OOS_SSH_IDENTITY:+-i "$OOS_SSH_IDENTITY"} \
-			"root@$host" "$1"
-	}
-	put() {
-		run "umask 077; cat > /tmp/$2.part && mv /tmp/$2.part /tmp/$2" < "$1"
-	}
-	;;
-*)
-	echo "error: OOS_SHELL is telnet or ssh" >&2
-	exit 2
-	;;
-esac
+port=${OOS_SSH_PORT:-22}
+# SSH never accepts a changed or unknown identity silently; the optional identity stays on this computer
+run() {
+	ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p "$port" \
+		${OOS_SSH_IDENTITY:+-i "$OOS_SSH_IDENTITY"} "root@$host" "$1"
+}
+put() {
+	run "umask 077; cat > /tmp/$2.part && mv /tmp/$2.part /tmp/$2" < "$1"
+}
 
 sha256() {
 	if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha256sum "$1"; fi | cut -d' ' -f1
@@ -67,33 +40,51 @@ send() {
 	put "$1" "$2"
 	want=$(sha256 "$1")
 	[ -n "$want" ] || { echo "error: no SHA-256 tool on this computer" >&2; exit 1; }
-	run "sha256sum /tmp/$2" 3 | grep -q "$want" || { echo "error: /tmp/$2 differs after the upload" >&2; exit 1; }
-	run "chmod +x /tmp/$2" 1 >/dev/null
+	run "sha256sum /tmp/$2" | grep -q "$want" || { echo "error: /tmp/$2 differs after the upload" >&2; exit 1; }
+	run "chmod +x /tmp/$2" >/dev/null
+}
+
+# stop NAME FILE: FILE ends the loop that starts NAME (rcS's and loop() below have the form `while [ ! -e FILE ]`),
+# NAME is ended, and the next step waits until both the program and its loop are gone (at most 15 s): an oos-ui that
+# starts while the last one still holds its ports and the DMA device runs without them (#212: "Resource busy" on
+# /dev/xdma0_c2h_0, "SCPI port 5555 not available"), and a loop still alive would start a program again. When they
+# are not gone, or the scope does not answer, nothing is started and the script ends with an error.
+stop() {
+	alive="pidof $1 >/dev/null || ps | grep -v grep | grep -qF 'while [ ! -e $2 ]'"
+	run "touch $2; kill \$(pidof $1) 2>/dev/null; i=0; while { $alive; } && [ \$i -lt 15 ]; do sleep 1; i=\$((i+1)); done; ! { $alive; }" >/dev/null ||
+		{ echo "error: $1 or its loop still runs after 15 s (or the scope did not answer): nothing started" >&2; exit 1; }
 }
 
 loop() {
 	# as rcS starts it, with another program and another stop file; the hardware is up, so no start-up screen
 	l="while [ ! -e $2 ]; do $1 --hw --afe >> /tmp/oos-ui.log 2>&1; sleep 2; done"
-	run "(setsid sh -c '$l' </dev/null >/dev/null 2>&1 &)" 1 >/dev/null
+	run "(setsid sh -c '$l' </dev/null >/dev/null 2>&1 &)" >/dev/null
 }
 
 if [ "${2:-}" = --restore ]; then
-	run "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" 3 >/dev/null
-	run "rm -f /tmp/oos-ui.off" 1 >/dev/null
+	stop oos-ui.new /tmp/oos-ui.off2
+	run "rm -f /tmp/oos-ui.off" >/dev/null
 	loop /bin/oos-ui /tmp/oos-ui.off
 	echo "installed oos-ui running again"
 	exit 0
 fi
 
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
-run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1" 2
+# the matrix of the board family (ADR 0067), checked before anything is uploaded
+board=${OOS_BOARD:-dho}
+case $board in
+*[!a-z0-9_-]* | -* | "") echo "error: OOS_BOARD='$board' is no name of a board family" >&2; exit 1 ;;
+esac
+matrix="$here/tools/board/$board/plan-matrix.sh"
+[ -f "$matrix" ] || { echo "error: no matrix for the board family '$board' ($matrix)" >&2; exit 1; }
+run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1"
 # a build from an earlier deploy still runs from /tmp: "text file busy" for the upload otherwise
-run "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" 3 >/dev/null
+stop oos-ui.new /tmp/oos-ui.off2
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
-send "$here/tools/plan-matrix.sh" plan-matrix.sh
-run "touch /tmp/oos-ui.off; kill \$(pidof oos-ui) 2>/dev/null || true" 3 >/dev/null
-run "rm -f /tmp/oos-ui.off2" 1 >/dev/null
+send "$matrix" plan-matrix.sh
+stop oos-ui /tmp/oos-ui.off
+run "rm -f /tmp/oos-ui.off2" >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2
 sleep 6
-run "pidof oos-ui.new; tail -3 /tmp/oos-ui.log" 2
+run "pidof oos-ui.new; tail -3 /tmp/oos-ui.log"

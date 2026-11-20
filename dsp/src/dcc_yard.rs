@@ -7,20 +7,15 @@
 //! Contributed by Arjen Halma (pull request #3). Checked against generated packets only, not yet against a track.
 
 /// Rail / command-station status derived from packets on the bus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TrackStatus {
     /// No valid DCC packets seen yet
+    #[default]
     Off,
     /// Idle or normal traffic; track is live
     Active,
     /// Emergency stop (broadcast or loco e-stop)
     Estop,
-}
-
-impl Default for TrackStatus {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 impl TrackStatus {
@@ -138,9 +133,9 @@ impl Yard {
                 let a = y.locos[i].addr;
                 y = y.apply_loco(a, data, true);
             }
-            if !estop && matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) {
-                y.status = TrackStatus::Active;
-            } else if !estop && y.status != TrackStatus::Estop {
+            if !estop
+                && (matches!(speed_kind(data), SpeedKind::Stop | SpeedKind::Run) || y.status != TrackStatus::Estop)
+            {
                 y.status = TrackStatus::Active;
             }
             return y;
@@ -374,7 +369,11 @@ impl Loco {
 
 impl Turnout {
     pub fn side_text(&self) -> &'static str {
-        if self.thrown { "Left" } else { "Right" }
+        if self.thrown {
+            "Left"
+        } else {
+            "Right"
+        }
     }
 }
 
@@ -437,7 +436,15 @@ mod tests {
         let first = Yard::default().apply(3, &[0b011_00010]);
         assert_eq!(first.locos[0].speed, 1);
         // the whole S-9.2 table: C S3..S0 -> stop / emergency stop / step
-        for (b, speed, estop) in [(0b0_0000u8, 0u8, false), (0b1_0000, 0, false), (0b0_0001, 0, true), (0b1_0001, 0, true), (0b1_0010, 2, false), (0b0_0011, 3, false), (0b1_1111, 28, false)] {
+        for (b, speed, estop) in [
+            (0b0_0000u8, 0u8, false),
+            (0b1_0000, 0, false),
+            (0b0_0001, 0, true),
+            (0b1_0001, 0, true),
+            (0b1_0010, 2, false),
+            (0b0_0011, 3, false),
+            (0b1_1111, 28, false),
+        ] {
             let l = Yard::default().apply(3, &[0b011_00000 | b]).locos[0].clone();
             assert_eq!((l.speed, l.estop), (speed, estop), "{:05b}", b);
         }

@@ -57,8 +57,16 @@ const PROP: u32 = 3;
 const NOP: u32 = 4;
 const FINISH: u32 = 9;
 
+/// How deep the nodes of a tree may nest, the root counting as one. The running tree of a DHO924S nests 6 levels deep
+/// with its root (verified on the unit, `/proc/device-tree`, 2026-11-18); that Linux leaves out nodes below 64 levels
+/// (`FDT_MAX_DEPTH`) is assumed from its source, not checked here. The bound keeps writing, comparing and dropping a
+/// tree (one stack frame per level) from overflowing the stack on a damaged one.
+pub(crate) const DEPTH_MAX: usize = 64;
+
 fn be32(b: &[u8], at: usize) -> Result<u32, String> {
-    b.get(at..at + 4).map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]])).ok_or_else(|| "device tree cut short".to_string())
+    b.get(at..at + 4)
+        .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
+        .ok_or_else(|| "device tree cut short".to_string())
 }
 
 fn cstr(b: &[u8], at: usize) -> Result<&str, String> {
@@ -98,6 +106,9 @@ impl Fdt {
             p += 4;
             match tok {
                 BEGIN => {
+                    if stack.len() == DEPTH_MAX {
+                        return Err(format!("device tree: nested deeper than {} levels", DEPTH_MAX));
+                    }
                     let name = cstr(b, p)?.to_string();
                     p += (name.len() + 1).div_ceil(4) * 4;
                     stack.push(Node { name, ..Default::default() });
@@ -137,7 +148,7 @@ impl Fdt {
             st.extend_from_slice(&BEGIN.to_be_bytes());
             st.extend_from_slice(n.name.as_bytes());
             st.push(0);
-            while st.len() % 4 != 0 {
+            while !st.len().is_multiple_of(4) {
                 st.push(0);
             }
             for (k, v) in &n.props {
@@ -155,7 +166,7 @@ impl Fdt {
                 st.extend_from_slice(&(v.len() as u32).to_be_bytes());
                 st.extend_from_slice(&off.to_be_bytes());
                 st.extend_from_slice(v);
-                while st.len() % 4 != 0 {
+                while !st.len().is_multiple_of(4) {
                     st.push(0);
                 }
             }
@@ -171,7 +182,18 @@ impl Fdt {
         let off_strings = off_struct + st.len();
         let total = off_strings + strings.len();
         let mut b = Vec::with_capacity(total);
-        for v in [MAGIC, total as u32, off_struct as u32, off_strings as u32, off_rsv as u32, 17, 16, self.boot_cpu, strings.len() as u32, st.len() as u32] {
+        for v in [
+            MAGIC,
+            total as u32,
+            off_struct as u32,
+            off_strings as u32,
+            off_rsv as u32,
+            17,
+            16,
+            self.boot_cpu,
+            strings.len() as u32,
+            st.len() as u32,
+        ] {
             b.extend_from_slice(&v.to_be_bytes());
         }
         for &(a, s) in self.rsv.iter().chain(std::iter::once(&(0, 0))) {
@@ -191,6 +213,15 @@ pub fn rsce_file<'a>(blob: &'a [u8], name: &str) -> Result<&'a [u8], String> {
     }
     let (toff, eblk) = (blob[9] as usize, blob[10] as usize);
     let n = be32_le(blob, 12)? as usize;
+    // the table lies inside the container: n entries of eblk blocks from block toff; entries of no blocks would all
+    // be the first one, so there is one at most
+    let fits = match eblk {
+        0 => n <= 1,
+        _ => (toff as u64 + n as u64 * eblk as u64) * 512 <= blob.len() as u64,
+    };
+    if !fits {
+        return Err(format!("RSCE: a table of {} entries does not fit its container", n));
+    }
     for i in 0..n {
         let at = (toff + i * eblk) * 512;
         let row = blob.get(at..at + 268).ok_or("RSCE: entry out of bounds")?;
@@ -317,13 +348,23 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
         }
     }
     // the reservations the loader added, except the one of its ramdisk
-    let added: Vec<(u64, u64)> =
-        r.rsv.iter().filter(|x| !o.rsv.contains(x) && !initrd.is_some_and(|(a, e)| x.0 < e && a < x.0 + x.1)).copied().collect();
+    let added: Vec<(u64, u64)> = r
+        .rsv
+        .iter()
+        .filter(|x| !o.rsv.contains(x) && !initrd.is_some_and(|(a, e)| x.0 < e && a < x.0 + x.1))
+        .copied()
+        .collect();
     let rsv_n = added.len();
     for x in added {
         if !t.rsv.contains(&x) {
             t.rsv.push(x);
         }
+    }
+    // a loader that seeds the kernel's address randomisation writes `/chosen/kaslr-seed`; kexec-tools (`kexec_load`
+    // with `--dtb`) refuses a tree whose seed is not 0 ("kaslr-seed is not wiped to 0") and puts a fresh one into a seed
+    // of 0, so the carried-over seed is wiped (issue #193)
+    if let Some(seed) = t.root.kid_mut("chosen").and_then(|c| c.props.iter_mut().find(|x| x.0 == "kaslr-seed")) {
+        seed.1.iter_mut().for_each(|b| *b = 0);
     }
     t.boot_cpu = r.boot_cpu;
     Ok((t.to_bytes(), n + rsv_n))
@@ -346,7 +387,18 @@ mod tests {
         let t = Fdt {
             rsv: vec![(0x460_0000, 0x17000)],
             boot_cpu: 0,
-            root: node("", &[("compatible", b"rigol,dho900\0"), ("#address-cells", &[0, 0, 0, 2])], vec![node("chosen", &[("bootargs", b"console=ttyS2\0")], vec![]), node("gpu@ff9a0000", &[("status", b"okay\0"), ("phandle", &[0, 0, 0, 7]), ("compatible", b"x\0")], vec![])]),
+            root: node(
+                "",
+                &[("compatible", b"rigol,dho900\0"), ("#address-cells", &[0, 0, 0, 2])],
+                vec![
+                    node("chosen", &[("bootargs", b"console=ttyS2\0")], vec![]),
+                    node(
+                        "gpu@ff9a0000",
+                        &[("status", b"okay\0"), ("phandle", &[0, 0, 0, 7]), ("compatible", b"x\0")],
+                        vec![],
+                    ),
+                ],
+            ),
         };
         let b = t.to_bytes();
         assert_eq!(Fdt::parse(&b).unwrap(), t);
@@ -356,27 +408,94 @@ mod tests {
     #[test]
     fn the_loaders_changes_go_into_the_new_tree() {
         // the image that started, what the loader made of it, the new image (another phandle numbering, a new node)
-        let old = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a\0")], vec![]), node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]), node("gone", &[], vec![])]);
-        let run = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a b\0"), ("linux,initrd-start", &[0, 0, 0, 0, 4, 0xbf, 0, 0]), ("linux,initrd-end", &[0, 0, 0, 0, 5, 0x17, 0x59, 0x44])], vec![]), node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,width", &[2, 88])], vec![])]), node("memory", &[("reg", &[1])], vec![])]);
-        let new = node("", &[("model", b"DHO\0")], vec![node("chosen", &[("bootargs", b"a\0")], vec![]), node("route", &[("phandle", &[0, 0, 0, 6])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]), node("gone", &[], vec![]), node("gpu", &[("status", b"okay\0")], vec![])]);
-        let (m, n) = with_loader_changes(&tree(new, vec![]), &tree(old, vec![]), &tree(run, vec![(0x460_0000, 0x17000), (0x4bf_0000, 0x58_5944)])).unwrap();
+        let old = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node("chosen", &[("bootargs", b"a\0")], vec![]),
+                node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]),
+                node("gone", &[], vec![]),
+            ],
+        );
+        let run = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node(
+                    "chosen",
+                    &[
+                        ("bootargs", b"a b\0"),
+                        ("linux,initrd-start", &[0, 0, 0, 0, 4, 0xbf, 0, 0]),
+                        ("linux,initrd-end", &[0, 0, 0, 0, 5, 0x17, 0x59, 0x44]),
+                    ],
+                    vec![],
+                ),
+                node("route", &[("phandle", &[0, 0, 0, 5])], vec![node("dsi", &[("logo,width", &[2, 88])], vec![])]),
+                node("memory", &[("reg", &[1])], vec![]),
+            ],
+        );
+        let new = node(
+            "",
+            &[("model", b"DHO\0")],
+            vec![
+                node("chosen", &[("bootargs", b"a\0")], vec![]),
+                node("route", &[("phandle", &[0, 0, 0, 6])], vec![node("dsi", &[("logo,mode", &[0])], vec![])]),
+                node("gone", &[], vec![]),
+                node("gpu", &[("status", b"okay\0")], vec![]),
+            ],
+        );
+        let (m, n) = with_loader_changes(
+            &tree(new, vec![]),
+            &tree(old, vec![]),
+            &tree(run, vec![(0x460_0000, 0x17000), (0x4bf_0000, 0x58_5944)]),
+        )
+        .unwrap();
         let m = Fdt::parse(&m).unwrap();
         let chosen = m.root.kid("chosen").unwrap();
         assert_eq!(chosen.prop("bootargs"), Some(&b"a b\0"[..]));
-        assert_eq!((chosen.prop("linux,initrd-start"), chosen.prop("linux,initrd-end")), (None, None), "the running ramdisk is not the new one");
+        assert_eq!(
+            (chosen.prop("linux,initrd-start"), chosen.prop("linux,initrd-end")),
+            (None, None),
+            "the running ramdisk is not the new one"
+        );
         let dsi = m.root.kid("route").unwrap().kid("dsi").unwrap();
         assert_eq!((dsi.prop("logo,width"), dsi.prop("logo,mode")), (Some(&[2u8, 88][..]), None));
-        assert_eq!(m.root.kid("route").unwrap().prop("phandle"), Some(&[0u8, 0, 0, 6][..]), "the new tree's numbering stays");
+        assert_eq!(
+            m.root.kid("route").unwrap().prop("phandle"),
+            Some(&[0u8, 0, 0, 6][..]),
+            "the new tree's numbering stays"
+        );
         assert!(m.root.kid("memory").is_some() && m.root.kid("gone").is_none() && m.root.kid("gpu").is_some());
         assert_eq!(m.rsv, vec![(0x460_0000, 0x17000)], "nor its reservation");
         assert_eq!(n, 6);
+    }
+
+    // Issue #193 (found in a fork, checked on main): a running tree with a seed for the kernel's address randomisation
+    // passed it on to the kexec start, and kexec-tools refused the tree. The test fails when the merged tree keeps a
+    // seed other than 0 (from the loader or from the new image), or when the seed is dropped instead of set to 0
+    // (kexec-tools only fills in a seed that is there and 0).
+    #[test]
+    fn the_kaslr_seed_is_wiped_to_0() {
+        let seed: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
+        let old = node("", &[], vec![node("chosen", &[("bootargs", b"a\0")], vec![])]);
+        let run = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) =
+            with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the loader's seed");
+        let new = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) = with_loader_changes(&tree(new, vec![]), &tree(old.clone(), vec![]), &tree(old, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the new image's seed");
     }
 
     #[test]
     fn a_phandle_change_is_refused() {
         let old = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 1])], vec![])]);
         let run = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 2])], vec![])]);
-        assert!(with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).is_err());
+        assert!(
+            with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).is_err()
+        );
         // a change to a node the new tree does not have
         let run = node("", &[], vec![node("a", &[("phandle", &[0, 0, 0, 1]), ("x", &[1])], vec![])]);
         let new = node("", &[], vec![]);

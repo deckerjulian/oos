@@ -139,7 +139,11 @@ impl State {
             std::fs::create_dir_all(d)?;
         }
         let tmp = path.with_extension("new");
-        crate::fsutil::write_atomic(path, self.text().as_bytes(), &crate::fsutil::Opts { tmp: Some(&tmp), ..Default::default() })
+        crate::fsutil::write_atomic(
+            path,
+            self.text().as_bytes(),
+            &crate::fsutil::Opts { tmp: Some(&tmp), ..Default::default() },
+        )
     }
 }
 
@@ -194,7 +198,6 @@ pub fn lock(state_path: &Path) -> Result<Lock, String> {
         .write(true)
         .open(state_path.with_extension("lock"))
         .map_err(io("opening the update lock"))?;
-    #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
@@ -211,11 +214,23 @@ pub fn running_build() -> Option<String> {
 
 /// Verify `package`, keep the image in `recovery` as the rollback image (when it is a confirmed or hand-installed
 /// one), write the new image, read it back, mark it on trial and arm OOS for the next power-on.
-pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 32]], opt: &InstallOpt) -> Result<Report, String> {
+pub fn install(
+    card: &mut Card,
+    state_path: &Path,
+    package: &[u8],
+    keys: &[[u8; 32]],
+    opt: &InstallOpt,
+) -> Result<Report, String> {
     let mut r = Report::default();
     let (h, img) = pkg::verify(package, keys)?;
     let m = &h.manifest;
-    r.say(format!("package: build {}, kernel {}, {} bytes, signature ok (key {})", short(&m.build), m.kernel, m.size, hex(&m.key)));
+    r.say(format!(
+        "package: build {}, kernel {}, {} bytes, signature ok (key {})",
+        short(&m.build),
+        m.kernel,
+        m.size,
+        hex(&m.key)
+    ));
     let info = check_image(img)?;
     if info.len != img.len() {
         return Err(format!("image is {} bytes, its sections end at {}", img.len(), info.len));
@@ -228,7 +243,11 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
 
     if let Some(cur) = st.current.as_ref().filter(|c| !c.build.starts_with("untracked")) {
         if cur.build_key() > new.build_key() && !opt.downgrade {
-            return Err(format!("build {} is older than the installed {} (give --downgrade to install it anyway)", short(&new.build), short(&cur.build)));
+            return Err(format!(
+                "build {} is older than the installed {} (give --downgrade to install it anyway)",
+                short(&new.build),
+                short(&cur.build)
+            ));
         }
     }
     // what recovery holds now
@@ -238,7 +257,10 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
         let (b, sha) = card.read_image(Region::Recovery, hdr.len).map_err(io("reading recovery"))?;
         if sha == new.sha256 {
             if !opt.force {
-                r.say(format!("recovery already holds build {}: nothing to do (--force writes it again)", short(&new.build)));
+                r.say(format!(
+                    "recovery already holds build {}: nothing to do (--force writes it again)",
+                    short(&new.build)
+                ));
                 r.unchanged = true;
                 return Ok(r);
             }
@@ -283,7 +305,10 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
     if save.is_some() {
         let slot_hdr = card.header(Region::Slot).map_err(io("reading the rollback slot"))?;
         // (a write of the slot cut by a power loss can leave data without its header: then it is ours to overwrite)
-        if slot_hdr.is_none() && st.event != SLOT_WRITING && !card.region_empty(Region::Slot).map_err(io("reading the rollback slot"))? {
+        if slot_hdr.is_none()
+            && st.event != SLOT_WRITING
+            && !card.region_empty(Region::Slot).map_err(io("reading the rollback slot"))?
+        {
             return Err("the rollback slot (backup + 32 MiB) holds data that is not an OOS image: nothing written, inspect it first".into());
         }
     }
@@ -337,8 +362,9 @@ pub fn install(card: &mut Card, state_path: &Path, package: &[u8], keys: &[[u8; 
 }
 
 /// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the device tree section
-/// the start runs with), the build; and for an image with another device tree, the tree to start it with (the new one
-/// with the loader's changes, `fdt::with_loader_changes`), which `kexec::load_with_tree` takes.
+/// the start runs with), the build; and, when the running build has kexec-tools, the tree to start it with
+/// (`fdt::with_loader_changes`: the new tree, or the running one for the same tree), which `kexec::load_with_tree`
+/// takes. None only without kexec-tools: then `kexec::load` (kexec_file_load) with the running tree.
 #[derive(Debug)]
 pub struct Staged {
     pub kernel: Vec<u8>,
@@ -354,8 +380,9 @@ pub struct Staged {
 ///
 /// `booted_dt`: the device tree section of the image the loader started (`kexec::BOOTED_DT`, saved by `oos-update
 /// boot`); without it only an image in `recovery` that is the running build (`running`) tells. `running_tree`: the tree
-/// the running kernel got (`/sys/firmware/fdt`), given when a kexec start with another tree can be made
-/// (`kexec::TOOL`); without it an image with another tree is refused.
+/// the running kernel got (`/sys/firmware/fdt`), given when the build has kexec-tools (`kexec::TOOL`): every kexec
+/// start then goes through them, also for the same tree. Without it an image with another tree is refused, and the
+/// same tree is started with kexec_file_load.
 pub fn kexec_stage(
     card: &mut Card,
     state_path: &Path,
@@ -387,29 +414,54 @@ pub fn kexec_stage(
             if !cur_is_running {
                 return Err(format!("the device tree this scope started with is not known ({} missing, recovery may hold another build): power-cycle once, or install with --new-dt", kexec::BOOTED_DT));
             }
-            let cur = card.header(Region::Recovery).map_err(io("reading recovery"))?.ok_or("recovery holds no OOS image: no device tree to compare with")?;
+            let cur = card
+                .header(Region::Recovery)
+                .map_err(io("reading recovery"))?
+                .ok_or("recovery holds no OOS image: no device tree to compare with")?;
             let (cur_img, _) = card.read_image(Region::Recovery, cur.len).map_err(io("reading recovery"))?;
             kexec::parts(&cur_img).map_err(|e| format!("recovery: {}: no device tree to compare with", e))?.2.to_vec()
         }
     };
     let tree = if booted == dt {
         r.say("device tree: the same as the running one");
-        None
+        // with kexec-tools the start goes its way even so: kexec_file_load puts the initramfs right behind the new
+        // kernel, low in memory, where the loader's reserved ramdisk area and the GIC's tables lie; a larger initramfs
+        // reached into them and the started kernel found no root (seen on the unit). kexec-tools loads above them.
+        match running_tree {
+            Some(run) => {
+                let old_dt = fdt::rsce_file(&booted, fdt::TREE)
+                    .map_err(|e| format!("the running image's device tree: {}", e))?;
+                let (t, _) =
+                    fdt::with_loader_changes(old_dt, old_dt, run).map_err(|e| format!("the device tree: {}", e))?;
+                Some(t)
+            }
+            None => None,
+        }
     } else {
         let Some(run) = running_tree else {
             return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
         };
         let new_dt = fdt::rsce_file(dt, fdt::TREE).map_err(|e| format!("the new image's device tree: {}", e))?;
-        let old_dt = fdt::rsce_file(&booted, fdt::TREE).map_err(|e| format!("the running image's device tree: {}", e))?;
-        let (t, n) = fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| format!("the new device tree: {}", e))?;
+        let old_dt =
+            fdt::rsce_file(&booted, fdt::TREE).map_err(|e| format!("the running image's device tree: {}", e))?;
+        let (t, n) =
+            fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| format!("the new device tree: {}", e))?;
         r.say(format!("device tree: another one; the kexec start tries it, with the {} changes the loader made to the running one", n));
         Some(t)
     };
     let key = keys.iter().find(|k| pkg::key_id(k) == m.key).ok_or("no key for the package")?;
     // the started image keeps the tree section it runs with (for its own updates later): the new one, when it brings one
-    let staged = Staged { kernel: kernel.to_vec(), initrd: kexec::initrd(ramdisk, package, key, dt), build: m.build.clone(), tree };
+    let staged = Staged {
+        kernel: kernel.to_vec(),
+        initrd: kexec::initrd(ramdisk, package, key, dt),
+        build: m.build.clone(),
+        tree,
+    };
     if !opt.execute {
-        r.say(format!("start build {} by kexec; it installs itself once it runs (dry run: --execute)", short(&staged.build)));
+        r.say(format!(
+            "start build {} by kexec; it installs itself once it runs (dry run: --execute)",
+            short(&staged.build)
+        ));
         return Ok((r, None));
     }
     let _l = lock(state_path)?;
@@ -455,7 +507,13 @@ fn slot_holds(card: &mut Card, e: &Entry) -> Result<bool, String> {
 
 /// Write the rollback image back to `recovery` (checked against its SHA-256 first) and arm OOS. `expect`: only when
 /// the state still names this image as current (the watcher's view at its start).
-pub fn rollback(card: &mut Card, state_path: &Path, reason: &str, execute: bool, expect: Option<[u8; 32]>) -> Result<Report, String> {
+pub fn rollback(
+    card: &mut Card,
+    state_path: &Path,
+    reason: &str,
+    execute: bool,
+    expect: Option<[u8; 32]>,
+) -> Result<Report, String> {
     let mut r = Report::default();
     card.check_layout()?;
     let _l = if execute { Some(lock(state_path)?) } else { None };
@@ -468,7 +526,10 @@ pub fn rollback(card: &mut Card, state_path: &Path, reason: &str, execute: bool,
     let prev = st.previous.clone().ok_or("no rollback image (nothing was kept by an update)")?;
     let (b, sha) = card.read_image(Region::Slot, prev.len as usize).map_err(io("reading the rollback slot"))?;
     if sha != prev.sha256 {
-        return Err(format!("the rollback slot does not hold build {} any more (SHA-256 differs): nothing written", short(&prev.build)));
+        return Err(format!(
+            "the rollback slot does not hold build {} any more (SHA-256 differs): nothing written",
+            short(&prev.build)
+        ));
     }
     check_image(&b)?;
     // the card decides, not the state: a cut write may have left something else there
@@ -534,7 +595,6 @@ pub fn arm_by_hand(card: &mut Card, state_path: &Path) -> Result<bool, String> {
 /// An install or rollback holds the update lock right now (also one of another process: the start-up watcher).
 pub fn busy(state_path: &Path) -> bool {
     let Ok(f) = std::fs::OpenOptions::new().write(true).open(state_path.with_extension("lock")) else { return false };
-    #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -567,7 +627,11 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
     let cur = st.current.as_ref().map(|c| c.build.clone()).unwrap_or_default();
     if let Some(run) = running {
         if run.trim() != cur.trim() {
-            let msg = format!("running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed", short(run), short(&cur));
+            let msg = format!(
+                "running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed",
+                short(run),
+                short(&cur)
+            );
             st.trial = None;
             st.current = None;
             st.event = msg.clone();
@@ -597,7 +661,11 @@ pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Opt
     if let Some(run) = running {
         let cur = st.current.as_ref().map(|c| c.build.trim().to_string()).unwrap_or_default();
         if run.trim() != cur {
-            return Err(format!("the running build {} is not the one on trial ({}): it has not started yet", run.trim(), cur));
+            return Err(format!(
+                "the running build {} is not the one on trial ({}): it has not started yet",
+                run.trim(),
+                cur
+            ));
         }
     }
     if let Some(x) = expect {
@@ -659,5 +727,7 @@ pub fn judge(h: &Health) -> Verdict {
     Verdict::Wait
 }
 
+#[cfg(test)]
+pub(crate) mod hostile_tests;
 #[cfg(test)]
 mod tests;

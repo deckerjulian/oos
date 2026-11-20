@@ -103,6 +103,48 @@ pub fn states(v: &[f32], level: f32, hyst: f32) -> Vec<Option<bool>> {
         .collect()
 }
 
+/// The level crossing of the edge nearest to `pre` within +-`span` samples, as a fractional sample index (rising:
+/// below -> at or above `level`; falling the other way). `either`: both directions. `hyst` > 0: like the hardware
+/// comparators, only the first crossing after the signal was `hyst` on the other side of the level counts, so noise on
+/// an edge of the other direction is no edge.
+pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize) -> Option<f64> {
+    if v.len() < 2 {
+        return None;
+    }
+    let lo = pre.saturating_sub(span).max(1);
+    let hi = (pre + span).min(v.len() - 1);
+    // back from the crossing at k: armed when the signal went past the band before it came back over the level
+    let look = span.max(4096);
+    let armed = |k: usize, up: bool| {
+        if hyst <= 0.0 {
+            return true;
+        }
+        for j in (k.saturating_sub(look)..k).rev() {
+            let x = v[j];
+            if up && x < level - hyst || !up && x > level + hyst {
+                return true;
+            }
+            if up && x >= level || !up && x <= level {
+                return false;
+            }
+        }
+        false
+    };
+    let mut best: Option<f64> = None;
+    for k in lo..=hi {
+        let (a, b) = (v[k - 1], v[k]);
+        let up = a < level && b >= level && (rising || either) && armed(k, true);
+        let down = a > level && b <= level && (!rising || either) && armed(k, false);
+        if up || down {
+            let t = (k - 1) as f64 + ((level - a) / (b - a)) as f64;
+            if best.is_none_or(|x| (t - pre as f64).abs() < (x - pre as f64).abs()) {
+                best = Some(t);
+            }
+        }
+    }
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,7 +152,9 @@ mod tests {
     #[test]
     fn square_with_noise() {
         // 0/1 V square, period 100 samples, small noise that would chatter without hysteresis
-        let v: Vec<f32> = (0..1000).map(|i| if (i / 50) % 2 == 1 { 1.0 } else { 0.0 } + if i % 2 == 0 { 0.02 } else { -0.02 }).collect();
+        let v: Vec<f32> = (0..1000)
+            .map(|i| if (i / 50) % 2 == 1 { 1.0 } else { 0.0 } + if i % 2 == 0 { 0.02 } else { -0.02 })
+            .collect();
         let e = edges(&v, 0.5, 0.1);
         assert_eq!(e.len(), 19);
         assert!(e[0].rising && (e[0].t - 49.5).abs() < 0.6);
@@ -144,9 +188,12 @@ mod tests {
             x = x.wrapping_mul(1664525).wrapping_add(1013904223);
             (x >> 8) as f32 / (1 << 24) as f32 - 0.5
         };
-        for (amp, level, h) in [(0.1f32, 0.5f32, 0.15f32), (0.5, 0.5, 0.15), (0.05, 0.02, 0.15), (0.3, 0.0, 0.0), (0.4, 1.0, 0.3)] {
+        for (amp, level, h) in
+            [(0.1f32, 0.5f32, 0.15f32), (0.5, 0.5, 0.15), (0.05, 0.02, 0.15), (0.3, 0.0, 0.0), (0.4, 1.0, 0.3)]
+        {
             let v: Vec<f32> = (0..5000).map(|i| if (i / 250) % 2 == 1 { 1.0 } else { 0.0 } + amp * noise()).collect();
-            let got: Vec<(usize, bool)> = trigger_edges(&v, level, h).iter().map(|e| (e.t.ceil() as usize, e.rising)).collect();
+            let got: Vec<(usize, bool)> =
+                trigger_edges(&v, level, h).iter().map(|e| (e.t.ceil() as usize, e.rising)).collect();
             let mut got = got;
             got.sort();
             assert_eq!(got, comparators(&v, level, h), "amp {} level {} h {}", amp, level, h);
@@ -170,5 +217,36 @@ mod tests {
         let e = edges(&v, 0.255, 0.02);
         assert_eq!(e.len(), 1);
         assert!((e[0].t - 25.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn edge_is_refined_near_pre() {
+        // a ramp crossing 0.5 between samples 11 and 12 (at 11.25), another rising crossing far away
+        let mut v: Vec<f32> = (0..40).map(|k| (k as f32 - 9.0) * 0.4 - 0.4).collect();
+        v[30] = -1.0;
+        v[31] = 1.0;
+        let t = edge_near(&v, 11, 0.5, 0.0, true, false, 4).unwrap();
+        assert!((t - 11.25).abs() < 1e-4, "{}", t);
+        assert!(edge_near(&v, 11, 0.5, 0.0, false, false, 4).is_none());
+        // the nearest of two crossings wins
+        assert!((edge_near(&v, 29, 0.0, 0.0, true, false, 40).unwrap() - 30.5).abs() < 1e-4);
+    }
+
+    /// A falling edge with noise crosses the level upwards too: with hysteresis that is no rising edge, and the rising
+    /// edge half a period away is found.
+    #[test]
+    fn hysteresis_keeps_noise_on_the_other_edge_out() {
+        // a sine, 1000 samples a period, with a +-0.02 wiggle; it falls through 0 at 500
+        let v: Vec<f32> = (0..3000)
+            .map(|k| (k as f32 / 1000.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { 0.02 } else { -0.02 })
+            .collect();
+        // without hysteresis the wiggle at the falling crossing looks like a rising edge
+        assert!((edge_near(&v, 500, 0.0, 0.0, true, false, 16).unwrap() - 500.0).abs() < 3.0);
+        // with it, nothing rising near 500 ...
+        assert!(edge_near(&v, 500, 0.0, 0.1, true, false, 16).is_none());
+        // ... and the rising crossing at 1000 within half a period
+        assert!((edge_near(&v, 500, 0.0, 0.1, true, false, 600).unwrap() - 1000.0).abs() < 3.0);
+        // the falling one is where the hardware said
+        assert!((edge_near(&v, 500, 0.0, 0.1, false, false, 16).unwrap() - 500.0).abs() < 6.0);
     }
 }

@@ -3,8 +3,8 @@
 //! Measure > Labels on trace: what a measurement measures, on the trace: level lines for levels, arrows for spans.
 
 use super::{si, Canvas, Rect, Ui, CH_COLORS, REF_COLORS};
-use crate::model::WaveId;
 use crate::gfx::Rgb;
+use crate::model::WaveId;
 use oos_dsp::measure::{Analysis, Meas};
 
 /// Labels at most, the rest stays in the measurement strip: more only hides the trace.
@@ -27,9 +27,21 @@ pub(super) enum Mark {
     Span(f64, f64),
 }
 
+/// The columns of a span from `x0` to `x1` in area `a`, when it is wide enough to draw and meets the area. A time far
+/// off a narrow view is a column at the end of what an i32 holds (`x_of_time`), so the columns are held to a few
+/// widths of the area around it first: a span draws and is labelled there as before (the label is held inside the
+/// area), and no sum of two columns overflows.
+pub(super) fn span_columns(x0: i32, x1: i32, a: Rect) -> Option<(i32, i32)> {
+    let near = |x: i32| x.clamp(a.x - 2 * a.w, a.x + 3 * a.w);
+    let (x0, x1) = (near(x0), near(x1));
+    (x1 > x0 + 1 && x1 >= a.x && x0 <= a.x + a.w).then_some((x0, x1))
+}
+
 /// First index of `v` above `after`.
 fn next_after(v: &[f64], after: f64) -> Option<f64> {
-    if after.is_nan() { return None; }
+    if after.is_nan() {
+        return None;
+    }
     v.get(v.partition_point(|&time| time <= after)).copied()
 }
 
@@ -94,7 +106,7 @@ pub(super) fn vertical_t(v: &[f32], t0: f64, dt: f64, t_lo: f64, t_hi: f64, _lo:
         }
         // sit on the high end of the span (pk-pk max / amplitude top)
         let d = (x as f64 - hi).abs();
-        if best.map_or(true, |(s, _)| d < s) {
+        if best.is_none_or(|(s, _)| d < s) {
             best = Some((d, t));
         }
     }
@@ -130,7 +142,12 @@ impl Ui {
     fn label_col(&self, id: WaveId) -> Rgb {
         match id {
             WaveId::Ch(c) => CH_COLORS[c.min(CH_COLORS.len() - 1)],
-            WaveId::Ref(i) => self.refs.get(i).and_then(|r| r.as_ref()).map(|r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1).unwrap_or(CH_COLORS[0]),
+            WaveId::Ref(i) => self
+                .refs
+                .get(i)
+                .and_then(|r| r.as_ref())
+                .map(|r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1)
+                .unwrap_or(CH_COLORS[0]),
         }
     }
 
@@ -199,14 +216,19 @@ impl Ui {
                         cv.line(x, y, x - 4, y + 7 * d, col);
                         cv.line(x, y, x + 4, y + 7 * d, col);
                     }
-                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), &text, col);
+                    self.meas_label(
+                        cv,
+                        x + 8 + label_half(self, &text),
+                        (y0 + y1) / 2 + verts * (label_h(self) + 2),
+                        &text,
+                        col,
+                    );
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
-                    let (x0, x1) = (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
-                    if x1 <= x0 + 1 || x1 < a.x || x0 > a.x + a.w {
-                        continue;
-                    }
+                    let (x0, x1) =
+                        (self.x_of_time((analysis_t0 + t0) as f32), self.x_of_time((analysis_t0 + t1) as f32));
+                    let Some((x0, x1)) = span_columns(x0, x1, a) else { continue };
                     let mid = (ana.top + ana.base) / 2.0 + (ana.top - ana.base) * (0.22 - 0.16 * rows as f64);
                     let y = self.y_of_id(id, mid as f32);
                     cv.hline(x0, x1, y, col);
@@ -235,7 +257,18 @@ mod tests {
 
     fn square() -> Analysis {
         // rises at 1, 3, 5 ms, falls at 2, 4, 6 ms, 0..1 V
-        Analysis { valid: true, vmin: -0.1, vmax: 1.1, top: 1.0, base: 0.0, rises: vec![1e-3, 3e-3, 5e-3], falls: vec![2e-3, 4e-3, 6e-3], rise_time: 1e-5, fall_time: 2e-5, ..Default::default() }
+        Analysis {
+            valid: true,
+            vmin: -0.1,
+            vmax: 1.1,
+            top: 1.0,
+            base: 0.0,
+            rises: vec![1e-3, 3e-3, 5e-3],
+            falls: vec![2e-3, 4e-3, 6e-3],
+            rise_time: 1e-5,
+            fall_time: 2e-5,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -254,6 +287,23 @@ mod tests {
         let a = square();
         assert_eq!(mark(Meas::Period, &a, 2e-3), Some(Mark::Span(3e-3, 5e-3)));
         assert_eq!(mark(Meas::Period, &a, 4e-3), None);
+    }
+
+    /// A span whose edges are far off a narrow view: their columns are the end of what an i32 holds. The test for a
+    /// span too short to draw added one to such a column (a debug build stopped with an overflow, a release build
+    /// wrapped round), and the middle of a span that runs off the right summed two of them (its label went to the
+    /// left edge of the area).
+    #[test]
+    fn a_span_far_off_the_screen_has_columns_that_do_not_overflow() {
+        let a = Rect::new(10, 20, 800, 400);
+        assert_eq!(span_columns(i32::MAX, i32::MAX, a), None);
+        assert_eq!(span_columns(i32::MIN, i32::MIN, a), None);
+        assert_eq!(span_columns(900, i32::MAX, a), None, "starts right of the area");
+        let (x0, x1) = span_columns(300, i32::MAX, a).expect("runs off the right");
+        assert!(x0 == 300 && x1 > a.x + a.w && (x0 + x1) / 2 > a.x + a.w, "{x0} {x1}");
+        // a span on the screen keeps its columns
+        assert_eq!(span_columns(100, 400, a), Some((100, 400)));
+        assert_eq!(span_columns(100, 101, a), None, "too short to draw");
     }
 
     #[test]

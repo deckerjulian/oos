@@ -87,13 +87,66 @@ pub enum Meas {
 }
 
 pub const ALL: [Meas; 60] = [
-    Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
-    Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
-    Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
-    Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
-    Meas::HighTime, Meas::LowTime, Meas::Burst, Meas::Outside, Meas::NPeriods, Meas::CycAmp, Meas::CycTop, Meas::CycBase,
-    Meas::CycPp, Meas::CycMax, Meas::CycMin, Meas::EstUi, Meas::Median, Meas::Mode, Meas::LinSlope, Meas::LinInt,
-    Meas::Pam0, Meas::Pam1, Meas::Pam2, Meas::Pam3, Meas::PamSep, Meas::Bits, Meas::PllUi, Meas::UiWtd, Meas::FoldRms,
+    Meas::Vmax,
+    Meas::Vmin,
+    Meas::Vpp,
+    Meas::Vtop,
+    Meas::Vbase,
+    Meas::Vamp,
+    Meas::Vupper,
+    Meas::Vmid,
+    Meas::Vlower,
+    Meas::Vavg,
+    Meas::Vrms,
+    Meas::VavgCyc,
+    Meas::VrmsCyc,
+    Meas::VrmsAc,
+    Meas::StdDev,
+    Meas::Overshoot,
+    Meas::Preshoot,
+    Meas::Area,
+    Meas::AreaCyc,
+    Meas::Period,
+    Meas::Freq,
+    Meas::Rise,
+    Meas::Fall,
+    Meas::PWidth,
+    Meas::NWidth,
+    Meas::PDuty,
+    Meas::NDuty,
+    Meas::PPulses,
+    Meas::NPulses,
+    Meas::PEdges,
+    Meas::NEdges,
+    Meas::TVmax,
+    Meas::TVmin,
+    Meas::PSlew,
+    Meas::NSlew,
+    Meas::HighTime,
+    Meas::LowTime,
+    Meas::Burst,
+    Meas::Outside,
+    Meas::NPeriods,
+    Meas::CycAmp,
+    Meas::CycTop,
+    Meas::CycBase,
+    Meas::CycPp,
+    Meas::CycMax,
+    Meas::CycMin,
+    Meas::EstUi,
+    Meas::Median,
+    Meas::Mode,
+    Meas::LinSlope,
+    Meas::LinInt,
+    Meas::Pam0,
+    Meas::Pam1,
+    Meas::Pam2,
+    Meas::Pam3,
+    Meas::PamSep,
+    Meas::Bits,
+    Meas::PllUi,
+    Meas::UiWtd,
+    Meas::FoldRms,
 ];
 
 impl Meas {
@@ -165,8 +218,21 @@ impl Meas {
         match self {
             Meas::Overshoot | Meas::Preshoot | Meas::PDuty | Meas::NDuty => "%",
             Meas::Area | Meas::AreaCyc => "Vs",
-            Meas::Period | Meas::Rise | Meas::Fall | Meas::PWidth | Meas::NWidth | Meas::TVmax | Meas::TVmin | Meas::HighTime
-            | Meas::LowTime | Meas::Burst | Meas::Outside | Meas::NPeriods | Meas::EstUi | Meas::PllUi | Meas::UiWtd => "s",
+            Meas::Period
+            | Meas::Rise
+            | Meas::Fall
+            | Meas::PWidth
+            | Meas::NWidth
+            | Meas::TVmax
+            | Meas::TVmin
+            | Meas::HighTime
+            | Meas::LowTime
+            | Meas::Burst
+            | Meas::Outside
+            | Meas::NPeriods
+            | Meas::EstUi
+            | Meas::PllUi
+            | Meas::UiWtd => "s",
             Meas::Freq => "Hz",
             Meas::PPulses | Meas::NPulses | Meas::PEdges | Meas::NEdges | Meas::Bits => "",
             Meas::PSlew | Meas::NSlew | Meas::LinSlope => "V/s",
@@ -249,7 +315,11 @@ fn mean(v: &[f64]) -> f64 {
 fn refs(lpct: f64, hpct: f64) -> (f64, f64) {
     let lo = if lpct.is_finite() && lpct > 0.0 && lpct < 0.5 { lpct } else { 0.1 };
     let hi = if hpct.is_finite() && hpct > 0.5 && hpct < 1.0 { hpct } else { 0.9 };
-    if hi > lo { (lo, hi) } else { (0.1, 0.9) }
+    if hi > lo {
+        (lo, hi)
+    } else {
+        (0.1, 0.9)
+    }
 }
 
 fn median_samples(f: &[f32]) -> f64 {
@@ -360,16 +430,53 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     analyze_refs(v, dt, min_amp, 0.1, 0.9)
 }
 
+/// `analyze_min` of min/max pairs (peak-detect decimation, roll and scan: two neighbouring points are the extremes of
+/// one span, in either order). Maximum, minimum, top and base come from the pairs, as the envelope shows them;
+/// everything else, the times of the extremes too, from the mean of each two neighbouring points, which takes out the
+/// zigzag between the extremes wherever the pairs begin (a record resampled from the frame need not start on a pair);
+/// a mean lies half a point after its first point, and its times are moved there. On an
+/// edge the two points of a pair lie a whole span apart: where that is more than the hysteresis, the pairs crossed the
+/// middle level again and again (a 25 Hz sine in roll at 0.2 s/div read 50 Hz, depending on its phase; #118).
+pub fn analyze_pairs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
+    let mid: Vec<f32> = v.windows(2).map(|w| (w[0] + w[1]) * 0.5).collect();
+    let mut a = analyze_refs(&mid, dt, min_amp, lpct, hpct);
+    if !a.valid {
+        return a;
+    }
+    let half = 0.5 * dt;
+    for t in [&mut a.rises, &mut a.falls, &mut a.hi_rises, &mut a.hi_falls, &mut a.lo_rises, &mut a.lo_falls] {
+        t.iter_mut().for_each(|x| *x += half);
+    }
+    (a.t_vmax, a.t_vmin, a.lin_int) = (a.t_vmax + half, a.t_vmin + half, a.lin_int - a.lin_slope * half);
+    let (mut imax, mut imin) = (None::<usize>, None::<usize>);
+    for (i, &x) in v.iter().enumerate().filter(|(_, x)| x.is_finite()) {
+        if imax.is_none_or(|j| x > v[j]) {
+            imax = Some(i);
+        }
+        if imin.is_none_or(|j| x < v[j]) {
+            imin = Some(i);
+        }
+    }
+    if let (Some(hi), Some(lo)) = (imax, imin) {
+        (a.vmax, a.vmin) = (v[hi] as f64, v[lo] as f64);
+        let finite: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+        (a.top, a.base) = top_base(&finite, v[lo], v[hi]);
+    }
+    a
+}
+
+/// The finite samples of `v`: `v` itself when it has no gap, else a copy without the gaps.
+pub fn finite_samples(v: &[f32]) -> std::borrow::Cow<'_, [f32]> {
+    if v.iter().all(|x| x.is_finite()) {
+        std::borrow::Cow::Borrowed(v)
+    } else {
+        std::borrow::Cow::Owned(v.iter().copied().filter(|x| x.is_finite()).collect())
+    }
+}
+
 /// IEEE-181 uses 10/90. The menu also offers 20/80 (`lpct` / `hpct` as fractions of amplitude).
 pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> Analysis {
-    // the finite samples: the record itself when it has no gap (a copy of 100 kpts per channel otherwise)
-    let own: Vec<f32>;
-    let f: &[f32] = if v.iter().all(|x| x.is_finite()) {
-        v
-    } else {
-        own = v.iter().copied().filter(|x| x.is_finite()).collect();
-        &own
-    };
+    let f: &[f32] = &finite_samples(v);
     if f.len() < 4 {
         return Analysis::default();
     }
@@ -420,11 +527,11 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         lpct,
         hpct,
         est_ui: f64::NAN,
-        median: median_samples(&f),
-        mode: hist_mode(&f, vmin, vmax),
+        median: median_samples(f),
+        mode: hist_mode(f, vmin, vmax),
         lin_slope,
         lin_int,
-        pam: crate::linecode::pam4_levels(&f, vmin, vmax),
+        pam: crate::linecode::pam4_levels(f, vmin, vmax),
         bits: f64::NAN,
         pll_ui: f64::NAN,
         ui_wtd: f64::NAN,
@@ -463,12 +570,15 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     // noisy samples that seldom reach the 10 % and 90 % levels held the main thread for half a minute
     for (k, x) in e.iter().enumerate() {
         let i = x.t as usize + 1;
-        let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
+        let (before, after) =
+            (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
         if x.rising {
             if let (Some(p), Some(q)) = (cross(v, i, lo, true, true, before), cross(v, i, hi_l, true, false, after)) {
                 rt.push((q - p) * dt);
             }
-        } else if let (Some(p), Some(q)) = (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after)) {
+        } else if let (Some(p), Some(q)) =
+            (cross(v, i, hi_l, false, true, before), cross(v, i, lo, false, false, after))
+        {
             ft.push((q - p) * dt);
         }
     }
@@ -607,9 +717,17 @@ impl Analysis {
             Meas::Pam2 => self.pam[2],
             Meas::Pam3 => self.pam[3],
             Meas::PamSep => {
-                if self.pam.iter().any(|level| !level.is_finite()) { return f64::NAN; }
+                if self.pam.iter().any(|level| !level.is_finite()) {
+                    return f64::NAN;
+                }
                 let d = [self.pam[1] - self.pam[0], self.pam[2] - self.pam[1], self.pam[3] - self.pam[2]];
-                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| if a.is_nan() { x } else { a.min(x) })
+                d.into_iter().filter(|x| x.is_finite() && *x > 0.0).fold(f64::NAN, |a, x| {
+                    if a.is_nan() {
+                        x
+                    } else {
+                        a.min(x)
+                    }
+                })
             }
             Meas::Bits => self.bits,
             Meas::PllUi => self.pll_ui,
@@ -619,10 +737,18 @@ impl Analysis {
     }
 
     fn lpct_or_default(&self) -> f64 {
-        if self.lpct > 0.0 { self.lpct } else { 0.1 }
+        if self.lpct > 0.0 {
+            self.lpct
+        } else {
+            0.1
+        }
     }
     fn hpct_or_default(&self) -> f64 {
-        if self.hpct > 0.0 { self.hpct } else { 0.9 }
+        if self.hpct > 0.0 {
+            self.hpct
+        } else {
+            0.9
+        }
     }
 }
 
@@ -672,7 +798,9 @@ fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
         }
         let Some(&e) = close.get(j) else { break };
         next = next.max(i + 1);
-        while next < open.len() && (open[next].is_nan() || open[next] <= s) { next += 1; }
+        while next < open.len() && (open[next].is_nan() || open[next] <= s) {
+            next += 1;
+        }
         if s.is_nan() || !open.get(next).is_some_and(|&x| x < e) {
             w.push(e - s);
         }
@@ -683,7 +811,8 @@ fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
 /// Mean of the per-cycle histogram top and base, their difference, and the sample max, min and peak-to-peak.
 /// Cycles run from one rising mid crossing to the next. A record with fewer than two rising edges has no result.
 fn cycle_levels(v: &[f32], dt: f64, rises: &[f64]) -> (f64, f64, f64, f64, f64, f64) {
-    let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for w in rises.windows(2) {
         let s = (w[0] / dt).ceil() as usize;
         let e = ((w[1] / dt).floor() as usize).min(v.len().saturating_sub(1));
@@ -780,7 +909,7 @@ pub fn delay(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     let ea = if p.0 { &a.rises } else { &a.falls };
     let eb = if p.1 { &b.rises } else { &b.falls };
     let Some(&ta) = ea.first() else { return f64::NAN };
-    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap()).unwrap_or(f64::NAN)
+    eb.iter().map(|&tb| tb - ta).min_by(|x, y| x.abs().total_cmp(&y.abs())).unwrap_or(f64::NAN)
 }
 
 /// Phase of B relative to A in degrees (delay / period of A x 360).
@@ -788,8 +917,12 @@ pub fn phase(a: &Analysis, b: &Analysis, p: Pair) -> f64 {
     delay(a, b, p) / a.period() * 360.0
 }
 
-fn edge_list<'a>(a: &'a Analysis, rising: bool) -> &'a [f64] {
-    if rising { &a.rises } else { &a.falls }
+fn edge_list(a: &Analysis, rising: bool) -> &[f64] {
+    if rising {
+        &a.rises
+    } else {
+        &a.falls
+    }
 }
 
 /// Mean, over every selected edge of A, of the closest selected edge of B minus that edge. May be negative.
@@ -872,33 +1005,105 @@ pub fn setup_hold_violations_at(clock: &Analysis, data: &Analysis, tsetup: f64, 
 mod tests {
     use super::*;
 
+    /// A crossing of NaN on B: the nearest edge was chosen with `partial_cmp(..).unwrap()`, which panicked; a NaN
+    /// distance is now the largest.
+    #[test]
+    fn delay_passes_over_a_nan_edge() {
+        let a = Analysis { valid: true, rises: vec![5e-9], ..Analysis::default() };
+        let b = Analysis { valid: true, rises: vec![f64::NAN, 7e-9, 4e-9], ..Analysis::default() };
+        assert_eq!(delay(&a, &b, Pair(true, true)), 4e-9 - 5e-9);
+    }
+
+    /// A sine as the roll stream of the unit holds it: pair j every `span` samples, the maximum and minimum of the
+    /// `2 * span` samples around the middle of its two points, as `board::resample` places a pair (the spans of
+    /// neighbouring pairs overlap: seen on the unit, a pair's maximum lies above the previous pair's minimum on a
+    /// falling edge).
+    fn sine_pairs(f: f64, dt: f64, span: usize, n: usize, phase: f64) -> Vec<f32> {
+        let x = |i: i64| (2.0 * std::f64::consts::PI * f * i as f64 * dt + phase).sin() as f32;
+        (0..n as i64)
+            .flat_map(|j| {
+                let mid = j * span as i64 + span as i64 / 4;
+                let s: Vec<f32> = (mid - span as i64..mid + span as i64).map(x).collect();
+                let (lo, hi) = s.iter().fold((f32::MAX, f32::MIN), |(l, h), &y| (l.min(y), h.max(y)));
+                [hi, lo]
+            })
+            .collect()
+    }
+
+    // Break it catches: edges counted on the zigzag of min/max pairs (each pair spans more than the hysteresis on an
+    // edge), which doubled the frequency of a sine in roll mode; extremes taken from the middles, which cut the peaks.
+    #[test]
+    fn min_max_pairs_give_the_frequency_of_the_signal() {
+        // roll at 0.2 s/div: 1800 pairs over 2 s, one every 1.1 ms, each the extremes of 2.2 ms of a 1 V sine. On the
+        // unit noise lifted the zigzag of 25 Hz (0.17 V) over the hysteresis (0.2 V) now and then; 40 Hz always does
+        let (span, dt) = (40, 2.0 / 1800.0 / 40.0);
+        for phase in [0.0, 0.3, 1.1, 2.0] {
+            let v = sine_pairs(40.0, dt, span, 1800, phase);
+            let pdt = span as f64 * dt / 2.0;
+            assert!((analyze_min(&v, pdt, 0.4).get(Meas::Freq) - 40.0).abs() > 5.0, "the zigzag must be a test here");
+            let a = analyze_pairs(&v, pdt, 0.4, 0.1, 0.9);
+            assert!((a.get(Meas::Freq) - 40.0).abs() < 0.05, "phase {}: {}", phase, a.get(Meas::Freq));
+            // a record that does not start on a pair, and one resampled between the points (the screen record)
+            let shifted = analyze_pairs(&v[1..], pdt, 0.4, 0.1, 0.9).get(Meas::Freq);
+            let between: Vec<f32> = v.windows(2).map(|w| 0.3 * w[0] + 0.7 * w[1]).collect();
+            let resampled = analyze_pairs(&between, pdt, 0.4, 0.1, 0.9).get(Meas::Freq);
+            assert!((shifted - 40.0).abs() < 0.05 && (resampled - 40.0).abs() < 0.05, "{} {}", shifted, resampled);
+            assert!(a.vmax > 0.999 && a.vmin < -0.999, "{} {}", a.vmax, a.vmin);
+            // the time of a rise is that of the signal, within a point: the sine rises through 0 at t = -phase / w
+            let (w, period) = (2.0 * std::f64::consts::PI * 40.0, 1.0 / 40.0);
+            let off = (a.rises[0] + phase / w).rem_euclid(period);
+            assert!(
+                off.min(period - off) < 0.25 * pdt,
+                "phase {}: rise {} is {} off",
+                phase,
+                a.rises[0],
+                off.min(period - off)
+            );
+            let env = analyze_min(&v, pdt, 0.4);
+            assert_eq!((a.top, a.base, a.get(Meas::Vpp)), (env.top, env.base, env.get(Meas::Vpp)), "phase {}", phase);
+        }
+    }
+
     #[test]
     fn complete_pulse_join_matches_suffix_reference_with_duplicate_and_nan_edges() {
-        fn old(open:&[f64],close:&[f64])->Vec<f64>{
-            let (mut widths,mut j)=(Vec::new(),0);
-            for (i,&s) in open.iter().enumerate(){
-                while j<close.len()&&close[j]<=s{j+=1;}
-                let Some(&e)=close.get(j) else{break};
-                if !open[i+1..].iter().any(|&x|x>s&&x<e){widths.push(e-s);}
+        fn old(open: &[f64], close: &[f64]) -> Vec<f64> {
+            let (mut widths, mut j) = (Vec::new(), 0);
+            for (i, &s) in open.iter().enumerate() {
+                while j < close.len() && close[j] <= s {
+                    j += 1;
+                }
+                let Some(&e) = close.get(j) else { break };
+                if !open[i + 1..].iter().any(|&x| x > s && x < e) {
+                    widths.push(e - s);
+                }
             }
             widths
         }
-        let cases:Vec<(Vec<f64>,Vec<f64>)>=vec![
-            (vec![],vec![]),(vec![1.0],vec![]),(vec![],vec![1.0]),
-            (vec![1.0,1.0,2.0,3.0],vec![1.0,1.5,2.0,2.5,3.5]),
-            (vec![3.0,4.0],vec![0.0,1.0]),(vec![0.0,1.0,2.0],vec![3.0]),
-            (vec![f64::NAN;3],vec![f64::NAN;3]),
+        let cases: Vec<(Vec<f64>, Vec<f64>)> = vec![
+            (vec![], vec![]),
+            (vec![1.0], vec![]),
+            (vec![], vec![1.0]),
+            (vec![1.0, 1.0, 2.0, 3.0], vec![1.0, 1.5, 2.0, 2.5, 3.5]),
+            (vec![3.0, 4.0], vec![0.0, 1.0]),
+            (vec![0.0, 1.0, 2.0], vec![3.0]),
+            (vec![f64::NAN; 3], vec![f64::NAN; 3]),
         ];
-        for (open,close) in cases {
-            let (a,b)=(pair_widths(&open,&close),old(&open,&close));
-            assert_eq!(a.len(),b.len());assert!(a.iter().zip(b).all(|(a,b)|*a==b||(a.is_nan()&&b.is_nan())));
+        for (open, close) in cases {
+            let (a, b) = (pair_widths(&open, &close), old(&open, &close));
+            assert_eq!(a.len(), b.len());
+            assert!(a.iter().zip(b).all(|(a, b)| *a == b || (a.is_nan() && b.is_nan())));
         }
-        let mut state=7u32;
-        for count in [2,17,100,1_000] {
-            let mut values=||{state=state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);(state%100) as f64};
-            let mut open:Vec<_>=(0..count).map(|_|values()).collect();let mut close:Vec<_>=(0..count+3).map(|_|values()).collect();
-            open.sort_by(f64::total_cmp);close.sort_by(f64::total_cmp);
-            assert_eq!(pair_widths(&open,&close),old(&open,&close));
+        let mut state = 7u32;
+        for count in [2, 17, 100, 1_000] {
+            let mut values = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state % 100) as f64
+            };
+            let mut open: Vec<_> = (0..count).map(|_| values()).collect();
+            let mut close: Vec<_> = (0..count + 3).map(|_| values()).collect();
+            open.sort_by(f64::total_cmp);
+            close.sort_by(f64::total_cmp);
+            assert_eq!(pair_widths(&open, &close), old(&open, &close));
         }
     }
 
@@ -906,9 +1111,11 @@ mod tests {
     // shows a regression without a threshold that a loaded computer trips.
     #[test]
     fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
-        let open:Vec<f64>=(0..400_000).map(|i|i as f64).collect();let close:Vec<f64>=open.iter().map(|t|t+0.5).collect();
-        let widths=pair_widths(&open,&close);
-        assert_eq!(widths.len(),400_000);assert!(widths.iter().all(|&width|width==0.5));
+        let open: Vec<f64> = (0..400_000).map(|i| i as f64).collect();
+        let close: Vec<f64> = open.iter().map(|t| t + 0.5).collect();
+        let widths = pair_widths(&open, &close);
+        assert_eq!(widths.len(), 400_000);
+        assert!(widths.iter().all(|&width| width == 0.5));
     }
 
     #[test]
@@ -944,7 +1151,13 @@ mod tests {
         // what they mean, edge by edge
         fn width(a: &[f64], b: &[f64]) -> f64 {
             let w: Vec<f64> = a.iter().filter_map(|&s| b.iter().find(|&&e| e > s).map(|&e| e - s)).collect();
-            mean(&a.iter().zip(w.iter()).filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd)).map(|(_, &wd)| wd).collect::<Vec<f64>>())
+            mean(
+                &a.iter()
+                    .zip(w.iter())
+                    .filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd))
+                    .map(|(_, &wd)| wd)
+                    .collect::<Vec<f64>>(),
+            )
         }
         let mut x = 7u32;
         let mut r = || {
@@ -952,7 +1165,8 @@ mod tests {
             (x >> 16) as f64
         };
         for n in [0usize, 1, 2, 3, 10, 200] {
-            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) = ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
+            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) =
+                ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
             rises.sort_by(f64::total_cmp);
             falls.sort_by(f64::total_cmp);
             let an = Analysis { rises: rises.clone(), falls: falls.clone(), ..Default::default() };

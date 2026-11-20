@@ -70,7 +70,7 @@ port not confirmed), DHO800 and DHO900 (LA port, front panel). The table is `VAR
 | Hardware variant | Models | OOS has run on |
 |---|---|---|
 | DHO800, 4 channels | DHO804, DHO814, DHO824 | DHO804 (user report, several releases) |
-| DHO800, 2 channels | DHO802, DHO812 | - |
+| DHO800, 2 channels | DHO802, DHO812 | DHO802 (user report, 0.1.13, issue #19) |
 | DHO900 with generator | DHO914S, DHO924S | DHO924S (the developer's unit) |
 | DHO900 without generator | DHO914, DHO924 | - |
 | DHO900 EDU | DHO914-EDU, DHO924-EDU | - |
@@ -170,11 +170,12 @@ fits over a record fail. Assumed, not measured: the path into the acquisition me
 An earlier table of this section showed 1.5 GHz with the right frequency and only more noise: those figures came from
 screen records at a slow time base.
 
-So overclocking is not usable at the full rate, and 1.25 GHz stays the default. System > Overclock stays an
-experiment.
+So overclocking is not usable at the full rate, and 1.25 GHz stays the default. System > Overclock is only in the menu
+with `adc.overclock = on` in /oos/system.conf (ADR 0010), or while limits.conf already sets another clock, so the way
+back to 1.25 GHz stays; every step above 1.25 GHz is marked "(test)".
 A start with `adc.clock_hz` that does not reach its end sets the file aside at the next start (`limits.conf.failed`, rcS).
 
-Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the
+Memory depths above 125 M need more entries in the depth list (`DEPTHS` in hal/src/dho/target.rs) and a check of the
 segment cap (`hal::dho::hz::MEM_BURSTS`).
 
 ### 4.2 Unit defaults: `/etc/oos/limits.conf`
@@ -249,7 +250,7 @@ Without a generator (model table or `afg = no`) nothing opens the generator line
 
 Still open for models other than the DHO924S:
 - EXT trigger input of the 2-channel models: not implemented.
-- DHO800: a DHO804 runs OOS (user report); front panel, LEDs and display have not been checked in detail.
+- DHO800: a DHO804 and a DHO802 run OOS (user reports); front panel, LEDs and display have not been checked in detail.
 - Logic analyser in the UI: not implemented on any model (`hal::dho::la` exists).
 
 ## 6. Related findings (other Rigol series)

@@ -12,7 +12,7 @@ while the PCIe driver loads (`its_build_mapti_cmd`, `its_build_inv_cmd`: the int
 previous kernel are still there); the display and the acquisition work, and the power-on after it has no warning.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
-`ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
+`ui/src/ui/update.rs` and `ui/remote/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
 
 ## What it protects against
 
@@ -37,8 +37,12 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
    (`oos-update boot`, before anything writes `recovery`).
 2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
    build.
-3. Its kernel and initramfs are loaded with `kexec_file_load`, or, when the image brings another device tree, with
-   `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another device tree" below). A second, uncompressed
+3. Its kernel and initramfs are loaded with `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another
+   device tree" below), with the new image's tree or, when it is the same, the running one; only a build without
+   kexec-tools uses `kexec_file_load`. That one puts the initramfs right behind the new kernel, low in memory, over
+   the loader's reserved ramdisk area and the GIC's tables: on the unit (2026-11-18) a 68 MB initramfs (a 48 MB
+   package) was dropped there and the started kernel found no root ("unknown-block(0,0)"); through kexec-tools the
+   same package installed. A second, uncompressed
    archive in the initramfs carries the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`:
    the new build may trust other keys) and the device tree section the start runs with (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
    (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
@@ -84,7 +88,10 @@ them anew in every tree) or to a node the new tree does not have refuses the kex
 `--new-dt`. Left out on purpose: the running kernel's ramdisk (`linux,initrd-*` in `/chosen` and its reservation):
 kexec-tools names the new one, and the kernel drops a ramdisk that lies in reserved memory (seen on the unit: the
 55 MB of the kexec start fell into the 13 MB the loader had reserved for its own, and the kernel found no root; the
-power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over.
+power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over. A
+seed for the kernel's address randomisation (`kaslr-seed` in `/chosen`) is carried over as 0: kexec-tools refuses a
+tree whose seed is not 0 and puts a fresh one into it (issue #193, found in a fork on a DHO924S whose loader wrote a
+seed; the developer's unit writes none, verified on the unit 2026-11-18: its running tree has no `kaslr-seed`).
 
 Where the segments go: above 1 GiB (`kexec --mem-min`), and above every GIC table the running kernel's log names. The
 GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); the started kernel takes them over and
@@ -160,7 +167,14 @@ Install on a running OOS:
 
 - browser: `http://<scope>:8080/update`, choose the file, Install; or
   `curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
-- shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
+- shell: `oos-update install FILE` (dry run), then `oos-update install FILE --execute`. FILE is the package uploaded
+  to /tmp (SCP or SFTP, for example `/tmp/oos-dev.oosupd`), or on a USB stick in the front port, which OOS mounts at
+  `/mnt/usb` (for example `/mnt/usb/oos-dev.oosupd`).
+- From 0.1.13 or older to a package larger than its kexec restart carries (0.1.14: 47 MB), the web page's install
+  ends in a kernel panic, with nothing written (#327). There: `oos-update install FILE --no-kexec` (dry run, which
+  names the direct write it would do), then `oos-update install FILE --no-kexec --execute`, a direct install without
+  the safety net of the kexec start (below). A dry run without `--execute` never starts the kexec restart, with or
+  without `--no-kexec` (`kexec_stage` returns before it)
 
 The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the
 result. Then power-cycle: that start is its trial. If the screen stays dark after the restart, power-cycle too: the
@@ -225,12 +239,13 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
 - A full `/oos` stops the trial bookkeeping: an update then neither confirms nor rolls back. The next power-on in one-shot
   mode starts stock.
 
-Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`) checks that `recovery` holds an image the loader takes and
+Selecting OOS by hand (`oos-boot-oos-again`, `oos-update arm`, on the screen System > Start OOS again: two taps
+within 5 s, the job's output in a dialog) checks that `recovery` holds an image the loader takes and
 that no install or rollback runs; after a cut job the next start stays stock. `oos-update confirm` ends a trial only when
 the image on trial is the one running. Images whose load addresses or sizes are outside what the loader handles
 (docs/boot.md) are refused at install.
 
-## Web upload limits (ui/src/http.rs)
+## Web upload limits (ui/remote/src/http.rs)
 
 At most 8 connections; bodies up to 70 MiB only for `POST /update` (128 MiB for `POST /waveform`, 1 MiB elsewhere),
 an announced larger `Content-Length` gets 413 at once; 10 s idle and 120 s per request. A body over 1 MiB is taken one

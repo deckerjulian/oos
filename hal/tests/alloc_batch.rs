@@ -102,7 +102,8 @@ fn the_read_step_allocates_nothing_after_the_first() {
 
 #[test]
 fn decode_allocates_one_vector_per_enabled_channel() {
-    for (mask, frame) in [(1u32, 2816usize), (0b0100, 200_000), (3, 4000), (0b1010, 4002), (0b0111, 8000), (0xf, 8000)] {
+    for (mask, frame) in [(1u32, 2816usize), (0b0100, 200_000), (3, 4000), (0b1010, 4002), (0b0111, 8000), (0xf, 8000)]
+    {
         let f = bytes(frame);
         decode_volts(&f, mask, CAL);
         let (k, out) = allocs(|| decode_volts(&f, mask, CAL));

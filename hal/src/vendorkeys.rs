@@ -15,7 +15,7 @@ fn word(b: &[u8], o: usize) -> Option<u32> {
 }
 
 fn wide(b: &[u8], o: usize) -> Option<u64> {
-    b.get(o..o + 8).map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+    b.get(o..)?.first_chunk().copied().map(u64::from_le_bytes)
 }
 
 fn half(b: &[u8], o: usize) -> Option<u16> {
@@ -143,7 +143,8 @@ fn inputs(vendor: &[u8]) -> String {
     let mut s = format!("{:08x}", crate::crc32(vendor));
     for p in stock_files() {
         if let Ok(m) = std::fs::metadata(&p) {
-            let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            let t =
+                m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
             s.push_str(&format!(" {}:{}", m.len(), t));
         }
     }
@@ -169,7 +170,11 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 /// Best effort: without it the next start searches again.
 fn keep(line: &str) {
     use crate::fsutil::{write_atomic, DirSync, Opts};
-    let _ = write_atomic(KEEP.as_ref(), line.as_bytes(), &Opts { mode: Some(0o600), dir_sync: DirSync::Skip, ..Default::default() });
+    let _ = write_atomic(
+        KEEP.as_ref(),
+        line.as_bytes(),
+        &Opts { mode: Some(0o600), dir_sync: DirSync::Skip, ..Default::default() },
+    );
 }
 
 #[cfg(test)]

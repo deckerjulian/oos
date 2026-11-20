@@ -41,15 +41,29 @@ pub struct Rec {
 
 const HDR: usize = 28;
 
+/// One block group of cal_vertical: four channels of 801 records.
+const GROUP_RECS: usize = 4 * 801;
+
+/// Bytes per cal_vertical record for a payload of `len` bytes. 56 on the units seen so far (three or four block groups);
+/// a DHO804 was reported with one group of 64-byte records, the 56 bytes and two more i32 (issue #37). A payload that is
+/// no whole number of either keeps 56, as before.
+pub fn vertical_stride(len: usize) -> usize {
+    if !len.is_multiple_of(GROUP_RECS * 56) && len.is_multiple_of(GROUP_RECS * 64) {
+        64
+    } else {
+        56
+    }
+}
+
 fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+    i32::from_le_bytes(crate::bytes_at(b, o))
 }
 
 impl Cal {
     pub fn from_bytes(lsb: &[u8], zero: &[u8], bw: &[u8], vertical: Vec<u8>) -> Cal {
         let mut c = Cal { lsb: [0.0; 16], zero: [0; 80], bw: [0; 80], vertical, keys: Vec::new() };
         for i in 0..16 {
-            c.lsb[i] = f64::from_le_bytes(lsb[HDR + 8 * i..HDR + 8 * i + 8].try_into().unwrap());
+            c.lsb[i] = f64::from_le_bytes(crate::bytes_at(lsb, HDR + 8 * i));
         }
         for i in 0..80 {
             c.zero[i] = i32_at(zero, HDR + 4 * i);
@@ -77,32 +91,52 @@ impl Cal {
         let dirs = [crate::dho::calfile::OOS_CAL_DIR, dir, def.as_str()];
         let mut from = Vec::new();
         let mut rd = |n: &str| {
-            let (b, d) = crate::dho::calfile::load_first(n, &dirs).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs)))?;
+            let (b, d) = crate::dho::calfile::load_first(n, &dirs).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}: no valid copy in {:?}", n, dirs))
+            })?;
             from.push((n.to_string(), d));
             Ok::<_, std::io::Error>(b)
         };
-        let (lsb, zero, bw, vert) = (rd("cal_lsb.hex")?, rd("cal_afe_zero.hex")?, rd("cal_afe_bandwidth.hex")?, rd("cal_vertical.hex")?);
+        let (lsb, zero, bw, vert) =
+            (rd("cal_lsb.hex")?, rd("cal_afe_zero.hex")?, rd("cal_afe_bandwidth.hex")?, rd("cal_vertical.hex")?);
         // a good CRC says nothing about the length: `from_bytes` needs these sizes
-        if lsb.len() < HDR + 128 || zero.len() < HDR + 320 || bw.len() < HDR + 320 || vert.len() < HDR + 4 * 801 * 56 {
+        if lsb.len() < HDR + 128 || zero.len() < HDR + 320 || bw.len() < HDR + 320 || vert.len() < HDR + GROUP_RECS * 56
+        {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "calibration file too short"));
         }
-        Ok((Cal::from_bytes(&lsb, &zero, &bw, vert), from))
+        let cal = Cal::from_bytes(&lsb, &zero, &bw, vert);
+        // records read at the wrong place give scale keys out of order, and gain codes that index past their tables
+        // (issue #37): such a file is not used, the scope starts uncalibrated instead of stopping
+        if !cal.keys_in_order() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cal_vertical.hex: scale keys out of order",
+            ));
+        }
+        if !cal.codes_in_range() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cal_vertical.hex: a gain code out of range",
+            ));
+        }
+        Ok((cal, from))
     }
 
     /// Record `idx` of channel `ch` in block group `var`. Older files have 12 blocks instead of 16: their last group
     /// stands in for the one they lack [A].
     pub fn rec(&self, var: usize, ch: usize, idx: usize) -> Rec {
-        let groups = ((self.vertical.len() - HDR) / (4 * 801 * 56)).max(1);
-        let o = HDR + ((var.min(groups - 1) * 4 + ch) * 801 + idx) * 56;
+        let stride = vertical_stride(self.vertical.len() - HDR);
+        let groups = ((self.vertical.len() - HDR) / (GROUP_RECS * stride)).max(1);
+        let o = HDR + ((var.min(groups - 1) * 4 + ch) * 801 + idx) * stride;
         let b = &self.vertical[o..o + 56];
         let mut g = [0; 8];
         for (k, x) in g.iter_mut().enumerate() {
             *x = i32_at(b, 8 + 4 * k);
         }
         Rec {
-            key: i64::from_le_bytes(b[0..8].try_into().unwrap()),
+            key: i64::from_le_bytes(crate::bytes_at(b, 0)),
             g,
-            gain: f64::from_le_bytes(b[40..48].try_into().unwrap()),
+            gain: f64::from_le_bytes(crate::bytes_at(b, 40)),
             zero: i32_at(b, 48),
             last: i32_at(b, 52),
         }
@@ -111,6 +145,25 @@ impl Cal {
     /// V per offset-DAC code of channel `ch` on input-gain path `ig` (cal_lsb, factory only).
     pub fn lsb(&self, ch: usize, ig: usize) -> f64 {
         self.lsb[ch * 4 + ig.min(3)]
+    }
+
+    /// Whether the scale keys of the first block rise from a positive start, as the rows of every unit's file do.
+    pub fn keys_in_order(&self) -> bool {
+        self.keys.first().is_some_and(|&k| k > 0) && self.keys.windows(2).all(|w| w[0] <= w[1])
+    }
+
+    /// Whether every record of every block the file holds has its seven gain codes in their ranges (afe-settings.md 2:
+    /// input gain, VGA, ATT, SGA, SGAR, MUXR 0..3, MUX 0..7). The input gain indexes the LSB table, the others become
+    /// register fields: a code out of range would index past the table or write a field that does not exist.
+    pub fn codes_in_range(&self) -> bool {
+        const MAX: [i32; 7] = [3, 3, 3, 3, 3, 7, 3];
+        let stride = vertical_stride(self.vertical.len() - HDR);
+        let groups = ((self.vertical.len() - HDR) / (GROUP_RECS * stride)).max(1);
+        (0..groups).all(|var| {
+            (0..4).all(|ch| {
+                (0..801).all(|i| self.rec(var, ch, i).g[..7].iter().zip(MAX).all(|(&v, max)| (0..=max).contains(&v)))
+            })
+        })
     }
 
     /// Scale key (nV/div) of row `i` of every block.
@@ -125,7 +178,7 @@ impl Cal {
 
     /// The 20 zero trims of channel `ch` (cal_afe_zero).
     pub fn zero_trims(&self, ch: usize) -> [i32; 20] {
-        self.zero[ch * 20..ch * 20 + 20].try_into().unwrap()
+        std::array::from_fn(|k| self.zero[ch * 20 + k])
     }
 
     /// First record whose scale key is >= `nv` (nV/div). The UI's scales pass through f32, where 100 mV reads
@@ -249,8 +302,20 @@ impl Afe {
     pub fn new(ch: usize) -> Afe {
         let mut r = [0u16; 0x40];
         for (reg, v) in [
-            (0x06, 0x1d00), (0x07, 0x8440), (0x20, 0x0008), (0x21, 0x0a91), (0x22, 0x5a00), (0x23, 0x1000), (0x26, 0x3200),
-            (0x27, 0x80c4), (0x28, 0x8000), (0x29, 0x0282), (0x2a, 0x3c44), (0x2b, 0x4c5f), (0x2c, 0x000c), (0x2e, 0x1ff9),
+            (0x06, 0x1d00),
+            (0x07, 0x8440),
+            (0x20, 0x0008),
+            (0x21, 0x0a91),
+            (0x22, 0x5a00),
+            (0x23, 0x1000),
+            (0x26, 0x3200),
+            (0x27, 0x80c4),
+            (0x28, 0x8000),
+            (0x29, 0x0282),
+            (0x2a, 0x3c44),
+            (0x2b, 0x4c5f),
+            (0x2c, 0x000c),
+            (0x2e, 0x1ff9),
             (0x37, 0xc000),
         ] {
             r[reg] = v;
@@ -533,7 +598,7 @@ impl Afe {
         // a block group the file leaves empty has gain 0 everywhere: a dead channel, the first group is close enough
         let var = if cal.block_filled(var, self.ch) { var } else { 0 };
         let r = cal.rec(var, self.ch, cal.scale_index(scale_nv));
-        let g: [i32; 7] = r.g[..7].try_into().unwrap();
+        let g: [i32; 7] = std::array::from_fn(|k| r.g[k]);
         let z = cal.zero_trims(self.ch);
         self.set_config(o, cal, g, &z);
         r
@@ -573,11 +638,23 @@ impl Afe {
     }
 
     /// Offset DAC (AFE reg 0x28) code = trunc(-(sign*offset + position) / 1e9 / lsb + zero).
-    pub fn set_offset(&mut self, o: &mut Vec<Op>, cal: &Cal, r: &Rec, offset_nv: i64, position_nv: i64, invert: bool) -> i64 {
+    pub fn set_offset(
+        &mut self,
+        o: &mut Vec<Op>,
+        cal: &Cal,
+        r: &Rec,
+        offset_nv: i64,
+        position_nv: i64,
+        invert: bool,
+    ) -> i64 {
         let lsb = cal.lsb[self.ch * 4 + r.g[0] as usize];
         let sign = if invert { -1.0 } else { 1.0 };
         // past the end of the DAC it stays at the end; wrapped it would throw the trace the other way (3.2)
-        let code = if lsb != 0.0 { ((-(sign * offset_nv as f64 + position_nv as f64) / 1e9 / lsb + r.zero as f64) as i64).clamp(0, 0xffff) } else { r.zero as i64 };
+        let code = if lsb != 0.0 {
+            ((-(sign * offset_nv as f64 + position_nv as f64) / 1e9 / lsb + r.zero as f64) as i64).clamp(0, 0xffff)
+        } else {
+            r.zero as i64
+        };
         self.set(o, 0x28, code);
         code
     }
@@ -592,9 +669,30 @@ pub trait AfeBus {
 
 /// AFE init table (registers 0x20..0x37), same for all channels.
 const INIT_TABLE: [(u8, u16); 24] = [
-    (0x20, 0x0008), (0x21, 0x0a91), (0x22, 0x5a00), (0x23, 0x1000), (0x24, 0x0000), (0x25, 0x0000), (0x26, 0x3200), (0x27, 0x0044),
-    (0x28, 0x0000), (0x29, 0x0282), (0x2a, 0x3c40), (0x2b, 0x4c00), (0x2c, 0x000c), (0x2d, 0x0000), (0x2e, 0x1ff9), (0x2f, 0x5980),
-    (0x30, 0x0000), (0x31, 0x0000), (0x32, 0xc000), (0x33, 0x0088), (0x34, 0x0009), (0x35, 0x0000), (0x36, 0x0000), (0x37, 0xc000),
+    (0x20, 0x0008),
+    (0x21, 0x0a91),
+    (0x22, 0x5a00),
+    (0x23, 0x1000),
+    (0x24, 0x0000),
+    (0x25, 0x0000),
+    (0x26, 0x3200),
+    (0x27, 0x0044),
+    (0x28, 0x0000),
+    (0x29, 0x0282),
+    (0x2a, 0x3c40),
+    (0x2b, 0x4c00),
+    (0x2c, 0x000c),
+    (0x2d, 0x0000),
+    (0x2e, 0x1ff9),
+    (0x2f, 0x5980),
+    (0x30, 0x0000),
+    (0x31, 0x0000),
+    (0x32, 0xc000),
+    (0x33, 0x0088),
+    (0x34, 0x0009),
+    (0x35, 0x0000),
+    (0x36, 0x0000),
+    (0x37, 0xc000),
 ];
 
 impl Afe {
@@ -760,7 +858,7 @@ pub fn set_gear(ch: usize, gear: u8) -> std::io::Result<()> {
     if !std::path::Path::new("/dev/dac_gear_change").exists() {
         use std::sync::Mutex;
         static LINES: Mutex<Vec<(usize, crate::dho::gpio::Line)>> = Mutex::new(Vec::new());
-        let mut lines = LINES.lock().unwrap();
+        let mut lines = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((_, l)) = lines.iter().find(|(c, _)| *c == ch) {
             l.set(gear & 1 != 0);
         } else {
@@ -802,14 +900,31 @@ pub fn adc_mode_words(mask: u32) -> [u32; 2] {
 /// Full channel set-up: ADC band-limit words, Hz filter of bandwidth `bwv`, scale, offset, then the input mode
 /// restore, which brings back the ADC input mode of the current channel
 /// set `mask` (the band-limit words leave the ADC in another mode). Op::Adc words need 100 us gaps.
-pub fn configure(afe: &mut Afe, cal: &Cal, scale_nv: i64, offset_nv: i64, bwv: u32, fs: u64, mask: u32) -> (Vec<Op>, Rec, i64) {
+pub fn configure(
+    afe: &mut Afe,
+    cal: &Cal,
+    scale_nv: i64,
+    offset_nv: i64,
+    bwv: u32,
+    fs: u64,
+    mask: u32,
+) -> (Vec<Op>, Rec, i64) {
     configure_ch(afe, cal, scale_nv, offset_nv, bwv, fs, mask, false, Some(true))
 }
 
 /// `configure` with the mirrored offset of an inverted channel (3.5) and the coupling: `dc` Some(true) DC, Some(false)
 /// AC, None leaves it as it is (GND, 3.3). The coupling is written only when it changes.
-#[allow(clippy::too_many_arguments)]
-pub fn configure_ch(afe: &mut Afe, cal: &Cal, scale_nv: i64, offset_nv: i64, bwv: u32, fs: u64, mask: u32, invert: bool, dc: Option<bool>) -> (Vec<Op>, Rec, i64) {
+pub fn configure_ch(
+    afe: &mut Afe,
+    cal: &Cal,
+    scale_nv: i64,
+    offset_nv: i64,
+    bwv: u32,
+    fs: u64,
+    mask: u32,
+    invert: bool,
+    dc: Option<bool>,
+) -> (Vec<Op>, Rec, i64) {
     let mut o: Vec<Op> = BANDLIMIT_ADC.iter().map(|&w| Op::Adc(w)).collect();
     afe.hz_filter(&mut o, filter(bwv, fs));
     let r = afe.set_scale(&mut o, cal, scale_nv, block_group(bwv, fs));
@@ -824,6 +939,62 @@ pub fn configure_ch(afe: &mut Afe, cal: &Cal, scale_nv: i64, offset_nv: i64, bwv
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #37 (a DHO804 with 0.1.13): its cal_vertical.hex holds one block group of 64-byte records, the 56 bytes
+    // and two more i32. Read at 56 bytes a record, the gain codes came from the wrong place and oos-ui stopped. Breaks
+    // it catches: a 64-byte file read at 56 bytes; a missing group not standing in for the others; the usual 56-byte
+    // file of four groups read another way; a file whose keys are out of order taken as calibration.
+    #[test]
+    fn vertical_records_of_56_and_64_bytes() {
+        let keys = scale_ladder();
+        let rec = |var: usize, ch: usize, i: usize| super::Rec {
+            key: keys[i],
+            g: [(i / 201) as i32, 1, 2, 3, var as i32, 5, ch as i32, 0],
+            gain: 1.0 + i as f64 / 1000.0,
+            zero: 32000 + i as i32,
+            last: 7,
+        };
+        let file = |groups: usize, stride: usize| {
+            let mut v = vec![0u8; HDR];
+            for var in 0..groups {
+                for ch in 0..4 {
+                    for i in 0..801 {
+                        v.extend_from_slice(&crate::dho::selfcal::rec_bytes(&rec(var, ch, i)));
+                        v.extend(std::iter::repeat_n(0xee, stride - 56));
+                    }
+                }
+            }
+            Cal::from_bytes(&[0; HDR + 128], &[0; HDR + 320], &[0; HDR + 320], v)
+        };
+        let c = file(1, 64);
+        for (ch, i) in [(0, 0), (1, 400), (3, 800)] {
+            assert_eq!(c.rec(0, ch, i), rec(0, ch, i));
+            assert_eq!(c.rec(3, ch, i), rec(0, ch, i), "the one group stands in for the others");
+        }
+        assert!(c.keys_in_order() && c.codes_in_range());
+        let c = file(4, 56);
+        for (var, ch, i) in [(0, 0, 0), (2, 1, 400), (3, 3, 800)] {
+            assert_eq!(c.rec(var, ch, i), rec(var, ch, i));
+        }
+        // the 64-byte file read at 56 bytes a record, as before: its keys are out of order
+        let mut v = vec![0u8; HDR];
+        for i in 0..GROUP_RECS {
+            v.extend_from_slice(&crate::dho::selfcal::rec_bytes(&rec(0, i / 801, i % 801)));
+            v.extend([0xee; 8]);
+        }
+        let keys56: Vec<i64> =
+            (0..801).map(|i| i64::from_le_bytes(v[HDR + 56 * i..HDR + 56 * i + 8].try_into().unwrap())).collect();
+        assert!(!(keys56[0] > 0 && keys56.windows(2).all(|w| w[0] <= w[1])), "read at 56, the keys are garbage");
+        assert_eq!(vertical_stride(v.len() - HDR), 64);
+        assert_eq!(vertical_stride(4 * GROUP_RECS * 56), 56);
+        assert_eq!(vertical_stride(3 * GROUP_RECS * 56), 56);
+        assert_eq!(vertical_stride(GROUP_RECS * 56 + 5), 56, "no whole number: 56 as before");
+        // a garbled code with the keys still in order: input gain 4 indexes past the LSB table (Copilot on #247)
+        let mut c = file(4, 56);
+        let o = HDR + (2 * 4 * 801 + 801 + 100) * 56 + 8;
+        c.vertical[o..o + 4].copy_from_slice(&4i32.to_le_bytes());
+        assert!(c.keys_in_order() && !c.codes_in_range());
+    }
 
     #[derive(Default)]
     struct Rec {
@@ -877,7 +1048,10 @@ mod tests {
     #[test]
     fn the_ladder_is_the_table() {
         let l = scale_ladder();
-        assert_eq!((l.len(), l[160], l[270], l[480], l[530], l[640], l[800]), (801, 1_000_000, 5_000_000, 100_000_000, 200_000_000, 1_000_000_000, 10_000_000_000));
+        assert_eq!(
+            (l.len(), l[160], l[270], l[480], l[530], l[640], l[800]),
+            (801, 1_000_000, 5_000_000, 100_000_000, 200_000_000, 1_000_000_000, 10_000_000_000)
+        );
         assert!(l.windows(2).all(|w| w[0] < w[1] && w[1] as f64 / w[0] as f64 <= 1.0251));
         let Ok(cal) = Cal::load(&crate::dho::calfile::test_dir(false)) else {
             eprintln!("calibration files not found, skipped");
@@ -916,7 +1090,10 @@ mod tests {
             let mut afe = Afe::new(ch);
             let (ops, r, code) = configure(&mut afe, &cal, scale, off, v, 1_250_000_000, 1 << ch);
             // ends with the restore: the input mode of the channel set
-            assert_eq!(&ops[ops.len() - 2..], &[Op::Adc(adc_mode_words(1 << ch)[0]), Op::Adc(adc_mode_words(1 << ch)[1])]);
+            assert_eq!(
+                &ops[ops.len() - 2..],
+                &[Op::Adc(adc_mode_words(1 << ch)[0]), Op::Adc(adc_mode_words(1 << ch)[1])]
+            );
             let (fa, fb, fc) = filter(v, 1_250_000_000);
             let mut got = vec![format!("filter {} {} {} group {}", fa, fb, fc, block_group(v, 1_250_000_000))];
             for op in &ops {

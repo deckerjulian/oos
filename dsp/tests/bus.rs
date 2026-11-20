@@ -3,7 +3,7 @@
 
 //! CAN and LIN decoders against generated frames with known content.
 
-use oos_dsp::decode::{can, lin, Kind, Packet};
+use oos_dsp::decode::{can, lin, lin_checksum, lin_pid, Kind, Packet};
 use oos_dsp::sim::{add_noise, bits_logic, can_bits, can_logic, lin_logic, sample, CanFrame};
 
 fn ids(p: &[Packet]) -> Vec<(u32, bool, bool)> {
@@ -29,7 +29,15 @@ fn can_standard_extended_and_remote_frames() {
     let dt = 1.0 / 25e6; // 50 samples per bit
     let v = sample(|t| l.v(t), 0.0, dt, 25_000);
     let p = can(&v, dt, br, 1.65, 0.2, false);
-    assert_eq!(ids(&p), vec![(0x123, false, false), (0x1abc_def0 & 0x1fff_ffff, true, false), (0x7ff, false, true), (0x0f0, false, false)]);
+    assert_eq!(
+        ids(&p),
+        vec![
+            (0x123, false, false),
+            (0x1abc_def0 & 0x1fff_ffff, true, false),
+            (0x7ff, false, true),
+            (0x0f0, false, false)
+        ]
+    );
     let mut want = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 0x55];
     want.extend([0xff; 8]);
     assert_eq!(data(&p), want);
@@ -68,7 +76,8 @@ fn can_on_can_h_with_noise() {
 
 #[test]
 fn lin_classic_and_enhanced_frames() {
-    let frames = [(0x10u8, vec![0x01, 0x02, 0x03], false), (0x3c, vec![0xaa, 0x55, 0x00, 0xff, 0x12, 0x34, 0x56, 0x78], true)];
+    let frames =
+        [(0x10u8, vec![0x01, 0x02, 0x03], false), (0x3c, vec![0xaa, 0x55, 0x00, 0xff, 0x12, 0x34, 0x56, 0x78], true)];
     let l = lin_logic(&frames, 19200.0, 0.0, 12.0);
     let dt = 1.0 / 1e6;
     let v = sample(|t| l.v(t), 0.0, dt, 20_000);
@@ -98,6 +107,88 @@ fn lin_wrong_checksum_is_flagged() {
     }
     let p = lin(&v, dt, 9600.0, 6.0, 0.5);
     assert_eq!(crcs(&p), vec![false], "{:?}", p);
+}
+
+/// What a packet says, without its times.
+fn said(p: &[Packet]) -> Vec<(Kind, u32, bool)> {
+    p.iter().map(|x| (x.kind, if x.kind == Kind::Break { 0 } else { x.value }, x.ok)).collect()
+}
+
+/// The bits of a LIN frame from its bytes as they are sent: a break of 13 bits and its delimiter, then every byte
+/// with a start bit, eight bits LSB first, a stop bit and a bit of pause; then `idle` bit times of idle line.
+fn lin_bits(bytes: &[u8], idle: usize) -> Vec<bool> {
+    let mut bits = vec![false; 13];
+    bits.push(true);
+    for &v in bytes {
+        bits.push(false);
+        bits.extend((0..8).map(|i| (v >> i) & 1 == 1));
+        bits.extend([true, true]);
+    }
+    bits.extend(vec![true; idle]);
+    bits
+}
+
+/// The bit rate of a frame is that of its sync field, as a node takes it: a bus at 18350 bit/s reads the same
+/// whatever rate the decoder is set to. It was read at the rate that was set, and a rate that is not in the list
+/// could not be set.
+#[test]
+fn lin_takes_its_bit_rate_from_the_sync_field() {
+    let frames = [(0x09u8, vec![0x70, 0xd3, 0xbb, 0x98, 0xd8, 0xc5, 0x46, 0xfe], true), (0x0a, vec![0xd0, 0x88], true)];
+    let l = lin_logic(&frames, 18350.0, 0.0, 12.0);
+    let dt = 1.0 / 1e6;
+    let v = sample(|t| l.v(t), 0.0, dt, 14_000);
+    let want = lin(&v, dt, 18350.0, 6.0, 0.5);
+    assert_eq!(ids(&want).iter().map(|x| x.0).collect::<Vec<_>>(), [0x09, 0x0a]);
+    assert_eq!((crcs(&want), want.iter().all(|x| x.ok)), (vec![true, true], true));
+    assert_eq!(data(&want), [0x55, 0x70, 0xd3, 0xbb, 0x98, 0xd8, 0xc5, 0x46, 0xfe, 0x55, 0xd0, 0x88]);
+    for baud in [19200.0, 9600.0, 2400.0, 115200.0] {
+        let p = lin(&v, dt, baud, 6.0, 0.5);
+        assert_eq!(said(&p), said(&want), "set to {baud}");
+        for b in p.iter().filter(|x| x.kind == Kind::Break) {
+            assert!((b.value as f64 / 18350.0 - 1.0).abs() < 0.01, "measured {} bit/s", b.value);
+        }
+    }
+}
+
+/// A frame whose sync field is not 0x55 is listed with its sync as an error, read at the rate of the other frames;
+/// it was a break alone, without a word of what was wrong.
+#[test]
+fn lin_a_bad_sync_is_listed_as_an_error() {
+    let pid = lin_pid(0x04);
+    let mut bits = lin_bits(&[0x55, lin_pid(0x01), 0x11, lin_checksum(&[lin_pid(0x01), 0x11])], 20);
+    bits.extend(lin_bits(&[0x54, pid, 0x3f, lin_checksum(&[pid, 0x3f])], 20));
+    let l = bits_logic(&bits, 1.0 / 19200.0, 12, 0.0, 12.0);
+    let dt = 1.0 / 1e6;
+    let v = sample(|t| l.v(t), 0.0, dt, 9_000);
+    let p = lin(&v, dt, 19200.0, 6.0, 0.5);
+    assert_eq!(ids(&p).iter().map(|x| x.0).collect::<Vec<_>>(), [0x01, 0x04]);
+    let sync = |x: &&Packet| x.kind == Kind::Data && matches!(x.value, 0x54 | 0x55);
+    let syncs: Vec<(u32, bool)> = p.iter().filter(sync).map(|x| (x.value, x.ok)).collect();
+    assert_eq!(syncs, [(0x55, true), (0x54, false)]);
+    assert_eq!((data(&p), crcs(&p)), (vec![0x55, 0x11, 0x54, 0x3f], vec![true, true]));
+    // it is read at the rate of the frame beside it, whatever rate is set
+    assert_eq!(said(&lin(&v, dt, 115200.0, 6.0, 0.5)), said(&p));
+}
+
+/// A byte long after a frame is not its checksum: the frame ends with its own, and the byte is not listed. The last
+/// byte before the next break was the checksum, however late it came.
+#[test]
+fn lin_a_late_byte_is_not_the_checksum_of_the_frame_before() {
+    let pid = lin_pid(0x08);
+    let frame = [0x55, pid, 0x67, 0x80, lin_checksum(&[pid, 0x67, 0x80])];
+    // the frame, 1500 bit times of idle line, a byte by itself, idle line, the frame again
+    let mut bits = lin_bits(&frame, 1500);
+    bits.push(false);
+    bits.extend((0..8).map(|i| (0xf0u8 >> i) & 1 == 1));
+    bits.extend(vec![true; 300]);
+    bits.extend(lin_bits(&frame, 20));
+    let l = bits_logic(&bits, 1.0 / 19200.0, 12, 0.0, 12.0);
+    let dt = 1.0 / 500e3;
+    let v = sample(|t| l.v(t), 0.0, dt, 52_000);
+    let p = lin(&v, dt, 19200.0, 6.0, 0.5);
+    assert_eq!(p.iter().filter(|x| x.kind == Kind::Break).count(), 2);
+    assert_eq!((data(&p), crcs(&p)), (vec![0x55, 0x67, 0x80, 0x55, 0x67, 0x80], vec![true, true]));
+    assert!(p.iter().all(|x| x.ok), "{p:?}");
 }
 
 /// A stuff bit right after the last CRC bit (ISO 11898-1: stuffing covers SOF .. CRC sequence) must not be taken for
@@ -148,7 +239,12 @@ fn can_stuff_bit_after_the_crc() {
         let v = sample(|t| l.v(t), 0.0, dt, 8_000);
         let p = can(&v, dt, br, 1.65, 0.2, false);
         assert_eq!(crcs(&p), vec![true], "id {:#x}", id);
-        assert!(p.iter().any(|x| x.kind == Kind::Ack && x.ok), "id {:#x}: {:?}", id, p.iter().filter(|x| x.kind == Kind::Ack).collect::<Vec<_>>());
+        assert!(
+            p.iter().any(|x| x.kind == Kind::Ack && x.ok),
+            "id {:#x}: {:?}",
+            id,
+            p.iter().filter(|x| x.kind == Kind::Ack).collect::<Vec<_>>()
+        );
         checked += 1;
         if checked >= 5 {
             break;
