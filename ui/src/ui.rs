@@ -702,13 +702,8 @@ pub struct Ui {
     area: Rect,
     /// plot rectangle (10 x 8 div) of the current layout
     grid: Rect,
-    layout_zoom: bool,
-    /// Entry context used by event navigation; closing zoom never rolls back main controls.
-    zoom_saved: Option<(usize, f32, f32)>,
-    // Display magnification only: original graticule divisions at detail centre.
-    zoom_vfactor: f32,
-    zoom_vcenter: f32,
-    zoom_user_closed: bool,
+    /// the zoom window: its vertical magnification, the time base it opened on, how it was closed (plot_layout.rs)
+    zoom_view: plot_layout::ZoomView,
     /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
     wins: Vec<Rect>,
     /// the window being drawn

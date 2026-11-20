@@ -327,7 +327,7 @@ impl Ui {
                 let half_zoom = tscales()[self.m.zscale] * HDIV * 0.5;
                 if (t as f32 - self.m.delay).abs() + half_zoom > half_main {
                     self.m.delay = t as f32;
-                    if let Some(saved) = self.zoom_saved.as_mut() {
+                    if let Some(saved) = self.zoom_view.saved.as_mut() {
                         saved.2 = t as f32;
                     }
                 }

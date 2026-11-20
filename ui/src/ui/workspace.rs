@@ -390,7 +390,7 @@ mod tests {
                 assert_eq!(ui.ref_sel, 1);
                 if zoom {
                     assert_eq!(ui.refs[1].as_ref().unwrap().offset, before);
-                    assert!(ui.zoom_vcenter > 0.0);
+                    assert!(ui.zoom_view.vcenter > 0.0);
                 } else {
                     assert!(ui.refs[1].as_ref().unwrap().offset < before);
                 }
@@ -1397,8 +1397,8 @@ impl Ui {
         };
         self.m.delay = center;
         self.set_zoom(false);
-        self.zoom_vfactor = 1.0;
-        self.zoom_vcenter = 0.0;
+        self.zoom_view.vfactor = 1.0;
+        self.zoom_view.vcenter = 0.0;
         self.dirty_map = true;
         self.toast("Fit record");
         true

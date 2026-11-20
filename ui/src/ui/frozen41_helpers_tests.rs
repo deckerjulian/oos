@@ -234,8 +234,8 @@ fn histogram_statistics_use_the_detail_lane_transform_and_horizontal_time_axis()
     ui.workspace.stacked = true;
     ui.set_zoom(true);
     ui.relayout();
-    ui.zoom_vfactor = 4.0;
-    ui.zoom_vcenter = 0.5;
+    ui.zoom_view.vfactor = 4.0;
+    ui.zoom_view.vcenter = 0.5;
     ui.m.ch[0].offset = 0.1;
     ui.m.ch[0].vscale = VSCALES.iter().position(|&v| v == 0.2).unwrap();
     ui.m.ch[0].unit = AmpUnit::A;

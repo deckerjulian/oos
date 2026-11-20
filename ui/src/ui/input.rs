@@ -861,7 +861,7 @@ impl Ui {
             Drag::Offset(c) => self.m.ch[c].offset,
             Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
             Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
-            Drag::ZoomVertical => self.zoom_vcenter,
+            Drag::ZoomVertical => self.zoom_view.vcenter,
             Drag::Bus => self.m.bus.pos,
             _ => 0.0,
         };
@@ -902,7 +902,7 @@ impl Ui {
         let ppy = self.area.h as f32 / VDIV;
         match t.drag {
             Drag::ZoomVertical => {
-                self.zoom_vcenter = t.start_offset + dy as f32 / ppy / self.zoom_vfactor;
+                self.zoom_view.vcenter = t.start_offset + dy as f32 / ppy / self.zoom_view.vfactor;
                 self.dirty_map = true;
             }
             Drag::RefOffset(i) => {
@@ -1095,13 +1095,13 @@ impl Ui {
         let next_center = center + (0.5 - (midpoint - a.y as f32) / a.h as f32) * VDIV / factor;
         let next_factor = (factor * a.h as f32 / (high - low).max(1) as f32).clamp(1.0, 1024.0);
         if !on {
-            self.zoom_saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
+            self.zoom_view.saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
         }
         self.m.zscale = z;
         self.m.zdelay = (t0 + t1) * 0.5;
         self.m.zoom = true;
-        self.zoom_vfactor = next_factor;
-        self.zoom_vcenter = next_center;
+        self.zoom_view.vfactor = next_factor;
+        self.zoom_view.vcenter = next_center;
         self.clamp_zoom();
         self.zoom_box.arm = true;
         self.dirty_map = true;
