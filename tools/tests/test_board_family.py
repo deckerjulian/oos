@@ -84,6 +84,13 @@ class Tools(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn("OOS_BOARD='nope'", r.stderr)
 
+    def test_gel_sim(self):
+        # before it looks for the built install file or starts a container
+        r = tool(["sh", str(ROOT / "tools/gel-sim.sh")], "nope")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("OOS_BOARD='nope'", r.stderr)
+        self.assertNotIn("build-dev-image", r.stderr)
+
     def test_check_builds_for_the_families(self):
         # the layers clippy, test and target build for OOS_FAMILIES, else every family; a wrong name stops the run
         def check(families):

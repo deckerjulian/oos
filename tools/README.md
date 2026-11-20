@@ -5,8 +5,8 @@ when its owner asked for it in the session (AGENTS.md, ADR 0018).
 
 The checks build for every board family (`check.sh` below). A tool that works for one board family takes it from
 `OOS_BOARD`, the switch the build reads, and works for `dho` when it is not set (ADR 0067): `plan-matrix.sh`,
-`compare-base.sh`, `device-deploy.sh`, and the image build (`../boot/build-dev-image.sh`). A name that is no folder of
-`rootfs/board/` is refused before anything is built.
+`compare-base.sh`, `device-deploy.sh`, `gel-sim.sh`, and the image build (`../boot/build-dev-image.sh`). A name that is
+no folder of `rootfs/board/` is refused before anything is built.
 
 ## Checks and tests on this computer
 
@@ -47,9 +47,9 @@ The checks build for every board family (`check.sh` below). A tool that works fo
 | `ssh-sim.sh` | no; Docker | `/bin/oos-ssh` and Dropbear in an arm64 container: password, key, scp, sftp and the guards |
 | `usb-sim.sh` | no; Docker, QEMU | `/bin/oos-usb` in a virtual machine with simulated disks, pulled while mounted |
 | `wlan-sim.sh` | no; Docker, QEMU | the WLAN path in a virtual machine with simulated radios and access points |
-| `gel-sim.sh [do_update.sh]` | no; Docker | the USB install file through the steps of the stock update, on a file laid out like a stock card |
+| `gel-sim.sh [do_update.sh]` | no; Docker | the USB install file through the steps of the stock update, on a file laid out like a stock card; the file's name, the stock partition table and the places of boot, recovery and backup are those of the family `OOS_BOARD` (its `etc/oos-board`) |
 | `unit-dtb-check.sh` | no; Docker | the DTB step of a unit profile (`eth.mac` as `local-mac-address`, [models.md 4.2](../docs/models.md)) |
-| `image-manifest.py IMAGE DTB INITRAMFS` | no | what an image build put into the image, one line per file, to compare two builds |
+| `image-manifest.py IMAGE DTB INITRAMFS` | no | what an image build put into the image, one line per file, to compare two builds; the DTB is `boot/out/<OOS_IMAGE_NAME>.dtb` of the family |
 | `deps-check.sh` | no; network | the pinned sources of `rootfs/deps.lock` against their upstream release listings |
 | `release-sources.sh list / check TAG` | no | the source files a release carries next to its image, from `rootfs/deps.lock` and `kernel/base.sha256`; `check` compares a release on GitHub with the list ([THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md)) |
 
