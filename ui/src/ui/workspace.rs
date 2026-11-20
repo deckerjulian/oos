@@ -1248,10 +1248,10 @@ impl Ui {
                 };
                 let origin = match panel {
                     Panel::Eye => self.eye_pane_rect(),
-                    Panel::Measurements => {
-                        let (head, body) = self.results_rects().unwrap();
-                        Rect::new(head.x, head.y, head.w, head.h + body.h)
-                    }
+                    Panel::Measurements => match self.results_rects() {
+                        Some((head, body)) => Rect::new(head.x, head.y, head.w, head.h + body.h),
+                        None => return false,
+                    },
                     Panel::Plot => self.grid,
                 };
                 self.workspace.gesture = Some(Gesture { panel, origin, x, y, at: self.now, moved: false, held: false });
@@ -1373,14 +1373,16 @@ impl Ui {
             self.toast("No retained waveform to fit");
             return false;
         };
-        if let WaveId::Ref(i) = source {
-            let r = self.refs[i].as_ref().unwrap();
+        let shown = match source {
+            WaveId::Ref(i) => self.refs[i].as_mut(),
+            _ => None,
+        };
+        if let Some(r) = shown {
             let summary = crate::wave::autoset_summary(&r.v, r.dt);
             if summary.valid {
                 let want = ((summary.vmax - summary.vmin) / (VDIV * 0.8)).max(VSCALES[0]);
                 let vpd = VSCALES.iter().copied().find(|&scale| scale >= want).unwrap_or(VSCALES[VSCALES.len() - 1]);
                 let offset = -0.5 * (summary.vmax + summary.vmin);
-                let r = self.refs[i].as_mut().unwrap();
                 r.vpd = vpd;
                 r.offset = offset;
             }

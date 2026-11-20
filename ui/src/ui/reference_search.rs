@@ -129,10 +129,10 @@ impl Ui {
         }
     }
     fn source_vpd(&self, id: WaveId, candidate: Option<(usize, f32)>) -> f32 {
-        match id {
-            WaveId::Ref(i) if candidate.is_some_and(|(slot, _)| slot == i) => candidate.unwrap().1,
-            WaveId::Ref(i) => self.refs[i].as_ref().map_or(1.0, |r| r.vpd),
-            WaveId::Ch(c) => self.m.ch[c].volts_per_div(),
+        match (id, candidate) {
+            (WaveId::Ref(i), Some((slot, vpd))) if slot == i => vpd,
+            (WaveId::Ref(i), _) => self.refs[i].as_ref().map_or(1.0, |r| r.vpd),
+            (WaveId::Ch(c), _) => self.m.ch[c].volts_per_div(),
         }
         .max(1e-6)
     }

@@ -263,8 +263,8 @@ impl Tz {
             };
             tz.dst = Some(Dst { name, off: doff, start, end });
         }
-        if p.peek().is_some() {
-            return Err(format!("unexpected '{}'", p.peek().unwrap() as char));
+        if let Some(c) = p.peek() {
+            return Err(format!("unexpected '{}'", c as char));
         }
         Ok(tz)
     }

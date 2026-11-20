@@ -406,8 +406,8 @@ impl<P: crate::Program> Server<P> {
                     Some(c) if self.conns[i].core => {
                         let response = core_async(&c, &mut self.links, exec);
                         if c.proc_ == 10 && response.get(24..28) == Some(&0u32.to_be_bytes()) {
-                            if let Some(id) = response.get(28..32) {
-                                let id = u32::from_be_bytes(id.try_into().unwrap()) as usize;
+                            if let Some(&[b0, b1, b2, b3]) = response.get(28..32) {
+                                let id = u32::from_be_bytes([b0, b1, b2, b3]) as usize;
                                 for connection in &mut self.conns {
                                     connection.links.retain(|old| *old != id);
                                 }

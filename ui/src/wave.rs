@@ -7,10 +7,10 @@
 use crate::board::{board, Board};
 use crate::model::*;
 
-/// The state shared with the acquisition thread, locked: the one `unwrap` for every reader and writer of `HwShared`
-/// in this file. A lock fails only when another holder panicked while it held it, and the state may then be half
-/// written; this panics then, as each of these lines did before.
-fn hw(shared: &crate::board::HwShared) -> std::sync::MutexGuard<'_, crate::board::Shared> {
+/// The state shared with the acquisition thread (`HwShared`, `LiveShared`), locked: the one `unwrap` for every reader
+/// and writer of it on the screen's side. A lock fails only when another holder panicked while it held it, and the
+/// state may then be half written; this panics then, as each of these lines did before.
+pub(crate) fn hw<T>(shared: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     shared.lock().unwrap()
 }
 
@@ -681,7 +681,7 @@ impl Source {
             return acquire_hw(m, shared, seen);
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
-            let g = shared.lock().unwrap();
+            let g = hw(shared);
             if g.0 == *seen || g.1.is_empty() {
                 return None; // no new frame
             }

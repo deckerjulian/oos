@@ -395,8 +395,9 @@ fn set_decoder(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         }
         // a module's option indices; brought into range where they are used (`protocols::opt_fit`)
         "dec_opt" => {
+            let opts = p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?;
             m.dec_opt =
-                p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap()
+                opts.try_into().map_err(|o: Vec<u8>| format!("{} values, want {}", o.len(), crate::protocols::OPTS))?
         }
         "dec_src2" => m.dec_src2 = p_decode_source(v)?,
         "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_decode_source(v)?) },
