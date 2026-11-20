@@ -46,6 +46,10 @@ const US: i128 = 1_000_000_000;
 enum Act {
     /// new settings: the model changed as the function says
     Set(fn(&mut Model)),
+    /// new settings that change what the front ends make of the scene: the model, and the scene's view of it
+    SetView(fn(&mut Model)),
+    /// CLEAR of the average (`Shared::avg_clear`)
+    AvgClear,
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -364,7 +368,85 @@ const CASES: &[Case] = &[
         script: &[(3, Act::Force)],
         ..BASE
     },
+    Case { name: "average-hw-16-then-clear", model: |m| average(m, true, 16), script: &[(15, Act::AvgClear)], ..BASE },
+    Case {
+        name: "average-hw-64-cleared-by-new-settings",
+        model: |m| average(m, true, 64),
+        period_us: Some(1_000),
+        passes: 20,
+        script: &[(10, Act::SetView(|m| m.ch[0].vscale -= 1))],
+        ..BASE
+    },
+    Case { name: "average-sw-16", model: |m| average(m, false, 16), ..BASE },
 ];
+
+/// The model in Average mode of `count`, in the FPGA (`hw`) or in software: CH1 at 1 us/div, records of 1k points.
+fn average(m: &mut Model, hw: bool, count: u32) {
+    ch(m, &[0]);
+    tdiv(m, 1e-6);
+    depth(m, "1k");
+    (m.acq, m.avg_hw, m.avg_count) = (AcqMode::Average, hw, count);
+}
+
+/// The offset the scene adds in Average mode: +`DITHER` V at every other trigger, -`DITHER` V at the others (a frame
+/// is much shorter than the trigger period), so an average of an even count takes it out and a frame not averaged
+/// keeps it.
+const DITHER: f64 = 0.02;
+
+/// `DITHER` with its sign at `t` s, of the trigger nearest to it, the triggers `period_us` apart.
+fn dither(t: f64, period_us: i128) -> f64 {
+    if (t * 1e6 / period_us as f64).round() as i64 % 2 == 0 {
+        DITHER
+    } else {
+        -DITHER
+    }
+}
+
+/// The model of a case in Average mode, else None.
+fn averaged(case: &Case) -> Option<Model> {
+    let mut m = Model::default();
+    (case.model)(&mut m);
+    (m.acq == AcqMode::Average).then_some(m)
+}
+
+/// The checks of a case in Average mode (`m`), whose scene adds `DITHER`. With the hardware average: 0x10b4 pulsed by
+/// the configuration and by every clear the screen asked for (CLEAR, new settings), one frame a batch, each the FPGA's
+/// (`hw_avg`) and the scene's signal with the offset averaged out. In software: no average in the FPGA, every frame a
+/// raw one with the offset of its trigger, both signs. Break it catches: an average not switched on or not read, a
+/// clear left out (the frames after new settings would mix records of the old scale), more than one frame a batch, a
+/// software average done by the FPGA.
+fn average_checks(case: &Case, m: &Model, trace: &str, frames: &[Frame]) {
+    let writes = |off: &str| trace.lines().filter(|l| l.starts_with("Write") && l.contains(off)).collect::<Vec<_>>();
+    let pulses = writes("off: 4276, v: 1 }").len();
+    let batches = trace.lines().filter(|l| l.starts_with("Played")).count();
+    assert!(!frames.is_empty(), "{}: no frame", case.name);
+    if m.avg_hw {
+        let asked = case.script.iter().filter(|(_, a)| matches!(a, Act::AvgClear | Act::SetView(_))).count();
+        assert_eq!(pulses, 1 + asked, "{}: the average clears (0x10b4)", case.name);
+        assert_eq!(frames.len(), batches, "{}: one averaged frame a batch", case.name);
+    } else {
+        let mode = writes("off: 4100,");
+        let on = mode.iter().filter_map(|l| l.rsplit("v: ").next()?.trim_end_matches(" }").parse::<u32>().ok());
+        assert!(pulses == 0 && on.into_iter().all(|v| v & 1 << 3 == 0), "{}: averaged in the FPGA", case.name);
+    }
+    let volts = signal(case.freq_hz, case.square);
+    let mut signs = [false; 2];
+    for f in frames {
+        assert_eq!(f.hw_avg, m.avg_hw, "{}: frame {} hw_avg", case.name, f.seq);
+        let res: Vec<f64> =
+            f.ch[0].iter().enumerate().map(|(i, &x)| x as f64 - volts(0, (i as f64 - f.pre as f64) * f.dt)).collect();
+        let off = res.iter().sum::<f64>() / res.len().max(1) as f64;
+        let spread = res.iter().fold(0f64, |a, r| a.max((r - off).abs()));
+        assert!(spread < 2e-3, "{}: frame {} is not the scene's signal: {} V off", case.name, f.seq, spread);
+        if m.avg_hw {
+            assert!(off.abs() < DITHER / 4.0, "{}: frame {}: {} V left of the offset", case.name, f.seq, off);
+        } else {
+            assert!((off.abs() - DITHER).abs() < 2e-3, "{}: frame {}: offset {} V", case.name, f.seq, off);
+            signs[(off > 0.0) as usize] = true;
+        }
+    }
+    assert!(m.avg_hw || signs == [true, true], "{}: the raw frames' offsets of both signs", case.name);
+}
 
 /// What each segment case must end with: the recordings armed (frame 0 recorded) and the segments of the last one.
 /// The stopped one ends after 30 (STOP at pass 5, a poll of 10 ms each and 1 ms a segment); the aborted one starts
@@ -444,6 +526,16 @@ impl Drop for Switches {
     }
 }
 
+/// What the front ends and the time base of the settings the model `m` gives make of the scene: the volts per division
+/// and offset of each channel, the sample period and the points before and after the trigger.
+fn view_of(m: &Model) -> View {
+    let want = super::settings(m, false);
+    let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
+    let p = st.configure(&want, None, None).expect("settings the unit takes").1;
+    let cal = std::array::from_fn(|c| (want.ch[c].scale, want.ch[c].offset));
+    View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post }
+}
+
 /// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings and what the loop left
 /// in the shared state.
 fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
@@ -453,19 +545,22 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let _switches = Switches;
     crate::board::policy::compress::force(Some(case.compress));
     let want = super::settings(&m, false);
-    let mut st = oos_hal::dho::seq::State::handover(want.mask, None);
-    let p = st.configure(&want, None, None).expect("settings the unit takes").1;
-    let cal = std::array::from_fn(|c| (want.ch[c].scale, want.ch[c].offset));
-    let view = View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+    let volts = signal(case.freq_hz, case.square);
+    // in Average mode an offset that differs from trigger to trigger, which the average takes out
+    let volts: Box<dyn Fn(usize, f64) -> f64> = match (m.acq, case.period_us) {
+        (AcqMode::Average, Some(p)) => Box::new(move |c, t| volts(c, t) + dither(t, p)),
+        _ => volts,
+    };
     let scene = Scene {
-        volts: signal(case.freq_hz, case.square),
+        volts,
         la: case.la.then(|| Box::new(la_lines) as Box<dyn Fn(f64) -> u16>),
         first_fs: case.period_us.unwrap_or(1) * US,
         period_fs: case.period_us.map(|p| p * US),
         auto_fs: None,
-        view,
+        view: view_of(&m),
     };
     let (u, bar, c2h, clock) = unit(scene);
+    let sim = u.clone();
     // with the calibration the front ends are programmed too, through a stub that answers them
     let afe = case.cal.then_some(oos_hal::dho::boot::sim::AfeStub { writes: 0, reads: 0 });
     let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
@@ -505,6 +600,12 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
                     g.want = Some(super::settings(&m, false));
                     g.slow = super::slow_mode(&m);
                 }
+                Act::SetView(f) => {
+                    f(&mut m);
+                    g.want = Some(super::settings(&m, false));
+                    sim.borrow_mut().scene.view = view_of(&m);
+                }
+                Act::AvgClear => g.avg_clear += 1,
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
@@ -626,7 +727,9 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             (case.model)(&mut m);
             super::slow_mode(&m) != crate::board::Slow::Off
         };
-        if slow {
+        if let Some(m) = averaged(case) {
+            average_checks(case, &m, &trace, &frames);
+        } else if slow {
             assert!(!frames.is_empty(), "{}: no picture published", case.name);
             // roll and scan: pictures of the scene's signal on the channels of the settings, in roll the newest point
             // at the right edge; in scan a whole sweep and the start of the next (RUN: after the pause; SINGLE:
