@@ -24,6 +24,14 @@ pub(super) struct MeasBackground {
     pub pending: Option<Record>,
 }
 
+/// History playback (ADR 0062): the last acquired records, newest last (at most `HISTORY`), and the one viewed.
+#[derive(Default)]
+pub(super) struct History {
+    pub recs: std::collections::VecDeque<Record>,
+    /// position in `recs` while viewing it (None = live)
+    pub pos: Option<usize>,
+}
+
 /// Segmented recording (ADR 0062): the records since the acquisition started (in software); for hardware segments the
 /// recording number told to the thread, its state, the segment shown (browsing) and the trigger times read back.
 #[derive(Default)]
@@ -103,7 +111,7 @@ impl Ui {
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
-            && self.hist_pos.is_none()
+            && self.history.pos.is_none()
             && self.seg.pos.is_none()
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some())
     }
@@ -317,7 +325,7 @@ impl Ui {
         self.toast(&self.seg_label(i));
     }
 
-    /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
+    /// Shows record `history.pos + d` of the history (d = 0: the newest), stopping the acquisition.
     pub(super) fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
         if let Some(v) =
@@ -328,15 +336,15 @@ impl Ui {
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
             return self.seg_show(i as usize);
         }
-        let n = self.history.len();
+        let n = self.history.recs.len();
         if n == 0 {
             return self.toast("History empty");
         }
         self.m.run = RunState::Stop;
-        let cur = self.hist_pos.unwrap_or(n - 1) as i32;
+        let cur = self.history.pos.unwrap_or(n - 1) as i32;
         let i = if d == 0 { n as i32 - 1 } else { (cur + d).clamp(0, n as i32 - 1) } as usize;
-        self.hist_pos = Some(i);
-        self.last[0] = Some(self.history[i].clone());
+        self.history.pos = Some(i);
+        self.last[0] = Some(self.history.recs[i].clone());
         self.measure_last();
         self.toast(&format!("History {}/{}", i + 1, n));
     }

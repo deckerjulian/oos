@@ -281,8 +281,8 @@ impl Ui {
         }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg.n = 0;
-            self.history.clear();
-            self.hist_pos = None;
+            self.history.recs.clear();
+            self.history.pos = None;
             if hw_seg {
                 self.seg.run += 1;
                 (self.seg.pos, self.seg.view) = (None, None);
@@ -506,13 +506,13 @@ impl Ui {
             self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
         }
         take.td += t1.elapsed().as_secs_f32() * 1000.0;
-        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
-            self.history.pop_front();
+        if self.history.recs.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
+            self.history.recs.pop_front();
         }
         // a deep LA record is tens of MB: the history keeps the LA of short records only
         let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
-        self.history.push_back(Record { raw: None, la, ..rec.clone() });
-        self.hist_pos = None;
+        self.history.recs.push_back(Record { raw: None, la, ..rec.clone() });
+        self.history.pos = None;
         self.mask_test(&rec);
         if take.deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
             take.raw_rec = Some(rec.clone());
@@ -798,7 +798,7 @@ impl Ui {
             && board().slow_mode(&self.m) == crate::board::Slow::Off
             && !self.m.la_on()
             && self.m.segments == 0
-            && self.hist_pos.is_none()
+            && self.history.pos.is_none()
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some());
         if !ok {
             self.src.hw_stop(None);

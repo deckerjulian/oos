@@ -280,8 +280,8 @@ impl Ui {
             0x08 => self.history_step(-1),
             0x06 => self.history_step(1),
             0x07 | key::NAVIGATE => {
-                if self.hist_pos.is_some() {
-                    self.hist_pos = None;
+                if self.history.pos.is_some() {
+                    self.history.pos = None;
                     self.m.run = RunState::Run;
                     self.toast("Live");
                 } else {

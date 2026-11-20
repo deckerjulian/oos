@@ -763,10 +763,8 @@ pub struct Ui {
     meas_src: WaveId,
     last: [Option<Record>; 1],
     stats: [Stats; NCH],
-    /// the last acquired records (newest last) for history playback
-    history: std::collections::VecDeque<Record>,
-    /// position in `history` while viewing it (None = live)
-    hist_pos: Option<usize>,
+    /// history playback: the last acquired records and the one viewed (records.rs)
+    history: records::History,
     /// mark all trigger events in the record (search)
     search_on: bool,
     /// measurements per channel (oos-dsp) of the last record
@@ -976,7 +974,7 @@ impl Ui {
         (self.grade.vmax, self.grade.vmaxz, self.grade.vmax_cg, self.grade.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
         // without a last record there is nothing to redraw in STOP, average with, compute math / decode / search on
         self.last[0] = None;
-        self.hist_pos = None;
+        self.history.pos = None;
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away

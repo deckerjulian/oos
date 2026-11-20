@@ -383,11 +383,11 @@ fn segmented_recording_stops_after_n_records() {
     for _ in 0..20 {
         ui.step(0.02);
     }
-    assert_eq!((ui.m.run, ui.seg.n, ui.history.len()), (RunState::Stop, 10, 10));
+    assert_eq!((ui.m.run, ui.seg.n, ui.history.recs.len()), (RunState::Stop, 10, 10));
     // RUN again: a new set
     ui.key(key::RUNSTOP);
     ui.step(0.02);
-    assert!(ui.seg.n <= 6 && ui.history.len() == ui.seg.n);
+    assert!(ui.seg.n <= 6 && ui.history.recs.len() == ui.seg.n);
 }
 
 #[test]
@@ -998,16 +998,16 @@ fn fast_frame_save_and_load_and_local_dest() {
     for _ in 0..4 {
         ui.step(0.033);
     }
-    assert!(ui.history.len() >= 3);
+    assert!(ui.history.recs.len() >= 3);
     ui.activate(Item::StoreFfSave);
     let p = dir.join("frame-001.bin");
     assert!(p.is_file());
-    let n = ui.history.len();
-    ui.history.clear();
+    let n = ui.history.recs.len();
+    ui.history.recs.clear();
     ui.last[0] = None;
     ui.activate(Item::StoreFfLoad);
-    assert_eq!(ui.history.len(), n);
-    assert!(ui.hist_pos.is_some());
+    assert_eq!(ui.history.recs.len(), n);
+    assert!(ui.history.pos.is_some());
     assert_eq!(ui.m.run, RunState::Stop);
     let _ = std::fs::remove_dir_all(&dir);
 }

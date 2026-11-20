@@ -98,8 +98,8 @@ impl Ui {
     }
 
     pub(super) fn ff_save(&mut self) {
-        let recs: Vec<Record> = if !self.history.is_empty() {
-            self.history.iter().cloned().collect()
+        let recs: Vec<Record> = if !self.history.recs.is_empty() {
+            self.history.recs.iter().cloned().collect()
         } else if let Some(rec) = self.last[0].as_ref() {
             vec![rec.clone()]
         } else {
@@ -121,10 +121,10 @@ impl Ui {
         };
         match crate::store::parse_ff(&data) {
             Ok(recs) if !recs.is_empty() => {
-                self.history = recs.into();
-                let n = self.history.len();
-                self.hist_pos = Some(n - 1);
-                self.last[0] = Some(self.history[n - 1].clone());
+                self.history.recs = recs.into();
+                let n = self.history.recs.len();
+                self.history.pos = Some(n - 1);
+                self.last[0] = Some(self.history.recs[n - 1].clone());
                 self.m.run = RunState::Stop;
                 self.measure_last();
                 self.toast(&format!("Loaded {} frames from {}", n, crate::store::file_name(&p)));
@@ -537,7 +537,7 @@ impl Ui {
             return self.reference_decode_packets(m);
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (self.wfm_total, self.hist_pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
+        (self.wfm_total, self.history.pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
         for c in 0..NCH {
             (rec.ch[c].as_ptr() as usize, rec.ch[c].len(), m.ch[c].volts_per_div().to_bits()).hash(&mut h);
         }
