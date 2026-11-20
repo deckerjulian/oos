@@ -343,6 +343,13 @@ impl Proto {
         get(i).info().roles
     }
 
+    /// The role whose line frames start on, where the hardware trigger in front of the protocol trigger looks
+    /// (`Protocol::start_role`).
+    pub fn start_role(self) -> usize {
+        let Proto::Module(i) = self;
+        get(i).start_role()
+    }
+
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok(self) -> bool {
         let Proto::Module(i) = self;

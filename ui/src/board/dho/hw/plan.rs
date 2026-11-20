@@ -185,7 +185,7 @@ pub(super) fn edge_check(f: &Frame, s: &Settings) -> Edge {
     }
     // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
     let hyst = (0.2 * s.ch[tc].scale) as f32;
-    crate::fastdraw::edge_near(
+    oos_dsp::edges::edge_near(
         v,
         f.pre,
         s.level as f32,

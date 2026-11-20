@@ -523,7 +523,7 @@ mod bench {
             for _ in 0..n {
                 let t0 = std::time::Instant::now();
                 let ti =
-                    crate::fastdraw::edge_near(&fr.ch[0], fr.pre, 0.0, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
+                    oos_dsp::edges::edge_near(&fr.ch[0], fr.pre, 0.0, 0.0, true, false, 16).unwrap_or(fr.pre as f64);
                 let xm = crate::fastdraw::Map {
                     ti,
                     x_per_sample: dt / window * 970.0,
