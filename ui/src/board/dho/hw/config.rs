@@ -89,7 +89,7 @@ impl<P: port::Port> Loop<P> {
         let status = |s: String| report(&self.out, s);
         let Request { want, mode: want_mode, avg_clear, .. } = req;
         if self.config.current.as_ref().is_none_or(|c| c.0 != *want) || self.config.mode != *want_mode {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             seg_abort(&mut self.segrun, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock, &self.out);
             self.config.mode = *want_mode;
             self.stop.last_batch = None;

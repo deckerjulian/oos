@@ -341,7 +341,7 @@ impl<P: port::Port> Loop<P> {
         // read with the generator request; the settings read below are as new or newer
         let stamp = stamp_now;
         let Some(req) = Request::read(&self.out, &self.guard, self.la_cal, self.program_afe) else {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             self.clock.sleep_us(50000);
             return;
         };
@@ -389,13 +389,13 @@ impl<P: port::Port> Loop<P> {
         self.trim.step(io!(self, stamp), &mut self.armed, self.cal_adc.as_mut(), mode, seg_recording, self.afg.on());
         self.units.slots_and_force(io!(self, stamp), &mut self.armed, mode, seg_recording);
         if mode != Slow::Off {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             self.slow.step(mode, &s, &p, io!(self, stamp), &mut self.config.current, &status);
             return;
         }
         self.slow.stop(&mut self.state, &mut self.bar);
         if s.segments.is_some() {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             if let Err(e) = seg_step(&mut self.segrun, (&s, &p), &mut self.batch.dma, io!(self, stamp)) {
                 status(format!("segments: {}", e));
                 seg_abort(&mut self.segrun, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock, &self.out);
@@ -412,7 +412,7 @@ impl<P: port::Port> Loop<P> {
     fn calibrate(&mut self, chans: &[usize], zero: bool, adc_cores: bool) {
         use oos_hal::dho::adc;
         let status = |s: String| report(&self.out, s);
-        disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+        disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
         seg_abort(&mut self.segrun, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock, &self.out);
         self.slow.stop(&mut self.state, &mut self.bar);
         let res = match (self.afe_bus.as_mut(), self.cal.as_ref()) {
@@ -476,13 +476,13 @@ impl<P: port::Port> Loop<P> {
         }
         let b = batch_plan(s, p);
         if !single_wants_more(&b, self.batch.single_done, stamp) {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             self.clock.sleep_us(2000);
             return;
         }
         // hardware average: CLEAR, RUN or SINGLE start it over (nothing is armed ahead in this mode)
         if let Some((tr, seen, logged)) = self.config.avg.as_mut().filter(|a| a.1 != avg_clear) {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
             if let Err(e) = execute::<P>(
                 &self.state.avg_clear_steps(),
                 &mut self.bar,
@@ -500,7 +500,7 @@ impl<P: port::Port> Loop<P> {
         // armed ahead with these settings and since the last SINGLE press: only the wait is left
         let ahead = self.armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
         if !ahead {
-            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h);
+            disarm(&mut self.armed, &mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock);
         }
         self.armed = None;
         // new settings, a view read in STOP, or the STOP itself (`hold`): a wait for a trigger ends at once. The
@@ -556,7 +556,8 @@ impl<P: port::Port> Loop<P> {
                 // and a view read in STOP as it plays; a STOP that reads nothing again (#24: a whole record) must
                 // do it here, or the next SINGLE armed a running FSM and never got its record (unit 2026-11-20)
                 if self.out.lock().is_ok_and(|g| g.hold) {
-                    if let Err(e) = seq::disarm(&mut self.state, &mut self.bar, &mut self.c2h, |_| {}) {
+                    if let Err(e) = seq::disarm(&mut self.state, &mut self.bar, &mut self.c2h, &mut self.clock, |_| {})
+                    {
                         status(format!("disarm at STOP: {}", e));
                     }
                 }

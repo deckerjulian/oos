@@ -331,12 +331,12 @@ impl UnitJobs {
             let (step, key) = dvm_step(want, s.mask, configs, self.dvm_run.map(|r| r.0), elapsed);
             match step {
                 DvmStep::Start(lane) => {
-                    super::plan::disarm(armed, state, bar, c2h);
+                    super::plan::disarm(armed, state, bar, c2h, clock);
                     bar.apply(&dvm::start(lane, dvm::EXP));
                     lock(out).dvm = None;
                 }
                 DvmStep::Stop => {
-                    super::plan::disarm(armed, state, bar, c2h);
+                    super::plan::disarm(armed, state, bar, c2h, clock);
                     bar.apply(&dvm::stop());
                     lock(out).dvm = None;
                 }
@@ -371,7 +371,7 @@ impl UnitJobs {
         if let Some((id, _, runs)) = lw.filter(|w| {
             mode == crate::board::Slow::Off && !seg_recording && stamp >= w.1 && self.levels_done != Some(w.0)
         }) {
-            super::plan::disarm(armed, state, bar, c2h);
+            super::plan::disarm(armed, state, bar, c2h, clock);
             let v = levels_measure(bar, clock, s, &state.gain, runs);
             lock(out).levels = Some((id, v));
             self.levels_done = Some(id);
@@ -393,7 +393,7 @@ impl UnitJobs {
         if let Some(id) =
             sw.filter(|&id| mode == crate::board::Slow::Off && !seg_recording && self.slots_done != Some(id))
         {
-            super::plan::disarm(armed, state, bar, c2h);
+            super::plan::disarm(armed, state, bar, c2h, clock);
             let r = oos_hal::dho::levels::run(bar, &mut |us| clock.sleep_us(us as u64));
             lock(out).slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
             self.slots_done = Some(id);

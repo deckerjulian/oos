@@ -1285,7 +1285,7 @@ mod tests {
         };
         assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, false), Ok(3));
         // armed ahead, then 1 ms of decoding: the ring records meanwhile, and the wait finds the batch complete
-        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock, |_| {}).unwrap();
         let armed_us = u.borrow().now_us();
         clock.sleep_us(1000);
         assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, true), Ok(3));
@@ -1301,8 +1301,8 @@ mod tests {
         // armed ahead and stopped before its first trigger: the record of frame 0 is gone, frames 1 and 2 keep theirs
         let kept = u.borrow().trigger_fs(1);
         u.borrow_mut().scene.period_fs = None;
-        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
-        seq::disarm(&mut st, &mut bar, &mut c2h, |_| {}).unwrap();
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock, |_| {}).unwrap();
+        seq::disarm(&mut st, &mut bar, &mut c2h, &mut clock, |_| {}).unwrap();
         assert_eq!(bar.rd(0x4034), scu::status::STOPPED, "the FSM stopped");
         u.borrow_mut().scene.period_fs = Some(100 * US);
         clock.sleep_us(1000);
