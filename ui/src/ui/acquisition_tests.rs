@@ -1526,21 +1526,34 @@ fn default_keeps_the_stamps_of_the_hardware_session() {
     use super::*;
     let shared: crate::board::HwShared = Default::default();
     let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    let single = |ui: &mut Ui| {
+    let (n, dt) = (12_500usize, 0.8e-9);
+    // the stamps of the SINGLEs the thread finished: it arms nothing for a SINGLE whose stamp is one of them
+    // (`single_wants_more` in board/dho/hw/settings.rs), so such a SINGLE gets no frame and never ends
+    let mut done: Vec<u64> = Vec::new();
+    let mut single = |ui: &mut Ui| {
         ui.m.trig_mode = TrigMode::Single;
         ui.m.run = RunState::Run;
         ui.step(0.05);
         let stamp = ui.m.hw_stamp;
-        (ui.m.trig_mode, ui.m.run) = (TrigMode::Auto, RunState::Stop);
+        if !done.contains(&stamp) {
+            let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
+            let f =
+                crate::board::Frame { seq: stamp, stamp, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() };
+            shared.lock().unwrap().queue.push_back(f);
+            done.push(stamp);
+        }
         ui.step(0.05);
-        stamp
+        ui.step(0.05);
+        let seq = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
+        let ended = ui.m.run == RunState::Stop && seq == Some(stamp);
+        ui.m.trig_mode = TrigMode::Auto;
+        ui.m.run = RunState::Stop;
+        ui.step(0.05);
+        ended
     };
-    let mut seen = vec![single(&mut ui), single(&mut ui)];
+    assert!(single(&mut ui) && single(&mut ui), "SINGLE with its own frame");
     let clear = ui.m.hw_avg_clear;
     ui.key(crate::ui::key::DEFAULT);
     assert!(ui.m.hw_avg_clear >= clear, "the average count went back");
-    let next = single(&mut ui);
-    assert!(!seen.contains(&next), "a SINGLE after Default took stamp {next} again ({seen:?})");
-    seen.push(next);
-    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+    assert!(single(&mut ui), "the SINGLE after Default never ended");
 }
