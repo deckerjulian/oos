@@ -150,8 +150,9 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
   `Content-Type`; the formats `store::parse_wave` recognises by their header (`ui/src/store/import.rs`).
 - Answer: `text/plain; charset=utf-8`. 200 `Loaded <name> into R<n>. ...` with a hint for the next step. 400 without
   a slot from 1 to 10 (409 before 0.1.15); 409 for a file that is refused, or when the session changed during the
-  parse; the slot chosen before stays either way. 503 while another upload is parsed. The file is parsed on a thread of its own and the answer comes when
-  the frame loop has taken the traces (seconds for a large file). Nothing is written to storage.
+  parse; the slot chosen before stays either way. 503 while another upload is parsed. The file is parsed on a thread
+  of its own and the answer comes when the frame loop has taken the traces (seconds for a large file). Nothing is
+  written to storage.
 - Limits: 128 MiB.
 - net.allow: no.
 
