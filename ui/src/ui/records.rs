@@ -24,7 +24,8 @@ pub(super) struct MeasBackground {
     pub pending: Option<Record>,
 }
 
-/// History playback (ADR 0062): the last acquired records, newest last (at most `HISTORY`), and the one viewed.
+/// History playback (ADR 0062): the last acquired records, newest last, and the one viewed. At most `HISTORY` records,
+/// or as many as the segments of a software segmented recording when that is more (`step_commit`).
 #[derive(Default)]
 pub(super) struct History {
     pub recs: std::collections::VecDeque<Record>,
