@@ -102,6 +102,26 @@ pub fn read_some(s: &TcpStream, buf: &mut Vec<u8>, cap: usize, chunk: usize, bud
     end
 }
 
+/// The start of a client's turn in the frame loop of a server that keeps its connections (HiSLIP, VXI-11): what is
+/// still to be written in `out` goes first, as much as `s` takes now (#192); the connection is to be closed when it is
+/// gone, or when `left_out` (net.allow changed and leaves its peer out). Else, unless the client closed its side
+/// before (`closing`: `eof` again), what has arrived is read into `buf` (`read_some`, at most `cap` bytes).
+pub fn flush_and_read(
+    s: &TcpStream,
+    out: &mut Outbox,
+    buf: &mut Vec<u8>,
+    closing: bool,
+    left_out: bool,
+    cap: usize,
+) -> ReadEnd {
+    let gone = out.flush(s) == Sent::Gone;
+    let end = ReadEnd { eof: closing, closed: left_out || gone };
+    if end.eof || end.closed {
+        return end;
+    }
+    read_some(s, buf, cap, 8192, 65536)
+}
+
 /// Writes what `s` takes of `buf` now, without waiting: `WouldBlock` when it takes nothing. The socket does not block
 /// for this one write and blocks again after it (MSG_DONTWAIT, as `read_now` uses it, is taken on a receive only on
 /// macOS). A peer that is gone gives an error, not a signal: Rust's runtime ignores SIGPIPE.
