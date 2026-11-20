@@ -65,13 +65,14 @@ pub type Shared = std::sync::Arc<std::sync::Mutex<(u64, Vec<u16>, String)>>;
 /// Starts the read-out thread; frames (sequence number, words, status text) appear in the returned slot.
 #[cfg(target_os = "linux")]
 pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
+    use crate::board::lock;
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
     let shared: Shared = std::sync::Arc::new(std::sync::Mutex::new((0, Vec::new(), "starting".into())));
     let out = shared.clone();
     std::thread::spawn(move || {
         let status = |s: String| {
             eprintln!("oos-ui fpga: {}", s);
-            out.lock().unwrap().2 = s;
+            lock(&out).2 = s;
         };
         // writes 10 us apart (`Bar1::gap_us`), as in the verified read-out
         let mut bar = match Bar1::open() {
@@ -172,7 +173,7 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
                         );
                     }
                     prev = words.clone();
-                    let mut g = out.lock().unwrap();
+                    let mut g = lock(&out);
                     *g = (seq, words, format!("frame {} changed {} status {:#x}", seq, changed, bar.rd(0x4034)));
                 }
                 Err(e) => {

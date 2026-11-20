@@ -9,7 +9,9 @@ use super::decode::decode;
 #[cfg(any(target_os = "linux", test))]
 use super::settings::seg_read_plan;
 #[cfg(any(target_os = "linux", test))]
-use crate::board::{Frame, HwShared};
+use super::slow::Io;
+#[cfg(any(target_os = "linux", test))]
+use crate::board::{lock, Frame, HwShared};
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::hz;
 #[cfg(any(target_os = "linux", test))]
@@ -47,33 +49,27 @@ pub(super) fn seg_abort<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal:
             eprintln!("oos-ui hw: segments stop: {}", e);
         }
     }
-    let mut g = out.lock().unwrap();
+    let mut g = lock(out);
     (g.seg.phase, g.seg.shown) = (crate::board::SegPhase::Idle, None);
     g.seg.times.clear();
 }
 
 /// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
 /// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
-/// play single segments on request.
+/// play single segments on request; with the settings `s` configured as `p`, the batch part's buffer `dma` and the
+/// loop's handles `io`.
 #[cfg(any(target_os = "linux", test))]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, R: std::io::Read>(
+pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
     run: &mut Option<SegRun>,
-    s: &Settings,
-    p: &hz::Params,
-    state: &mut oos_hal::dho::seq::State,
-    bar: &mut B,
-    clock: &mut C,
-    c2h: &mut R,
+    (s, p): (&Settings, &hz::Params),
     dma: &mut oos_hal::dho::bus::DmaBuf,
-    out: &HwShared,
-    n: &mut u64,
-    stamp: u64,
+    io: Io<'_, B, R, C>,
 ) -> Result<(), String> {
     use crate::board::SegPhase;
     use oos_hal::dho::seg;
+    let Io { state, bar, c2h, clock, out, n, stamp } = io;
     let (cmd, running, want) = {
-        let g = out.lock().unwrap();
+        let g = lock(out);
         (g.seg.run, g.seg.running, g.seg.want)
     };
     if running && run.as_ref().map_or(0, |r| r.run) != cmd {
@@ -90,7 +86,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
             deliver: true,
             tl: seg::Timeline::new(None),
         });
-        let mut g = out.lock().unwrap();
+        let mut g = lock(out);
         g.seg = crate::board::HwSeg {
             run: g.seg.run,
             running: g.seg.running,
@@ -107,7 +103,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
     };
     if r.recording {
         let x = seg::status(bar, r.n);
-        out.lock().unwrap().seg.recorded = x.recorded;
+        lock(out).seg.recorded = x.recorded;
         if !x.complete(r.n) && running {
             clock.sleep_us(10000);
             return Ok(());
@@ -119,7 +115,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
             "oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}",
             x.recorded, r.n, x.fsm, tag
         );
-        out.lock().unwrap().seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
+        lock(out).seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
         return Ok(());
     }
     let rs = seg_read_plan(s, p);
@@ -127,7 +123,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
     if r.next < r.count {
         r.deliver &= running;
         let cnt = rs.frames.min(r.count - r.next);
-        if r.deliver && out.lock().unwrap().queue.len() + cnt as usize > crate::board::QUEUE_MAX {
+        if r.deliver && lock(out).queue.len() + cnt as usize > crate::board::QUEUE_MAX {
             // the screen has not taken the last batch yet
             clock.sleep_us(5000);
             return Ok(());
@@ -154,7 +150,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
                 .collect();
         }
         r.next += cnt;
-        let mut g = out.lock().unwrap();
+        let mut g = lock(out);
         g.seg.times.extend(times);
         g.seg.read = r.next;
         if let Some(f) = frames.last() {
@@ -169,14 +165,14 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clock, 
     // done: single segments on request
     match want {
         Some(k) if k < r.count => {
-            out.lock().unwrap().seg.want = None;
+            lock(out).seg.want = None;
             let one = oos_hal::dho::seg::read_settings(&rs, 1);
             seg::read(state, &one, p, bar, c2h, dma, clock, k, 1)?;
             *n += 1;
             let f = Frame { stamp, ..decode(&dma.data()[..fb.min(dma.data().len())], &one, p, *n) };
-            out.lock().unwrap().seg.shown = Some((k, f));
+            lock(out).seg.shown = Some((k, f));
         }
-        Some(_) => out.lock().unwrap().seg.want = None,
+        Some(_) => lock(out).seg.want = None,
         None => clock.sleep_us(10000),
     }
     Ok(())

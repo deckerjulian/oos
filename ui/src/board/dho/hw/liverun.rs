@@ -10,7 +10,7 @@
 //! it.
 
 use super::port::{Hw, Port};
-use crate::board::{Frame, HwShared, Shared};
+use crate::board::{lock, Frame, HwShared, Shared};
 use crate::model::*;
 use oos_hal::dho::sim::{unit, Scene, View};
 
@@ -472,7 +472,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let mask = want.mask;
     {
-        let mut g = out.lock().unwrap();
+        let mut g = lock(&out);
         g.want = Some(want);
         g.slow = super::slow_mode(&m);
     }
@@ -497,7 +497,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let _out = crate::drawpipe::keep_out();
     super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
-        let mut g = shared.lock().unwrap();
+        let mut g = lock(&shared);
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
                 Act::Set(f) => {
@@ -528,7 +528,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
         }
         pass <= case.passes
     });
-    let queued = out.lock().unwrap().queue.iter().filter(|f| !f.roll && !f.scan).cloned().collect::<Vec<_>>();
+    let queued = lock(&out).queue.iter().filter(|f| !f.roll && !f.scan).cloned().collect::<Vec<_>>();
     if case.cal {
         let _ = std::fs::remove_dir_all(&cal_dir);
     }
@@ -563,7 +563,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
     }
     for case in CASES {
         let (trace, frames, mask, out) = run_case(case);
-        let g = out.lock().unwrap();
+        let g = lock(&out);
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
             text += &trace;

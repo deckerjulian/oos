@@ -18,7 +18,7 @@ pub mod pipe;
 pub mod policy;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The board this build drives: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
 #[cfg(oos_board = "dho")]
@@ -514,6 +514,14 @@ pub const QUEUE_MAX: usize = 256;
 pub const QUEUE_SAMPLES: usize = 32 << 20;
 
 pub type HwShared = Arc<Mutex<Shared>>;
+
+/// A state shared with the acquisition thread (`HwShared`, `LiveShared`, the board's own cells), locked: the one place
+/// for every reader and writer of it, the thread's and the screen's (`wave::hw` is this). A lock fails only when
+/// another holder panicked while it held it, and the state may then be half written; this panics then, as each of
+/// these places did before: neither the acquisition thread nor the screen goes on with such a state.
+pub fn lock<T>(shared: &Mutex<T>) -> MutexGuard<'_, T> {
+    shared.lock().expect("a holder of the shared state panicked while holding it: the state may be half written")
+}
 
 #[cfg(test)]
 mod boundary {

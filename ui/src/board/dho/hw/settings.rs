@@ -247,7 +247,6 @@ pub(super) fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
 
 /// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
 /// (`seq::read_raw_again`) for the record the UI keeps.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn raw_newest(b: &Settings, p: &hz::Params) -> bool {
     b.compress > 1 && p.memsel <= crate::board::policy::compress::MAX_DEPTH
 }

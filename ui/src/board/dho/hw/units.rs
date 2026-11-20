@@ -6,6 +6,7 @@
 //! counter, and the measure unit's side jobs in the acquisition loop (`UnitJobs`: DVM, levels, debug slots, :TFORce).
 //! A new opt-in unit gets its switch and its steps here.
 
+use crate::board::lock;
 #[cfg(any(target_os = "linux", test))]
 use crate::board::HwShared;
 use oos_hal::dho::auxout;
@@ -104,13 +105,13 @@ fn mask_map_cell() -> &'static std::sync::Mutex<oos_hal::dho::mask::Map> {
 
 /// The comparator mapping of the mask test and the zone trigger now (system.conf, then `mask_map_set`).
 pub fn mask_map() -> oos_hal::dho::mask::Map {
-    *mask_map_cell().lock().unwrap()
+    *lock(mask_map_cell())
 }
 
 /// Sets one `key=value` of the mapping (None: none), and returns the whole mapping. The acquisition thread takes the
 /// new mapping with the next batch and reloads the tables.
 pub fn mask_map_set(kv: Option<&str>) -> Result<String, String> {
-    let mut m = mask_map_cell().lock().unwrap();
+    let mut m = lock(mask_map_cell());
     if let Some(kv) = kv {
         m.set(kv)?;
     }
@@ -270,7 +271,7 @@ pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clo
     n: &mut u64,
 ) {
     use oos_hal::dho::counter;
-    let want = out.lock().unwrap().counter_want;
+    let want = lock(out).counter_want;
     if want != counting.map(|c| c.0) {
         match want {
             Some(w) => {
@@ -283,7 +284,7 @@ pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clo
                 *counting = None;
             }
         }
-        out.lock().unwrap().counter = None;
+        lock(out).counter = None;
         return;
     }
     if let Some((w, t)) = *counting {
@@ -291,7 +292,7 @@ pub(super) fn counter_tick<B: oos_hal::dho::bus::Bus, C: oos_hal::dho::boot::Clo
         if clock.now_us().saturating_sub(t) as f64 * 1e-6 >= gate + 0.1 {
             let r = counter::read(bar);
             *n += 1;
-            out.lock().unwrap().counter =
+            lock(out).counter =
                 Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
             *counting = Some((w, clock.now_us()));
         }
@@ -324,7 +325,7 @@ impl UnitJobs {
         let super::slow::Io { state, bar, c2h, clock, out, .. } = io;
         if !seg_recording {
             use oos_hal::dho::dvm;
-            let want = out.lock().unwrap().dvm_want;
+            let want = lock(out).dvm_want;
             let now = clock.now_us();
             let elapsed = self.dvm_run.map_or(0.0, |r| super::since(now, r.1).as_secs_f64());
             let (step, key) = dvm_step(want, s.mask, configs, self.dvm_run.map(|r| r.0), elapsed);
@@ -332,18 +333,18 @@ impl UnitJobs {
                 DvmStep::Start(lane) => {
                     super::plan::disarm(armed, state, bar, c2h);
                     bar.apply(&dvm::start(lane, dvm::EXP));
-                    out.lock().unwrap().dvm = None;
+                    lock(out).dvm = None;
                 }
                 DvmStep::Stop => {
                     super::plan::disarm(armed, state, bar, c2h);
                     bar.apply(&dvm::stop());
-                    out.lock().unwrap().dvm = None;
+                    lock(out).dvm = None;
                 }
                 DvmStep::Read => {
                     let raw = dvm::read(bar);
                     self.dvm_n += 1;
                     let r = key.map(|k| dvm_reading(&raw, k, s, &state.gain, self.dvm_n));
-                    out.lock().unwrap().dvm = r;
+                    lock(out).dvm = r;
                 }
                 DvmStep::Idle => {}
             }
@@ -366,13 +367,13 @@ impl UnitJobs {
         seg_recording: bool,
     ) {
         let super::slow::Io { state, bar, c2h, clock, out, stamp, .. } = io;
-        let lw = out.lock().unwrap().levels_want;
+        let lw = lock(out).levels_want;
         if let Some((id, _, runs)) = lw.filter(|w| {
             mode == crate::board::Slow::Off && !seg_recording && stamp >= w.1 && self.levels_done != Some(w.0)
         }) {
             super::plan::disarm(armed, state, bar, c2h);
             let v = levels_measure(bar, clock, s, &state.gain, runs);
-            out.lock().unwrap().levels = Some((id, v));
+            lock(out).levels = Some((id, v));
             self.levels_done = Some(id);
         }
     }
@@ -388,16 +389,16 @@ impl UnitJobs {
         seg_recording: bool,
     ) {
         let super::slow::Io { state, bar, c2h, clock, out, .. } = io;
-        let sw = out.lock().unwrap().slots_want;
+        let sw = lock(out).slots_want;
         if let Some(id) =
             sw.filter(|&id| mode == crate::board::Slow::Off && !seg_recording && self.slots_done != Some(id))
         {
             super::plan::disarm(armed, state, bar, c2h);
             let r = oos_hal::dho::levels::run(bar, &mut |us| clock.sleep_us(us as u64));
-            out.lock().unwrap().slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
+            lock(out).slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
             self.slots_done = Some(id);
         }
-        if std::mem::take(&mut out.lock().unwrap().force) {
+        if std::mem::take(&mut lock(out).force) {
             bar.apply(&oos_hal::dho::tpu::force(&state.ts));
         }
     }

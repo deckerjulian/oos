@@ -9,7 +9,7 @@ use super::decode::decode_with;
 use super::plan::{disarm, final_replay, stop_plan};
 use super::slow::Io;
 use super::{execute, port, report};
-use crate::board::Frame;
+use crate::board::{lock, Frame};
 use oos_hal::dho::bus::{Bus, DmaBuf};
 use oos_hal::dho::hz;
 use oos_hal::dho::seq::{self, Settings};
@@ -48,7 +48,7 @@ impl StopRun {
         let replay = last_read.and_then(|(lb, lp, count, raw)| {
             final_replay(lb, lp, *count, *raw, ahead, deep_want).map(|ds| (ds, *lp, *count))
         });
-        let match_cores = out.lock().unwrap().cores;
+        let match_cores = lock(out).cores;
         let last = replay.and_then(|(ds, lp, count)| {
             match seq::read_raw_again(state, &ds, &lp, bar, c2h, raw_dma, count - 1, |_| {}) {
                 Ok(()) => {
@@ -61,7 +61,7 @@ impl StopRun {
                 }
             }
         });
-        let mut g = out.lock().unwrap();
+        let mut g = lock(out);
         if let Some(f) = last {
             g.frame = f.clone();
             g.queue.push_back(f);
@@ -85,7 +85,7 @@ impl StopRun {
         let Io { state, bar, c2h, clock, out, n, stamp } = io;
         // a final-frame request of the UI while the views are read again: answered as the hold does
         {
-            let mut g = out.lock().unwrap();
+            let mut g = lock(out);
             g.final_ack = g.final_req;
         }
         match &self.last_batch {
@@ -97,13 +97,13 @@ impl StopRun {
                     Ok(bytes) => {
                         let fb = seq::frame_bytes(&rb, lp);
                         *n += 1;
-                        let m = out.lock().unwrap().cores.then_some(cores);
+                        let m = lock(out).cores.then_some(cores);
                         let f = Frame {
                             stamp,
                             fixed_ti: Some(ti),
                             ..decode_with(&bytes[..fb.min(bytes.len())], &rb, lp, *n, m)
                         };
-                        out.lock().unwrap().replay = Some(f);
+                        lock(out).replay = Some(f);
                     }
                     Err(e) => report(out, format!("STOP read: {}", e)),
                 }
