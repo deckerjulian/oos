@@ -900,9 +900,8 @@ pub struct Ui {
     pub store_dir: std::path::PathBuf,
     /// Auto / USB stick / desktop for waveform, mask and screenshot files
     store_dest: crate::store::StoreDest,
-    /// Math menu category (kept when the operation is Off)
-    math_fam: MathFamily,
-    math_state: std::cell::RefCell<mathwave::State>,
+    /// the math channels: the menu's category, the results and their worker, the scales to refit (mathwave.rs)
+    math: mathwave::Math,
     capture_views: std::cell::RefCell<capture_memory::State>,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
     pub scr: Screen,

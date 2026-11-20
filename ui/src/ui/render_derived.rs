@@ -93,7 +93,7 @@ impl Ui {
     /// Off plus the operations of the selected Math category.
     pub(super) fn math_ops_in_family(&self) -> Vec<MathOp> {
         let mut v = vec![MathOp::Off];
-        v.extend_from_slice(self.math_fam.ops());
+        v.extend_from_slice(self.math.family.ops());
         v
     }
 

@@ -186,8 +186,8 @@ impl Ui {
                 self.m.order_trigger_levels();
                 // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
                 self.bus_auto = None;
-                self.math_state.borrow_mut().forget_fit();
-                self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
+                self.math.state.borrow_mut().forget_fit();
+                self.math.family = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
                 if self.mask_sw.mask.is_none() {
                     self.m.mask_on = false;

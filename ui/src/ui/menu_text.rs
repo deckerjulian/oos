@@ -556,7 +556,7 @@ impl Ui {
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
-            Item::MathFam => self.math_fam.name().into(),
+            Item::MathFam => self.math.family.name().into(),
             Item::StoreDest => self.store_dest.name().into(),
             Item::MeasStats => onoff(self.stats_on),
             Item::MeasLabels => onoff(self.m.meas_labels),
