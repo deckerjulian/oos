@@ -546,23 +546,27 @@ impl<U: Send + 'static> Http<U> {
         let post = text.starts_with("POST ");
         // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
         let peer_ok = self.acl.permits_peer(s.peer_addr());
-        // an answer that is text for the page to show, not the data asked for
-        let mut failed = false;
-        let (ctype, body): (&str, Vec<u8>) = match route {
-            _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
-            "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
-            "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
-            "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
+        // each answer with its status, chosen where the answer is made (#205: not read back from the body's text)
+        const OK: &str = "200 OK";
+        const FORBIDDEN: &str = "403 Forbidden";
+        let refused = || (FORBIDDEN, "text/plain", b"refused".to_vec());
+        let (status, ctype, body): (&str, &str, Vec<u8>) = match route {
+            _ if foreign(&text, route, post) => refused(),
+            "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => refused(),
+            "/" => (OK, "text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
+            "/style.css" => (OK, "text/css", STYLE.as_bytes().to_vec()),
             "/waveform" if post => {
                 let slot = query
                     .split('&')
                     .find_map(|part| part.strip_prefix("slot="))
                     .and_then(|value| value.parse::<usize>().ok());
                 match slot.filter(|s| (1..=10).contains(s)) {
-                    None => {
-                        failed = true;
-                        ("text/plain; charset=utf-8", b"Choose a reference slot from R1 to R10.".to_vec())
-                    }
+                    // the request itself is wrong, not the file or the state of the scope
+                    None => (
+                        "400 Bad Request",
+                        "text/plain; charset=utf-8",
+                        b"Choose a reference slot from R1 to R10.".to_vec(),
+                    ),
                     Some(slot) => {
                         self.waveform_take(i, slot, query, hdr_end, site);
                         return false;
@@ -575,33 +579,26 @@ impl<U: Send + 'static> Http<U> {
                 self.pending.remove(i);
                 return false;
             }
-            "/update" if !post => ("text/html; charset=utf-8", {
+            "/update" if !post => (OK, "text/html; charset=utf-8", {
                 let (status, last) = site.update_state();
                 update_page(&status, &last).into_bytes()
             }),
             "/lxi/identification" => {
-                ("text/xml", lxi_identification(&self.offer, &oos_hal::model::platform().caps.name).into_bytes())
+                (OK, "text/xml", lxi_identification(&self.offer, &oos_hal::model::platform().caps.name).into_bytes())
             }
             // what the screen answers: its state, the last record, an update package, MCP
-            "/cmd" => remote_cmds(query, cmds, site),
-            _ => match site.answer(route, post, req_body) {
-                Some((ctype, body, bad)) => {
-                    failed = bad;
-                    (ctype, body)
-                }
-                None => ("text/plain", b"not found".to_vec()),
+            "/cmd" => match remote_cmds(query, cmds, site) {
+                true => (OK, "text/plain", b"ok".to_vec()),
+                false => refused(),
             },
-        };
-        let status = if failed {
-            "409 Conflict"
-        } else if body == b"not found" {
-            "404 Not Found"
-        } else if body == b"refused" {
-            "403 Forbidden"
-        } else if ctype.is_empty() {
-            "202 Accepted"
-        } else {
-            "200 OK"
+            _ => match site.answer(route, post, req_body) {
+                // the route says the body is why it failed, not the data asked for
+                Some((ctype, body, true)) => ("409 Conflict", ctype, body),
+                // an MCP notification: no body
+                Some(("", body, false)) => ("202 Accepted", "", body),
+                Some((ctype, body, false)) => (OK, ctype, body),
+                None => ("404 Not Found", "text/plain", b"not found".to_vec()),
+            },
         };
         let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
         if body.len() > SEND_INLINE {
@@ -674,15 +671,15 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
     dead
 }
 
-/// GET /cmd: the commands `c=` of the query go to `cmds` when a remote may give every one of them; "refused" and none
-/// of them when one may not (#205: a request that is refused does nothing, not the half of it that was allowed).
-fn remote_cmds<S: Site>(query: &str, cmds: &mut Vec<String>, site: &S) -> (&'static str, Vec<u8>) {
+/// GET /cmd: the commands `c=` of the query go to `cmds` when a remote may give every one of them; false and none of
+/// them when one may not (#205: a request that is refused does nothing, not the half of it that was allowed).
+fn remote_cmds<S: Site>(query: &str, cmds: &mut Vec<String>, site: &S) -> bool {
     let given: Vec<String> = query.split('&').filter_map(|kv| kv.strip_prefix("c=")).map(unescape).collect();
     if !given.iter().all(|c| site.remote_ok(c)) {
-        return ("text/plain", b"refused".to_vec());
+        return false;
     }
     cmds.extend(given);
-    ("text/plain", b"ok".to_vec())
+    true
 }
 
 /// The value of a header of the request head (name without case).
