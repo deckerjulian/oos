@@ -66,8 +66,9 @@ executor.
   `cal.core_offset`.
 - **Environment:** `OOS_PREARM`, `OOS_FRAME_HEADER` (which also writes `/tmp/oos-hdr.log`), `OOS_HWAVG`,
   `OOS_TRIG_HW_STATUS`, `OOS_CAL_DEBUG`.
-- **Globals:** `oos_hal::model::platform()` (three uses in `spawn`), `drawpipe::pipe()` with its deposit workers and
-  the read-out buffers lent to them, `drawpipe::counters()`, `board::policy::compress::note_batch_k`.
+- **Globals:** `oos_hal::model::platform()` (three uses in `spawn`), `board::pipe::workers()` (the deposit workers of
+  `drawpipe`, registered there) and the read-out buffers lent to them, `board::pipe::counters()`,
+  `board::policy::compress::note_batch_k`.
 - **Threads:** the one thread, placed by `placement::place`; `HwShared` (`Arc<Mutex<Shared>>`, 41 lock sites in
   `spawn`) with the UI's side in `ui/src/wave.rs` (`acquire_hw`, `Source::hw_*`).
 - **Output:** the status line in `Shared`, log lines on stderr.

@@ -603,7 +603,7 @@ impl Ui {
         let rate = take.got as f32 / dt_wall.max(1e-3) as f32;
         self.wfm_rate += 0.1 * (rate - self.wfm_rate);
         self.wfm_total += take.got as u64;
-        crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, take.got as u64);
+        crate::board::pipe::Counters::add(&crate::board::pipe::counters().used, take.got as u64);
     }
 
     /// The measurement of this step's record, now or in the background, and the analyser updates.

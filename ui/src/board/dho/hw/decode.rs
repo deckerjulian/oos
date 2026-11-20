@@ -162,7 +162,7 @@ pub fn codes_into(
     p: &hz::Params,
     seq: u64,
     f: &mut Frame,
-) -> Option<crate::drawpipe::CodeLayout> {
+) -> Option<crate::board::pipe::CodeLayout> {
     if s.header || oos_hal::dho::seq::compress_k(s, p) > 1 || bytes.is_empty() {
         return None;
     }
@@ -171,7 +171,7 @@ pub fn codes_into(
     }
     set_meta(s, p, seq, f);
     let m = oos_hal::dho::seq::code_map(s.mask, s.ch.map(|k| (k.scale, k.offset)));
-    Some(crate::drawpipe::CodeLayout {
+    Some(crate::board::pipe::CodeLayout {
         stride: m.ratio,
         word: m.word,
         affine: m.affine,
@@ -186,7 +186,7 @@ pub fn codes_into(
 pub(super) const POOL: usize = 3;
 
 /// The read-out buffer lent to the deposit workers as it is (drawpipe.rs).
-impl crate::drawpipe::RawBatch for oos_hal::dho::bus::DmaBuf {
+impl crate::board::pipe::RawBatch for oos_hal::dho::bus::DmaBuf {
     fn bytes(&self) -> &[u8] {
         self.data()
     }

@@ -77,7 +77,7 @@ impl Ui {
     /// Fork, `:SYSTem:DEBug:MASK?`: the mask unit's raw counters and slot next to the software test and the frame
     /// counters of the pipeline (docs/fork/hwmask.md).
     pub fn mask_debug_text(&self) -> String {
-        let (acq, used, _) = crate::drawpipe::counters().read();
+        let (acq, used, _) = crate::board::pipe::counters().read();
         let sw = format!(
             "sw_pass={},sw_fail={},acquired={},used={},records={}",
             self.mask_pass, self.mask_fail, acq, used, self.records

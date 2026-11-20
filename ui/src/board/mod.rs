@@ -14,6 +14,7 @@
 //! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
 
 pub mod dho;
+pub mod pipe;
 pub mod policy;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
