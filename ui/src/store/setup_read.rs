@@ -735,7 +735,7 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
 /// line and the key; unknown keys are ignored.
-#[cfg_attr(not(test), allow(dead_code))] // the strict form, for the tests
+#[cfg(test)] // the strict form, for the tests
 pub fn parse_setup(text: &str) -> Result<Model, String> {
     let (m, bad) = parse_setup_lenient(text);
     match bad.into_iter().next() {
@@ -788,7 +788,6 @@ fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
             arate: m.dec_arate,
             tick: m.dec_tick,
             nibbles: m.dec_nibbles,
-            uspeed: m.dec_uspeed,
         };
         if let Some(o) = crate::protocols::get(i).legacy(&old) {
             m.dec_opt = o.map(|x| x as u8);

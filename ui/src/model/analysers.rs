@@ -21,7 +21,7 @@ pub enum AView {
 
 impl AView {
     /// Every view (the tests check each analyser page against it).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub const ALL: [AView; 9] = [
         AView::Scope,
         AView::Spectrum,

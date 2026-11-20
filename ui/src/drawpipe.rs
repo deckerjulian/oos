@@ -621,7 +621,7 @@ impl Pipe {
     /// claim, decoded with `decode` or, without per-frame measurements, drawn from their words with `codes`
     /// (`draw_frame_codes`). The buffer comes back through `take_buffer` when the batch is done. Frames nobody claims
     /// are counted as dropped. Returns the batch (tests hold it to let the helper alone draw it).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // the parts of one batch, each from a different place of the board loop
     pub fn feed_codes(
         &self,
         raw: Box<dyn RawBatch>,

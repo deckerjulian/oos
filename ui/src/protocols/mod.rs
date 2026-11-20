@@ -123,7 +123,6 @@ pub const BAUD_DEFAULT: usize = 7;
 /// The decoder settings of a setup from before a protocol became a module: what its option rows were kept in.
 /// A module that was a built-in protocol maps them onto its options (`Protocol::legacy`).
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // the rows of protocols that are still built in (USB speed: no module reads it yet)
 pub struct Legacy {
     pub baud: usize,
     pub bits: u32,
@@ -134,7 +133,6 @@ pub struct Legacy {
     pub arate: usize,
     pub tick: usize,
     pub nibbles: u32,
-    pub uspeed: usize,
 }
 
 /// One option row of the Decode menu: a name and its choices; the setting is the index of the choice.

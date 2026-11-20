@@ -24,7 +24,7 @@ pub const NEAR_COLS: usize = 16;
 pub const NEAR_PAD: usize = 64;
 
 /// `fastdraw::edge_smooth` with the same arguments and the same result, searched near `pre` first.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // the arguments of `fastdraw::edge_smooth`, so either can stand for the other
 pub fn edge_smooth_near(
     v: &[f32],
     pre: usize,

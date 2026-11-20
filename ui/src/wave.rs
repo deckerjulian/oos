@@ -1031,7 +1031,7 @@ impl Phosphor {
     /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
     /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
     /// between its extremes; two dots would drop the edges of a slow time base.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // a record's parts as each caller holds them, not always a `Record`
     pub fn draw_ex(
         &mut self,
         c: usize,
