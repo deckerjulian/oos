@@ -114,7 +114,7 @@ fn vertical_zoom_is_shared_by_detail_lanes_and_has_exact_forward_inverse_mapping
         ui.zoom_view.vcenter = 0.75;
         let overview = Ui::split_zoom(ui.grid).0;
         assert_eq!(ui.zoom_vertical_transform(overview), (1.0, 0.0));
-        for area in ui.wins.iter().copied() {
+        for area in ui.plot.wins.iter().copied() {
             assert_eq!(ui.zoom_vertical_transform(area), (4.0, 0.75));
             for d in [-0.1, 0.5, 1.0] {
                 let y = ui.zoom_y_of_divs(area, d);
@@ -371,7 +371,7 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
     ui.m.run = RunState::Run;
     ui.step(0.02);
     assert!(!ui.record_mode());
-    assert_eq!(ui.wins.len(), 3);
+    assert_eq!(ui.plot.wins.len(), 3);
     for c in 0..2 {
         assert!(
             ui.phz.map[c].iter().any(|&v| v > 0),
@@ -381,7 +381,7 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
             ui.last[0].as_ref().map(|r| r.dt)
         );
     }
-    assert_eq!((ui.phz.w, ui.phz.h), (ui.wins[0].w as usize, ui.wins[0].h as usize));
+    assert_eq!((ui.phz.w, ui.phz.h), (ui.plot.wins[0].w as usize, ui.plot.wins[0].h as usize));
     // The reported late-session offset can clip a vertically magnified detail,
     // while the same enabled channel remains visible in the unity overview.
     ui.m.run = RunState::Stop;

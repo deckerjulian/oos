@@ -739,10 +739,8 @@ pub struct Ui {
     grid: Rect,
     /// the zoom window: its vertical magnification, the time base it opened on, how it was closed (plot_layout.rs)
     zoom_view: plot_layout::ZoomView,
-    /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
-    wins: Vec<Rect>,
-    /// the window being drawn
-    cur_win: usize,
+    /// the waveform windows in the plot, the one being drawn, the pass of the second picture (plot_layout.rs)
+    plot: plot_layout::Plot,
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
     /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
     full: bool,
@@ -897,8 +895,6 @@ pub struct Ui {
     capture_views: std::cell::RefCell<capture_memory::State>,
     /// the screen the layout is made for: the panel, or another size in host test runs (`--size`)
     pub scr: Screen,
-    /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
-    view_pass: bool,
     /// the USB stick: whether one is mounted, and when the sticks are looked for next (save_recall.rs)
     stick: save_recall::Stick,
     /// the logic analyser: the probe as last read, the pixel columns of the last LA record drawn (la.rs)

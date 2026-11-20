@@ -199,10 +199,10 @@ mod tests {
         for l in WinLayout::ALL {
             u.m.win_layout = l;
             render(&mut u);
-            assert_eq!(u.wins.len(), l.count(), "{:?}", l);
+            assert_eq!(u.plot.wins.len(), l.count(), "{:?}", l);
             let g = u.grid;
-            for (i, a) in u.wins.iter().enumerate() {
-                assert_eq!((a.w, a.h), (u.wins[0].w, u.wins[0].h), "{:?}", l);
+            for (i, a) in u.plot.wins.iter().enumerate() {
+                assert_eq!((a.w, a.h), (u.plot.wins[0].w, u.plot.wins[0].h), "{:?}", l);
                 assert!(
                     a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h,
                     "{:?} {:?}",
@@ -210,12 +210,12 @@ mod tests {
                     a
                 );
                 assert_eq!(a.h % 8, 0, "{:?}", l);
-                for b in &u.wins[i + 1..] {
+                for b in &u.plot.wins[i + 1..] {
                     assert!(!overlaps(*a, *b), "{:?}", l);
                 }
             }
             // one phosphor map per channel at the size of a window
-            assert_eq!((u.ph.w, u.ph.h), (u.wins[0].w as usize, u.wins[0].h as usize));
+            assert_eq!((u.ph.w, u.ph.h), (u.plot.wins[0].w as usize, u.plot.wins[0].h as usize));
         }
     }
 
@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(&u.m.ch_win[..n_ch()], &(0..n_ch()).map(|c| c % 2).collect::<Vec<_>>()[..]);
         render(&mut u);
         // a channel's volts map into its own window; Split stacks them
-        let (a, b) = (u.wins[0], u.wins[1]);
+        let (a, b) = (u.plot.wins[0], u.plot.wins[1]);
         assert!(b.y >= a.y + a.h);
         assert_eq!(u.ch_area(0), a);
         assert_eq!(u.ch_area(1), b);
@@ -241,7 +241,7 @@ mod tests {
         // back to one window: everything in it, whatever the per-channel choice says
         u.select_option(Item::WinLayout, "Scope");
         render(&mut u);
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         assert!((0..n_ch()).all(|c| u.ch_area(c) == u.area));
     }
 
@@ -251,10 +251,10 @@ mod tests {
         u.m.win_layout = WinLayout::Quad;
         u.m.zoom = true;
         render(&mut u);
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         u.m.zoom = false;
         render(&mut u);
-        assert_eq!(u.wins.len(), 4);
+        assert_eq!(u.plot.wins.len(), 4);
     }
 
     #[test]
@@ -379,7 +379,7 @@ mod tests {
         u.select_option(Item::WinRef(0), "3");
         assert_eq!(u.value(Item::WinRef(0)), "3");
         render(&mut u);
-        assert_eq!(u.source_area(WaveId::Ref(0)), Some(u.wins[2]));
+        assert_eq!(u.source_area(WaveId::Ref(0)), Some(u.plot.wins[2]));
     }
 
     #[test]
@@ -431,15 +431,20 @@ mod tests {
         assert_eq!(u.options(Item::WinLayout), vec!["Scope", "Full", "Split", "Four"]);
         u.select_option(Item::WinLayout, "Full");
         render(&mut u);
-        assert!(u.full && u.wins.len() == 1 && u.grid.y == 0);
+        assert!(u.full && u.plot.wins.len() == 1 && u.grid.y == 0);
         u.select_option(Item::WinLayout, "Split");
         render(&mut u);
-        assert!(!u.full && u.wins.len() == 2 && u.wins[1].y > u.wins[0].y && u.wins[0].x == u.wins[1].x);
+        assert!(
+            !u.full
+                && u.plot.wins.len() == 2
+                && u.plot.wins[1].y > u.plot.wins[0].y
+                && u.plot.wins[0].x == u.plot.wins[1].x
+        );
         assert_eq!(u.value(Item::PaneSel), "Traces");
         u.select_option(Item::PaneSel, "Results");
         render(&mut u);
         assert_eq!(
-            (u.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
+            (u.plot.wins.len(), u.m.win_layout, u.m.pane, u.m.split_pane, u.m.density),
             (1, WinLayout::One, tables::PANE_RESULTS, tables::PANE_RESULTS, Density::Split)
         );
         assert!(u.pane_h() > 0);
@@ -449,16 +454,16 @@ mod tests {
         assert_eq!(u.m.pane, tables::PANE_TREND);
         u.select_option(Item::WinLayout, "Four");
         render(&mut u);
-        assert_eq!(u.wins.len(), 4);
+        assert_eq!(u.plot.wins.len(), 4);
         assert_eq!(u.pane_h(), 0);
         u.select_option(Item::WinLayout, "Scope");
         render(&mut u);
-        assert_eq!((u.wins.len(), u.pane_h()), (1, 0));
+        assert_eq!((u.plot.wins.len(), u.pane_h()), (1, 0));
         // Split comes back to the lower pane it had
         u.select_option(Item::WinLayout, "Split");
         render(&mut u);
         assert_eq!(u.value(Item::PaneSel), "Trend");
-        assert_eq!(u.wins.len(), 1);
+        assert_eq!(u.plot.wins.len(), 1);
         assert!(u.pane_h() > 0);
     }
 
@@ -494,13 +499,13 @@ mod tests {
         assert_eq!(u.hdmi.snap[snap_at], cv.px[at], "Scope copies the plot, strip and card");
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
-        assert_eq!(u.wins.len(), 4);
-        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
+        assert_eq!(u.plot.wins.len(), 4);
+        assert!(u.plot.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
         assert!(!u.full);
         u.select_option(Item::WinLayout, "Split");
         u.select_option(Item::PaneSel, "Results");
         u.render(&mut cv);
-        assert!(u.pane_h() > 0 && u.wins.len() == 1 && !u.full);
+        assert!(u.pane_h() > 0 && u.plot.wins.len() == 1 && !u.full);
         let pane = u.pane_rect();
         assert!(pane.y >= TOP.h && pane.y + pane.h <= u.frame().bottom.y);
     }
@@ -512,7 +517,7 @@ mod tests {
         u.spread_wins();
         u.m.active = 0;
         render(&mut u);
-        let b = u.wins[1];
+        let b = u.plot.wins[1];
         // CH2's marker at the left edge of the right window
         let y = u.y_of_volts(1, 0.0);
         let x = b.x + 10;
@@ -592,7 +597,7 @@ mod tests {
         assert_eq!(u.m.la_win, 0);
         render(&mut u);
         let (band, pitch) = u.la_band(u.m.la.lines().len());
-        let w = u.wins[0];
+        let w = u.plot.wins[0];
         // at the bottom of the window, half of it or what 16 lanes of the smallest pitch need
         let n = u.m.la.lines().len() as i32;
         assert!(
@@ -610,7 +615,7 @@ mod tests {
         u.m.la_win = 3;
         render(&mut u);
         let (band, _) = u.la_band(u.m.la.lines().len());
-        let w = u.wins[3];
+        let w = u.plot.wins[3];
         assert!(band.h > w.h * 3 / 4 && band.y >= w.y, "{:?} {:?}", band, w);
     }
 

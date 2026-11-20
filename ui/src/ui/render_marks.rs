@@ -59,7 +59,7 @@ impl Ui {
 
     /// Room a ref badge keeps clear under it: the time labels along the bottom of the lowest lane.
     fn ref_badge_pad(&self) -> i32 {
-        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+        if self.stacked() && self.plot.cur_win + 1 < self.plot.wins.len() {
             2
         } else {
             self.fonts().s.size + 10
@@ -87,12 +87,12 @@ impl Ui {
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
             if !all_sources
                 && self.stacked()
-                && self.trace_sources().get(self.cur_win) != Some(&workspace::Trace::Reference(i))
+                && self.trace_sources().get(self.plot.cur_win) != Some(&workspace::Trace::Reference(i))
             {
                 continue;
             }
             // a split (not Stacked): each reference in the window its Windows row names
-            if !all_sources && !self.stacked() && self.wins.len() > 1 && self.ref_win_of(i) != self.cur_win {
+            if !all_sources && !self.stacked() && self.plot.wins.len() > 1 && self.ref_win_of(i) != self.plot.cur_win {
                 continue;
             }
             if !r.on || r.v.is_empty() || !(r.dt > 0.0) {
@@ -283,7 +283,7 @@ impl Ui {
                     CH_COLORS[c],
                 );
             }
-            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => {
+            Drag::Delay if self.plot.cur_win == self.touch.win.min(self.plot.wins.len().max(1) - 1) => {
                 tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT)
             }
             Drag::Level

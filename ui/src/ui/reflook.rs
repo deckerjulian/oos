@@ -131,7 +131,7 @@ impl Ui {
     }
 
     pub(super) fn waves_on(&self) -> bool {
-        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.wins.len() <= 1
+        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.plot.wins.len() <= 1
     }
 
     pub(super) fn waves_board_rect(&self) -> Option<Rect> {
