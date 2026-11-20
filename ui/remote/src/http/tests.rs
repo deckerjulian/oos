@@ -21,8 +21,9 @@ impl Site for Nothing {
     fn remote_ok(&self, _: &str) -> bool {
         false
     }
-    fn answer(&mut self, _: &str, _: bool, _: &[u8]) -> Option<(&'static str, Vec<u8>, bool)> {
-        None
+    fn answer(&mut self, route: &str, _: bool, _: &[u8]) -> Option<(&'static str, Body, bool)> {
+        // a body made on a sender thread (as the screenshots of the program)
+        (route == "/later").then(|| ("text/plain", Body::Later(Box::new(|| b"made later".to_vec())), false))
     }
     fn update_state(&mut self) -> (fn() -> String, String) {
         (held_state, "last <upload>".into())
@@ -36,6 +37,13 @@ impl Site for Nothing {
     fn take_upload(&mut self, _: Result<(), String>, _: &str, _: usize, _: u64) -> (bool, String) {
         (false, String::new())
     }
+}
+
+/// The tests that use the senders of `oos_system::net` (shared by the process), one at a time: one that holds both
+/// would make the other's answer 503.
+fn senders() -> std::sync::MutexGuard<'static, ()> {
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ONE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// While set, the state of the update is not given (`held_state` waits): the program that gives it is still running.
@@ -60,6 +68,7 @@ fn held_state() -> String {
 #[test]
 fn the_update_page_is_made_off_the_frame_loop() {
     use std::sync::atomic::Ordering::SeqCst;
+    let _one_at_a_time = senders();
     let mut h = Http::<()>::open(0);
     HOLD_STATE.store(true, SeqCst);
     let until = std::time::Instant::now() + Duration::from_secs(60);
@@ -271,4 +280,30 @@ fn an_early_answer_to_a_head_has_no_body() {
         assert_eq!(head, get.strip_suffix(msg).unwrap(), "the head of a HEAD is the head of the GET");
     }
     assert_eq!(LARGE_BODY, MAX_OTHER, "a HEAD with a large body is 413 before it could be 503");
+}
+
+/// A body the program makes later (`Body::Later`) is made and sent on a sender thread, with its length; a HEAD gets the
+/// head alone.
+#[test]
+fn a_body_made_later_is_sent_whole() {
+    let _one_at_a_time = senders();
+    let mut h = Http::<()>::open(0);
+    for (method, body) in [("GET", "made later"), ("HEAD", "")] {
+        let mut c = TcpStream::connect(("127.0.0.1", h.port().unwrap())).unwrap();
+        c.write_all(format!("{method} /later HTTP/1.1\r\n\r\n").as_bytes()).unwrap();
+        c.set_read_timeout(Some(Duration::from_millis(1))).unwrap();
+        let mut got = Vec::new();
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until {
+            h.poll(&mut Nothing);
+            match c.read_to_end(&mut got) {
+                Ok(_) => break,
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let r = String::from_utf8_lossy(&got);
+        assert!(r.starts_with("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\n"), "{r}");
+        assert!(r.ends_with(&format!("\r\n\r\n{body}")), "{method}: {r}");
+    }
 }

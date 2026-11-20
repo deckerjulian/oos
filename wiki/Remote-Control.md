@@ -39,6 +39,10 @@ own. **From 0.1.8** the live picture can be a JPEG made by the scope's video enc
 to PNG): about 75 KB a picture against 115 KB, at under a third of the processor time of a PNG; text is a little less
 sharp, and screenshots stay PNG.
 
+**From 0.1.15** the BMP picture, the screenshot of the MCP tool `screenshot` and the update page are made off the
+frame loop as well. While two large answers are being sent at once, the next one gets "busy, try again" (503); the
+page asks again by itself, a script of your own should too.
+
 ## Ethernet
 
 Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web remote.

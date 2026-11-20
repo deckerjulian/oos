@@ -40,7 +40,7 @@ pub trait Site {
     fn remote_ok(&self, line: &str) -> bool;
     /// The answer of a route of the program: (content type, body, whether the body is the reason it failed and not
     /// the data asked for); None for a route that is none of its. An empty content type is 202 with no body.
-    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)>;
+    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Body, bool)>;
     /// What `GET /update` shows: what gives the state of the update (it may take a while: the server calls it on a
     /// thread of its own, not in the frame loop) and the result of the last upload.
     fn update_state(&mut self) -> (fn() -> String, String);
@@ -162,6 +162,28 @@ pub struct Http<U> {
     pub acl: oos_system::netacl::Shared,
     /// the addresses the identification page names
     offer: Offer,
+}
+
+/// The body of an answer of the program (`Site::answer`): made, or made on a sender thread of the server when making
+/// it takes long (a picture encoded from a copy of the screen), never in the frame loop (#205).
+pub enum Body {
+    Now(Vec<u8>),
+    Later(Box<dyn FnOnce() -> Vec<u8> + Send>),
+}
+
+impl Body {
+    /// The bytes, made now if they are made later.
+    pub fn bytes(self) -> Vec<u8> {
+        match self {
+            Body::Now(b) => b,
+            Body::Later(make) => make(),
+        }
+    }
+
+    /// `bytes` as text (an MCP answer for a test or the soak run).
+    pub fn text(self) -> String {
+        String::from_utf8_lossy(&self.bytes()).into_owned()
+    }
 }
 
 /// The head of an answer of `Http::answer`: status, type (none for an answer without a body: the 202 of an MCP
@@ -600,11 +622,24 @@ impl<U: Send + 'static> Http<U> {
                 false => refused(),
             },
             _ => match site.answer(route, post, req_body) {
+                // made on a sender thread, 503 when they are all busy (#205)
+                Some((ctype, Body::Later(make), failed)) => {
+                    let status = if failed { "409 Conflict" } else { OK };
+                    let made = oos_system::net::answer_in_background(s, move || {
+                        let body = make();
+                        (answer_head(status, ctype, body.len(), ""), if head_only { Vec::new() } else { body })
+                    });
+                    if !made {
+                        oos_system::net::busy_answer(s);
+                    }
+                    self.pending.remove(i);
+                    return false;
+                }
                 // the route says the body is why it failed, not the data asked for
-                Some((ctype, body, true)) => ("409 Conflict", ctype, body),
+                Some((ctype, Body::Now(body), true)) => ("409 Conflict", ctype, body),
                 // an MCP notification: no body
-                Some(("", body, false)) => ("202 Accepted", "", body),
-                Some((ctype, body, false)) => (OK, ctype, body),
+                Some(("", Body::Now(body), false)) => ("202 Accepted", "", body),
+                Some((ctype, Body::Now(body), false)) => (OK, ctype, body),
                 None => ("404 Not Found", "text/plain", b"not found".to_vec()),
             },
         };

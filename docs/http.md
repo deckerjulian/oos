@@ -120,7 +120,9 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
 - Mark: **stable**
 - Request: nothing.
 - Answer: 200 `image/bmp`, the screen as a 24-bit BMP (1.8 MB), made at the request (`bmp` in
-  `ui/src/scpi/display.rs`, the picture of `:DISPlay:DATA?`). No `ETag`. 503 while two large answers are being sent.
+  `ui/src/scpi/display.rs`, the picture of `:DISPlay:DATA?`): the screen is copied in the frame loop and encoded
+  and sent on one of the two sender threads of the large answers (before 0.1.15 it was encoded in the frame loop).
+  No `ETag`. 503 while two large answers are being sent.
 - net.allow: no.
 
 ### `GET /wave.csv`
@@ -228,7 +230,9 @@ the body is why it failed (`Site::answer`), 202 for an MCP notification, else 20
 - Mark: **stable**
 - Request: no arguments.
 - Answer: one `image` content item, `mimeType` `image/png`, `data` the screen as PNG in base64 (`gfx::png::png_of`,
-  made at the call).
+  made at the call): the screen is copied in the frame loop, and the PNG and the answer are made and sent on one of
+  the two sender threads of the large answers, 503 while both are busy (before 0.1.15 the PNG was encoded in the
+  frame loop, which stood still meanwhile).
 
 ### `GET /update`
 

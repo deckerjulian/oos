@@ -10,6 +10,7 @@ use crate::gfx::Canvas;
 use crate::scpi::Scpi;
 use crate::shots::Live;
 use crate::ui::Ui;
+use oos_remote::http::Body;
 use std::net::TcpStream;
 
 /// What an answer of the web server may use: the screen, its last picture, the SCPI interpreter and the live picture,
@@ -65,11 +66,11 @@ impl oos_remote::http::Site for Ctx<'_> {
     }
 
     /// /ui-state, /stamp, /wave.csv, /la.csv, /wave.bin, POST /update, /screen.bmp and /mcp.
-    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)> {
-        let ok = |ctype: &'static str, b: Vec<u8>| Some((ctype, b, false));
+    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Body, bool)> {
+        let ok = |ctype: &'static str, b: Vec<u8>| Some((ctype, Body::Now(b), false));
         let file = |ctype: &'static str, r: Result<Vec<u8>, String>| match r {
-            Ok(b) => Some((ctype, b, false)),
-            Err(e) => Some(("text/plain", e.into_bytes(), true)),
+            Ok(b) => Some((ctype, Body::Now(b), false)),
+            Err(e) => Some(("text/plain", Body::Now(e.into_bytes()), true)),
         };
         let ui = &mut *self.ui;
         match route {
@@ -82,11 +83,15 @@ impl oos_remote::http::Site for Ctx<'_> {
             "/update" if post => match ui.update_upload(body) {
                 Ok(m) => ok("text/plain", m.into_bytes()),
                 // refused: the body says why (409, #205)
-                Err(e) => Some(("text/plain", format!("REFUSED: {}", e).into_bytes(), true)),
+                Err(e) => Some(("text/plain", Body::Now(format!("REFUSED: {}", e).into_bytes()), true)),
             },
-            "/screen.bmp" => ok("image/bmp", crate::scpi::bmp(self.cv)),
+            // the screen copied here, encoded on a sender thread
+            "/screen.bmp" => {
+                let shot = snapshot(self.cv);
+                Some(("image/bmp", Body::Later(Box::new(move || crate::scpi::bmp(&shot))), false))
+            }
             "/mcp" => match mcp(&String::from_utf8_lossy(body), self) {
-                Some(r) => ok("application/json", r.into_bytes()),
+                Some(b) => Some(("application/json", b, false)),
                 None => ok("", Vec::new()),
             },
             _ => None,
@@ -132,8 +137,17 @@ impl oos_remote::http::Site for Ctx<'_> {
     }
 }
 
-/// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
-pub fn mcp(body: &str, cx: &mut Ctx) -> Option<String> {
+/// A copy of the screen's pixels, to be encoded off the frame loop.
+fn snapshot(cv: &Canvas) -> Canvas {
+    let mut shot = Canvas::new(cv.w, cv.h);
+    shot.px.copy_from_slice(&cv.px);
+    shot
+}
+
+/// One MCP JSON-RPC message; None for notifications (answered with 202 and no body). The answer of the tool
+/// `screenshot` is made later (`Body::Later`, on a sender thread of the web server), from a copy of the screen taken
+/// here (#205: encoding a PNG took the frame loop's time).
+pub fn mcp(body: &str, cx: &mut Ctx) -> Option<Body> {
     let (ui, cv, scpi) = (&mut *cx.ui, cx.cv, &mut *cx.scpi);
     use crate::json::{parse, J};
     let err = |id: J, code: f64, msg: &str| {
@@ -144,7 +158,7 @@ pub fn mcp(body: &str, cx: &mut Ctx) -> Option<String> {
         ])
         .to_string()
     };
-    let Some(req) = parse(body) else { return Some(err(J::Null, -32700.0, "parse error")) };
+    let Some(req) = parse(body) else { return Some(Body::Now(err(J::Null, -32700.0, "parse error").into_bytes())) };
     let id = req.get("id").cloned()?;
     let method = req.get("method").and_then(J::str).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(J::Null);
@@ -195,19 +209,26 @@ pub fn mcp(body: &str, cx: &mut Ctx) -> Option<String> {
                     ]),
                 }
             }
-            Some("screenshot") => J::obj(&[(
-                "content",
-                J::Arr(vec![J::obj(&[
-                    ("type", J::s("image")),
-                    ("mimeType", J::s("image/png")),
-                    ("data", J::Str(crate::base64::encode(&crate::gfx::png::png_of(cv)))),
-                ])]),
-            )]),
-            _ => return Some(err(id, -32602.0, "unknown tool")),
+            Some("screenshot") => {
+                let shot = snapshot(cv);
+                return Some(Body::Later(Box::new(move || {
+                    let png = crate::gfx::png::png_of(&shot);
+                    let result = J::obj(&[(
+                        "content",
+                        J::Arr(vec![J::obj(&[
+                            ("type", J::s("image")),
+                            ("mimeType", J::s("image/png")),
+                            ("data", J::Str(crate::base64::encode(&png))),
+                        ])]),
+                    )]);
+                    J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string().into_bytes()
+                })));
+            }
+            _ => return Some(Body::Now(err(id, -32602.0, "unknown tool").into_bytes())),
         },
-        _ => return Some(err(id, -32601.0, "method not found")),
+        _ => return Some(Body::Now(err(id, -32601.0, "method not found").into_bytes())),
     };
-    Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
+    Some(Body::Now(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string().into_bytes()))
 }
 
 #[cfg(test)]
