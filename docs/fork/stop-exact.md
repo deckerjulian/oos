@@ -13,6 +13,8 @@ Single scan only).
 
 ## Now
 
+In the acquisition thread the STOP is `StopRun` in `ui/src/board/dho/hw/stop.rs`.
+
 - The UI publishes `Shared::hold` = stopped and a record is shown or the screen was cleared (`Source::hw_hold`, every
   step). A source started in STOP still gets its first record; a Clear in STOP keeps the thread held (it armed again
   before, overwrote the stored record and filled the queue).

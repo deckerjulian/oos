@@ -15,6 +15,8 @@ mod serial;
 mod settings;
 #[cfg(any(target_os = "linux", test))]
 mod slow;
+#[cfg(any(target_os = "linux", test))]
+mod stop;
 #[cfg(test)]
 mod tests;
 mod trim;
@@ -26,9 +28,9 @@ pub use self::decode::{codes_into, decode, decode_into};
 use self::decode::{decode_with, la_record, POOL};
 #[cfg(any(target_os = "linux", test))]
 use self::plan::{
-    batch_plan, deep_raw_settings, disarm, edge_check, final_replay, frame0_check_wanted, frame0_drop, frame0_left_out,
-    frame1_left_out, frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, prearm_on, stop_plan,
-    FIRST_LEFT_MAX_S, FRAME1_CHECK_MAX,
+    batch_plan, deep_raw_settings, disarm, edge_check, frame0_check_wanted, frame0_drop, frame0_left_out,
+    frame1_left_out, frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, prearm_on, FIRST_LEFT_MAX_S,
+    FRAME1_CHECK_MAX,
 };
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
@@ -40,6 +42,8 @@ pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, ROLL_TDIV};
 use self::settings::{avg_kind, raw_for_ui, raw_newest, single_wants_more};
 #[cfg(any(target_os = "linux", test))]
 use self::slow::SlowRun;
+#[cfg(any(target_os = "linux", test))]
+use self::stop::StopRun;
 #[cfg(any(target_os = "linux", test))]
 use self::trim::{core_offset_tight, core_trim, load_overlay, overlay_in_use, TrimPending, TRIM_TRIES};
 #[cfg(any(target_os = "linux", test))]
@@ -201,9 +205,8 @@ fn run<P: port::Port>(
         let mut stamp;
         let mut xadc_at: Option<u64> = None;
         let mut la_fails = 0u32;
-        // STOP: the last batch (its read settings, parameters, newest frame in the ring) and the view last read for
-        let mut last_batch: Option<(Settings, hz::Params, u32)> = None;
-        let mut replayed: Option<(f64, f64)> = None;
+        // STOP: the last batch, the view last read for, and whether arming is paused (`stop.rs`)
+        let mut stop = StopRun::default();
         // the learnt offsets of the ADC cores (`cores`)
         let mut cores = super::cores::Cores::default();
         // the read buffer of the batches, kept (bus::DmaBuf)
@@ -218,9 +221,8 @@ fn run<P: port::Port>(
         // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
         let mut comp_last: Option<u64> = None;
         // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
-        // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
+        // raw)
         let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
-        let mut paused = false;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
@@ -425,90 +427,46 @@ fn run<P: port::Port>(
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
-            // STOP: the batch in progress has been read. Once, before anything else of the STOP: disarm (a batch armed
-            // ahead writes the ring the views below read again, so the last batch is gone with it), and the newest
-            // frame once more raw where the live compression or the deep measurements want it (the record that stays
-            // on screen). Both STOP ways go through here: the hold (PR #7) and the views read again (`stop_view`)
+            // STOP (`stop.rs`): the hold, once, with the newest frame read raw where it is wanted; then the views
+            // read again from the stored record (normal acquisitions only)
             let (hold, final_req, deep_want) = {
                 let g = out.lock().unwrap();
                 (g.hold, g.final_req, g.deep_raw)
             };
-            if hold && !paused {
-                let ahead = armed.is_some();
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                if ahead {
-                    last_batch = None;
-                }
-                let replay = last_read.as_ref().and_then(|(lb, lp, count, raw)| {
-                    final_replay(lb, lp, *count, *raw, ahead, deep_want).map(|ds| (ds, *lp, *count))
-                });
-                let match_cores = out.lock().unwrap().cores;
-                let last = replay.and_then(|(ds, lp, count)| {
-                    match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {})
-                    {
-                        Ok(()) => {
-                            n += 1;
-                            Some(Frame {
-                                stamp,
-                                ..decode_with(raw_dma.data(), &ds, &lp, n, match_cores.then_some(&mut cores))
-                            })
-                        }
-                        Err(e) => {
-                            status(format!("raw read of the deep window at STOP: {}", e));
-                            None
-                        }
-                    }
-                });
-                let mut g = out.lock().unwrap();
-                if let Some(f) = last {
-                    g.frame = f.clone();
-                    g.queue.push_back(f);
-                }
-                g.final_ack = final_req;
-                drop(g);
-                paused = true;
+            if hold && !stop.paused {
+                let io = slow::Io {
+                    state: &mut state,
+                    bar: &mut bar,
+                    c2h: &mut c2h,
+                    clock: &mut clock,
+                    out: &out,
+                    n: &mut n,
+                    stamp,
+                };
+                stop.hold(io, &mut armed, last_read.as_ref(), &mut raw_dma, &mut cores, (final_req, deep_want));
             }
-            // STOP (normal acquisitions only): nothing is armed, the record in the ring stays; for every new view
-            // the newest frame of the last batch is read again (`stop_plan`), settings changed meanwhile wait for RUN
             let stop_view = out.lock().unwrap().stop_view;
             match stop_view {
                 Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
-                    // a final-frame request of the UI while the views are read again: answered as the hold does
-                    {
-                        let mut g = out.lock().unwrap();
-                        g.final_ack = g.final_req;
-                    }
-                    match &last_batch {
-                        Some((lb, lp, idx)) if replayed != Some(v) => {
-                            replayed = Some(v);
-                            let (rb, ti) = stop_plan(lb, lp, v.0, v.1);
-                            let steps = state.reread_steps(&rb, lp, *idx);
-                            match execute::<P>(&steps, &mut bar, None, &mut c2h, &mut lines, &mut clock) {
-                                Ok(bytes) => {
-                                    let fb = seq::frame_bytes(&rb, lp);
-                                    n += 1;
-                                    let m = out.lock().unwrap().cores.then_some(&mut cores);
-                                    let f = Frame {
-                                        stamp,
-                                        fixed_ti: Some(ti),
-                                        ..decode_with(&bytes[..fb.min(bytes.len())], &rb, lp, n, m)
-                                    };
-                                    out.lock().unwrap().replay = Some(f);
-                                }
-                                Err(e) => status(format!("STOP read: {}", e)),
-                            }
-                        }
-                        _ => clock.sleep_us(20000),
-                    }
+                    let io = slow::Io {
+                        state: &mut state,
+                        bar: &mut bar,
+                        c2h: &mut c2h,
+                        clock: &mut clock,
+                        out: &out,
+                        n: &mut n,
+                        stamp,
+                    };
+                    stop.view::<P>(v, io, &mut lines, &mut cores);
                     continue;
                 }
-                _ => replayed = None,
+                _ => stop.no_view(),
             }
             if current.as_ref().is_none_or(|c| c.0 != want) || mode != want_mode {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &mut clock, &out);
                 mode = want_mode;
-                last_batch = None;
+                stop.last_batch = None;
                 slow.stop(&mut state, &mut bar);
                 match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
@@ -661,7 +619,7 @@ fn run<P: port::Port>(
                 clock.sleep_us(5000);
                 continue;
             }
-            if std::mem::take(&mut paused) {
+            if std::mem::take(&mut stop.paused) {
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
                 out.lock().unwrap().queue.clear();
             }
@@ -1082,7 +1040,7 @@ fn run<P: port::Port>(
                         f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
                     }
                     if count > 0 {
-                        last_batch = Some((b.clone(), p, count - 1));
+                        stop.last_batch = Some((b.clone(), p, count - 1));
                     }
                     let mut g = out.lock().unwrap();
                     // the pipeline's counters take every frame read that is neither queued nor lent to the workers:
@@ -1110,8 +1068,8 @@ fn run<P: port::Port>(
                 // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record
                 // there is gone, later frames of the last batch are untouched
                 Err(e) if e == seq::NEW_SETTINGS => {
-                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
-                        last_batch = None;
+                    if stop.last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                        stop.last_batch = None;
                     }
                     // cut by the STOP (`hold`): the FSM still waits armed. New settings disarm it as they configure
                     // and a view read in STOP as it plays; a STOP that reads nothing again (#24: a whole record) must
@@ -1123,8 +1081,8 @@ fn run<P: port::Port>(
                     }
                 }
                 Err(e) => {
-                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
-                        last_batch = None;
+                    if stop.last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                        stop.last_batch = None;
                     }
                     status(format!("acquire: {}", e));
                     // the mask/zone unit stalled the arm: drop it for these settings (the next loop reconfigures)
