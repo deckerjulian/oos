@@ -12,20 +12,14 @@
 use super::port::{Hw, Port};
 use crate::board::{lock, Frame, HwShared, Shared};
 use crate::model::*;
-use oos_hal::dho::sim::{unit, Scene, View};
+use oos_hal::dho::afg::{Mod, ModShape, Wave};
+use oos_hal::dho::sim::{unit, GenState, Scene, Unit, View};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// The simulated unit as the loop's port: its register window, stream and clock, a front-end stub, lines that record,
-/// and a generator that is not there.
-pub(super) struct SimPort;
-pub(super) struct NoGen;
-
-impl oos_hal::dho::afg::GenLines for NoGen {
-    fn relays(&mut self, _code: u8) {}
-    fn power(&mut self, _on: bool) {}
-    fn relay_code(&self) -> u8 {
-        0
-    }
-}
+/// and the generator's lines of the unit it holds (None: they cannot be opened).
+pub(super) struct SimPort(pub(super) Option<Rc<RefCell<Unit>>>);
 
 impl Port for SimPort {
     type Bus = oos_hal::dho::sim::Bar;
@@ -33,9 +27,11 @@ impl Port for SimPort {
     type Afe = oos_hal::dho::boot::sim::AfeStub;
     type Lines = oos_hal::dho::lines::Recorded;
     type Clock = oos_hal::dho::sim::Time;
-    type Gen = NoGen;
-    fn open_gen(&mut self) -> std::io::Result<NoGen> {
-        Ok(NoGen)
+    type Gen = oos_hal::dho::sim::Gen;
+    fn open_gen(&mut self) -> std::io::Result<Self::Gen> {
+        let u =
+            self.0.clone().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no generator lines"))?;
+        Ok(oos_hal::dho::sim::Gen(u))
     }
 }
 
@@ -50,6 +46,8 @@ enum Act {
     SetView(fn(&mut Model)),
     /// CLEAR of the average (`Shared::avg_clear`)
     AvgClear,
+    /// a request of the generator (`Shared::afg`): on, Hz, Vpp, V offset, wave, modulation
+    Gen(crate::board::Gen),
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -378,7 +376,62 @@ const CASES: &[Case] = &[
         ..BASE
     },
     Case { name: "average-sw-16", model: |m| average(m, false, 16), ..BASE },
+    Case {
+        name: "generator-on-retuned-off",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        passes: 20,
+        script: &[
+            (2, Act::Gen((true, 1e3, 1.0, 0.0, Wave::Sine, Mod::None))),
+            (8, Act::Gen((true, 2e3, 1.0, 0.0, Wave::Sine, Mod::None))),
+            (14, Act::Gen((false, 2e3, 1.0, 0.0, Wave::Sine, Mod::None))),
+        ],
+        ..BASE
+    },
+    Case {
+        name: "generator-square-then-am",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        passes: 12,
+        script: &[
+            (2, Act::Gen((true, 1e4, 2.0, 0.5, Wave::Square { duty: 0.5 }, Mod::None))),
+            (
+                6,
+                Act::Gen((true, 1e4, 2.0, 0.5, Wave::Sine, Mod::Am { rate: 100.0, depth: 0.5, shape: ModShape::Sine })),
+            ),
+        ],
+        ..BASE
+    },
 ];
+
+/// The checks of the generator's requests in a case's script against what the unit's generator was told by the pass
+/// of each (`gens[k]`: after k passes): the output and its supply on as asked, the frequency of the phase increment and
+/// the modulation; a new frequency of the same wave, level and no modulation retuned without a new table
+/// (`afg::retune`), any other change of a running output with one. Break it catches: a request not applied, applied
+/// to another bank, at another frequency, an output left on, a retune that starts over or a start that keeps the old
+/// table.
+fn generator_checks(case: &Case, gens: &[GenState]) {
+    let mut before: Option<(crate::board::Gen, GenState)> = None;
+    for (at, want) in case.script.iter().filter_map(|(at, a)| if let Act::Gen(w) = a { Some((*at, *w)) } else { None })
+    {
+        let g = gens[at as usize];
+        let (on, f, a, o, wave, md) = want;
+        assert_eq!((g.output, g.power), (on, on), "{}: the generator after pass {}: {:?}", case.name, at, g);
+        let modulation = match md {
+            Mod::None => 0,
+            Mod::Am { .. } => 0x82,
+            Mod::Fm { .. } => 0x84,
+            Mod::Pm { .. } => 0x88,
+        };
+        if on {
+            assert!((g.hz - f).abs() < 1e-3, "{}: {} Hz, not {} Hz", case.name, g.hz, f);
+            assert_eq!(g.modulation, modulation, "{}: modulation after pass {}", case.name, at);
+        }
+        if let Some((w, b)) = before.filter(|(w, _)| w.0 && on) {
+            let retune = (w.2, w.3, w.4, w.5) == (a, o, wave, Mod::None) && md == Mod::None;
+            assert_eq!(g.samples == b.samples, retune, "{}: a new table after pass {}", case.name, at);
+        }
+        before = Some((want, g));
+    }
+}
 
 /// The model in Average mode of `count`, in the FPGA (`hw`) or in software: CH1 at 1 us/div, records of 1k points.
 fn average(m: &mut Model, hw: bool, count: u32) {
@@ -536,9 +589,9 @@ fn view_of(m: &Model) -> View {
     View { cal, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post }
 }
 
-/// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings and what the loop left
-/// in the shared state.
-fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
+/// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings, what the loop left
+/// in the shared state and what the generator was told after each pass.
+fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<GenState>) {
     let mut m = Model::default();
     (case.model)(&mut m);
     // the switches of this thread, put back when the case ends (a failing one too)
@@ -561,9 +614,12 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     };
     let (u, bar, c2h, clock) = unit(scene);
     let sim = u.clone();
+    // what the generator was told after each pass
+    let mut gens = Vec::new();
     // with the calibration the front ends are programmed too, through a stub that answers them
     let afe = case.cal.then_some(oos_hal::dho::boot::sim::AfeStub { writes: 0, reads: 0 });
-    let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port: SimPort };
+    let port = SimPort(Some(u.clone()));
+    let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let mask = want.mask;
     {
@@ -592,6 +648,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     let _out = crate::drawpipe::keep_out();
     super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
+        gens.push(sim.borrow().generator());
         let mut g = lock(&shared);
         for (_, act) in case.script.iter().filter(|(at, _)| *at == pass) {
             match act {
@@ -606,6 +663,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
                     sim.borrow_mut().scene.view = view_of(&m);
                 }
                 Act::AvgClear => g.avg_clear += 1,
+                Act::Gen(w) => g.afg[0] = Some(*w),
                 Act::Hold => g.hold = true,
                 Act::Rearm => rearm_due = true,
                 Act::SegRun => (g.seg.run, g.seg.running) = (g.seg.run + 1, true),
@@ -635,7 +693,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared) {
     }
     let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).chain(replays).collect();
     let trace = u.borrow().trace_text();
-    (trace, frames, mask, out)
+    (trace, frames, mask, out, gens)
 }
 
 /// The line of a segmented recording: segments asked for, recorded, read back, the time of each and the one shown.
@@ -663,7 +721,8 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         std::fs::create_dir_all(d).expect("OOS_LIVE_OUT is a folder");
     }
     for case in CASES {
-        let (trace, frames, mask, out) = run_case(case);
+        let (trace, frames, mask, out, gens) = run_case(case);
+        generator_checks(case, &gens);
         let g = lock(&out);
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
@@ -715,7 +774,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         }
         // the calibration reaches the configuration: the same case without it writes other values
         if case.cal {
-            let (plain, _, _, _) = run_case(&Case { cal: false, ..*case });
+            let (plain, ..) = run_case(&Case { cal: false, ..*case });
             let writes = |t: &str| -> Vec<String> {
                 t.lines().filter(|l| l.starts_with("Write")).map(|l| l[l.find("off").unwrap()..].to_string()).collect()
             };

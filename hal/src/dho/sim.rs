@@ -18,7 +18,8 @@
 //! triggers and how the front ends scale it is the test's `Scene`; the writes of the front ends, the ADC, the trigger
 //! and the time base are recorded, not interpreted (3.2). Every access leaves a line in the trace. The roll stream and
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
-//! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The stamps of a
+//! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The generator's
+//! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The stamps of a
 //! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
 //! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
 
@@ -120,6 +121,12 @@ pub enum Event {
         last: u32,
         bytes: usize,
     },
+    /// the generator's lines (`Gen`): the relay code and the supply after a change of either
+    GenLines {
+        us: i128,
+        relays: u8,
+        power: bool,
+    },
     /// roll and scan: chunks made, the first with this counter
     Chunks {
         us: i128,
@@ -214,7 +221,77 @@ impl Avg {
     }
 }
 
-/// The simulated unit. Its sides are `Bar`, `Stream` and `Time`, which share it (`unit`).
+/// The bank selects of the generator's block (afg.md 2.1): B (DDS), M (modulation), A (amplitude).
+const GEN_B: u32 = 0x3ff0;
+const GEN_M: u32 = 0x3ff4;
+const GEN_A: u32 = 0x3ff8;
+/// The DDS clock (afg.md 2.3: 156.25 MHz, verified on the unit, section 14) and one table cycle in its phase.
+const DDS_HZ: f64 = 156.25e6;
+const DDS_CYCLE: f64 = (1u64 << 52) as f64;
+
+/// What the generator was told, as afg.md 2.2 reads its registers: the bank selected by the last select written 1
+/// takes the writes of 0x3000..0x307c (that a select written 0 ends its bank, and that the last one written 1 holds
+/// while another is still 1, is assumed: afg.md 2.1 calls the meaning of the selects assumed), and the lines of `Gen`.
+/// Nothing is read back from the block (afg.md 1); it makes no signal.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GenState {
+    /// bank B 0x3000 bit 0: the output on
+    pub output: bool,
+    /// the frequency of the phase increment, bank B 0x3048..0x3054 (56 bits; 2^52 a cycle at `DDS_HZ`), Hz
+    pub hz: f64,
+    /// the amplitude and offset DAC codes, bank A 0x3070 / 0x3078 (written as 0xffff - code)
+    pub ampl: u32,
+    pub offset: u32,
+    /// bank M 0x3000: 0 none, 0x82 AM, 0x84 FM, 0x88 PM
+    pub modulation: u32,
+    /// samples written to the RAM port, bank B 0x3038, since the start
+    pub samples: u64,
+    /// the lines: relay code (bit n = afg_in(n+1)) and the supply
+    pub relays: u8,
+    pub power: bool,
+}
+
+/// The generator's block between writes: the bank selected and its registers.
+#[derive(Default)]
+struct GenRegs {
+    bank: Option<u32>,
+    regs: BTreeMap<(u32, u32), u32>,
+    samples: u64,
+    relays: u8,
+    power: bool,
+}
+
+impl GenRegs {
+    fn write(&mut self, off: u32, v: u32) {
+        match (off, self.bank) {
+            (GEN_B | GEN_M | GEN_A, _) if v & 1 != 0 => self.bank = Some(off),
+            (GEN_B | GEN_M | GEN_A, Some(b)) if b == off => self.bank = None,
+            (0x3000..=0x307c, Some(b)) => {
+                self.regs.insert((b, off), v);
+                self.samples += (b == GEN_B && off == 0x3038) as u64;
+            }
+            _ => {}
+        }
+    }
+
+    fn state(&self) -> GenState {
+        let r = |b: u32, off: u32| self.regs.get(&(b, off)).copied().unwrap_or(0) as u64;
+        let inc = r(GEN_B, 0x3048) | r(GEN_B, 0x304c) << 16 | r(GEN_B, 0x3050) << 32 | (r(GEN_B, 0x3054) & 0xff) << 48;
+        let code = |off: u32| self.regs.get(&(GEN_A, off)).map_or(0, |&v| 0xffff - (v & 0xffff));
+        GenState {
+            output: r(GEN_B, 0x3000) & 1 != 0,
+            hz: inc as f64 * DDS_HZ / DDS_CYCLE,
+            ampl: code(0x3070),
+            offset: code(0x3078),
+            modulation: r(GEN_M, 0x3000) as u32,
+            samples: self.samples,
+            relays: self.relays,
+            power: self.power,
+        }
+    }
+}
+
+/// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
     view: View,
@@ -236,6 +313,7 @@ pub struct Unit {
     latched: u64,
     first_trigger_fs: Option<i128>,
     avg: Avg,
+    gen: GenRegs,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -259,6 +337,7 @@ impl Unit {
             latched: 0,
             first_trigger_fs: None,
             avg: Avg::default(),
+            gen: GenRegs::default(),
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -272,6 +351,11 @@ impl Unit {
     /// The trigger time of frame `k` of the ring, fs, when it was recorded.
     pub fn trigger_fs(&self, k: u32) -> Option<i128> {
         self.ring.get(&k).copied()
+    }
+
+    /// What the generator was told so far.
+    pub fn generator(&self) -> GenState {
+        self.gen.state()
     }
 
     /// The trace as text, one event a line (for a comparison of two runs).
@@ -454,6 +538,9 @@ impl Unit {
                 self.latched = (at / LATCH_TICK_FS) as u64;
             }
         }
+        if (0x3000..=0x3ffc).contains(&off) {
+            self.gen.write(off, v);
+        }
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -606,6 +693,30 @@ impl Clock for Time {
     }
     fn now_us(&mut self) -> u64 {
         self.0.borrow().now_us() as u64
+    }
+}
+
+/// The generator's lines of a shared `Unit` (afg.md 4): the relays and the supply, kept in its `GenState` and traced.
+pub struct Gen(pub Rc<RefCell<Unit>>);
+
+impl Gen {
+    fn set(&mut self, f: impl FnOnce(&mut GenRegs)) {
+        let mut u = self.0.borrow_mut();
+        f(&mut u.gen);
+        let (us, relays, power) = (u.t_fs / US, u.gen.relays, u.gen.power);
+        u.trace.push(Event::GenLines { us, relays, power });
+    }
+}
+
+impl crate::dho::afg::GenLines for Gen {
+    fn relays(&mut self, code: u8) {
+        self.set(|g| g.relays = code)
+    }
+    fn power(&mut self, on: bool) {
+        self.set(|g| g.power = on)
+    }
+    fn relay_code(&self) -> u8 {
+        self.0.borrow().gen.relays
     }
 }
 
@@ -1105,6 +1216,41 @@ mod tests {
         let (cfg, pn) = st.configure(&normal, None, None).unwrap();
         run(&cfg, &mut sides);
         assert_eq!(check(&mut st, (&normal, &pn), &mut Vec::new(), 1, &mut sides), 1, "0x10b0 outside the average");
+    }
+
+    // Break it catches: a generator block that takes the writes of another bank, a frequency that is not the phase
+    // increment at 156.25 MHz, DAC codes not read as 0xffff - code, lines that are not kept, or a retune that uploads
+    // the table again
+    #[test]
+    fn the_generator_keeps_what_its_block_and_lines_were_told() {
+        use crate::dho::afg::{self, GenLines, Mod, ModShape, Wave};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (u, mut bar, _, mut clock) = unit(scene(&p, None, None));
+        let mut lines = Gen(u.clone());
+        assert_eq!(u.borrow().generator(), GenState::default(), "nothing told yet");
+        // 1 kHz, 1 Vpp, 0 V without the calibration file
+        afg::run(&mut bar, &mut lines, &mut clock, &afg::start(None, Wave::Sine, 1e9, 1e9, 0.0, 0));
+        let g = u.borrow().generator();
+        assert!(g.output && g.power && g.modulation == 0, "{:?}", g);
+        assert!((g.hz - 1e3).abs() < 1e-6, "{} Hz", g.hz);
+        assert_eq!((g.samples, g.relays), (8192, lines.relay_code()));
+        assert!(g.ampl > 0, "{:?}", g);
+        // 2 kHz without a new table (`afg::retune`), the output on all along
+        let quick = afg::retune(None, Wave::Sine, 1e9, 2e9, 1e9, 0.0, lines.relay_code()).expect("a retune");
+        afg::run(&mut bar, &mut lines, &mut clock, &quick);
+        let r = u.borrow().generator();
+        assert!(r.output && (r.hz - 2e3).abs() < 1e-6 && r.samples == 8192, "{:?}", r);
+        // AM: the modulation's bank, not the DDS's 0x3000
+        let am = Mod::Am { rate: 100.0, depth: 0.5, shape: ModShape::Sine };
+        afg::run(&mut bar, &mut lines, &mut clock, &afg::start_mod(None, Wave::Sine, 1e9, 1e9, 0.0, 0, am));
+        let m = u.borrow().generator();
+        assert!(m.output && m.modulation == 0x82, "{:?}", m);
+        afg::run(&mut bar, &mut lines, &mut clock, &afg::stop());
+        let o = u.borrow().generator();
+        assert!(!o.output && !o.power, "{:?}", o);
+        let traced = u.borrow().trace.iter().filter(|e| matches!(e, Event::GenLines { .. })).count();
+        assert!(traced >= 3, "the lines in the trace: {}", traced);
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played
