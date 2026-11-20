@@ -155,7 +155,7 @@ impl Ui {
     pub(super) fn remove_measurement(&mut self, index: usize) {
         if index < self.m.meas.len() {
             let entry = self.m.meas.remove(index);
-            self.meas_own.remove(&entry);
+            self.meas_own.rows.remove(&entry);
         } else if index < self.m.meas.len() + self.m.meas2.len() {
             self.m.meas2.remove(index - self.m.meas.len());
         } else if index < self.measurement_count() {
@@ -163,7 +163,7 @@ impl Ui {
         } else {
             return;
         }
-        self.meas_cfg = None;
+        self.meas_own.dialog = None;
         self.clear_measurement_statistics();
         self.relayout();
     }
@@ -849,8 +849,8 @@ impl Ui {
         self.m.meas.clear();
         self.m.meas2.clear();
         self.m.cat.clear();
-        self.meas_own.clear();
-        self.meas_cfg = None;
+        self.meas_own.rows.clear();
+        self.meas_own.dialog = None;
         self.mark_changed();
         true
     }

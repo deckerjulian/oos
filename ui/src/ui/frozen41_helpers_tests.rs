@@ -178,7 +178,7 @@ fn remote_current_statistics_use_the_selected_rows_own_thresholds() {
         .collect();
     ui.refs[0] = Some(reference(values, 1e-9, 0.001));
     ui.m.meas = vec![(Meas::Rise, WaveId::Ref(0))];
-    ui.meas_own.insert(
+    ui.meas_own.rows.insert(
         (Meas::Rise, WaveId::Ref(0)),
         reflook::MeasOwn { refs_set: true, low: 0.4, high: 0.6, ..reflook::MeasOwn::shared(&ui.m) },
     );

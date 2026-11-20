@@ -805,10 +805,8 @@ pub struct Ui {
     offline: offline::Mode,
     /// Take over, offline waveforms, or the live scope.
     look: reflook::RefLook,
-    /// Settings of each added measurement. Missing keys follow the shared measure menu.
-    meas_own: std::collections::HashMap<(Meas, WaveId), reflook::MeasOwn>,
-    /// Settings dialog open on this index of `m.meas`.
-    meas_cfg: Option<u16>,
+    /// the settings of each added measurement, and the row whose settings dialog is open (reflook.rs)
+    meas_own: reflook::OwnMeas,
     /// the external display: whether one is attached, its size, and the waveform copied for it (windows.rs)
     pub hdmi: windows::Hdmi,
     /// the start-up screen and the last start-up's result for About (startup.rs)

@@ -361,8 +361,8 @@ impl Ui {
         self.bus_auto = None;
         self.clear_measurement_statistics();
         self.select_workspace_source(WaveId::Ch(self.m.active));
-        self.meas_own.clear();
-        self.meas_cfg = None;
+        self.meas_own.rows.clear();
+        self.meas_own.dialog = None;
         self.ensure_meas_own();
         self.stats_on = false;
         self.xy = false;

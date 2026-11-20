@@ -80,8 +80,7 @@ impl Ui {
             sim_gen: Default::default(),
             offline: Default::default(),
             look: reflook::RefLook::Live,
-            meas_own: std::collections::HashMap::new(),
-            meas_cfg: None,
+            meas_own: Default::default(),
             input: input::State::default(),
             touch: TouchState {
                 down: false,
