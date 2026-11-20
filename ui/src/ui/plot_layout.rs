@@ -196,7 +196,7 @@ impl Ui {
     /// Full density drawn on the panel. Not while the external display shows the waveform (the panel stays the
     /// controls) unless the expand button asked for it, and not with the touch lock, whose way out is the Menu button.
     pub(super) fn full_on(&self) -> bool {
-        self.full && !self.m.touch_lock
+        self.full.on && !self.m.touch_lock
     }
 
     pub(super) fn plot_top(&self) -> i32 {

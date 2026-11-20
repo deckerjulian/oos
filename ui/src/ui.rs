@@ -741,12 +741,8 @@ pub struct Ui {
     zoom_view: plot_layout::ZoomView,
     /// the waveform windows in the plot, the one being drawn, the pass of the second picture (plot_layout.rs)
     plot: plot_layout::Plot,
-    /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
-    /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
-    full: bool,
-    /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
-    /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
-    full_asked: bool,
+    /// Full density on the panel, and whether the expand button asked for it (windows.rs)
+    full: windows::Full,
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
     menu: MenuId,

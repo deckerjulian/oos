@@ -427,12 +427,12 @@ fn the_measurement_strip_docks_on_four_sides() {
     assert!(!overlaps(u.pane_rect(), u.strip_rect().unwrap()));
     u.m.pane = 0;
 
-    u.full = true;
+    u.full.on = true;
     u.m.strip_dock = StripDock::Above;
     u.relayout();
     assert_eq!(u.grid.y, u.strip_rows_h());
     assert!(u.strip_rect().unwrap().y < u.grid.y);
-    u.full = false;
+    u.full.on = false;
 
     // the control on the Measure page picks the side
     u.m.strip_dock = StripDock::Under;

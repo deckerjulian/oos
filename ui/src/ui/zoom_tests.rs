@@ -58,7 +58,7 @@ fn corner_magnifier_toggles_display_and_keeps_distinct_touch_targets() {
     let (win, win_hit) = ui.win_btn();
     assert!(!overlaps(zoom, win) && !overlaps(hit, win_hit));
     tap(&mut ui, hit);
-    assert!(ui.m.zoom && !ui.zoom_box.arm && !ui.full);
+    assert!(ui.m.zoom && !ui.zoom_box.arm && !ui.full.on);
     let hit = ui.zoom_btn().1;
     tap(&mut ui, hit);
     assert!(!ui.m.zoom && !ui.zoom_box.arm);
