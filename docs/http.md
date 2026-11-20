@@ -178,8 +178,9 @@ found` and `refused`, 202 for an MCP notification, else 200.
 - Request: query `c`, once or more, each a front-panel command of `ui/src/cmd.rs` that `cmd::remote_ok` lets
   through: `key <name|0xNN>`, `knob <name> <+n|-n|push>`, `tap <x> <y>`, `drag <x0> <y0> <x1> <y1> [hold]`,
   `workflow live|sim|load|measure|settings`.
-- Answer: 200 `text/plain` `ok`; 403 `refused` when one `c` is another command. The commands that are let through
-  run either way, in the frame loop after the answer; `ok` says they were taken, not what they did. Without `c`: `ok`.
+- Answer: 200 `text/plain` `ok`; 403 `refused` when one `c` is another command, and then none of them runs (before
+  0.1.15 the ones let through ran anyway). The commands of an `ok` run in the frame loop after the answer; `ok` says
+  they were taken, not what they did. Without `c`: `ok`.
 - net.allow: no (keys and knobs, ADR 0025).
 
 ### `GET /lxi/identification`

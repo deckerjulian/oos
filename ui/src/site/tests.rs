@@ -800,8 +800,29 @@ fn cmd_takes_keys_knobs_and_touch_only() {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, get(c));
         assert!(r.starts_with("HTTP/1.1 403"), "{}: {}", c, r);
     }
-    let r = request(&mut h, &mut ui, &cv, &mut scpi, get("key%20runstop"));
+    // the commands a request hands to the frame loop: none of a refused request, not even its allowed ones (#205)
+    let mut handed = |req: Vec<u8>, ui: &mut Ui, scpi: &mut crate::scpi::Scpi| {
+        let port = h.port().unwrap();
+        let t = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            let _ = c.write_all(&req);
+            let mut out = Vec::new();
+            let _ = c.read_to_end(&mut out);
+            String::from_utf8_lossy(&out).into_owned()
+        });
+        let mut cmds = Vec::new();
+        while !t.is_finished() {
+            cmds.extend(h.poll(&mut Ctx::new(ui, &cv, scpi)));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        (t.join().unwrap(), cmds)
+    };
+    let (r, cmds) = handed(get("key%20runstop&c=quit"), &mut ui, &mut scpi);
+    assert!(r.starts_with("HTTP/1.1 403") && cmds.is_empty(), "{}: {:?}", r, cmds);
+    let (r, cmds) = handed(get("key%20runstop&c=knob%20vscale%20%2B1"), &mut ui, &mut scpi);
     assert!(r.starts_with("HTTP/1.1 200"), "{}", r);
+    assert_eq!(cmds, ["key runstop", "knob vscale +1"]);
     for c in ["key runstop", "knob vscale +1", "tap 100 200", "drag 1 2 3 4"] {
         assert!(crate::cmd::remote_ok(c), "{}", c);
     }

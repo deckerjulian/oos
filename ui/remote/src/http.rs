@@ -672,20 +672,15 @@ fn read_some(s: &TcpStream, req: &mut Vec<u8>, t: &mut Instant, need: Option<usi
     dead
 }
 
-/// GET /cmd: the commands `c=` of the query that a remote may give go to `cmds`; "refused" when one may not.
+/// GET /cmd: the commands `c=` of the query go to `cmds` when a remote may give every one of them; "refused" and none
+/// of them when one may not (#205: a request that is refused does nothing, not the half of it that was allowed).
 fn remote_cmds<S: Site>(query: &str, cmds: &mut Vec<String>, site: &S) -> (&'static str, Vec<u8>) {
-    let mut refused = false;
-    for kv in query.split('&') {
-        if let Some(v) = kv.strip_prefix("c=") {
-            let c = unescape(v);
-            if site.remote_ok(&c) {
-                cmds.push(c);
-            } else {
-                refused = true;
-            }
-        }
+    let given: Vec<String> = query.split('&').filter_map(|kv| kv.strip_prefix("c=")).map(unescape).collect();
+    if !given.iter().all(|c| site.remote_ok(c)) {
+        return ("text/plain", b"refused".to_vec());
     }
-    ("text/plain", if refused { b"refused".to_vec() } else { b"ok".to_vec() })
+    cmds.extend(given);
+    ("text/plain", b"ok".to_vec())
 }
 
 /// The value of a header of the request head (name without case).
