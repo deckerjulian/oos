@@ -712,7 +712,7 @@ impl Ui {
                 t.drag = Drag::ZoomBox;
                 self.zoom_box.path = vec![(x, y), (x, y)];
                 self.zoom_box.map = Some(map);
-            } else if let Some((k, _)) = self.zone_arm {
+            } else if let Some((k, _)) = self.zone_trig.arm {
                 t.drag = Drag::Zone(k);
                 self.input.zone_path = vec![(x, y)];
             }
@@ -970,7 +970,7 @@ impl Ui {
                 self.settings_changed();
             }
             Drag::Zone(_) => {
-                let shape = self.zone_arm.is_some_and(|a| a.1);
+                let shape = self.zone_trig.arm.is_some_and(|a| a.1);
                 let last = self.input.zone_path.last().copied().unwrap_or((x, y));
                 if !shape {
                     self.input.zone_path.truncate(1);
@@ -1112,8 +1112,8 @@ impl Ui {
 
     /// Turns the drawn screen path into zone `k` (waveform coordinates of its source channel).
     fn finish_zone(&mut self, k: usize) {
-        let shape = self.zone_arm.is_some_and(|a| a.1);
-        self.zone_arm = None;
+        let shape = self.zone_trig.arm.is_some_and(|a| a.1);
+        self.zone_trig.arm = None;
         let path = std::mem::take(&mut self.input.zone_path);
         let a = self.area;
         let (tdiv, delay) = self.view();
@@ -1179,12 +1179,12 @@ impl Ui {
             return;
         }
         cv.set_clip(self.grid);
-        if self.zone_arm.is_some_and(|a| a.1) {
+        if self.zone_trig.arm.is_some_and(|a| a.1) {
             for w in self.input.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
             }
         }
-        if self.zone_arm.is_some_and(|a| !a.1) && self.input.zone_path.len() == 2 {
+        if self.zone_trig.arm.is_some_and(|a| !a.1) && self.input.zone_path.len() == 2 {
             let ((x0, y0), (x1, y1)) = (self.input.zone_path[0], self.input.zone_path[1]);
             for (p, q) in [((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))] {
                 cv.line(p.0, p.1, q.0, q.1, ACCENT);

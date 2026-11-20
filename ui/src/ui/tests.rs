@@ -308,7 +308,7 @@ fn zone_drawn_by_touch_filters_records() {
     ui.relayout();
     ui.open_menu(MenuId::Zone);
     ui.activate(Item::ZoneBox);
-    assert_eq!(ui.zone_arm, Some((0, false)));
+    assert_eq!(ui.zone_trig.arm, Some((0, false)));
     // a box in the top left corner of the plot (far above the demo signal)
     let a = ui.area;
     let (x0, y0, x1, y1) = (a.x + 60, a.y + 20, a.x + 160, a.y + 60);
@@ -323,7 +323,7 @@ fn zone_drawn_by_touch_filters_records() {
     for _ in 0..5 {
         ui.step(0.02);
     }
-    assert!(ui.zone_drops > 0 && ui.last[0].is_none());
+    assert!(ui.zone_trig.drops > 0 && ui.last[0].is_none());
     // "must not intersect": records pass again
     ui.m.zones[0].inside = false;
     ui.step(0.02);

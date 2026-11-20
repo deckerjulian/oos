@@ -508,7 +508,7 @@ impl Ui {
         }
         self.zoom_box.arm = !self.zoom_box.arm;
         if self.zoom_box.arm {
-            self.zone_arm = None;
+            self.zone_trig.arm = None;
             self.toast("Drag a box to zoom");
         }
     }
