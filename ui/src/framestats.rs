@@ -445,7 +445,7 @@ mod tests {
         let mut folds = folds_for(&m);
         // a deep record read through the compression (deeper than the live compression, whose pair frames do not
         // count at all: compress.rs)
-        let deep = (1.25e9, crate::compress::MAX_DEPTH as usize * 10);
+        let deep = (1.25e9, crate::board::policy::compress::MAX_DEPTH as usize * 10);
         let env = Frame {
             seq: 1,
             dt,

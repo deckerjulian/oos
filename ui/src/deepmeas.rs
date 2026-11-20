@@ -8,26 +8,10 @@
 //! them (`hold`): every value of a measurement then belongs to one raw record, and the statistics count each once.
 //! The live picture stays on pairs.
 
+use crate::board::policy::compress::MAX_DEPTH;
+use crate::board::policy::deep::{Want, MAX_BYTES};
 use crate::board::Frame;
 use crate::model::*;
-
-/// Least time between two raw deep reads while running, for a read of up to `PERIOD_BYTES`; a larger read waits
-/// longer in proportion (`period`). On the DHO924S a raw read cost about 3 % of the records per MiB read once a second
-/// (10 M at 1 ms/div, 20 MiB: a third of the records at once a second, unit 2026-11-15): so a read costs at most about
-/// 6 % of them and of the screen rate.
-pub const PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
-/// Raw bytes a read may have to be due every `PERIOD`.
-pub const PERIOD_BYTES: usize = 2 << 20;
-/// Largest raw read of one frame (all channels): 24 MiB, 12 M points of one channel, six C2H reads of 4 MiB. A
-/// screen window above it keeps the pair measurement (mean-type values NaN).
-pub const MAX_BYTES: usize = 24 << 20;
-
-/// What the UI asks of the acquisition thread (`Shared::deep_raw`): raw deep reads, for every batch (`every`, Single:
-/// the one record is the answer) or at most once per `PERIOD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Want {
-    pub every: bool,
-}
 
 thread_local! {
     /// tests: `enabled` for this thread
@@ -65,12 +49,12 @@ pub fn want(m: &Model) -> Option<Want> {
 
 /// A frame of the deep-memory read through the compression (min/max pairs of a record above 1 M points).
 pub fn deep_pairs(f: &Frame) -> bool {
-    f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
+    f.envelope && !f.roll && !f.scan && f.acq.1 > MAX_DEPTH as usize
 }
 
 /// A raw read of a deep record's screen window (the record of its batch while raw deep reads come).
 pub fn deep_raw_frame(f: &Frame) -> bool {
-    !f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
+    !f.envelope && !f.roll && !f.scan && f.acq.1 > MAX_DEPTH as usize
 }
 
 /// Points of the raw screen window `hw` reads for a deep record (screen and a quarter screen each side, at least 4096
@@ -98,20 +82,10 @@ pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
         && fits(f.acq.0, m.hw_time_per_div() as f64, f.acq.1, channels)
 }
 
-/// Least time between two raw deep reads of `bytes`: `PERIOD` per `PERIOD_BYTES`, at least `PERIOD`.
-pub fn period(bytes: usize) -> std::time::Duration {
-    PERIOD.mul_f64((bytes as f64 / PERIOD_BYTES as f64).max(1.0))
-}
-
-/// The acquisition thread's rate limit: a raw deep read of `bytes` is due for every batch with `every`, else when its
-/// `period` has passed since the last (or none was made). `last` and `now` are microseconds of the loop's clock.
-pub fn due(w: Want, last: Option<u64>, now: u64, bytes: usize) -> bool {
-    w.every || last.is_none_or(|t| std::time::Duration::from_micros(now.saturating_sub(t)) >= period(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::policy::deep::*;
 
     fn deep(envelope: bool) -> Frame {
         Frame {

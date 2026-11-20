@@ -14,6 +14,7 @@
 //! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
 
 pub mod dho;
+pub mod policy;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
@@ -367,7 +368,7 @@ pub struct MaskRead {
 }
 
 /// What the UI wants of raw reads of deep records for the measurements (`Shared::deep_raw`; None: off).
-pub type DeepWant = Option<crate::deepmeas::Want>;
+pub type DeepWant = Option<policy::deep::Want>;
 
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
