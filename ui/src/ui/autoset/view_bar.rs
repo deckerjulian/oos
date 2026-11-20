@@ -47,7 +47,7 @@ impl Ui {
     }
 
     pub(in crate::ui) fn auto_bar_on(&self) -> bool {
-        self.auto_bar.is_some_and(|t| self.now - t < AUTO_BAR_S) && !self.view_on()
+        self.auto.bar.is_some_and(|t| self.now - t < AUTO_BAR_S) && !self.view_on()
     }
 
     /// A tap while the bar shows: a button sets its view and keeps the bar; anywhere else closes it (and the tap goes on
@@ -60,13 +60,13 @@ impl Ui {
             match v {
                 Some(v) => {
                     self.auto_view(v);
-                    self.auto_bar = Some(self.now);
+                    self.auto.bar = Some(self.now);
                 }
-                None => self.auto_bar = None,
+                None => self.auto.bar = None,
             }
             return true;
         }
-        self.auto_bar = None;
+        self.auto.bar = None;
         false
     }
 

@@ -795,9 +795,8 @@ pub struct Ui {
     offline_hold: Option<offline::LiveHold>,
     /// the external display: whether one is attached, its size, and the waveform copied for it (windows.rs)
     pub hdmi: windows::Hdmi,
-    /// start-up screen (startup.rs) and the last start-up's result (About)
-    pub start_up: Option<startup::StartScreen>,
-    start_up_last: Option<oos_hal::bootstatus::View>,
+    /// the start-up screen and the last start-up's result for About (startup.rs)
+    start_up: startup::StartUp,
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
@@ -832,14 +831,10 @@ pub struct Ui {
     pub frames: u64,
     /// records taken in, for the state line
     pub records: u64,
-    /// auto set-up under way on the hardware (autoset.rs)
-    auto: Option<autoset::AutoRun>,
+    /// the auto set-up under way on the hardware, the bar of views after one, the last `:DEBug:SLOTs?` (autoset.rs)
+    auto: autoset::Auto,
     /// the jobs a remote command can wait for: their numbers and the receipts of the finished ones (scpi_operations.rs)
     ops: scpi_operations::Ledger,
-    /// when the bar of views after an auto set-up came up (ui/autoset.rs)
-    auto_bar: Option<f64>,
-    /// request number of the last `:DEBug:SLOTs?`
-    slot_req: u64,
     pub fps: f32,
     /// acquisitions per second (smoothed)
     pub wfm_rate: f32,
@@ -895,14 +890,9 @@ pub struct Ui {
     mask: Option<oos_dsp::mask::Mask>,
     mask_pass: u64,
     mask_fail: u64,
-    /// the mask in the columns of the hardware table (hwmask.rs), the latest counters of the mask unit, and a number
-    /// raised to clear them
-    mask_cols: Option<(Vec<f32>, Vec<f32>)>,
-    mask_hw: Option<crate::board::MaskRead>,
-    mask_hw_clear: u64,
-    /// the acquisition thread dropped the mask/zone unit for the current settings after it stalled the acquisition:
-    /// why (hwmask.rs); the software test and filter take over
-    unit_blocked: Option<String>,
+    /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why
+    /// the acquisition thread dropped the unit (hwmask.rs)
+    mask_unit: hwmask::Unit,
     pub shot_request: Option<String>,
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)

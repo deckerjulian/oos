@@ -8,6 +8,20 @@
 use super::*;
 use crate::board::{MaskRead, MaskWant};
 
+/// The mask unit as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Unit {
+    /// the mask in the columns of the hardware table (`mask_cols_update`)
+    pub cols: Option<(Vec<f32>, Vec<f32>)>,
+    /// the latest counters of the unit
+    pub read: Option<MaskRead>,
+    /// raised to clear the counters
+    pub clear: u64,
+    /// the acquisition thread dropped the mask/zone unit for the current settings after it stalled the acquisition:
+    /// why (`Shared::unit_blocked`); the software test and filter take over. The zone trigger reads it too
+    pub blocked: Option<String>,
+}
+
 impl Ui {
     /// The mask test runs in the hardware: enabled on this board, live hardware frames, the mask on and built, its
     /// channel acquired. The fast display path then stays on.
@@ -16,23 +30,23 @@ impl Ui {
             && self.src.is_hw()
             && self.m.mask_on
             && self.mask.is_some()
-            && self.mask_cols.is_some()
+            && self.mask_unit.cols.is_some()
             && self.m.ch[self.m.mask_src].on
-            && self.unit_blocked.is_none()
+            && self.mask_unit.blocked.is_none()
     }
 
     /// Takes the stall guard's verdict (`Shared::unit_blocked`); a new block is shown once.
     pub(super) fn unit_blocked_poll(&mut self) {
         let b = self.src.hw_unit_blocked();
-        if b.is_some() && self.unit_blocked.is_none() {
+        if b.is_some() && self.mask_unit.blocked.is_none() {
             self.toast("Mask/zone hardware stalled the acquisition: software test");
         }
-        self.unit_blocked = b;
+        self.mask_unit.blocked = b;
     }
 
     /// The table columns of the mask (`Mask::columns`), after every new mask.
     pub(super) fn mask_cols_update(&mut self) {
-        self.mask_cols = self.mask.as_ref().map(|m| m.columns(crate::board::MASK_COLUMNS));
+        self.mask_unit.cols = self.mask.as_ref().map(|m| m.columns(crate::board::MASK_COLUMNS));
     }
 
     /// Hands the mask test to the acquisition thread and takes its latest counters; a new failure stops the
@@ -40,28 +54,28 @@ impl Ui {
     pub(super) fn mask_hw_poll(&mut self) {
         self.unit_blocked_poll();
         let want = if self.mask_hw_active() {
-            self.mask_cols.as_ref().map(|(lo, hi)| MaskWant {
+            self.mask_unit.cols.as_ref().map(|(lo, hi)| MaskWant {
                 ch: self.m.mask_src,
                 lo: lo.clone(),
                 hi: hi.clone(),
                 stop: self.m.mask_stop,
-                clear: self.mask_hw_clear,
+                clear: self.mask_unit.clear,
             })
         } else {
             None
         };
         let Some(r) = self.src.hw_mask(want) else { return };
-        if mask_stops(self.mask_hw, r, self.m.mask_src) && self.m.mask_stop && self.m.run == RunState::Run {
+        if mask_stops(self.mask_unit.read, r, self.m.mask_src) && self.m.mask_stop && self.m.run == RunState::Run {
             self.m.run = RunState::Stop;
             self.toast("Mask failed: stopped");
         }
-        self.mask_hw = r;
+        self.mask_unit.read = r;
     }
 
     /// (passed, failed) of the mask statistics: the hardware counters while the hardware tests, else the software
     /// test's.
     pub(crate) fn mask_counts(&self) -> (u64, u64) {
-        match self.mask_hw.filter(|r| r.ch == self.m.mask_src && self.mask_hw_active()) {
+        match self.mask_unit.read.filter(|r| r.ch == self.m.mask_src && self.mask_hw_active()) {
             Some(r) => (r.frames.saturating_sub(r.fails), r.fails),
             None => (self.mask_pass, self.mask_fail),
         }
@@ -71,7 +85,7 @@ impl Ui {
     pub(crate) fn mask_counts_reset(&mut self) {
         self.mask_pass = 0;
         self.mask_fail = 0;
-        self.mask_hw_clear += 1;
+        self.mask_unit.clear += 1;
     }
 
     /// Fork, `:SYSTem:DEBug:MASK?`: the mask unit's raw counters and slot next to the software test and the frame
@@ -82,12 +96,12 @@ impl Ui {
             "sw_pass={},sw_fail={},acquired={},used={},records={}",
             self.mask_pass, self.mask_fail, acq, used, self.records
         );
-        let Some(r) = self.mask_hw else {
+        let Some(r) = self.mask_unit.read else {
             return format!(
                 "off,enabled={},active={},blocked={},{}",
                 board().mask_hw() as u8,
                 self.mask_hw_active() as u8,
-                self.unit_blocked.is_some() as u8,
+                self.mask_unit.blocked.is_some() as u8,
                 sw
             );
         };
@@ -114,7 +128,7 @@ impl Ui {
     /// columns that would fail. The hardware itself has no per-column result; this is the software's view of the same
     /// table and samples (docs/fork/hwmask.md "Sweep").
     pub fn mask_columns_text(&self, a: usize, b: usize) -> String {
-        let Some(r) = self.mask_hw else { return "off".into() };
+        let Some(r) = self.mask_unit.read else { return "off".into() };
         let Some(t) = self.src.hw_mask_table() else { return "no table".into() };
         let frame = self.last[0].as_ref().and_then(|x| x.raw.as_ref()).map(|x| x.frame.clone()).filter(|f| !f.envelope);
         let samples: &[f32] = frame.as_ref().map_or(&[], |f| &f.ch[r.ch][..]);
@@ -222,14 +236,14 @@ mod tests {
     fn hardware_counts_while_the_hardware_tests() {
         let mut ui = crate::ui::testkit::demo_ui();
         (ui.mask_pass, ui.mask_fail) = (7, 2);
-        ui.mask_hw = rd(0, 4, 3);
+        ui.mask_unit.read = rd(0, 4, 3);
         // the demo source is no hardware: the software counts
         assert!(!ui.mask_hw_active());
         assert_eq!(ui.mask_counts(), (7, 2));
         ui.mask_counts_reset();
-        assert_eq!((ui.mask_counts(), ui.mask_hw_clear), ((0, 0), 1));
+        assert_eq!((ui.mask_counts(), ui.mask_unit.clear), ((0, 0), 1));
         assert!(ui.mask_debug_text().starts_with("ch=1,slot=0,ctrl=0x00000000,"), "{}", ui.mask_debug_text());
-        ui.mask_hw = None;
+        ui.mask_unit.read = None;
         assert!(ui.mask_debug_text().starts_with("off,enabled=0,active=0,blocked=0,sw_pass=0"));
     }
 }
