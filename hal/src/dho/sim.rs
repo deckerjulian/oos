@@ -20,10 +20,10 @@
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
 //! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The generator's
 //! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The frequency counter
-//! (counter.md) counts the scene's trigger instants over its gates (`Counter`), the DVM block (docs/fork/dvm.md) sums the
-//! codes of a lane over its windows (`Dvm`). The stamps of a
-//! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
-//! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
+//! (counter.md) counts the scene's trigger instants over its gates (`Counter`), the DVM block (docs/fork/dvm.md) sums
+//! the codes of a lane over its windows (`Dvm`). The stamps of a segmented record are those of the head of `seg`: the
+//! latch holds the trigger of the last frame played, the first-trigger stamp that of the first frame recorded since its
+//! clear, both in ticks of 0.8 ns.
 
 pub use crate::dho::seg::sim::{engine, Engine, SimBus, SimC2h};
 

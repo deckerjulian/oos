@@ -437,6 +437,10 @@ const CASES: &[Case] = &[
 /// virtual clock, read every 0.5 s), then the stop.
 const DVM_PASSES: u32 = 240;
 
+/// Readings of the DVM block after a start before its first whole window: 2^28 samples at 156.25 MSa/s take 1.7 s, it
+/// is read every 0.5 s (and a pass of the case's loop).
+const DVM_EARLY: usize = 3;
+
 /// The vertical offset of CH2 in the DVM case: its codes are not those of CH1, and the volts take it out again.
 const DVM_OFFSET: f32 = 0.3;
 
@@ -451,11 +455,11 @@ struct Seen {
 }
 
 /// The checks of the DVM block's requests in a case's script against the readings after each pass until the next
-/// request (as `counter_checks`): readings of the channel asked for on its lane (`dvm::lane`), none valid before the
-/// first whole window and all valid after it, at least two of them, each the scene's sine: DC 0 V, AC and AC+DC rms
-/// its amplitude over the root of 2; after the stop none and 0x2244 written 0. Break it catches: a block not started,
-/// not read or not restarted for another channel, a lane or channel mixed up, the offset or scale of the volts wrong,
-/// a block left running.
+/// request (as `counter_checks`): readings of the channel asked for on its lane (`dvm::lane`), the first `DVM_EARLY`
+/// (before the first whole window) none valid and all after them valid, at least two of them, each the scene's sine:
+/// DC 0 V, AC and AC+DC rms its amplitude over the root of 2; after the stop none and 0x2244 written 0. Break it
+/// catches: a block not started, not read or not restarted for another channel, a result before a whole window, a lane
+/// or channel mixed up, the offset or scale of the volts wrong, a block left running.
 fn dvm_checks(case: &Case, trace: &str, seen: &[Seen]) {
     let asked: Vec<(u32, Option<DvmWant>)> =
         case.script.iter().filter_map(|(at, a)| if let Act::Dvm(w) = a { Some((*at, *w)) } else { None }).collect();
@@ -475,8 +479,10 @@ fn dvm_checks(case: &Case, trace: &str, seen: &[Seen]) {
         };
         let lane = oos_hal::dho::dvm::lane(mask, w.ch);
         assert!(reads.iter().all(|r| (r.ch, Some(r.lane)) == (w.ch, lane)), "{}: {:?}", case.name, reads);
-        let valid: Vec<[f64; 3]> =
-            reads.iter().skip_while(|r| r.volts.is_none()).map(|r| r.volts.unwrap_or_default()).collect();
+        // a window of 2^28 samples is 1.7 s, the readings 0.5 s apart: the first three see no whole window
+        let early = reads.iter().take(DVM_EARLY).filter(|r| r.volts.is_some()).count();
+        assert!(reads.len() > DVM_EARLY && early == 0, "{}: valid before the first window: {:?}", case.name, reads);
+        let valid: Vec<[f64; 3]> = reads[DVM_EARLY..].iter().map(|r| r.volts.unwrap_or_default()).collect();
         assert!(valid.len() >= 2, "{}: {} valid readings of the request at pass {}", case.name, valid.len(), at);
         for v in valid {
             let ok = v[0].abs() < 5e-3 && v[1..].iter().all(|x| (x - rms).abs() < rms * 2e-2);
