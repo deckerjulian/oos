@@ -243,7 +243,7 @@ flowchart TB
     screen --> store
     store --> signal
     store --> settings
-    signal -- "Board, Frame" --> board
+    signal -- "Board, Frame, pipe::Workers" --> board
     settings --> model
     board --> model
     model --> base
@@ -327,7 +327,7 @@ The steps, in order. A later step waits for the earlier ones it names.
 
 | # | Step | Waits for | Record | Issue, measure |
 |---|---|---|---|---|
-| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (the paths where the board code, the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name: 39 at the start of this step, today the number in `tools/layers.txt`; the record of a frame and its software trigger went to the signal layer as `wave::to_record`, the rules the thread decides by to `board::policy`) | | ADR 0049, ADR 0074 | `tools/layers.txt` |
+| 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (the paths where the board code, the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name: 39 at the start of this step, today the number in `tools/layers.txt`; the record of a frame and its software trigger went to the signal layer as `wave::to_record`, the rules the thread decides by to `board::policy`, and the thread reaches the draw pipeline through `board::pipe::Workers`, which `drawpipe` registers) | | ADR 0049, ADR 0074 | `tools/layers.txt` |
 | 2 | The state of the screen in its parts: the loose fields of `Ui` | | ADR 0060–0063 | ui-fields in `tools/code-metrics.txt` |
 | 3 | HTTP moves to `oos-remote`; the screenshot encoder stays in `oos-ui` | 1 (transport-skip 0) | ADR 0064 | |
 | 4 | `oos-model`, then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |

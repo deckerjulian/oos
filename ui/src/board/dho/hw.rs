@@ -522,7 +522,7 @@ impl<P: port::Port> Loop<P> {
         };
         // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
         // the frame count, so the read waits at most one frame longer
-        let pipe = crate::drawpipe::pipe();
+        let pipe = crate::board::pipe::workers();
         let idle = || pipe.is_some_and(|x| x.help(&mut self.batch.helper));
         let t_batch = self.clock.now_us();
         let got = seq::acquire_batch_on(

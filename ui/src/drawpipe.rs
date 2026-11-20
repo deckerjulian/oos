@@ -15,17 +15,21 @@
 //!
 //! The picture is the one of `draw_frame` on every frame, one by one: the workers run it on the frames of a batch but
 //! the newest, which takes the UI's path. A batch whose workers are still busy, frames of older settings and maps of
-//! an older mapping are dropped and counted (`Counters`). Where the workers do not take a batch (no view: the fast
+//! an older mapping are dropped and counted (`board::pipe::Counters`). Where the workers do not take a batch (no view: the fast
 //! path does not apply; batches of one frame; the hardware average) the acquisition thread queues its frames for the
 //! frame loop. The other sources (demo, replay, live, SIM) have no batches and no workers.
+//!
+//! The acquisition thread reaches the workers through what the board declares (`board::pipe`: `Workers`, `Feed`,
+//! `Counters`, ADR 0074); `set_enabled` registers them there.
 
+use crate::board::pipe::{counters, CodeLayout, CodesInto, Counters, DecodeInto, RawBatch};
 use crate::board::Frame;
 use crate::fastdraw::EdgeSeek;
 use crate::model::*;
 use crate::wave::Phosphor;
 use std::any::Any;
 use std::ops::Range;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -184,20 +188,6 @@ pub const CODES_MIN_BYTES: usize = 64 << 10;
 /// channels the read-out is read four times; on the host that was 0.95x the decode path, too little to rely on.
 pub const CODES_MAX_STRIDE: usize = 2;
 
-/// Where a frame's read-out holds each channel (`fastdraw::Codes`), as the board gives it (`CodesInto`).
-#[derive(Clone, Copy)]
-pub struct CodeLayout {
-    pub stride: usize,
-    pub word: [Option<usize>; NCH],
-    pub affine: [(f32, f32); NCH],
-    pub volt: fn(u16, (f32, f32)) -> f32,
-    /// volts of samples a..b of one channel (bytes, stride, word, a, b, affine, out): the board's decode loop
-    pub volts: VoltsFn,
-}
-
-/// The board's decode loop: (bytes, stride, word, a, b, affine, out).
-pub type VoltsFn = fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>);
-
 impl CodeLayout {
     /// Channel `c` of the read-out `bytes` (empty when not in it).
     pub fn channel<'a>(&self, bytes: &'a [u8], c: usize) -> crate::fastdraw::Codes<'a> {
@@ -212,11 +202,6 @@ impl CodeLayout {
         crate::fastdraw::Codes { bytes, words, stride: self.stride, word, n, affine: self.affine[c], volt: self.volt }
     }
 }
-
-/// The board's view of a frame without decoding it: sets every field of the frame but the channel vectors (left
-/// empty) as the decode would, and says where the channels are; None where only the decode will do (compressed or
-/// with a header).
-pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
 
 #[cfg(test)]
 thread_local! {
@@ -275,41 +260,6 @@ pub fn draw_frame_codes(
     };
     Some(dense(ph, m, f, Dense { x_per_sample, pairs: false, present }, stats, refine, deposit))
 }
-
-/// Frames acquired, used (drawn into the picture) and dropped, since the start.
-#[derive(Default)]
-pub struct Counters {
-    pub acquired: AtomicU64,
-    pub used: AtomicU64,
-    pub dropped: AtomicU64,
-    /// frames whose cheap measurements went into the statistics (framestats.rs)
-    pub measured: AtomicU64,
-}
-
-/// The process's counters (the acquisition thread, the workers and the UI add to them).
-pub fn counters() -> &'static Counters {
-    static C: OnceLock<Counters> = OnceLock::new();
-    C.get_or_init(Counters::default)
-}
-
-impl Counters {
-    pub fn add(c: &AtomicU64, n: u64) {
-        c.fetch_add(n, Ordering::Relaxed);
-    }
-    /// (acquired, used, dropped)
-    pub fn read(&self) -> (u64, u64, u64) {
-        (self.acquired.load(Ordering::Relaxed), self.used.load(Ordering::Relaxed), self.dropped.load(Ordering::Relaxed))
-    }
-}
-
-/// A read-out buffer of the board (the acquisition thread's DMA target), lent to the workers.
-pub trait RawBatch: Send + Sync {
-    fn bytes(&self) -> &[u8];
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
-}
-
-/// Decodes the frame bytes into a kept frame (the board's decoder with the batch's settings).
-pub type DecodeInto = Arc<dyn Fn(&[u8], &mut Frame) + Send + Sync>;
 
 /// The buffer while the drawers have it: back to the acquisition thread's pool when the last share is drawn.
 struct Lease {
@@ -952,6 +902,7 @@ static PIPE: OnceLock<Pipe> = OnceLock::new();
 /// The workers on or off while the scope runs (`ENABLED`). Off: they stay, idle, and forget their view, so no frame
 /// of the old settings is merged when they come on again.
 pub fn set_enabled(on: bool) {
+    crate::board::pipe::register(workers);
     let was = ENABLED.swap(on, std::sync::atomic::Ordering::Relaxed);
     if was && !on {
         if let Some(p) = PIPE.get() {
@@ -995,6 +946,38 @@ pub fn pipe() -> Option<&'static Pipe> {
         return None;
     }
     Some(PIPE.get_or_init(|| Pipe::start(crate::placement::little_count().unwrap_or(WORKERS), true, counters())))
+}
+
+/// `pipe` as the acquisition thread sees it (`board::pipe::workers`).
+fn workers() -> Option<&'static dyn crate::board::pipe::Workers> {
+    pipe().map(|p| p as &dyn crate::board::pipe::Workers)
+}
+
+/// The workers for the acquisition thread (`board::pipe`): the methods above, the thread's helper state made on its
+/// first use.
+impl crate::board::pipe::Workers for Pipe {
+    fn accepting(&self) -> bool {
+        Pipe::accepting(self)
+    }
+    fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
+        Pipe::take_buffer(self)
+    }
+    fn feed(&self, b: crate::board::pipe::Feed) {
+        self.feed_codes(b.raw, b.fb, b.first, b.frames, b.stamp, b.decode, b.codes);
+    }
+    fn help(&self, h: &mut crate::board::pipe::Helper) -> bool {
+        own_helper(h).is_some_and(|h| Pipe::help(self, h))
+    }
+    fn help_done(&self, h: &mut crate::board::pipe::Helper) {
+        if let Some(h) = own_helper(h) {
+            Pipe::help_done(self, h);
+        }
+    }
+}
+
+/// The helper state in the acquisition thread's keeping, made the first time.
+fn own_helper(h: &mut crate::board::pipe::Helper) -> Option<&mut Helper> {
+    h.0.get_or_insert_with(|| Box::new(Helper::default())).downcast_mut::<Helper>()
 }
 
 /// The pipe with `n` workers for the tests of the frame loop in batch mode (the first call decides).

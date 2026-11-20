@@ -44,7 +44,7 @@ pub(super) struct BatchRun {
     /// the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read raw)
     pub(super) fresh: Option<(Settings, hz::Params, u32, bool)>,
     /// this thread's share of the deposit work while it waits (drawpipe.rs)
-    pub(super) helper: crate::drawpipe::Helper,
+    pub(super) helper: crate::board::pipe::Helper,
 }
 
 impl Default for BatchRun {
@@ -113,10 +113,10 @@ impl BatchRun {
             _ => count,
         };
         let avail = self.dma.data().len().checked_div(fb).map_or(0, |n| (shown as usize).min(n));
-        crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
+        crate::board::pipe::Counters::add(&crate::board::pipe::counters().acquired, avail as u64);
         // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
         // deposit workers, the next batch read into a buffer they gave back
-        let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
+        let pipe = crate::board::pipe::workers().filter(|x| after.is_none() && avail > 1 && x.accepting());
         // the raw newest frame stands for the newest compressed one (same record)
         let raw_frame = raw_frame.filter(|_| avail as u32 == count);
         let mut skip = 0usize;
@@ -162,7 +162,7 @@ impl BatchRun {
                     let full = std::mem::replace(&mut self.dma, next);
                     let (bs, ps) = (b.clone(), p);
                     let (cs, cp) = (b.clone(), p);
-                    let codes: crate::drawpipe::CodesInto =
+                    let codes: crate::board::pipe::CodesInto =
                         Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
                     // frame 0 left out as on the path without batches (issue #5; unit 2026-11-16: the
                     // one stray frame of 7,075 in batch mode was frame 0 of its batch), unless its edge
@@ -173,17 +173,17 @@ impl BatchRun {
                     if f1_fed {
                         frame1_left_out(frame1_left_out_unseen(avail, true));
                     }
-                    pipe.feed_codes(
-                        Box::new(full),
+                    pipe.feed(crate::board::pipe::Feed {
+                        raw: Box::new(full),
                         fb,
-                        skip,
-                        avail - 1,
+                        first: skip,
+                        frames: avail - 1,
                         stamp,
-                        Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)),
-                        Some(codes),
-                    );
+                        decode: Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)),
+                        codes: Some(codes),
+                    });
                 }
-                None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
+                None => crate::board::pipe::Counters::add(&crate::board::pipe::counters().dropped, avail as u64 - 1),
             }
             // two frames: the newest is frame 1
             if avail == 2 && f1_off {
@@ -500,7 +500,7 @@ fn queue(out: &crate::board::HwShared, frames: Vec<Frame>, count: u32, skip: usi
         }
         g.dropped += 1;
     }
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, g.dropped - dropped_before);
+    crate::board::pipe::Counters::add(&crate::board::pipe::counters().dropped, g.dropped - dropped_before);
     if let Some(f) = g.queue.back() {
         g.frame = f.clone();
     }
