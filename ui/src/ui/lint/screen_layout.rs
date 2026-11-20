@@ -108,7 +108,7 @@ fn files_go_to_the_stick_while_it_is_there() {
 #[test]
 fn system_info_has_the_rates() {
     let mut u = crate::ui::testkit::demo_ui();
-    u.wfm_rate = 123.0;
+    u.counts.wfm_rate = 123.0;
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     assert!(u
@@ -524,10 +524,10 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
         }
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
-        let before = (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr);
+        let before = (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.counts.frames, u.scr);
         let mut hc = Canvas::new(1920, 1080);
         u.render_view(&mut hc);
-        assert_eq!(before, (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr), "{}", name);
+        assert_eq!(before, (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.counts.frames, u.scr), "{}", name);
         let mut again = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut again);
         assert!(again.px == cv.px, "{}: the panel picture changed", name);

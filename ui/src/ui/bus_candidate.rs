@@ -319,7 +319,7 @@ mod tests {
         shared.lock().unwrap().queue.push_back((*old).clone());
         shared.lock().unwrap().frame = (*old).clone();
         ui.step(0.05);
-        assert_eq!(ui.records, 1);
+        assert_eq!(ui.counts.records, 1);
         assert!(ui.azr.eye.as_ref().is_some_and(|eye| eye.records > 0), "seed a genuine accepted Eye record");
         let mut clock = vec![0.0; points];
         for frame in 0..32 {
@@ -386,7 +386,7 @@ mod tests {
         let (mut ui, shared) = fixture(points);
         assert!(ui.mixed_bus_command(2));
         ui.step(0.001); // establish the fresh hardware arm stamp
-        let before = (ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records);
+        let before = (ui.counts.records, ui.counts.wfm_total, ui.azr.eye.as_ref().unwrap().records);
         let statistics = ui.measurement_statistics_snapshot_for_test();
         let picture = ui.ph.map.clone();
         let old = Arc::clone(&ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame);
@@ -394,16 +394,16 @@ mod tests {
         push(&ui, &shared, points, 0xa5, 3);
         ui.step(0.001);
         assert!(ui.bus_candidate_waiting());
-        assert_eq!(ui.records, before.0);
-        assert_eq!(ui.wfm_total, before.1);
+        assert_eq!(ui.counts.records, before.0);
+        assert_eq!(ui.counts.wfm_total, before.1);
         assert_eq!(ui.azr.eye.as_ref().unwrap().records, before.2);
         assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
         assert_eq!(ui.ph.map, picture);
         assert!(Arc::ptr_eq(&old, &ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame));
         assert_eq!(shared.lock().unwrap().queue.len(), 1, "only one candidate may leave the FIFO while decoding");
-        until(&mut ui, |ui| ui.records > before.0);
-        assert_eq!(ui.records, before.0 + 1);
-        assert_eq!(ui.wfm_total, before.1 + 1);
+        until(&mut ui, |ui| ui.counts.records > before.0);
+        assert_eq!(ui.counts.records, before.0 + 1);
+        assert_eq!(ui.counts.wfm_total, before.1 + 1);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(ui.last[0].as_ref().unwrap().triggered, "accepted record must carry the real Bus trigger decision");
@@ -418,14 +418,14 @@ mod tests {
         // analysis. Pending acquisition remains frozen until acceptance above;
         // after it, wait for that actual snapshot before testing stopped repaint.
         until(&mut ui, |ui| ui.azr.eye.is_some());
-        assert_eq!((ui.records, ui.wfm_total), (before.0 + 1, before.1 + 1));
+        assert_eq!((ui.counts.records, ui.counts.wfm_total), (before.0 + 1, before.1 + 1));
         assert_eq!(shared.lock().unwrap().queue.len(), 1);
-        assert!(ui.azr.eye_auto.snapshot_caption().unwrap().contains(&format!("CH1 #{}", ui.records)));
-        let stopped = (ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records);
+        assert!(ui.azr.eye_auto.snapshot_caption().unwrap().contains(&format!("CH1 #{}", ui.counts.records)));
+        let stopped = (ui.counts.records, ui.counts.wfm_total, ui.azr.eye.as_ref().unwrap().records);
         for _ in 0..4 {
             ui.step(0.02);
         }
-        assert_eq!((ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records), stopped);
+        assert_eq!((ui.counts.records, ui.counts.wfm_total, ui.azr.eye.as_ref().unwrap().records), stopped);
     }
 
     #[test]
@@ -435,13 +435,13 @@ mod tests {
         ui.m.trig_bus_val = 0x5a;
         ui.mixed_bus_command(2);
         ui.step(0.001);
-        let before = ui.records;
+        let before = ui.counts.records;
         let eye = ui.azr.eye.as_ref().unwrap().records;
         push(&ui, &shared, points, 0xa5, 2);
         ui.step(0.001);
         assert!(ui.bus_candidate_waiting());
         until(&mut ui, |ui| !ui.bus_candidate_waiting());
-        assert_eq!(ui.records, before);
+        assert_eq!(ui.counts.records, before);
         assert_eq!(ui.m.run, RunState::Run);
         assert_eq!(ui.m.status, TrigStatus::Wait);
         assert_eq!(ui.azr.eye.as_ref().unwrap().records, eye);
@@ -450,7 +450,7 @@ mod tests {
         assert!(ui.bus_candidate_waiting());
         ui.key(key::FORCE);
         ui.step(0.001);
-        assert_eq!(ui.records, before + 1);
+        assert_eq!(ui.counts.records, before + 1);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert_eq!(ui.m.trig_bus_val, 0x5a);
@@ -466,7 +466,7 @@ mod tests {
         let (mut ui, shared) = fixture(points);
         ui.mixed_bus_command(2);
         ui.step(0.001);
-        let before = ui.records;
+        let before = ui.counts.records;
         push(&ui, &shared, points, 0xa5, 2);
         push(&ui, &shared, points, 0x5a, 3);
         ui.step(0.001);
@@ -475,7 +475,7 @@ mod tests {
         ui.mark_changed();
         assert!(!ui.bus_candidate_waiting());
         ui.step(0.001);
-        assert_eq!(ui.records, before);
+        assert_eq!(ui.counts.records, before);
         assert!(shared.lock().unwrap().queue.is_empty(), "old arm's queued record must be rejected");
         push(&ui, &shared, points, 0x5a, 4);
         push(&ui, &shared, points, 0x5a, 5);
@@ -485,15 +485,15 @@ mod tests {
         assert_eq!(ui.m.run, RunState::Stop);
         assert!(!ui.bus_candidate_waiting());
         ui.step(0.001);
-        assert_eq!(ui.records, before);
+        assert_eq!(ui.counts.records, before);
         ui.key(key::SINGLE);
         ui.step(0.001);
         assert!(shared.lock().unwrap().queue.is_empty());
-        assert_eq!(ui.records, before);
+        assert_eq!(ui.counts.records, before);
         push(&ui, &shared, points, 0x5a, 6);
         ui.step(0.001);
-        until(&mut ui, |ui| ui.records > before);
-        assert_eq!(ui.records, before + 1);
+        until(&mut ui, |ui| ui.counts.records > before);
+        assert_eq!(ui.counts.records, before + 1);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 6);
         assert_eq!(ui.decoder_worker_state_for_test().0, 1);
@@ -504,7 +504,7 @@ mod tests {
         use std::io::{BufRead, Write};
         let points = 300_000;
         let (mut ui, shared) = fixture(points);
-        let before = ui.records;
+        let before = ui.counts.records;
         push(&ui, &shared, points, 0xa5, 2);
         ui.step(0.001);
         assert!(ui.bus_candidate_waiting());
@@ -524,7 +524,7 @@ mod tests {
         assert!(ui.bus_candidate_waiting());
         assert_eq!(ui.bus_candidate.epoch, epoch);
         assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
-        assert_eq!(ui.records, before);
+        assert_eq!(ui.counts.records, before);
         socket.write_all(b":STOP;:TRIG:STAT?\n").unwrap();
         for _ in 0..20 {
             scpi.poll(&mut ui, &Canvas::new(W, H));
@@ -552,7 +552,7 @@ mod tests {
         response.clear();
         std::io::BufReader::new(socket.try_clone().unwrap()).read_line(&mut response).unwrap();
         ui.step(0.001);
-        assert_eq!(ui.records, before + 1);
+        assert_eq!(ui.counts.records, before + 1);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(!ui.last[0].as_ref().unwrap().triggered);

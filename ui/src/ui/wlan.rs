@@ -1283,7 +1283,7 @@ mod tests {
                 _ => ui.tap((next() % PANEL_W as u64) as i32, (next() % PANEL_H as u64) as i32),
             }
             ui.dialog = None;
-            ui.power_dlg = false;
+            ui.power.open = false;
             if i % 500 == 0 {
                 ui.render(&mut cv);
             }

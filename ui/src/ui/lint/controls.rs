@@ -435,8 +435,8 @@ fn random_input_on(scr: Screen) {
             u.wlan.osk = None;
         }
         u.dialog = None;
-        u.power_dlg = false;
-        u.power_action = None;
+        u.power.open = false;
+        u.power.action = None;
         if i % 200 == 0 {
             u.step(0.02);
             u.render(&mut cv);

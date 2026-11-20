@@ -67,6 +67,21 @@ impl Default for FastPath {
     }
 }
 
+/// The counts of the screen and the acquisition (ADR 0062), for the state line, System info, `stat` and the tests.
+#[derive(Default)]
+pub struct Counts {
+    /// frames drawn (render.rs)
+    pub frames: u64,
+    /// records taken in, for the state line
+    pub records: u64,
+    /// frames drawn per second, measured by the main loop (main.rs)
+    pub fps: f32,
+    /// acquisitions per second (smoothed)
+    pub wfm_rate: f32,
+    /// every waveform acquired since the start (Clear resets it)
+    pub wfm_total: u64,
+}
+
 /// What the step saw last (ADR 0062).
 pub(super) struct Seen {
     /// the trigger level last seen and when it changed: the level line shows for `LEVEL_LINE_S` after a change (knob,
@@ -199,7 +214,7 @@ impl Ui {
             if !self.record_mode() {
                 self.m.status = TrigStatus::Stop;
             }
-            self.wfm_rate = 0.0;
+            self.counts.wfm_rate = 0.0;
         }
         self.step_grade();
     }
@@ -281,8 +296,8 @@ impl Ui {
         }
         if running && !self.was_running && self.m.segments > 0 {
             self.seg.n = 0;
-            self.history.clear();
-            self.hist_pos = None;
+            self.history.recs.clear();
+            self.history.pos = None;
             if hw_seg {
                 self.seg.run += 1;
                 (self.seg.pos, self.seg.view) = (None, None);
@@ -506,13 +521,13 @@ impl Ui {
             self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
         }
         take.td += t1.elapsed().as_secs_f32() * 1000.0;
-        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
-            self.history.pop_front();
+        if self.history.recs.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
+            self.history.recs.pop_front();
         }
         // a deep LA record is tens of MB: the history keeps the LA of short records only
         let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
-        self.history.push_back(Record { raw: None, la, ..rec.clone() });
-        self.hist_pos = None;
+        self.history.recs.push_back(Record { raw: None, la, ..rec.clone() });
+        self.history.pos = None;
         self.mask_test(&rec);
         if take.deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
             take.raw_rec = Some(rec.clone());
@@ -520,7 +535,7 @@ impl Ui {
         self.last[0] = Some(rec);
         self.cleared = false;
         take.got += 1;
-        self.records += 1;
+        self.counts.records += 1;
         if self.m.segments > 0 {
             self.seg.n += 1;
             // hardware segments end when the thread has read them all back (`seg_poll`)
@@ -601,8 +616,8 @@ impl Ui {
         self.times.acq += 0.05 * (take.ta - self.times.acq);
         self.times.draw += 0.05 * (take.td - self.times.draw);
         let rate = take.got as f32 / dt_wall.max(1e-3) as f32;
-        self.wfm_rate += 0.1 * (rate - self.wfm_rate);
-        self.wfm_total += take.got as u64;
+        self.counts.wfm_rate += 0.1 * (rate - self.counts.wfm_rate);
+        self.counts.wfm_total += take.got as u64;
         crate::board::pipe::Counters::add(&crate::board::pipe::counters().used, take.got as u64);
     }
 
@@ -684,7 +699,7 @@ impl Ui {
                     if let Some(entry) =
                         i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied()
                     {
-                        self.queue_catalog_statistics(entry, self.wfm_total);
+                        self.queue_catalog_statistics(entry, self.counts.wfm_total);
                     }
                 }
                 if row.v.is_finite() {
@@ -748,7 +763,7 @@ impl Ui {
             };
             parts.push(st.into());
         }
-        parts.push(format!("{:.0} wfm/s", self.wfm_rate));
+        parts.push(format!("{:.0} wfm/s", self.counts.wfm_rate));
         parts.join("   \u{b7}   ")
     }
 
@@ -798,7 +813,7 @@ impl Ui {
             && board().slow_mode(&self.m) == crate::board::Slow::Off
             && !self.m.la_on()
             && self.m.segments == 0
-            && self.hist_pos.is_none()
+            && self.history.pos.is_none()
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some());
         if !ok {
             self.src.hw_stop(None);

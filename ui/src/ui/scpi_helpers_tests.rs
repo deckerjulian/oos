@@ -140,7 +140,7 @@ fn selected_reference_cursors_match_stacked_zoom_readouts_and_touch_keeps_xy_axe
     (ui.m.cur_a, ui.m.cur_b, ui.m.cur_c, ui.m.cur_d) = (0.2, 0.8, 0.3, 0.7);
     ui.key(key::SINGLE);
     let fence = ui.scpi_operations();
-    let acquisition = (ui.m.run, ui.m.trigger_wave(), ui.replay.captures, ui.wfm_total);
+    let acquisition = (ui.m.run, ui.m.trigger_wave(), ui.replay.captures, ui.counts.wfm_total);
     assert!(ui.set_cursor_source(WaveId::Ch(0)));
     assert!(ui.set_cursor_source(WaveId::Ref(0)));
     ui.relayout();
@@ -160,7 +160,7 @@ fn selected_reference_cursors_match_stacked_zoom_readouts_and_touch_keeps_xy_axe
     assert!(ui.m.cur_c > 0.3, "the visible Y cursor must be draggable on the reference lane");
     assert_eq!((ui.m.cur_a, ui.m.cur_b, ui.m.cur_d), (0.2, 0.8, 0.7));
     assert_eq!((ui.m.ch[0].vscale, ui.m.ch[0].offset), channel);
-    assert_eq!((ui.m.run, ui.m.trigger_wave(), ui.replay.captures, ui.wfm_total), acquisition);
+    assert_eq!((ui.m.run, ui.m.trigger_wave(), ui.replay.captures, ui.counts.wfm_total), acquisition);
     assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
     assert_eq!(ui.last[0].as_ref().unwrap().ch[0].as_ptr(), accepted);
     assert_eq!(

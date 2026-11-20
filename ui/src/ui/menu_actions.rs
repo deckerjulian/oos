@@ -856,7 +856,7 @@ impl Ui {
                 // the dialog of the POWER key, without the MCU answer that belongs to a key press
                 self.close_menu();
                 self.dialog = None;
-                self.power_dlg = true;
+                self.power.open = true;
             }
             Item::HZero => {
                 self.m.delay = 0.0;
@@ -1063,7 +1063,7 @@ impl Ui {
                     d.push(format!("{} warning(s), see System info", p.warnings.len()));
                 }
                 d.extend([
-                    format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
+                    format!("Source: {}   {:.0} fps", self.src.name(), self.counts.fps),
                     self.start_up_summary().unwrap_or_default(),
                     "Tap to close".into(),
                 ]);

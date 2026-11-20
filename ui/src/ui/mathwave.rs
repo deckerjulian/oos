@@ -270,7 +270,7 @@ impl Ui {
                     if r.ch[id].is_empty() {
                         return Err("Source has no data");
                     }
-                    (self.wfm_total, r.ch[id].as_ptr() as usize, r.ch[id].len(), r.t0.to_bits(), r.dt.to_bits())
+                    (self.counts.wfm_total, r.ch[id].as_ptr() as usize, r.ch[id].len(), r.t0.to_bits(), r.dt.to_bits())
                         .hash(&mut h);
                 }
             } else if id < MATH_REF_BASE {

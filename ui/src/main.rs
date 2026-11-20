@@ -1232,7 +1232,7 @@ impl Device {
         for c in self.ui.panel_tx.drain(..) {
             self.inp.send(&board::board().panel_cmd(c));
         }
-        if let Some(a) = self.ui.power_action.take() {
+        if let Some(a) = self.ui.power.action.take() {
             power(&mut self.inp, a);
         }
         self.save_setup();
@@ -1251,7 +1251,7 @@ impl Device {
         }
         self.fps_n += 1;
         if self.fps_t.elapsed().as_secs_f64() >= 1.0 {
-            self.ui.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
+            self.ui.counts.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
             self.fps_n = 0;
             self.fps_t = Instant::now();
         }

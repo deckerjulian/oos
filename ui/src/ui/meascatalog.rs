@@ -813,7 +813,7 @@ mod integration_tests {
         ui.activate(Item::MeasClear);
         assert_eq!(ui.measurement_count(), 0);
         assert!(ui.mstat.is_empty());
-        assert_eq!((ui.m.run, ui.wfm_total), (RunState::Stop, 0));
+        assert_eq!((ui.m.run, ui.counts.wfm_total), (RunState::Stop, 0));
     }
 
     #[test]

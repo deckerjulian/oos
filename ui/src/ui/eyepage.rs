@@ -698,7 +698,7 @@ mod automatic_setup_tests {
         let mut fresh = ui.last[0].clone().unwrap();
         fresh.ch[0].rotate_left(3);
         ui.last[0] = Some(fresh);
-        ui.records += 1;
+        ui.counts.records += 1;
         ui.now += REFRESH;
         ui.analyzer_update();
         assert_eq!(ui.azr.page.records, 2);

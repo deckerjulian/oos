@@ -763,10 +763,8 @@ pub struct Ui {
     meas_src: WaveId,
     last: [Option<Record>; 1],
     stats: [Stats; NCH],
-    /// the last acquired records (newest last) for history playback
-    history: std::collections::VecDeque<Record>,
-    /// position in `history` while viewing it (None = live)
-    hist_pos: Option<usize>,
+    /// history playback: the last acquired records and the one viewed (records.rs)
+    history: records::History,
     /// mark all trigger events in the record (search)
     search_on: bool,
     /// measurements per channel (oos-dsp) of the last record
@@ -859,18 +857,12 @@ pub struct Ui {
     pub now: f64,
     /// what the step saw last: the trigger level and its change, the last record and the usual interval (acquire.rs)
     seen: acquire::Seen,
-    pub frames: u64,
-    /// records taken in, for the state line
-    pub records: u64,
+    /// the counts of the screen and the acquisition: frames drawn, records taken in, their rates (acquire.rs)
+    pub counts: acquire::Counts,
     /// the auto set-up under way on the hardware, the bar of views after one, the last `:DEBug:SLOTs?` (autoset.rs)
     auto: autoset::Auto,
     /// the jobs a remote command can wait for: their numbers and the receipts of the finished ones (scpi_operations.rs)
     ops: scpi_operations::Ledger,
-    pub fps: f32,
-    /// acquisitions per second (smoothed)
-    pub wfm_rate: f32,
-    /// every waveform acquired since the start (Clear resets it)
-    pub wfm_total: u64,
     /// the network as the main loop last read it: the addresses, the LAN link, the WLAN stick (wlan.rs)
     pub net: wlan::Network,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
@@ -922,9 +914,8 @@ pub struct Ui {
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
     pub panel_tx: Vec<crate::board::PanelCmd>,
-    /// power dialog open (power key)
-    pub power_dlg: bool,
-    pub power_action: Option<PowerAction>,
+    /// the power key's dialog and what it asked the main loop for (input.rs)
+    pub power: input::Power,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
@@ -969,14 +960,14 @@ impl Ui {
     /// waveforms, persistence / colour-grade maps, averaging, measurements and their statistics, mask counts and
     /// search marks start over; in STOP the screen stays empty until the next acquisition (RUN draws again at once).
     fn clear_display(&mut self) {
-        self.wfm_total = 0;
+        self.counts.wfm_total = 0;
         self.bus_views_clear();
         self.ph.clear();
         self.phz.clear();
         (self.grade.vmax, self.grade.vmaxz, self.grade.vmax_cg, self.grade.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
         // without a last record there is nothing to redraw in STOP, average with, compute math / decode / search on
         self.last[0] = None;
-        self.hist_pos = None;
+        self.history.pos = None;
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away

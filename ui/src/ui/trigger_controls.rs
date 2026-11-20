@@ -323,9 +323,9 @@ mod acquisition_source_tests {
             assert_eq!(ui.m.run, if running { RunState::Run } else { RunState::Stop });
             assert_eq!(ui.m.status, if running { TrigStatus::Wait } else { TrigStatus::Stop });
             if !running {
-                let count = ui.wfm_total;
+                let count = ui.counts.wfm_total;
                 ui.step(0.2);
-                assert_eq!(ui.wfm_total, count, "choosing a source while Stop cannot acquire a preview");
+                assert_eq!(ui.counts.wfm_total, count, "choosing a source while Stop cannot acquire a preview");
             }
         }
     }

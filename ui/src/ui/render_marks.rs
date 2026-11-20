@@ -472,8 +472,8 @@ impl Ui {
         });
         if let Some(t) = seg {
             x = backed_text(cv, &f.sb, x, y, &t, BLUE) + 16;
-        } else if let Some(i) = self.hist_pos {
-            x = backed_text(cv, &f.sb, x, y, &format!("History {}/{}", i + 1, self.history.len()), BLUE) + 16;
+        } else if let Some(i) = self.history.pos {
+            x = backed_text(cv, &f.sb, x, y, &format!("History {}/{}", i + 1, self.history.recs.len()), BLUE) + 16;
         }
         if self.search_on {
             let events = self.search_events();

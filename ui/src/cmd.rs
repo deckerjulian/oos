@@ -178,7 +178,7 @@ pub fn stat_text(ui: &Ui) -> String {
     };
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
-        ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.times.step, ui.times.acq, ui.times.draw, ui.times.render, ui.times.present, e[0], e[1], e[2], e[3], ui.fast.off.0, ui.fast.off.1, gpu
+        ui.counts.fps, ui.counts.frames, ui.counts.records, ui.m.run, ui.m.status, ui.now, ui.times.step, ui.times.acq, ui.times.draw, ui.times.render, ui.times.present, e[0], e[1], e[2], e[3], ui.fast.off.0, ui.fast.off.1, gpu
     )
 }
 

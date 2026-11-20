@@ -700,7 +700,7 @@ fn perf_guard_batch_step_at_10_us_per_div() {
                 }
             }
             // every frame drawn (fast path or pipeline), 15 a step
-            assert_eq!(ui.wfm_total, 15 * 40, "{} frames drawn", ui.wfm_total);
+            assert_eq!(ui.counts.wfm_total, 15 * 40, "{} frames drawn", ui.counts.wfm_total);
             per[k] = median(times);
             let mode = if batch { "workers" } else { "queue" };
             println!("10 us/div mask {:#x} {} pt, {}: frame loop {:.2} ms a step (median)", mask, n, mode, per[k]);

@@ -94,7 +94,7 @@ impl Ui {
     /// Input while the screen is up: the power key and its dialog work, a finished (or stalled) start-up closes on any
     /// tap or key.
     pub(super) fn start_up_input(&mut self, ev: &Ev) -> bool {
-        if !self.start_up_active() || self.power_dlg {
+        if !self.start_up_active() || self.power.open {
             return false;
         }
         if let Ev::Key(k) = ev {
@@ -556,9 +556,9 @@ mod tests {
         u.start_up_update(&text, 30.0);
         assert!(u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }) && u.start_up_active());
         // the power dialog is up: its input goes to the scope screen's handling
-        u.power_dlg = true;
+        u.power.open = true;
         assert!(!u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }));
-        u.power_dlg = false;
+        u.power.open = false;
         // 61 s without a line: a tap leaves
         u.start_up_update(&text, 75.5);
         let mut cv = Canvas::new(PANEL_W, PANEL_H);

@@ -383,11 +383,11 @@ fn segmented_recording_stops_after_n_records() {
     for _ in 0..20 {
         ui.step(0.02);
     }
-    assert_eq!((ui.m.run, ui.seg.n, ui.history.len()), (RunState::Stop, 10, 10));
+    assert_eq!((ui.m.run, ui.seg.n, ui.history.recs.len()), (RunState::Stop, 10, 10));
     // RUN again: a new set
     ui.key(key::RUNSTOP);
     ui.step(0.02);
-    assert!(ui.seg.n <= 6 && ui.history.len() == ui.seg.n);
+    assert!(ui.seg.n <= 6 && ui.history.recs.len() == ui.seg.n);
 }
 
 #[test]
@@ -788,31 +788,31 @@ fn power_key_dialog() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     ui.key(key::POWER);
-    assert!(ui.power_dlg);
+    assert!(ui.power.open);
     assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
     // second press cancels, again with the cancel frame
     ui.key(key::POWER);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     assert_eq!(ui.panel_tx.len(), 2);
     // tap on "Power off"
     ui.key(key::POWER);
     let b = ui.pwr_layout().1[0];
     ui.tap(b.x + b.w / 2, b.y + b.h / 2);
-    assert_eq!(ui.power_action, Some(PowerAction::Off));
-    assert!(!ui.power_dlg);
+    assert_eq!(ui.power.action, Some(PowerAction::Off));
+    assert!(!ui.power.open);
     // tap outside: nothing happens
-    ui.power_action = None;
+    ui.power.action = None;
     ui.key(key::POWER);
     ui.tap(5, 5);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     // any other key closes the dialog without acting
     ui.key(key::POWER);
     ui.key(key::RUNSTOP);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     let b = ui.pwr_layout().1[1];
     ui.key(key::POWER);
     ui.tap(b.x + 5, b.y + 5);
-    assert_eq!(ui.power_action, Some(PowerAction::Restart));
+    assert_eq!(ui.power.action, Some(PowerAction::Restart));
 }
 
 /// Every trigger type with its starting values triggers on the demo signals.
@@ -998,16 +998,16 @@ fn fast_frame_save_and_load_and_local_dest() {
     for _ in 0..4 {
         ui.step(0.033);
     }
-    assert!(ui.history.len() >= 3);
+    assert!(ui.history.recs.len() >= 3);
     ui.activate(Item::StoreFfSave);
     let p = dir.join("frame-001.bin");
     assert!(p.is_file());
-    let n = ui.history.len();
-    ui.history.clear();
+    let n = ui.history.recs.len();
+    ui.history.recs.clear();
     ui.last[0] = None;
     ui.activate(Item::StoreFfLoad);
-    assert_eq!(ui.history.len(), n);
-    assert!(ui.hist_pos.is_some());
+    assert_eq!(ui.history.recs.len(), n);
+    assert!(ui.history.pos.is_some());
     assert_eq!(ui.m.run, RunState::Stop);
     let _ = std::fs::remove_dir_all(&dir);
 }
