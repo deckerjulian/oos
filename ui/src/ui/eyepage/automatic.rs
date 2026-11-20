@@ -876,7 +876,7 @@ mod performance_and_timing_tests {
         let key = ui.auto_eye_key();
         assert_eq!(ui.azr.eye_auto.submitted, 1);
         ui.eye_set_place(EyePlace::Side);
-        ui.eye_big = Some(3);
+        ui.eye_col.big = Some(3);
         assert_eq!(ui.auto_eye_key(), key);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         while ui.azr.eye_auto.applied_results == 0 {

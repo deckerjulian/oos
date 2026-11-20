@@ -354,7 +354,7 @@ impl Ui {
         let rms = |s: (f64, u64)| if s.1 == 0 { f64::NAN } else { (s.0 / s.1 as f64).sqrt() };
         (j.period_jitter_rms, j.c2c_rms) = (rms(p.step), rms(p.step2));
         let trend = eye::tie_trend(&clk.edges, tie, clk);
-        let (_, plots) = charts_shown(lay, self.eye_big);
+        let (_, plots) = charts_shown(lay, self.eye_col.big);
         p.chart_trend(&trend, clk, plots[0].w as usize);
         p.chart_hist(&j);
         let (pj, why) = p.chart_spec(&trend, clk, plots[2].w as usize);
@@ -390,9 +390,9 @@ impl Ui {
 
     /// Where the column sits this frame: 0 has left the screen, 1 is home.
     pub(super) fn eye_column_open(&self) -> f32 {
-        let u = ((self.now - self.eye_t) / SLIDE).clamp(0.0, 1.0) as f32;
+        let u = ((self.now - self.eye_col.t) / SLIDE).clamp(0.0, 1.0) as f32;
         let e = u * u * (3.0 - 2.0 * u);
-        self.eye_from + (self.eye_to - self.eye_from) * e
+        self.eye_col.from + (self.eye_col.to - self.eye_col.from) * e
     }
 
     pub(in crate::ui) fn eye_tab(&self) -> Rect {
@@ -401,9 +401,9 @@ impl Ui {
 
     /// Slide the column the other way. A tap in the middle of a move reverses it.
     fn eye_slide(&mut self) {
-        self.eye_from = self.eye_column_open();
-        self.eye_to = if self.eye_to > 0.5 { 0.0 } else { 1.0 };
-        self.eye_t = self.now;
+        self.eye_col.from = self.eye_column_open();
+        self.eye_col.to = if self.eye_col.to > 0.5 { 0.0 } else { 1.0 };
+        self.eye_col.t = self.now;
     }
 
     /// The column tab, or a plot. A plot that is already open goes back to the four. Full screen has neither.
@@ -420,10 +420,10 @@ impl Ui {
             return false;
         }
         let l = placed(self.eye_page_rect(), self.eye_column_open());
-        let (charts, _) = charts_shown(&l, self.eye_big);
-        if let Some(k) = self.eye_big {
+        let (charts, _) = charts_shown(&l, self.eye_col.big);
+        if let Some(k) = self.eye_col.big {
             if charts[k as usize].contains(x, y) {
-                self.eye_big = None;
+                self.eye_col.big = None;
                 self.azr.page.t = f64::NEG_INFINITY;
                 return true;
             }
@@ -431,7 +431,7 @@ impl Ui {
         }
         for (k, r) in charts.iter().enumerate() {
             if r.contains(x, y) {
-                self.eye_big = Some(k as u8);
+                self.eye_col.big = Some(k as u8);
                 self.azr.page.t = f64::NEG_INFINITY;
                 return true;
             }
@@ -510,9 +510,9 @@ impl Ui {
         self.m.eye_notch = 0.0;
         self.m.eye_hp = false;
         self.m.view = AView::Eye;
-        self.eye_big = None;
-        self.eye_to = 1.0;
-        self.eye_from = 1.0;
+        self.eye_col.big = None;
+        self.eye_col.to = 1.0;
+        self.eye_col.from = 1.0;
         self.invalidate_reference_eye();
         self.azr.eye_auto.enabled = true;
         self.relayout();
