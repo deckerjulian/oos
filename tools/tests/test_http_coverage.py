@@ -222,6 +222,11 @@ class Coverage(unittest.TestCase):
                                    '"/" | "/ui-state" | "/wave.csv" => Some("GET,HEAD")'), HTTP_MD)
         self.assertIn("ui/remote/src/http.rs: fn methods_of lets GET,HEAD through to /, its entries in docs/http.md "
                       "name GET", self.findings())
+        # an arm in a comment is no arm
+        self.write(HTTP_RS.replace('"/waveform" | "/mcp" => Some("POST"),',
+                                   '// e.g. "/bogus" => Some("POST"), /* "/x" => Some("GET") */\n'
+                                   '        "/waveform" | "/mcp" => Some("POST"),'), HTTP_MD)
+        self.assertEqual(self.findings(), [])
         # without the function every route would take every method
         self.write(HTTP_RS.replace("fn methods_of(", "fn methods(", 1), HTTP_MD)
         self.assertEqual(self.findings(), ["ui/remote/src/http.rs: no arm found in fn methods_of"])

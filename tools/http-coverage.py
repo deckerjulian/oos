@@ -194,12 +194,19 @@ def routes(src, where=HTTP_RS, taken=None):
 def methods_of(src):
     """The arms of `fn methods_of`: {path: set of methods}, empty without the function."""
     body = fn_tokens(src, "methods_of")
-    text = src[body[0][2]:body[-1][3]] if body else ""
-    out = {}
-    for pats, allow in re.findall(r'((?:"[^"]+"\s*\|?\s*)+)=>\s*Some\("([^"]+)"\)', text):
-        for path in re.findall(r'"([^"]+)"', pats):
-            # split as the server does (`a.split(", ")` in fn answer): "GET,HEAD" is one method there, and so here
-            out.setdefault(path, set()).update(allow.split(", "))
+    out, paths = {}, []
+    # read from the tokens, so an arm in a comment is none: the strings of a pattern, `=>`, `Some`, `(`, a string
+    for i, (kind, text, _, _) in enumerate(body):
+        if kind == "str":
+            paths.append(text[1:-1])
+        elif kind == "arrow" and [t[1] for t in body[i + 1:i + 3]] == ["Some", "("] and \
+                i + 3 < len(body) and body[i + 3][0] == "str":
+            for path in paths:
+                # split as the server does (`a.split(", ")` in fn answer): "GET,HEAD" is one method there, and so here
+                out.setdefault(path, set()).update(body[i + 3][1][1:-1].split(", "))
+            paths = []
+        elif text not in ("|", "=>"):
+            paths = []
     return out
 
 
