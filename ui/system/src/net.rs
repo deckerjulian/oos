@@ -402,14 +402,23 @@ mod tests {
         let mut out = Outbox::default();
         out.push(&vec![0u8; 16 << 20]);
         let t0 = Instant::now();
-        // the socket takes what its buffers hold (on Linux several MB), then nothing
-        let mut left = usize::MAX;
-        while out.data.len() - out.at < left {
-            left = out.data.len() - out.at;
-            assert_eq!(out.flush_at(&s, t0), Sent::Later);
-        }
-        assert_eq!(out.flush_at(&s, t0 + SEND_STALL / 2), Sent::Later);
-        assert_eq!(out.flush_at(&s, t0 + SEND_STALL), Sent::Gone);
+        // the socket takes what its buffers hold (on Linux several MB), then nothing. The kernel may still move bytes
+        // to the peer a while later (sooner or later under load), and the next flush then writes again: the clock
+        // goes on in quarter steps until the outbox gives the client up, which must be a whole `SEND_STALL` after the
+        // last byte moved, never sooner, and must come (the client never reads)
+        assert_eq!(out.flush_at(&s, t0), Sent::Later, "a reply of 16 MB does not fit at once");
+        let mut t = t0;
+        let gone_at = loop {
+            t += SEND_STALL / 4;
+            match out.flush_at(&s, t) {
+                Sent::Later => assert!(t < t0 + 1000 * SEND_STALL, "never given up"),
+                Sent::Gone => break t,
+                Sent::Done => panic!("a client that reads nothing took 16 MB"),
+            }
+        };
+        let moved = out.moved.expect("bytes moved at the first flush");
+        assert!(gone_at.duration_since(moved) >= SEND_STALL, "given up {:?} after the last move", gone_at - moved);
+        assert!(gone_at.duration_since(moved) < SEND_STALL + SEND_STALL / 4, "not given up a step after the stall");
         let mut empty = Outbox::default();
         assert_eq!(empty.flush(&s), Sent::Done);
     }
