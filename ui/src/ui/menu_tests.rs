@@ -34,7 +34,7 @@ fn layout_plot_size_and_touch_targets() {
         assert!(ui.top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
     }
     // sticks: their boxes beside the network box, the buttons move over and stay on the bar
-    (ui.usb, ui.wlan_stick) = (true, true);
+    (ui.usb, ui.net.wlan_stick) = (true, true);
     for (_, _, r) in ui.top_buttons() {
         assert!(r.x > ui.run_pill().x + ui.run_pill().w && r.x + r.w <= ui.status_box("USB").unwrap().x, "{:?}", r);
     }
@@ -46,7 +46,7 @@ fn layout_plot_size_and_touch_targets() {
     ui.tap(w.x + 5, 10);
     assert!(ui.menu_open && ui.menu_root() == MenuId::Network);
     ui.tap(w.x + 5, 10);
-    (ui.usb, ui.wlan_stick) = (false, false);
+    (ui.usb, ui.net.wlan_stick) = (false, false);
     for n in 0..=NCH {
         for c in 0..NCH {
             ui.m.ch[c].on = c < n;

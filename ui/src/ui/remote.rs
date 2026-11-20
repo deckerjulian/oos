@@ -454,8 +454,8 @@ impl Ui {
             Item::RemAllow => self.allow_value(),
             Item::RemFirewall => self.firewall_value(),
             Item::NetWeb if !s.remote_web => "off".into(),
-            Item::NetWeb if self.net.is_empty() => "not connected".into(),
-            Item::NetWeb => format!("http://{}:8080", self.net),
+            Item::NetWeb if self.net.addr.is_empty() => "not connected".into(),
+            Item::NetWeb => format!("http://{}:8080", self.net.addr),
             Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
             Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::net::VXI11_CORE_PORT)),
             _ => return self.ssh_value(it),
@@ -529,7 +529,7 @@ mod tests {
         let mut u = crate::ui::testkit::demo_ui();
         assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
         assert!(!u.sys.remote_ssh, "SSH off by default");
-        u.net = "192.168.1.9".into();
+        u.net.addr = "192.168.1.9".into();
         assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
         u.select_option(Item::RemWeb, "Off");
         assert!(!u.sys.remote_web);

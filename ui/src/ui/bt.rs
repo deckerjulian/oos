@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn the_top_bar_box_opens_the_page() {
         let mut u = Ui::new(Source::Demo { t: 0.0 });
-        (u.bt.stick, u.wlan_stick) = (true, true);
+        (u.bt.stick, u.net.wlan_stick) = (true, true);
         let b = u.status_box("BT").unwrap();
         assert!(b.right() < u.status_box("WLAN").unwrap().x && u.top_right() == b.x);
         u.tap(b.x + 5, b.y + 5);

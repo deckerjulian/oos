@@ -171,7 +171,7 @@ impl Ui {
 
     /// The address of an interface, if it has one.
     pub(super) fn addr_of(&self, name: &str) -> Option<&str> {
-        self.net_ifs.iter().find(|i| i.0 == name).map(|i| i.1.as_str())
+        self.net.ifs.iter().find(|i| i.0 == name).map(|i| i.1.as_str())
     }
 
     /// Touch area of a top-bar button: the full bar height.
@@ -732,10 +732,10 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
         chip: false,
         // an address without a cable is only the fallback waiting for one
         draw: |u, cv, r, _| {
-            let lan = u.addr_of("eth0").filter(|_| u.eth_link);
+            let lan = u.addr_of("eth0").filter(|_| u.net.eth_link);
             let l1 = if lan.is_none() {
                 "LAN"
-            } else if u.net_fixed {
+            } else if u.net.fixed {
                 "LAN \u{b7} local"
             } else {
                 "LAN \u{b7} DHCP"
@@ -746,7 +746,7 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
     },
     StatusBox {
         label: "WLAN",
-        shown: |u| u.wlan_stick,
+        shown: |u| u.net.wlan_stick,
         // as wide as LAN: room for an address (issue #23: at the normal text size 104 px were too narrow)
         width: |u| u.net_box().w,
         chip: false,

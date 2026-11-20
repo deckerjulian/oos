@@ -848,16 +848,8 @@ pub struct Ui {
     pub wfm_rate: f32,
     /// every waveform acquired since the start (Clear resets it)
     pub wfm_total: u64,
-    /// IPv4 address shown in the top bar ("" = no network)
-    pub net: String,
-    /// its interface (eth0, wlan0)
-    pub net_if: String,
-    /// all interfaces with an address: name, address
-    pub net_ifs: Vec<(String, String)>,
-    /// no DHCP answer at the start: the fixed address of rcS
-    pub net_fixed: bool,
-    /// a WLAN stick is plugged in (its interface exists)
-    wlan_stick: bool,
+    /// the network as the main loop last read it: the addresses, the LAN link, the WLAN stick (wlan.rs)
+    pub net: wlan::Network,
     /// a mouse and a keyboard (USB or Bluetooth): the pointer and the modifier keys (ui/pointer.rs)
     pub mouse: pointer::Mouse,
     /// System > Network > Bluetooth (ui/bt.rs), and the stick and its inputs for the top bar
@@ -867,10 +859,6 @@ pub struct Ui {
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,
-    /// a cable in the LAN port with a link
-    pub eth_link: bool,
-    /// one more autonegotiation for a link at 10 Mbit/s; the main loop drives it (ethlink.rs)
-    pub eth: crate::ethlink::Retry,
     /// settings of the scope itself (sysconf.rs); written to `sys_path` (none in tests: nothing written)
     pub sys: crate::sysconf::SysConf,
     pub sys_path: Option<std::path::PathBuf>,
