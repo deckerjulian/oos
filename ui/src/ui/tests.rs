@@ -1130,3 +1130,38 @@ fn axis_labels() {
     // 1 us/div at a delay of 1 s
     assert_eq!(axis_label(1.000002, 1e-6, 1.0, 1.000005, "s"), "1.000002 s");
 }
+
+// Break it catches (#279): level 50 % with AC trigger coupling set the middle of the signal in volts, while the trigger
+// compares the source without its mean and counts its level from there: on a signal that does not cross 0 V the level
+// lay above the whole swing and the trigger did not fire
+#[test]
+fn level_50_with_ac_trigger_coupling_counts_from_the_mean() {
+    use super::*;
+    let mut ui = crate::ui::testkit::demo_ui();
+    ui.m.run = RunState::Stop;
+    ui.m.trig_src = 0;
+    ui.m.trig_type = TrigType::Edge;
+    // 0 to 3.3 V, high a quarter of the time: middle 1.65 V, mean 0.825 V
+    let dt = 1e-6;
+    let v: Vec<f32> = (0..4000).map(|k| if k % 400 < 100 { 3.3 } else { 0.0 }).collect();
+    let rec = crate::wave::Record {
+        t0: -2e-3,
+        dt,
+        ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+        triggered: true,
+        partial: false,
+        raw: None,
+        la: None,
+        pairs: false,
+    };
+    ui.last[0] = Some(rec);
+    ui.stats[0] = crate::wave::stats(&v, dt);
+    ui.m.trig_coup = TrigCoup::Dc;
+    ui.activate(Item::Trig50);
+    assert!((ui.m.trig_level - 1.65).abs() < 0.02, "DC: the middle, {}", ui.m.trig_level);
+    for coup in [TrigCoup::Ac, TrigCoup::LfReject] {
+        ui.m.trig_coup = coup;
+        ui.activate(Item::Trig50);
+        assert!((ui.m.trig_level - 0.825).abs() < 0.02, "{:?}: the middle less the mean, {}", coup, ui.m.trig_level);
+    }
+}
