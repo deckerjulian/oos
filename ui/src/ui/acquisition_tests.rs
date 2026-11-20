@@ -1517,3 +1517,30 @@ fn opc_after_stop_waits_for_the_record_of_the_stop() {
     assert_eq!(fence.state(&ui), OperationState::Cancelled);
     crate::deepmeas::force(None);
 }
+
+// Break it catches: the Default key (`*RST`) set the hardware session's stamp back to 0. The next SINGLE counted it up
+// to a stamp the acquisition thread had already finished a SINGLE with, so it armed nothing and the SINGLE never ended
+// (unit 2026-11-20, the second `*RST` in one oos-ui process)
+#[test]
+fn default_keeps_the_stamps_of_the_hardware_session() {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    let single = |ui: &mut Ui| {
+        ui.m.trig_mode = TrigMode::Single;
+        ui.m.run = RunState::Run;
+        ui.step(0.05);
+        let stamp = ui.m.hw_stamp;
+        (ui.m.trig_mode, ui.m.run) = (TrigMode::Auto, RunState::Stop);
+        ui.step(0.05);
+        stamp
+    };
+    let mut seen = vec![single(&mut ui), single(&mut ui)];
+    let clear = ui.m.hw_avg_clear;
+    ui.key(crate::ui::key::DEFAULT);
+    assert!(ui.m.hw_avg_clear >= clear, "the average count went back");
+    let next = single(&mut ui);
+    assert!(!seen.contains(&next), "a SINGLE after Default took stamp {next} again ({seen:?})");
+    seen.push(next);
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+}

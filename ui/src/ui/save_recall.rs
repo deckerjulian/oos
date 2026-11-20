@@ -172,6 +172,7 @@ impl Ui {
                     self.mask = None;
                     self.mask_ref = None;
                 }
+                m.keep_session(&self.m);
                 self.m = m;
                 // a set-up written by hand or by an older build may have the two levels the wrong way round
                 self.m.order_trigger_levels();

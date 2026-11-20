@@ -669,7 +669,8 @@ impl Ui {
         self.replay = Replay::default();
         let held = self.workflow_hold.take();
         let restored = held.is_some();
-        if let Some(saved) = held {
+        if let Some(mut saved) = held {
+            saved.model.keep_session(&self.m);
             self.m = saved.model;
             self.bus_auto = saved.bus_auto;
             for (i, r) in self.refs.iter_mut().enumerate() {
