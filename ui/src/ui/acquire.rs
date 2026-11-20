@@ -598,18 +598,18 @@ impl Ui {
             if hold {
                 // the measurement shown stays that of the last raw deep record, or of this step's
                 if let Some(r) = take.raw_rec.take() {
-                    if self.meas_bg.is_some() {
-                        self.meas_want = true;
-                        self.meas_pending = Some(r);
+                    if self.meas_bg.worker.is_some() {
+                        self.meas_bg.want = true;
+                        self.meas_bg.pending = Some(r);
                     } else {
                         self.measure_rec(&r);
-                        self.meas_new = true;
+                        self.meas_bg.new = true;
                     }
                 }
-            } else if self.meas_bg.is_some() {
+            } else if self.meas_bg.worker.is_some() {
                 // the result for the last record is still good when it comes after this one: `meas_n` only
                 // changes where a result out becomes wrong (a clear, measuring here at once)
-                self.meas_want = true;
+                self.meas_bg.want = true;
                 // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
                 // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
                 // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
@@ -619,11 +619,11 @@ impl Ui {
                     .and_then(|r| r.raw.as_ref())
                     .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
                 if raw_deep && crate::deepmeas::want(&self.m).is_some() {
-                    self.meas_pending = self.last[0].clone();
+                    self.meas_bg.pending = self.last[0].clone();
                 }
             } else {
                 self.measure_last();
-                self.meas_new = true;
+                self.meas_bg.new = true;
             }
             let p1 = std::time::Instant::now();
             self.analyzer_update();
@@ -655,7 +655,7 @@ impl Ui {
     fn step_meas_rows(&mut self) {
         // the measurements of the newest record (in the background: when they are done, also after a stop)
         self.meas_poll();
-        if std::mem::take(&mut self.meas_new) {
+        if std::mem::take(&mut self.meas_bg.new) {
             let rows = self.meas_rows();
             self.trend_update(self.mstat.is_empty(), &rows);
             self.mstat.resize(rows.len(), MStat::default());

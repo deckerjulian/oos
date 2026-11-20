@@ -190,7 +190,7 @@ impl Ui {
         if !self.m.ch[c].on || !self.computing_like_last(c) || matches!(k, Meas::TVmax | Meas::TVmin) {
             return f64::NAN;
         }
-        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+        if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             return f64::NAN;
         }
         self.meas_of(&self.ana[c], k)
