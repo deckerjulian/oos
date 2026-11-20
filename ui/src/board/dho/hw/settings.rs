@@ -138,9 +138,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     // protocol trigger: hardware edge on the line where frames start (the protocol's start role: SPI chip select, I2S
     // word select, else the data line)
     let mut src = if m.trig_type == TrigType::Bus {
-        let Proto::Module(i) = m.dec_proto;
-        [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][crate::protocols::get(i).start_role().min(3)]
-            .unwrap_or(m.dec_src)
+        [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][m.dec_proto.start_role().min(3)].unwrap_or(m.dec_src)
     } else {
         m.trig_src
     };
@@ -329,8 +327,7 @@ fn bus_line(m: &Model) -> Option<u8> {
     if !m.bus_on_la() {
         return None;
     }
-    let Proto::Module(i) = m.dec_proto;
-    m.dec_la[crate::protocols::get(i).start_role().min(3)].or(m.dec_la[0])
+    m.dec_la[m.dec_proto.start_role().min(3)].or(m.dec_la[0])
 }
 
 /// The UI trigger as a hardware (TPU) trigger. Two-level types: `Settings::level` is the upper level.

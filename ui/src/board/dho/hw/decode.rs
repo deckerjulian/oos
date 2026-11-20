@@ -26,7 +26,7 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     let hyst = (0.3 * s.ch[tc].scale) as f32;
     let span = v.len();
     let near = |rising: bool| {
-        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map(|t| t - pre as f64)
+        oos_dsp::edges::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map(|t| t - pre as f64)
     };
     let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
     let only_off = std::env::var_os("OOS_FRAME_HEADER").is_some_and(|x| x == "off");

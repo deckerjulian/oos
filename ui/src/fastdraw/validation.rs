@@ -2,6 +2,7 @@
 
 //! Independent bounded search oracles and an opt-in host CPU timing fixture.
 use super::*;
+use oos_dsp::edges::edge_near;
 
 fn closest(candidates: impl IntoIterator<Item = f64>, pre: usize) -> Option<f64> {
     candidates.into_iter().fold(None, |best, t| match best {
