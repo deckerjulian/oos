@@ -13,6 +13,9 @@ use oos_hal::update::{self, pkg, State};
 use std::path::Path;
 
 const BIN: &str = "/bin/oos-update";
+/// The longest `oos-update status --quick` may take for the page /update (on the DHO924S it took about 0.04 s,
+/// verified on the unit 2026-11-20).
+const STATUS_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 const NOTICE: &str = "/tmp/oos-update.notice";
 const UPLOAD: &str = "/tmp/oos-update.upload";
 const JOB_LOG: &str = "/tmp/oos-update.job";
@@ -95,13 +98,13 @@ impl Ui {
     }
 
     /// What the web page /update shows (http.rs): the state as `oos-update status --quick` gives it. It runs a
-    /// program and waits for it, so the web server calls it on a thread of its own, never in the frame loop (#205).
+    /// program and waits for it, so the web server calls it on a thread of its own, never in the frame loop (#205);
+    /// at most `STATUS_LIMIT`, so a program that hangs on the card holds that thread, one of the two senders of the
+    /// large answers, no longer.
     pub fn update_status() -> String {
-        std::process::Command::new(BIN)
-            .args(["status", "--quick"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
-            .unwrap_or_else(|e| format!("{}: {}", BIN, e))
+        let mut cmd = std::process::Command::new(BIN);
+        cmd.args(["status", "--quick"]);
+        output_within(cmd, STATUS_LIMIT).unwrap_or_else(|e| format!("{}: {}", BIN, e))
     }
 
     /// The result of the last upload, as the web page /update shows it.
@@ -284,9 +287,65 @@ fn wrap_lines(t: &str, w: usize) -> Vec<String> {
     out
 }
 
+/// What `cmd` writes to stdout and then to stderr, when it ends within `limit`; else it is killed and the answer says
+/// so. Its output is read while it runs, so a long one cannot stall it.
+fn output_within(mut cmd: std::process::Command, limit: std::time::Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let reader = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut got = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut got);
+            }
+            got
+        })
+    };
+    let out = reader(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = reader(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let until = std::time::Instant::now() + limit;
+    // a program given up on is killed and reaped on a thread of its own: one stuck in I/O of the card dies only when
+    // that I/O returns, and the caller must not wait for that; the readers end when its pipes close
+    let give_up = |mut child: std::process::Child, why: String| {
+        let _ = child.kill();
+        let _ = std::thread::Builder::new().name("reap".into()).spawn(move || drop(child.wait()));
+        Err(why)
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Ok(None) => return give_up(child, format!("no answer within {} s, stopped", limit.as_secs_f32())),
+            Err(e) => return give_up(child, e.to_string()),
+        }
+    }
+    let text =
+        |t: std::thread::JoinHandle<Vec<u8>>| String::from_utf8_lossy(&t.join().unwrap_or_default()).into_owned();
+    Ok(text(out) + &text(err))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A program that ends: its stdout, then its stderr, also when they are larger than a pipe holds. One that does
+    /// not end in time is stopped, and the answer says so (the page /update shows it instead of waiting).
+    #[test]
+    fn output_within_reads_a_program_or_stops_it() {
+        let sh = |script: &str| {
+            let mut c = std::process::Command::new("sh");
+            c.args(["-c", script]);
+            c
+        };
+        let limit = std::time::Duration::from_secs(60);
+        assert_eq!(output_within(sh("echo state; echo warn >&2"), limit).as_deref(), Ok("state\nwarn\n"));
+        let big = output_within(sh("head -c 300000 /dev/zero | tr '\\0' x"), limit).unwrap();
+        assert_eq!(big.len(), 300_000);
+        let e = output_within(sh("exec sleep 600"), std::time::Duration::from_millis(50)).unwrap_err();
+        assert!(e.starts_with("no answer within 0.05 s"), "{e}");
+        assert!(output_within(std::process::Command::new("/no/such/program"), limit).is_err());
+    }
 
     #[test]
     fn wraps_at_words() {
