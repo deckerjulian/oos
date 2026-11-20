@@ -755,21 +755,12 @@ pub struct Ui {
     ref_ana: [std::sync::Arc<oos_dsp::measure::Analysis>; NREF],
     /// False when a hidden, unrequested reference skipped the capture-time scan.
     ref_ana_valid: [bool; NREF],
-    /// the measurements in the background (`measure_in_background`); `meas_want`: the record shown is still to be
-    /// measured; `meas_n`: counts what makes a result still out wrong (a clear, a measurement made here at once), a
-    /// result sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every
-    /// result would be dropped); `meas_new`: new results for the statistics, the trend and the counter
-    meas_bg: Option<MeasWorker>,
-    meas_want: bool,
+    /// the measurements in the background (records.rs)
+    meas_bg: records::MeasBackground,
+    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
+    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
+    /// would be dropped). The setup files and SCPI count it too
     meas_n: u64,
-    meas_new: bool,
-    /// per channel: the measurement sent (`meas_env_sent`) and the one shown (`meas_env`) ran on min/max pairs
-    /// (`framestats::needs_samples` are then not available)
-    meas_env_sent: [bool; NCH],
-    meas_env: [bool; NCH],
-    /// the record a background measurement is wanted of (`meas_want`), when it must not be the newest at the time the
-    /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
-    meas_pending: Option<Record>,
     /// what choosing the Bus trigger switched on by itself (`set_trig_type`): the channels and whether the decoder; leaving
     /// Bus switches exactly those off again, what the user had on stays
     bus_auto: Option<([bool; NCH], bool)>,
@@ -1039,7 +1030,7 @@ impl Ui {
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
-        (self.meas_n, self.meas_want, self.meas_pending) = (self.meas_n + 1, false, None);
+        (self.meas_n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_n + 1, false, None);
         self.ana = Default::default();
         self.clear_measurement_statistics();
         self.mask_counts_reset();

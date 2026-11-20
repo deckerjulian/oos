@@ -8,6 +8,22 @@
 
 use super::*;
 
+/// The measurements in the background (`Ui::measure_in_background`, ADR 0062): the worker, while there is one; the
+/// record shown is still to be measured (`want`); new results for the statistics, the trend and the counter (`new`);
+/// per channel, whether the measurement sent (`env_sent`) and the one shown (`env`) ran on min/max pairs
+/// (`framestats::needs_samples` are then not available).
+#[derive(Default)]
+pub(super) struct MeasBackground {
+    pub worker: Option<MeasWorker>,
+    pub want: bool,
+    pub new: bool,
+    pub env_sent: [bool; NCH],
+    pub env: [bool; NCH],
+    /// the record a background measurement is wanted of (`want`), when it must not be the newest at the time the
+    /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
+    pub pending: Option<Record>,
+}
+
 /// Segmented recording (ADR 0062): the records since the acquisition started (in software); for hardware segments the
 /// recording number told to the thread, its state, the segment shown (browsing) and the trigger times read back.
 #[derive(Default)]
@@ -94,7 +110,7 @@ impl Ui {
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
     pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
-        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+        if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             f64::NAN
         } else {
             self.ana[c].get(k)
@@ -342,10 +358,10 @@ impl Ui {
             })
             .collect();
         let done = measure_channels(&work);
-        self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
+        self.meas_bg.env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
         self.meas_n += 1;
-        self.meas_want = false;
+        self.meas_bg.want = false;
     }
 
     /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
@@ -389,7 +405,7 @@ impl Ui {
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
-        self.meas_env = self.meas_env_sent;
+        self.meas_bg.env = self.meas_bg.env_sent;
         for c in 0..NCH {
             (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
         }
@@ -400,26 +416,26 @@ impl Ui {
 
     /// From now on the measurements of new records are made in the background (the frame loop on the unit).
     pub fn measure_in_background(&mut self) {
-        self.meas_bg = MeasWorker::start();
+        self.meas_bg.worker = MeasWorker::start();
     }
 
     /// The background's side, every frame: takes a finished result, and gives it the record shown when it wants one.
     pub(super) fn meas_poll(&mut self) {
-        let Some(w) = self.meas_bg.as_mut() else { return };
+        let Some(w) = self.meas_bg.worker.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
             if n == self.meas_n {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
-                self.meas_new = true;
+                self.meas_bg.new = true;
             }
         }
-        let w = self.meas_bg.as_mut().expect("worker");
-        if w.busy || !self.meas_want {
+        let w = self.meas_bg.worker.as_mut().expect("worker");
+        if w.busy || !self.meas_bg.want {
             return;
         }
-        self.meas_want = false;
-        let pending = self.meas_pending.take();
+        self.meas_bg.want = false;
+        let pending = self.meas_bg.pending.take();
         let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
         if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame)) {
@@ -439,15 +455,15 @@ impl Ui {
                 }
             })
             .collect();
-        let w = self.meas_bg.as_mut().expect("worker");
+        let w = self.meas_bg.worker.as_mut().expect("worker");
         if w.tx.send((self.meas_n, job)).is_ok() {
             w.busy = true;
-            self.meas_env_sent = env;
+            self.meas_bg.env_sent = env;
         } else {
             // the thread is gone: measure here again
-            self.meas_bg = None;
+            self.meas_bg.worker = None;
             self.measure_last();
-            self.meas_new = true;
+            self.meas_bg.new = true;
         }
     }
 

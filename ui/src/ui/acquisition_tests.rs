@@ -46,7 +46,7 @@ fn live_raw_at(tdiv: f64) {
         // a new value each round: a measurement that stays at the last one is caught too
         let high = 2.0 + round as f32;
         // the worker is still on the previous record when the raw one comes, and pair records follow
-        ui.meas_bg.as_mut().unwrap().busy = true;
+        ui.meas_bg.worker.as_mut().unwrap().busy = true;
         seq += 1;
         shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)));
         // one batch of one frame each at 2 and 5 ms/div: the next pair record is queued before the UI looks
@@ -60,7 +60,7 @@ fn live_raw_at(tdiv: f64) {
             shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
             ui.step(0.02);
         }
-        ui.meas_bg.as_mut().unwrap().busy = false;
+        ui.meas_bg.worker.as_mut().unwrap().busy = false;
         for _ in 0..50 {
             ui.step(0.02);
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -100,20 +100,20 @@ fn clear_drops_the_record_waiting_for_the_worker() {
         let t = std::time::Instant::now();
         loop {
             ui.step(0.02);
-            if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+            if (!ui.meas_bg.worker.as_ref().unwrap().busy && !ui.meas_bg.want) || t.elapsed().as_secs() > 20 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     };
     // a raw deep record waits for the busy worker
-    ui.meas_bg.as_mut().unwrap().busy = true;
+    ui.meas_bg.worker.as_mut().unwrap().busy = true;
     shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0));
     ui.step(0.02);
-    assert!(ui.meas_pending.is_some());
+    assert!(ui.meas_bg.pending.is_some());
     ui.clear_display();
     // the worker is free and a shallow record comes: it is the one measured
-    ui.meas_bg.as_mut().unwrap().busy = false;
+    ui.meas_bg.worker.as_mut().unwrap().busy = false;
     shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0));
     wait(&mut ui);
     // a deep pair record: its measurement stays that of the last record measured
