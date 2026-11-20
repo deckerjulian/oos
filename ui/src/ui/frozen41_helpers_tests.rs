@@ -21,12 +21,12 @@ fn force_queues_exactly_one_live_mock_request_even_with_a_modal_open() {
     for modal in 0..3 {
         ui.m.run = RunState::Stop;
         ui.dialog = None;
-        ui.power_dlg = false;
+        ui.power.open = false;
         ui.close_menu();
         match modal {
             0 => ui.dialog = Some(vec!["modal".into()]),
             1 => ui.open_menu(MenuId::Trigger),
-            _ => ui.power_dlg = true,
+            _ => ui.power.open = true,
         }
         shared.lock().unwrap().force = false;
         ui.key(key::FORCE);

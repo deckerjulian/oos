@@ -788,31 +788,31 @@ fn power_key_dialog() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     ui.key(key::POWER);
-    assert!(ui.power_dlg);
+    assert!(ui.power.open);
     assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
     // second press cancels, again with the cancel frame
     ui.key(key::POWER);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     assert_eq!(ui.panel_tx.len(), 2);
     // tap on "Power off"
     ui.key(key::POWER);
     let b = ui.pwr_layout().1[0];
     ui.tap(b.x + b.w / 2, b.y + b.h / 2);
-    assert_eq!(ui.power_action, Some(PowerAction::Off));
-    assert!(!ui.power_dlg);
+    assert_eq!(ui.power.action, Some(PowerAction::Off));
+    assert!(!ui.power.open);
     // tap outside: nothing happens
-    ui.power_action = None;
+    ui.power.action = None;
     ui.key(key::POWER);
     ui.tap(5, 5);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     // any other key closes the dialog without acting
     ui.key(key::POWER);
     ui.key(key::RUNSTOP);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     let b = ui.pwr_layout().1[1];
     ui.key(key::POWER);
     ui.tap(b.x + 5, b.y + 5);
-    assert_eq!(ui.power_action, Some(PowerAction::Restart));
+    assert_eq!(ui.power.action, Some(PowerAction::Restart));
 }
 
 /// Every trigger type with its starting values triggers on the demo signals.

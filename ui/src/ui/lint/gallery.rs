@@ -150,7 +150,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.sysinfo_open();
             u.dialog = Some(vec![]);
         }),
-        ("s-power-dlg", |u| u.power_dlg = true),
+        ("s-power-dlg", |u| u.power.open = true),
         ("s-touchlock", |u| u.m.touch_lock = true),
         ("s-la", |u| u.m.la.on = true),
         ("s-cards-1", |u| {

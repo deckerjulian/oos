@@ -920,9 +920,8 @@ pub struct Ui {
     pub quit: bool,
     /// commands for the front panel, sent by the main loop (power handshake)
     pub panel_tx: Vec<crate::board::PanelCmd>,
-    /// power dialog open (power key)
-    pub power_dlg: bool,
-    pub power_action: Option<PowerAction>,
+    /// the power key's dialog and what it asked the main loop for (input.rs)
+    pub power: input::Power,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)

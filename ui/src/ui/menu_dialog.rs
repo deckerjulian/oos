@@ -66,7 +66,7 @@ impl Ui {
             || self.m.touch_lock
             || self.full_on()
             || self.dialog.is_some()
-            || self.power_dlg
+            || self.power.open
             || self.wlan.osk.is_some()
         {
             return;
@@ -859,7 +859,7 @@ impl Ui {
         self.draw_load_slot(cv);
         let f = self.fonts();
         self.draw_osk(cv);
-        if self.power_dlg {
+        if self.power.open {
             cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
             let (r, [off, restart, cancel]) = self.pwr_layout();
             cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
