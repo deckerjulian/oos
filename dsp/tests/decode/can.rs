@@ -140,3 +140,43 @@ fn can_fd_on_can_h_1m_5m() {
     assert_eq!(vals(&p, "D"), (0..32).collect::<Vec<u32>>());
     assert_eq!(oks(&p, "CRC"), [true]);
 }
+
+/// A bus that is slow on its way back to recessive, as CAN_H was on a unit (500 kbit/s, the edge to dominant in
+/// under 0.1 us, the way back with a time constant of 1.6 us: at the threshold in the middle a dominant bit read
+/// 3.1 us long and a recessive one 0.9 us). The bit timing follows the edges to dominant alone, as a node's does,
+/// and every frame is read right with both decoders and both polarities. With a resynchronisation on every edge the
+/// bit behind a slow edge was sampled in its neighbour: no frame, or one with a wrong identifier.
+#[test]
+fn can_with_a_slow_edge_to_recessive_is_read_right() {
+    use oos_dsp::sim::{can_logic, CanFrame};
+    let frames = [
+        CanFrame { id: 0x519, ext: false, rtr: false, data: vec![0x11, 0x22, 0x33] },
+        CanFrame { id: 0x1597_eeb2, ext: true, rtr: false, data: vec![0xde, 0x55, 0xcb, 0xfa, 0x5d, 0x45, 0xad, 0x8c] },
+        CanFrame { id: 0x757, ext: false, rtr: true, data: vec![] },
+        CanFrame { id: 0x000, ext: false, rtr: false, data: vec![0x00; 8] },
+    ];
+    let rate = 500e3;
+    let l = can_logic(&frames, rate, 0.0, 3.3);
+    let dt = 1.0 / 25e6;
+    let ideal = sample(|t| l.v(t), 0.0, dt, 60_000);
+    // dominant (low on this line) at once, back to recessive with a time constant of 0.8 bit times
+    let k = (1.0 - (-dt / (0.8 / rate)).exp()) as f32;
+    let mut y = ideal[0];
+    let slow: Vec<f32> = ideal
+        .iter()
+        .map(|&x| {
+            y = if x < 1.65 { x } else { y + (x - y) * k };
+            y
+        })
+        .collect();
+    let high: Vec<f32> = slow.iter().map(|x| 3.3 - x).collect();
+    let want: Vec<(u32, bool, bool)> = frames.iter().map(|f| (f.id, f.ext, f.rtr)).collect();
+    for (v, invert) in [(&slow, false), (&high, true)] {
+        for p in [can(v, dt, rate, 1.65, 0.1, invert), can_fd(v, dt, rate, 2e6, 1.65, 0.1, invert)] {
+            assert_eq!(ids(&p), want, "invert {invert}");
+            let crcs: Vec<bool> = p.iter().filter(|x| x.kind == Kind::Crc).map(|x| x.ok).collect();
+            assert_eq!(crcs, [true; 4], "invert {invert}");
+            assert!(p.iter().all(|x| x.ok), "invert {invert}: {:?}", p.iter().find(|x| !x.ok));
+        }
+    }
+}
