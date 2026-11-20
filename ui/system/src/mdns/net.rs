@@ -91,7 +91,7 @@ pub fn interfaces(only: Option<&[String]>) -> Vec<Iface> {
             continue;
         }
         let Some(addr) = e.addr else { continue };
-        let index = crate::ifaddrs::index_of(&e.name);
+        let index = e.index;
         if index == 0 {
             continue;
         }

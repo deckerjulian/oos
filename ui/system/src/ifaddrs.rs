@@ -11,6 +11,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub name: String,
+    /// the interface's index (if_nametoindex of the name as the list gives it, not of `name`, which may have lost
+    /// bytes that are not UTF-8); 0 for none
+    pub index: u32,
     /// `IFF_*` of the interface
     pub flags: u32,
     /// the address, when it is IPv4 or IPv6
@@ -49,6 +52,7 @@ pub fn list() -> Vec<Entry> {
             let a = &*p;
             p = a.ifa_next;
             let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
+            let index = libc::if_nametoindex(a.ifa_name);
             let addr = if a.ifa_addr.is_null() {
                 None
             } else {
@@ -71,17 +75,11 @@ pub fn list() -> Vec<Entry> {
                 }
                 _ => None,
             };
-            out.push(Entry { name, flags: a.ifa_flags, addr, netmask });
+            out.push(Entry { name, index, flags: a.ifa_flags, addr, netmask });
         }
         libc::freeifaddrs(ifa);
     }
     out
-}
-
-/// The index of interface `name` (if_nametoindex); 0 for none.
-pub fn index_of(name: &str) -> u32 {
-    // SAFETY: the name is a NUL-terminated string that lives for the call
-    std::ffi::CString::new(name).map_or(0, |c| unsafe { libc::if_nametoindex(c.as_ptr()) })
 }
 
 #[cfg(test)]
@@ -95,8 +93,7 @@ mod tests {
         let lo = all.iter().find(|e| e.v4() == Some(Ipv4Addr::LOCALHOST)).expect("an entry with 127.0.0.1");
         assert!(lo.has(libc::IFF_UP) && lo.has(libc::IFF_LOOPBACK), "{lo:?}");
         assert_eq!(lo.netmask, Some(Ipv4Addr::new(255, 0, 0, 0)), "{lo:?}");
-        assert_ne!(index_of(&lo.name), 0, "{lo:?}");
-        assert_eq!(index_of("no-such-interface"), 0);
-        assert_eq!(index_of("a\0b"), 0, "a name with a NUL is none");
+        assert_ne!(lo.index, 0, "{lo:?}");
+        assert!(all.iter().filter(|e| e.name == lo.name).all(|e| e.index == lo.index), "one index per interface");
     }
 }
