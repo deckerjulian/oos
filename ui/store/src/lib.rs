@@ -500,7 +500,7 @@ fn zone_mask_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("mask_y", m.mask_y.to_string());
     crate::settings::write(&crate::settings::mask::TEST, m, 0, kv);
     kv("quick", name(m.quick));
-    kv("text_size", name(m.text_size));
+    crate::settings::write(&crate::settings::display::TEXT, m, 0, kv);
     kv("la", m.la.to_text());
     kv(
         "dec_la",

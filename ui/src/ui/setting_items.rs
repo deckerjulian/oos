@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 80] = [
+const ITEMS: [(Item, &str); 81] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -17,6 +17,7 @@ const ITEMS: [(Item, &str); 80] = [
     (Item::ColorGrade, "color_grade"),
     (Item::Dots, "dots"),
     (Item::BottomBar, "bar"),
+    (Item::TextSize, "text_size"),
     (Item::TrigSlope, "slope"),
     (Item::TrigMode, "trig_mode"),
     (Item::TrigHoldoff, "holdoff"),

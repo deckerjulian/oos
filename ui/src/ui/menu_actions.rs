@@ -554,10 +554,6 @@ impl Ui {
                     self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
                 }
             }
-            Item::TextSize => {
-                let i = m.text_size.index();
-                m.text_size = TEXT_SIZES[step_index(i, TEXT_SIZES.len(), d)];
-            }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);
                 let i = opt_src_step(i, d);

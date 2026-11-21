@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The Display group: how the waveform is drawn and how the graticule looks. Their commands are `:DISPlay:...`
-//! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The two slices are the two places of
+//! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The three slices are the three places of
 //! `store::setup_text` that write them, so the keys of a setup file keep their order.
+//!
+//! Still written out by hand: the HDMI output (a menu step warns about the Layout, a change sets the other picture
+//! up), the Z input (an optional wave) and the views (two values in one line).
 
 use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
-use crate::model::{Grid, PERSIST};
+use crate::model::{step_index, Grid, PERSIST, TEXT_SIZES};
 
-/// Both slices, in the order of the docs table.
-pub const SLICES: [&[Setting]; 2] = [&VIEW, &DRAW];
+/// The slices, in the order of the docs table.
+pub const SLICES: [&[Setting]; 3] = [&VIEW, &DRAW, &TEXT];
 
 /// Written after `mdepth`.
 pub const VIEW: [Setting; 5] = [
@@ -132,6 +135,31 @@ pub const DRAW: [Setting; 3] = [
         put: |m, _, v| m.bar_compact = v.index() != 0,
     },
 ];
+
+/// Written after `quick`.
+pub const TEXT: [Setting; 1] = [Setting {
+    key: "text_size",
+    scpi: Scpi::None {
+        #[cfg(test)]
+        why: "a choice of the screen's layout, not of the measurement",
+    },
+    ty: Ty::Choice(
+        &[
+            Choice { store: "Normal", scpi: "", label: "Normal" },
+            Choice { store: "Large", scpi: "", label: "Large" },
+            Choice { store: "Larger", scpi: "", label: "Larger" },
+        ],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Text size",
+    #[cfg(test)]
+    doc: "The size of the text on the screen; the menu steps to the end of the list and stops.",
+    accept: None,
+    step: Some(|m, _, d| Val::Index(step_index(m.text_size.index(), TEXT_SIZES.len(), d))),
+    get: |m, _| Val::Index(m.text_size.index()),
+    put: |m, _, v| m.text_size = TEXT_SIZES[v.index()],
+}];
 
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 
