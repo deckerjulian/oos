@@ -356,7 +356,7 @@ mod tests {
         assert!(row[0].0.starts_with("DVM R3") && row[1].0.starts_with("Counter R3"), "{:?}", row);
         assert!(u.dvm_value().is_finite());
 
-        u.ref_sel = 0;
+        u.ref_page.sel = 0;
         u.activate(Item::RefImport);
         assert!(u.m.ch.iter().all(|c| !c.on));
         assert!(!u.sim_play);

@@ -650,7 +650,7 @@ impl Ui {
                     Some(workspace::Trace::Math(_)) => self.adjust(Item::MathScale, -steps),
                     _ => match self.selected_workspace_source() {
                         Some(WaveId::Ref(i)) => {
-                            self.ref_sel = i;
+                            self.ref_page.sel = i;
                             self.adjust(Item::RefVpd, -steps);
                         }
                         Some(WaveId::Ch(c)) => self.adjust(Item::ChScale(c), -steps),

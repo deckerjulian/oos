@@ -237,13 +237,13 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
 fn rejected_reference_edits_do_not_change_the_selected_slot_or_loaded_data() {
     let mut ui = crate::ui::testkit::demo_ui();
     ui.refs[0] = Some(reference(vec![0.0, 1.0], 1e-9, 0.0));
-    ui.ref_sel = 0;
+    ui.ref_page.sel = 0;
     let owner = Arc::clone(&ui.refs[0].as_ref().unwrap().v);
     assert!(!ui.ref_vscale_set(1, 0.5));
     assert!(!ui.ref_voffset_set(1, 0.1));
     assert!(!ui.ref_label_set(1, "empty".into()));
     assert!(!ui.ref_show_slot(1, true));
     assert!(!ui.ref_vscale_set(0, f32::INFINITY));
-    assert_eq!(ui.ref_sel, 0);
+    assert_eq!(ui.ref_page.sel, 0);
     assert!(Arc::ptr_eq(&owner, &ui.refs[0].as_ref().unwrap().v));
 }

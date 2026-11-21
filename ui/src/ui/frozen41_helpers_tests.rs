@@ -50,7 +50,7 @@ fn force_in_stored_and_sim_sessions_never_touches_the_mock_hardware() {
             ui.set_offline(true);
         }
         ui.m.sim_slot = 0;
-        ui.ref_sel = 0;
+        ui.ref_page.sel = 0;
         ui.m.trig_mode = TrigMode::Single;
         ui.m.run = RunState::Stop;
         ui.dialog = Some(vec!["modal must not swallow Force".into()]);
@@ -271,10 +271,10 @@ fn histogram_statistics_use_the_detail_lane_transform_and_horizontal_time_axis()
 fn invalid_reference_color_and_mask_pair_do_not_partially_mutate_configuration() {
     let mut ui = Ui::new(Source::Demo { t: 0.0 });
     ui.refs[0] = Some(reference(vec![0.0; 10], 1e-9, 0.0));
-    ui.ref_sel = 0;
+    ui.ref_page.sel = 0;
     assert!(!ui.ref_color_set(1, 1));
     assert!(!ui.ref_color_set(0, REF_COLORS.len()));
-    assert_eq!(ui.ref_sel, 0);
+    assert_eq!(ui.ref_page.sel, 0);
     assert_eq!(ui.refs[0].as_ref().unwrap().color, 0);
     let before = (ui.m.mask_x, ui.m.mask_y);
     assert!(!ui.mask_tolerance(Some(1.0), Some(f32::NAN)));

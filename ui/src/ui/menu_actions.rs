@@ -528,23 +528,23 @@ impl Ui {
             Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::RefSel => {
-                let slot = (self.ref_sel as i32 + d).rem_euclid(NREF as i32) as usize;
+                let slot = (self.ref_page.sel as i32 + d).rem_euclid(NREF as i32) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
             }
             Item::RefColor => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     r.color = cycle(r.color.min(REF_COLORS.len() - 1), REF_COLORS.len(), d);
                 }
             }
             Item::RefVpd => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     let i = VSCALES.iter().position(|&s| s >= r.vpd * 0.999).unwrap_or(VSCALES.len() - 1);
                     r.vpd = VSCALES[step_index(i, VSCALES.len(), d)];
                 }
                 self.measure_refs();
             }
             Item::RefOffset => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     r.offset += 0.1 * r.vpd * d as f32;
                 }
             }
@@ -985,8 +985,8 @@ impl Ui {
             Item::MaskLoad => self.mask_load(),
             Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
             Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
-            Item::RefLabel => match &self.refs[self.ref_sel] {
-                Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
+            Item::RefLabel => match &self.refs[self.ref_page.sel] {
+                Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_page.sel, &r.label)),
                 None => self.toast("That slot is empty"),
             },
             Item::ChBiasZero(c) => self.zero_input(c),

@@ -454,9 +454,10 @@ impl Ui {
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
             Item::HFine => onoff(m.fine_t),
             Item::HExpandI => format!("{:?}", m.h_expand),
-            Item::RefColor => {
-                self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
-            }
+            Item::RefColor => self.refs[self.ref_page.sel]
+                .as_ref()
+                .map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0)
+                .into(),
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
             Item::TrigSrc => self.trigger_source_label(),
@@ -525,11 +526,13 @@ impl Ui {
             Item::LogInfo => self.log_info(),
             Item::CurC => self.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
             Item::CurD => self.cursor_values().get(3).map_or(format!("{:.0} %", m.cur_d * 100.0), |v| v.1.clone()),
-            Item::RefSel => format!("R{}", self.ref_sel + 1),
-            Item::RefVpd => {
-                self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
+            Item::RefSel => format!("R{}", self.ref_page.sel + 1),
+            Item::RefVpd => self.refs[self.ref_page.sel]
+                .as_ref()
+                .map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V"))),
+            Item::RefOffset => {
+                self.refs[self.ref_page.sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V"))
             }
-            Item::RefOffset => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
             Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
             Item::MathLinA => format!("{:.3}", m.math_lin.0),

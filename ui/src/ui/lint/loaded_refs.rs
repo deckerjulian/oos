@@ -66,7 +66,7 @@ fn a_reference_travels_through_a_file() {
     u.activate(Item::RefSave);
     let a = u.refs[0].as_ref().unwrap().v.clone();
     u.activate(Item::RefExport);
-    u.ref_sel = 4;
+    u.ref_page.sel = 4;
     u.activate(Item::RefExport);
     assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("empty")));
     std::fs::rename(dir.join("ref1.csv"), dir.join("ref5.csv")).unwrap();
@@ -149,7 +149,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     let n = 400;
     let sine: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 40e6 * k as f64 * dt).sin() as f32).collect();
     write_wave(&dir, 1, 0.0, dt, &sine);
-    u.ref_sel = 0;
+    u.ref_page.sel = 0;
     u.activate(Item::RefImport);
     let loaded = u.refs[0].as_ref().unwrap();
     assert!((loaded.dt - dt).abs() < 1e-18, "{}", loaded.dt);
@@ -212,9 +212,9 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     let (mv, mi) = inductor_pair(1e-3, mdt, mn);
     write_wave(&dir, 1, 0.0, mdt, &mv);
     write_wave(&dir, 2, 0.0, mdt, &mi);
-    u.ref_sel = 0;
+    u.ref_page.sel = 0;
     u.activate(Item::RefImport);
-    u.ref_sel = 1;
+    u.ref_page.sel = 1;
     u.activate(Item::RefImport);
     u.m.view = AView::Magnetic;
     u.m.mag_v = WaveId::Ref(0);
@@ -532,9 +532,9 @@ fn load_dq_dqs(u: &mut Ui) -> bool {
     u.m.la.on = false;
     u.m.run = RunState::Stop;
     u.last[0] = None;
-    u.ref_sel = 0;
+    u.ref_page.sel = 0;
     u.ref_load_path(dq);
-    u.ref_sel = 1;
+    u.ref_page.sel = 1;
     u.ref_load_path(dqs);
     true
 }
@@ -620,7 +620,7 @@ fn cphy_eye_full_screen_shot() {
     u.m.run = RunState::Stop;
     u.last[0] = None;
     u.m.meas.clear();
-    u.ref_sel = 0;
+    u.ref_page.sel = 0;
     u.ref_load_path(&va);
     if let Some(r) = u.refs[0].as_mut() {
         r.label = "VA".into();

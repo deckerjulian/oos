@@ -826,9 +826,8 @@ pub struct Ui {
     refs: [Option<RefWave>; NREF],
     cnt: tools::Counter,
     dvm: tools::Dvm,
-    /// the reference the Slot rows work on
-    ref_sel: usize,
-    /// the Reference page: the channel Save copies, the files the Import picker shows (tools/refs.rs)
+    /// the Reference page: the slot its rows work on, the channel Save copies, the files the Import picker shows
+    /// (tools/refs.rs)
     ref_page: tools::RefPage,
     xy: bool,
     pub now: f64,

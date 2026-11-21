@@ -105,7 +105,6 @@ impl Ui {
             refs: std::array::from_fn(|_| None),
             cnt: tools::Counter::default(),
             dvm: tools::Dvm::default(),
-            ref_sel: 0,
             ref_page: Default::default(),
             xy: false,
             now: 0.0,

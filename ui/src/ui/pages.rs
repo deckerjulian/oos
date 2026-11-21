@@ -252,8 +252,13 @@ pub(super) const PAGES: [Page; 48] = [
     plain(
         MenuId::Ref,
         |u, _| {
-            u.refs[u.ref_sel].as_ref().map_or(format!("Reference R{} \u{b7} empty", u.ref_sel + 1), |r| {
-                format!("Reference R{}{}{}", u.ref_sel + 1, if r.label.is_empty() { "" } else { " \u{b7} " }, r.label)
+            u.refs[u.ref_page.sel].as_ref().map_or(format!("Reference R{} \u{b7} empty", u.ref_page.sel + 1), |r| {
+                format!(
+                    "Reference R{}{}{}",
+                    u.ref_page.sel + 1,
+                    if r.label.is_empty() { "" } else { " \u{b7} " },
+                    r.label
+                )
             })
         },
         |u, _| u.ref_items(),

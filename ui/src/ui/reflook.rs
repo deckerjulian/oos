@@ -802,7 +802,7 @@ mod tests {
             csv.push_str(&format!("{:.12e},{}\n", i as f64 * 1e-9, x));
         }
         std::fs::write(dir.join("ref1.csv"), csv).unwrap();
-        u.ref_sel = 0;
+        u.ref_page.sel = 0;
         u.activate(Item::RefImport);
         assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
         assert!(!u.offline.on && u.m.ch[0].on, "import keeps the live channels");
