@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 78] = [
+const ITEMS: [(Item, &str); 80] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -87,6 +87,8 @@ const ITEMS: [(Item, &str); 78] = [
     (Item::PowFsw, "power_more fsw"),
     (Item::HExpandI, "h_expand"),
     (Item::AutoRoll, "auto_roll"),
+    (Item::MeasLabels, "meas_labels"),
+    (Item::StripDock, "strip_dock"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -129,6 +131,14 @@ impl Ui {
         let before = (s.get)(&self.m, n);
         s.step(&mut self.m, n, d);
         match it {
+            // the statistics card follows the dock the strip uses; moving the strip does not change what was measured
+            // (no `settings_changed`)
+            Item::StripDock => {
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
+                self.relayout();
+                return true;
+            }
             // only the inputs the model has switch on
             Item::ChOn(c) => {
                 self.m.ch[c].on &= c < n_ch();
@@ -222,10 +232,10 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the Horizontal menu, in the DVM menu, in the Mask menu, in the LA menu, in a
-    /// menu of an analyser page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
-    /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
-    /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
+    /// The item is in the Display menu, in the Horizontal menu, in the Measure settings, in the DVM menu, in the Mask
+    /// menu, in the LA menu, in a menu of an analyser page, in the Acquire menu (in Average mode with segments, so their
+    /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
+    /// page, in the Bode menu of a generator, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
     /// show, and the video trigger on line n, so its line shows).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
@@ -235,6 +245,7 @@ mod tests {
             || [
                 MenuId::Display,
                 MenuId::Horizontal,
+                MenuId::Measure,
                 MenuId::Dvm,
                 MenuId::Acquire,
                 MenuId::Mask,

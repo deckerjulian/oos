@@ -366,11 +366,6 @@ impl Ui {
             return;
         }
         let _ = self.adjust_scope(it, d) || self.adjust_tools(it, d) || self.adjust_more(it, d);
-        // moving the strip does not change what was measured
-        if it == Item::StripDock {
-            self.relayout();
-            return;
-        }
         self.settings_changed();
         if it == Item::Hdmi {
             self.sync_full();
@@ -612,15 +607,6 @@ impl Ui {
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
             Item::MeasStats => self.results.on = !self.results.on,
-            Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
-            Item::StripDock => {
-                let all = StripDock::ALL;
-                let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
-                m.strip_dock = all[step_index(i, all.len(), d)];
-                // the statistics card follows the dock the strip uses
-                self.workspace.measure_docked = true;
-                self.workspace.measure_float = None;
-            }
             _ => return false,
         }
         true

@@ -275,8 +275,7 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 /// The panes, zoom, the drawing, HDMI and the views.
 fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("pane", m.pane.to_string());
-    kv("meas_labels", m.meas_labels.to_string());
-    kv("strip_dock", name(m.strip_dock));
+    crate::settings::write(&crate::settings::measure::VIEW, m, 0, kv);
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
     crate::settings::write(&crate::settings::timebase::ROLL, m, 0, kv);

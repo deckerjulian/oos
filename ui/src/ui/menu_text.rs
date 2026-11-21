@@ -217,8 +217,6 @@ impl Ui {
             Item::MaskReset => "Reset counts",
             Item::MaskClear => "Clear mask",
             Item::MeasStats => "Statistics",
-            Item::MeasLabels => "Labels on trace",
-            Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
             _ => return None,
         })
@@ -547,8 +545,6 @@ impl Ui {
             Item::MathFam => self.math.family.name().into(),
             Item::StoreDest => self.files.dest.name().into(),
             Item::MeasStats => on_off(self.results.on),
-            Item::MeasLabels => on_off(self.m.meas_labels),
-            Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => on_off(m.zoom),
             _ => return None,
         })

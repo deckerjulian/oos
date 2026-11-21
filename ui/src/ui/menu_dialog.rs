@@ -113,8 +113,7 @@ impl Ui {
             return o;
         }
         let v: &[&str] = match it {
-            Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
-            Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::DecOn | Item::SearchOn => &["Off", "On"],
+            Item::MeasStats | Item::Zoom | Item::DecOn | Item::SearchOn => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 

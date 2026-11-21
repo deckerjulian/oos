@@ -316,8 +316,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<
         }
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
         "pane" => m.pane = p_idx(v, crate::model::PANES_N)?,
-        "meas_labels" => m.meas_labels = p_bool(v)?,
-        "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };

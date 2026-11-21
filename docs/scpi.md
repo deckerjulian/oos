@@ -599,7 +599,18 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | `:MEASure:OUTSide[?]` | `ABOVe|BELow|BOTH` outside-level measurement selection. |
 | `:MEASure:NPERiods[?]` | Configured period count for relevant measurements. |
 | `:MEASure:EDGes[?]` | `CLOCk|DATA` edge measurement mode. |
-| `:MEASure:INDicator[?]` | Measurement labels; `:CURSor:MEASure:INDicator[?]` is an alias. |
+
+How the measurements show, their `:MEASure` commands and their keys in a setup file. They are declared once, in
+`ui/model/src/settings/measure.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`.
+
+<!-- settings:measure:begin -->
+| Command | Takes | Setup key | Measure settings menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MEASure:INDicator[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `meas_labels` | Labels on trace | Draws the labels of the measurements on the trace; `:CURSor:MEASure:INDicator[?]` is the same switch. |
+| none | a choice of the screen's layout, not of the measurement | `strip_dock` | Dock | Where the strip of results docks to the plot; the menu steps to the end of the list and stops. |
+<!-- settings:measure:end -->
 
 Statistics count accepted observations. A stopped reference can have a valid current value with count0 after reset. Worker completion, polling and panning do not by themselves add observations. The existing SCREEN/NONE gate and per-row settings still determine each result; OPC does not wait for background analysis.
 
