@@ -438,9 +438,10 @@ def zero_of_every_scale(s, o):
 
 @test("a0")
 def gnd_is_flat(s, o):
-    s.w(":CHAN1:COUP GND")
+    c = CH[0]
+    s.w(f":CHAN{c}:COUP GND")
     s.settle()
-    t0, dt, v = s.wave(1)
+    t0, dt, v = s.wave(c)
     assert v, "no samples"
     near("mean", statistics.fmean(v), 0, ab=0.05)
     assert statistics.pstdev(v) < 0.02, statistics.pstdev(v)
@@ -595,17 +596,17 @@ def random_settings_do_not_kill_it(s, o):
     """Random but valid settings, the kind of mix nobody tries by hand."""
     rnd = random.Random(1)
     a = s.stat()["frames"]
+    # the channels of the profile: the first one's coupling, invert and scale, the others switched, the second's probe
+    first, others = CH[0], CH[1:]
     keys = [
         ("trig_type", ["Edge", "Pulse", "Slope", "Pattern", "Duration", "Timeout", "Runt", "Window", "NthEdge"]),
         ("trig_mode", ["Auto", "Normal"]),
         ("slope", ["Rise", "Fall", "Either"]),
         ("mdepth", [0, 1, 2, 3, 4]),
-        ("ch1.coupling", ["Dc", "Ac", "Gnd"]),
-        ("ch2.on", ["true", "false"]),
-        ("ch3.on", ["true", "false"]),
-        ("ch4.on", ["true", "false"]),
-        ("ch1.invert", ["true", "false"]),
-        ("ch2.probe", [1, 10, 100]),
+        (f"ch{first}.coupling", ["Dc", "Ac", "Gnd"]),
+        *[(f"ch{n}.on", ["true", "false"]) for n in others],
+        (f"ch{first}.invert", ["true", "false"]),
+        (f"ch{(others or CH)[0]}.probe", [1, 10, 100]),
         ("dec_on", ["true", "false"]),
         ("dec_proto", ["Uart", "I2c", "Spi", "Can"]),
         ("persist", [0, 1, 2]),
@@ -616,7 +617,7 @@ def random_settings_do_not_kill_it(s, o):
         k, vals = rnd.choice(keys)
         s.w(f":SYST:SET {k} = {rnd.choice(vals)}")
         s.w(f":TIM:SCAL {rnd.choice([1e-8, 1e-6, 1e-4, 1e-3, 1e-2])}")
-        s.w(f":CHAN1:SCAL {rnd.choice(VSCALES)}")
+        s.w(f":CHAN{first}:SCAL {rnd.choice(VSCALES)}")
         s.w(f":TIM:OFFS {rnd.uniform(-1, 1) * 1e-4}")
         time.sleep(0.12)
         if i % 25 == 0:
