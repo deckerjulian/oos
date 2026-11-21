@@ -112,7 +112,7 @@ per frequency and limit two records (Run, then `:STOP;*OPC?`), the amplitude by 
 | 35 MHz (7) | 35 | 42.8 MHz | -4.6 dB |
 | 40 MHz (8) | 40 | 49.3 MHz | -3.9 dB |
 | 50 MHz (10) | 50 | about 62 MHz | -2.9 dB |
-| 60 / 75 MHz (12 / 15) | | above 60 MHz | -2.2 / -1.6 dB |
+| 60 / 75 MHz (12 / 15) | 60 / 75 | above 60 MHz | -2.2 / -1.6 dB |
 
 - The 20 MHz limit is code 5, the same filter as 25 MHz (afe-settings.md 5.1): both read the same to 0.01 dB.
 - Up to code 5 the corner lies a little below 5c MHz (0.78 to 0.95 of it), from code 6 about 1.2 times above; the
