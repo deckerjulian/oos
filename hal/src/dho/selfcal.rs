@@ -97,7 +97,7 @@ pub fn run_all_with(
                 }
             }
         }
-        v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal));
+        v.sort_by(|a, b| a.scale.total_cmp(&b.scale));
         v.into_iter().map(|e| e.g).collect()
     };
     let total: usize = chans.iter().map(|&ch| 4 * list(ch).len() + if zero { 3 } else { 0 }).sum();
@@ -803,11 +803,7 @@ pub fn vertical_entry(
 pub fn rebuild_scales(block: &mut [Rec], keys: &[i64], entries: &[Entry]) {
     for (i, r) in block.iter_mut().enumerate() {
         let k = keys[i] as f64;
-        let Some(e) = entries
-            .iter()
-            .filter(|e| e.scale > k)
-            .min_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal))
-        else {
+        let Some(e) = entries.iter().filter(|e| e.scale > k).min_by(|a, b| a.scale.total_cmp(&b.scale)) else {
             continue;
         };
         r.key = keys[i];
@@ -828,7 +824,7 @@ pub fn entries_of(block: &[Rec]) -> Vec<Entry> {
         }
         v.push(Entry { g, scale: r.gain * r.key as f64, zero: r.zero });
     }
-    v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal));
+    v.sort_by(|a, b| a.scale.total_cmp(&b.scale));
     v
 }
 
