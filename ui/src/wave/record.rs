@@ -65,36 +65,14 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
     let hyst: [f32; NCH] = std::array::from_fn(|c| m.trig_hyst_div() * m.ch[c].volts_per_div());
     let inp = oos_dsp::trigger::Input { ch: refs, dt: f.dt, hyst };
     let usable = m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !refs[c].is_empty());
-    // plain edge trigger on a channel: the edge of the set direction nearest the hardware point, on the signal smoothed to
-    // one screen point (fastdraw::edge_smooth; the hardware point is not always on the right edge, trigger.md 8)
+    // plain edge trigger on a channel
     let smooth = (m.trig_type == TrigType::Edge
         && m.trig_line().is_none()
         && !f.roll
         && !f.scan
         && f.fixed_ti.is_none()
         && f.ch[m.trig_src].len() > 1)
-        .then(|| {
-            let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
-            let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-            // the screen window stays inside the frame where it can
-            let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
-            let fits = |t: f64| first > last || (first..=last).contains(&t);
-            let found = crate::trignear::edge_smooth_near(
-                &f.ch[m.trig_src],
-                f.pre,
-                sw_trig_level(m, f),
-                hyst[m.trig_src],
-                rising,
-                either,
-                screen / 2,
-                col,
-                fits,
-            )
-            .0;
-            // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
-            // hardware point stands
-            found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
-        })
+        .then(|| edge_near(f, m, n, window, t_first))
         .flatten();
     let found = if let Some(t) = f.fixed_ti {
         // read again in STOP: the trigger of the record as it was shown
@@ -148,6 +126,35 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         None
     };
     found
+}
+
+/// The plain edge trigger on a channel, for `trigger_point` and the sparse path: the edge of the set direction nearest
+/// the hardware point, on the signal smoothed to one screen point (fastdraw::edge_smooth; the hardware point is not
+/// always on the right edge, trigger.md 8), with the hysteresis of the hardware comparators. None without one.
+pub fn edge_near(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<f64> {
+    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
+    let screen = (window / f.dt).ceil() as usize;
+    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
+    let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
+    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
+    // the screen window stays inside the frame where it can
+    let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
+    let fits = |t: f64| first > last || (first..=last).contains(&t);
+    let found = crate::trignear::edge_smooth_near(
+        &f.ch[m.trig_src],
+        f.pre,
+        sw_trig_level(m, f),
+        hyst,
+        rising,
+        either,
+        screen / 2,
+        col,
+        fits,
+    )
+    .0;
+    // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the hardware
+    // point stands
+    found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
 }
 
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,

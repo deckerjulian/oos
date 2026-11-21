@@ -13,8 +13,7 @@
 
 use crate::board::Frame;
 use crate::model::*;
-use crate::platform::Platform;
-use crate::wave::sw_trig_level;
+use crate::wave::edge_near;
 use crate::wave::Phosphor;
 use std::cell::RefCell;
 
@@ -193,26 +192,7 @@ fn trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<
     if m.trig_type != TrigType::Edge || m.trig_line().is_some() || f.roll || f.scan || f.ch[m.trig_src].len() <= 1 {
         return None;
     }
-    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
-    let screen = (window / f.dt).ceil() as usize;
-    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-    let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
-    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
-    let fits = |t: f64| first > last || (first..=last).contains(&t);
-    let found = crate::trignear::edge_smooth_near(
-        &f.ch[m.trig_src],
-        f.pre,
-        sw_trig_level(m, f),
-        hyst,
-        rising,
-        either,
-        screen / 2,
-        col,
-        fits,
-    )
-    .0;
-    found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
+    edge_near(f, m, n, window, t_first)
 }
 
 #[cfg(test)]

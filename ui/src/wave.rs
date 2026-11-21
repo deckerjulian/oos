@@ -17,7 +17,7 @@ mod record;
 
 pub use levels::*;
 pub use record::resample as resample_record;
-pub use record::{sw_trig_level, to_record, trig_mean, trigger_point};
+pub use record::{edge_near, sw_trig_level, to_record, trig_mean, trigger_point};
 
 pub struct Rng(u64);
 impl Rng {
