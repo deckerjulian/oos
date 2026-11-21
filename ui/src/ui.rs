@@ -815,8 +815,6 @@ pub struct Ui {
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
     mstat: Vec<MStat>,
-    /// past values of each measurement row
-    trend: Vec<panes::Trend>,
     /// what the second pane keeps between frames
     pn: panes::PaneState,
     log: logger::Logger,

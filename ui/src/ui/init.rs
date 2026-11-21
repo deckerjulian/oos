@@ -98,7 +98,6 @@ impl Ui {
                 win: 0,
             },
             mstat: Vec::new(),
-            trend: Vec::new(),
             pn: Default::default(),
             log: logger::Logger::default(),
             single_armed: false,
