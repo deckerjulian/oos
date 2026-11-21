@@ -8,6 +8,7 @@
 //! (`/oos/system.conf`: `features.off`, `decoders.off`), nothing left out by default. Setups that name something left
 //! out still load (`store::parse_setup_lenient`) and simply do not show it.
 
+use super::menu_text::on_off;
 use super::*;
 
 /// A feature that can be left out: its id in system.conf, its name, the analyser page and the menu it is.
@@ -139,7 +140,7 @@ impl Ui {
             Item::FeatDec(i) => self.proto_on(*PROTOS.get(i)?),
             _ => return None,
         };
-        Some(if on { "On" } else { "Off" }.into())
+        Some(on_off(on))
     }
 
     pub(super) fn features_options(&self, it: Item) -> Option<Vec<String>> {

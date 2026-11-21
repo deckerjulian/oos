@@ -5,6 +5,7 @@
 //! type is I2C: a clock and a data line. Each line is a channel or a reference slot, with its own threshold.
 //! Decoded words are drawn in hex. The read/write bit can be part of the address byte or left out of it.
 
+use super::menu_text::on_off;
 use super::worker::Worker;
 use super::{
     Canvas, Item, Kind, MenuId, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED,
@@ -106,13 +107,7 @@ impl Ui {
     pub(super) fn bus_value(&self, it: Item) -> Option<String> {
         let b = &self.m.bus;
         Some(match it {
-            Item::BusOn => {
-                if b.on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::BusOn => on_off(b.on),
             Item::BusLabel => b.shown_label(),
             Item::BusPos => format!("{:.1} div", b.pos),
             Item::BusClk => self.wave_name(b.clk),

@@ -9,6 +9,7 @@
 //! (bit n = Dn): the demo source generates them, the hardware source reads them after the analog record
 //! (`board/dho/hw.rs`). Hidden on models without the LA port (`platform().caps.la`).
 
+use super::menu_text::on_off;
 use super::*;
 // the settings are the model's, the record the signal's (ADR 0049); the page names them from here
 pub use crate::logic::LaRec;
@@ -153,13 +154,12 @@ impl Ui {
 
     pub(super) fn la_value(&self, it: Item) -> Option<String> {
         let l = &self.m.la;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::LaShow => GROUPS.iter().take(3).find(|g| g.1 == l.show).map_or(GROUPS[3].0, |g| g.0).into(),
             Item::LaThr(p) => PRESETS[l.preset[p.min(1)].min(USER)].0.into(),
             Item::LaUser(p) => format!("{:.2} V", l.user[p.min(1)]),
             Item::LaHeight => HEIGHTS[l.height.min(HEIGHTS.len() - 1)].0.into(),
-            Item::LaLine(n) => onoff(l.show >> n.min(15) & 1 == 1),
+            Item::LaLine(n) => on_off(l.show >> n.min(15) & 1 == 1),
             Item::LaPat(n) => {
                 ["H", "L", "X"][PAT_BITS.iter().position(|&b| b == self.m.pat_la[n.min(15)]).unwrap_or(2)].into()
             }

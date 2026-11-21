@@ -5,6 +5,7 @@
 //! one does. A new SIM setting gets its item here.
 
 use super::*;
+use crate::ui::menu_text::on_off;
 
 impl Ui {
     pub(in crate::ui) fn sim_items(&self) -> Vec<Item> {
@@ -116,13 +117,7 @@ impl Ui {
             Item::SimBw => si_short(m.sim_bw, "Hz"),
             Item::SimDeemph => format!("{:.1} dB", m.sim_deemph),
             Item::SimNoise => si_short(m.sim_noise, "V"),
-            Item::SimSsc => {
-                if m.sim_ssc {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::SimSsc => on_off(m.sim_ssc),
             Item::SimSscCenter => {
                 if m.sim_ssc_center {
                     "Center".into()

@@ -4,6 +4,7 @@
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
 use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, pad, wave_clash, Taken};
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
@@ -116,11 +117,10 @@ impl Ui {
 
     pub(super) fn inverter_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
         let opt = |c: Option<WaveId>| c.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into());
         let line = |n: u8| format!("D{}", n.min(15));
         Some(match it {
-            Item::InvOn => onoff(m.view == AView::Inverter),
+            Item::InvOn => on_off(m.view == AView::Inverter),
             Item::InvPage => {
                 if m.inv_page == InvPage::Dq0 {
                     "DQ0".into()
@@ -158,7 +158,7 @@ impl Ui {
             Item::InvQb => line(m.inv_qb),
             Item::InvQi => m.inv_qi.map(line).unwrap_or_else(|| "Off".into()),
             Item::InvCpr => format!("{:.0}", m.inv_cpr),
-            Item::InvSwap => onoff(m.inv_swap),
+            Item::InvSwap => on_off(m.inv_swap),
             Item::InvHa => line(m.inv_ha),
             Item::InvHb => line(m.inv_hb),
             Item::InvHc => line(m.inv_hc),
@@ -217,7 +217,7 @@ impl Ui {
             opts[(i as i32 + d).rem_euclid(opts.len() as i32) as usize].clone()
         };
         match it {
-            Item::InvOn => self.m.view = if self.m.view == AView::Inverter { AView::Scope } else { AView::Inverter },
+            Item::InvOn => super::analysers::toggle_view(&mut self.m, AView::Inverter),
             Item::InvPage => {
                 self.m.inv_page = if self.m.inv_page == InvPage::Dq0 { InvPage::Mech } else { InvPage::Dq0 };
                 if self.m.inv_page == InvPage::Mech && self.m.inv_ang == InvAngle::Off {

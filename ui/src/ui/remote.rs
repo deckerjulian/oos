@@ -19,6 +19,7 @@
 //! toast says when that is done, or what failed. A computer has no firewall: there only the list changes. An entry is
 //! checked by `netacl::canonical` and refused whole when a word is not a prefix: nothing is written then.
 
+use super::menu_text::on_off;
 use super::worker::Worker;
 use super::*;
 use crate::remote::{Runner, Step};
@@ -441,15 +442,14 @@ impl Ui {
     }
 
     pub(super) fn remote_value(&self, it: Item) -> Option<String> {
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         let s = &self.sys;
         let port = |on: bool, text: String| if on { text } else { "off".into() };
         Some(match it {
-            Item::RemWeb => onoff(s.remote_web),
-            Item::RemScpi => onoff(s.remote_scpi),
-            Item::RemVxi => onoff(s.remote_vxi11),
-            Item::RemSsh => onoff(s.remote_ssh),
-            Item::RemMdns => onoff(s.remote_mdns),
+            Item::RemWeb => on_off(s.remote_web),
+            Item::RemScpi => on_off(s.remote_scpi),
+            Item::RemVxi => on_off(s.remote_vxi11),
+            Item::RemSsh => on_off(s.remote_ssh),
+            Item::RemMdns => on_off(s.remote_mdns),
             Item::RemName => self.name_value(),
             Item::RemAllow => self.allow_value(),
             Item::RemFirewall => self.firewall_value(),

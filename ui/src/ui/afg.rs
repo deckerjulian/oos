@@ -5,6 +5,7 @@
 //! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`Board::gen`) with the
 //! factory calibration; limits as the stock system, frequency caps per shape from the platform limits.
 
+use super::menu_text::on_off;
 use super::*;
 use crate::board::{board, Board};
 
@@ -105,13 +106,7 @@ impl Ui {
         let m = &self.m;
         Some(match it {
             Item::AfgSel => format!("Gen {}", m.gen_sel + 1),
-            Item::AfgOn => {
-                if m.afg_on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::AfgOn => on_off(m.afg_on),
             Item::AfgFreq => si_short(m.afg_freq, "Hz"),
             Item::AfgFreqEntry => "Keypad".into(),
             Item::AfgAmpl => si_short(m.afg_ampl, "Vpp"),

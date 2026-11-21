@@ -5,6 +5,7 @@
 //! generated password on demand, the host key, and the trusted keys (imported from a USB stick, listed, removed).
 //! The switch for SSH itself stands with the other services (ui/remote.rs). `crate::ssh` has the files and the rules.
 
+use super::menu_text::on_off;
 use super::*;
 use crate::ssh::{self, Keys};
 
@@ -111,7 +112,7 @@ impl Ui {
             Item::SshState if !self.sys.remote_ssh => "off".into(),
             Item::SshState if s.state.is_empty() => "not started".into(),
             Item::SshState => s.state.clone(),
-            Item::SshPassword => if self.sys.ssh_password { "On" } else { "Off" }.into(),
+            Item::SshPassword => on_off(self.sys.ssh_password),
             Item::SshHostKey => {
                 s.host_fp.as_ref().map_or("not made yet".into(), |f| format!("{}\u{2026}", &f[..f.len().min(19)]))
             }

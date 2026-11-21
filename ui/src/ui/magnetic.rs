@@ -3,6 +3,7 @@
 
 //! Magnetic page: inductance, B / H / μr, cycle loss, and the I vs ∫V loop (`oos_dsp::magnetic`).
 
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::magnetic::{self, Geom};
 
@@ -41,10 +42,9 @@ impl Ui {
 
     pub(super) fn magnetic_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
         let geom = |x: f64, unit: &str| if x > 0.0 { si(x, unit) } else { "off".into() };
         Some(match it {
-            Item::MagOn => onoff(m.view == AView::Magnetic),
+            Item::MagOn => on_off(m.view == AView::Magnetic),
             Item::MagV => self.wave_name(m.mag_v),
             Item::MagI => self.wave_name(m.mag_i),
             Item::MagN => format!("{:.0}", m.mag_n),
@@ -94,7 +94,7 @@ impl Ui {
         }
         let m = &mut self.m;
         match it {
-            Item::MagOn => m.view = if m.view == AView::Magnetic { AView::Scope } else { AView::Magnetic },
+            Item::MagOn => super::analysers::toggle_view(m, AView::Magnetic),
             Item::MagN => m.mag_n = (m.mag_n + d as f64).clamp(1.0, 10_000.0),
             Item::MagAe => m.mag_ae = eng_ladder(m.mag_ae, d, 1e-6, 0.1, true),
             Item::MagLe => m.mag_le = eng_ladder(m.mag_le, d, 1e-3, 10.0, true),
