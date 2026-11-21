@@ -367,9 +367,6 @@ impl Ui {
         }
         let _ = self.adjust_scope(it, d) || self.adjust_tools(it, d) || self.adjust_more(it, d);
         self.settings_changed();
-        if it == Item::Hdmi {
-            self.sync_full();
-        }
     }
 
     /// `adjust` of the channels, the time base, the logger and the trigger. True when `it` is one of them.
@@ -546,13 +543,6 @@ impl Ui {
             Item::ZoneMode => {
                 let z = &mut m.zones[self.zone_trig.sel];
                 z.inside = !z.inside;
-            }
-            Item::Hdmi => {
-                let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
-                m.hdmi = HDMI_MODES[step_index(i, HDMI_MODES.len(), d)];
-                if self.m.hdmi == HdmiMode::Layout {
-                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
-                }
             }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);

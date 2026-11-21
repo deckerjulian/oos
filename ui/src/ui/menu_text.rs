@@ -366,7 +366,6 @@ impl Ui {
             Item::CurC => "Y1",
             Item::CurD => "Y2",
             Item::ClearDisp => "Clear",
-            Item::Hdmi => "HDMI",
             Item::ZoneSel => "Zone",
             Item::ZoneOn => "Enable",
             Item::ZoneSrc => "Source",
@@ -526,7 +525,6 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::Hdmi => format!("{:?}", m.hdmi),
             Item::ZoneSel => format!("Z{}", self.zone_trig.sel + 1),
             Item::ZoneOn => on_off(m.zones[self.zone_trig.sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_trig.sel].src + 1),

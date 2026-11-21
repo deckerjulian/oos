@@ -583,6 +583,7 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
 | `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
 | none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
+| none | a choice of the screen's layout, not of the measurement | `hdmi` | HDMI | What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu steps to the end of the list and stops. |
 | none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |
 <!-- settings:display:end -->
 

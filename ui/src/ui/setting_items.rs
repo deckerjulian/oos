@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 81] = [
+const ITEMS: [(Item, &str); 82] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -18,6 +18,7 @@ const ITEMS: [(Item, &str); 81] = [
     (Item::Dots, "dots"),
     (Item::BottomBar, "bar"),
     (Item::TextSize, "text_size"),
+    (Item::Hdmi, "hdmi"),
     (Item::TrigSlope, "slope"),
     (Item::TrigMode, "trig_mode"),
     (Item::TrigHoldoff, "holdoff"),
@@ -138,6 +139,15 @@ impl Ui {
                 self.workspace.measure_docked = true;
                 self.workspace.measure_float = None;
                 self.relayout();
+                return true;
+            }
+            // the Layout costs the panel frames; a new mode sets the other picture up after the settings changed
+            Item::Hdmi => {
+                if self.m.hdmi == HdmiMode::Layout {
+                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
+                }
+                self.settings_changed();
+                self.sync_full();
                 return true;
             }
             // only the inputs the model has switch on

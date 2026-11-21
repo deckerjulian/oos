@@ -175,7 +175,6 @@ impl Ui {
             Item::DecParity => &["None", "Even", "Odd"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::ZoneOn => &["Off", "On"],
-            Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::ZoneSel => &["Z1", "Z2"],
             Item::ZoneSrc => return ch_names(),
             Item::ZoneMode => &["Intersect", "Not intersect"],

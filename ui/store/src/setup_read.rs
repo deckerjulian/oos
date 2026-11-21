@@ -421,7 +421,6 @@ fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
         "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
-        "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "hdmi_view" => {
             let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;
             if n > crate::model::VIEWS_MAX {

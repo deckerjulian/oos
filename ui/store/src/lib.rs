@@ -282,7 +282,6 @@ fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     crate::settings::write(&crate::settings::display::DRAW, m, 0, kv);
-    kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
