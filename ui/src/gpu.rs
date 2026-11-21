@@ -142,6 +142,25 @@ struct DoneMsg {
     pad2: f32,
 }
 
+impl DoneMsg {
+    /// The helper's answer as it comes off the socket: eight native-endian words in the order of the fields
+    /// (`repr(C)`, no padding; `messages_have_the_helpers_layout` checks the offsets).
+    fn from_ne_bytes(b: &[u8; std::mem::size_of::<DoneMsg>()]) -> DoneMsg {
+        let w = |i: usize| u32::from_ne_bytes(b.as_chunks::<4>().0[i]);
+        let f = |i: usize| f32::from_bits(w(i));
+        DoneMsg {
+            magic: w(0),
+            kind: w(1),
+            status: w(2),
+            pad: w(3),
+            ms_upload: f(4),
+            ms_draw: f(5),
+            ms_read: f(6),
+            pad2: f(7),
+        }
+    }
+}
+
 /// Two rows differ: eight bytes at a time (musl's memcmp, which `==` on byte slices calls, goes byte by byte and
 /// took 7.5 ms for the 5 MB of a frame on the unit).
 fn differ(a: &[u8], b: &[u8]) -> bool {
@@ -371,18 +390,7 @@ mod imp {
             let _ = self.sock.set_read_timeout(Some(t));
             let mut b = [0u8; std::mem::size_of::<DoneMsg>()];
             self.sock.read_exact(&mut b).map_err(|e| format!("no answer: {}", e))?;
-            let w = |i: usize| u32::from_ne_bytes(b.as_chunks::<4>().0[i]);
-            let f = |i: usize| f32::from_bits(w(i));
-            let d = DoneMsg {
-                magic: w(0),
-                kind: w(1),
-                status: w(2),
-                pad: w(3),
-                ms_upload: f(4),
-                ms_draw: f(5),
-                ms_read: f(6),
-                pad2: f(7),
-            };
+            let d = DoneMsg::from_ne_bytes(&b);
             if d.magic != MAGIC || d.kind != K_DONE {
                 return Err("bad answer".into());
             }
@@ -813,6 +821,27 @@ mod tests {
             ),
             (24, 32, 96, 112, 2224, 32, 24)
         );
+        // the answer's words, in the order `DoneMsg::from_ne_bytes` reads them
+        use std::mem::offset_of;
+        let offsets = [
+            offset_of!(DoneMsg, magic),
+            offset_of!(DoneMsg, kind),
+            offset_of!(DoneMsg, status),
+            offset_of!(DoneMsg, pad),
+            offset_of!(DoneMsg, ms_upload),
+            offset_of!(DoneMsg, ms_draw),
+            offset_of!(DoneMsg, ms_read),
+            offset_of!(DoneMsg, pad2),
+        ];
+        assert_eq!(offsets, [0, 4, 8, 12, 16, 20, 24, 28]);
+        let mut b = [0u8; 32];
+        let words = [MAGIC, K_DONE, 7, 0, 1.5f32.to_bits(), 2.25f32.to_bits(), 0.125f32.to_bits(), 0];
+        for (at, w) in offsets.iter().zip(words) {
+            b[*at..*at + 4].copy_from_slice(&w.to_ne_bytes());
+        }
+        let d = DoneMsg::from_ne_bytes(&b);
+        assert_eq!((d.magic, d.kind, d.status, d.pad), (MAGIC, K_DONE, 7, 0));
+        assert_eq!((d.ms_upload, d.ms_draw, d.ms_read, d.pad2), (1.5, 2.25, 0.125, 0.0));
         let _ = (K_HELLO, K_TARGET, K_FRAME, K_DONE, NONE);
     }
 }
