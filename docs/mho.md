@@ -126,7 +126,7 @@ by itself, and nothing of it outlasts a power-off. **Not yet verified on hardwar
 |---|---|---|
 | `power` | `adc_power`, `afe_power` = 1 (GPIO0_A1, GPIO0_A2) | |
 | `clock` | `sysref_reset` = 0 as stock leaves it; reads the clock chip's ID registers over the 3-wire bus (GPIO1_C1..C3); only when the vendor ID is TI's (0x51 0x04) it writes the unit's own table `/rigol/resource/conf/init_all_clock_V00_0N.txt` (N from the hardware code) | the ID before and after |
-| `fpga` | `fpga_power` = 1 (GPIO1_A0); PROGRAM_B (GPIO1_B5) low, then high; the unit's own image from `/rigol/FPGA` (`acq::fpga_image`) over `/dev/spidev5.0` at 25 MHz (slave serial); 5 s | INIT_B (GPIO2_C7) and DONE (GPIO2_C4) |
+| `fpga` | `fpga_power` = 1 (GPIO1_A0); PROGRAM_B (GPIO1_B5) low, then high; the unit's own image from `/rigol/FPGA` (`acq::fpga_image`) over `/dev/spidev5.0` at 25 MHz (slave serial; the name comes from the device tree's `spi5` alias, without which the port is `/dev/spidev2.0`); 5 s | INIT_B (GPIO2_C7) and DONE (GPIO2_C4) |
 | `pcie` | the PCIe host module and `xdma.ko`, with the DHO's retries | the endpoint's device ID, then the registers of `bringup::FIRST_READS` (the same tools/mho-check.py reads under the stock system) |
 
 `--until power|clock|fpga|pcie` ends after that step; without `--yes` it only says what it would do and reads the

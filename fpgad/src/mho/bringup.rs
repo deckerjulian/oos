@@ -215,8 +215,10 @@ fn fpga(image: &str) -> Result<(), String> {
     if !wait(&init, true, 1000) {
         return Err("INIT_B stayed low after PROGRAM_B: the FPGA is not ready for its image (supply?)".into());
     }
-    let mut spi =
-        std::fs::OpenOptions::new().write(true).open(b::FPGA_SPI).map_err(|e| format!("{}: {}", b::FPGA_SPI, e))?;
+    let mut spi = std::fs::OpenOptions::new()
+        .write(true)
+        .open(b::FPGA_SPI)
+        .map_err(|e| format!("{}: {} (spidevs here: {})", b::FPGA_SPI, e, spidevs()))?;
     let t = Instant::now();
     for c in data.chunks(b::SPI_CHUNK) {
         spi.write_all(c).map_err(|e| format!("{}: {}", b::FPGA_SPI, e))?;
@@ -235,6 +237,34 @@ fn fpga(image: &str) -> Result<(), String> {
     println!("bringup: DONE high, waiting 5 s as the stock system does");
     std::thread::sleep(Duration::from_secs(5));
     Ok(())
+}
+
+/// The spidevs there are and the controller each belongs to (spi5 of the RK3399 is ff200000.spi), for the error when
+/// the FPGA's port is missing.
+fn spidevs() -> String {
+    let Ok(dir) = std::fs::read_dir("/sys/class/spidev") else {
+        return "none".into();
+    };
+    let mut v: Vec<String> = dir
+        .flatten()
+        .map(|e| {
+            // .../ff200000.spi/spi_master/spi2/spi2.0: the first ancestor named *.spi is the controller
+            let dev = std::fs::canonicalize(e.path().join("device")).unwrap_or_default();
+            let ctl = dev
+                .ancestors()
+                .filter_map(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .find(|n| n.ends_with(".spi"))
+                .unwrap_or_else(|| "?".into());
+            format!("{} on {}", e.file_name().to_string_lossy(), ctl)
+        })
+        .collect();
+    v.sort();
+    if v.is_empty() {
+        "none".into()
+    } else {
+        v.join(", ")
+    }
 }
 
 /// PCIe host and xdma (the helper of the DHO800/DHO900, with its retries), then the first registers.

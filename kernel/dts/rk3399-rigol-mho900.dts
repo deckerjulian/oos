@@ -32,6 +32,15 @@
 	model = "Rigol MHO900";
 	compatible = "rigol,mho900", "rockchip,rk3399";
 
+	aliases {
+		/*
+		 * The FPGA's configuration port is /dev/spidev5.0, as stock. Without the alias spi5 takes the first free bus
+		 * number after the DHO's spi1 alias and comes up as /dev/spidev2.0 (seen on an MHO98, mho-dev-4, GitHub
+		 * issue #4: the bring-up found no /dev/spidev5.0).
+		 */
+		spi5 = &spi5;
+	};
+
 	/* As stock: PWM1 at 25 kHz, normal polarity. One cooling level, full speed. */
 	fan_pwm: pwm-fan {
 		compatible = "pwm-fan";
