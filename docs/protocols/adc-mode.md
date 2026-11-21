@@ -333,4 +333,38 @@ acquisition thread delivers at 1 us/div. Min/max data (Peak, FPGA compression) i
 What is left after the offsets, and how much each part costs, is measured from a sine record: `:SYSTem:DEBug:CORes?`
 (`oos_dsp::interleave::budget`, docs/scpi.md) fits the sine on every core's own samples and gives each core's offset,
 gain and time error, the level of each pattern, harmonics, the generator's image and noise, and SINAD with and without
-the patterns; `tools/adc-budget.py` runs it over frequencies and V/div (issue #335). Not yet run on a unit.
+the patterns; `tools/adc-budget.py` runs it over frequencies and V/div (issue #335).
+
+### 6.1 Error budget (measured 2026-11-21)
+
+Verified on the unit (DHO924S, stored calibration): the built-in generator's sine, 1.6 Vpp, cable GI/GO to CH1, depth
+100 k at 1 us/div (the highest rate of the channel set), Normal, Single; `tools/adc-budget.py`, the first 32768 samples
+of each record. "raw" is `:ACQuire:CORes RAW`, "matched" the default `MATC`. Levels in dBc, SINAD in dB; "full" is the
+SINAD of the matched record with the remaining core patterns taken off as well, what a gain and timing correction
+could reach.
+
+| channels, rate (cores) | V/div | f | offset raw / matched | gain | timing | harmonics | noise | SINAD matched / full |
+|---|---|---|---|---|---|---|---|---|
+| 1, 1.25 GSa/s (8) | 0.25 | 1 MHz | -52.6 / -77.5 | -67.9 | -87.4 | -49.1 | -46.5 | 44.6 / 44.6 |
+| | 0.25 | 10 MHz | -54.4 / -76.6 | -69.0 | -70.7 | -49.5 | -49.3 | 46.4 / 46.4 |
+| | 0.25 | 50 MHz | -43.4 / -64.0 | -56.8 | -55.2 | -57.8 | -35.3 | 35.2 / 35.3 |
+| | 0.5 | 1 / 10 / 50 MHz | -45.5 / -62.1 (1 MHz) | -67.4 / -66.6 / -48.0 | -80.8 / -70.3 / -48.1 | -49 .. -58 | -40.0 / -42.0 / -30.3 | 39.5 / 41.9 / 30.1 (full +0.1) |
+| | 1 | 1 / 10 / 50 MHz | -39.9 / -58.3 (1 MHz) | -67.0 / -62.7 / -41.4 | -76.7 / -62.6 / -42.5 | -47 .. -55 | -38.3 / -38.9 / -28.2 | 37.9 / 38.7 / 27.7 (full +0.4) |
+| 2, 625 MSa/s (4) | 0.25 | 1 / 10 / 50 MHz | -50.8 / -83.8 (1 MHz) | -65.3 / -66.3 / -56.7 | -95.4 / -85.8 / -60.1 | -50 .. -60 | -45.3 / -45.4 / -32.7 | 44.9 / 44.1 / 32.6 (full +0.1) |
+| 4, 312.5 MSa/s (2) | 0.25 | 1 / 10 / 50 MHz | -47.5 / -80.7 (1 MHz) | -73.4 / -78.3 / -86.9 | -90.0 / -96.7 / -84.8 | -59.1 / -53.5 / -37.5 | -45.8 / -46.9 / -32.6 | 45.7 / 46.0 / 31.4 (full 0) |
+
+What it says:
+
+- The matching of the offsets works as in section 6: the offset pattern drops by 20 to 33 dB.
+- The cores' gains differ by about 0.04 % rms at 1 and 10 MHz (about -68 dBc), the same between records (correlation
+  0.97 or more); their time errors are about 5 ps rms at 10 MHz (repeatable), at 1 MHz below what the fit resolves.
+- With the offsets matched, a correction of gain and timing would raise SINAD by at most 0.1 dB up to 10 MHz and
+  0.4 dB at 50 MHz. The cores do not limit SINAD; noise does: -46 to -49 dBc near full scale up to 10 MHz, rising to
+  -31 to -35 dBc at 50 MHz. Whether that rise is jitter of the generator or of the sample clock is not known (it would
+  be about 50 ps rms if it is jitter); it needs a source with known low jitter.
+- At 50 MHz the gain and time patterns of eight cores grow with V/div (0.15 % and 5.5 ps at 0.25 V/div, 0.86 % and
+  24 ps at 1 V/div), which a mismatch inside the ADC alone would not do; the pair of cores of four channels shows none
+  (0.005 %, 0.2 ps). The cause is not known. The generator's images (156.25 MHz = fs / 8) fall on the same frequencies
+  as the core patterns, so this needs an external generator to separate.
+- Only CH1 was measured (the generator is cabled to it); CH2 to CH4 are not yet measured.
+- At 156.25 MSa/s the generator's image aliases onto the fundamental; the budget then reports its level as NaN.
