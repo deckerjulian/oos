@@ -351,9 +351,11 @@ Sequence (registers and order):
    `hz_filter` then uses a & 3, b & 3, c & 0x3f (r2e[7:6], r2e[10:9], r2e[5:0]; r2e[15:11] and bit 8 kept).
    The filter is analog (about Fs / 4 in absolute hertz), so the Auto constant stays at any ADC clock. Above 1.25 GSa/s the
    code is capped at its maximum 63 (filter open). Below 39.7 MSa/s the code stays at its floor 1 (nominal 5 MHz), so
-   from about 10 MSa/s down the filter no longer reaches below half the rate. The nominal corner of a code (5 MHz per
-   step, from the 5 MHz steps of the bandwidth menu) is assumed; the real -3 dB points are not yet measured on hardware
-   (`docs/bandwidth-test.md`).
+   from about 10 MSa/s down the filter no longer reaches below half the rate. The corner of a code is nominally 5 MHz per
+   step (the 5 MHz steps of the bandwidth menu). Measured on the unit from the noise spectrum (bandwidth-test.md, Test A,
+   2026-11-21, a first figure): one pole, the corner 10 to 30 % above 5c MHz up to code 20 (code 15 about 93 MHz), and
+   from code 40 limited by the front end (Full about 310 MHz). Auto at code 15 (four channels) thus sits near fs / 3.4
+   and takes only about 6 dB off at Nyquist.
 3. ADC: reg 0x54 <- 0x4210 and reg 0x55 <- 0x0008 -> FPGA 0x1034 <- **0x01545251**, **0x0155000c**
    (100 us before/after each), on every call. The word is 0x1000000 | reg << 16 | (XOR mask of reg ^ value).
 4. `hz_filter(ch, a, b, c)` -> W(2e).
