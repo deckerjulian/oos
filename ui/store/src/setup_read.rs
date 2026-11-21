@@ -11,7 +11,6 @@ pub(crate) use crate::words::{p_bool, p_f32, p_f64, p_idx, p_u32};
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
-const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
 const CURSORS: [CursorMode; 5] =
     [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
@@ -224,7 +223,6 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
         "trig_ref2" => m.trig_ref2 = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
         "trig_when" => m.trig_when = p_enum(v, &WHENS)?,
-        "video_line" => m.video_line = p_u32(v)?,
         "pat" => {
             let b = p_list(v, NCH, |x| p_enum(x, &BITS))?;
             m.pat.copy_from_slice(&b);
@@ -233,7 +231,6 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let l = p_list(v, NCH, p_f32)?;
             m.pat_levels.copy_from_slice(&l);
         }
-        "nth_n" => m.nth_n = p_u32(v)?,
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::model::SEG_HW_MAX),
         "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::model::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,
@@ -319,8 +316,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<
         }
         "dec_sel" => m.dec_sel = p_idx(v, DECODERS)?,
         "pane" => m.pane = p_idx(v, crate::model::PANES_N)?,
-        "meas_labels" => m.meas_labels = p_bool(v)?,
-        "strip_dock" => m.strip_dock = p_enum(v, &StripDock::ALL)?,
         "trend_sel" => {
             let f: Vec<&str> = v.split_whitespace().collect();
             let [a, b] = f[..] else { return Err("trend_sel: two values".into()) };
@@ -340,7 +335,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<
         "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
-        "h_expand" => m.h_expand = p_enum(v, &HEXPANDS)?,
         "math" => m.math = p_enum(v, &MATH_OPS)?,
         "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
@@ -424,11 +418,9 @@ fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     let ntime = tscales().len();
     match k {
         "zoom" => m.zoom = p_bool(v)?,
-        "auto_roll" => m.auto_roll = p_bool(v)?,
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
         "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
-        "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "hdmi_view" => {
             let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;
             if n > crate::model::VIEWS_MAX {
@@ -615,7 +607,6 @@ fn set_inverter_zones(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "mask_x" => m.mask_x = p_f32(v)?,
         "mask_y" => m.mask_y = p_f32(v)?,
         "quick" => m.quick = p_enum(v, &QUICKS)?,
-        "text_size" => m.text_size = p_enum(v, &TEXT_SIZES)?,
         "la" => m.la = crate::model::la::LaSet::parse(v)?,
         "dec_la" => {
             let w: Vec<&str> = v.split_whitespace().collect();

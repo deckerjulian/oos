@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The Display group: how the waveform is drawn and how the graticule looks. Their commands are `:DISPlay:...`
-//! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The two slices are the two places of
+//! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The three slices are the three places of
 //! `store::setup_text` that write them, so the keys of a setup file keep their order.
+//!
+//! Still written out by hand: the monitor of the HDMI Layout (`hdmi_view`: over SCPI it needs two views), the Z input
+//! (an optional wave) and the views (two values in one line).
 
 use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
-use crate::model::{Grid, PERSIST};
+use crate::model::{step_index, Grid, HDMI_MODES, PERSIST, TEXT_SIZES};
 
-/// Both slices, in the order of the docs table.
-pub const SLICES: [&[Setting]; 2] = [&VIEW, &DRAW];
+/// The slices, in the order of the docs table.
+pub const SLICES: [&[Setting]; 3] = [&VIEW, &DRAW, &TEXT];
 
 /// Written after `mdepth`.
 pub const VIEW: [Setting; 5] = [
@@ -84,7 +87,7 @@ pub const VIEW: [Setting; 5] = [
 ];
 
 /// Written after `zdelay`.
-pub const DRAW: [Setting; 3] = [
+pub const DRAW: [Setting; 4] = [
     Setting {
         key: "color_grade",
         scpi: Scpi::Cmd("COLor"),
@@ -131,7 +134,59 @@ pub const DRAW: [Setting; 3] = [
         get: |m, _| Val::Index(m.bar_compact as usize),
         put: |m, _, v| m.bar_compact = v.index() != 0,
     },
+    Setting {
+        key: "hdmi",
+        scpi: Scpi::None {
+            #[cfg(test)]
+            why: "a choice of the screen's layout, not of the measurement",
+        },
+        ty: Ty::Choice(
+            &[
+                Choice { store: "Mirror", scpi: "", label: "Mirror" },
+                Choice { store: "Waveform", scpi: "", label: "Waveform" },
+                Choice { store: "Layout", scpi: "", label: "Layout" },
+            ],
+            Unknown::Value,
+            Arg::Keyword,
+        ),
+        label: "HDMI",
+        #[cfg(test)]
+        doc: "What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu \
+              steps to the end of the list and stops.",
+        accept: None,
+        step: Some(|m, _, d| {
+            let i = HDMI_MODES.iter().position(|&h| h == m.hdmi).unwrap_or(0);
+            Val::Index(step_index(i, HDMI_MODES.len(), d))
+        }),
+        get: |m, _| Val::Index(HDMI_MODES.iter().position(|&h| h == m.hdmi).unwrap_or(0)),
+        put: |m, _, v| m.hdmi = HDMI_MODES[v.index()],
+    },
 ];
+
+/// Written after `quick`.
+pub const TEXT: [Setting; 1] = [Setting {
+    key: "text_size",
+    scpi: Scpi::None {
+        #[cfg(test)]
+        why: "a choice of the screen's layout, not of the measurement",
+    },
+    ty: Ty::Choice(
+        &[
+            Choice { store: "Normal", scpi: "", label: "Normal" },
+            Choice { store: "Large", scpi: "", label: "Large" },
+            Choice { store: "Larger", scpi: "", label: "Larger" },
+        ],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Text size",
+    #[cfg(test)]
+    doc: "The size of the text on the screen; the menu steps to the end of the list and stops.",
+    accept: None,
+    step: Some(|m, _, d| Val::Index(step_index(m.text_size.index(), TEXT_SIZES.len(), d))),
+    get: |m, _| Val::Index(m.text_size.index()),
+    put: |m, _, v| m.text_size = TEXT_SIZES[v.index()],
+}];
 
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 

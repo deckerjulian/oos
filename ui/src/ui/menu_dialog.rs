@@ -113,10 +113,7 @@ impl Ui {
             return o;
         }
         let v: &[&str] = match it {
-            Item::StripDock => return StripDock::ALL.iter().map(|s| s.label().to_string()).collect(),
-            Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn => {
-                &["Off", "On"]
-            }
+            Item::MeasStats | Item::Zoom | Item::DecOn | Item::SearchOn => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
@@ -178,8 +175,6 @@ impl Ui {
             Item::DecParity => &["None", "Even", "Odd"],
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::ZoneOn => &["Off", "On"],
-            Item::Hdmi => &["Mirror", "Waveform", "Layout"],
-            Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
             Item::ZoneSrc => return ch_names(),
             Item::ZoneMode => &["Intersect", "Not intersect"],
@@ -197,7 +192,6 @@ impl Ui {
             Item::TrendSel(_) => return self.trend_options(),
             Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
             Item::HFine | Item::LogOn => &["Off", "On"],
-            Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
             Item::BootMode => &["One-shot", "Persist"],
             // long lists: shown as a picker (see `ctl`)
             Item::MathOpI => return self.math_ops_in_family().iter().map(|o| o.name().to_string()).collect(),

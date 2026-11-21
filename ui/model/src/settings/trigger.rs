@@ -7,10 +7,10 @@
 //! file keep their order.
 //!
 //! An SCPI value a row does not take falls through to the later branches of `exec_cmd`, which answer
-//! `-113,"Undefined header"`, as before the table. Still written out by hand: `trig_when` (its menu offers Off only
-//! for Runt), `video_line` (the menu keeps it below the line count of the standard) and `nth_n` (the menu keeps it
-//! within 1 to 65535), where a row would change what they do, a setup reading any number into the last two; and the
-//! sources, levels and patterns, which are not one value each.
+//! `-113,"Undefined header"`, as before the table. `video_line` and `nth_n` take any whole number from a setup; their
+//! menu limits are row steps (docs/adr/code/0044). Still written out by hand: `trig_when` (its menu offers Off only for
+//! Runt, and a row offers the same choices whatever the model holds), and the sources, levels and patterns, which are
+//! not one value each.
 
 use super::{Arg, Choice, Scpi, Setting, Ty, Unknown, Val};
 use crate::model::{step_index, time_ladder, Pol, Slope, TrigMode, VSync, VideoStd, WinMode, TRIG_COUPS};
@@ -166,7 +166,7 @@ pub const SECOND: [Setting; 2] = [
 ];
 
 /// Written after `trig_when`.
-pub const TIMES: [Setting; 4] = [
+pub const TIMES: [Setting; 5] = [
     Setting {
         key: "trig_t1",
         scpi: Scpi::None {
@@ -242,10 +242,25 @@ pub const TIMES: [Setting; 4] = [
         get: |m, _| Val::Index(VSYNCS.iter().position(|&s| s == m.video_sync).unwrap_or(0)),
         put: |m, _, v| m.video_sync = VSYNCS[v.index()],
     },
+    Setting {
+        key: "video_line",
+        scpi: Scpi::None {
+            #[cfg(test)]
+            why: NO_SUBTREE,
+        },
+        ty: Ty::U32 { min: 0, max: u32::MAX, step: 1, unit: "" },
+        label: "Line",
+        #[cfg(test)]
+        doc: "The line Line n fires on; the menu keeps it from 1 to 10 below half the lines of the standard.",
+        accept: None,
+        step: Some(|m, _, d| Val::U32((m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32)),
+        get: |m, _| Val::U32(m.video_line),
+        put: |m, _, v| m.video_line = v.index() as u32,
+    },
 ];
 
 /// Written after `pat_levels`.
-pub const WINDOW: [Setting; 2] = [
+pub const WINDOW: [Setting; 3] = [
     Setting {
         key: "win_mode",
         scpi: Scpi::None {
@@ -283,6 +298,21 @@ pub const WINDOW: [Setting; 2] = [
         step: None,
         get: |m, _| Val::F32(m.nth_idle),
         put: |m, _, v| m.nth_idle = v.secs(),
+    },
+    Setting {
+        key: "nth_n",
+        scpi: Scpi::None {
+            #[cfg(test)]
+            why: NO_SUBTREE,
+        },
+        ty: Ty::U32 { min: 0, max: u32::MAX, step: 1, unit: "" },
+        label: "Edge no.",
+        #[cfg(test)]
+        doc: "The edge after the idle time that fires the Nth edge trigger; the menu keeps it from 1 to 65535.",
+        accept: None,
+        step: Some(|m, _, d| Val::U32((m.nth_n as i32 + d).clamp(1, 65535) as u32)),
+        get: |m, _| Val::U32(m.nth_n),
+        put: |m, _, v| m.nth_n = v.index() as u32,
     },
 ];
 

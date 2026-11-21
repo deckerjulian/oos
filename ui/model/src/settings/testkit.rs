@@ -7,7 +7,7 @@
 use super::*;
 
 /// Each table: its slices, the SCPI root of its commands, its name in the markers of docs/scpi.md, its menu.
-pub const GROUPS: [(&[&[Setting]], &str, &str, &str); 14] = [
+pub const GROUPS: [(&[&[Setting]], &str, &str, &str); 16] = [
     (&display::SLICES, ":DISPlay", "display", "Display"),
     (&trigger::SLICES, ":TRIGger", "trigger", "Trigger"),
     (&acquisition::SLICES, ":ACQuire", "acquisition", "Acquire"),
@@ -22,6 +22,8 @@ pub const GROUPS: [(&[&[Setting]], &str, &str, &str); 14] = [
     (&spectrum::SLICES, ":SPECtrum", "spectrum", "Spectrum"),
     (&eye::SLICES, ":EYE", "eye", "Eye"),
     (&power::SLICES, ":POWer", "power", "Power"),
+    (&timebase::SLICES, ":TIMebase", "timebase", "Horizontal"),
+    (&measure::SLICES, ":MEASure", "measure", "Measure settings"),
 ];
 
 /// Every row with the SCPI root of its group, the first channel for `<n>`.

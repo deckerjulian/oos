@@ -174,11 +174,9 @@ fn time_trigger_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     crate::settings::write(&crate::settings::trigger::SECOND, m, 0, kv);
     kv("trig_when", name(m.trig_when));
     crate::settings::write(&crate::settings::trigger::TIMES, m, 0, kv);
-    kv("video_line", m.video_line.to_string());
     kv("pat", m.pat.iter().map(|&b| name(b)).collect::<Vec<_>>().join(" "));
     kv("pat_levels", list(&m.pat_levels));
     crate::settings::write(&crate::settings::trigger::WINDOW, m, 0, kv);
-    kv("nth_n", m.nth_n.to_string());
     crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, 0, kv);
 }
 
@@ -240,7 +238,7 @@ fn label_cursor_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         kv("tfine", m.tfine.to_string());
     }
     crate::settings::write(&crate::settings::channel::EXPAND, m, 0, kv);
-    kv("h_expand", format!("{:?}", m.h_expand));
+    crate::settings::write(&crate::settings::timebase::HREF, m, 0, kv);
 }
 
 /// The selected math channel as `math*` keys, the others as `m<N>.*`.
@@ -277,15 +275,13 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 /// The panes, zoom, the drawing, HDMI and the views.
 fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("pane", m.pane.to_string());
-    kv("meas_labels", m.meas_labels.to_string());
-    kv("strip_dock", name(m.strip_dock));
+    crate::settings::write(&crate::settings::measure::VIEW, m, 0, kv);
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
-    kv("auto_roll", m.auto_roll.to_string());
+    crate::settings::write(&crate::settings::timebase::ROLL, m, 0, kv);
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     crate::settings::write(&crate::settings::display::DRAW, m, 0, kv);
-    kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
@@ -503,7 +499,7 @@ fn zone_mask_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("mask_y", m.mask_y.to_string());
     crate::settings::write(&crate::settings::mask::TEST, m, 0, kv);
     kv("quick", name(m.quick));
-    kv("text_size", name(m.text_size));
+    crate::settings::write(&crate::settings::display::TEXT, m, 0, kv);
     kv("la", m.la.to_text());
     kv(
         "dec_la",

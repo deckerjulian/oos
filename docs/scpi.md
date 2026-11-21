@@ -116,6 +116,21 @@ coupling, probe, bias, deskew and label (above and below) are written by hand.
 | `:CHANnel<n>:EXPand[?]` | `GND`, `CENTer`; the query answers `GND` or `CENT` | `v_expand_gnd` | Expand around | Vertical expansion reference supported by the model, one switch for every channel: a change of scale keeps the ground line or the screen centre in place. |
 <!-- settings:channel:end -->
 
+### Time base settings
+
+The time base settings of one value each, their `:TIMebase` commands and their keys in a setup file. They are declared
+once, in `ui/model/src/settings/timebase.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`. The scale, the delay, the fine switch and the zoom are written by hand
+(above and below).
+
+<!-- settings:timebase:begin -->
+| Command | Takes | Setup key | Horizontal menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:TIMebase:HREFerence:MODE[?]` | `CENTer`, `LB` or `LEFT`, `RB` or `RIGHt`, `TRIGger`; the query answers `CENT`, `LB`, `RB` or `TRIG` | `h_expand` | Expand around | The point a change of the time scale keeps in place: the centre of the screen, its left or right edge, or the trigger. |
+| `:TIMebase:ROLL[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `auto_roll` | Auto Roll | Rolls the trace at slow time scales while this is on; the acquisition source can still keep it from rolling. |
+<!-- settings:timebase:end -->
+
 ### Trigger settings
 
 The values of the Trigger menu, their `:TRIGger` commands and their keys in a setup file. They are declared once, in
@@ -138,8 +153,10 @@ command does not take is refused with `-113`.
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t2` | Upper limit | The upper time limit of Inside and Outside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_std` | Standard | The video standard of the video trigger. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_sync` | Sync | What the video trigger fires on: every line, line n, odd or even fields, every field. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_line` | Line | The line Line n fires on; the menu keeps it from 1 to 10 below half the lines of the standard. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `win_mode` | Trigger on | When the window trigger fires: the signal enters the window, leaves it, or stays inside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_idle` | Idle time | The quiet time before the edges the Nth edge trigger counts. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_n` | Edge no. | The edge after the idle time that fires the Nth edge trigger; the menu keeps it from 1 to 65535. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `setup` | Setup | The setup time the setup/hold trigger checks the data against the clock edge. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `hold` | Hold | The hold time the setup/hold trigger checks the data against after the clock edge. |
 <!-- settings:trigger:end -->
@@ -543,9 +560,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:DISPlay:VIEW:MONitor[?] <n>` | The view an HDMI monitor shows in the Layout, 0 the panel's own; another than 0 needs at least two views. A value past the view count is refused with `-224`. |
 | `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
 | `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |
-| `:TIMebase:HREFerence:MODE[?]` | Horizontal expansion reference. |
 | `:TIMebase:MODE[?]` | Main/zoom/XY mode supported by the model. |
-| `:TIMebase:ROLL[?]` | Model roll setting; acquisition source restrictions still apply. |
 | `:TIMebase:XY:ENABle[?]`, `:X[?]`, `:Y[?]`, `:Z[?]` | XY display and channel roles; `NONE` disables the optional Z input. |
 | `:REFerence:COLor[?]`, `:RESet` | Selected/explicit slot color and reference display-scale reset. Recorded samples and native timing are retained. |
 
@@ -568,6 +583,8 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
 | `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
 | none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
+| none | a choice of the screen's layout, not of the measurement | `hdmi` | HDMI | What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu steps to the end of the list and stops. |
+| none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |
 <!-- settings:display:end -->
 
 ### Measurement settings and statistics
@@ -584,7 +601,18 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | `:MEASure:OUTSide[?]` | `ABOVe|BELow|BOTH` outside-level measurement selection. |
 | `:MEASure:NPERiods[?]` | Configured period count for relevant measurements. |
 | `:MEASure:EDGes[?]` | `CLOCk|DATA` edge measurement mode. |
-| `:MEASure:INDicator[?]` | Measurement labels; `:CURSor:MEASure:INDicator[?]` is an alias. |
+
+How the measurements show, their `:MEASure` commands and their keys in a setup file. They are declared once, in
+`ui/model/src/settings/measure.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`.
+
+<!-- settings:measure:begin -->
+| Command | Takes | Setup key | Measure settings menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MEASure:INDicator[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `meas_labels` | Labels on trace | Draws the labels of the measurements on the trace; `:CURSor:MEASure:INDicator[?]` is the same switch. |
+| none | a choice of the screen's layout, not of the measurement | `strip_dock` | Dock | Where the strip of results docks to the plot; the menu steps to the end of the list and stops. |
+<!-- settings:measure:end -->
 
 Statistics count accepted observations. A stopped reference can have a valid current value with count0 after reset. Worker completion, polling and panning do not by themselves add observations. The existing SCREEN/NONE gate and per-row settings still determine each result; OPC does not wait for background analysis.
 

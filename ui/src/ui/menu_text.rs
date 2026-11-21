@@ -98,7 +98,7 @@ impl Ui {
             | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2 | Item::VidLine | Item::PatLevel | Item::NthN => Kind::Value,
+            Item::TrigLevel2 | Item::PatLevel => Kind::Value,
             Item::ChScale(_)
             | Item::ChOffset(_)
             | Item::HScale
@@ -217,10 +217,7 @@ impl Ui {
             Item::MaskReset => "Reset counts",
             Item::MaskClear => "Clear mask",
             Item::MeasStats => "Statistics",
-            Item::MeasLabels => "Labels on trace",
-            Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
-            Item::AutoRoll => "Auto Roll",
             _ => return None,
         })
     }
@@ -310,13 +307,11 @@ impl Ui {
             Item::TrigLevel2 => "Level 2",
             Item::TrigSrc2 => "Source B",
             Item::TrigWhen => "When",
-            Item::VidLine => "Line",
             Item::Pat(0) => "CH1",
             Item::Pat(1) => "CH2",
             Item::Pat(2) => "CH3",
             Item::Pat(_) => "CH4",
             Item::PatLevel => "Level",
-            Item::NthN => "Edge no.",
             Item::AcqSeg => "Segments",
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
@@ -339,7 +334,6 @@ impl Ui {
             Item::ChBiasZero(_) => "Zero this input",
             Item::ChSkew(_) => "Deskew",
             Item::HFine => "Fine time base",
-            Item::HExpandI => "Expand around",
             Item::RefColor => "Slot color",
             Item::RefLabel => "Slot name",
             Item::RefSel => "Slot",
@@ -372,8 +366,6 @@ impl Ui {
             Item::CurC => "Y1",
             Item::CurD => "Y2",
             Item::ClearDisp => "Clear",
-            Item::Hdmi => "HDMI",
-            Item::TextSize => "Text size",
             Item::ZoneSel => "Zone",
             Item::ZoneOn => "Enable",
             Item::ZoneSrc => "Source",
@@ -452,7 +444,6 @@ impl Ui {
             Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
             Item::HFine => on_off(m.fine_t),
-            Item::HExpandI => format!("{:?}", m.h_expand),
             Item::RefColor => self.refs[self.ref_page.sel]
                 .as_ref()
                 .map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0)
@@ -472,7 +463,6 @@ impl Ui {
                 WhenKind::In => "Inside".into(),
                 WhenKind::Out => "Outside".into(),
             },
-            Item::VidLine => format!("{}", m.video_line),
             Item::Pat(c) => match m.pat[c] {
                 Bit::H => "H".into(),
                 Bit::L => "L".into(),
@@ -481,7 +471,6 @@ impl Ui {
                 Bit::F => "Fall".into(),
             },
             Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
-            Item::NthN => format!("{}", m.nth_n),
             Item::AcqSeg => {
                 if m.segments == 0 {
                     "Off".into()
@@ -536,8 +525,6 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::Hdmi => format!("{:?}", m.hdmi),
-            Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_trig.sel + 1),
             Item::ZoneOn => on_off(m.zones[self.zone_trig.sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_trig.sel].src + 1),
@@ -554,10 +541,7 @@ impl Ui {
             Item::MathFam => self.math.family.name().into(),
             Item::StoreDest => self.files.dest.name().into(),
             Item::MeasStats => on_off(self.results.on),
-            Item::MeasLabels => on_off(self.m.meas_labels),
-            Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => on_off(m.zoom),
-            Item::AutoRoll => on_off(m.auto_roll),
             _ => return None,
         })
     }

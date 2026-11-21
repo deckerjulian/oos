@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 74] = [
+const ITEMS: [(Item, &str); 82] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -17,6 +17,8 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::ColorGrade, "color_grade"),
     (Item::Dots, "dots"),
     (Item::BottomBar, "bar"),
+    (Item::TextSize, "text_size"),
+    (Item::Hdmi, "hdmi"),
     (Item::TrigSlope, "slope"),
     (Item::TrigMode, "trig_mode"),
     (Item::TrigHoldoff, "holdoff"),
@@ -29,8 +31,10 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::TrigT2, "trig_t2"),
     (Item::VidStd, "video_std"),
     (Item::VidSync, "video_sync"),
+    (Item::VidLine, "video_line"),
     (Item::WinModeI, "win_mode"),
     (Item::NthIdle, "nth_idle"),
+    (Item::NthN, "nth_n"),
     (Item::Setup, "setup"),
     (Item::Hold, "hold"),
     (Item::AcqMode, "acq"),
@@ -83,6 +87,10 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::PowMode, "power mode"),
     (Item::PowFline, "power_more fline"),
     (Item::PowFsw, "power_more fsw"),
+    (Item::HExpandI, "h_expand"),
+    (Item::AutoRoll, "auto_roll"),
+    (Item::MeasLabels, "meas_labels"),
+    (Item::StripDock, "strip_dock"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -125,6 +133,23 @@ impl Ui {
         let before = (s.get)(&self.m, n);
         s.step(&mut self.m, n, d);
         match it {
+            // the statistics card follows the dock the strip uses; moving the strip does not change what was measured
+            // (no `settings_changed`)
+            Item::StripDock => {
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
+                self.relayout();
+                return true;
+            }
+            // the Layout costs the panel frames; a new mode sets the other picture up after the settings changed
+            Item::Hdmi => {
+                if self.m.hdmi == HdmiMode::Layout {
+                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
+                }
+                self.settings_changed();
+                self.sync_full();
+                return true;
+            }
             // only the inputs the model has switch on
             Item::ChOn(c) => {
                 self.m.ch[c].on &= c < n_ch();
@@ -218,20 +243,30 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an analyser
-    /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
-    /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
-    /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
-    /// show).
+    /// The item is in the Display menu, in the Horizontal menu, in the Measure settings, in the DVM menu, in the Mask
+    /// menu, in the LA menu, in a menu of an analyser page, in the Acquire menu (in Average mode with segments, so their
+    /// rows show; HW average shows only with a hardware source, which the demo is not), in a Channel menu or its More
+    /// page, in the Bode menu of a generator, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
+    /// show, and the video trigger on line n, so its line shows).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::La, MenuId::Spectrum, MenuId::Eye]
-                .into_iter()
-                .chain(channels)
-                .any(|m| u.items(m).contains(&it))
+            || [
+                MenuId::Display,
+                MenuId::Horizontal,
+                MenuId::Measure,
+                MenuId::Dvm,
+                MenuId::Acquire,
+                MenuId::Mask,
+                MenuId::La,
+                MenuId::Spectrum,
+                MenuId::Eye,
+            ]
+            .into_iter()
+            .chain(channels)
+            .any(|m| u.items(m).contains(&it))
         {
             return true;
         }
@@ -257,7 +292,7 @@ mod tests {
         }) {
             return true;
         }
-        u.m.trig_when = WhenKind::In;
+        (u.m.trig_when, u.m.video_sync) = (WhenKind::In, crate::model::VSync::Line);
         TRIG_TYPES.iter().any(|&t| {
             u.m.trig_type = t;
             u.items(MenuId::Trigger).contains(&it)

@@ -366,15 +366,7 @@ impl Ui {
             return;
         }
         let _ = self.adjust_scope(it, d) || self.adjust_tools(it, d) || self.adjust_more(it, d);
-        // moving the strip does not change what was measured
-        if it == Item::StripDock {
-            self.relayout();
-            return;
-        }
         self.settings_changed();
-        if it == Item::Hdmi {
-            self.sync_full();
-        }
     }
 
     /// `adjust` of the channels, the time base, the logger and the trigger. True when `it` is one of them.
@@ -414,11 +406,6 @@ impl Ui {
             Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::HFine => m.fine_t = !m.fine_t,
-            Item::HExpandI => {
-                let all = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
-                let i = all.iter().position(|&x| x == m.h_expand).unwrap_or(0);
-                m.h_expand = all[cycle(i, all.len(), d)];
-            }
             Item::LogOn => {
                 if self.log.file.is_some() {
                     self.log_stop("Log ended");
@@ -472,9 +459,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cycle(i, all.len(), d)];
             }
-            Item::VidLine => {
-                m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
-            }
             Item::Pat(c) => {
                 let all = if m.trig_type == TrigType::Duration {
                     &[Bit::H, Bit::L, Bit::X][..]
@@ -488,7 +472,6 @@ impl Ui {
                 let c = m.trig_src;
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
-            Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
             _ => return false,
         }
         true
@@ -561,17 +544,6 @@ impl Ui {
                 let z = &mut m.zones[self.zone_trig.sel];
                 z.inside = !z.inside;
             }
-            Item::Hdmi => {
-                let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
-                m.hdmi = HDMI_MODES[step_index(i, HDMI_MODES.len(), d)];
-                if self.m.hdmi == HdmiMode::Layout {
-                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
-                }
-            }
-            Item::TextSize => {
-                let i = m.text_size.index();
-                m.text_size = TEXT_SIZES[step_index(i, TEXT_SIZES.len(), d)];
-            }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);
                 let i = opt_src_step(i, d);
@@ -621,15 +593,6 @@ impl Ui {
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
             Item::MeasStats => self.results.on = !self.results.on,
-            Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
-            Item::StripDock => {
-                let all = StripDock::ALL;
-                let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
-                m.strip_dock = all[step_index(i, all.len(), d)];
-                // the statistics card follows the dock the strip uses
-                self.workspace.measure_docked = true;
-                self.workspace.measure_float = None;
-            }
             _ => return false,
         }
         true
@@ -741,7 +704,6 @@ impl Ui {
                 let on = !self.m.zoom;
                 self.set_zoom(on);
             }
-            Item::AutoRoll => self.m.auto_roll = !self.m.auto_roll,
             Item::ZScale => {
                 self.m.zscale = step_index(self.m.zscale, tscales().len(), d);
                 self.clamp_zoom();
