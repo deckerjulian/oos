@@ -711,6 +711,8 @@ impl MeasWorker {
 /// of its module and has one field here (`bt: bt::BtUi`, `cat: meascatalog::Catalog`, ...). What stays a field of its
 /// own here, and why:
 /// - the model `m` and the source `src`: every part reads the settings and the records;
+/// - the scope's own settings `sys` and their file `sys_path`: most pages, the main loop, the remote commands and
+///   the command file read them, and every page that changes one writes the file (`sys_save`);
 /// - the screen `scr` and the time `now`: every part draws on the one and counts by the other;
 /// - the open menu (`menu`, `menu_open`, `parent`, `menu_history`, `pick`, `focus`): the shared menu code runs every
 ///   page from it (ADR 0060);
