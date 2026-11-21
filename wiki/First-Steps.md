@@ -160,7 +160,9 @@ changed.
 
 ## Optional memory
 
-The acquisition memory holds 512 MiB, the stock software uses 256 MiB of it. Hardware segments (Acquire > Segments,
+The acquisition memory holds 512 MiB (verified on the unit, a DHO924S, on 2026-11-21:
+[horizontal-config.md 1.8](https://github.com/dekajoule/oos/blob/main/docs/protocols/horizontal-config.md#18-frame-memory-above-256-mib));
+the stock software uses 256 MiB of it. Hardware segments (Acquire > Segments,
 Hardware) can use the other half for twice as many segments of a size, where the unit has it. It is off by default.
 
 - **System > Probe optional memory** checks your unit: the acquisition pauses for a moment while each segment size of

@@ -222,12 +222,16 @@ switched on (below), and checks each segment size before it relies on it. System
     memory depths give the model's channels (`Board::upper_plan`; a size whose part below 256 MiB holds fewer than the
     probe's three frames is left out, so 100 M and 125 M points are), it configures that set-up with three hardware
     segments and probes. It then configures the UI's settings again. The probe writes frames: a record kept in STOP
-    is not read again. A hardware segment recording still kept refuses the probe.
+    is not read again.
   - The answer goes into `/oos/system.conf` as `mem.upper.found = yes|no` and switches the memory on (every size held)
     or off (one did not). An error of the probe (a configuration the unit refused) changes nothing.
   - The user may switch it off at any time and on again. On where the last probe on this unit found it
     (`mem.upper.found = yes`) takes effect at once; on without that runs the probe first, and only its yes switches
     it on.
+    `mem.upper = on` without `mem.upper.found = yes` (an image's default, a line by hand) counts as off. Off chosen
+    while a probe runs wins: its yes is kept as `found = yes` and the memory stays off.
+  - A probe is refused while hardware segments are set up and kept; switched off (also in STOP) it goes ahead, the
+    kept segments are dropped anyway at the next configuration.
   - Switched on, a recording uses the upper part for a size the probe of this run said yes for, and probes a size it
     has not seen in this run before its first recording that needs it (once per segment size and run of oos-ui).
   - System info, "Optional memory": 256 MiB, in use / present, off / not present / off, not probed.

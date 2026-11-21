@@ -11,11 +11,13 @@
 use super::*;
 use crate::board::{board, Board};
 
-/// The state of the probe: the request sent and not answered yet, and the number of the last one.
+/// The state of the probe: the request sent and not answered yet, the number of the last one, and whether the switch
+/// was set to Off while it ran (Off wins over the probe's yes).
 #[derive(Default)]
 pub(super) struct State {
     pub asked: Option<u64>,
     pub n: u64,
+    pub off: bool,
 }
 
 impl Ui {
@@ -36,11 +38,22 @@ impl Ui {
     }
 
     pub(super) fn upper_value(&self, it: Item) -> Option<String> {
-        (it == Item::UpperUse).then(|| if self.sys.mem_upper { "On" } else { "Off" }.to_string())
+        (it == Item::UpperUse).then(|| if self.upper_shown_on() { "On" } else { "Off" }.to_string())
     }
 
     pub(super) fn upper_options(&self, it: Item) -> Option<Vec<String>> {
         (it == Item::UpperUse).then(|| vec!["Off".into(), "On".into()])
+    }
+
+    /// The optional memory switched on: `mem.upper = on` after a probe's yes on this unit; `on` alone (an image's
+    /// default, a line by hand) is off until a probe said yes.
+    fn upper_on(&self) -> bool {
+        self.sys.mem_upper && self.sys.mem_upper_found == Some(true)
+    }
+
+    /// What the switch shows: on, or on once the probe that runs says yes (unless Off was chosen meanwhile).
+    fn upper_shown_on(&self) -> bool {
+        self.upper_on() || (self.upper.asked.is_some() && !self.upper.off)
     }
 
     /// The probe button's text: what it does, or that the probe runs.
@@ -52,19 +65,22 @@ impl Ui {
         }
     }
 
-    /// The switch: off at once; on at once where a probe on this unit found the memory, else the probe first (its yes
-    /// switches it on).
+    /// The switch: off at once (also over a probe that runs: its yes then leaves it off); on at once where a probe on
+    /// this unit found the memory, else the probe first (its yes switches it on).
     pub(super) fn upper_adjust(&mut self, it: Item, _d: i32) -> bool {
         if it != Item::UpperUse {
             return false;
         }
-        if self.sys.mem_upper {
+        if self.upper_shown_on() {
+            self.upper.off = self.upper.asked.is_some();
             self.upper_set(false);
             self.toast("Optional memory: off, the lower 256 MiB only");
         } else if self.sys.mem_upper_found == Some(true) {
+            self.upper.off = false;
             self.upper_set(true);
             self.toast("Optional memory: on");
         } else {
+            self.upper.off = false;
             self.upper_probe();
         }
         true
@@ -91,9 +107,12 @@ impl Ui {
             self.toast("The optional memory is being probed");
             return;
         }
-        // the probe writes frames: segments recorded in the hardware would be lost
+        // the probe writes frames: segments recorded in the hardware and still set up would be lost (switched off,
+        // they go at the next configuration anyway, also in STOP)
         let kept = match &self.src {
-            Source::Hw { shared, .. } => crate::wave::hw(shared).seg.phase != crate::board::SegPhase::Idle,
+            Source::Hw { shared, .. } => {
+                self.seg_hw_on() && crate::wave::hw(shared).seg.phase != crate::board::SegPhase::Idle
+            }
             _ => false,
         };
         if kept {
@@ -118,19 +137,26 @@ impl Ui {
         }
         self.upper.asked = None;
         let text = match got {
+            Err(e) => {
+                self.upper.off = false;
+                format!("Optional memory: probe stopped: {}", e)
+            }
             Ok(sizes) if sizes.is_empty() => "Optional memory: no segment size to probe".to_string(),
             Ok(sizes) => {
                 let no: Vec<String> = sizes.iter().filter(|e| !e.1).map(|e| e.0.to_string()).collect();
                 let yes = no.is_empty();
                 self.sys.mem_upper_found = Some(yes);
-                self.upper_set(yes);
-                if yes {
+                // Off chosen while the probe ran wins over its yes
+                let on = yes && !std::mem::take(&mut self.upper.off);
+                self.upper_set(on);
+                if yes && !on {
+                    format!("Optional memory: present, off ({} segment sizes probed)", sizes.len())
+                } else if yes {
                     format!("Optional memory: on ({} segment sizes probed)", sizes.len())
                 } else {
                     format!("Optional memory: not present, off (segments of {} bursts)", no.join(", "))
                 }
             }
-            Err(e) => format!("Optional memory: probe stopped: {}", e),
         };
         self.toast(&text);
     }
@@ -222,7 +248,9 @@ mod tests {
         board().set_upper_mem(false, None);
     }
 
-    // Break it catches: a probe on another source, or one that writes over hardware segments still kept.
+    // Break it catches: a probe on another source, one that writes over hardware segments still set up and kept, or
+    // one refused after the hardware segments were switched off in STOP (the thread forgets them only at the next
+    // configuration).
     #[test]
     fn no_probe_without_the_hardware_or_over_kept_segments() {
         let mut u = crate::ui::testkit::demo_ui();
@@ -230,8 +258,56 @@ mod tests {
         u.select_option(Item::UpperUse, "On");
         assert_eq!((u.upper.asked, u.sys.mem_upper), (None, false));
         let (mut u, shared) = hw_ui();
+        (u.m.seg_hw, u.m.segments) = (true, 10);
+        u.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-6).abs() < 1e-9).unwrap();
+        assert!(u.seg_hw_on());
         crate::wave::hw(&shared).seg.phase = crate::board::SegPhase::Done;
         u.activate(Item::UpperProbe);
         assert!(u.upper.asked.is_none() && crate::wave::hw(&shared).upper_want.is_none());
+        // switched off (`:ACQ:SEGM:HARD OFF` in STOP): the phase is still Done, the probe goes ahead
+        u.m.run = RunState::Stop;
+        u.m.seg_hw = false;
+        u.activate(Item::UpperProbe);
+        assert!(u.upper.asked.is_some() && crate::wave::hw(&shared).upper_want.is_some());
+    }
+
+    // Break it catches: `mem.upper = on` without a probe's yes (an image's default) taken as on, or System info that
+    // says "in use" before a yes; On then not probing first.
+    #[test]
+    fn on_without_a_yes_is_off_until_the_probe() {
+        let (mut u, shared) = hw_ui();
+        (u.sys.mem_upper, u.sys.mem_upper_found) = (true, None);
+        board().set_upper_mem(true, None);
+        assert_eq!(u.value(Item::UpperUse), "Off");
+        assert_eq!(board().upper_mem(), crate::board::UpperMem::NotProbed);
+        u.select_option(Item::UpperUse, "On");
+        assert!(u.upper.asked.is_some(), "On probes first");
+        answer(&mut u, &shared, Ok(vec![(256, true)]));
+        assert_eq!((u.value(Item::UpperUse), board().upper_mem()), ("On".into(), crate::board::UpperMem::InUse));
+        board().set_upper_mem(false, None);
+    }
+
+    // Break it catches: a probe's yes that switches the memory on after the user chose Off while it ran.
+    #[test]
+    fn off_while_the_probe_runs_wins() {
+        let (mut u, shared) = hw_ui();
+        u.activate(Item::UpperProbe);
+        u.select_option(Item::UpperUse, "Off");
+        answer(&mut u, &shared, Ok(vec![(256, true), (2048, true)]));
+        assert_eq!((u.sys.mem_upper, u.sys.mem_upper_found), (false, Some(true)));
+        assert_eq!((u.value(Item::UpperUse), board().upper_mem()), ("Off".into(), crate::board::UpperMem::Off));
+        assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("present, off")), "{:?}", u.toast);
+        // the next probe's yes switches it on again (Off was for that run only)
+        u.activate(Item::UpperProbe);
+        answer(&mut u, &shared, Ok(vec![(256, true)]));
+        assert!(u.sys.mem_upper);
+        // On during a probe that Off was chosen in: the yes switches it on
+        u.select_option(Item::UpperUse, "Off");
+        u.activate(Item::UpperProbe);
+        u.select_option(Item::UpperUse, "Off");
+        u.select_option(Item::UpperUse, "On");
+        answer(&mut u, &shared, Ok(vec![(256, true)]));
+        assert!(u.sys.mem_upper);
+        board().set_upper_mem(false, None);
     }
 }

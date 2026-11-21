@@ -84,14 +84,15 @@ pub fn upper_mem() -> crate::board::UpperMem {
     upper_state(upper_key(), &crate::board::lock(&UPPER))
 }
 
-/// `upper_mem` for the keys `key` and the probes `probed` of this run.
+/// `upper_mem` for the keys `key` and the probes `probed` of this run. On counts only with a probe's yes on this unit
+/// (`mem.upper = on` alone, from an image's defaults or by hand, is not in use).
 fn upper_state(key: Key, probed: &[(u32, bool)]) -> crate::board::UpperMem {
     use crate::board::UpperMem;
     match key {
-        (true, _) if probed.is_empty() || probed.iter().any(|e| e.1) => UpperMem::InUse,
-        (true, _) | (false, Some(false)) => UpperMem::Missing,
+        (true, Some(true)) if probed.is_empty() || probed.iter().any(|e| e.1) => UpperMem::InUse,
+        (true, Some(true)) | (_, Some(false)) => UpperMem::Missing,
         (false, Some(true)) => UpperMem::Off,
-        (false, None) => UpperMem::NotProbed,
+        (_, None) => UpperMem::NotProbed,
     }
 }
 
@@ -100,11 +101,11 @@ pub(super) fn upper_known(seg: u32) -> Option<bool> {
     crate::board::lock(&UPPER).iter().find(|e| e.0 == seg).map(|e| e.1)
 }
 
-/// Whether a recording of segments of `seg` bursts may go above 256 MiB: the switch on, and no probe of this run said
-/// no for the size (a size not probed yet is probed before the recording, `upper_probed`). Off: the lower 256 MiB only,
-/// and no probe.
+/// Whether a recording of segments of `seg` bursts may go above 256 MiB: the switch on after a probe's yes on this
+/// unit, and no probe of this run said no for the size (a size not probed yet is probed before the recording,
+/// `upper_probed`). Off, or on without that yes: the lower 256 MiB only, and no probe.
 pub(super) fn upper_allowed(seg: u32) -> bool {
-    upper_key().0 && upper_known(seg) != Some(false)
+    upper_key() == (true, Some(true)) && upper_known(seg) != Some(false)
 }
 
 /// Keeps a probe's answer for segments of `seg` bursts, in place of an earlier one.
@@ -413,7 +414,8 @@ mod tests {
 
     // Break it catches: the optional memory used or shown in use with the switch off (ADR 0010: off by default; the
     // user switches it off), a size that a probe of this run said no for used anyway, System info that says "in use"
-    // when every probe said no, or that forgets a found memory switched off.
+    // when every probe said no, or that forgets a found memory switched off; `mem.upper = on` without a probe's yes
+    // (an image's default) used or shown in use.
     #[test]
     fn the_switch_decides_and_a_no_of_this_run_holds() {
         use super::{set_upper_key, upper_allowed, upper_state};
@@ -425,10 +427,19 @@ mod tests {
         assert_eq!(upper_state((true, Some(true)), &[]), UpperMem::InUse, "on: sizes probed at their first recording");
         assert_eq!(upper_state((true, Some(true)), &[(256, false), (2048, true)]), UpperMem::InUse);
         assert_eq!(upper_state((true, Some(true)), &[(256, false)]), UpperMem::Missing);
+        // on without a probe's yes (an image's default, a line by hand): not in use
+        assert_eq!(upper_state((true, None), &[]), UpperMem::NotProbed);
+        assert_eq!(upper_state((true, Some(false)), &[]), UpperMem::Missing);
         // a size no probe of this run has seen (the table is the program's): allowed with the switch on only, whatever
         // the last probe found
         let seg = 1 << 30;
-        for (on, found, want) in [(false, None, false), (false, Some(true), false), (true, Some(true), true)] {
+        for (on, found, want) in [
+            (false, None, false),
+            (false, Some(true), false),
+            (true, None, false),
+            (true, Some(false), false),
+            (true, Some(true), true),
+        ] {
             set_upper_key(on, found);
             assert_eq!(upper_allowed(seg), want, "switch {} found {:?}", on, found);
         }
