@@ -24,28 +24,19 @@ pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200
 /// raw, or the whole record compressed to ~625 k points).
 pub const MAX_DEPTH: u32 = 1_000_000;
 
-thread_local! {
-    /// tests: `enabled` for this thread
-    #[cfg(test)]
-    static FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
 /// Sets `enabled` for the calling thread (tests).
 #[cfg(test)]
 pub fn force(on: Option<bool>) {
-    FORCE.with(|f| f.set(on));
+    ON.force(on);
 }
 
 /// `acq.compress = on` in system.conf, or OOS_COMPRESS set (any value but empty or 0). Off by default until the unit
 /// has passed the procedure in docs/fork/compress.md.
 pub fn enabled() -> bool {
-    #[cfg(test)]
-    if let Some(on) = FORCE.with(|f| f.get()) {
-        return on;
-    }
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| FLAG.get())
+    ON.get()
 }
+
+static ON: super::Switch = super::Switch::new(|| FLAG.get());
 
 const FLAG: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.compress", env: Some("OOS_COMPRESS"), on: "on" };
 

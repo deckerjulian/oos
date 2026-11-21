@@ -337,20 +337,15 @@ impl State {
             w.extend(mask::load(&cols));
             self.mask_cols = Some(cols);
         }
-        w.push((mask::COMPRESS, mask::compress_word(run.1)));
-        w.extend(mask::select(&mut self.s1190, slot, clear));
-        self.sh.s4020 = mask::scu_bits(self.sh.s4020, true, m.stop_on_fail);
-        w.push((0x4020, self.sh.s4020));
         self.mask_run = Some(run);
-        let mut st = vec![Step::Note(format!(
+        let note = format!(
             "mask test CH{} slot {}, {} samples per column{}",
             m.ch + 1,
             slot,
             run.1,
             if clear { ", counters cleared" } else { "" }
-        ))];
-        st.extend(w.into_iter().map(Step::Wr));
-        st
+        );
+        self.arm(w, run.1, slot, clear, |s4020| mask::scu_bits(s4020, true, m.stop_on_fail), note)
     }
 
     /// The zone unit for `s` (docs/fork/hwzone.md), like `mask_steps`: nothing while it runs as wanted; else off, the
@@ -401,18 +396,34 @@ impl State {
             }
         }
         w.push((zone::CTRL, run.2));
-        w.push((mask::COMPRESS, mask::compress_word(n)));
-        w.extend(mask::select(&mut self.s1190, slot, clear));
-        self.sh.s4020 = zone::scu_bit(self.sh.s4020, true);
-        w.push((0x4020, self.sh.s4020));
         self.zone_run = Some(run);
-        let mut st = vec![Step::Note(format!(
+        let note = format!(
             "zone trigger CH{} slot {}, control {:#x}{}",
             z.ch + 1,
             slot,
             run.2,
             if clear { ", counter cleared" } else { "" }
-        ))];
+        );
+        self.arm(w, n, slot, clear, |s4020| zone::scu_bit(s4020, true), note)
+    }
+
+    /// The end of `mask_steps` and `zone_steps` after the writes `w` of its tables: the compression for `n` samples
+    /// per column, the slot (its counters cleared when `clear`), the SCU word with the unit's bit set (`armed`); the
+    /// note first, then the writes.
+    fn arm(
+        &mut self,
+        mut w: Vec<Write>,
+        n: u32,
+        slot: u32,
+        clear: bool,
+        armed: impl Fn(u32) -> u32,
+        note: String,
+    ) -> Vec<Step> {
+        w.push((mask::COMPRESS, mask::compress_word(n)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = armed(self.sh.s4020);
+        w.push((0x4020, self.sh.s4020));
+        let mut st = vec![Step::Note(note)];
         st.extend(w.into_iter().map(Step::Wr));
         st
     }

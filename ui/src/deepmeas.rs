@@ -13,28 +13,19 @@ use crate::board::policy::deep::{Want, MAX_BYTES};
 use crate::board::Frame;
 use crate::model::*;
 
-thread_local! {
-    /// tests: `enabled` for this thread
-    #[cfg(test)]
-    static FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
 /// Sets `enabled` for the calling thread (tests).
 #[cfg(test)]
 pub fn force(on: Option<bool>) {
-    FORCE.with(|f| f.set(on));
+    ON.force(on);
 }
 
 /// On unless `meas.deep_raw = off` in system.conf, or OOS_DEEP_RAW set to empty or 0 (verified on the DHO924S
 /// 2026-11-15, docs/fork/deep-meas.md).
 pub fn enabled() -> bool {
-    #[cfg(test)]
-    if let Some(on) = FORCE.with(|f| f.get()) {
-        return on;
-    }
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !OFF.get())
+    ON.get()
 }
+
+static ON: crate::board::policy::Switch = crate::board::policy::Switch::new(|| !OFF.get());
 
 /// Off: the switch of `enabled` reads `off`.
 const OFF: crate::sysconf::Flag = crate::sysconf::Flag { key: "meas.deep_raw", env: Some("OOS_DEEP_RAW"), on: "off" };
