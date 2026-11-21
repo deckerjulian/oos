@@ -186,6 +186,8 @@ impl Ui {
             eprintln!("oos-ui: {}: decoders.off leaves out every decoder, {} stays", path.display(), name);
         }
         self.sys_path = Some(path);
+        // the optional memory as a probe on this unit found it (`mem.upper`, upper.rs)
+        crate::board::Board::set_upper_mem(crate::board::board(), self.sys.mem_upper, self.sys.mem_upper_found);
         self.net_name_init();
         self.clock_known = std::path::Path::new(CLOCK_SET).exists();
         self.apply_tz();

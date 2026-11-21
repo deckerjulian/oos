@@ -38,15 +38,15 @@ use self::config::{ConfigRun, Request};
 pub use self::decode::{codes_into, decode, decode_into};
 #[cfg(any(target_os = "linux", test))]
 use self::plan::{batch_plan, disarm};
-pub use self::seg::upper_mem;
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
+pub use self::seg::{set_upper_key, upper_mem};
 pub use self::serial::serial_debug;
 #[cfg(test)]
 pub use self::settings::roll_la_t0;
 #[cfg(any(target_os = "linux", test))]
 use self::settings::single_wants_more;
-pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, ROLL_TDIV};
+pub use self::settings::{avg_hw_ok, seg_max, settings, slow_mode, upper_plan, ROLL_TDIV};
 #[cfg(any(target_os = "linux", test))]
 use self::slow::SlowRun;
 #[cfg(any(target_os = "linux", test))]
@@ -341,6 +341,12 @@ impl<P: port::Port> Loop<P> {
         let req = lock(&self.out).cal_req.take();
         if let Some((chans, zero, adc_cores)) = req {
             self.calibrate(&chans, zero, adc_cores);
+            return;
+        }
+        // System > Probe optional memory (`seg.rs`): every segment size of its plan, then the UI's settings again
+        let probe = lock(&self.out).upper_want.take();
+        if let Some((n, plan)) = probe {
+            self.probe_upper(n, &plan);
             return;
         }
         // built-in generator (`afg.rs`): a changed request applied

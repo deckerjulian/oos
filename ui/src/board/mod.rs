@@ -105,6 +105,14 @@ pub trait Board: Sync + 'static {
     fn seg_max(&self, m: &Model) -> Option<usize>;
     /// the optional frame memory above 256 MiB for hardware segments (System info)
     fn upper_mem(&self) -> UpperMem;
+    /// the keys of system.conf (System > Opt. memory, Probe optional memory): `on` (`mem.upper`) recordings use the
+    /// optional memory, each segment size after its own probe of this run; off they use the lower 256 MiB only, with no
+    /// probe. `found` (`mem.upper.found`): the last probe's answer on this unit, None never probed (System info)
+    fn set_upper_mem(&self, on: bool, found: Option<bool>);
+    /// what System > Probe optional memory asks the acquisition thread to probe (`Shared::upper_want`): one set-up per
+    /// segment size the Acquire menu's memory depths give the model's channels, where the unit could use the optional
+    /// memory for it
+    fn upper_plan(&self, m: &Model) -> Vec<Self::Want>;
 
     /// Average mode with `Model::avg_hw`: the board averages in hardware for the model's set-up. False where it cannot
     /// (roll, scan, logic analyser, hardware segments, a count or depth it does not take); the UI then averages
@@ -459,7 +467,16 @@ pub struct Shared {
     /// number, per slot 0..7: 12-bit min, 12-bit max, mean on the 16-bit scale; None when the unit gave nothing)
     pub slots_want: Option<u64>,
     pub slots: Option<SlotDump>,
+    /// System > Probe optional memory: the probe wanted (request number, the set-ups of `Board::upper_plan`) and the
+    /// answer (request number, the segment sizes in bursts with the probe's yes or no, or why it stopped); the thread
+    /// pauses the acquisition for it and configures the UI's settings again after it
+    pub upper_want: Option<(u64, Vec<Want>)>,
+    pub upper_probed: Option<UpperProbed>,
 }
+
+/// The answer of a probe of the optional memory (`Shared::upper_probed`): request number, then per segment size
+/// (bursts) the probe's yes or no, or why it stopped.
+pub type UpperProbed = (u64, Result<Vec<(u32, bool)>, String>);
 
 /// A raw measure-unit run for `:DEBug:SLOTs?`: request number, per slot 12-bit min, 12-bit max, 16-bit mean.
 pub type SlotDump = (u64, Option<[[f32; 3]; 8]>);
@@ -488,14 +505,17 @@ pub enum SegPhase {
 }
 
 /// The optional frame memory above 256 MiB of hardware segments (docs/protocols/horizontal-config.md 1.8). It was
-/// found by measuring on a unit: the stock software uses 256 MiB.
+/// found by measuring on a unit: the stock software uses 256 MiB. Off until System > Probe optional memory found it on
+/// the unit and it is switched on (`mem.upper` in system.conf, ADR 0010).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpperMem {
-    /// not probed yet: the probe runs at the first recording of more segments than fit below 256 MiB
+    /// never probed on this unit (no `mem.upper.found` line) and off: recordings do not use it
     NotProbed,
-    /// the unit has it, and recordings use it
+    /// switched on (`mem.upper = on`): recordings use it
     InUse,
-    /// the probe found it missing
+    /// a probe found it, and it is switched off (`mem.upper = off`): recordings do not use it
+    Off,
+    /// the probe found it missing (`mem.upper.found = no`, or every probe of this run said no)
     Missing,
 }
 

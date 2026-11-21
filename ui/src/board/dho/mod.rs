@@ -121,6 +121,14 @@ impl Board for Dho {
         hw::upper_mem()
     }
 
+    fn set_upper_mem(&self, on: bool, found: Option<bool>) {
+        hw::set_upper_key(on, found)
+    }
+
+    fn upper_plan(&self, m: &Model) -> Vec<Self::Want> {
+        hw::upper_plan(m)
+    }
+
     fn dvm_hw(&self) -> bool {
         hw::dvm_hw_on()
     }

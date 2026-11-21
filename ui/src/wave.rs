@@ -534,6 +534,19 @@ impl Source {
         None
     }
 
+    /// Hardware source: asks for a probe of the optional memory (`Shared::upper_want`) when `want` is given, and takes
+    /// the answer that came (`Shared::upper_probed`); None for other sources.
+    pub fn hw_upper(&self, want: Option<(u64, Vec<crate::board::Want>)>) -> Option<Option<crate::board::UpperProbed>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = hw(shared);
+            if want.is_some() {
+                g.upper_want = want;
+            }
+            return Some(g.upper_probed.take());
+        }
+        None
+    }
+
     /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
     pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
         if let Source::Hw { shared, .. } = self {

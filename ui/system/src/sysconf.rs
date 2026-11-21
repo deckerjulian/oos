@@ -17,6 +17,9 @@
 //! graphics = gpu            # System > Graphics (gpu or cpu)
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! net.allow = 192.168.1.0/24 # System > Network > Remote services > Allowed (netacl.rs; rcS reads it, docs/network.md 6)
+//! mem.upper = on            # System > Opt. memory: the memory above 256 MiB used (off by default; the probe's yes
+//!                           # turns it on, horizontal-config.md 1.8)
+//! mem.upper.found = yes     # what System > Probe optional memory found on this unit last (no line: never probed)
 //! ```
 
 use crate::clock::Tz;
@@ -77,6 +80,11 @@ pub struct SysConf {
     /// the decoders left out (protocol keys, `decoders.off`); nothing is left out by default
     pub features_off: Vec<String>,
     pub decoders_off: Vec<String>,
+    /// System > Opt. memory (`mem.upper`): hardware segments use the frame memory above 256 MiB. Off by default
+    /// (ADR 0010); a probe that said yes on this unit turns it on, the user may switch it off and on again
+    pub mem_upper: bool,
+    /// System > Probe optional memory (`mem.upper.found`): what the last probe found on this unit, None never probed
+    pub mem_upper_found: Option<bool>,
     /// `net.allow` of the image defaults (`IMAGE_PATH`): in force while the settings file has no line of its own; never
     /// written to the settings file (`net_allow`)
     image_net_allow: Option<String>,
@@ -103,6 +111,8 @@ impl Default for SysConf {
             backlight: 100,
             features_off: Vec::new(),
             decoders_off: Vec::new(),
+            mem_upper: false,
+            mem_upper_found: None,
             image_net_allow: None,
             extra: Vec::new(),
         }
@@ -242,6 +252,14 @@ impl SysConf {
                     c.decoders_off = id_list(k, v, &mut bad);
                     true
                 }
+                "mem.upper" => on_off(v).map(|b| c.mem_upper = b).is_some(),
+                "mem.upper.found" => match v {
+                    "yes" | "no" => {
+                        c.mem_upper_found = Some(v == "yes");
+                        true
+                    }
+                    _ => false,
+                },
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -279,6 +297,13 @@ impl SysConf {
         }
         if !self.decoders_off.is_empty() {
             s.push_str(&format!("decoders.off = {}\n", self.decoders_off.join(" ")));
+        }
+        // nothing until the memory was probed or switched on: a file of before #488 stays as it was
+        if self.mem_upper || self.mem_upper_found.is_some() {
+            s.push_str(&format!("mem.upper = {}\n", word(self.mem_upper)));
+        }
+        if let Some(f) = self.mem_upper_found {
+            s.push_str(&format!("mem.upper.found = {}\n", if f { "yes" } else { "no" }));
         }
         for l in &self.extra {
             s.push_str(l);
@@ -669,6 +694,33 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
+    }
+
+    // Break it catches: the optional memory switched on without a line (ADR 0010: off by default), a switch or a
+    // probe's answer that is not written back (the next start would use it, or treat the unit as never probed), a bad
+    // value taken
+    #[test]
+    fn the_optional_memory_keys_round_trip() {
+        let c = SysConf::default();
+        assert_eq!((c.mem_upper, c.mem_upper_found), (false, None), "off and never probed");
+        assert!(!c.text().contains("mem.upper"), "no line until a probe ran or the switch was used");
+        for (on, found, lines) in [
+            (true, Some(true), "mem.upper = on\nmem.upper.found = yes\n"),
+            (false, Some(true), "mem.upper = off\nmem.upper.found = yes\n"),
+            (false, Some(false), "mem.upper = off\nmem.upper.found = no\n"),
+        ] {
+            let c = SysConf { mem_upper: on, mem_upper_found: found, ..Default::default() };
+            assert!(c.text().contains(&format!("\n{}", lines)), "{}", c.text());
+            let (back, bad) = SysConf::parse(&c.text());
+            assert!(bad.is_empty(), "{:?}", bad);
+            assert_eq!(back, c);
+        }
+        let (d, bad) = SysConf::parse("mem.upper = maybe\nmem.upper.found = perhaps\n");
+        assert_eq!((d.mem_upper, d.mem_upper_found, bad.len()), (false, None, 2));
+        // an image built for one unit may ship it; the settings file wins
+        let (base, _) = SysConf::image_defaults("mem.upper = on\n");
+        assert!(base.mem_upper);
+        assert!(!SysConf::parse_over(base, "mem.upper = off\n").0.mem_upper);
     }
 
     // Break it catches: a settings file of a version with telnet (ADR 0054) that no longer loads cleanly, or whose

@@ -9,6 +9,9 @@ use super::*;
 impl Ui {
     /// Row label, with the trigger rows named after their role in the selected trigger type.
     pub(super) fn item_label(&self, it: Item) -> &'static str {
+        if it == Item::UpperProbe {
+            return self.upper_button();
+        }
         if it == Item::SimPlay {
             if self.sim_generating() {
                 return "Cancel generation";

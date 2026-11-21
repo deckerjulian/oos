@@ -137,7 +137,7 @@ type Poll = fn(&mut Ui);
 /// What the frame loop takes on each frame from the services and the hardware probes, after the clock has moved, in
 /// this order (the order of the calls the list replaced). A new `*_poll` goes here, or into `POLLED_ELSEWHERE` with
 /// the place it is called from; `every_poll_is_in_polls` names one that is in neither.
-const POLLS: [(&str, Poll); 13] = [
+const POLLS: [(&str, Poll); 14] = [
     ("update_poll", Ui::update_poll),
     ("wlan_poll", Ui::wlan_poll),
     ("ntp_poll", Ui::ntp_poll),
@@ -151,6 +151,7 @@ const POLLS: [(&str, Poll); 13] = [
     ("mask_hw_poll", Ui::mask_hw_poll),
     ("zone_hw_poll", Ui::zone_hw_poll),
     ("la_probe_poll", Ui::la_probe_poll),
+    ("upper_poll", Ui::upper_poll),
 ];
 
 /// The polls that are called from elsewhere on purpose, and why. The list only gets shorter (ADR 0061).

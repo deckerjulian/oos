@@ -93,7 +93,7 @@ in the README. How to use it: the guides listed on [[Home]].
 - Self-calibration into own files (`/oos/cal`); factory files are never changed
 - System > Overclock (with `adc.overclock = on`): the sample clock in steps from 1.25 to 2 GHz, for tests only, from the
   next power-on
-- Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits, and whether the optional memory above 256 MiB is in use
+- Saves setups, CSV, binary waveforms and PNG, also to a USB stick; System info page with model, temperatures and limits, and whether the optional memory above 256 MiB is in use (off by default; System > Probe optional memory finds it, System > Opt. memory switches it)
 - System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set by
   hand; once the clock is set, file names carry the local date and time
 - System > Network > 10 Mbit retry: an Ethernet link that comes up at 10 Mbit/s gets one more autonegotiation

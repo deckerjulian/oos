@@ -76,6 +76,7 @@ mod tables;
 mod tools;
 mod trigger_controls;
 mod update;
+mod upper;
 mod viewmore;
 mod windows;
 mod wlan;
@@ -773,6 +774,8 @@ pub struct Ui {
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs)
     sysinfo: sysinfo::Page,
+    /// System > Probe optional memory: the request to the thread (upper.rs)
+    upper: upper::State,
     touch: TouchState,
     /// what the input keeps between two events: keys and fingers held, knob times, the zone path, the pinch (input.rs)
     input: input::State,
