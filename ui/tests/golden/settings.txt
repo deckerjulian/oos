@@ -1302,7 +1302,7 @@ scpi :REFerence:COLor "BLUE" -> query: BLUE; errors: none
 scpi :REFerence:COLor "GRAY" -> query: GRAY; errors: none
 scpi :REFerence:COLor "GREen" -> query: GRE; errors: none
 scpi :REFerence:COLor "ORANge" -> query: ORAN; errors: none
-scpi :REFerence:COLor "RED" -> query: GRAY; errors: -224,"Illegal parameter value" RED
+scpi :REFerence:COLor "RED" -> query: RED; errors: none
 scpi :REFerence:COLor "VIOLet" -> query: ORAN; errors: none
 scpi :REFerence:COLor "WHITe" -> query: GRAY; errors: none
 scpi :REFerence:COLor "x" -> query: GRAY; errors: -224,"Illegal parameter value" x
@@ -1320,7 +1320,7 @@ scpi :REFerence:CURRent default -> query: 1; errors: none
 scpi :REFerence:LABel:CONTent "" -> query: ""; errors: none
 scpi :REFerence:LABel:CONTent "-1" -> query: -1; errors: none
 scpi :REFerence:LABel:CONTent "1,\"ref\"" -> query: ref; errors: none
-scpi :REFerence:LABel:CONTent "1e9" -> query: ""; errors: -224,"Illegal parameter value" 1e9
+scpi :REFerence:LABel:CONTent "1e9" -> query: 1e9; errors: none
 scpi :REFerence:LABel:CONTent "\"ref\"" -> query: ref; errors: none
 scpi :REFerence:LABel:CONTent "x" -> query: x; errors: none
 scpi :REFerence:LABel:CONTent default -> query: ""; errors: none
@@ -1355,17 +1355,17 @@ scpi :REFerence:SOURce "x" -> query: CHAN1; errors: -224,"Illegal parameter valu
 scpi :REFerence:SOURce default -> query: CHAN1; errors: none
 scpi :REFerence:VOFFset "" -> query: -1.500000E+00; errors: -224,"Illegal parameter value"
 scpi :REFerence:VOFFset "-1" -> query: -1.000000E+00; errors: none
-scpi :REFerence:VOFFset "0.5" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" 0.5
+scpi :REFerence:VOFFset "0.5" -> query: 5.000000E-01; errors: none
 scpi :REFerence:VOFFset "1,0.5" -> query: 5.000000E-01; errors: none
-scpi :REFerence:VOFFset "1e9" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" 1e9
+scpi :REFerence:VOFFset "1e9" -> query: 1.000000E+09; errors: none
 scpi :REFerence:VOFFset "x" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" x
 scpi :REFerence:VOFFset default -> query: -1.500000E+00; errors: none
 scpi :REFerence:VSCale "" -> query: 1.000000E+00; errors: -224,"Illegal parameter value"
 scpi :REFerence:VSCale "-1" -> query: 1.000000E+00; errors: -230,"Data corrupt or stale" reference is empty
-scpi :REFerence:VSCale "0.5" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" 0.5
+scpi :REFerence:VSCale "0.5" -> query: 5.000000E-01; errors: none
 scpi :REFerence:VSCale "1,0.5" -> query: 5.000000E-01; errors: none
-scpi :REFerence:VSCale "1e-6" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" 1e-6
-scpi :REFerence:VSCale "1e9" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" 1e9
+scpi :REFerence:VSCale "1e-6" -> query: 1.000000E-06; errors: none
+scpi :REFerence:VSCale "1e9" -> query: 1.000000E+09; errors: none
 scpi :REFerence:VSCale "x" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :REFerence:VSCale default -> query: 1.000000E+00; errors: none
 scpi :SIM:JITTer:CORNer "" -> query: 1.000000E+06; errors: -224,"Illegal parameter value" SIM setting
