@@ -97,7 +97,7 @@ pub fn run_all_with(
                 }
             }
         }
-        v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap());
+        v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal));
         v.into_iter().map(|e| e.g).collect()
     };
     let total: usize = chans.iter().map(|&ch| 4 * list(ch).len() + if zero { 3 } else { 0 }).sum();
@@ -309,13 +309,17 @@ pub fn adc_cores(
             cal.set32(CalAdc::fine_at(c, k.min(15)), 0);
         }
         let a = &mut afes[idx].1;
-        if order.is_none() {
-            let (cz, _) = dac_for(hw, a, 32768.0).ok_or("DAC search failed")?;
-            run(hw, a, |a, o| a.set_dac(o, cz));
-            hw.sleep_ms(20);
-            order = Some(core_order(hw)?);
-        }
-        let ord = order.unwrap();
+        let ord = match order {
+            Some(ord) => ord,
+            None => {
+                let (cz, _) = dac_for(hw, a, 32768.0).ok_or("DAC search failed")?;
+                run(hw, a, |a, o| a.set_dac(o, cz));
+                hw.sleep_ms(20);
+                let ord = core_order(hw)?;
+                order = Some(ord);
+                ord
+            }
+        };
         let (h, _) = dac_for(hw, a, ADC_HI).ok_or("DAC search failed")?;
         let (l, _) = dac_for(hw, a, ADC_LO).ok_or("DAC search failed")?;
         let (_, rf) = spans(hw, a, h, l).ok_or("ADC measure unit not answering")?;
@@ -799,7 +803,10 @@ pub fn vertical_entry(
 pub fn rebuild_scales(block: &mut [Rec], keys: &[i64], entries: &[Entry]) {
     for (i, r) in block.iter_mut().enumerate() {
         let k = keys[i] as f64;
-        let Some(e) = entries.iter().filter(|e| e.scale > k).min_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap())
+        let Some(e) = entries
+            .iter()
+            .filter(|e| e.scale > k)
+            .min_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal))
         else {
             continue;
         };
@@ -815,13 +822,13 @@ pub fn rebuild_scales(block: &mut [Rec], keys: &[i64], entries: &[Entry]) {
 pub fn entries_of(block: &[Rec]) -> Vec<Entry> {
     let mut v: Vec<Entry> = Vec::new();
     for r in block {
-        let g: [i32; 7] = r.g[..7].try_into().unwrap();
+        let g: [i32; 7] = std::array::from_fn(|i| r.g[i]);
         if r.key == 0 || v.iter().any(|e| e.g == g) {
             continue;
         }
         v.push(Entry { g, scale: r.gain * r.key as f64, zero: r.zero });
     }
-    v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap());
+    v.sort_by(|a, b| a.scale.partial_cmp(&b.scale).unwrap_or(std::cmp::Ordering::Equal));
     v
 }
 
