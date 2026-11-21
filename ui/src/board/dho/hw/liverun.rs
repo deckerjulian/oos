@@ -1238,7 +1238,7 @@ impl crate::board::pipe::Workers for Deposit {
                 let (b, ..) = d.open.pop_front().expect("a batch drawn to its end");
                 d.back.push(b.raw.into_any());
             }
-            let Some((b, next, _)) = d.open.front_mut() else { return false };
+            let Some((b, next, end)) = d.open.front_mut() else { return false };
             let bytes = &b.raw.bytes()[*next * b.fb..(*next + 1) * b.fb];
             let mut f = Frame::default();
             (b.decode)(bytes, &mut f);
@@ -1255,8 +1255,14 @@ impl crate::board::pipe::Workers for Deposit {
                 d.compared += 1;
             }
             *next += 1;
+            let last = *next >= *end;
             d.drawn += 1;
             d.frames.push(f);
+            // as the real pipe: drawing the last frame of a batch gives its buffer back at once
+            if last {
+                let (b, ..) = d.open.pop_front().expect("the batch just drawn");
+                d.back.push(b.raw.into_any());
+            }
             true
         })
     }
