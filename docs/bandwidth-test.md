@@ -74,7 +74,7 @@ Verified on the unit, as a first figure. Six records of 32768 raw samples per se
 `:STOP;*OPC?`), Welch spectrum (1024-point Hann segments, half overlap), each bandwidth limit divided by Full at the
 same frequency. Behind the filter the ADC and its driver add their own noise, about 20 dB under the front end's at
 0.5 mV/div (8 dB at 2 mV/div); that floor (the level every limit reaches at 500 to 600 MHz) is taken off both before
-the ratio.
+the ratio. Full itself is read against its own level from 50 to 150 MHz.
 
 | limit (filter code c) | -3 dB | at 156.25 MHz | at 312.5 MHz |
 |---|---|---|---|
@@ -91,7 +91,7 @@ the ratio.
   Up to code 20 the corners lie 10 to 30 % above 5c MHz; from code 40 the front end's own roll-off takes over.
 - For Auto (afe-settings.md 5.1): with four channels (312.5 MSa/s, code 15) the corner is about 93 MHz, fs / 3.4,
   and the filter takes only about 6 dB off at Nyquist (156 MHz); with two (625 MSa/s, code 31) about 7 dB at 312.5 MHz.
-  A signal just above Nyquist folds back nearly at full size.
+  A signal just above Nyquist folds back at about half its amplitude (0.5 at -6 dB, 0.45 at -7 dB).
 - Limits of the method: it sees only the stages after the noise source (not the input divider and relays), and below
   about 15 MHz the noise is not flat, so the low corners are the least sure (about +-15 %). A sine through each limit
   (the generator on CH1, divided by Full) gives the corners up to 60 MHz exactly; not yet done, the cable was off.
