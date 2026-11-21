@@ -4,6 +4,8 @@
 //! SHA-1 (only for the image id the stock loader checks), SHA-256 and SHA-512 (FIPS 180-4), streaming, no dependencies. The round constants and initial values were generated
 //! from the prime cube / square roots (not typed in) and the tests check the FIPS / NIST example digests.
 
+use std::ops::{BitAnd, BitXor, Not, Shr};
+
 const K256: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
     0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
@@ -108,73 +110,128 @@ const H512: [u64; 8] = [
     0x5be0cd19137e2179,
 ];
 
-/// SHA-256 state.
+/// The word of one SHA-2 function and what differs with it (FIPS 180-4, 4.1.2 / 4.1.3, 4.2.2 / 4.2.3, 5.3.3 /
+/// 5.3.5): the round constants, the initial hash value and the rotations; the rest of the algorithm is the same.
+/// Public only because `Sha2` names it; `u32` and `u64` are the two words.
+pub trait Word:
+    'static + Copy + Default + BitAnd<Output = Self> + BitXor<Output = Self> + Not<Output = Self> + Shr<u32, Output = Self>
+{
+    /// One per round (64 or 80).
+    const K: &'static [Self];
+    const H: [Self; 8];
+    /// Σ0 of a, Σ1 of e (three rotations each), σ0 and σ1 of the schedule (two rotations and a shift each).
+    const ROT: [[u32; 3]; 4];
+    fn rotr(self, n: u32) -> Self;
+    fn add(self, o: Self) -> Self;
+    /// From big-endian bytes (exactly the word's size).
+    fn from_be(b: &[u8]) -> Self;
+    /// To big-endian bytes (exactly the word's size).
+    fn put_be(self, out: &mut [u8]);
+}
+
+macro_rules! word {
+    ($t:ty, $k:expr, $h:expr, $rot:expr) => {
+        impl Word for $t {
+            const K: &'static [Self] = &$k;
+            const H: [Self; 8] = $h;
+            const ROT: [[u32; 3]; 4] = $rot;
+            fn rotr(self, n: u32) -> Self {
+                self.rotate_right(n)
+            }
+            fn add(self, o: Self) -> Self {
+                self.wrapping_add(o)
+            }
+            fn from_be(b: &[u8]) -> Self {
+                let mut x = [0u8; size_of::<$t>()];
+                x.copy_from_slice(b);
+                <$t>::from_be_bytes(x)
+            }
+            fn put_be(self, out: &mut [u8]) {
+                out.copy_from_slice(&self.to_be_bytes());
+            }
+        }
+    };
+}
+word!(u32, K256, H256, [[2, 13, 22], [6, 11, 25], [7, 18, 3], [17, 19, 10]]);
+word!(u64, K512, H512, [[28, 34, 39], [14, 18, 41], [1, 8, 7], [19, 61, 6]]);
+
+/// SHA-2 state over the word `W`, with blocks of `B` bytes (16 words) and a digest of `O` bytes (8 words).
 #[derive(Clone)]
-pub struct Sha256 {
-    h: [u32; 8],
-    buf: [u8; 64],
+pub struct Sha2<W, const B: usize, const O: usize> {
+    h: [W; 8],
+    buf: [u8; B],
     n: usize,
     len: u64,
 }
 
-impl Default for Sha256 {
+/// SHA-256 state.
+pub type Sha256 = Sha2<u32, 64, 32>;
+/// SHA-512 state.
+pub type Sha512 = Sha2<u64, 128, 64>;
+
+impl<W: Word, const B: usize, const O: usize> Default for Sha2<W, B, O> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Sha256 {
+impl<W: Word, const B: usize, const O: usize> Sha2<W, B, O> {
+    /// Bytes of the word.
+    const S: usize = size_of::<W>();
+
     pub fn new() -> Self {
-        Sha256 { h: H256, buf: [0; 64], n: 0, len: 0 }
+        const { assert!(B == 16 * Self::S && O == 8 * Self::S) };
+        Sha2 { h: W::H, buf: [0; B], n: 0, len: 0 }
     }
 
-    fn block(h: &mut [u32; 8], b: &[u8]) {
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]]);
+    fn block(h: &mut [W; 8], b: &[u8]) {
+        let [r0, r1, s0r, s1r] = W::ROT;
+        let mut w = [W::default(); 80];
+        for (i, x) in w[..16].iter_mut().enumerate() {
+            *x = W::from_be(&b[i * Self::S..][..Self::S]);
         }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        for i in 16..W::K.len() {
+            let s0 = w[i - 15].rotr(s0r[0]) ^ w[i - 15].rotr(s0r[1]) ^ (w[i - 15] >> s0r[2]);
+            let s1 = w[i - 2].rotr(s1r[0]) ^ w[i - 2].rotr(s1r[1]) ^ (w[i - 2] >> s1r[2]);
+            w[i] = w[i - 16].add(s0).add(w[i - 7]).add(s1);
         }
         let [mut a, mut b_, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        for (k, wi) in W::K.iter().zip(&w) {
+            let s1 = e.rotr(r1[0]) ^ e.rotr(r1[1]) ^ e.rotr(r1[2]);
             let ch = (e & f) ^ (!e & g);
-            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K256[i]).wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let t1 = hh.add(s1).add(ch).add(*k).add(*wi);
+            let s0 = a.rotr(r0[0]) ^ a.rotr(r0[1]) ^ a.rotr(r0[2]);
             let maj = (a & b_) ^ (a & c) ^ (b_ & c);
-            let t2 = s0.wrapping_add(maj);
+            let t2 = s0.add(maj);
             hh = g;
             g = f;
             f = e;
-            e = d.wrapping_add(t1);
+            e = d.add(t1);
             d = c;
             c = b_;
             b_ = a;
-            a = t1.wrapping_add(t2);
+            a = t1.add(t2);
         }
         for (x, y) in h.iter_mut().zip([a, b_, c, d, e, f, g, hh]) {
-            *x = x.wrapping_add(y);
+            *x = x.add(y);
         }
     }
 
     pub fn update(&mut self, mut data: &[u8]) {
         self.len = self.len.wrapping_add(data.len() as u64);
         if self.n > 0 {
-            let k = (64 - self.n).min(data.len());
+            let k = (B - self.n).min(data.len());
             self.buf[self.n..self.n + k].copy_from_slice(&data[..k]);
             self.n += k;
             data = &data[k..];
-            if self.n < 64 {
+            if self.n < B {
                 return;
             }
             let b = self.buf;
             Self::block(&mut self.h, &b);
             self.n = 0;
         }
-        let (blocks, r) = data.as_chunks::<64>();
+        let (blocks, r) = data.as_chunks::<B>();
         for c in blocks {
             Self::block(&mut self.h, c);
         }
@@ -182,19 +239,22 @@ impl Sha256 {
         self.n = r.len();
     }
 
-    pub fn finish(mut self) -> [u8; 32] {
-        let bits = self.len.wrapping_mul(8);
-        let mut pad = [0u8; 72];
+    pub fn finish(mut self) -> [u8; O] {
+        // the length field is two words (8 or 16 bytes); messages here are far below 2^61 bytes, so for SHA-512 the
+        // upper 64 bits are zero, and SHA-256 keeps the lower 64 bits of the bit count (FIPS 180-4, 5.1)
+        let lb = 2 * Self::S;
+        let bits = (self.len as u128) * 8;
+        let mut pad = [0u8; 256];
         pad[0] = 0x80;
-        let k = if self.n < 56 { 56 - self.n } else { 120 - self.n };
-        pad[k..k + 8].copy_from_slice(&bits.to_be_bytes());
+        let k = if self.n < B - lb { B - lb - self.n } else { 2 * B - lb - self.n };
+        pad[k..k + lb].copy_from_slice(&bits.to_be_bytes()[16 - lb..]);
         let len = self.len;
-        self.update(&pad[..k + 8]);
+        self.update(&pad[..k + lb]);
         self.len = len;
         debug_assert_eq!(self.n, 0);
-        let mut out = [0u8; 32];
+        let mut out = [0u8; O];
         for (i, v) in self.h.iter().enumerate() {
-            out[4 * i..4 * i + 4].copy_from_slice(&v.to_be_bytes());
+            v.put_be(&mut out[i * Self::S..][..Self::S]);
         }
         out
     }
@@ -205,101 +265,6 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut s = Sha256::new();
     s.update(data);
     s.finish()
-}
-
-/// SHA-512 state.
-#[derive(Clone)]
-pub struct Sha512 {
-    h: [u64; 8],
-    buf: [u8; 128],
-    n: usize,
-    len: u64,
-}
-
-impl Default for Sha512 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Sha512 {
-    pub fn new() -> Self {
-        Sha512 { h: H512, buf: [0; 128], n: 0, len: 0 }
-    }
-
-    fn block(h: &mut [u64; 8], b: &[u8]) {
-        let mut w = [0u64; 80];
-        for i in 0..16 {
-            let mut x = [0u8; 8];
-            x.copy_from_slice(&b[8 * i..8 * i + 8]);
-            w[i] = u64::from_be_bytes(x);
-        }
-        for i in 16..80 {
-            let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
-            let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
-        }
-        let [mut a, mut b_, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
-        for i in 0..80 {
-            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
-            let ch = (e & f) ^ (!e & g);
-            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K512[i]).wrapping_add(w[i]);
-            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
-            let maj = (a & b_) ^ (a & c) ^ (b_ & c);
-            let t2 = s0.wrapping_add(maj);
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(t1);
-            d = c;
-            c = b_;
-            b_ = a;
-            a = t1.wrapping_add(t2);
-        }
-        for (x, y) in h.iter_mut().zip([a, b_, c, d, e, f, g, hh]) {
-            *x = x.wrapping_add(y);
-        }
-    }
-
-    pub fn update(&mut self, mut data: &[u8]) {
-        self.len = self.len.wrapping_add(data.len() as u64);
-        if self.n > 0 {
-            let k = (128 - self.n).min(data.len());
-            self.buf[self.n..self.n + k].copy_from_slice(&data[..k]);
-            self.n += k;
-            data = &data[k..];
-            if self.n < 128 {
-                return;
-            }
-            let b = self.buf;
-            Self::block(&mut self.h, &b);
-            self.n = 0;
-        }
-        let (blocks, r) = data.as_chunks::<128>();
-        for c in blocks {
-            Self::block(&mut self.h, c);
-        }
-        self.buf[..r.len()].copy_from_slice(r);
-        self.n = r.len();
-    }
-
-    pub fn finish(mut self) -> [u8; 64] {
-        // messages here are far below 2^61 bytes: the upper 64 bits of the 128-bit length are zero
-        let bits = (self.len as u128) * 8;
-        let mut pad = [0u8; 144];
-        pad[0] = 0x80;
-        let k = if self.n < 112 { 112 - self.n } else { 240 - self.n };
-        pad[k..k + 16].copy_from_slice(&bits.to_be_bytes());
-        let len = self.len;
-        self.update(&pad[..k + 16]);
-        self.len = len;
-        debug_assert_eq!(self.n, 0);
-        let mut out = [0u8; 64];
-        for (i, v) in self.h.iter().enumerate() {
-            out[8 * i..8 * i + 8].copy_from_slice(&v.to_be_bytes());
-        }
-        out
-    }
 }
 
 /// SHA-512 of one buffer (the tests check the streaming hasher against it).
@@ -391,24 +356,53 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// The NIST example messages (FIPS 180-4 examples; the 448- and 896-bit ones and a million 'a').
+    const M448: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    const M896: &[u8] = concat!(
+        "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmn",
+        "hijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+    )
+    .as_bytes();
+
     #[test]
     fn fips_examples() {
-        assert_eq!(hex(&sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-        assert_eq!(hex(&sha256(b"")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(
-            hex(&sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
-            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-        );
-        assert_eq!(
-            hex(&sha512(b"abc")),
-            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
-             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
-        );
-        assert_eq!(
-            hex(&sha512(b"")),
-            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce\
-             47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
-        );
+        let million = vec![b'a'; 1_000_000];
+        let cases: [(&[u8], &str, &str); 5] = [
+            (
+                b"",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce\
+                 47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            ),
+            (
+                b"abc",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
+                 2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+            ),
+            (
+                M448,
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+                "204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c335\
+                 96fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445",
+            ),
+            (
+                M896,
+                "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+                "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018\
+                 501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909",
+            ),
+            (
+                &million,
+                "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+                "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973eb\
+                 de0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b",
+            ),
+        ];
+        for (m, d256, d512) in cases {
+            assert_eq!(hex(&sha256(m)), d256, "sha256 of {} bytes", m.len());
+            assert_eq!(hex(&sha512(m)), d512, "sha512 of {} bytes", m.len());
+        }
     }
 
     #[test]
@@ -426,13 +420,36 @@ mod tests {
             b.update(&data[cut..]);
             assert_eq!(b.finish(), sha512(&data), "sha512 cut {}", cut);
         }
-        // a million 'a' (FIPS 180-2 example 3)
-        let mut a = Sha256::new();
-        let m = [b'a'; 1000];
-        for _ in 0..1000 {
-            a.update(&m);
+    }
+
+    /// A megabyte and 77 bytes of xorshift64 output, fed in pieces of 1 to 997 bytes; the digests are Python's
+    /// `hashlib` of the same bytes.
+    #[test]
+    fn large_pseudo_random_input() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let data: Vec<u8> = (0..(1 << 20) + 77)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 32) as u8
+            })
+            .collect();
+        let (mut a, mut b) = (Sha256::new(), Sha512::new());
+        let (mut rest, mut piece) = (&data[..], 1);
+        while !rest.is_empty() {
+            let (p, r) = rest.split_at(piece.min(rest.len()));
+            a.update(p);
+            b.update(p);
+            rest = r;
+            piece = piece % 997 + 1;
         }
-        assert_eq!(hex(&a.finish()), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+        assert_eq!(hex(&a.finish()), "960c399057973f18c12722efef778d948de553267837cb884ff2fb858c86c8e0");
+        assert_eq!(
+            hex(&b.finish()),
+            "1fa9c19cf34257c9c09ca3b215bc101b35c87a2f96a8948097bc94094df8cede\
+             2a936cb416e34d0fc69e24496d11050d23894a46a121fabfacfa7ce2abc1b0c2"
+        );
     }
 
     #[test]
