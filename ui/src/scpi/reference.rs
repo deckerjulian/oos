@@ -32,14 +32,14 @@ impl Scpi {
         ["GRAY", "RED", "GRE", "BLUE", "ORAN"][i.min(4)]
     }
 
-    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. Without a comma, `arg` is the value for the selected slot when the
-    /// command sets one (`value`: `:VSCale 2`, `:SHOW ON`), and otherwise the slot (a query, `:RESet`); a word that is
-    /// no slot there stays on the selected slot. A bad slot number is an error.
-    fn ref_pair(&mut self, ui: &Ui, arg: &str, value: bool) -> (Option<usize>, String) {
+    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. Without a comma, `arg` is the value for the selected slot when
+    /// `bare_is_value` (a command that sets one: `:VSCale 2`, `:SHOW ON`), and otherwise the slot (a query, `:RESet`);
+    /// a word that is no slot there stays on the selected slot. A bad slot number is an error.
+    fn ref_pair(&mut self, ui: &Ui, arg: &str, bare_is_value: bool) -> (Option<usize>, String) {
         let arg = arg.trim();
         let (slot, rest) = if let Some((a, b)) = arg.split_once(',') {
             (parse_slot(a), b.trim().trim_matches('"').to_string())
-        } else if value || arg.is_empty() {
+        } else if bare_is_value || arg.is_empty() {
             (Some(ui.ref_slot()), arg.trim_matches('"').to_string())
         } else if let Some(i) = parse_slot(arg) {
             (Some(i), String::new())

@@ -232,7 +232,8 @@ fn a_bare_value_sets_the_selected_slot() {
     assert!((vsc - 0.25).abs() < 1e-6, "{vsc}");
     line(&mut s, &mut ui, &cv, ":REF:RES 1");
     assert_eq!(line(&mut s, &mut ui, &cv, ":REF:SHOW?;:SYST:ERR?"), "1;0,\"No error\"");
-    assert!((ui.ref_vscale(0).unwrap() - 0.25).abs() > 1e-6, "RES 1 resets slot 1");
+    let v = ui.ref_vscale(0);
+    assert!(v.is_some_and(|v| (v - 0.25).abs() > 1e-6), "RES 1 resets slot 1 and keeps it: {v:?}");
     line(&mut s, &mut ui, &cv, ":REF:VSC 0,2");
     assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-224,"), "a bad slot stays an error");
 }
