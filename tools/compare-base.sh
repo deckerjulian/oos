@@ -27,7 +27,10 @@
 #
 # Both sides are built and compared for the board family OOS_BOARD, `dho` when it is not set (ADR 0067,
 # tools/lib/board.sh): its programs, its matrix of register sequences and its live run. What --record-sums keeps is of
-# one family; --base-sums takes it only for the same family.
+# one family; --base-sums takes it only for the same family. The report of another family than dho is in
+# ui/target/compare-base-<family>/, so the reports of several families stand side by side (CI runs one per family the
+# change reaches); the base's tree is the same. A base without the family has nothing to compare it with: everything
+# of the family is new, and that counts as a difference.
 #
 # The register sequences are printed with the calibration files in OOS_CAL_DIR, else in local/cal of this tree, else
 # with a made-up calibration set: `oos-fpgad made-up-cal` of this tree writes it once into the work folder, and both
@@ -42,8 +45,7 @@ set -u
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 root=$PWD
-work=$root/ui/target/compare-base
-tree=$work/tree
+tree=$root/ui/target/compare-base/tree
 
 stop() {
 	echo "compare-base.sh: $*" >&2
@@ -52,6 +54,8 @@ stop() {
 
 . tools/lib/board.sh
 board=$(oos_board "$root") || stop "no board family to compare"
+work=$root/ui/target/compare-base
+[ "$board" = dho ] || work=$work-$board
 
 # The live run of tree $1 into folder $2 (made new). Returns 1 when that tree has no live run.
 live_run() {
@@ -90,12 +94,21 @@ if [ -z "$base" ]; then
 fi
 base=$(git rev-parse --verify --quiet "$base^{commit}") || stop "not a commit: ${1:-}"
 
-mkdir -p "$work"
+mkdir -p "$work" "${tree%/*}"
 if [ -e "$tree/.git" ]; then
 	git -C "$tree" checkout --quiet --detach --force "$base" || stop "cannot check out $base in $tree"
 else
 	git worktree prune
 	git worktree add --quiet --detach --force "$tree" "$base" || stop "cannot make the tree of $base in $tree"
+fi
+if [ ! -f "$tree/rootfs/board/$board/etc/oos-board" ]; then
+	line="the base has no board family $board: everything of it is new, nothing to compare"
+	echo "$line"
+	rm -f "$work/pictures.txt" "$work/registers.diff" "$work/live.diff"
+	rm -rf "$work/differing"
+	printf '### Against %s, board family %s\n\n- %s\n' "$(git log -1 --format='%h' "$base")" "$board" "$line" \
+		>"$work/summary.md"
+	exit 1
 fi
 
 if [ -n "${OOS_CAL_DIR:-}" ]; then

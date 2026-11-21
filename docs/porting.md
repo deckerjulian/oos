@@ -58,6 +58,13 @@ as the crates (`hal/board_cfg.rs`, from the build scripts of oos-hal and oos-ui;
 the build is for `dho`, and a name with no folder in `rootfs/board/` stops the build. The compiler names every part of
 the interface still missing.
 
+CI checks the port as it checks `dho`, with nothing to add: its folder in `rootfs/board/` puts it on the list of
+families (`tools/ci-parts.sh`), and the jobs `check`, `compare` and `scope` run for each family a change reaches
+(every family for neutral code, only the port for a change in its own folders). Until main has the family, its
+comparison and its programs count as new. For the test on a unit, the port adds its entry to `PROFILES` in
+`tools/device-test.py`: the pattern of its models in `*IDN?`, its channels, vertical scales, highest sample rate and
+whether it has a generator; `--board <board>` picks it, and the model in `*IDN?` does by default.
+
 ## Board families
 
 One image per family, chosen when OOS is built; a family is ready when the maintainer says so in a pull request that
