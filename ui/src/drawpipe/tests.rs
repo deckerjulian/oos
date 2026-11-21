@@ -508,6 +508,43 @@ fn frames_before_first_are_left_out() {
     assert!((0..NCH).all(|c| got.map[c] == want.map[c]));
 }
 
+// Break it catches (#441): timed persistence through the batch merge. The picture ages once, before the first maps of
+// the screen step are added, and not at all when nothing is merged (no record: the newest trace is held).
+#[test]
+fn a_merge_ages_the_picture_once_before_adding() {
+    let (w, h) = (970, 448);
+    let m = model(1e-6, false, false);
+    let (bytes, fb, s, p) = batch(20, 12_512, false);
+    let pipe = Pipe::start(0, false, fresh());
+    pipe.set_view(Some(&m), w, h);
+    // the picture so far: counts on every channel
+    let mut got = Phosphor::new(w, h);
+    for map in got.map.iter_mut() {
+        map.iter_mut().enumerate().for_each(|(i, x)| *x = (i * 37 % 4000) as u16);
+    }
+    let seed = got.map.clone();
+    // nothing to merge: the picture is held, the decay still waits
+    let mut renew = Renew::Decay(0.5);
+    assert_eq!(pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0)), Merged::default());
+    assert_eq!(renew, Renew::Decay(0.5));
+    assert!(got.map == seed, "aged without a record");
+    // a batch: aged by the factor, then its maps added
+    let b = pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 20, 0, dec(&s, &p), None);
+    let mut hp = Helper::default();
+    while pipe.help(&mut hp) {}
+    drop(b);
+    let n = pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
+    assert_eq!((n.frames, renew), (20, Renew::Keep));
+    let (frames, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+    let mut want = Phosphor::new(w, h);
+    want.map = seed;
+    want.decay(0.5);
+    for (c, map) in want.map.iter_mut().enumerate() {
+        map.iter_mut().zip(&frames.map[c]).for_each(|(x, y)| *x = x.saturating_add(*y));
+    }
+    assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "not the picture aged once and the batch added");
+}
+
 // Break it catches: frames of older settings drawn, maps of an older mapping merged, frames nobody drew not
 // counted, batches taken while the fast path does not apply.
 #[test]

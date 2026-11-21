@@ -1117,13 +1117,20 @@ fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
 // Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
 // had come or not. With records slower than the persistence time (slow time bases, deep memory) the newest record
 // faded out before the next one, and the trace pulsed. It ages when the next record comes, by the time since the last
-// one; with a record every step that is what it did before.
+// one; with a record every step that is what it did before. The zoom picture the same way.
 #[test]
 fn timed_persistence_fades_a_record_from_the_next_one_on() {
+    for zoom in [false, true] {
+        timed_persistence_with(zoom);
+    }
+}
+
+fn timed_persistence_with(zoom: bool) {
     use super::*;
     let shared: crate::board::HwShared = Default::default();
     let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
     ui.m.run = RunState::Run;
+    ui.m.zoom = zoom;
     ui.m.persist = PERSIST.iter().position(|p| p.1 == 0.1).unwrap();
     let persist = PERSIST[ui.m.persist].1 as f64;
     for c in 1..NCH {
@@ -1144,19 +1151,24 @@ fn timed_persistence_fades_a_record_from_the_next_one_on() {
             ..Default::default()
         });
     };
-    // the picture `before` aged for `t` seconds, and one record (`one`) drawn into it
-    let aged = |before: &[u16], one: &[u16], t: f64| -> Vec<u16> {
-        let mut p = Phosphor::new(1, 1);
-        p.map[0] = before.to_vec();
-        p.decay((-t / persist).exp() as f32);
-        p.map[0].iter().zip(one).map(|(a, b)| a.saturating_add(*b)).collect()
+    // the main and the zoom picture of CH1
+    let maps = |ui: &Ui| [ui.ph.map[0].clone(), ui.phz.map[0].clone()];
+    // the pictures `before` aged for `t` seconds, and one record (`one`) drawn into them
+    let aged = |before: &[Vec<u16>; 2], one: &[Vec<u16>; 2], t: f64| -> [Vec<u16>; 2] {
+        std::array::from_fn(|i| {
+            let mut p = Phosphor::new(1, 1);
+            p.map[0] = before[i].clone();
+            p.decay((-t / persist).exp() as f32);
+            p.map[0].iter().zip(&one[i]).map(|(a, b)| a.saturating_add(*b)).collect()
+        })
     };
     let dt = 0.033;
     ui.step(dt);
     push(&ui, 1);
     ui.step(dt);
-    let one = ui.ph.map[0].clone();
-    assert!(one.iter().any(|&c| c != 0), "the record is in the picture");
+    let one = maps(&ui);
+    assert!(one[0].iter().any(|&c| c != 0), "zoom {zoom}: the record is in the picture");
+    assert_eq!(one[1].iter().any(|&c| c != 0), zoom, "the record is in the zoom picture with zoom only");
     // slow records, one every half second: the newest stays as it was drawn until the next comes
     let mut seq = 1;
     let mut picture = one.clone();
@@ -1165,7 +1177,7 @@ fn timed_persistence_fades_a_record_from_the_next_one_on() {
         for _ in 0..15 {
             ui.step(dt);
             waited += dt;
-            assert!(ui.ph.map[0] == picture, "the newest record faded before the next one came");
+            assert!(maps(&ui) == picture, "zoom {zoom}: the newest record faded before the next one came");
         }
         seq += 1;
         push(&ui, seq);
@@ -1173,7 +1185,10 @@ fn timed_persistence_fades_a_record_from_the_next_one_on() {
         waited += dt;
         // the one before has aged by the half second since it came
         let want = aged(&picture, &one, waited);
-        assert!(ui.ph.map[0] == want, "slow records: the picture is not the last one aged by the time between");
+        assert!(
+            maps(&ui) == want,
+            "zoom {zoom}, slow records: the picture is not the last one aged by the time between"
+        );
         picture = want;
     }
     // fast records, one every step: aged by one step each, as before
@@ -1182,7 +1197,7 @@ fn timed_persistence_fades_a_record_from_the_next_one_on() {
         push(&ui, seq);
         ui.step(dt);
         let want = aged(&picture, &one, dt);
-        assert!(ui.ph.map[0] == want, "fast records: the picture is not the last one aged by one step");
+        assert!(maps(&ui) == want, "zoom {zoom}, fast records: the picture is not the last one aged by one step");
         picture = want;
     }
 }
