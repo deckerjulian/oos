@@ -100,7 +100,7 @@ impl BatchRun {
             self.single_done = Some(stamp);
         }
         if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(b, &p, deep_want) {
-            match seq::prearm(state, b, &p, bar, c2h, |_| {}) {
+            match seq::prearm(state, b, &p, bar, c2h, clock, |_| {}) {
                 Ok(()) => *armed = Some((b.clone(), stamp)),
                 Err(e) => report(out, format!("prearm: {}", e)),
             }

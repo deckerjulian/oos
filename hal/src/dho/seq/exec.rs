@@ -127,26 +127,30 @@ pub fn raw_settings(s: &Settings) -> Settings {
 
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
 /// decodes: the same writes as the arm `acquire_batch` would issue next, earlier. Read it with `acquire_batch(..,
-/// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`.
-pub fn prearm<B: Bus, R: std::io::Read>(
+/// armed = true, ..)` and the same `s` and `p`; anything else that writes the FPGA first needs `disarm`. The steps'
+/// polls and sleeps run on `clock`, the caller's (the loop's).
+pub fn prearm<B: Bus, R: std::io::Read, C: Clock>(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
     bar: &mut B,
     c2h: &mut R,
-    log: impl FnMut(String),
+    clock: &mut C,
+    mut log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute_bus(&st.arm_only_steps(s, p), bar, c2h, &mut crate::dho::bus::DmaBuf::new(), log)
+    let mut dma = crate::dho::bus::DmaBuf::new();
+    execute_bus_on(&st.arm_only_steps(s, p), bar, c2h, &mut dma, clock, &mut log, &|| false)
 }
 
-/// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`).
-pub fn disarm<B: Bus, R: std::io::Read>(
+/// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`), its poll on `clock`.
+pub fn disarm<B: Bus, R: std::io::Read, C: Clock>(
     st: &mut State,
     bar: &mut B,
     c2h: &mut R,
-    log: impl FnMut(String),
+    clock: &mut C,
+    mut log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute_bus(&st.disarm_steps(), bar, c2h, &mut crate::dho::bus::DmaBuf::new(), log)
+    execute_bus_on(&st.disarm_steps(), bar, c2h, &mut crate::dho::bus::DmaBuf::new(), clock, &mut log, &|| false)
 }
 
 /// The LA read of the acquisition just read out (`la_read_steps`) on the unit: LA words, bit n = Dn, word `start` of

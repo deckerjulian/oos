@@ -29,7 +29,7 @@ impl StopRun {
     /// where the live compression or the deep measurements want it (the record that stays on screen). Both STOP ways go
     /// through here: the hold (PR #7) and the views read again (`view`). `last_read`: the batch read by the previous
     /// pass; `req`: the UI's final-frame request and what the deep measurements want, as read at the top of the pass.
-    pub(super) fn hold<B: Bus, R: std::io::Read, C>(
+    pub(super) fn hold<B: Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
         &mut self,
         io: Io<'_, B, R, C>,
         armed: &mut Option<(Settings, u64)>,
@@ -38,10 +38,10 @@ impl StopRun {
         cores: &mut crate::board::dho::cores::Cores,
         req: (u64, crate::board::DeepWant),
     ) {
-        let Io { state, bar, c2h, out, n, stamp, .. } = io;
+        let Io { state, bar, c2h, clock, out, n, stamp } = io;
         let (final_req, deep_want) = req;
         let ahead = armed.is_some();
-        disarm(armed, state, bar, c2h);
+        disarm(armed, state, bar, c2h, clock);
         if ahead {
             self.last_batch = None;
         }

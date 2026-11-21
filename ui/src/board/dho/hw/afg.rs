@@ -45,7 +45,7 @@ impl<G: GenLines> AfgRun<G> {
     ) {
         let Io { state, bar, c2h, clock, out, .. } = io;
         if want != self.done {
-            disarm(armed, state, bar, c2h);
+            disarm(armed, state, bar, c2h, clock);
             seg_abort(segrun, state, bar, c2h, clock, out);
             // models without the generator (non-S): its GPIO lines and FPGA block are never touched
             if let Some((on, f, a, o, wave, md)) = want.filter(|_| oos_hal::model::platform().caps.has_gen()) {

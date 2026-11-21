@@ -237,7 +237,7 @@ impl TrimRun {
             // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
             if !gen_on && t.mode == state.mode.min(10) {
                 if let Some(c) = cal_adc {
-                    super::plan::disarm(armed, state, bar, c2h);
+                    super::plan::disarm(armed, state, bar, c2h, clock);
                     self.tries[t.mode] += 1;
                     self.done[t.mode] = core_trim(bar, clock, state, c, &mut self.overlay, t.mask);
                 }
