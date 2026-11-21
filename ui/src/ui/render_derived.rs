@@ -240,7 +240,7 @@ impl Ui {
 
     /// Histogram source: the measurement source if it is on, else the first channel on.
     pub(super) fn hist_src(&self) -> Option<usize> {
-        if let WaveId::Ch(c) = self.meas_src {
+        if let WaveId::Ch(c) = self.sources.a {
             if c < n_ch() && self.m.ch[c].on {
                 return Some(c);
             }

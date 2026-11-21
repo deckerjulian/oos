@@ -239,7 +239,7 @@ fn histogram_statistics_use_the_detail_lane_transform_and_horizontal_time_axis()
     ui.m.ch[0].offset = 0.1;
     ui.m.ch[0].vscale = VSCALES.iter().position(|&v| v == 0.2).unwrap();
     ui.m.ch[0].unit = AmpUnit::A;
-    ui.meas_src = WaveId::Ch(0);
+    ui.sources.a = WaveId::Ch(0);
     ui.m.hist = Hist::Vertical;
     let (w, h) = (ui.phz.w, ui.phz.h);
     let (top, bottom) = (h / 4, 3 * h / 4);

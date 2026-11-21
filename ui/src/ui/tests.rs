@@ -15,7 +15,7 @@ fn add_item_toggles_a_measurement() {
 
     let mut ui = crate::ui::testkit::demo_ui();
     ui.m.meas.clear();
-    ui.meas_src = WaveId::Ch(0);
+    ui.sources.a = WaveId::Ch(0);
     let (a, b) = (ALL_MEAS[0], ALL_MEAS[1]);
     ui.activate(Item::MeasAdd(a));
     ui.activate(Item::MeasAdd(b));
@@ -23,10 +23,10 @@ fn add_item_toggles_a_measurement() {
     ui.activate(Item::MeasAdd(a));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(0))]);
     // the same measurement of another channel is its own entry
-    ui.meas_src = WaveId::Ch(1);
+    ui.sources.a = WaveId::Ch(1);
     ui.activate(Item::MeasAdd(b));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(0)), (b, WaveId::Ch(1))]);
-    ui.meas_src = WaveId::Ch(0);
+    ui.sources.a = WaveId::Ch(0);
     ui.activate(Item::MeasAdd(b));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(1))]);
 }

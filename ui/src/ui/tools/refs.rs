@@ -217,11 +217,11 @@ impl Ui {
         let is_ref = |w: &WaveId| matches!(w, WaveId::Ref(_));
         self.m.meas.retain(|(_, w)| !is_ref(w));
         self.m.meas2.retain(|(_, a, b)| !is_ref(a) && !is_ref(b));
-        if is_ref(&self.meas_src) {
-            self.meas_src = WaveId::Ch(0);
+        if is_ref(&self.sources.a) {
+            self.sources.a = WaveId::Ch(0);
         }
-        if is_ref(&self.meas_src_b) {
-            self.meas_src_b = WaveId::Ch(0);
+        if is_ref(&self.sources.b) {
+            self.sources.b = WaveId::Ch(0);
         }
         self.ensure_meas_own();
         self.measure_refs();

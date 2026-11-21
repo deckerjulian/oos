@@ -392,7 +392,7 @@ mod tests {
         for &kind in &ALL_MEAS {
             ui.activate(Item::MeasAdd(kind));
         }
-        ui.meas_src_b = WaveId::Ch(1);
+        ui.sources.b = WaveId::Ch(1);
         for kind in 0..13 {
             ui.meas_pair_toggle(kind);
         }

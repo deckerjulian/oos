@@ -411,8 +411,8 @@ mod tests {
     fn pair_header_has_real_source_status_and_picker_routes_without_extra_rows() {
         let mut ui = mixed();
         ui.select_workspace_source(WaveId::Ref(1));
-        ui.meas_src = WaveId::Ref(1);
-        ui.meas_src_b = WaveId::Ch(1);
+        ui.sources.a = WaveId::Ref(1);
+        ui.sources.b = WaveId::Ch(1);
         ui.open_meas_list();
         ui.activate(Item::Open(MenuId::MeasPair));
         let dialog = ui.dlg_layout().unwrap();
@@ -428,8 +428,8 @@ mod tests {
             ui.close_picker();
             assert_eq!(ui.menu, MenuId::MeasPair);
         }
-        assert_eq!(ui.meas_src, WaveId::Ref(0));
-        assert_eq!(ui.meas_src_b, WaveId::Ref(2));
+        assert_eq!(ui.sources.a, WaveId::Ref(0));
+        assert_eq!(ui.sources.b, WaveId::Ref(2));
         assert_eq!(
             ui.selected_workspace_source(),
             Some(WaveId::Ref(1)),
@@ -668,7 +668,7 @@ impl Ui {
             WaveId::Ch(c) => self.m.active = c,
             WaveId::Ref(i) => self.ref_sel = i,
         }
-        self.meas_src = id;
+        self.sources.a = id;
     }
     pub(super) fn workspace_source_visible_here(&self, id: WaveId) -> bool {
         match id {
@@ -714,7 +714,7 @@ impl Ui {
     pub(super) fn draw_pair_header(&self, cv: &mut Canvas, dialog: &Dlg) {
         cv.text(&self.fonts().mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
         let targets = self.pair_header_sources(dialog);
-        for ((_, rect), id) in targets.into_iter().zip([self.meas_src, self.meas_src_b]) {
+        for ((_, rect), id) in targets.into_iter().zip([self.sources.a, self.sources.b]) {
             btn(cv, rect, BTN, BTN_BORDER);
             cv.set_clip(Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h));
             cv.text_in(

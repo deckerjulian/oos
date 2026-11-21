@@ -1407,7 +1407,7 @@ impl Ui {
                 if rect.contains(x, y) {
                     self.ref_sel = slot;
                     self.offline.slot = slot;
-                    self.meas_src = WaveId::Ref(slot);
+                    self.sources.a = WaveId::Ref(slot);
                     if x >= rect.x + rect.w - 42 && y < rect.y + 28 {
                         if let Some(reference) = self.refs[slot].as_mut() {
                             reference.on = !reference.on;

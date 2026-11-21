@@ -13,7 +13,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     for k in ALL_MEAS.iter().take(10) {
         u.m.meas.push((*k, WaveId::Ch(0)));
     }
-    u.meas_src_b = WaveId::Ch(1);
+    u.sources.b = WaveId::Ch(1);
     for k in 0..6 {
         u.meas_pair_toggle(k);
     }
@@ -23,7 +23,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     assert_eq!(rows.len(), 16);
     assert!(rows.iter().any(|r| r.name.starts_with("Delay rise-rise 1-2")));
     // the same channel twice makes no sense
-    u.meas_src_b = WaveId::Ch(0);
+    u.sources.b = WaveId::Ch(0);
     let n = u.m.meas2.len();
     u.meas_pair_toggle(7);
     assert_eq!(u.m.meas2.len(), n);

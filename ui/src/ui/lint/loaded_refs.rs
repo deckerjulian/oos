@@ -420,9 +420,9 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let filtered_pp = oos_dsp::measure::analyze_min(&filtered, dt, 0.4).get(Meas::Vpp);
     assert!((filtered_pp - row.v).abs() > 0.2, "filtered {} ref {}", filtered_pp, row.v);
     assert!(u.options(Item::MeasSrc).iter().any(|s| s == "R1"));
-    u.meas_src = WaveId::Ch(n_ch() - 1);
+    u.sources.a = WaveId::Ch(n_ch() - 1);
     u.adjust(Item::MeasSrc, 1);
-    assert_eq!(u.meas_src, WaveId::Ref(0));
+    assert_eq!(u.sources.a, WaveId::Ref(0));
 
     // a later copy of the same sine: delay is the difference of the two t0 values
     put_ref(&mut u, 1, 25e-9, dt, sine.clone());
@@ -563,7 +563,7 @@ fn dq_and_dqs_refs_make_a_strobe_eye() {
     ]
     .into();
     u.m.meas_labels = true;
-    u.meas_src = WaveId::Ref(0);
+    u.sources.a = WaveId::Ref(0);
     u.measure_refs();
     if let Some(r) = u.refs[1].as_mut() {
         r.color = 1;
