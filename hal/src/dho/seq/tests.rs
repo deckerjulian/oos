@@ -785,3 +785,67 @@ fn disarm_is_the_stop_sequence_of_an_arm() {
     assert_eq!(&arm[..17], &d[..]);
     assert!(matches!(a.disarm_steps()[1], Step::Poll { reg: 0x4034, ms: 10, .. }));
 }
+
+/// The Auto filter code (`afe::bw::AUTO`) of every enabled channel in the steps `st`: (a, b, c) of AFE reg 0x2e.
+fn auto_filter(st: &[Step], ch: usize) -> Option<(u16, u16, u16)> {
+    st.iter().rev().find_map(|x| match x {
+        Step::Afe(afe::Op::Afe { ch: c, reg: 0x2e, val }) if *c == ch => Some((val >> 6 & 3, val >> 9 & 3, val & 0x3f)),
+        _ => None,
+    })
+}
+
+// Issue #335 step 1. Break it catches: Auto taking the ADC rate (1.25 GSa/s) instead of the rate of one channel, so
+// with two or four channels the filter stays open above their Nyquist frequency; a set-up after a change of the
+// channel set or the time base that keeps the old code. The corner is nominal (code c = 5c MHz, afe-settings.md 5.1;
+// the real -3 dB point is not yet measured on hardware).
+#[test]
+fn auto_bandwidth_follows_the_rate_of_one_channel() {
+    let (cal, cal_adc) = (crate::dho::madeup::afe_cal([0, 1, 2, 3]), crate::dho::madeup::adc_cal([0, 1, 2, 3]));
+    let auto = Chan { bw: afe::bw::AUTO, ..Settings::default().ch[0] };
+    let mut st = State::handover(1, None);
+    let mut run = |mask: u32, tdiv: f64, depth: i128| {
+        let s = Settings { afe: true, mask, tdiv, depth, ch: [auto; 4], ..Settings::default() };
+        let (steps, p) = st.configure(&s, Some(&cal), Some(&cal_adc)).unwrap();
+        assert_eq!(p.rate, hz::prep(mask, tdiv_fs(tdiv), depth, 0).rate);
+        let codes: Vec<u16> = (0..4)
+            .filter(|c| mask & 1 << c != 0)
+            .map(|c| {
+                let (a, b, code) =
+                    auto_filter(&steps, c).unwrap_or_else(|| panic!("mask {:#x}: no filter on CH{}", mask, c + 1));
+                assert_eq!((a, b), (0, 0), "mask {:#x} CH{}", mask, c + 1);
+                code
+            })
+            .collect();
+        assert!(codes.windows(2).all(|w| w[0] == w[1]), "mask {:#x}: {:?}", mask, codes);
+        // the widest code whose nominal corner stays at or below a quarter of the channel's rate (1.25e9 / 63 per
+        // code), except the floor of 5 MHz and the open filter at 1.25 GSa/s
+        let c = codes[0] as f64;
+        let per_code = 1.25e9 / 63.0;
+        let rate = p.rate as f64;
+        assert!((1.0..=63.0).contains(&c));
+        assert!(c == 1.0 || c * per_code <= rate, "mask {:#x} at {} s/div: code {} over {} Sa/s", mask, tdiv, c, rate);
+        assert!(
+            c == 63.0 || (c + 1.0) * per_code > rate,
+            "mask {:#x} at {} s/div: code {} under {} Sa/s",
+            mask,
+            tdiv,
+            c,
+            rate
+        );
+        (p.rate, codes[0])
+    };
+    // the fastest time base: 1.25 GSa/s on one channel, 625 MSa/s on two, 312.5 MSa/s on three and four
+    assert_eq!(run(1, 20e-9, 0), (1_250_000_000, 63));
+    assert_eq!(run(3, 20e-9, 0), (625_000_000, 31));
+    assert_eq!(run(7, 20e-9, 0), (312_500_000, 15));
+    assert_eq!(run(0xf, 20e-9, 0), (312_500_000, 15));
+    // and back: a smaller channel set opens the filter again
+    assert_eq!(run(1, 20e-9, 0).1, 63);
+    // at a fixed depth (100 k points) slower time bases lower the rate and the code with it, down to the floor
+    for mask in [1, 3, 7, 0xf] {
+        let codes: Vec<u16> =
+            [20e-9, 1e-6, 10e-6, 100e-6, 1e-3, 10e-3].iter().map(|&t| run(mask, t, 100_000).1).collect();
+        assert!(codes.windows(2).all(|w| w[0] >= w[1]), "mask {:#x}: {:?}", mask, codes);
+        assert_eq!(*codes.last().unwrap(), 1, "mask {:#x}: {:?}", mask, codes);
+    }
+}

@@ -345,12 +345,15 @@ Sequence (registers and order):
 | 6 | (0, 0, 63) | 315M |
 | 7 | (0, 0, 25) | 125M |
 | 0xa | (3, 3, 7) | 350M |
-| 0x12 | (0, 0, clamp(Fs / 19841269, 1, 63)) | Auto: Fs = sample rate in Sa/s; 19841269 = 1.25e9/63, so 1.25 GSa/s -> 63, 625 M -> 31, 312.5 M -> 15, 156.25 M -> 7, 62.5 M -> 3, 31.25 M -> 1 |
+| 0x12 | (0, 0, clamp(Fs / 19841269, 1, 63)) | Auto: Fs = sample rate of one channel in Sa/s (`hz::Params::rate`, not the ADC rate: 312.5 MSa/s with three or four channels); 19841269 = 1.25e9/63, so 1.25 GSa/s -> 63, 625 M -> 31, 312.5 M -> 15, 156.25 M -> 7, 62.5 M -> 3, 31.25 M -> 1 |
 | any other | a = v[27:20], b = v[19:12], c = v[11:4] | encoded value |
 
    `hz_filter` then uses a & 3, b & 3, c & 0x3f (r2e[7:6], r2e[10:9], r2e[5:0]; r2e[15:11] and bit 8 kept).
    The filter is analog (about Fs / 4 in absolute hertz), so the Auto constant stays at any ADC clock. Above 1.25 GSa/s the
-   code is capped at its maximum 63 (filter open).
+   code is capped at its maximum 63 (filter open). Below 39.7 MSa/s the code stays at its floor 1 (nominal 5 MHz), so
+   from about 10 MSa/s down the filter no longer reaches below half the rate. The nominal corner of a code (5 MHz per
+   step, from the 5 MHz steps of the bandwidth menu) is assumed; the real -3 dB points are not yet measured on hardware
+   (`docs/bandwidth-test.md`).
 3. ADC: reg 0x54 <- 0x4210 and reg 0x55 <- 0x0008 -> FPGA 0x1034 <- **0x01545251**, **0x0155000c**
    (100 us before/after each), on every call. The word is 0x1000000 | reg << 16 | (XOR mask of reg ^ value).
 4. `hz_filter(ch, a, b, c)` -> W(2e).
@@ -486,9 +489,12 @@ values.
 
 ### 5.5 Auto bandwidth refresh
 
-With Auto the filter code follows the sample rate: every set-up recomputes it from the current rate (`hal::dho::seq` passes
-the rate to `hal::dho::afe::configure`), and the block group follows (5.2). A change of the Auto code needs the filter write, then
-scale and offset of every channel. Do not write 0x10dc while anti-aliasing is off; OOS never writes it.
+With Auto the filter code follows the sample rate of one channel: every set-up recomputes it from the current rate
+(`hal::dho::seq` passes `hz::Params::rate` to `hal::dho::afe::configure`), and the block group follows (5.2). A
+change of the channel set, the time base or the depth is a new set-up, so the code follows each of them. Host test:
+`hal/src/dho/seq/tests.rs` `auto_bandwidth_follows_the_rate_of_one_channel` (1 to 4 channels; issue #335). A change
+of the Auto code needs the filter write, then scale and offset of every channel. Do not write 0x10dc while
+anti-aliasing is off; OOS never writes it.
 
 ### 5.6 Self-calibration
 
