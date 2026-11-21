@@ -27,7 +27,7 @@ use crate::board::{lock, Frame};
 use crate::fastdraw::EdgeSeek;
 use crate::model::*;
 use crate::platform::Platform;
-use crate::wave::Phosphor;
+use crate::wave::{Phosphor, Renew};
 use std::any::Any;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -661,11 +661,12 @@ impl Pipe {
     }
 
     /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
-    /// `clear`: minimum persistence, the picture is replaced: by the drawn maps themselves if anything is merged.
+    /// `renew`: what `ph` needs before the first frames of the screen step, done (and set to `Keep`) when anything is
+    /// merged; a picture to clear (minimum persistence) is replaced by the drawn maps themselves.
     /// One set of maps a call, whatever the number of workers (they fold theirs into one, `publish`): the frame loop
-    /// adds the maps of the channels on, or with `clear` swaps them in and adds nothing (issue #186). Without a
+    /// adds the maps of the channels on, or with `Clear` swaps them in and adds nothing (issue #186). Without a
     /// whole set it takes a parked one: the frames of a drawer that has no more batches come with a later screen.
-    pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
+    pub fn merge(&self, ph: &mut Phosphor, renew: &mut Renew, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
         let gen = lock(&self.view).view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
         let full = {
@@ -678,16 +679,17 @@ impl Pipe {
         };
         let Some(mut a) = full else { return got };
         if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
-            if *clear {
+            if *renew == Renew::Clear {
                 // the picture cleared and the maps added is the maps: the old picture goes back to be cleared
                 std::mem::swap(&mut ph.map, &mut a.ph.map);
                 a.used = [true; NCH];
-                *clear = false;
             } else {
+                ph.renew(*renew);
                 for c in (0..NCH).filter(|&c| a.used[c]) {
                     got.px += add_map(&mut ph.map[c], &a.ph.map[c]);
                 }
             }
+            *renew = Renew::Keep;
             for (x, y) in edges.iter_mut().zip(a.edges) {
                 *x += y;
             }
