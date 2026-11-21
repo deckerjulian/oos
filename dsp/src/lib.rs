@@ -5,6 +5,7 @@
 //!
 //! - `bandwidth`: equivalent-time folding of periodic signals (also above Nyquist), step response -> rise time and
 //!   magnitude response (front-end bandwidth test)
+//! - `interleave`: error budget of an interleaved ADC from one sine record (each core's offset, gain and time error)
 //! - `edges`: comparator with hysteresis -> edge list with interpolated times (the base of all triggers)
 //! - `trigger`: software trigger types of a modern scope (edge, pulse, slope, video, pattern, duration, timeout, runt,
 //!   window, delay, setup/hold, Nth edge) with time conditions
@@ -37,6 +38,7 @@ pub mod eye;
 mod hostile;
 pub mod hss;
 pub mod identify;
+pub mod interleave;
 pub mod interp;
 pub mod levels;
 pub mod linecode;

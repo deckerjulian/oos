@@ -189,18 +189,28 @@ impl Ui {
     /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
     /// acquisition kept one, otherwise the screen record.
     fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
-        let rec = self.last[0].as_ref()?;
         if memory {
-            if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
-                if let Some(v) = raw.frame.ch.get(c) {
-                    if !v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0 {
-                        return Some((v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt));
-                    }
-                }
+            if let Some(view) = self.native_view(c) {
+                return Some(view);
             }
         }
+        let rec = self.last[0].as_ref()?;
         let v = rec.ch.get(c)?;
         (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
+    }
+
+    /// The native record of channel `c` (the acquisition's samples, no envelope), its dt and t0. None without one.
+    fn native_view(&self, c: usize) -> Option<(&[f32], f64, f64)> {
+        let raw = self.last[0].as_ref()?.raw.as_ref().filter(|r| !r.frame.envelope)?;
+        let v = raw.frame.ch.get(c)?;
+        (!v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0)
+            .then(|| (v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt))
+    }
+
+    /// The first `max` samples of channel `c`'s native record and its dt, never the screen record (`:SYSTem:DEBug:CORes?`).
+    pub fn channel_raw(&self, c: usize, max: usize) -> Option<(Vec<f32>, f64)> {
+        let (v, dt, _) = self.native_view(c)?;
+        Some((v[..v.len().min(max)].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect(), dt))
     }
 
     /// How many points `channel_page` can walk. Zero when that source has no record.

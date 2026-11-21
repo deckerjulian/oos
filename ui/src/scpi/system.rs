@@ -3,7 +3,7 @@
 
 //! `:SYSTem`: the error queue (`ERRor?`), `STATe?`, `GRAPhics`, `PIPeline` (kept for scripts: Batch is the only draw
 //! path), `AOUTput`, `LOG`, `SET` and `GET`, and the fork's `:SYSTem:DEBug:...` nodes with the raw state of the FPGA
-//! units. A new command goes into `system_cmd` here (a debug node into `system_debug_cmd`), with its line in
+//! units and the error budget of the ADC cores. A new command goes into `system_cmd` here (a debug node into `system_debug_cmd`), with its line in
 //! docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
 use super::{kw, parse_bool, t, Scpi};
@@ -171,9 +171,49 @@ impl Scpi {
             }
             return None;
         }
+        // fork, unit debug: the error budget of the interleaved ADC cores on a channel's deep record (issue #335)
+        if nodes.len() == 3 && kw(nodes[2], "CORes") && query {
+            return t(&cores_budget_text(ui, arg));
+        }
         self.push_err(format!("-113,\"Undefined header\" {}", cmd));
         None
     }
+}
+
+/// Samples of a record `:SYSTem:DEBug:CORes?` looks at (the first ones): 4096 a core at 8 cores, enough for the fit,
+/// and the analysis stays short where it runs, in the frame loop (about 10 ms on the host).
+const BUDGET_POINTS: u64 = 1 << 15;
+
+/// `:SYSTem:DEBug:CORes? [<ch>[,<cores>[,<Hz>...]]]` (fork, unit debug): `oos_dsp::interleave::budget` of channel `ch`'s
+/// native record (default 1; never the screen record) for `cores` interleaved cores (default 8), with the levels of the tones at the frequencies
+/// that follow. `none` when the channel has no record or the record carries no budget.
+fn cores_budget_text(ui: &Ui, arg: &str) -> String {
+    let mut it = arg.split(',').map(str::trim).filter(|x| !x.is_empty());
+    let ch = it.next().and_then(|x| x.parse::<usize>().ok()).filter(|c| (1..=4).contains(c)).unwrap_or(1);
+    let m = it.next().and_then(|x| x.parse::<usize>().ok()).filter(|m| (1..=8).contains(m)).unwrap_or(8);
+    let extra: Vec<f64> = it.filter_map(|x| x.parse::<f64>().ok()).filter(|f| *f > 0.0).collect();
+    let Some((v, dt)) = ui.channel_raw(ch - 1, BUDGET_POINTS as usize) else {
+        return "none".into();
+    };
+    budget_text(&v, dt, m, &extra)
+}
+
+/// The answer of `:SYSTem:DEBug:CORes?` for record `v`.
+fn budget_text(v: &[f32], dt: f64, m: usize, extra: &[f64]) -> String {
+    let Some(b) = oos_dsp::interleave::budget(v, dt, m, extra) else {
+        return "none".into();
+    };
+    let mut s = format!(
+        "f={:.6e},amp={:.6e},cores={},sinad={:.1},matched={:.1},offset={:.1},gain={:.1},timing={:.1},harmonics={:.1},noise={:.1}",
+        b.f, b.amp, m, b.sinad_db, b.sinad_matched_db, b.offset_dbc, b.gain_dbc, b.skew_dbc, b.harmonics_dbc, b.noise_dbc
+    );
+    for (f, l) in &b.extra {
+        s += &format!(",extra={:.6e}:{:.1}", f, l);
+    }
+    for c in &b.cores {
+        s += &format!(";{:.3e},{:.3e},{:.3e}", c.offset, c.gain, c.skew);
+    }
+    s
 }
 
 #[cfg(test)]
@@ -253,5 +293,38 @@ mod draw_path_tests {
         // the demo source is not the hardware: no workers
         ui.step(0.02);
         assert!(crate::drawpipe::pipe().is_none());
+    }
+}
+
+#[cfg(test)]
+mod cores_budget_tests {
+    use super::*;
+
+    // Break it catches: an answer whose fields a script cannot split (head, then one group per core), a record without
+    // a sine answered with numbers, arguments out of range taken as they are.
+    #[test]
+    fn the_budget_answer_has_a_head_and_one_group_per_core() {
+        let dt = 0.8e-9;
+        let v: Vec<f32> = (0..16_384)
+            .map(|i| ((2.0 * std::f64::consts::PI * 9.7e6 * i as f64 * dt).sin() + 0.002 * (i % 8) as f64) as f32)
+            .collect();
+        let a = budget_text(&v, dt, 8, &[146.55e6]);
+        let (head, cores) = a.split_once(';').unwrap();
+        let keys: Vec<&str> = head.split(',').map(|kv| kv.split('=').next().unwrap()).collect();
+        assert_eq!(
+            keys,
+            ["f", "amp", "cores", "sinad", "matched", "offset", "gain", "timing", "harmonics", "noise", "extra"]
+        );
+        assert!(head.starts_with("f=9.7") && head.contains(",cores=8,"), "{}", head);
+        assert_eq!(cores.split(';').count(), 8);
+        assert!(cores.split(';').all(|g| g.split(',').count() == 3), "{}", cores);
+        assert_eq!(budget_text(&[0.0; 4096], dt, 8, &[]), "none");
+        // on the demo source: an answer and no error; channel 9 and 0 cores fall back to CH1 and 8 cores
+        let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
+        let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);
+        let any = q(&mut ui, ":SYSTem:DEBug:CORes?");
+        assert!(any.starts_with("none") || any.starts_with("f="), "{}", any);
+        assert_eq!(q(&mut ui, ":SYSTem:DEBug:CORes? 9,0"), any);
+        assert_eq!(q(&mut ui, ":SYST:ERR?").split(',').next(), Some("0"));
     }
 }
