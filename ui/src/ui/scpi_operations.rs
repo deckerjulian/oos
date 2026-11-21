@@ -113,7 +113,7 @@ impl Ui {
             // a STOP of the hardware not yet taken by the step, or waiting for its last record (`Stop::final_until`)
             stop: (self.src.is_hw()
                 && self.m.run == RunState::Stop
-                && (self.was_running || self.stop.final_until.is_some()))
+                && (self.seen.running || self.stop.final_until.is_some()))
             .then_some(self.stop.final_req),
         }
     }

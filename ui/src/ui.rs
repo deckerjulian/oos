@@ -783,8 +783,6 @@ pub struct Ui {
     pub(crate) fast: acquire::FastPath,
     /// segmented recording, in software and in the hardware (records.rs)
     seg: records::Segments,
-    /// the acquisition ran in the last frame
-    was_running: bool,
     /// analysers (analysis.rs)
     azr: analysis::State,
     /// self-calibration page (selfcal.rs)
@@ -793,8 +791,6 @@ pub struct Ui {
     bode: bode::State,
     workspace: workspace::Workspace,
     pub desktop_panel: Option<bool>,
-    /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets no new one)
-    analyzed_view: AView,
     /// SIM: Play is moving the timebase window through the selected record
     sim_play: bool,
     /// SIM: the generator thread and the error it left for SCPI (sim.rs)
