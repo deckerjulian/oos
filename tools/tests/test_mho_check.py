@@ -235,5 +235,31 @@ class AfeTrace(unittest.TestCase):
         self.assertEqual(mc.select_changes(ev, {153: 0, 149: 0}), [(1.0, "c 153", 0, 1)])
 
 
+class Panel(unittest.TestCase):
+    def test_frames_and_other_bytes(self):
+        self.assertEqual(mc.panel_crc7(0x06, 0xbb), 0x03)
+        data = bytes([0x00, 0xfa, 0x01, 0x0c, mc.panel_crc7(0x01, 0x0c), 0xaf, 0xfa, 0x01])
+        self.assertEqual(mc.panel_frames(data), ([(0x01, 0x0c)], bytes([0x00, 0xfa, 0x01])))
+
+    def test_strace_reads_and_writes_on_the_ports_only(self):
+        text = "\n".join([
+            '812  1700000000.100000 read(57,  <unfinished ...>',
+            '813  1700000000.150000 write(57, "\\xfa\\x01\\xff\\x72\\xaf", 5) = 5',
+            '812  1700000000.200000 <... read resumed> "\\xfa\\x06\\x0c\\x0e\\xaf", 4096) = 5',
+            '814  1700000000.300000 write(12, "\\x41", 1) = 1',
+            '812  1700000000.400000 read(57, "", 4096) = 0',
+        ])
+        calls = mc.parse_strace(text, {57})
+        self.assertEqual([(c, fd, d.hex()) for _, c, fd, d in calls],
+                         [("write", 57, "fa01ff72af"), ("read", 57, "fa060c0eaf")])
+
+    def test_labels_follow_their_frames(self):
+        calls = [(1.0, "read", 57, bytes([0xfa, 0x06, 0x0c, mc.panel_crc7(0x06, 0x0c), 0xaf])),
+                 (3.0, "write", 57, b"\x41")]
+        lines = mc.panel_lines(calls, {57: "ttyS0"}, [(2.0, "Run/Stop"), (9.0, "end")], {0x0c: "Run/Stop"})
+        self.assertEqual(lines, ["1.000 ttyS0 in  06 0c (Run/Stop)", "---- Run/Stop", "3.000 ttyS0 out other bytes 41",
+                                 "---- end"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check on an MHO900 under its stock system what OOS assumes about its acquisition board.
 
-  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes] [--map | --afe] [--fifty]
+  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes] [--map | --afe | --panel] [--fifty]
 
 Every assumption of docs/protocols/mho-acquisition.md that can be seen without writing to the hardware is checked, and
 the result is written to mho-check-<model>-<date>.txt in the current directory, to attach to the GitHub issue.
@@ -33,6 +33,12 @@ register and data. It switches on the kernel's trace event gpio_value for those 
 decodes the levels on the PC and switches the event off again, with the trace settings as they were; nothing else is
 touched. It writes mho-afe-<model>-<date>.txt.
 
+With --panel it records the front panel: the stock system's own traffic on its serial ports (the process that holds
+/dev/ttyS0 open, followed with strace for its reads and writes, if the stock system has strace; it changes nothing),
+while the owner presses each key and turns each knob and types its name on the PC. It writes
+mho-panel-<model>-<date>.txt with the frames decoded (docs/protocols/frontpanel.md). The scope reacts slower while it
+records. Without strace it records only the ports' byte counters.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
@@ -44,7 +50,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "5"
+VERSION = "6"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -206,6 +212,159 @@ def idn_without_serial(idn):
     if len(f) >= 4:
         f[2] = "<serial>"
     return ",".join(f)
+
+
+# ---- the front panel (--panel) ----
+
+def panel_crc7(cmd, data):
+    """CRC-7/MMC over [cmd, data] (docs/protocols/frontpanel.md)."""
+    c = 0
+    for b in (cmd & 0xff, data & 0xff):
+        c ^= b
+        for _ in range(8):
+            c = ((c << 1) ^ 0x12) & 0xff if c & 0x80 else (c << 1) & 0xff
+    return c >> 1
+
+
+def panel_frames(data):
+    """Splits bytes into the DHO's frames FA cmd data crc7 AF: [(cmd, data)] and the bytes that start none."""
+    frames, skipped, i = [], [], 0
+    while i < len(data):
+        f = data[i:i + 5]
+        if len(f) == 5 and f[0] == 0xfa and f[4] == 0xaf and f[3] == panel_crc7(f[1], f[2]):
+            frames.append((f[1], f[2]))
+            i += 5
+        else:
+            skipped.append(data[i])
+            i += 1
+    return frames, bytes(skipped)
+
+
+STRACE_LINE = re.compile(r'^(\d+)\s+(\d+\.\d+)\s+(?:(read|write)\((\d+),\s*(?:"([^"]*)"|<unfinished)|<\.\.\. (read|write) '
+                         r'resumed>\s*"([^"]*)")')
+
+
+def parse_strace(text, fds):
+    """The reads and writes of `strace -f -ttt -xx` on the descriptors `fds`: [(time, 'read'|'write', fd, bytes)].
+    A call split by another thread (unfinished ... resumed) is joined; a read that returned nothing is left out."""
+    out, pending = [], {}
+    for line in text.splitlines():
+        m = STRACE_LINE.match(line)
+        if not m:
+            continue
+        pid, t = m.group(1), float(m.group(2))
+        if m.group(3):
+            call, fd, data = m.group(3), int(m.group(4)), m.group(5)
+            if data is None:
+                pending[pid] = (call, fd)
+                continue
+        else:
+            call, data = m.group(6), m.group(7)
+            if pid not in pending:
+                continue
+            fd = pending.pop(pid)[1]
+        if fd in fds and data:
+            out.append((t, call, fd, bytes.fromhex(data.replace("\\x", ""))))
+    return out
+
+
+def panel_key_names():
+    """The DHO's key names (tools/frontpanel.py), or none when that file is not beside this one."""
+    try:
+        import importlib.util
+        import pathlib
+        spec = importlib.util.spec_from_file_location("frontpanel", pathlib.Path(__file__).with_name("frontpanel.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m.KEYS
+    except (OSError, AttributeError, ImportError):
+        return {}
+
+
+def panel_lines(calls, ports, labels, names):
+    """The report body: every call in time order with its frames, the owner's labels between them."""
+    out, li = [], 0
+    for t, call, fd, data in calls:
+        while li < len(labels) and labels[li][0] <= t:
+            out.append(f"---- {labels[li][1]}")
+            li += 1
+        frames, skipped = panel_frames(data)
+        way = "in " if call == "read" else "out"
+        desc = [f"{c:02x} {d:02x}" + (f" ({names[d]})" if call == "read" and d in names else "") for c, d in frames]
+        if skipped:
+            desc.append("other bytes " + skipped.hex(" "))
+        out.append(f"{t:.3f} {ports.get(fd, fd)} {way} " + "; ".join(desc))
+    out += [f"---- {text}" for _, text in labels[li:]]
+    return out
+
+
+def panel_main(a, adb):
+    if not adb.is_root():
+        return "--panel needs adb root (it follows another process); nothing done"
+    pids = adb.sh("for p in /proc/[0-9]*; do ls -l $p/fd 2>/dev/null | grep -q /dev/ttyS0 && echo ${p#/proc/}; done").split()
+    pids = [p for p in pids if p.isdigit()]
+    counters = lambda: adb.sh("cat /proc/tty/driver/serial").strip()
+    idn = ""
+    try:
+        idn = idn_without_serial(Scpi(a.host, a.scpi_port).query("*IDN?"))
+    except OSError:
+        pass
+    out = [f"mho-check {VERSION} --panel (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn or 'not asked'}", f"kernel: {adb.sh('uname -r').strip()}", ""]
+    if not pids:
+        out.append("no process holds /dev/ttyS0 open")
+    ports = {}
+    for pid in pids[:1]:
+        out.append(f"process with /dev/ttyS0: {pid} {adb.sh(f'cat /proc/{pid}/cmdline').split(chr(0))[0].strip()}")
+        for line in adb.sh(f"ls -l /proc/{pid}/fd").splitlines():
+            m = re.search(r"\s(\d+) -> (/dev/tty\S+)", line)
+            if m:
+                ports[int(m.group(1))] = m.group(2).replace("/dev/", "")
+        out.append("its serial ports: " + ", ".join(f"fd {k} {v}" for k, v in sorted(ports.items())))
+    out.append("ttyS0 settings: " + adb.sh("stty -F /dev/ttyS0 -a 2>&1 | head -3").strip().replace("\n", " | "))
+    strace = adb.sh("which strace").strip()
+    out += ["strace: " + (strace or "not on this system: only the byte counters are recorded"), "",
+            "counters before:", counters(), ""]
+    if not a.yes and input("--panel follows the stock program's serial ports while you press keys (the scope reacts "
+                           "slower meanwhile). Go on? [y/N] ").strip().lower() not in ("y", "yes", "j", "ja"):
+        return "declined; nothing done"
+    proc = None
+    log = "/data/local/tmp/oos-panel.strace"
+    if strace and pids:
+        tids = adb.sh(f"ls /proc/{pids[0]}/task").split()
+        args = " ".join(f"-p {t}" for t in tids if t.isdigit())
+        proc = subprocess.Popen(["adb", "-s", adb.target, "shell",
+                                 f"rm -f {log}; strace -f -ttt -xx -s 256 -e trace=read,write -o {log} {args}"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
+    offset = float(adb.sh("date +%s").strip() or 0) - time.time()
+    print("Press one key or turn one knob a few steps, then type here what it was (e.g. 'Run/Stop', 'V-Scale CH1 "
+          "right 3'). Every key and knob once, the power key last only briefly. An empty line ends.")
+    labels = []
+    while True:
+        text = input("what was it: ").strip()
+        if not text:
+            break
+        labels.append((time.time() + offset, text))
+    if proc:
+        adb.sh("kill -INT $(pidof strace)")
+        proc.wait(timeout=20)
+    out += ["counters after:", counters(), ""]
+    if proc:
+        text = adb.sh(f"cat {log}; rm -f {log}", timeout=120)
+        calls = parse_strace(text, set(ports))
+        out += ["Frames: time, port, in (from the panel) or out (to it), then cmd and data of each frame (a DHO key "
+                "name where the data byte is one). The owner's labels follow the frames they name (scope time; the "
+                "label is typed after the key, so its frames come before it).", ""]
+        out += panel_lines(calls, ports, labels, panel_key_names())
+    else:
+        out += ["labels: " + "; ".join(t for _, t in labels)]
+    model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
+    name = f"mho-panel-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    return 0
 
 
 # ---- the scope ----
@@ -1069,6 +1228,9 @@ def main():
     ap.add_argument("--afe", action="store_true",
                     help="instead of the checks: record the words on the front ends' GPIO bus for each vertical "
                          "setting, with the kernel's gpio_value trace event (about 7 minutes; nothing connected)")
+    ap.add_argument("--panel", action="store_true",
+                    help="instead of the checks: record the stock system's front-panel traffic while you press each "
+                         "key and type its name (follows the stock program with strace; changes nothing)")
     ap.add_argument("--fifty", action="store_true",
                     help="with --map or --afe: each channel at 50 ohm too (the inputs must be unconnected)")
     a = ap.parse_args()
@@ -1080,6 +1242,8 @@ def main():
         sys.exit("adb not found (Android platform tools)")
     if "sparrow3_" not in adb.sh("ls /rigol/FPGA"):
         sys.exit("this is not an MHO900 under its stock system (no sparrow3 image in /rigol/FPGA); nothing done")
+    if a.panel:
+        sys.exit(panel_main(a, adb))
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
 
