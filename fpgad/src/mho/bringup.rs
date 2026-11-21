@@ -95,8 +95,7 @@ struct Pll {
 impl Pll {
     fn open() -> Result<Pll, String> {
         let e = |e: std::io::Error| e.to_string();
-        // the two lines the stock system leaves at 1 and 0 while the clock runs
-        drop(Line::output(b::line::PLL_RESET, true).map_err(e)?);
+        // the line the stock system leaves at 0 while the clock runs
         drop(Line::output(b::line::SYSREF_RESET, false).map_err(e)?);
         Ok(Pll {
             sclk: Line::output(b::line::PLL_SCLK, false).map_err(e)?,

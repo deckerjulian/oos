@@ -60,7 +60,7 @@
 	gpio-line-names =
 		"fpga_power", "", "", "", "", "", "", "",
 		"", "", "", "", "", "fpga_programb", "", "",
-		"", "pll_sclk", "pll_cs", "pll_sdio", "pll_reset", "", "sysref_reset", "",
+		"", "pll_sclk", "pll_cs", "pll_sdio", "", "", "sysref_reset", "",
 		"", "", "", "", "", "", "", "";
 };
 

@@ -33,8 +33,11 @@ The clock tables are TI register words: 136 lines `R<n> 0x<aaaadd>`, 24 bits = r
 (verified on a unit: the bring-up's error on an MHO98, GitHub issue #4). They are the unit's own files `/rigol/resource/conf/init_all_clock_V00_01.txt`
 (code 1), `_V00_02.txt` (code 2) and `_V00_03.txt` (codes 3 and up) (platform probe). OOS ships none of them; the
 bring-up of docs/mho.md reads the unit's own at run time, as it reads the FPGA image. The bus: chip select gpio 50
-(active low, idle high), clock gpio 49 (idle low), one data line gpio 51; `reset` gpio 52 and `sysref_reset` gpio 54
-are left at 1 and 0 by the stock system (platform probe); the frame is assumed to be the LMK04821 data sheet's.
+(active low, idle high), clock gpio 49 (idle low), one data line gpio 51, and `sysref_reset` gpio 54, left at 0 by the
+stock system (platform probe). The stock clock driver takes these four lines and no others. gpio 52 (GPIO1_C4), listed
+as `reset` beside them in the platform probe, is the DSI panel's reset, as on the DHO: under OOS the panel driver holds
+it, and the bring-up's request for it failed with "Resource busy" on an MHO98 (verified on the unit, GitHub issue #4).
+The frame is assumed to be the LMK04821 data sheet's.
 
 The FPGA image is chosen by the hardware code; the file is the unit's own under `/rigol/FPGA` (OOS may read it at run
 time, it cannot ship it, ADR 0013):

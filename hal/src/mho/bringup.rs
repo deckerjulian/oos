@@ -18,12 +18,13 @@ pub mod line {
     pub const ADC_POWER: &str = "adc_power";
     pub const AFE_POWER: &str = "afe_power";
     pub const FPGA_POWER: &str = "fpga_power";
-    /// The clock chip's 3-wire bus: clock, chip select (active low), the one data line, and the two lines the stock
-    /// system leaves at 1 (`pll_reset`) and 0 (`sysref_reset`).
+    /// The clock chip's 3-wire bus: clock, chip select (active low), the one data line, and `sysref_reset`, which
+    /// the stock system leaves at 0. These four are all the stock clock driver takes. GPIO1_C4 next to them (the
+    /// `reset` of the stock GPIO list) is the DSI panel's reset, not the clock chip's: the bring-up never touches it
+    /// (it stopped there with "Resource busy" on an MHO98, GitHub issue #4, because the panel driver holds it).
     pub const PLL_SCLK: &str = "pll_sclk";
     pub const PLL_CS: &str = "pll_cs";
     pub const PLL_SDIO: &str = "pll_sdio";
-    pub const PLL_RESET: &str = "pll_reset";
     pub const SYSREF_RESET: &str = "sysref_reset";
     /// The FPGA's configuration lines (Kintex-7, slave serial): PROGRAM_B out, INIT_B and DONE in.
     pub const PROGRAM_B: &str = "fpga_programb";
@@ -35,14 +36,13 @@ pub mod line {
 
 /// The state of each line as the stock system leaves it once the board runs (platform probe of an MHO98, hardware
 /// code 3: `/sys/kernel/debug/gpio`). Outputs only; the bring-up ends with these.
-pub const STOCK_OUTPUTS: [(&str, bool); 8] = [
+pub const STOCK_OUTPUTS: [(&str, bool); 7] = [
     (line::ADC_POWER, true),
     (line::AFE_POWER, true),
     (line::FPGA_POWER, true),
     (line::PLL_SCLK, false),
     (line::PLL_CS, true),
     (line::PLL_SDIO, false),
-    (line::PLL_RESET, true),
     (line::SYSREF_RESET, false),
 ];
 
