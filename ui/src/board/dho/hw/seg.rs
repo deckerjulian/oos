@@ -61,6 +61,17 @@ pub(super) fn upper_known(seg: u32) -> Option<bool> {
     crate::board::lock(&UPPER).iter().find(|e| e.0 == seg).map(|e| e.1)
 }
 
+/// The segments of a recording of `want` that `low` frames below 256 MiB allow (`up`: and as many above it): all of
+/// them and those of the lower part. None, (0, 0), where not one segment fits below the top 1 M bursts that a record
+/// must not reach (segments of 100 M and 125 M points, horizontal-config.md 1.8).
+fn parts(want: u32, low: u32, up: bool) -> (u32, u32) {
+    if low == 0 {
+        return (0, 0);
+    }
+    let total = want.max(1).min(if up { 2 * low } else { low });
+    (total, total.min(low))
+}
+
 /// The probe of the upper frame memory for the segments of `p`, once per segment size.
 #[cfg(any(target_os = "linux", test))]
 fn upper_probed<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
@@ -153,21 +164,25 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
             seg::stop(state, bar, c2h, clock)?;
         }
         // below 256 MiB first; more segments than fit there go above it where the unit has that memory
-        let want = s.segments.map_or(0, |g| g.n).max(1);
-        let low = low_frames(p.seg).max(1);
+        let want = s.segments.map_or(0, |g| g.n);
+        let low = low_frames(p.seg);
         let up = want > low && low >= 2 && upper_probed((s, p), state, bar, c2h, clock)?;
-        let total = want.min(if up { 2 * low } else { low });
-        seg::start_at(state, s, bar, c2h, clock, 0, total.min(low))?;
+        let (total, low) = parts(want, low, up);
+        if total == 0 {
+            eprintln!("oos-ui hw: segments of {} bursts do not fit below the reserved top: none recorded", p.seg);
+        } else {
+            seg::start_at(state, s, bar, c2h, clock, 0, low)?;
+        }
         *run = Some(SegRun {
             run: cmd,
             n: total,
-            recording: true,
+            recording: total > 0,
             count: 0,
             next: 0,
             deliver: true,
             tl: seg::Timeline::new(None),
             seg: p.seg,
-            low: total.min(low),
+            low,
             upper: false,
             tag: None,
         });
@@ -176,7 +191,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
             run: g.seg.run,
             running: g.seg.running,
             done_run: cmd,
-            phase: SegPhase::Recording,
+            phase: if total > 0 { SegPhase::Recording } else { SegPhase::Done },
             total,
             ..Default::default()
         };
@@ -273,4 +288,21 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
         None => clock.sleep_us(10000),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parts;
+
+    // Break it catches: a segment that does not fit below the reserved top recorded anyway (it would reach the top
+    // 1 M bursts), the upper part used without the probe's yes, more segments than both parts hold.
+    #[test]
+    fn parts_of_a_recording() {
+        assert_eq!(parts(1000, 0, true), (0, 0), "100 M / 125 M points: nothing");
+        assert_eq!(parts(6, 3, false), (3, 3));
+        assert_eq!(parts(6, 3, true), (6, 3));
+        assert_eq!(parts(10, 3, true), (6, 3));
+        assert_eq!(parts(2, 3, true), (2, 2));
+        assert_eq!(parts(0, 3, false), (1, 1), "at least one");
+    }
 }

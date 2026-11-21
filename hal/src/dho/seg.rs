@@ -169,6 +169,8 @@ pub fn probe_upper<B: Bus, R: std::io::Read, C: Clock>(
     if hz::max_record_frames(p.seg) < N {
         return Ok(false);
     }
+    // back to back: the interval of the segments (up to 10 s) would outlast the wait
+    let s = &seq::Settings { segments: s.segments.map(|g| seq::Segments { interval: 0.0, ..g }), ..s.clone() };
     let k = hz::upper_first_frame(p.seg);
     let record = |st: &mut seq::State, bar: &mut B, c2h: &mut R, clock: &mut C, first: u32| -> Result<bool, String> {
         start_at(st, s, bar, c2h, clock, first, N)?;
@@ -589,7 +591,8 @@ mod tests {
     #[test]
     fn probe_upper_tells_512_mib_from_256() {
         use crate::dho::sim::{unit, Scene, View};
-        let s = settings(10);
+        // a recording's interval of 10 s does not slow the probe
+        let s = Settings { segments: Some(Segments { n: 10, interval: 10.0 }), ..settings(10) };
         for (upper, period, want) in [(true, Some(MS), true), (false, Some(MS), false), (true, None, false)] {
             let mut st = State::handover(1, None);
             let p = st.configure(&s, None, None).unwrap().1;

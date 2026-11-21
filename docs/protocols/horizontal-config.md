@@ -205,6 +205,8 @@ System info shows whether it is in use ("Optional memory").
   - below 256 MiB: frames 0 .. `hz::max_record_frames(seg)` - 1;
   - from burst 16,777,216: ring index `hz::upper_first_frame(seg)` on, the same number of frames, with the top 1 M
     bursts of 512 MiB kept free as well. That they need it is **assumed**; 480..512 MiB was not tried.
+  - A segment of 16,777,216 bursts (100 M and 125 M points) fits in neither part: OOS records no hardware segments of
+    that size (the menu offers none).
 - The upper part is a second record arm (`scu::record_arm_at`, `State::record_steps_at`) once the lower part is
   complete. **Verified on the unit**: the arm starts the first-trigger stamp (0x40c0) again even without its clear, so
   OOS reads it when the lower part is complete and the segment times count from there. The few ms of the poll and the
@@ -213,7 +215,8 @@ System info shows whether it is in use ("Optional memory").
   play; its latch (0x40b0) is its own. The times use the latch only.
 - OOS uses the upper part only for a segment size the unit has shown to hold there (`seg::probe_upper`, once per
   segment size and run of oos-ui):
-  - three frames from index 0, then three from `upper_first_frame`, each forced when no trigger comes;
+  - three frames from index 0, then three from `upper_first_frame`, back to back (without the recording's interval) and
+    each forced when no trigger comes;
   - then the headers of frames 1 and 2 again: they must differ from each other (the play reads the frame asked for)
     and be unchanged by the upper frames.
   This also covers a frame index the FPGA might not hold.
