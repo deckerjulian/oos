@@ -263,14 +263,14 @@ impl Ui {
         if self.m.fit_platform() {
             self.mark_changed();
         }
-        if let WaveId::Ch(c) = self.meas_src {
+        if let WaveId::Ch(c) = self.sources.a {
             if c >= n_ch() {
-                self.meas_src = WaveId::Ch(0);
+                self.sources.a = WaveId::Ch(0);
             }
         }
-        if let WaveId::Ch(c) = self.meas_src_b {
+        if let WaveId::Ch(c) = self.sources.b {
             if c >= n_ch() {
-                self.meas_src_b = WaveId::Ch(0);
+                self.sources.b = WaveId::Ch(0);
             }
         }
         if self.ref_page.src >= n_ch() {

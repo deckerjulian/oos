@@ -734,12 +734,9 @@ pub struct Ui {
     pub src: Source,
     pub ph: Phosphor,
     pub phz: Phosphor,
-    area: Rect,
-    /// plot rectangle (10 x 8 div) of the current layout
-    grid: Rect,
     /// the zoom window: its vertical magnification, the time base it opened on, how it was closed (plot_layout.rs)
     zoom_view: plot_layout::ZoomView,
-    /// the waveform windows in the plot, the one being drawn, the pass of the second picture (plot_layout.rs)
+    /// the plot's rectangles, its waveform windows, the one being drawn, the pass of the second picture (plot_layout.rs)
     plot: plot_layout::Plot,
     /// Full density on the panel, and whether the expand button asked for it (windows.rs)
     full: windows::Full,
@@ -754,7 +751,8 @@ pub struct Ui {
     /// the open picker (menu == MenuId::Pick)
     pick: Option<Pick>,
     focus: usize,
-    meas_src: WaveId,
+    /// the sources the measurements are added for: A, and B of delay and phase (analysis/measure.rs)
+    sources: analysis::Sources,
     last: [Option<Record>; 1],
     stats: [Stats; NCH],
     /// history playback: the last acquired records and the one viewed (records.rs)
@@ -828,8 +826,6 @@ pub struct Ui {
     refs: [Option<RefWave>; NREF],
     cnt: tools::Counter,
     dvm: tools::Dvm,
-    /// source B of delay and phase
-    meas_src_b: WaveId,
     /// the reference the Slot rows work on
     ref_sel: usize,
     /// the Reference page: the channel Save copies, the files the Import picker shows (tools/refs.rs)

@@ -98,7 +98,7 @@ impl Ui {
     }
 
     fn draw_power(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let mut l = vec![format!(
             "Power  V = {}  I = {}  ({:?})",
             self.wave_name(self.m.pw_v),
@@ -148,7 +148,7 @@ impl super::analysers::Analyser for SpectrumPage {
     }
 
     fn draw(&self, ui: &Ui, cv: &mut Canvas) {
-        ui.draw_spectrum(cv, ui.area, false);
+        ui.draw_spectrum(cv, ui.plot.area, false);
     }
 }
 

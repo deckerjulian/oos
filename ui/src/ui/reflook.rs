@@ -147,7 +147,7 @@ impl Ui {
         if !self.waves_on() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         if g.w < 200 || g.h < 80 {
             return None;
         }
@@ -830,7 +830,7 @@ mod tests {
         put(&mut u, 1, square(3.0), true);
         u.m.meas.clear();
         u.meas_own.rows.clear();
-        u.meas_src = WaveId::Ref(0);
+        u.sources.a = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Vpp));
         u.set_look(RefLook::Waves);
         assert_eq!(u.look, RefLook::Waves);
@@ -917,9 +917,9 @@ mod tests {
         put(&mut u, 1, edge(), true);
         u.m.meas.clear();
         u.meas_own.rows.clear();
-        u.meas_src = WaveId::Ref(0);
+        u.sources.a = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Rise));
-        u.meas_src = WaveId::Ref(1);
+        u.sources.a = WaveId::Ref(1);
         u.activate(Item::MeasAdd(Meas::Rise));
         u.measure_refs();
         u.set_meas_refs(0, 0.1, 0.9);

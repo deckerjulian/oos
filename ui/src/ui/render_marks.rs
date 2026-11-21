@@ -67,7 +67,7 @@ impl Ui {
     }
 
     pub(super) fn draw_refs(&self, cv: &mut Canvas) {
-        self.draw_refs_at(cv, self.area, self.view(), false);
+        self.draw_refs_at(cv, self.plot.area, self.view(), false);
     }
 
     pub(super) fn draw_refs_at(&self, cv: &mut Canvas, area: Rect, view: (f32, f32), all_sources: bool) {
@@ -155,8 +155,8 @@ impl Ui {
         let Some(rec) = &self.last[0] else { return };
         let (a, b) = (&rec.ch[0], &rec.ch[1]);
         let f = self.fonts();
-        let side = self.area.h;
-        let sq = Rect::new(self.area.x + (self.area.w - side) / 2, self.area.y, side, side);
+        let side = self.plot.area.h;
+        let sq = Rect::new(self.plot.area.x + (self.plot.area.w - side) / 2, self.plot.area.y, side, side);
         cv.fill(sq, rgb(0x04, 0x04, 0x08));
         cv.rect(sq, GRID_AXIS);
         cv.vline(sq.x + side / 2, sq.y, sq.y + side - 1, GRID_LINE);
@@ -185,7 +185,7 @@ impl Ui {
 
     pub(super) fn draw_markers(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         // channel ground markers at the left edge of the grid
         for c in 0..NCH {
             if !self.m.ch[c].on || !self.shows(c) {
@@ -313,7 +313,7 @@ impl Ui {
             return;
         }
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         cv.set_clip(a);
         let tagbox = |cv: &mut Canvas, x: i32, y: i32, s: &str| {
             let r = Rect::new(x, y, f.s.width(s) + 8, 14);
@@ -383,7 +383,7 @@ impl Ui {
             }
             None => return Vec::new(),
         };
-        let area = self.source_area(source).unwrap_or(self.area);
+        let area = self.source_area(source).unwrap_or(self.plot.area);
         match self.m.cursor {
             CursorMode::Off => Vec::new(),
             CursorMode::Xy => {
@@ -444,7 +444,7 @@ impl Ui {
             return;
         }
         let f = self.fonts();
-        let g = self.grid;
+        let g = self.plot.grid;
         let y = g.y + 14;
         // only what makes the picture something else than a live measurement; the rates are on System info
         let record_caption = self.record_caption();
@@ -533,7 +533,7 @@ impl Ui {
         if !self.search_on {
             return;
         }
-        let a = self.area;
+        let a = self.plot.area;
         let events = self.search_events();
         let (scale, delay) = self.view();
         let left = delay as f64 - scale as f64 * HDIV as f64 * 0.5;

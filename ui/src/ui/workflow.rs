@@ -134,7 +134,7 @@ mod import_measurement_tests {
         assert_eq!((ui.m.meas.clone(), ui.m.meas2.clone()), expected);
         assert!(ui.m.meas_full_record && ui.m.meas_labels);
         assert_eq!((ui.m.meas_lpct, ui.m.meas_hpct), (0.2, 0.8));
-        assert_eq!(ui.meas_src, WaveId::Ref(2), "new source is selected without replacing existing readouts");
+        assert_eq!(ui.sources.a, WaveId::Ref(2), "new source is selected without replacing existing readouts");
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
             })
             .collect();
         u.refs[0] = Some(RefWave { label: "Test record".into(), vpd: 0.5, ..RefWave::test(values, 1e-9, 0.0) });
-        u.meas_src = WaveId::Ref(0);
+        u.sources.a = WaveId::Ref(0);
         u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         u.m.run = RunState::Stop;
         u
@@ -902,7 +902,7 @@ impl Ui {
         if reference_session {
             self.clear_measurement_statistics();
         }
-        self.meas_src = WaveId::Ref(first);
+        self.sources.a = WaveId::Ref(first);
         if self.look == reflook::RefLook::TakeOver {
             self.solo_reference(first);
         }
@@ -975,7 +975,7 @@ impl Ui {
         if note.is_empty() || self.view_on() || self.eye_open() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         Some(Rect::new(g.x + 8, g.y + g.h - 48, 52, 22))
     }
 

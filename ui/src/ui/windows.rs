@@ -211,7 +211,7 @@ mod tests {
             u.m.win_layout = l;
             render(&mut u);
             assert_eq!(u.plot.wins.len(), l.count(), "{:?}", l);
-            let g = u.grid;
+            let g = u.plot.grid;
             for (i, a) in u.plot.wins.iter().enumerate() {
                 assert_eq!((a.w, a.h), (u.plot.wins[0].w, u.plot.wins[0].h), "{:?}", l);
                 assert!(
@@ -253,7 +253,7 @@ mod tests {
         u.select_option(Item::WinLayout, "Scope");
         render(&mut u);
         assert_eq!(u.plot.wins.len(), 1);
-        assert!((0..n_ch()).all(|c| u.ch_area(c) == u.area));
+        assert!((0..n_ch()).all(|c| u.ch_area(c) == u.plot.area));
     }
 
     #[test]
@@ -291,13 +291,13 @@ mod tests {
         // mirror: the panel is the picture, so Full gives it the bars
         u.select_option(Item::Hdmi, "Mirror");
         render(&mut u);
-        let normal = u.grid;
+        let normal = u.plot.grid;
         let (_, hit) = u.full_btn();
         u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
         assert_eq!(u.m.density, Density::Full);
         assert!(u.full.on);
         render(&mut u);
-        assert!(u.grid.y < normal.y && u.grid.h > normal.h, "{:?} {:?}", u.grid, normal);
+        assert!(u.plot.grid.y < normal.y && u.plot.grid.h > normal.h, "{:?} {:?}", u.plot.grid, normal);
         // the cards are gone: a tap where CH1's card was opens nothing
         let (chs, _, _) = u.cards();
         u.tap(chs[0].x + 5, chs[0].y + 5);
@@ -307,13 +307,13 @@ mod tests {
         assert_eq!(u.m.density, Density::Scope);
         assert!(!u.full.on);
         render(&mut u);
-        assert_eq!(u.grid, normal);
+        assert_eq!(u.plot.grid, normal);
         // the touch lock needs the Menu button: no full screen while it is on
         u.m.density = Density::Full;
         u.sync_full();
         u.m.touch_lock = true;
         render(&mut u);
-        assert_eq!(u.grid, normal);
+        assert_eq!(u.plot.grid, normal);
     }
 
     #[test]
@@ -331,19 +331,19 @@ mod tests {
             render(u);
         };
         render(&mut u);
-        let normal = u.grid;
+        let normal = u.plot.grid;
         press(&mut u);
-        assert!(u.full.on && u.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.grid, normal);
+        assert!(u.full.on && u.plot.grid.h > normal.h, "Full must enlarge the plot: {:?} {:?}", u.plot.grid, normal);
         press(&mut u);
-        assert_eq!((u.m.density, u.full.on, u.grid), (Density::Scope, false, normal));
+        assert_eq!((u.m.density, u.full.on, u.plot.grid), (Density::Scope, false, normal));
         // a display attached while Full: the panel keeps its bars, the external display shows the waveform
         press(&mut u);
         u.set_hdmi_present(true);
         render(&mut u);
-        assert!(!u.full.on && u.grid == normal);
+        assert!(!u.full.on && u.plot.grid == normal);
         u.set_hdmi_present(false);
         render(&mut u);
-        assert!(u.full.on && u.grid.h > normal.h);
+        assert!(u.full.on && u.plot.grid.h > normal.h);
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod tests {
             u.set_hdmi_present(true);
             u.select_option(Item::Hdmi, mode);
             render(&mut u);
-            let normal = u.grid;
+            let normal = u.plot.grid;
             let tap = |u: &mut Ui| {
                 let (_, hit) = u.full_btn();
                 u.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
@@ -362,17 +362,17 @@ mod tests {
             };
             tap(&mut u);
             assert!(
-                u.full.on && u.grid.h > normal.h,
+                u.full.on && u.plot.grid.h > normal.h,
                 "{mode}: the tap must enlarge the panel: {:?} {:?}",
-                u.grid,
+                u.plot.grid,
                 normal
             );
             tap(&mut u);
-            assert_eq!((u.m.density, u.full.on, u.grid), (Density::Scope, false, normal), "{mode}");
+            assert_eq!((u.m.density, u.full.on, u.plot.grid), (Density::Scope, false, normal), "{mode}");
             // Full chosen under Density keeps the panel's bars: the external display has the waveform
             u.select_option(Item::WinLayout, "Full");
             render(&mut u);
-            assert!(u.m.density == Density::Full && !u.full.on && u.grid == normal, "{mode}");
+            assert!(u.m.density == Density::Full && !u.full.on && u.plot.grid == normal, "{mode}");
             // and a display plugged in after a tap takes the waveform back
             u.select_option(Item::WinLayout, "Scope");
             tap(&mut u);
@@ -380,7 +380,7 @@ mod tests {
             u.set_hdmi_present(false);
             u.set_hdmi_present(true);
             render(&mut u);
-            assert!(!u.full.on && u.grid == normal, "{mode}");
+            assert!(!u.full.on && u.plot.grid == normal, "{mode}");
         }
     }
 
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(u.options(Item::WinLayout), vec!["Scope", "Full", "Split", "Four"]);
         u.select_option(Item::WinLayout, "Full");
         render(&mut u);
-        assert!(u.full.on && u.plot.wins.len() == 1 && u.grid.y == 0);
+        assert!(u.full.on && u.plot.wins.len() == 1 && u.plot.grid.y == 0);
         u.select_option(Item::WinLayout, "Split");
         render(&mut u);
         assert!(
@@ -491,20 +491,20 @@ mod tests {
         u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
         u.results.on = true;
         render(&mut u);
-        let normal = u.grid;
+        let normal = u.plot.grid;
         u.set_hdmi_present(true);
         u.hdmi.snap_want = true;
         u.select_option(Item::WinLayout, "Full");
         let mut cv = Canvas::new(W, H);
         u.render(&mut cv);
         assert_eq!(u.m.density, Density::Full);
-        assert!(!u.full.on && u.grid == normal, "the panel stays the controls");
+        assert!(!u.full.on && u.plot.grid == normal, "the panel stays the controls");
         u.select_option(Item::Hdmi, "Mirror");
         u.render(&mut cv);
-        assert!(u.full.on && u.grid.y == 0, "mirror shows Full on the panel");
+        assert!(u.full.on && u.plot.grid.y == 0, "mirror shows Full on the panel");
         u.select_option(Item::Hdmi, "Waveform");
         u.render(&mut cv);
-        assert!(!u.full.on && u.grid == normal, "waveform gives the panel its bars back");
+        assert!(!u.full.on && u.plot.grid == normal, "waveform gives the panel its bars back");
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;

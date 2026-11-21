@@ -281,7 +281,7 @@ fn sim_play_loads_the_preset_into_the_slot() {
     assert!((u.m.eye_rate - 16e9).abs() < 1.0);
     assert!(u.m.ch[0].on, "SIM is a reference and does not switch the analog channels off");
     assert!(u.last[0].is_none());
-    assert_eq!(u.meas_src, WaveId::Ref(2));
+    assert_eq!(u.sources.a, WaveId::Ref(2));
     assert!(u.m.zoom);
     // The overview fits the complete SSC period; zoom retains the bit scale.
     let record_span = r.v.len() as f64 * r.dt;

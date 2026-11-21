@@ -749,7 +749,7 @@ impl Ui {
 
     /// Gain (top) and phase (bottom) over log frequency.
     pub(super) fn draw_bode(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let f = self.fonts();
         let (f0, f1) = (self.m.bode_start.ln(), self.m.bode_stop.ln());
         let x_of = |hz: f64| a.x + ((hz.ln() - f0) / (f1 - f0) * a.w as f64).round() as i32;

@@ -501,12 +501,12 @@ impl Ui {
         match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => {
-                let cur = self.meas_src;
-                self.meas_src = self.step_wave(cur, d);
+                let cur = self.sources.a;
+                self.sources.a = self.step_wave(cur, d);
             }
             Item::MeasSrcB => {
-                let cur = self.meas_src_b;
-                self.meas_src_b = self.step_wave(cur, d);
+                let cur = self.sources.b;
+                self.sources.b = self.step_wave(cur, d);
             }
             // Track cursor B on its own source (follows cursor A's until set)
             Item::CurSrcB => {
@@ -930,7 +930,7 @@ impl Ui {
             }
             Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
             Item::MeasAdd(k) => {
-                let e = (k, self.meas_src);
+                let e = (k, self.sources.a);
                 if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                     self.m.meas.remove(index);
                     self.meas_own.rows.remove(&e);
@@ -943,7 +943,7 @@ impl Ui {
                     self.toast(&format!(
                         "{} {} removed",
                         meascatalog::meas_long_name(k),
-                        self.wave_name(self.meas_src)
+                        self.wave_name(self.sources.a)
                     ));
                     return true;
                 } else {
@@ -954,7 +954,7 @@ impl Ui {
                     self.clear_measurement_statistics();
                 }
                 if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
-                    if let Some((a, _)) = self.meas_analysis(self.meas_src) {
+                    if let Some((a, _)) = self.meas_analysis(self.sources.a) {
                         let p = a.period();
                         if p.is_finite() && p > 0.0 {
                             self.m.meas_idle = p;
@@ -962,7 +962,7 @@ impl Ui {
                     }
                 }
                 self.ensure_meas_own();
-                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
+                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.sources.a)));
             }
             Item::MeasPair(k) => self.meas_pair_toggle(k),
             Item::CntClear => self.counter_clear(),

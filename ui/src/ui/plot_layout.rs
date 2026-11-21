@@ -18,15 +18,25 @@ pub(super) struct ZoomBox {
     pub map: Option<(Rect, f32, f32)>,
 }
 
-/// The windows of the plot as the layout made them (ADR 0062).
-#[derive(Default)]
+/// The rectangles and windows of the plot as the layout made them (ADR 0062).
 pub(super) struct Plot {
+    /// the plot's area on the screen
+    pub area: Rect,
+    /// plot rectangle (10 x 8 div) of the current layout
+    pub grid: Rect,
     /// the waveform windows in the plot (one: the plot itself); `area` is the first while nothing else is drawn
     pub wins: Vec<Rect>,
     /// the window being drawn
     pub cur_win: usize,
     /// `render_view` is drawing the second picture: the layout must not touch the phosphor maps
     pub view_pass: bool,
+}
+
+impl Default for Plot {
+    fn default() -> Self {
+        let none = Rect::new(0, 0, 0, 0);
+        Plot { area: none, grid: none, wins: Vec::new(), cur_win: 0, view_pass: false }
+    }
 }
 
 /// The zoom window's display (ADR 0062).
@@ -180,7 +190,7 @@ impl Ui {
     /// Where the eye page itself is drawn: under the placement bar, on the whole plot or in the pane.
     pub(super) fn eye_page_rect(&self) -> Rect {
         if !self.eye_open() {
-            return self.area;
+            return self.plot.area;
         }
         let a = self.eye_pane_rect();
         const BAR: i32 = workspace::HEADER;
@@ -299,9 +309,9 @@ impl Ui {
     /// The rectangle channel `c` is drawn in: its window, or the main waveform area (zoom).
     pub(super) fn ch_area(&self, c: usize) -> Rect {
         if self.plot.wins.len() > 1 {
-            self.plot.wins.get(self.win_of(c)).copied().unwrap_or(self.area)
+            self.plot.wins.get(self.win_of(c)).copied().unwrap_or(self.plot.area)
         } else {
-            self.area
+            self.plot.area
         }
     }
 
@@ -315,7 +325,7 @@ impl Ui {
         if self.plot.wins.len() > 1 {
             self.plot.wins[self.la_win_of()]
         } else {
-            self.area
+            self.plot.area
         }
     }
 
@@ -343,9 +353,9 @@ impl Ui {
     /// Area for cards over the plot (tables, results): the whole plot when it is split.
     pub(super) fn over_area(&self) -> Rect {
         if self.plot.wins.len() > 1 {
-            self.grid
+            self.plot.grid
         } else {
-            self.area
+            self.plot.area
         }
     }
 
@@ -385,7 +395,7 @@ impl Ui {
 
     /// The expand button at the top right of the plot: (drawn, touch area). It is a tap target only; it does not move.
     pub(super) fn full_btn(&self) -> (Rect, Rect) {
-        let g = self.grid;
+        let g = self.plot.grid;
         // left of the view button while an analysis view has the plot
         let right = if self.view_on() { self.view_btn().x - 6 } else { g.x + g.w - 4 };
         let r = Rect::new(right - 36, g.y + 3, 36, 28);
@@ -424,7 +434,7 @@ impl Ui {
     /// overview is too low for it, and it moves to the top of the zoomed view, under the zoom bar.
     pub(super) fn win_btn(&self) -> (Rect, Rect) {
         let (r, hit) = Self::below_btn(self.zoom_btn());
-        let top = if self.m.zoom && !self.view_on() { Self::split_zoom(self.grid).1.y + 3 } else { r.y };
+        let top = if self.m.zoom && !self.view_on() { Self::split_zoom(self.plot.grid).1.y + 3 } else { r.y };
         let dy = top.max(r.y) - r.y;
         (Rect::new(r.x, r.y + dy, r.w, r.h), Rect::new(hit.x, hit.y + dy, hit.w, hit.h))
     }
@@ -483,7 +493,7 @@ impl Ui {
         if w < 2 && h < 2 {
             return;
         }
-        cv.set_clip(self.zoom_box.map.map_or(self.grid, |map| map.0));
+        cv.set_clip(self.zoom_box.map.map_or(self.plot.grid, |map| map.0));
         cv.rect(Rect::new(x0.min(x1), y0.min(y1), w.max(1), h.max(1)), ACCENT);
         cv.no_clip();
     }
@@ -494,7 +504,7 @@ impl Ui {
             return None;
         }
         if self.m.zoom {
-            let (o, z) = Self::split_zoom(self.grid);
+            let (o, z) = Self::split_zoom(self.plot.grid);
             if o.contains(x, y) {
                 return Some((o, self.m.time_per_div(), self.m.delay));
             }
@@ -504,8 +514,8 @@ impl Ui {
             }
             return None;
         }
-        if self.area.w > 0 && self.area.contains(x, y) {
-            Some((self.area, self.m.time_per_div(), self.m.delay))
+        if self.plot.area.w > 0 && self.plot.area.contains(x, y) {
+            Some((self.plot.area, self.m.time_per_div(), self.m.delay))
         } else {
             None
         }
@@ -525,7 +535,7 @@ impl Ui {
     }
 
     pub(super) fn zoom_vertical_transform(&self, area: Rect) -> (f32, f32) {
-        let detail = Self::split_zoom(self.grid).1;
+        let detail = Self::split_zoom(self.plot.grid).1;
         if self.m.zoom && !self.view_on() && area.y >= detail.y && area.y < detail.y + detail.h {
             (self.zoom_view.vfactor, self.zoom_view.vcenter)
         } else {
@@ -593,7 +603,7 @@ impl Ui {
             || self.power.open
             || self.m.touch_lock
             || self.view_on()
-            || !self.grid.contains(x, y)
+            || !self.plot.grid.contains(x, y)
         {
             return false;
         }
@@ -601,7 +611,7 @@ impl Ui {
         // the lane of the zoomed window the wheel is over
         let detail_lane = lane.filter(|_| self.m.zoom);
         let detail = detail_lane.is_some();
-        if self.m.zoom && lane.is_none() && !Self::split_zoom(self.grid).0.contains(x, y) {
+        if self.m.zoom && lane.is_none() && !Self::split_zoom(self.plot.grid).0.contains(x, y) {
             return false;
         }
         let source = if self.stacked() { lane.and_then(|lane| self.trace_sources().get(lane).copied()) } else { None };
@@ -616,9 +626,9 @@ impl Ui {
             let area = if let Some(l) = detail_lane {
                 self.plot.wins[l]
             } else if self.m.zoom {
-                Self::split_zoom(self.grid).0
+                Self::split_zoom(self.plot.grid).0
             } else {
-                lane.map(|index| self.plot.wins[index]).unwrap_or(self.area)
+                lane.map(|index| self.plot.wins[index]).unwrap_or(self.plot.area)
             };
             let fraction = ((x - area.x) as f32 / area.w.max(1) as f32).clamp(0.0, 1.0);
             for _ in 0..steps.unsigned_abs() {
@@ -683,7 +693,7 @@ impl Ui {
 
     /// The strip between the overview and the zoomed view.
     pub(super) fn zoom_readout(&self) -> Rect {
-        let (o, z) = Self::split_zoom(self.grid);
+        let (o, z) = Self::split_zoom(self.plot.grid);
         Rect::new(o.x, o.y + o.h, o.w, (z.y - o.y - o.h).max(1))
     }
 
@@ -695,7 +705,7 @@ impl Ui {
 
     /// The main waveform area (the zoomed view when zoom is on, the first window when the plot is split).
     pub(super) fn wave_area(&self) -> Rect {
-        self.plot.wins.first().copied().unwrap_or(self.grid)
+        self.plot.wins.first().copied().unwrap_or(self.plot.grid)
     }
 
     /// Recomputes the layout and reallocates the phosphor maps when the plot size changed.
@@ -708,9 +718,9 @@ impl Ui {
         let w0 = wins[0];
         if self.plot.view_pass {
             // the second picture (HDMI layout): rectangles of its own, the maps of the panel
-            self.grid = g;
-        } else if g != self.grid || self.zoom_view.laid_out != self.m.zoom || self.plot.wins.first() != Some(&w0) {
-            self.grid = g;
+            self.plot.grid = g;
+        } else if g != self.plot.grid || self.zoom_view.laid_out != self.m.zoom || self.plot.wins.first() != Some(&w0) {
+            self.plot.grid = g;
             self.zoom_view.laid_out = self.m.zoom;
             if self.m.zoom {
                 let (o, _) = Self::split_zoom(g);
@@ -725,7 +735,7 @@ impl Ui {
         }
         self.plot.wins = wins;
         self.plot.cur_win = 0;
-        self.area = self.wave_area();
+        self.plot.area = self.wave_area();
     }
 
     /// Time base of the main waveform area: (s/div, delay).

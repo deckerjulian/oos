@@ -509,9 +509,9 @@ impl Ui {
         let m = &self.m;
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::MeasSrc => self.wave_name(self.meas_src),
+            Item::MeasSrc => self.wave_name(self.sources.a),
             Item::MeasCopyTo => "Pick".into(),
-            Item::MeasSrcB => self.wave_name(self.meas_src_b),
+            Item::MeasSrcB => self.wave_name(self.sources.b),
             Item::CurSrcB => self.wave_name(self.cursor_b_source()),
             Item::MathExprI => {
                 if m.math_expr[m.math_sel].is_empty() {

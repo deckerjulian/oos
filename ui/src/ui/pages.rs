@@ -287,7 +287,7 @@ pub(super) const PAGES: [Page; 48] = [
     page!(MenuId::SimAdvanced, "SIM advanced", |u, _| u.sim_advanced_items(), None),
     plain(
         MenuId::MeasPair,
-        |u, _| format!("Pairs {} to {}", u.pair_source_caption(u.meas_src), u.pair_source_caption(u.meas_src_b)),
+        |u, _| format!("Pairs {} to {}", u.pair_source_caption(u.sources.a), u.pair_source_caption(u.sources.b)),
         |_, _| (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
         None,
         None,

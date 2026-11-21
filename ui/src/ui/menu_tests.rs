@@ -21,15 +21,15 @@ fn layout_plot_size_and_touch_targets() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     // default: one measurement row under the plot
-    assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 456));
+    assert_eq!((ui.plot.grid.x, ui.plot.grid.y, ui.plot.grid.w, ui.plot.grid.h), (0, 40, 1024, 456));
     ui.m.meas.clear();
     ui.relayout();
-    assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
+    assert_eq!((ui.plot.grid.w, ui.plot.grid.h), (1024, 480));
     // statistics: the results panel takes no room
     ui.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
     ui.results.on = true;
     ui.relayout();
-    assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
+    assert_eq!((ui.plot.grid.w, ui.plot.grid.h), (1024, 480));
     for (_, _, r) in ui.top_buttons() {
         assert!(ui.top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
     }
@@ -209,7 +209,7 @@ fn clear_empties_the_display_in_stop() {
     assert_eq!(ui.toast.as_ref().unwrap().0, "Display cleared");
     assert_eq!(ui.m.run, RunState::Stop);
     // no trace pixel in the plot (below the mask pill)
-    let a = ui.area;
+    let a = ui.plot.area;
     let yellow = (a.y + 60..a.y + a.h - 20)
         .flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y)))
         .filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0])

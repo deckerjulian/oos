@@ -431,7 +431,7 @@ impl Ui {
 
     /// Delay or phase `k` between the sources of the Measure page: on when it was off, off when it was on.
     pub(super) fn meas_pair_toggle(&mut self, k: usize) {
-        let e = (k, self.meas_src, self.meas_src_b);
+        let e = (k, self.sources.a, self.sources.b);
         if e.1 == e.2 {
             return self.toast("Source A and B are the same source");
         }
@@ -775,7 +775,7 @@ impl Ui {
         let Some((source, scale, offset, _)) = self.cursor_source_context() else {
             return f64::NAN;
         };
-        let area = self.source_area(source).unwrap_or(self.area);
+        let area = self.source_area(source).unwrap_or(self.plot.area);
         self.zoom_divs_at(area, frac) as f64 * scale as f64 - offset as f64
     }
 
@@ -783,7 +783,7 @@ impl Ui {
         let Some((source, scale, offset, _)) = self.cursor_source_context() else {
             return 0.5;
         };
-        let area = self.source_area(source).unwrap_or(self.area);
+        let area = self.source_area(source).unwrap_or(self.plot.area);
         let (factor, center) = self.zoom_vertical_transform(area);
         if !v.is_finite() || !scale.is_finite() || scale <= 0.0 {
             return 0.5;
@@ -794,19 +794,19 @@ impl Ui {
 
     /// The source `:MEASure:ITEM` uses when the command names none, and the second source of a pair.
     pub(crate) fn meas_source(&self) -> WaveId {
-        self.meas_src
+        self.sources.a
     }
 
     pub(crate) fn meas_source_b(&self) -> WaveId {
-        self.meas_src_b
+        self.sources.b
     }
 
     pub(crate) fn set_meas_source(&mut self, id: WaveId) {
-        self.meas_src = id;
+        self.sources.a = id;
     }
 
     pub(crate) fn set_meas_source_b(&mut self, id: WaveId) {
-        self.meas_src_b = id;
+        self.sources.b = id;
     }
 
     /// Ok(true) adds a row; Ok(false) preserves an existing row and its statistics.
@@ -1157,7 +1157,7 @@ mod ref_clear_tests {
         ui.ref_clear_all();
         assert_eq!(ui.m.meas, own, "the channel readouts stay, the reference ones go");
         assert!(ui.m.meas2.is_empty());
-        assert!(!matches!(ui.meas_src, WaveId::Ref(_)));
+        assert!(!matches!(ui.sources.a, WaveId::Ref(_)));
     }
 }
 

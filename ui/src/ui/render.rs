@@ -30,7 +30,7 @@ impl Ui {
         }
         l.under.no_clip();
         l.under.clear(BG);
-        let g = self.grid;
+        let g = self.plot.grid;
         if self.m.zoom && !self.xy {
             let (o, _) = Self::split_zoom(g);
             self.draw_grid(l.under, o);
@@ -75,19 +75,19 @@ impl Ui {
             // was drawn above; detail maps use the same lane dimensions.
             for i in 0..self.plot.wins.len() {
                 self.plot.cur_win = i;
-                self.area = self.plot.wins[i];
+                self.plot.area = self.plot.wins[i];
                 if !self.m.zoom {
                     self.draw_mask(l.under);
-                    self.traces(l, self.area, false, false);
+                    self.traces(l, self.plot.area, false, false);
                 } else {
-                    self.traces(l, self.area, true, false);
+                    self.traces(l, self.plot.area, true, false);
                 }
                 let cv = l.over();
                 self.draw_hist(cv);
                 self.draw_zones(cv);
                 if self.plot.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
-                        self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
+                        self.draw_refs_at(cv, self.waves_plot(self.plot.area), self.view(), false);
                     } else {
                         self.draw_refs(cv);
                     }
@@ -112,7 +112,7 @@ impl Ui {
                 }
             }
             self.plot.cur_win = 0;
-            self.area = self.wave_area();
+            self.plot.area = self.wave_area();
         }
         let cv = l.over();
         if self.m.zoom && !self.xy && !self.view_on() {
@@ -219,9 +219,9 @@ impl Ui {
     fn render_view_layers_as_is(&mut self, l: &mut Layers) {
         let keep = (
             self.scr,
-            self.grid,
+            self.plot.grid,
             std::mem::take(&mut self.plot.wins),
-            self.area,
+            self.plot.area,
             self.plot.cur_win,
             self.counts.frames,
             self.hdmi.snap_want,
@@ -230,8 +230,15 @@ impl Ui {
         (self.plot.view_pass, self.hdmi.snap_want) = (true, false);
         self.render_layers(l);
         self.plot.view_pass = false;
-        (self.scr, self.grid, self.plot.wins, self.area, self.plot.cur_win, self.counts.frames, self.hdmi.snap_want) =
-            keep;
+        (
+            self.scr,
+            self.plot.grid,
+            self.plot.wins,
+            self.plot.area,
+            self.plot.cur_win,
+            self.counts.frames,
+            self.hdmi.snap_want,
+        ) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid
@@ -320,7 +327,7 @@ impl Ui {
     /// keeps clear of the channel markers at the left edge.
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) {
             Some(self.m.active)
         } else {

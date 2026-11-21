@@ -485,7 +485,7 @@ impl Ui {
     }
 
     fn draw_dq(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let f = &self.fonts();
         let mut lines =
             vec![format!("{}   angle {}", if self.m.inv_volt { "voltage" } else { "current" }, self.ang_name())];
@@ -560,7 +560,7 @@ impl Ui {
     }
 
     fn draw_mech(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let mut lines = vec![format!("angle {}", self.ang_name())];
         if let Some(me) = &self.azr.mech {
             let s = &me.shaft;

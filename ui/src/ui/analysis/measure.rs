@@ -9,6 +9,14 @@ use super::*;
 
 pub(super) const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
 
+/// The sources the measurements are added for (ADR 0062).
+pub(in crate::ui) struct Sources {
+    /// the source a measurement is added for
+    pub a: WaveId,
+    /// source B of delay and phase
+    pub b: WaveId,
+}
+
 /// The measurements of the last record and of the references (ADR 0062).
 #[derive(Default)]
 pub(in crate::ui) struct Measured {

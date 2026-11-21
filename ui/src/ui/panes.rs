@@ -957,7 +957,7 @@ impl Ui {
     /// A tap on the pane, or on the sort button of the full view; true when it was used.
     pub(super) fn pane_tap(&mut self, x: i32, y: i32) -> bool {
         if self.m.view == AView::Spectrum && !self.xy && self.azr.spec.is_some() {
-            let b = self.spec_box(self.area, false);
+            let b = self.spec_box(self.plot.area, false);
             if b.sort.contains(x, y) {
                 self.sort_toggle();
                 return true;
