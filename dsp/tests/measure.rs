@@ -133,6 +133,40 @@ fn cycle_levels_of_a_sine() {
     assert!(close(a.get(Meas::CycTop), 2.0, 0.02) && close(a.get(Meas::CycBase), -1.0, 0.02));
 }
 
+// Break it catches: the cycle measurements took their cycles between rising edges only, so one and a half periods
+// that start high (a fall, a rise, a fall) gave no value, while the period and the duty cycle had one (OOS Plus, W4R).
+#[test]
+fn one_cycle_between_two_falling_edges_is_measured() {
+    let dt = 1e-6;
+    // 1 kHz, 0..1 V, 30 % duty, 1.5 periods from the middle of a high time: falls at 0.15 and 1.15 ms, a rise at 0.85
+    let v: Vec<f32> = (0..1500).map(|i| if (i + 150) % 1000 < 300 { 1.0 } else { 0.0 }).collect();
+    let a = analyze(&v, dt);
+    assert_eq!((a.get(Meas::PEdges), a.get(Meas::NEdges)), (1.0, 2.0));
+    assert!(close(a.get(Meas::Period), 1e-3, 1e-3) && close(a.get(Meas::PDuty), 30.0, 1e-2));
+    for (m, want) in [
+        (Meas::VavgCyc, 0.3),
+        (Meas::VrmsCyc, 0.3f64.sqrt()),
+        (Meas::AreaCyc, 0.3e-3),
+        (Meas::CycTop, 1.0),
+        (Meas::CycBase, 0.0),
+        (Meas::CycAmp, 1.0),
+        (Meas::CycPp, 1.0),
+        (Meas::CycMax, 1.0),
+    ] {
+        assert!(close(a.get(m), want, 1e-2), "{}: {}", m.name(), a.get(m));
+    }
+    assert_eq!(a.get(Meas::CycMin), 0.0);
+    // with two rises the cycle stays between them
+    let v: Vec<f32> = (0..1500).map(|i| if (i + 900) % 1000 < 300 { 1.0 } else { 0.0 }).collect();
+    let b = analyze(&v, dt);
+    assert_eq!(b.get(Meas::PEdges), 2.0);
+    assert!(close(b.get(Meas::VavgCyc), 0.3, 1e-2) && close(b.get(Meas::AreaCyc), 0.3e-3, 1e-2));
+    // less than a cycle (a rise and a fall) still has none
+    let v: Vec<f32> = (0..1000).map(|i| if (i + 400) % 1000 < 300 { 1.0 } else { 0.0 }).collect();
+    let c = analyze(&v, dt);
+    assert!(c.get(Meas::VavgCyc).is_nan() && c.get(Meas::CycAmp).is_nan() && c.get(Meas::PDuty).is_nan());
+}
+
 #[test]
 fn skew_setup_and_hold() {
     let dt = 1e-6;
