@@ -27,7 +27,7 @@ fn layout_plot_size_and_touch_targets() {
     assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
     // statistics: the results panel takes no room
     ui.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
-    ui.stats_on = true;
+    ui.results.on = true;
     ui.relayout();
     assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
     for (_, _, r) in ui.top_buttons() {

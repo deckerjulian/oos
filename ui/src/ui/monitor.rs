@@ -53,17 +53,17 @@ impl Ui {
     /// shows the panel's view.
     pub(super) fn with_monitor_view<R>(&mut self, f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
         let (m, xy, full) = self.monitor_view()?;
-        let stats = self.stats_on && m.meas == self.m.meas && m.meas2 == self.m.meas2;
+        let stats = self.results.on && m.meas == self.m.meas && m.meas2 == self.m.meas2;
         let j = self.m.hdmi_view - 1;
         let panel = std::mem::replace(&mut self.m, m);
         // the monitor's top bar marks its own view; the panel's notes stay on the panel
         self.m.view_cur = j;
         let toast = self.toast.take();
-        let keep = (self.xy, self.full.on, self.stats_on);
-        (self.xy, self.full.on, self.stats_on) = (xy, full, stats);
+        let keep = (self.xy, self.full.on, self.results.on);
+        (self.xy, self.full.on, self.results.on) = (xy, full, stats);
         let r = f(self);
         self.m = panel;
-        (self.xy, self.full.on, self.stats_on) = keep;
+        (self.xy, self.full.on, self.results.on) = keep;
         self.toast = toast;
         Some(r)
     }

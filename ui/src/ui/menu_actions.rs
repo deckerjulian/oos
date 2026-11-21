@@ -620,7 +620,7 @@ impl Ui {
                 m.math_scale = step_index(m.math_scale, n, d);
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
-            Item::MeasStats => self.stats_on = !self.stats_on,
+            Item::MeasStats => self.results.on = !self.results.on,
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
             Item::StripDock => {
                 let all = StripDock::ALL;

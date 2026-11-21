@@ -489,7 +489,7 @@ mod tests {
         assert!(u.win_items().contains(&Item::Hdmi));
         assert_eq!(u.value(Item::Hdmi), "Waveform");
         u.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
-        u.stats_on = true;
+        u.results.on = true;
         render(&mut u);
         let normal = u.grid;
         u.set_hdmi_present(true);
@@ -682,7 +682,7 @@ mod tests {
         u.close_menu();
         u.m.win_layout = WinLayout::One;
         u.spread_wins();
-        u.stats_on = true;
+        u.results.on = true;
         u.full.on = false;
         for _ in 0..12 {
             u.step(0.05);

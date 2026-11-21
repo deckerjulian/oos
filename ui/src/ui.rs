@@ -819,9 +819,8 @@ pub struct Ui {
     pn: panes::PaneState,
     log: logger::Logger,
     single_armed: bool,
-    stats_on: bool,
-    /// measurement results overlay folded to its header
-    results_min: bool,
+    /// the statistics panel of the measurements: shown, folded to its header (strip.rs)
+    results: strip::Results,
     /// Eye page: its right column, sliding, and the plot that fills the chart area (eyepage.rs)
     eye_col: eyepage::Column,
     /// Clear pressed: the screen stays empty (also in STOP) until the next record

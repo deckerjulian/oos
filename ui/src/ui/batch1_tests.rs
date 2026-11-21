@@ -29,7 +29,7 @@ fn many_measurements(u: &mut Ui) {
 #[test]
 fn every_dock_choice_docks_the_card_again_also_the_one_already_selected() {
     let mut u = fresh();
-    u.stats_on = true;
+    u.results.on = true;
     u.relayout();
     for dock in [StripDock::Under, StripDock::Right] {
         u.m.strip_dock = dock;
@@ -63,7 +63,7 @@ fn a_card_under_the_plot_pages_many_rows_at_once() {
     for dock in [StripDock::Under, StripDock::Above] {
         let mut u = fresh();
         many_measurements(&mut u);
-        u.stats_on = true;
+        u.results.on = true;
         u.workspace_action(Action::MeasureDock(dock));
         u.relayout();
         assert!(u.results_page_size() >= 6, "{dock:?}: {} rows per page", u.results_page_size());

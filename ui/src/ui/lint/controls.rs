@@ -32,7 +32,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     assert!(u.strip_rows() >= 3);
     assert!(u.grid.h >= 160);
     // the card of the statistics stays on the screen
-    u.stats_on = true;
+    u.results.on = true;
     let (_, body) = u.results_rects().unwrap();
     assert!(body.y + body.h <= PANEL_H, "{:?}", body);
 }

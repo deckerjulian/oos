@@ -856,11 +856,11 @@ impl Ui {
     }
 
     pub(crate) fn stats_shown(&self) -> bool {
-        self.stats_on
+        self.results.on
     }
 
     pub(crate) fn set_stats_shown(&mut self, on: bool) {
-        self.stats_on = on;
+        self.results.on = on;
     }
 
     /// `:MEASure:STATistic:RESet`: the history, not the rows.

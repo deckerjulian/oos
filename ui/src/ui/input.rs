@@ -364,7 +364,7 @@ impl Ui {
         self.meas_own.rows.clear();
         self.meas_own.dialog = None;
         self.ensure_meas_own();
-        self.stats_on = false;
+        self.results.on = false;
         self.xy = false;
         self.mask_sw.forget();
         self.close_menu();
@@ -1292,7 +1292,7 @@ impl Ui {
             // no top bar and no cards: only what is over the plot
             if let Some((h, _)) = self.results_rects() {
                 if Rect::new(h.x, h.y - 5, h.w, h.h + 10).contains(x, y) {
-                    self.results_min = !self.results_min;
+                    self.results.folded = !self.results.folded;
                     return;
                 }
             }
@@ -1353,7 +1353,7 @@ impl Ui {
         // header of the results overlay (40 px touch area): fold / unfold
         if let Some((h, _)) = self.results_rects() {
             if Rect::new(h.x, h.y - 5, h.w, h.h + 10).contains(x, y) {
-                self.results_min = !self.results_min;
+                self.results.folded = !self.results.folded;
                 return;
             }
         }

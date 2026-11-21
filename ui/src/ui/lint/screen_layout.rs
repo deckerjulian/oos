@@ -256,7 +256,7 @@ fn screen_in_order_on(scr: Screen) {
         u.render(&mut cv);
         // the statistics card stays in the plot (with as many items as the strip shows on one row each)
         let all = std::mem::replace(&mut u.m.meas, ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect());
-        u.stats_on = true;
+        u.results.on = true;
         u.relayout();
         let (head, body) = u.results_rects().unwrap();
         assert!(
@@ -267,7 +267,7 @@ fn screen_in_order_on(scr: Screen) {
             ts
         );
         u.render(&mut cv);
-        (u.stats_on, u.m.meas) = (false, all);
+        (u.results.on, u.m.meas) = (false, all);
         // the cards in every mix of channels, LA and generator, with long texts
         for c in 0..NCH {
             (u.m.ch[c].offset, u.m.ch[c].probe, u.m.ch[c].invert) = (-12.5, 100.0, true);

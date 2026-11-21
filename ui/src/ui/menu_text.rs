@@ -558,7 +558,7 @@ impl Ui {
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math.family.name().into(),
             Item::StoreDest => self.store_dest.name().into(),
-            Item::MeasStats => onoff(self.stats_on),
+            Item::MeasStats => onoff(self.results.on),
             Item::MeasLabels => onoff(self.m.meas_labels),
             Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => onoff(m.zoom),

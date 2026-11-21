@@ -481,7 +481,7 @@ fn close_corner_and_escape_remain_closed_with_histogram_box_and_overlapping_summ
                 ui.set_zoom(true);
                 ui.zoom_box.arm = armed;
                 let close = ui.zoom_close();
-                ui.stats_on = true;
+                ui.results.on = true;
                 ui.workspace.measure_float = Some((close.x - 10, close.y));
                 let trigger = ui.m.trigger();
                 let counters = (ui.counts.records, ui.replay.captures);

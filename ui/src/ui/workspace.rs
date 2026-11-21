@@ -173,15 +173,15 @@ mod tests {
         ui.meas_pages.readouts = 2;
         for dock in StripDock::ALL {
             ui.workspace_action(Action::MeasureDock(dock));
-            assert!(ui.stats_on && ui.results_panel());
+            assert!(ui.results.on && ui.results_panel());
             assert_eq!(ui.meas_pages.readouts, 2);
             let (header, body) = ui.results_rects().unwrap();
             assert!(header.x >= 0 && header.x + header.w <= W);
             assert!(header.y >= TOP.h && body.y + body.h <= BOTTOM.y);
         }
-        ui.results_min = true;
+        ui.results.folded = true;
         ui.workspace.measure_float = Some((W - 40, BOTTOM.y - 30));
-        ui.results_min = false;
+        ui.results.folded = false;
         let (header, body) = ui.results_rects().unwrap();
         assert!(header.x + header.w <= W && body.y + body.h <= BOTTOM.y);
         assert_eq!(Ui::results_pitch(73), 42, "statistics stay available for large selections");
@@ -293,8 +293,8 @@ mod tests {
     fn native_pointer_menu_back_and_close_win_over_overlapping_statistics_and_eye_headers() {
         for panel in [Panel::Measurements, Panel::Eye] {
             let mut ui = mixed();
-            ui.stats_on = true;
-            ui.results_min = false;
+            ui.results.on = true;
+            ui.results.folded = false;
             if panel == Panel::Eye {
                 ui.m.view = AView::Eye;
             }
@@ -321,7 +321,7 @@ mod tests {
                 assert!(unreachable || header.contains(x, y), "the test must overlap the actual background header");
                 let position = (ui.workspace.measure_float, ui.workspace.eye_float);
                 pointer_tap(&mut ui, target);
-                assert!(!ui.results_min, "Back/Close must not fold the statistics panel behind the menu");
+                assert!(!ui.results.folded, "Back/Close must not fold the statistics panel behind the menu");
                 assert_eq!((ui.workspace.measure_float, ui.workspace.eye_float), position);
                 assert!(ui.workspace.gesture.is_none());
                 if back {
@@ -351,7 +351,7 @@ mod tests {
             ui.now += 0.7;
             ui.workspace_hold_tick();
             ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
-            assert!(!ui.results_min);
+            assert!(!ui.results.folded);
             assert_eq!(ui.workspace.measure_float, position);
             assert!(ui.workspace.gesture.is_none() && ui.workspace.popup.is_none());
             if modal == 0 {
@@ -1142,15 +1142,15 @@ impl Ui {
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
                 self.workspace.measure_docked = false;
-                self.stats_on = true;
-                self.results_min = false;
+                self.results.on = true;
+                self.results.folded = false;
                 self.relayout();
             }
             Action::MeasureDock(dock) => {
                 self.workspace.measure_float = None;
                 self.workspace.measure_docked = true;
                 self.m.strip_dock = dock;
-                self.stats_on = true;
+                self.results.on = true;
                 self.relayout();
             }
         }
@@ -1319,7 +1319,7 @@ impl Ui {
                         _ => {}
                     }
                 } else if gesture.panel == Panel::Measurements {
-                    self.results_min = !self.results_min;
+                    self.results.folded = !self.results.folded;
                 } else if gesture.panel == Panel::Eye {
                     self.eye_header_tap(x, y);
                 }
@@ -1410,7 +1410,7 @@ impl Ui {
         self.workspace.eye_left = false;
         self.workspace.measure_docked = false;
         self.workspace.measure_float = None;
-        self.stats_on = false;
+        self.results.on = false;
         self.m.pane = 0;
         self.m.win_layout = WinLayout::One;
         self.m.density = if self.full_on() { Density::Full } else { Density::Scope };
