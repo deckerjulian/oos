@@ -150,23 +150,23 @@ fn live_skips_unrequested_refs_but_keeps_hidden_measurements_and_remote_facts() 
     u.return_to_live();
     assert!(!u.refs[0].as_ref().unwrap().on);
     u.measure_refs();
-    assert!(u.ref_ana[0].get(Meas::Vpp).is_nan(), "an unused hidden ref has no cached analysis");
-    assert!(!u.ref_ana_valid[0]);
+    assert!(u.measured.refs[0].get(Meas::Vpp).is_nan(), "an unused hidden ref has no cached analysis");
+    assert!(!u.measured.refs_valid[0]);
     assert!(u.meas_at(WaveId::Ref(0), Meas::Vpp) > 0.5, "direct UI measurement also analyzes on demand");
-    assert!(!u.ref_ana_valid[0], "an on-demand read must not enable repeated idle rescans");
+    assert!(!u.measured.refs_valid[0], "an on-demand read must not enable repeated idle rescans");
     assert!(u.fact_meas(Meas::Vpp, WaveId::Ref(0)) > 0.5, "explicit SCPI facts still analyze a hidden ref");
     u.m.meas.push((Meas::Vpp, WaveId::Ref(0)));
     u.measure_refs();
-    assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "a hidden measured source remains current");
+    assert!(u.measured.refs[0].get(Meas::Vpp) > 0.5, "a hidden measured source remains current");
     u.m.meas.clear();
     u.m.meas2.push((0, WaveId::Ref(0), WaveId::Ch(0)));
     u.measure_refs();
-    assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "pairs retain their hidden reference source");
+    assert!(u.measured.refs[0].get(Meas::Vpp) > 0.5, "pairs retain their hidden reference source");
     u.m.meas2.clear();
     u.set_offline(true);
     u.m.dvm_on = true;
     u.measure_refs();
-    assert!(u.ref_ana[0].get(Meas::Vpp) > 0.5, "the offline meter retains its source");
+    assert!(u.measured.refs[0].get(Meas::Vpp) > 0.5, "the offline meter retains its source");
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn sim_play_loads_the_preset_into_the_slot() {
     assert!((u.m.eye_rate - 16e9).abs() < 1.0);
     assert!(u.m.ch[0].on, "SIM is a reference and does not switch the analog channels off");
     assert!(u.last[0].is_none());
-    assert_eq!(u.meas_src, WaveId::Ref(2));
+    assert_eq!(u.sources.a, WaveId::Ref(2));
     assert!(u.m.zoom);
     // The overview fits the complete SSC period; zoom retains the bit scale.
     let record_span = r.v.len() as f64 * r.dt;

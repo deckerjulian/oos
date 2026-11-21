@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """image-manifest.py: what an image build put into the image, one line per file, to compare two builds.
 
-    tools/image-manifest.py kernel/out/base/Image boot/out/oos-dho900.dtb boot/out/initramfs.cpio.gz
+    tools/image-manifest.py kernel/out/base/Image boot/out/<OOS_IMAGE_NAME>.dtb boot/out/initramfs.cpio.gz
+
+The DTB is named after OOS_IMAGE_NAME of the board family's rootfs/board/<name>/etc/oos-board (oos-dho900 for dho).
 
 Prints `sha256  name` for the kernel, the DTB and every regular file of the initramfs (newc cpio, gzip), `-> target`
 for its links and `dev`/`dir` for the rest, with the mode, sorted by name. `etc/oos-build` is left out: it holds the

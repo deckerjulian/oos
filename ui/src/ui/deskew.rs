@@ -190,13 +190,13 @@ mod tests {
     fn auto_calibration_preserves_hidden_offsets_samples_native_metadata_and_acquisition() {
         let mut ui = stopped();
         let native = ui.refs[1].as_ref().unwrap().clone();
-        let state = (ui.m.run, ui.m.status, ui.replay.captures, ui.wfm_total, ui.m.trigger());
+        let state = (ui.m.run, ui.m.status, ui.replay.captures, ui.counts.wfm_total, ui.m.trigger());
         assert!((ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)) - 3e-9).abs() < 1e-15);
         let before = ui.reference_trigger_hits(1).unwrap();
         ui.auto_deskew();
         assert!((ui.m.deskew_ref[1] - 3e-9).abs() < 1e-15);
         assert_eq!(ui.m.deskew_ref[2], 17e-9, "a hidden nonzero calibration is retained");
-        assert_eq!((ui.m.run, ui.m.status, ui.replay.captures, ui.wfm_total, ui.m.trigger()), state);
+        assert_eq!((ui.m.run, ui.m.status, ui.replay.captures, ui.counts.wfm_total, ui.m.trigger()), state);
         let after = ui.refs[1].as_ref().unwrap();
         assert_eq!((after.t0, after.dt, &after.v), (native.t0, native.dt, &native.v));
         assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).abs() < 1e-15, "pair cache uses corrected origins");
@@ -278,7 +278,7 @@ mod tests {
         ui.m.delay = 0.0;
         ui.workspace.stacked = true;
         ui.relayout();
-        ui.cur_win = 1;
+        ui.plot.cur_win = 1;
         let a = reference(-250e-9, true).v;
         let b: Vec<f32> = (0..a.len()).map(|i| a[i.saturating_sub(3)]).collect();
         ui.last[0] = Some(Record {
@@ -297,6 +297,6 @@ mod tests {
         assert!((ui.m.deskew_ch[1] - 3e-9).abs() < 1e-15);
         assert_eq!(ui.m.deskew_ch[2], 9e-9, "disabled ADC calibration is preserved");
         assert_eq!(ui.m.run, RunState::Stop);
-        assert_eq!(ui.wfm_total, 0);
+        assert_eq!(ui.counts.wfm_total, 0);
     }
 }

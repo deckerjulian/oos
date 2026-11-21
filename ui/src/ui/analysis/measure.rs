@@ -9,6 +9,25 @@ use super::*;
 
 pub(super) const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
 
+/// The sources the measurements are added for (ADR 0062).
+pub(in crate::ui) struct Sources {
+    /// the source a measurement is added for
+    pub a: WaveId,
+    /// source B of delay and phase
+    pub b: WaveId,
+}
+
+/// The measurements of the last record and of the references (ADR 0062).
+#[derive(Default)]
+pub(in crate::ui) struct Measured {
+    /// per channel (oos-dsp), of the last record
+    pub ch: [Arc<oos_dsp::measure::Analysis>; NCH],
+    /// of each ref slot, from the stored samples (no front-end bandwidth)
+    pub refs: [Arc<oos_dsp::measure::Analysis>; NREF],
+    /// false when a hidden, unrequested reference skipped the capture-time scan
+    pub refs_valid: [bool; NREF],
+}
+
 /// A reference may keep the same allocation between accepted SIM captures.
 /// Include its revision as well as the physical gate and analysis settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -357,7 +376,7 @@ impl Ui {
                 low: self.m.meas_lpct.to_bits(),
                 high: self.m.meas_hpct.to_bits(),
                 epoch: self.workflow_epoch,
-                revision: record.raw.as_ref().map_or(self.wfm_total, |raw| raw.frame.seq),
+                revision: record.raw.as_ref().map_or(self.counts.wfm_total, |raw| raw.frame.seq),
                 full: self.m.meas_full_record,
                 basic,
                 idle: self.m.meas_idle.to_bits(),
@@ -365,7 +384,7 @@ impl Ui {
                 periods: self.m.meas_n,
                 data: self.m.meas_data,
                 conditioning: (self.m.ch[channel].coupling as u8, self.m.ch[channel].invert, self.m.ch[channel].bw),
-                capture: self.wfm_total,
+                capture: self.counts.wfm_total,
                 pairs: self.measurement_on_pairs(record, channel),
             },
             t0,
@@ -488,7 +507,7 @@ impl Ui {
             if analysis.is_none()
                 && self.m.ch[channel].on
                 && self.computing_like_last(channel)
-                && self.ana[channel].valid
+                && self.measured.ch[channel].valid
             {
                 continue;
             }
@@ -514,7 +533,7 @@ impl Ui {
                     })
                 })
                 .unwrap_or_default();
-            self.ana[channel] = analysis.unwrap_or_default();
+            self.measured.ch[channel] = analysis.unwrap_or_default();
             if !self.m.ch[channel].on {
                 *self.azr.ch_measure[channel].borrow_mut() = None;
                 self.azr.ch_measure_pending[channel].set(None);
@@ -696,8 +715,8 @@ impl Ui {
                 || self.m.meas2.iter().any(|entry| entry.1 == id || entry.2 == id)
                 || meter == Some(i);
             let analysis = requested.then(|| self.reference_measurement(i)).flatten();
-            self.ref_ana_valid[i] = analysis.is_some();
-            self.ref_ana[i] = analysis.map_or_else(Default::default, |(a, _)| a);
+            self.measured.refs_valid[i] = analysis.is_some();
+            self.measured.refs[i] = analysis.map_or_else(Default::default, |(a, _)| a);
             if self.refs[i].is_none() {
                 *self.azr.ref_measure[i].borrow_mut() = None;
             }

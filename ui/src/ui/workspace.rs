@@ -83,14 +83,14 @@ mod tests {
         ui.trace_mode(true);
         assert!(ui.stacked() && ui.m.zoom);
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.wins.len(), ui.trace_sources().len());
-        let (overview, detail) = Ui::split_zoom(ui.grid);
-        for &lane in &ui.wins {
+        assert_eq!(ui.plot.wins.len(), ui.trace_sources().len());
+        let (overview, detail) = Ui::split_zoom(ui.plot.grid);
+        for &lane in &ui.plot.wins {
             assert_eq!((lane.x, lane.w), (detail.x, detail.w));
             assert!(lane.y >= detail.y && lane.y + lane.h <= detail.y + detail.h);
             assert!(lane.h > 0 && lane.y >= overview.y + overview.h);
         }
-        assert_eq!((ui.phz.w, ui.phz.h), (ui.wins[0].w as usize, ui.wins[0].h as usize));
+        assert_eq!((ui.phz.w, ui.phz.h), (ui.plot.wins[0].w as usize, ui.plot.wins[0].h as usize));
         assert_ne!(ui.source_area(WaveId::Ref(0)), ui.source_area(WaveId::Ref(1)));
         let mut cv = Canvas::new(W, H);
         ui.render(&mut cv);
@@ -104,7 +104,7 @@ mod tests {
         ui.trace_mode(false);
         assert!(ui.m.zoom && !ui.stacked());
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.wins, vec![Ui::split_zoom(ui.grid).1]);
+        assert_eq!(ui.plot.wins, vec![Ui::split_zoom(ui.plot.grid).1]);
         ui.render(&mut cv);
     }
 
@@ -173,15 +173,15 @@ mod tests {
         ui.meas_pages.readouts = 2;
         for dock in StripDock::ALL {
             ui.workspace_action(Action::MeasureDock(dock));
-            assert!(ui.stats_on && ui.results_panel());
+            assert!(ui.results.on && ui.results_panel());
             assert_eq!(ui.meas_pages.readouts, 2);
             let (header, body) = ui.results_rects().unwrap();
             assert!(header.x >= 0 && header.x + header.w <= W);
             assert!(header.y >= TOP.h && body.y + body.h <= BOTTOM.y);
         }
-        ui.results_min = true;
+        ui.results.folded = true;
         ui.workspace.measure_float = Some((W - 40, BOTTOM.y - 30));
-        ui.results_min = false;
+        ui.results.folded = false;
         let (header, body) = ui.results_rects().unwrap();
         assert!(header.x + header.w <= W && body.y + body.h <= BOTTOM.y);
         assert_eq!(Ui::results_pitch(73), 42, "statistics stay available for large selections");
@@ -203,7 +203,7 @@ mod tests {
         let mut ui = mixed();
         ui.set_zoom(true);
         ui.trace_mode(true);
-        let lane = ui.wins[1];
+        let lane = ui.plot.wins[1];
         let (x, y) = (lane.x + lane.w / 2, lane.y + lane.h / 2);
         let before = ui.m.zdelay;
         ui.touch_ev(Phase::Down, x, y);
@@ -211,7 +211,7 @@ mod tests {
         ui.touch_ev(Phase::Up, x + 60, y);
         assert!(ui.m.zdelay < before, "detail content follows the rightward finger");
         let before = ui.m.zdelay;
-        let overview = Ui::split_zoom(ui.grid).0;
+        let overview = Ui::split_zoom(ui.plot.grid).0;
         let (x, y) = (overview.x + overview.w / 2 + 100, overview.y + 45);
         ui.touch_ev(Phase::Down, x, y);
         ui.touch_ev(Phase::Move, x + 40, y);
@@ -293,8 +293,8 @@ mod tests {
     fn native_pointer_menu_back_and_close_win_over_overlapping_statistics_and_eye_headers() {
         for panel in [Panel::Measurements, Panel::Eye] {
             let mut ui = mixed();
-            ui.stats_on = true;
-            ui.results_min = false;
+            ui.results.on = true;
+            ui.results.folded = false;
             if panel == Panel::Eye {
                 ui.m.view = AView::Eye;
             }
@@ -321,7 +321,7 @@ mod tests {
                 assert!(unreachable || header.contains(x, y), "the test must overlap the actual background header");
                 let position = (ui.workspace.measure_float, ui.workspace.eye_float);
                 pointer_tap(&mut ui, target);
-                assert!(!ui.results_min, "Back/Close must not fold the statistics panel behind the menu");
+                assert!(!ui.results.folded, "Back/Close must not fold the statistics panel behind the menu");
                 assert_eq!((ui.workspace.measure_float, ui.workspace.eye_float), position);
                 assert!(ui.workspace.gesture.is_none());
                 if back {
@@ -343,7 +343,7 @@ mod tests {
             let position = ui.workspace.measure_float;
             match modal {
                 0 => ui.dialog = Some(vec!["Modal information".into()]),
-                1 => ui.power_dlg = true,
+                1 => ui.power.open = true,
                 _ => ui.wlan.osk = Some(wlan::Osk::for_ref(0, "Reference label")),
             }
             let (x, y) = (header.x + 24, header.y + 12);
@@ -351,14 +351,14 @@ mod tests {
             ui.now += 0.7;
             ui.workspace_hold_tick();
             ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
-            assert!(!ui.results_min);
+            assert!(!ui.results.folded);
             assert_eq!(ui.workspace.measure_float, position);
             assert!(ui.workspace.gesture.is_none() && ui.workspace.popup.is_none());
             if modal == 0 {
                 assert!(ui.dialog.is_none(), "the modal receives the dismiss tap");
             }
             if modal == 1 {
-                assert!(!ui.power_dlg, "the power dialog receives its cancel tap");
+                assert!(!ui.power.open, "the power dialog receives its cancel tap");
             }
             if modal == 2 {
                 assert!(ui.wlan.osk.is_some(), "an outside keyboard tap must not reach the panel");
@@ -411,8 +411,8 @@ mod tests {
     fn pair_header_has_real_source_status_and_picker_routes_without_extra_rows() {
         let mut ui = mixed();
         ui.select_workspace_source(WaveId::Ref(1));
-        ui.meas_src = WaveId::Ref(1);
-        ui.meas_src_b = WaveId::Ch(1);
+        ui.sources.a = WaveId::Ref(1);
+        ui.sources.b = WaveId::Ch(1);
         ui.open_meas_list();
         ui.activate(Item::Open(MenuId::MeasPair));
         let dialog = ui.dlg_layout().unwrap();
@@ -428,8 +428,8 @@ mod tests {
             ui.close_picker();
             assert_eq!(ui.menu, MenuId::MeasPair);
         }
-        assert_eq!(ui.meas_src, WaveId::Ref(0));
-        assert_eq!(ui.meas_src_b, WaveId::Ref(2));
+        assert_eq!(ui.sources.a, WaveId::Ref(0));
+        assert_eq!(ui.sources.b, WaveId::Ref(2));
         assert_eq!(
             ui.selected_workspace_source(),
             Some(WaveId::Ref(1)),
@@ -507,13 +507,13 @@ mod tests {
                 ui.m.cur_d = 0.75;
                 let mut cv = Canvas::new(W, H);
                 cv.clear(BG);
-                for index in 0..ui.wins.len() {
-                    ui.cur_win = index;
-                    ui.area = ui.wins[index];
+                for index in 0..ui.plot.wins.len() {
+                    ui.plot.cur_win = index;
+                    ui.plot.area = ui.plot.wins[index];
                     ui.draw_cursors(&mut cv);
                 }
                 let selected = ui.source_area(WaveId::Ref(1)).unwrap();
-                for &area in &ui.wins {
+                for &area in &ui.plot.wins {
                     let marked = (area.y..area.y + area.h).any(|y| {
                         cv.px[(y * W + area.x) as usize..(y * W + area.x + area.w) as usize].contains(&CURSOR)
                     });
@@ -668,14 +668,14 @@ impl Ui {
             WaveId::Ch(c) => self.m.active = c,
             WaveId::Ref(i) => self.ref_sel = i,
         }
-        self.meas_src = id;
+        self.sources.a = id;
     }
     pub(super) fn workspace_source_visible_here(&self, id: WaveId) -> bool {
         match id {
             WaveId::Ch(c) => self.m.ch[c].on && self.shows(c),
             WaveId::Ref(i) => {
                 self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.on)
-                    && (!self.stacked() || self.trace_sources().get(self.cur_win) == Some(&Trace::Reference(i)))
+                    && (!self.stacked() || self.trace_sources().get(self.plot.cur_win) == Some(&Trace::Reference(i)))
             }
         }
     }
@@ -714,7 +714,7 @@ impl Ui {
     pub(super) fn draw_pair_header(&self, cv: &mut Canvas, dialog: &Dlg) {
         cv.text(&self.fonts().mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
         let targets = self.pair_header_sources(dialog);
-        for ((_, rect), id) in targets.into_iter().zip([self.meas_src, self.meas_src_b]) {
+        for ((_, rect), id) in targets.into_iter().zip([self.sources.a, self.sources.b]) {
             btn(cv, rect, BTN, BTN_BORDER);
             cv.set_clip(Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h));
             cv.text_in(
@@ -744,8 +744,8 @@ impl Ui {
     pub(super) fn source_area(&self, id: WaveId) -> Option<Rect> {
         if !self.stacked() {
             if let WaveId::Ref(i) = id {
-                if self.wins.len() > 1 {
-                    return self.wins.get(self.ref_win_of(i)).copied();
+                if self.plot.wins.len() > 1 {
+                    return self.plot.wins.get(self.ref_win_of(i)).copied();
                 }
             }
             return Some(self.wave_area());
@@ -755,11 +755,11 @@ impl Ui {
             WaveId::Ref(i) => Trace::Reference(i),
         };
         let index = self.trace_sources().iter().position(|source| *source == wanted)?;
-        self.wins.get(index).copied()
+        self.plot.wins.get(index).copied()
     }
     pub(super) fn drag_reference(&self) -> Option<usize> {
         if self.stacked() {
-            return match self.trace_sources().get(self.cur_win) {
+            return match self.trace_sources().get(self.plot.cur_win) {
                 Some(Trace::Reference(i)) => Some(*i),
                 _ => None,
             };
@@ -956,7 +956,7 @@ impl Ui {
         let width = 244;
         let height = rows.len() as i32 * 30 + 8;
         // inside the plot, so the popup never covers the bars or runs off the screen
-        let g = self.grid;
+        let g = self.plot.grid;
         let (x0, y0) = (g.x + 4, g.y.max(TOP.h));
         let rect = Rect::new(
             x.clamp(x0, (g.right() - width - 4).max(x0)),
@@ -1142,15 +1142,15 @@ impl Ui {
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
                 self.workspace.measure_docked = false;
-                self.stats_on = true;
-                self.results_min = false;
+                self.results.on = true;
+                self.results.folded = false;
                 self.relayout();
             }
             Action::MeasureDock(dock) => {
                 self.workspace.measure_float = None;
                 self.workspace.measure_docked = true;
                 self.m.strip_dock = dock;
-                self.stats_on = true;
+                self.results.on = true;
                 self.relayout();
             }
         }
@@ -1199,7 +1199,7 @@ impl Ui {
         if gesture.moved || gesture.held || self.now - gesture.at < HOLD {
             return;
         }
-        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() || self.m.touch_lock {
+        if self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() || self.m.touch_lock {
             return;
         }
         gesture.held = true;
@@ -1209,7 +1209,7 @@ impl Ui {
     pub(super) fn workspace_touch(&mut self, phase: Phase, x: i32, y: i32) -> bool {
         // Menus and dialogs own the pointer before anything behind them can
         // fold, drag or open a context menu on a panel header.
-        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             self.workspace.gesture = None;
             return false;
         }
@@ -1241,7 +1241,7 @@ impl Ui {
                     Panel::Eye
                 } else if self.results_rects().is_some_and(|(header, _)| header.contains(x, y)) {
                     Panel::Measurements
-                } else if self.grid.contains(x, y) && !self.menu_open {
+                } else if self.plot.grid.contains(x, y) && !self.menu_open {
                     Panel::Plot
                 } else {
                     return false;
@@ -1252,7 +1252,7 @@ impl Ui {
                         Some((head, body)) => Rect::new(head.x, head.y, head.w, head.h + body.h),
                         None => return false,
                     },
-                    Panel::Plot => self.grid,
+                    Panel::Plot => self.plot.grid,
                 };
                 self.workspace.gesture = Some(Gesture { panel, origin, x, y, at: self.now, moved: false, held: false });
                 panel != Panel::Plot
@@ -1319,7 +1319,7 @@ impl Ui {
                         _ => {}
                     }
                 } else if gesture.panel == Panel::Measurements {
-                    self.results_min = !self.results_min;
+                    self.results.folded = !self.results.folded;
                 } else if gesture.panel == Panel::Eye {
                     self.eye_header_tap(x, y);
                 }
@@ -1410,7 +1410,7 @@ impl Ui {
         self.workspace.eye_left = false;
         self.workspace.measure_docked = false;
         self.workspace.measure_float = None;
-        self.stats_on = false;
+        self.results.on = false;
         self.m.pane = 0;
         self.m.win_layout = WinLayout::One;
         self.m.density = if self.full_on() { Density::Full } else { Density::Scope };

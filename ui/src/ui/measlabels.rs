@@ -116,7 +116,7 @@ pub(super) fn vertical_t(v: &[f32], t0: f64, dt: f64, t_lo: f64, t_hi: f64, _lo:
 impl Ui {
     fn meas_label(&self, cv: &mut Canvas, cx: i32, y: i32, text: &str, col: Rgb) {
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let w = f.s.width(text) + 10;
         let x = (cx - w / 2).clamp(a.x + 2, a.x + a.w - w - 2);
         let h = label_h(self);
@@ -130,7 +130,7 @@ impl Ui {
         match id {
             WaveId::Ch(c) => self.y_of_volts(c, v),
             WaveId::Ref(i) => {
-                let a = self.area;
+                let a = self.plot.area;
                 let Some(r) = self.refs.get(i).and_then(|r| r.as_ref()) else {
                     return a.y + a.h / 2;
                 };
@@ -168,7 +168,7 @@ impl Ui {
     fn label_shows(&self, id: WaveId) -> bool {
         match id {
             WaveId::Ch(c) => self.m.ch.get(c).is_some_and(|ch| ch.on) && self.shows(c),
-            WaveId::Ref(i) => self.cur_win == 0 && self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.on),
+            WaveId::Ref(i) => self.plot.cur_win == 0 && self.refs.get(i).and_then(|r| r.as_ref()).is_some_and(|r| r.on),
         }
     }
 
@@ -176,7 +176,7 @@ impl Ui {
         if !self.m.meas_labels {
             return;
         }
-        let a = self.area;
+        let a = self.plot.area;
         // voltage spans sit on the first on-screen peak/trough; time spans on the edges; levels across the width
         let (mut rows, mut verts, mut levels) = (0, 0, 0);
         let (tdiv, delay) = self.view();

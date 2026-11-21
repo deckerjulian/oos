@@ -300,7 +300,7 @@ mod tests {
         let mut ui = long_capture();
         assert_eq!(ui.raw_info(0), Some((100_000, 1e-9, -50e-6)));
         assert_eq!(ui.raw_volts(0).unwrap()[88_888], 0.75);
-        let (original, captures) = (ui.raw_volts(0).unwrap(), ui.records);
+        let (original, captures) = (ui.raw_volts(0).unwrap(), ui.counts.records);
         for delay in [-48.766e-6, 38.888e-6] {
             ui.m.delay = delay;
             ui.step(0.02);
@@ -315,7 +315,7 @@ mod tests {
         ui.m.delay = 38.888e-6;
         ui.step(0.02);
         assert_eq!(ui.raw_volts(0).unwrap(), original);
-        assert_eq!(ui.records, captures);
+        assert_eq!(ui.counts.records, captures);
         assert_eq!(ui.m.run, RunState::Stop);
         let first = ui.captured_view((ui.m.time_per_div(), ui.m.delay)).unwrap();
         assert!(Arc::ptr_eq(&first, &ui.captured_view((ui.m.time_per_div(), ui.m.delay)).unwrap()));
@@ -476,12 +476,12 @@ mod tests {
         ui.key(key::SINGLE);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         for (captures, stamp) in [(1, 8), (2, 9)] {
-            while ui.records < captures {
+            while ui.counts.records < captures {
                 ui.step(0.02);
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            assert_eq!((ui.records, ui.m.run, ui.m.hw_stamp), (captures, RunState::Stop, stamp));
+            assert_eq!((ui.counts.records, ui.m.run, ui.m.hw_stamp), (captures, RunState::Stop, stamp));
             assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.stamp, stamp);
             if captures == 1 {
                 ui.key(key::SINGLE);

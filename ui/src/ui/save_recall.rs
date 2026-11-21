@@ -16,6 +16,16 @@ pub(super) struct Stick {
     pub next_look: f64,
 }
 
+/// Where files are stored, as the screen keeps it (ADR 0062).
+pub struct Files {
+    /// the storage folder (setups, CSV, PNG), created when missing
+    pub dir: std::path::PathBuf,
+    /// Auto / USB stick / desktop for waveform, mask and screenshot files
+    pub(super) dest: crate::store::StoreDest,
+    /// setup slot n = file setup<n>.txt
+    pub(super) slot: u32,
+}
+
 impl Ui {
     /// The band the external display scales when it shows the waveform: between the top bar and the cards.
     /// HDMI workspace: the waveform area as it is now (one canvas: the band between the bars; with layers: the layer
@@ -50,19 +60,19 @@ impl Ui {
 
     /// A USB stick is mounted and the storage directory was not set by hand: files go to it.
     pub fn usb_used(&self) -> bool {
-        self.stick.mounted && self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR)
+        self.stick.mounted && self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR)
     }
 
     /// Where screenshots, CSV, mask copies and fast-frame files go now.
     pub fn save_dir(&self) -> std::path::PathBuf {
-        match self.store_dest {
+        match self.files.dest {
             crate::store::StoreDest::Stick => std::path::PathBuf::from(crate::store::USB_DIR),
-            crate::store::StoreDest::Local => self.store_dir.clone(),
+            crate::store::StoreDest::Local => self.files.dir.clone(),
             crate::store::StoreDest::Auto => {
                 if self.usb_used() {
                     std::path::PathBuf::from(crate::store::USB_DIR)
                 } else {
-                    self.store_dir.clone()
+                    self.files.dir.clone()
                 }
             }
         }
@@ -70,7 +80,7 @@ impl Ui {
 
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
-        match self.store_dest {
+        match self.files.dest {
             crate::store::StoreDest::Local if self.stick.mounted => " locally, not on the stick",
             crate::store::StoreDest::Stick => " on the USB stick",
             crate::store::StoreDest::Auto if self.usb_used() => " on the USB stick",
@@ -97,7 +107,7 @@ impl Ui {
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
         if on != self.stick.mounted {
             self.stick.mounted = on;
-            if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
+            if self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
                 self.toast(if on { "USB stick ready: files are saved to it" } else { "USB stick removed" });
             }
         }
@@ -107,12 +117,12 @@ impl Ui {
     /// in RAM is not used for it when OOS's data partition is there.
     pub(super) fn setup_path(&self) -> std::path::PathBuf {
         let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
+        let dir = if self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
             keep
         } else {
-            self.store_dir.as_path()
+            self.files.dir.as_path()
         };
-        dir.join(format!("setup{}.txt", self.store_slot))
+        dir.join(format!("setup{}.txt", self.files.slot))
     }
 
     /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
@@ -186,8 +196,8 @@ impl Ui {
                 self.m.order_trigger_levels();
                 // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
                 self.bus_auto = None;
-                self.math_state.borrow_mut().forget_fit();
-                self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
+                self.math.state.borrow_mut().forget_fit();
+                self.math.family = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
                 if self.mask_sw.mask.is_none() {
                     self.m.mask_on = false;

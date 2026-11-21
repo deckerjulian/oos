@@ -34,7 +34,7 @@ impl Ui {
 
     /// The next usual measurement that is not already on the measure source.
     pub(super) fn next_usual_meas(&self) -> Option<Meas> {
-        let src = self.meas_src;
+        let src = self.sources.a;
         let on = |k: Meas| self.m.meas.iter().any(|e| e.0 == k && e.1 == src);
         Self::USUAL_MEAS.into_iter().chain(ALL_MEAS).find(|k| !on(*k))
     }
@@ -66,7 +66,7 @@ impl Ui {
             || self.m.touch_lock
             || self.full_on()
             || self.dialog.is_some()
-            || self.power_dlg
+            || self.power.open
             || self.wlan.osk.is_some()
         {
             return;
@@ -130,7 +130,7 @@ impl Ui {
                 return self.wave_names()
             }
             Item::MeasCopyTo => {
-                return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.meas_src)).collect()
+                return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.sources.a)).collect()
             }
             Item::MathA | Item::MathB => {
                 return self.math_source_ids(self.m.math_sel).into_iter().map(src_name).collect()
@@ -228,7 +228,7 @@ impl Ui {
             Item::NumEntry => return self.numpad_keys(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
-            Item::RefImport => return self.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
+            Item::RefImport => return self.ref_page.files.iter().map(|p| crate::store::file_name(p)).collect(),
             Item::QuickAct => return QUICKS.iter().map(|q| q.name().to_string()).collect(),
             Item::Overclock => return board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
             _ => &[],
@@ -315,7 +315,7 @@ impl Ui {
         }
         if it == Item::MeasCopyTo {
             if let Some(to) = self.wave_ids().into_iter().find(|&w| self.wave_name(w) == want) {
-                let from = self.meas_src;
+                let from = self.sources.a;
                 let n = self.copy_measurements(from, to);
                 self.toast(&format!(
                     "{} measurement{} copied {} -> {}",
@@ -714,9 +714,9 @@ impl Ui {
                     };
                     // orange: added measurement, current option of a picker, active state of a start menu entry
                     let on = match row.it {
-                        Item::MeasAdd(k) => self.m.meas.contains(&(k, self.meas_src)),
-                        Item::MeasPair(k) => self.m.meas2.contains(&(k, self.meas_src, self.meas_src_b)),
-                        Item::NavHist => self.hist_pos.is_some(),
+                        Item::MeasAdd(k) => self.m.meas.contains(&(k, self.sources.a)),
+                        Item::MeasPair(k) => self.m.meas2.contains(&(k, self.sources.a, self.sources.b)),
+                        Item::NavHist => self.history.pos.is_some(),
                         Item::SingleAct => self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run,
                         Item::RunStop => self.m.run == RunState::Run,
                         _ => false,
@@ -859,7 +859,7 @@ impl Ui {
         self.draw_load_slot(cv);
         let f = self.fonts();
         self.draw_osk(cv);
-        if self.power_dlg {
+        if self.power.open {
             cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
             let (r, [off, restart, cancel]) = self.pwr_layout();
             cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);

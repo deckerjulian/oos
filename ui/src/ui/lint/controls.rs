@@ -13,7 +13,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     for k in ALL_MEAS.iter().take(10) {
         u.m.meas.push((*k, WaveId::Ch(0)));
     }
-    u.meas_src_b = WaveId::Ch(1);
+    u.sources.b = WaveId::Ch(1);
     for k in 0..6 {
         u.meas_pair_toggle(k);
     }
@@ -23,16 +23,16 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     assert_eq!(rows.len(), 16);
     assert!(rows.iter().any(|r| r.name.starts_with("Delay rise-rise 1-2")));
     // the same channel twice makes no sense
-    u.meas_src_b = WaveId::Ch(0);
+    u.sources.b = WaveId::Ch(0);
     let n = u.m.meas2.len();
     u.meas_pair_toggle(7);
     assert_eq!(u.m.meas2.len(), n);
     // rows wrap in the strip, and the plot keeps its place
     u.relayout();
     assert!(u.strip_rows() >= 3);
-    assert!(u.grid.h >= 160);
+    assert!(u.plot.grid.h >= 160);
     // the card of the statistics stays on the screen
-    u.stats_on = true;
+    u.results.on = true;
     let (_, body) = u.results_rects().unwrap();
     assert!(body.y + body.h <= PANEL_H, "{:?}", body);
 }
@@ -152,7 +152,7 @@ fn ten_references() {
 fn a_mask_comes_back_from_its_file() {
     let dir = crate::ui::testkit::Scratch::new("mask");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.activate(Item::MaskCreate);
     let a = u.mask_sw.reference.clone().unwrap();
     u.activate(Item::MaskSave);
@@ -255,22 +255,22 @@ fn decoder_results_are_cached_per_record() {
     for _ in 0..4 {
         u.step(0.04);
     }
-    u.dec_cache.borrow_mut().clear();
+    u.decoded = Default::default();
     let a = u.decode_packets().unwrap();
-    assert_eq!(u.dec_cache.borrow().len(), 1);
+    assert_eq!(u.decoded.len(), 1);
     assert_eq!(u.decode_packets().unwrap(), a);
-    assert_eq!(u.dec_cache.borrow().len(), 1);
+    assert_eq!(u.decoded.len(), 1);
     // other settings, other result
     u.m.dec_bits = 7;
     let _ = u.decode_packets();
-    assert_eq!(u.dec_cache.borrow().len(), 2);
+    assert_eq!(u.decoded.len(), 2);
 }
 
 #[test]
 fn event_table_scrolls_and_goes_to_an_event() {
     let dir = crate::ui::testkit::Scratch::new("events");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.m.ch[2].on = true;
     u.m.dec_on = true;
     u.m.dec_src = 2;
@@ -284,7 +284,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // running: a tap only says so
-    let (x, y) = (u.area.x + 100, u.area.y + 8 + 40 + 40);
+    let (x, y) = (u.plot.area.x + 100, u.plot.area.y + 8 + 40 + 40);
     let d0 = u.m.delay;
     u.tap(x, y);
     assert_eq!(u.m.delay, d0);
@@ -299,8 +299,8 @@ fn event_table_scrolls_and_goes_to_an_event() {
     assert!(t.starts_with("Time (s),Source,Event,Ok") && t.lines().count() == n + 1, "{}", &t[..80.min(t.len())]);
     let _ = std::fs::remove_dir_all(&dir);
     // the close button
-    let close = u.area.x + 30 + 420 - 46 + 10;
-    u.tap(close, u.area.y + 20);
+    let close = u.plot.area.x + 30 + 420 - 46 + 10;
+    u.tap(close, u.plot.area.y + 20);
     assert!(u.table.kind.is_none());
 }
 
@@ -352,11 +352,12 @@ fn second_pane_fits_with_everything_else() {
                 u.step(0.04);
             }
             u.relayout();
-            assert!(u.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.grid);
+            assert!(u.plot.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.plot.grid);
             if u.pane_h() > 0 {
                 let r = u.pane_rect();
                 assert!(
-                    r.y > u.grid.y + u.grid.h && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
+                    r.y > u.plot.grid.y + u.plot.grid.h
+                        && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
                     "pane {} la {}: {:?}",
                     pane,
                     la,
@@ -421,7 +422,7 @@ fn random_input_on(scr: Screen) {
         MenuId::Storage,
         MenuId::Bode,
     ];
-    u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
+    u.files.dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
     for i in 0..3_000 {
         if i % 40 == 0 {
             u.open_menu(pages[next() as usize % pages.len()]);
@@ -435,14 +436,14 @@ fn random_input_on(scr: Screen) {
             u.wlan.osk = None;
         }
         u.dialog = None;
-        u.power_dlg = false;
-        u.power_action = None;
+        u.power.open = false;
+        u.power.action = None;
         if i % 200 == 0 {
             u.step(0.02);
             u.render(&mut cv);
         }
     }
-    let _ = std::fs::remove_dir_all(&u.store_dir);
+    let _ = std::fs::remove_dir_all(&u.files.dir);
 }
 
 #[test]

@@ -71,10 +71,8 @@ fi
 
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
 # the matrix of the board family (ADR 0067), checked before anything is uploaded
-board=${OOS_BOARD:-dho}
-case $board in
-*[!a-z0-9_-]* | -* | "") echo "error: OOS_BOARD='$board' is no name of a board family" >&2; exit 1 ;;
-esac
+. "$here/tools/lib/board.sh"
+board=$(oos_board "$here") || exit 1
 matrix="$here/tools/board/$board/plan-matrix.sh"
 [ -f "$matrix" ] || { echo "error: no matrix for the board family '$board' ($matrix)" >&2; exit 1; }
 run "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1"

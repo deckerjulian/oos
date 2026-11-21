@@ -20,9 +20,10 @@
 //! scan (roll-mode.md) come as chunks on the same clock (`Roll`), with the logic analyser's chunks when it is on. The
 //! hardware average (0x1004 bit 3) keeps a running average of the triggers since its clear (`Avg`). The generator's
 //! DDS block and its lines (afg.md) keep what they were told (`GenState`, the side `Gen`). The frequency counter
-//! (counter.md) counts the scene's trigger instants over its gates (`Counter`). The stamps of a
-//! segmented record are those of the head of `seg`: the latch holds the trigger of the last frame played, the
-//! first-trigger stamp that of the first frame recorded since its clear, both in ticks of 0.8 ns.
+//! (counter.md) counts the scene's trigger instants over its gates (`Counter`), the DVM block (docs/fork/dvm.md) sums
+//! the codes of a lane over its windows (`Dvm`). The stamps of a segmented record are those of the head of `seg`: the
+//! latch holds the trigger of the last frame played, the first-trigger stamp that of the first frame recorded since its
+//! clear, both in ticks of 0.8 ns.
 
 pub use crate::dho::seg::sim::{engine, Engine, SimBus, SimC2h};
 
@@ -143,6 +144,8 @@ struct Rec {
     armed_fs: i128,
     /// frames recorded so far
     n: u32,
+    /// the zone trigger did not take a trigger: the next is looked for from here (`MaskUnit`)
+    rearm_fs: Option<i128>,
 }
 
 /// The roll or scan stream (roll-mode.md 2, 5 and 9): started by the FSM run (0x4004 bit 0) while 0x4008 bit 17
@@ -325,6 +328,78 @@ struct Counter {
     words: [u32; 10],
 }
 
+/// One sample of an ADC lane at 156.25 MSa/s, the rate the DVM block and the measure unit count in (docs/fork/dvm.md,
+/// on the DHO924S: a window of 2^28 samples every 1.71 s, whatever the time base; self-cal.md 2.4).
+const CORE_SAMPLE_FS: i128 = 6_400_000;
+/// Samples of the scene the model takes per window at most, evenly spread; the sums are scaled to the window's.
+const DVM_POINTS_LOG2: u32 = 12;
+
+/// The DVM block (docs/fork/dvm.md): a write of 0x2244 that clears the restart bit (bit 0) after it was set starts
+/// windows of 2^exp samples (bits 5:1) of one lane (bits 9:8) back to back from then; exp 0 (the stop) runs none. The
+/// rising edge of 0x2248 bit 0 latches the sum and the sum of squares of the last whole window. The samples are the
+/// stored 12-bit codes of the channel on that lane (`dvm::lane`; with one channel every lane carries it): the scene's
+/// volts as the read-out codes, divided by 16 (a read-path gain of 1, which the scene's view has). Assumed: that the
+/// windows run back to back from the restart, that the latch takes the last whole one, the zeros without one, that a
+/// lane without a channel sums nothing, the low half of 0x2250 and bits 7:6 of 0x2244 as 0; and the sums are those of
+/// 2^12 samples of the window, scaled.
+#[derive(Default)]
+struct Dvm {
+    /// the start of the first window while it runs, its exp and lane
+    run: Option<(i128, u32, u32)>,
+    /// the sum and the sum of squares latched
+    sums: (u64, u64),
+}
+
+/// The mask unit's comparator and the zone logic on its sample path (docs/fork/hwmask.md, hwzone.md). The table
+/// (0x1194) and the two zone tables (0x11d8, 0x11dc) take a column's word while its write bit is set. A frame recorded
+/// while the mask test is on (0x4020 bit 15) counts as tested and, when a sample of the slot's channel (0x1190 bits
+/// 23:20, `mask::slot`) lies outside the limits of its column, as failed; with the zone trigger armed (0x4020 bit 1)
+/// a trigger is recorded only when the frame qualifies (each zone on in 0x11d0 touched, or not, as its mode says) and
+/// then counts. The samples are the read-out codes >> 8, column `i / n` for sample `i` and the strobe count `n` of
+/// 0x1184 bits 9:0. 0x1190 bit 29 and 30 clear the counters, its rising bit 28 latches them. Verified on the unit: the
+/// scale, the slots and the columns at 10k points (hwmask.md, "On the DHO924S"), the qualification (hwzone.md).
+/// Assumed: that a rejected trigger costs a whole record before the next is taken, the latch, the counters' clear.
+/// Not modelled: stop on fail, the stall of a strobe count the record does not hold, the zone's flags in 0x4030 and
+/// 0x4038 (they read what was written).
+#[derive(Default)]
+struct MaskUnit {
+    /// per column: the lower and upper limit and whether each is on
+    table: BTreeMap<u32, (u8, u8, bool, bool)>,
+    /// per zone and column in it: the lower and upper limit
+    zones: [BTreeMap<u32, (u8, u8)>; 2],
+    /// frames tested (with the zone trigger: qualified) and failed since their clear, and the two latched
+    frames: u64,
+    fails: u64,
+    latched: (u64, u64),
+}
+
+/// Samples of the scene the measure unit's model takes per run, evenly spread over it.
+const MEASURE_POINTS: i128 = 1024;
+
+/// Measure codes (16-bit scale) one step of a core's offset register moves the slot of that core by: about half an ADC
+/// step of 16 codes (docs/fork/core-offset.md, rounds 11 and 12 on the unit: 8 to 10.6 codes).
+const CORE_STEP_CODES: i32 = 9;
+/// The slot of the measure unit that shows ADC core n (core-offset.md, round 11: mode 2 on the unit; the other modes
+/// alike, assumed).
+const CORE_SLOT: [usize; 8] = [0, 2, 1, 3, 4, 6, 5, 7];
+
+/// The ADC measure unit (self-cal.md 2.4, the head of `levels`): the rising edge of 0x1040 bit 31 starts a run of 2^e
+/// samples per core (e = bits 4:0) at 156.25 MHz, bit 30 reads set once it is over. Bits 10:8 select the slot 0x1044
+/// (its mean on the 16-bit scale) and 0x1048 (its 12-bit maximum in bits 27:16, minimum in 11:0) show. A slot shows
+/// the channel `levels::slots` gives it (assumed there) over the run: the scene's read-out codes, which are those of
+/// the measure unit with a read-path gain of 1, as the scene has. 0xeeeeeeee in both before a run is over (what
+/// `levels::run` refuses). Assumed: the extremes and the mean of 1024 samples of the run. Where the test gives the
+/// cores' own offsets (`Unit::cores`), each slot is moved by its core's offset register against them,
+/// `CORE_STEP_CODES` a register step; else every core is alike.
+#[derive(Default)]
+struct Measure {
+    /// the start and the end of the last run
+    run: Option<(i128, i128)>,
+    /// the offset register of each ADC core as written through 0x1034 (adc-mode.md 2.2: `0x01000000 | (0x14 + 8n) <<
+    /// 16 | o & 0x7ff`, 11 bits signed)
+    offsets: [i32; 8],
+}
+
 /// The simulated unit. Its sides are `Bar`, `Stream`, `Time` and the generator's lines `Gen`, which share it (`unit`).
 pub struct Unit {
     pub scene: Scene,
@@ -349,6 +424,12 @@ pub struct Unit {
     avg: Avg,
     gen: GenRegs,
     counter: Counter,
+    dvm: Dvm,
+    mask: MaskUnit,
+    measure: Measure,
+    /// the value of each ADC core's offset register at which that core reads the scene as it is (its own offset, which
+    /// the stored calibration and the core trim aim at); None: every core alike, whatever is written
+    pub cores: Option<[i32; 8]>,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -374,6 +455,10 @@ impl Unit {
             avg: Avg::default(),
             gen: GenRegs::default(),
             counter: Counter::default(),
+            dvm: Dvm::default(),
+            mask: MaskUnit::default(),
+            measure: Measure::default(),
+            cores: None,
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -384,9 +469,21 @@ impl Unit {
         self.t_fs / US
     }
 
+    /// Lets `us` of virtual time pass while the code under test does not touch the unit (a test's stand-in for the
+    /// host's own work, such as decoding a batch): what was armed records on. Not a wait, so not in `slept_us`.
+    pub fn pass_us(&mut self, us: u64) {
+        self.t_fs += us as i128 * US;
+        self.advance();
+    }
+
     /// The trigger time of frame `k` of the ring, fs, when it was recorded.
     pub fn trigger_fs(&self, k: u32) -> Option<i128> {
         self.ring.get(&k).copied()
+    }
+
+    /// The ADC cores' offset registers as last written (`Measure`).
+    pub fn core_offsets(&self) -> [i32; 8] {
+        self.measure.offsets
     }
 
     /// What the generator was told so far.
@@ -432,6 +529,137 @@ impl Unit {
         self.counter.words = std::array::from_fn(|i| (w[i / 2] >> (32 * (i % 2))) as u32);
     }
 
+    /// The DVM block's sums of its last whole window, latched (`Dvm`).
+    fn dvm_latch(&mut self) {
+        self.dvm.sums = (0, 0);
+        let Some((run, exp, lane)) = self.dvm.run else { return };
+        let window = (1i128 << exp) * CORE_SAMPLE_FS;
+        let whole = (self.t_fs - run) / window;
+        let mask = self.reg(0x4008) & 0xf;
+        let one = (mask.count_ones() == 1).then(|| mask.trailing_zeros() as usize);
+        let ch = one.or_else(|| (0..4).find(|&c| crate::dho::dvm::lane(mask, c) == Some(lane)));
+        let Some(c) = ch.filter(|_| whole > 0) else { return };
+        let g0 = run + (whole - 1) * window;
+        let points = exp.min(DVM_POINTS_LOG2);
+        let (scale, offset) = self.scene.view.cal[c];
+        let (mut sum, mut sq) = (0u64, 0u64);
+        for i in 0..1i128 << points {
+            let t = g0 + (2 * i + 1) * window / (2 << points);
+            let code = (encode::code((self.scene.volts)(c, t as f64 * 1e-15), scale, offset) as u64 + 8) >> 4;
+            let code = code.min(4095);
+            (sum, sq) = (sum + code, sq + code * code);
+        }
+        self.dvm.sums = (sum << (exp - points), sq << (exp - points));
+    }
+
+    /// The channel the mask unit compares (its slot, `mask::slot`) and the strobe count; None without a slot or with
+    /// its channel not acquired (`MaskUnit`).
+    fn unit_source(&self) -> Option<(usize, usize)> {
+        let mask = self.reg(0x4008) & 0xf;
+        let slot = (self.reg(crate::dho::mask::CTRL) & crate::dho::mask::ctrl::SLOT_MASK) >> 20;
+        let slot = (slot != 0).then(|| slot.trailing_zeros())?;
+        let c = (0..4).find(|&c| crate::dho::mask::slot(mask, c) == Some(slot))?;
+        Some((c, (self.reg(crate::dho::mask::COMPRESS) & 0x3ff).max(1) as usize))
+    }
+
+    /// The 8-bit codes the mask unit compares of channel `c` in the frame triggered at `at`, from sample `from` on.
+    fn unit_codes(&self, c: usize, at: i128, from: usize, n: usize) -> Vec<u8> {
+        self.words(c, at, from as u32, n).iter().map(|&w| (w >> 8) as u8).collect()
+    }
+
+    /// Whether the zone trigger takes the trigger at `at`: each zone on touched (a sample of one of its columns within
+    /// its limits, or the trace crossing them from the sample before) when its mode asks for it, not touched else
+    /// (`MaskUnit`). True while it is not armed.
+    fn zone_takes(&self, at: i128) -> bool {
+        use crate::dho::zone::ctrl;
+        let w = self.reg(crate::dho::zone::CTRL);
+        if self.reg(0x4020) & crate::dho::zone::SCU_ENABLE == 0 || w >> ctrl::ON_SHIFT & 3 == 0 {
+            return true;
+        }
+        let Some((c, n)) = self.unit_source() else { return true };
+        let len = (self.view.pre + self.view.post) as usize;
+        (0..2).filter(|k| w >> (ctrl::ON_SHIFT + k) & 1 != 0).all(|k| {
+            let touched = self.mask.zones[k as usize].iter().any(|(&col, &(lo, hi))| {
+                let first = (col as usize * n).min(len);
+                let from = first.saturating_sub(1);
+                let codes = self.unit_codes(c, at, from, ((col as usize + 1) * n).min(len) - from);
+                let inside = codes[first - from..].iter().any(|x| (lo..=hi).contains(x));
+                inside || codes.windows(2).any(|p| (p[0] < lo && p[1] > hi) || (p[0] > hi && p[1] < lo))
+            });
+            touched == (w >> (ctrl::MODE_SHIFT + k) & 1 != 0)
+        })
+    }
+
+    /// The frame triggered at `at` through the mask test while it is on: tested, and failed when a sample lies beyond
+    /// its column's limits; else counted while the zone trigger, which took it, is armed (`MaskUnit`).
+    fn mask_test(&mut self, at: i128) {
+        if self.reg(0x4020) & crate::dho::mask::scu::ENABLE == 0 {
+            self.mask.frames += (self.reg(0x4020) & crate::dho::zone::SCU_ENABLE != 0) as u64;
+            return;
+        }
+        let Some((c, n)) = self.unit_source() else { return };
+        let codes = self.unit_codes(c, at, 0, (self.view.pre + self.view.post) as usize);
+        let fail = codes.iter().enumerate().any(|(i, &x)| {
+            self.mask.table.get(&((i / n) as u32)).is_some_and(|&(lo, hi, le, he)| (le && x < lo) || (he && x > hi))
+        });
+        self.mask.frames += 1;
+        self.mask.fails += fail as u64;
+    }
+
+    /// A write to one of the mask unit's registers (`MaskUnit`).
+    fn mask_write(&mut self, off: u32, v: u32, before: u32) {
+        use crate::dho::mask::{ctrl, table, CTRL, TABLE};
+        use crate::dho::zone::{table as ztable, TABLES};
+        if off == TABLE && v & table::WRITE != 0 {
+            let lim = (v as u8, (v >> table::HI_SHIFT) as u8, v & table::LO_EN != 0, v & table::HI_EN != 0);
+            self.mask.table.insert(v >> table::COL_SHIFT & 0x3ff, lim);
+        }
+        if let Some(k) = TABLES.iter().position(|&r| r == off).filter(|_| v & ztable::WRITE != 0) {
+            let col = v >> ztable::COL_SHIFT & 0x3ff;
+            if v & ztable::IN_ZONE != 0 {
+                self.mask.zones[k].insert(col, (v as u8, (v >> ztable::HI_SHIFT) as u8));
+            } else {
+                self.mask.zones[k].remove(&col);
+            }
+        }
+        if off == CTRL {
+            if v & ctrl::CLEAR_FAILS != 0 {
+                self.mask.fails = 0;
+            }
+            if v & ctrl::CLEAR_FRAMES != 0 {
+                self.mask.frames = 0;
+            }
+            if v & ctrl::LATCH != 0 && before & ctrl::LATCH == 0 {
+                self.mask.latched = (self.mask.frames, self.mask.fails);
+            }
+        }
+    }
+
+    /// What the measure unit's slot selected in 0x1040 shows of its last run: (0x1044, 0x1048) (`Measure`).
+    fn measure_slot(&self) -> (u32, u32) {
+        let none = (0xeeee_eeee, 0xeeee_eeee);
+        let Some((a, b)) = self.measure.run.filter(|r| r.1 <= self.t_fs) else { return none };
+        let (mask, slot) = (self.reg(0x4008) & 0xf, (self.reg(0x1040) >> 8 & 7) as usize);
+        let Some(c) = (0..4).find(|&c| crate::dho::levels::slots(mask, c).contains(&slot)) else { return none };
+        let (scale, offset) = self.scene.view.cal[c];
+        let codes: Vec<u16> = (0..MEASURE_POINTS)
+            .map(|i| a + (2 * i + 1) * (b - a) / (2 * MEASURE_POINTS))
+            .map(|t| encode::code((self.scene.volts)(c, t as f64 * 1e-15), scale, offset))
+            .map(|x| (x as i32 + self.core_shift(slot)).clamp(0, u16::MAX as i32) as u16)
+            .collect();
+        let (lo, hi) = codes.iter().fold((u16::MAX, 0), |(l, h), &x| (l.min(x), h.max(x)));
+        let mean = codes.iter().map(|&x| x as f64).sum::<f64>() / codes.len() as f64;
+        (mean.round() as u32, ((hi >> 4) as u32) << 16 | (lo >> 4) as u32)
+    }
+
+    /// Measure codes the core shown in `slot` reads off the scene: its offset register against its own offset
+    /// (`Unit::cores`), `CORE_STEP_CODES` a step; 0 without them.
+    fn core_shift(&self, slot: usize) -> i32 {
+        let Some(own) = self.cores else { return 0 };
+        let n = CORE_SLOT.iter().position(|&k| k == slot).unwrap_or(slot);
+        (self.measure.offsets[n] - own[n]) * CORE_STEP_CODES
+    }
+
     /// The trace as text, one event a line (for a comparison of two runs).
     pub fn trace_text(&self) -> String {
         self.trace.iter().map(|e| format!("{:?}\n", e)).collect()
@@ -449,15 +677,21 @@ impl Unit {
     fn advance(&mut self) {
         self.stream_chunks();
         let wait = self.reg(0x4068) as i128 * INTERVAL_TICK_FS;
-        let Some(r) = self.rec.as_mut() else { return };
+        let Some(mut r) = self.rec.take() else { return };
         let span = (self.view.pre + self.view.post) as i128 * self.view.dot_fs;
         let mut new = Vec::new();
         loop {
-            let from = match r.n {
-                0 => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
+            let from = match (r.rearm_fs, r.n) {
+                (Some(t), _) => t,
+                (None, 0) => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
                 _ => self.ring[&(r.first + r.n - 1)] + span + wait,
             };
             let Some(at) = self.scene.next_trigger(from).filter(|&at| at <= self.t_fs) else { break };
+            // a trigger the zone trigger does not take: the FSM arms again and fills a whole record (assumed)
+            r.rearm_fs = (!self.zone_takes(at)).then_some(at + span);
+            if r.rearm_fs.is_some() {
+                continue;
+            }
             let k = r.first + r.n;
             self.ring.insert(k, at);
             self.first_trigger_fs.get_or_insert(at);
@@ -466,12 +700,15 @@ impl Unit {
             new.push((k, at));
             if r.first + r.n > r.last {
                 self.recorded = r.n;
-                self.rec = None;
                 break;
             }
         }
+        if r.first + r.n <= r.last {
+            self.rec = Some(r);
+        }
         for (k, at) in new {
             self.average(k, at);
+            self.mask_test(at);
         }
     }
 
@@ -598,6 +835,26 @@ impl Unit {
         self.trace.push(Event::Played { us: self.t_fs / US, first, last, bytes });
     }
 
+    /// The raw LA window of frame `f`, triggered at `at` (la.md 4.2): N = 0x1100 / 10 words from LA sample 0x1108 of
+    /// its record, the read rounded up to 4 words, no header. The record has n_la = memsel x m / 2 LA samples at m / 2
+    /// per analog sample, the trigger at LA sample pre x m / 2 (la.md 3.3, m = `la::sample_mode`); word k is the
+    /// scene's lines at its time, 0 without lines and past the record (stale memory on the unit). The trigger index and
+    /// the unit of 0x1108 are assumed there (test T1), and so are they here.
+    fn play_la(&mut self, f: u32, at: i128) {
+        let m = crate::dho::la::sample_mode(self.reg(0x4008)) as i128;
+        let (n, start) = (self.reg(0x1100) / 10, self.reg(0x1108) as i128);
+        let dot = self.view.dot_fs * 2 / m;
+        let (pre, len) = (self.view.pre as i128 * m / 2, (self.view.pre + self.view.post) as i128 * m / 2);
+        let bytes = crate::dho::la::read_bytes(n);
+        let at_word = |k: i128| match &self.scene.la {
+            Some(la) if start + k < len => la((at + (start + k - pre) * dot) as f64 * 1e-15),
+            _ => 0,
+        };
+        let words: Vec<u16> = (0..bytes as i128 / 2).map(at_word).collect();
+        self.stream.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+        self.trace.push(Event::Played { us: self.t_fs / US, first: f, last: f, bytes });
+    }
+
     fn write(&mut self, off: u32, v: u32) {
         self.t_fs += WRITE_FS;
         self.advance();
@@ -628,6 +885,22 @@ impl Unit {
         if off == crate::dho::counter::LATCH && v & 1 != 0 {
             self.count_latch();
         }
+        if off == crate::dho::dvm::CFG && v & 1 == 0 && before & 1 != 0 {
+            let exp = v >> 1 & 0x1f;
+            self.dvm.run = (exp > 0).then_some((self.t_fs, exp, v >> 8 & 3));
+        }
+        if off == crate::dho::dvm::LATCH && v & 1 != 0 && before & 1 == 0 {
+            self.dvm_latch();
+        }
+        self.mask_write(off, v, before);
+        // an ADC word (bit 24) to a core's offset register 0x14 + 8n
+        let adc_reg = v >> 16 & 0x7f;
+        if off == 0x1034 && v & 1 << 24 != 0 && (0x14..0x54).contains(&adc_reg) && adc_reg % 8 == 4 {
+            self.measure.offsets[(adc_reg as usize - 0x14) / 8] = ((v & 0x7ff) << 21) as i32 >> 21;
+        }
+        if off == 0x1040 && v & 1 << 31 != 0 && before & 1 << 31 == 0 {
+            self.measure.run = Some((self.t_fs, self.t_fs + (1i128 << (v & 0x1f)) * CORE_SAMPLE_FS));
+        }
         if off == acq::AVG_CLEAR && v & 1 != 0 && before & 1 == 0 {
             self.avg.clear();
         }
@@ -649,6 +922,9 @@ impl Unit {
         let c = self.reg(0x400c);
         let (first, last) = (self.reg(0x4010), self.reg(0x4018));
         let r4008 = self.reg(0x4008);
+        // the stream is the LA's alone (la.md 4.2): its words come with the play-last pulse, the FSM run after it plays
+        // no analog frame (assumed: the unit sent the LA words alone)
+        let la_only = r4008 & (1 << 24 | 1 << 23) == 1 << 24;
         if rise & 1 != 0 && r4008 & (1 << 17 | 1 << 22) != 0 {
             let r1170 = self.reg(0x1170) & 0x0fff_ffff;
             let frac = if self.reg(0x1154) & 1 == 0 { self.reg(0x115c) as i128 + 1 } else { 1 << 32 };
@@ -663,17 +939,25 @@ impl Unit {
                 made: 0,
             });
             self.sweep_done = false;
-        } else if rise & 1 != 0 && c & 0x4000_0000 != 0 {
+        } else if rise & 1 != 0 && c & 0x4000_0000 != 0 && !la_only {
             self.play(first, last);
         } else if rise & 1 != 0 && c & 0x2200_0000 == 0x2200_0000 {
-            // a new view takes effect at the arm
+            // a new view takes effect at the arm. The arm overwrites the ring from frame `first` on
+            // (acquisition-start.md, "Reading a stored frame again"): its pre-trigger fill takes that frame at once, so
+            // the record stored there is gone even when a stop comes before the trigger (assumed, as the loop's batch
+            // path has it); the later frames are overwritten as they are recorded
             self.view = self.scene.view;
-            self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0 });
+            self.ring.remove(&first);
+            self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0, rearm_fs: None });
             self.recorded = 0;
         } else if rise & 4 != 0 {
-            // play-last: the newest frame of the ring
-            if let Some((&f, _)) = self.ring.iter().next_back() {
-                self.play(f, f);
+            // play-last: the newest frame of the ring, its LA words while the stream is the LA's (0x4008 bit 24)
+            if let Some((&f, &at)) = self.ring.iter().next_back() {
+                if la_only {
+                    self.play_la(f, at);
+                } else {
+                    self.play(f, f);
+                }
             }
         }
     }
@@ -714,6 +998,18 @@ impl Unit {
                 (self.avg.triggers.min(self.reg(off) as u64 + 1).saturating_sub(1)) as u32
             }
             0x221c..=0x2240 => self.counter.words[(off - crate::dho::counter::RESULTS) as usize / 4],
+            crate::dho::dvm::CFG => (self.dvm.sums.1 >> 32) as u32 & !0x3ff | self.reg(off) & 0x33f,
+            crate::dho::dvm::SUM_LO => self.dvm.sums.0 as u32,
+            crate::dho::dvm::SUM_HI => ((self.dvm.sums.0 >> 32) as u32) << 16,
+            crate::dho::dvm::SQ_LO => self.dvm.sums.1 as u32,
+            crate::dho::dvm::SQ_HI => (self.dvm.sums.1 >> 32) as u32,
+            0x1040 => self.reg(off) & !(1 << 30) | (self.measure.run.is_some_and(|r| r.1 <= self.t_fs) as u32) << 30,
+            0x1044 => self.measure_slot().0,
+            0x1048 => self.measure_slot().1,
+            crate::dho::mask::FRAMES_LO => self.mask.latched.0 as u32,
+            crate::dho::mask::FRAMES_HI => (self.mask.latched.0 >> 32) as u32,
+            crate::dho::mask::FAILS_LO => self.mask.latched.1 as u32,
+            crate::dho::mask::FAILS_HI => (self.mask.latched.1 >> 32) as u32,
             0x40d0 => self.sweep_done as u32,
             0x1204 => match &self.roll {
                 Some(r) if r.scan && !self.sweep_done && r.made >= SWEEP_CHUNKS / 2 && self.reg(0x4058) == 0 => {
@@ -974,6 +1270,53 @@ mod tests {
         assert!(afe.writes > 1, "the front end was written: {}", afe.writes);
         assert_eq!(lines.gears.first(), Some(&(2, 1)));
         assert!(lines.gears.iter().skip(1).any(|&(ch, _)| ch == 1), "configure set the gear of CH2: {:?}", lines.gears);
+    }
+
+    /// The arms in the trace of `u`: the writes of 0x400c that set record-seq mode (bits 29 and 25) without play.
+    fn arms(u: &Unit) -> usize {
+        let arm = |e: &&Event| matches!(e, Event::Write { off: 0x400c, v, .. } if v & 0x6200_0000 == 0x2200_0000);
+        u.trace.iter().filter(arm).count()
+    }
+
+    // Break it catches: a batch armed ahead whose wait arms again or that records nothing while the batch before is
+    // decoded, an arm that leaves the record stored in its first frame, a disarm that does not stop the FSM
+    #[test]
+    fn a_batch_armed_ahead_records_while_the_one_before_is_decoded_and_a_disarm_stops_it() {
+        let s = Settings { tdiv: 10e-9, frames: 3, window: None, ..Settings::default() };
+        let (mut st, p) = configured(&s);
+        // a trigger every 100 us from 1 us
+        let (u, mut bar, mut c2h, mut clock) = unit(scene(&p, Some(100 * US), None));
+        let mut dma = DmaBuf::new();
+        let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream, clock: &mut Time, ahead: bool| {
+            seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, clock, ahead, 1, |_| {}, || false, || false)
+        };
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, false), Ok(3));
+        // armed ahead, then 1 ms of decoding: the ring records meanwhile, and the wait finds the batch complete
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
+        let armed_us = u.borrow().now_us();
+        clock.sleep_us(1000);
+        assert_eq!(batch(&mut st, &mut bar, &mut c2h, &mut clock, true), Ok(3));
+        let read_us = u.borrow().now_us();
+        assert_eq!(arms(&u.borrow()), 2, "the batch armed ahead was armed again");
+        for k in 0..3 {
+            let at = u.borrow().trigger_fs(k).expect("recorded") / US;
+            assert!(at > armed_us && at < armed_us + 1000, "frame {} at {} us: not during the decode", k, at);
+        }
+        let v = seq::decode_volts(&dma.data()[..seq::frame_bytes(&s, &p)], 1, CAL);
+        let t0 = (u.borrow().trigger_fs(0).unwrap() - p.pre as i128 * p.dot_fs as i128) as f64 * 1e-15;
+        assert!((v[0][0] as f64 - sine(0, t0)).abs() < 1e-3, "frame 0 is the record armed ahead");
+        // armed ahead and stopped before its first trigger: the record of frame 0 is gone, frames 1 and 2 keep theirs
+        let kept = u.borrow().trigger_fs(1);
+        u.borrow_mut().scene.period_fs = None;
+        seq::prearm(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).unwrap();
+        seq::disarm(&mut st, &mut bar, &mut c2h, |_| {}).unwrap();
+        assert_eq!(bar.rd(0x4034), scu::status::STOPPED, "the FSM stopped");
+        u.borrow_mut().scene.period_fs = Some(100 * US);
+        clock.sleep_us(1000);
+        let u = u.borrow();
+        assert_eq!((u.trigger_fs(0), u.trigger_fs(1)), (None, kept), "the ring after the disarm");
+        let late = u.trace.iter().any(|e| matches!(e, Event::Recorded { us, .. } if *us > read_us));
+        assert!(!late, "recorded after the stop");
     }
 
     // Break it catches: an executor that waits on the wall clock, or a ring wait that counts frames by anything but
@@ -1377,6 +1720,205 @@ mod tests {
         bar.apply(&counter::stop());
         clock.sleep_us(300_000);
         assert_eq!(counter::read(&mut bar), counter::Raw::default(), "stopped: nothing latched");
+    }
+
+    // Break it catches: a DVM block that sums another lane or channel than the one written, results of a window not yet
+    // whole, sums not on the stored codes' scale (the volts of `dvm::volts` would be off), a block that runs on after
+    // its stop
+    #[test]
+    fn the_dvm_block_sums_the_codes_of_its_lane_over_its_windows() {
+        use crate::dho::dvm::{self, Mode};
+        use crate::dho::levels::Vert;
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (_, mut bar, _, mut clock) = unit(scene(&p, None, None));
+        let vert = |c: usize| Vert { scale: CAL[c].0, offset: CAL[c].1, gain: 1.0 };
+        let rms = |c: usize| 0.3 * (c as f64 + 1.0) / 2f64.sqrt();
+        // CH2 of CH1 + CH2 is lane 2; windows of 2^20 samples, 6.7 ms
+        bar.wr(0x4008, 0b0011);
+        bar.apply(&dvm::start(2, 20));
+        clock.sleep_us(5_000);
+        assert_eq!(dvm::decode(&dvm::read(&mut bar), 20), None, "no whole window yet");
+        clock.sleep_us(5_000);
+        let r = dvm::decode(&dvm::read(&mut bar), 20).expect("a whole window");
+        let (dc, ac) = (dvm::volts(&r, Mode::Dc, &vert(1)), dvm::volts(&r, Mode::AcRms, &vert(1)));
+        assert!(dc.abs() < 2e-3 && (ac - rms(1)).abs() < rms(1) * 1e-2, "CH2: DC {} V, AC {} V", dc, ac);
+        // CH1 alone on lane 3: with one channel every lane carries it
+        bar.wr(0x4008, 0b0001);
+        bar.apply(&dvm::start(3, 20));
+        clock.sleep_us(7_000);
+        let r = dvm::decode(&dvm::read(&mut bar), 20).expect("a whole window");
+        let ac = dvm::volts(&r, Mode::AcRms, &vert(0));
+        assert!((ac - rms(0)).abs() < rms(0) * 1e-2, "CH1: AC {} V", ac);
+        bar.apply(&dvm::stop());
+        clock.sleep_us(20_000);
+        let r = dvm::read(&mut bar);
+        assert_eq!((r.sum(), r.sq()), (0, 0), "stopped: nothing summed");
+    }
+
+    // Break it catches: a mask test that compares another channel, column or scale than the table written, counters not
+    // latched or not cleared, a zone trigger that takes a trigger whose frame does not qualify (or of the other mode),
+    // or none that does
+    #[test]
+    fn the_mask_unit_tests_and_the_zone_trigger_qualifies_the_frames_recorded() {
+        use crate::dho::seq::{HwMask, HwZone};
+        use crate::dho::{mask, zone};
+        let mut base = Settings { tdiv: 100e-9, depth: 1000, frames: 10, window: None, ..Settings::default() };
+        // the tables at the scale and offset the scene's view has
+        (base.ch[0].scale, base.ch[0].offset) = CAL[0];
+        // CH1's sine (0.3 V, 1 MHz) at each column's time over the screen, `shift` s later, +-0.05 V
+        let band = |shift: f64, clear: u64| {
+            let at = |j: usize| sine(0, base.delay + (j as f64 + 0.5 - 500.0) * base.tdiv / 100.0 - shift) as f32;
+            let lo = (0..mask::COLUMNS).map(|j| at(j) - 0.05).collect();
+            let hi = (0..mask::COLUMNS).map(|j| at(j) + 0.05).collect();
+            HwMask { ch: 0, lo, hi, stop_on_fail: false, clear, map: mask::Map::default() }
+        };
+        // a box over the sine's crest (0.25 us, 0.3 V) or above it, the trace to touch it or not
+        let zone = |v: (f64, f64), inside: bool| HwZone {
+            ch: 0,
+            zones: vec![zone::Zone { poly: vec![(0.2e-6, v.0), (0.3e-6, v.1)], inside }],
+            clear: 0,
+            map: mask::Map::default(),
+        };
+        let mut st = State::handover(base.mask, None);
+        let p = st.configure(&base, None, None).unwrap().1;
+        // a trigger every 20 us from 1 us: at the sine's rising zero crossing
+        let (_, bar, c2h, clock) = unit(scene(&p, Some(20 * US), None));
+        let mut sides = (bar, c2h, clock);
+        let batch = |st: &mut State, s: &Settings, sides: &mut (Bar, Stream, Time)| {
+            let (bar, c2h, clock) = sides;
+            let (cfg, p) = st.configure(s, None, None).unwrap();
+            seq::execute_bus_on(&cfg, bar, c2h, &mut DmaBuf::new(), clock, &mut |_| {}, &|| false).unwrap();
+            let mut dma = DmaBuf::new();
+            let got =
+                seq::acquire_batch_on(st, s, &p, bar, c2h, &mut dma, clock, false, 12, |_| {}, || false, || false);
+            let ctrl = st.mask_ctrl().or(st.zone_ctrl()).unwrap();
+            (got, mask::read(bar, ctrl))
+        };
+        let (got, r) = batch(&mut st, &Settings { hwmask: Some(band(0.0, 0)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 0), "the band around the signal");
+        let (got, r) = batch(&mut st, &Settings { hwmask: Some(band(0.25e-6, 1)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 10), "the band a quarter period late, cleared");
+        let (got, r) = batch(&mut st, &Settings { hwzone: Some(zone((0.25, 0.35), true)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames(), r.fails()), (Ok(10), 10, 0), "the crest touched");
+        let (got, r) = batch(&mut st, &Settings { hwzone: Some(zone((0.35, 0.5), false)), ..base.clone() }, &mut sides);
+        assert_eq!((got, r.frames()), (Ok(10), 20), "the box above the crest not touched");
+        let (got, _) = batch(&mut st, &Settings { hwzone: Some(zone((0.35, 0.5), true)), ..base.clone() }, &mut sides);
+        assert!(got.is_err_and(|e| e.contains("no acquisition")), "the box above the crest is never touched");
+    }
+
+    // Break it catches: LA words of another frame, start, spacing or length than the record's (la.md 3.3, 4.2), an
+    // analog frame played into the LA read, or bytes left in the stream for the next batch
+    #[test]
+    fn the_la_read_of_a_record_is_the_scenes_lines_from_its_start() {
+        // one, two and four channels: m = 1, 2 and 4 LA samples per two analog samples (la.md 3.1)
+        for mask in [0b0001u32, 0b0011, 0b1111] {
+            let m = crate::dho::la::sample_mode(mask) as i128;
+            let s = Settings { tdiv: 100e-9, depth: 1000, frames: 3, window: None, mask, ..Settings::default() };
+            let (mut st, p) = configured(&s);
+            let view = View { cal: CAL, dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+            // the lines count steps of 10 ns
+            let la = |t: f64| (t / 1e-8) as u64 as u16;
+            let period_fs = Some(20 * US);
+            let scene =
+                Scene { volts: Box::new(sine), la: Some(Box::new(la)), first_fs: US, period_fs, auto_fs: None, view };
+            let (u, mut bar, mut c2h, mut clock) = unit(scene);
+            let mut dma = DmaBuf::new();
+            let mut batch = |st: &mut State, bar: &mut Bar, c2h: &mut Stream| {
+                seq::acquire_batch_on(st, &s, &p, bar, c2h, &mut dma, &mut clock, false, 12, |_| {}, || false, || false)
+            };
+            assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "mask {:#x}", mask);
+            let w = seq::acquire_la(&mut st, &s, &p, &mut bar, &mut c2h, |_| {}).expect("the LA read");
+            let at = u.borrow().trigger_fs(2).expect("the newest frame");
+            let (pre, dot) = (p.pre as i128 * m / 2, 2 * p.dot_fs as i128 / m);
+            assert_eq!(w.len() as i128, p.memsel as i128 * m / 2, "mask {:#x}: n_la = memsel x m / 2 words", mask);
+            for (k, &x) in w.iter().enumerate() {
+                let want = la((at + (k as i128 - pre) * dot) as f64 * 1e-15);
+                assert_eq!(x, want, "mask {:#x}: word {}", mask, k);
+            }
+            assert!(u.borrow().stream.is_empty(), "mask {:#x}: bytes left after the LA read", mask);
+            assert_eq!(batch(&mut st, &mut bar, &mut c2h), Ok(3), "mask {:#x}: the next batch", mask);
+        }
+    }
+
+    // Break it catches: a measure unit that shows a slot another channel than `levels::slots` gives it, values of
+    // another scale (12-bit extremes, 16-bit mean) or offset, a run done before its time, values before a run
+    #[test]
+    fn the_measure_unit_shows_each_slots_channel_over_its_run() {
+        use crate::dho::levels::{self, Vert};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let (_, mut bar, _, mut clock) = unit(scene(&p, None, None));
+        bar.wr(0x4008, 0b0011);
+        assert_eq!(bar.rd(0x1044), 0xeeee_eeee, "no run yet");
+        bar.wr(0x1040, 0x8000_0000 | levels::RUN_EXP);
+        assert_eq!(bar.rd(0x1040) & 1 << 30, 0, "a run of 1.68 ms is not over at once");
+        let runs = [levels::run(&mut bar, &mut |us| clock.sleep_us(us as u64)).expect("a run")];
+        let vert = std::array::from_fn(|c| Vert { scale: CAL[c].0, offset: CAL[c].1, gain: 1.0 });
+        let lv = levels::channel_levels(&runs, 0b0011, &vert);
+        // CH1 0.3 V, CH2 0.6 V around 0 V; CH3 and CH4 not acquired
+        for (c, a) in [(0, 0.3), (1, 0.6)] {
+            let l = lv[c].unwrap_or_else(|| panic!("CH{} levels", c + 1));
+            let step = 16.0 * CAL[c].0 / 7500.0;
+            assert!((l.hi - a).abs() < a * 1e-2 + step && (l.lo + a).abs() < a * 1e-2 + step, "CH{}: {:?}", c + 1, l);
+            assert!(l.mean.abs() < a * 1e-2 && !l.clipped, "CH{}: {:?}", c + 1, l);
+        }
+        assert!(lv[2].is_none() && lv[3].is_none());
+    }
+
+    /// The core trim's side of the simulated unit (as `hw::trim::UnitTrim` of oos-ui): measure runs and offset words.
+    struct Trim<'a>(&'a mut Bar, &'a mut Time, crate::dho::adc::Adc);
+
+    impl crate::dho::coretrim::TrimHw for Trim<'_> {
+        fn slots(&mut self) -> Option<[crate::dho::levels::Slot; 8]> {
+            let clock = &mut *self.1;
+            crate::dho::levels::run(self.0, &mut |us| clock.sleep_us(us as u64))
+        }
+        fn wait_ms(&mut self, ms: u32) {
+            self.1.sleep_us(ms as u64 * 1000);
+        }
+        fn set_offset(&mut self, core: usize, o: i32) {
+            for w in self.2.core_offset(core, o) {
+                self.0.wr(w.reg, w.val);
+            }
+        }
+    }
+
+    // Break it catches: an offset word not taken for its core (another register, the sign of 11 bits lost), a core
+    // shown in another slot than core-offset.md's or moved by another step, cores that differ without `cores`
+    #[test]
+    fn the_measure_unit_shows_each_cores_offset_and_the_core_trim_matches_them() {
+        use crate::dho::coretrim::{self, TrimHw};
+        let s = Settings { tdiv: 10e-9, frames: 1, window: None, ..Settings::default() };
+        let (_, p) = configured(&s);
+        let quiet = Scene { volts: Box::new(|_, _| 0.0), ..scene(&p, None, None) };
+        let (u, mut bar, _, mut clock) = unit(quiet);
+        bar.wr(0x4008, 1);
+        let own = [-30, 31, 32, 33, 34, 35, 36, 37];
+        // stored offsets: core 5 three steps high, core 7 two low, core 0 below zero (the sign of the 11 bits)
+        let stored = [-30, 31, 32, 33, 34, 38, 36, 35];
+        let mut hw = Trim(&mut bar, &mut clock, crate::dho::adc::Adc::default());
+        for (n, &o) in stored.iter().enumerate() {
+            hw.set_offset(n, o);
+        }
+        assert_eq!(u.borrow().core_offsets(), stored);
+        let alike = hw.slots().expect("a run");
+        assert!(alike.iter().all(|k| *k == alike[0]), "without the cores' own offsets every slot alike: {:?}", alike);
+        u.borrow_mut().cores = Some(own);
+        let m = hw.slots().expect("a run");
+        let mid = m[0].mean;
+        let want = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 27.0, -18.0];
+        for (k, w) in want.iter().enumerate() {
+            assert_eq!(m[k].mean - mid, *w, "slot {}: {:?}", k, m[k]);
+        }
+        let (groups, lsb) = coretrim::plan(1, &[1.0; 4]);
+        let g = coretrim::gate(&mut hw, &groups, &lsb).expect("the gate");
+        assert_eq!((g.matched, g.skipped), (1, 0), "a quiet channel at mid-scale");
+        let order = coretrim::order(&mut hw, &stored).expect("the order");
+        assert_eq!((order.slot, order.codes), (CORE_SLOT, [CORE_STEP_CODES as f64; 8]));
+        let t = coretrim::trim_gated(&mut hw, &groups, &stored, &order, &lsb, &g).expect("the trim");
+        assert_eq!(t.offsets, own, "every core at its own offset: {:?}", t);
+        assert_eq!(u.borrow().core_offsets(), own);
     }
 
     // Break it catches: stamps other than the head of `seg` states (the latch holds the trigger of the frame played

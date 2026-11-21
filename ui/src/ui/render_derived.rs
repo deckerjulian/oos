@@ -28,6 +28,33 @@ impl MaskTest {
     }
 }
 
+/// The decoded lines of the records shown (ADR 0062): the packets with times in s, by a key of the record and the
+/// settings, analog and LA alike; the screen redraws ~30 times a second and decodes a record once.
+#[derive(Default)]
+pub(super) struct Decoded(std::cell::RefCell<Vec<(u64, Vec<oos_dsp::decode::Packet>)>>);
+
+impl Decoded {
+    /// The packets kept under `key`.
+    pub fn get(&self, key: u64) -> Option<Vec<oos_dsp::decode::Packet>> {
+        self.0.borrow().iter().find(|e| e.0 == key).map(|e| e.1.clone())
+    }
+
+    /// Keeps what the decoders of one record need.
+    pub fn put(&self, key: u64, p: &[oos_dsp::decode::Packet]) {
+        let mut c = self.0.borrow_mut();
+        if c.len() >= DECODERS * 2 {
+            c.remove(0);
+        }
+        c.push((key, p.to_vec()));
+    }
+
+    /// How many results are kept.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+}
+
 impl Ui {
     /// Mask test of one acquisition (live records only): counts passed / failed, stops on a failure if set.
     pub(super) fn mask_test(&mut self, rec: &Record) {
@@ -93,13 +120,13 @@ impl Ui {
     /// Off plus the operations of the selected Math category.
     pub(super) fn math_ops_in_family(&self) -> Vec<MathOp> {
         let mut v = vec![MathOp::Off];
-        v.extend_from_slice(self.math_fam.ops());
+        v.extend_from_slice(self.math.family.ops());
         v
     }
 
     pub(super) fn ff_save(&mut self) {
-        let recs: Vec<Record> = if !self.history.is_empty() {
-            self.history.iter().cloned().collect()
+        let recs: Vec<Record> = if !self.history.recs.is_empty() {
+            self.history.recs.iter().cloned().collect()
         } else if let Some(rec) = self.last[0].as_ref() {
             vec![rec.clone()]
         } else {
@@ -121,10 +148,10 @@ impl Ui {
         };
         match crate::store::parse_ff(&data) {
             Ok(recs) if !recs.is_empty() => {
-                self.history = recs.into();
-                let n = self.history.len();
-                self.hist_pos = Some(n - 1);
-                self.last[0] = Some(self.history[n - 1].clone());
+                self.history.recs = recs.into();
+                let n = self.history.recs.len();
+                self.history.pos = Some(n - 1);
+                self.last[0] = Some(self.history.recs[n - 1].clone());
                 self.m.run = RunState::Stop;
                 self.measure_last();
                 self.toast(&format!("Loaded {} frames from {}", n, crate::store::file_name(&p)));
@@ -140,7 +167,7 @@ impl Ui {
         if !self.shows(self.m.mask_src) {
             return;
         }
-        let a = self.area;
+        let a = self.plot.area;
         let ch = &self.m.ch[self.m.mask_src];
         let ppd = a.h as f32 / VDIV;
         let cy = a.y as f32 + a.h as f32 / 2.0;
@@ -188,7 +215,7 @@ impl Ui {
             (fmt_count(fail as f64), if fail > 0 { RED } else { TEXT }),
         ];
         let w: i32 = parts.iter().map(|(s, _)| f.sb.width(s)).sum::<i32>() + 24;
-        let a = self.area;
+        let a = self.plot.area;
         let r = Rect::new(a.x + 8, a.y + 24, w, 24);
         let col = if fail > 0 { RED } else { GREEN };
         cv.round(r, 12, mix(BAR, col, 110), 255);
@@ -213,7 +240,7 @@ impl Ui {
 
     /// Histogram source: the measurement source if it is on, else the first channel on.
     pub(super) fn hist_src(&self) -> Option<usize> {
-        if let WaveId::Ch(c) = self.meas_src {
+        if let WaveId::Ch(c) = self.sources.a {
             if c < n_ch() && self.m.ch[c].on {
                 return Some(c);
             }
@@ -255,7 +282,7 @@ impl Ui {
     pub(super) fn draw_hist(&self, cv: &mut Canvas) {
         let Some((bins, mean, sd)) = self.hist_bins() else { return };
         let Some(c) = self.hist_src().filter(|&c| self.shows(c)) else { return };
-        let a = self.area;
+        let a = self.plot.area;
         let col = CH_COLORS[c];
         let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f64;
         let depth = (a.w / 5).max(40) as f64;
@@ -369,7 +396,7 @@ impl Ui {
     pub(super) fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
         let on: Vec<usize> = (0..NMATH)
-            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win)
+            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.plot.cur_win)
             .collect();
         let labels: Vec<Option<String>> =
             on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
@@ -378,8 +405,8 @@ impl Ui {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
                 let r = Rect::new(
-                    self.area.x + self.area.w - 12 - f.s.width(label) - 16,
-                    self.area.y + 22 + 26 * row as i32,
+                    self.plot.area.x + self.plot.area.w - 12 - f.s.width(label) - 16,
+                    self.plot.area.y + 22 + 26 * row as i32,
                     f.s.width(label) + 16,
                     20,
                 );
@@ -395,13 +422,13 @@ impl Ui {
         let col = MATH_COLORS[k % MATH_COLORS.len()];
         let f = self.fonts();
         // the last stacked lane keeps its time labels clear: the trace is clipped above them
-        let mut lane = self.area;
-        if self.stacked() && self.cur_win + 1 == self.wins.len() {
+        let mut lane = self.plot.area;
+        if self.stacked() && self.plot.cur_win + 1 == self.plot.wins.len() {
             lane.h = (lane.h - (f.s.size + 8)).max(f.s.size);
         }
         cv.set_clip(lane);
-        let ppy = self.area.h as f32 / VDIV;
-        let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
+        let ppy = self.plot.area.h as f32 / VDIV;
+        let cy = self.plot.area.y as f32 + self.plot.area.h as f32 / 2.0;
 
         let label = if c.op == MathOp::Fft {
             let Some(w) = self.math_record(k).ok().flatten() else {
@@ -420,15 +447,15 @@ impl Ui {
             let span = df * (db.len() - 1) as f64;
             let n = db.len();
             let mut prev: Option<(i32, i32)> = None;
-            for px in 0..self.area.w {
+            for px in 0..self.plot.area.w {
                 // peak of the bins that fall into this pixel column
-                let k0 = (px as usize * (n - 1)) / self.area.w as usize;
-                let k1 = (((px + 1) as usize * (n - 1)) / self.area.w as usize).max(k0 + 1).min(n);
+                let k0 = (px as usize * (n - 1)) / self.plot.area.w as usize;
+                let k1 = (((px + 1) as usize * (n - 1)) / self.plot.area.w as usize).max(k0 + 1).min(n);
                 let v = db[k0..k1].iter().copied().fold(f32::MIN, f32::max);
-                let (zoom, center) = self.zoom_vertical_transform(self.area);
+                let (zoom, center) = self.zoom_vertical_transform(self.plot.area);
                 let d = VDIV * 0.5 - (top - v) / dbdiv;
                 let y = (cy - (d - center) * zoom * ppy).round() as i32;
-                let x = self.area.x + px;
+                let x = self.plot.area.x + px;
                 if let Some((x0, y0)) = prev {
                     cv.line(x0, y0, x, y, col);
                 }
@@ -450,21 +477,27 @@ impl Ui {
                     Err(e) => e,
                     _ => "Computing",
                 };
-                cv.text(&f.s, self.area.x + 60, self.area.y + 40 + 18 * row, &format!("M{}: {}", k + 1, status), col);
+                cv.text(
+                    &f.s,
+                    self.plot.area.x + 60,
+                    self.plot.area.y + 40 + 18 * row,
+                    &format!("M{}: {}", k + 1, status),
+                    col,
+                );
                 return None;
             };
             let w = rec.v.as_ref();
             let sc = math_scales();
             let vpd = sc[c.scale.min(sc.len() - 1)] as f32;
             let tdiv = self.view().0 as f64;
-            let ppx = self.area.w as f64 / HDIV as f64;
+            let ppx = self.plot.area.w as f64 / HDIV as f64;
             let mut prev: Option<(i32, i32)> = None;
             let left = self.view().1 as f64 - tdiv * HDIV as f64 * 0.5;
             let right = left + tdiv * HDIV as f64;
             let at = |t: f64| ((t - rec.t0) / rec.dt).floor().clamp(-1.0, w.len() as f64) as isize;
             let begin = (at(left) - 1).clamp(0, w.len() as isize) as usize;
             let end = (at(right) + 2).clamp(0, w.len() as isize) as usize;
-            let step = ((end - begin) / (self.area.w as usize * 2)).max(1);
+            let step = ((end - begin) / (self.plot.area.w as usize * 2)).max(1);
             for i in (begin..end).step_by(step) {
                 let v = w[i];
                 if !v.is_finite() {
@@ -472,8 +505,8 @@ impl Ui {
                     continue;
                 }
                 let t = rec.t0 + i as f64 * rec.dt - self.view().1 as f64;
-                let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
-                let (zoom, center) = self.zoom_vertical_transform(self.area);
+                let x = (self.plot.area.x as f64 + self.plot.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
+                let (zoom, center) = self.zoom_vertical_transform(self.plot.area);
                 let y = (cy - (v / vpd + c.offset - center) * zoom * ppy).clamp(-1e4, 1e4).round() as i32;
                 if let Some((x0, y0)) = prev {
                     cv.line(x0, y0, x, y, col);
@@ -497,7 +530,7 @@ impl Ui {
         match id {
             WaveId::Ch(c) => self.y_of_volts(c, v),
             WaveId::Ref(i) => {
-                let a = self.area;
+                let a = self.plot.area;
                 let Some(r) = self.refs.get(i).and_then(|x| x.as_ref()) else {
                     return a.y;
                 };
@@ -507,7 +540,7 @@ impl Ui {
     }
 
     pub(super) fn x_of_time(&self, t: f32) -> i32 {
-        let a = self.area;
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ppd = a.w as f32 / HDIV;
         (a.x as f32 + a.w as f32 / 2.0 + (t - delay) / tdiv * ppd).round() as i32
@@ -537,31 +570,22 @@ impl Ui {
             return self.reference_decode_packets(m);
         }
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (self.wfm_total, self.hist_pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
+        (self.counts.wfm_total, self.history.pos, rec.t0.to_bits(), rec.dt.to_bits()).hash(&mut h);
         for c in 0..NCH {
             (rec.ch[c].as_ptr() as usize, rec.ch[c].len(), m.ch[c].volts_per_div().to_bits()).hash(&mut h);
         }
         format!("{:?}", m.dec_cfg()).hash(&mut h);
         let key = h.finish();
-        if let Some(e) = self.dec_cache.borrow().iter().find(|e| e.0 == key) {
-            return Ok(std::sync::Arc::new(e.1.clone()));
+        if let Some(p) = self.decoded.get(key) {
+            return Ok(std::sync::Arc::new(p));
         }
         let mut p = crate::trig::decode(m, std::array::from_fn(|c| &rec.ch[c][..]), rec.dt)?;
         for x in p.iter_mut() {
             x.t0 = rec.t0 + x.t0 * rec.dt;
             x.t1 = rec.t0 + x.t1 * rec.dt;
         }
-        self.dec_cache_put(key, &p);
+        self.decoded.put(key, &p);
         Ok(std::sync::Arc::new(p))
-    }
-
-    /// Keeps what the decoders of one record need.
-    pub(super) fn dec_cache_put(&self, key: u64, p: &[oos_dsp::decode::Packet]) {
-        let mut c = self.dec_cache.borrow_mut();
-        if c.len() >= DECODERS * 2 {
-            c.remove(0);
-        }
-        c.push((key, p.to_vec()));
     }
 
     /// All decoders that are on: bands at the bottom of the plot, or rows under the lanes for those on LA lines.
@@ -570,7 +594,7 @@ impl Ui {
             return;
         }
         let (mut band, mut lane) = (0, 0);
-        let bottom = self.area.y + self.area.h - 46;
+        let bottom = self.plot.area.y + self.plot.area.h - 46;
         for k in 0..DECODERS {
             if !self.m.dec_is_on(k) {
                 continue;
@@ -582,7 +606,7 @@ impl Ui {
             if row.is_some() {
                 lane += 1;
             }
-            if win.unwrap_or(self.la_win_of()) != self.cur_win {
+            if win.unwrap_or(self.la_win_of()) != self.plot.cur_win {
                 continue;
             }
             let y = match row {
@@ -600,7 +624,7 @@ impl Ui {
     fn draw_decoder(&self, cv: &mut Canvas, m: &Model, k: usize, y: i32, row: Option<Rect>) {
         use oos_dsp::decode::Kind;
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let col = if m.dec_on_la() {
             la::line_color(m.dec_la[0].unwrap_or(0))
         } else {

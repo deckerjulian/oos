@@ -60,7 +60,7 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
     ui.set_zoom(true);
     ui.m.zscale = tscales().iter().position(|&t| (t - 100e-12).abs() < 1e-18).unwrap();
     ui.m.zdelay = 0.0;
-    ui.zoom_vertical_step(1, ui.area, 0.5);
+    ui.zoom_vertical_step(1, ui.plot.area, 0.5);
     ui.relayout();
     output(&mut ui, "02-gen7-reference-math-stacked-zoom.png");
     ui.m.zdelay = 1e-9;

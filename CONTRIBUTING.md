@@ -227,14 +227,16 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   `in development`; its commands of oos-fpgad in `fpgad/src/<name>/mod.rs` (`pub(crate) fn run`, as `dho` has them)
   and the choice of that module in `fpgad/src/main.rs`; its matrix of register sequences
   `tools/board/<name>/plan-matrix.sh`, which `tools/plan-matrix.sh` and the comparison run with `OOS_BOARD=<name>`;
-  its device tree under `kernel/`; and the pages of `docs/protocols/` its hardware code is written from. Build its
+  its device tree under `kernel/`; the pages of `docs/protocols/` its hardware code is written from; and
+  `hal/src/<name>/` in each list of the paths only a unit proves (`$hardware` of `tools/pr-gate.sh` and
+  `tools/pr-labels.sh`, the `unitpath` line of `tools/ci-parts.sh`, `UNIT` of `tools/agent-target.py`). Build its
   image with `OOS_BOARD=<name>`. The maintainer changes the state to `ready`.
 - **Generate** nothing.
 - **The check:** `hal/tests/board_families.rs::every_board_family_is_complete` fails, naming the family and the part,
   when a folder of `rootfs/board/` lacks its `Target` in `FAMILIES`, its `impl Board for`, its commands of oos-fpgad,
-  its `plan-matrix.sh`, a key of `etc/oos-board`, a command of `bin/oos-board` or its row in docs/porting.md, and when
-  a row or a `Target` has no folder. The tests of `hal/src/target.rs` compare each family's `etc/oos-board` with its
-  `Target`.
+  its `plan-matrix.sh`, a key of `etc/oos-board`, a command of `bin/oos-board`, its folder of hal in a list of the
+  paths only a unit proves or its row in docs/porting.md, and when a row or a `Target` has no folder. The tests of
+  `hal/src/target.rs` compare each family's `etc/oos-board` with its `Target`.
 
 ## Where to develop
 

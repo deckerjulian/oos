@@ -193,7 +193,7 @@ impl Ui {
     }
 
     pub(super) fn draw_dpt(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let fig_w = 250.min(a.w / 3);
         let plot = Rect::new(a.x, a.y, a.w - fig_w, a.h);
         let (t0, t1) = self.azr.dpt_t;

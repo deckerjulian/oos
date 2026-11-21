@@ -134,7 +134,7 @@ impl Ui {
     }
 
     pub(super) fn draw_bw(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let f = self.fonts();
         let col = CH_COLORS[self.m.bw_src.min(NCH - 1)];
         let Some(r) = &self.azr.bw else {

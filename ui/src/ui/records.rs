@@ -22,6 +22,19 @@ pub(super) struct MeasBackground {
     /// the record a background measurement is wanted of (`want`), when it must not be the newest at the time the
     /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
     pub pending: Option<Record>,
+    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
+    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
+    /// would be dropped). The setup files and SCPI count it too
+    pub n: u64,
+}
+
+/// History playback (ADR 0062): the last acquired records, newest last, and the one viewed. At most `HISTORY` records,
+/// or as many as the segments of a software segmented recording when that is more (`step_commit`).
+#[derive(Default)]
+pub(super) struct History {
+    pub recs: std::collections::VecDeque<Record>,
+    /// position in `recs` while viewing it (None = live)
+    pub pos: Option<usize>,
 }
 
 /// Segmented recording (ADR 0062): the records since the acquisition started (in software); for hardware segments the
@@ -103,7 +116,7 @@ impl Ui {
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
-            && self.hist_pos.is_none()
+            && self.history.pos.is_none()
             && self.seg.pos.is_none()
             && self.last[0].as_ref().is_some_and(|r| r.raw.is_some())
     }
@@ -113,7 +126,7 @@ impl Ui {
         if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             f64::NAN
         } else {
-            self.ana[c].get(k)
+            self.measured.ch[c].get(k)
         }
     }
 
@@ -317,7 +330,7 @@ impl Ui {
         self.toast(&self.seg_label(i));
     }
 
-    /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
+    /// Shows record `history.pos + d` of the history (d = 0: the newest), stopping the acquisition.
     pub(super) fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
         if let Some(v) =
@@ -328,15 +341,15 @@ impl Ui {
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
             return self.seg_show(i as usize);
         }
-        let n = self.history.len();
+        let n = self.history.recs.len();
         if n == 0 {
             return self.toast("History empty");
         }
         self.m.run = RunState::Stop;
-        let cur = self.hist_pos.unwrap_or(n - 1) as i32;
+        let cur = self.history.pos.unwrap_or(n - 1) as i32;
         let i = if d == 0 { n as i32 - 1 } else { (cur + d).clamp(0, n as i32 - 1) } as usize;
-        self.hist_pos = Some(i);
-        self.last[0] = Some(self.history[i].clone());
+        self.history.pos = Some(i);
+        self.last[0] = Some(self.history.recs[i].clone());
         self.measure_last();
         self.toast(&format!("History {}/{}", i + 1, n));
     }
@@ -360,7 +373,7 @@ impl Ui {
         let done = measure_channels(&work);
         self.meas_bg.env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
-        self.meas_n += 1;
+        self.meas_bg.n += 1;
         self.meas_bg.want = false;
     }
 
@@ -407,10 +420,10 @@ impl Ui {
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
         self.meas_bg.env = self.meas_bg.env_sent;
         for c in 0..NCH {
-            (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
+            (self.stats[c], self.measured.ch[c]) = (Stats::default(), Default::default());
         }
         for (c, st, an) in done {
-            (self.stats[c], self.ana[c]) = (st, std::sync::Arc::new(an));
+            (self.stats[c], self.measured.ch[c]) = (st, std::sync::Arc::new(an));
         }
     }
 
@@ -424,7 +437,7 @@ impl Ui {
         let Some(w) = self.meas_bg.worker.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
-            if n == self.meas_n {
+            if n == self.meas_bg.n {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
                 self.meas_bg.new = true;
@@ -456,7 +469,7 @@ impl Ui {
             })
             .collect();
         let w = self.meas_bg.worker.as_mut().expect("worker");
-        if w.tx.send((self.meas_n, job)).is_ok() {
+        if w.tx.send((self.meas_bg.n, job)).is_ok() {
             w.busy = true;
             self.meas_bg.env_sent = env;
         } else {

@@ -265,7 +265,7 @@ impl Ui {
             return Err(format!("CH{} has no data", c + 1));
         }
         let text: String = v.iter().filter(|x| x.is_finite()).map(|x| format!("{}\n", x)).collect();
-        let _ = crate::store::write(&self.store_dir.join("arb.csv"), text.as_bytes());
+        let _ = crate::store::write(&self.files.dir.join("arb.csv"), text.as_bytes());
         Ok(v.len())
     }
 
@@ -277,7 +277,7 @@ impl Ui {
                 Err(e) => self.toast(&e),
             },
             Item::AfgArbFile => {
-                let p = self.store_dir.join("arb.csv");
+                let p = self.files.dir.join("arb.csv");
                 let v = std::fs::read_to_string(&p).map(|t| board().arb_parse(&t)).unwrap_or_default();
                 if self.afg_arb_load(&v) {
                     self.toast(&format!("Arb wave: {} points from arb.csv", v.len()));
@@ -354,7 +354,7 @@ mod arb_tests {
         let dir = crate::ui::testkit::Scratch::new("ui-arb");
         std::fs::create_dir_all(&dir).unwrap();
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.store_dir = dir.clone();
+        ui.files.dir = dir.clone();
         assert!(ui.afg_arb_capture(0).is_err(), "no record yet");
         for _ in 0..3 {
             ui.step(0.05);

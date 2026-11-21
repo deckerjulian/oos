@@ -249,7 +249,7 @@ fn leaving_bus_after_a_recall_leaves_the_recalled_decoder() {
     let dir = crate::ui::testkit::Scratch::new("interplay-bus");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.m.dec_on = false;
     u.set_trig_type(TrigType::Bus);
     u.step(0.05);

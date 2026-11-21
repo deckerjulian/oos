@@ -213,7 +213,7 @@ fn setup_save_and_recall_keep_how_a_ref_looks() {
     let mut u = fresh(Layout::Default);
     let dir = crate::ui::testkit::Scratch::new("b2-setup");
     std::fs::create_dir_all(&dir).unwrap();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.refs[0] = Some(sine_ref(0, 2000, 1e-6));
     u.refs[2] = Some(sine_ref(2, 2000, 1e-6));
     {
@@ -363,7 +363,7 @@ fn shots_refs_sim_axis_power() {
 fn eye_on_a_stopped_sim_ref_computes_instead_of_waiting_for_edges() {
     // PCIe 5.0 at 32 Gb/s into R1, then Stop holds the frame: no new record arrives to trigger the analysis
     let mut u = fresh(Layout::Minimal);
-    u.store_dir = std::env::temp_dir().join("oos-batch2-eye");
+    u.files.dir = std::env::temp_dir().join("oos-batch2-eye");
     assert!(u.sim_preset_set("PCIe 5.0"));
     u.sim_activate(Item::SimPlay);
     u.wait_sim_generation();

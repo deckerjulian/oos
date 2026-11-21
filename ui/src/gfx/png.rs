@@ -227,15 +227,15 @@ pub(super) const LEN_CODE: [u8; 259] = {
 pub(super) fn match_len(raw: &[u8], i: usize, d: usize) -> usize {
     let max = (raw.len() - i).min(258);
     let (a, b) = (&raw[i..i + max], &raw[i - d..i - d + max]);
-    let mut n = 0;
-    while n + 8 <= max {
-        let x =
-            u64::from_le_bytes(a[n..n + 8].try_into().unwrap()) ^ u64::from_le_bytes(b[n..n + 8].try_into().unwrap());
+    // whole words of eight bytes, then the bytes after the last one
+    let (wa, wb) = (a.as_chunks::<8>().0, b.as_chunks::<8>().0);
+    for (k, (x, y)) in wa.iter().zip(wb).enumerate() {
+        let x = u64::from_le_bytes(*x) ^ u64::from_le_bytes(*y);
         if x != 0 {
-            return n + (x.trailing_zeros() / 8) as usize;
+            return k * 8 + (x.trailing_zeros() / 8) as usize;
         }
-        n += 8;
     }
+    let mut n = wa.len() * 8;
     while n < max && a[n] == b[n] {
         n += 1;
     }

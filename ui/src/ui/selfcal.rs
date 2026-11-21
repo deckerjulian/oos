@@ -115,7 +115,7 @@ impl Ui {
     /// A self-calibration is requested or running.
     pub(super) fn cal_running(&self) -> bool {
         self.cal_shared().is_some_and(|sh| {
-            let g = sh.lock().unwrap();
+            let g = crate::wave::hw(&sh);
             g.cal_progress.is_some() || g.cal_req.is_some()
         })
     }
@@ -123,7 +123,7 @@ impl Ui {
     /// Progress or the last result.
     pub(super) fn cal_status(&self) -> String {
         let Some(sh) = self.cal_shared() else { return "needs the hardware source".into() };
-        let g = sh.lock().unwrap();
+        let g = crate::wave::hw(&sh);
         if let Some((d, t, s)) = &g.cal_progress {
             return format!("{:.0} % {}", 100.0 * *d as f64 / (*t).max(1) as f64, s);
         }
@@ -154,7 +154,7 @@ impl Ui {
                 if self.cal.armed.is_some_and(|t| self.now - t < 10.0) {
                     self.cal.armed = None;
                     let chans: Vec<usize> = if self.cal.ch == 0 { (0..NCH).collect() } else { vec![self.cal.ch - 1] };
-                    let mut g = sh.lock().unwrap();
+                    let mut g = crate::wave::hw(&sh);
                     (g.cal_req, g.cal_result, g.cal_cancel) = (Some((chans, self.cal.zero, self.cal.adc)), None, false);
                     drop(g);
                     self.toast("Self-cal started");
@@ -178,7 +178,7 @@ impl Ui {
             }
             Item::CalCancel => {
                 if let Some(sh) = self.cal_shared() {
-                    sh.lock().unwrap().cal_cancel = true;
+                    crate::wave::hw(&sh).cal_cancel = true;
                     self.toast("Cancelling self-cal ...");
                 }
             }
@@ -213,7 +213,7 @@ impl Ui {
     /// Per frame: pick up a finished run.
     pub(super) fn cal_poll(&mut self) {
         let Some(sh) = self.cal_shared() else { return };
-        let r = sh.lock().unwrap().cal_result.take();
+        let r = crate::wave::hw(&sh).cal_result.take();
         if let Some(r) = r {
             let s = match r {
                 Ok(s) => format!("done: {}", s),
@@ -227,9 +227,9 @@ impl Ui {
     /// Progress banner over the plot while a run is active.
     pub(super) fn draw_cal_banner(&self, cv: &mut Canvas) {
         let Some(sh) = self.cal_shared() else { return };
-        let p = sh.lock().unwrap().cal_progress.clone();
+        let p = crate::wave::hw(&sh).cal_progress.clone();
         let Some((d, t, s)) = p else { return };
-        let a = self.area;
+        let a = self.plot.area;
         let f = self.fonts();
         let txt = format!(
             "Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)",

@@ -204,7 +204,7 @@ impl Ui {
         if let Some((_, body)) = self.results_rects() {
             let total = self.meas_rows().len();
             let fit = self.results_page_size();
-            if total > fit && !self.results_min {
+            if total > fit && !self.results.folded {
                 let (prev, next) = Self::results_page_buttons(body);
                 let pages = total.div_ceil(fit);
                 if prev.contains(x, y) || next.contains(x, y) {
@@ -366,7 +366,7 @@ impl Ui {
     }
 
     pub(super) fn draw_results_page_buttons(&self, cv: &mut Canvas, body: Rect, total: usize) {
-        if total <= self.results_page_size() || self.results_min {
+        if total <= self.results_page_size() || self.results.folded {
             return;
         }
         let (first, end) = self.results_page_range(total);
@@ -392,7 +392,7 @@ mod tests {
         for &kind in &ALL_MEAS {
             ui.activate(Item::MeasAdd(kind));
         }
-        ui.meas_src_b = WaveId::Ch(1);
+        ui.sources.b = WaveId::Ch(1);
         for kind in 0..13 {
             ui.meas_pair_toggle(kind);
         }
@@ -400,7 +400,7 @@ mod tests {
         let original = ui.m.meas.clone();
         ui.relayout();
         assert!(ui.paged_strip());
-        assert!(ui.grid.h >= 300);
+        assert!(ui.plot.grid.h >= 300);
         let mut visited = HashSet::new();
         for page in 0..73usize.div_ceil(BAND_PAGE) {
             ui.meas_pages.readouts = page;
@@ -496,7 +496,7 @@ mod tests {
                 ui.m.strip_dock = dock;
                 ui.meas_pages.readouts = 0;
                 ui.relayout();
-                let (wave, eye) = (ui.grid, ui.eye_pane_rect());
+                let (wave, eye) = (ui.plot.grid, ui.eye_pane_rect());
                 let strip = ui.strip_rect().expect("73 readouts have a strip");
                 assert!(!overlaps(wave, eye), "{placement:?}/{dock:?}: wave {wave:?} eye {eye:?}");
                 assert!(!overlaps(strip, wave), "{placement:?}/{dock:?}: strip {strip:?} wave {wave:?}");

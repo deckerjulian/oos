@@ -501,12 +501,12 @@ impl Ui {
         match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
             Item::MeasSrc => {
-                let cur = self.meas_src;
-                self.meas_src = self.step_wave(cur, d);
+                let cur = self.sources.a;
+                self.sources.a = self.step_wave(cur, d);
             }
             Item::MeasSrcB => {
-                let cur = self.meas_src_b;
-                self.meas_src_b = self.step_wave(cur, d);
+                let cur = self.sources.b;
+                self.sources.b = self.step_wave(cur, d);
             }
             // Track cursor B on its own source (follows cursor A's until set)
             Item::CurSrcB => {
@@ -588,7 +588,7 @@ impl Ui {
                 m.quick = QUICKS[cycle(i, QUICKS.len(), d)];
             }
             Item::MathOpI => {
-                let fam = self.math_fam;
+                let fam = self.math.family;
                 let mut ops = vec![MathOp::Off];
                 ops.extend_from_slice(fam.ops());
                 let i = ops.iter().position(|&x| x == m.math).unwrap_or(0);
@@ -597,10 +597,10 @@ impl Ui {
                 self.math_autoscale();
             }
             Item::MathFam => {
-                let i = MathFamily::ALL.iter().position(|&f| f == self.math_fam).unwrap_or(0);
-                self.math_fam = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
-                if m.math != MathOp::Off && m.math.family() != self.math_fam {
-                    m.math = self.math_fam.ops()[0];
+                let i = MathFamily::ALL.iter().position(|&f| f == self.math.family).unwrap_or(0);
+                self.math.family = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
+                if m.math != MathOp::Off && m.math.family() != self.math.family {
+                    m.math = self.math.family.ops()[0];
                     m.math_offset = 0.0;
                     self.math_autoscale();
                 }
@@ -612,7 +612,7 @@ impl Ui {
                 let k = cycle(m.math_sel, NMATH, d);
                 m.math_select(k);
                 if m.math != MathOp::Off {
-                    self.math_fam = m.math.family();
+                    self.math.family = m.math.family();
                 }
             }
             Item::MathScale => {
@@ -620,7 +620,7 @@ impl Ui {
                 m.math_scale = step_index(m.math_scale, n, d);
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
-            Item::MeasStats => self.stats_on = !self.stats_on,
+            Item::MeasStats => self.results.on = !self.results.on,
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
             Item::StripDock => {
                 let all = StripDock::ALL;
@@ -753,10 +753,10 @@ impl Ui {
             Item::XyMode => self.xy = !self.xy,
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
-            Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
+            Item::StoreSlot => self.files.slot = (self.files.slot as i32 + d).clamp(1, 9) as u32,
             Item::StoreDest => {
-                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
-                self.store_dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
+                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.files.dest).unwrap_or(0);
+                self.files.dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
             }
             Item::MaskSrc => {
                 // a mask belongs to its channel: the new source needs a new one
@@ -772,7 +772,7 @@ impl Ui {
                 self.m.mask_y = ((self.m.mask_y + d as f32 * 0.04) * 100.0).round().clamp(4.0, 400.0) / 100.0;
                 self.build_mask();
             }
-            Item::RefSrc => self.ref_src = src_step(self.ref_src, NCH, d),
+            Item::RefSrc => self.ref_page.src = src_step(self.ref_page.src, NCH, d),
             Item::RefShow(i) => {
                 if let Some(r) = &mut self.refs[i] {
                     r.on = !r.on;
@@ -856,7 +856,7 @@ impl Ui {
                 // the dialog of the POWER key, without the MCU answer that belongs to a key press
                 self.close_menu();
                 self.dialog = None;
-                self.power_dlg = true;
+                self.power.open = true;
             }
             Item::HZero => {
                 self.m.delay = 0.0;
@@ -900,7 +900,7 @@ impl Ui {
                 }
             }
             Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
-                let p = self.ref_files.get(k).cloned();
+                let p = self.ref_page.files.get(k).cloned();
                 self.close_picker();
                 if let Some(p) = p {
                     self.ref_load_path(&p);
@@ -930,20 +930,20 @@ impl Ui {
             }
             Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
             Item::MeasAdd(k) => {
-                let e = (k, self.meas_src);
+                let e = (k, self.sources.a);
                 if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                     self.m.meas.remove(index);
-                    self.meas_own.remove(&e);
-                    if self.meas_cfg == Some(index as u16) {
-                        self.meas_cfg = None;
-                    } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
-                        self.meas_cfg = self.meas_cfg.map(|n| n - 1);
+                    self.meas_own.rows.remove(&e);
+                    if self.meas_own.dialog == Some(index as u16) {
+                        self.meas_own.dialog = None;
+                    } else if self.meas_own.dialog.is_some_and(|n| n as usize > index) {
+                        self.meas_own.dialog = self.meas_own.dialog.map(|n| n - 1);
                     }
                     self.clear_measurement_statistics();
                     self.toast(&format!(
                         "{} {} removed",
                         meascatalog::meas_long_name(k),
-                        self.wave_name(self.meas_src)
+                        self.wave_name(self.sources.a)
                     ));
                     return true;
                 } else {
@@ -954,7 +954,7 @@ impl Ui {
                     self.clear_measurement_statistics();
                 }
                 if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
-                    if let Some((a, _)) = self.meas_analysis(self.meas_src) {
+                    if let Some((a, _)) = self.meas_analysis(self.sources.a) {
                         let p = a.period();
                         if p.is_finite() && p > 0.0 {
                             self.m.meas_idle = p;
@@ -962,7 +962,7 @@ impl Ui {
                     }
                 }
                 self.ensure_meas_own();
-                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
+                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.sources.a)));
             }
             Item::MeasPair(k) => self.meas_pair_toggle(k),
             Item::CntClear => self.counter_clear(),
@@ -998,12 +998,12 @@ impl Ui {
                 self.m.meas.clear();
                 self.m.meas2.clear();
                 self.m.cat.clear();
-                self.meas_own.clear();
-                self.meas_cfg = None;
+                self.meas_own.rows.clear();
+                self.meas_own.dialog = None;
                 self.clear_measurement_statistics();
             }
             Item::RefSave => {
-                let c = self.ref_src;
+                let c = self.ref_page.src;
                 let rec = self.last[0].clone();
                 let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                     let (v, dt) = self.meas_wave(r, c);
@@ -1063,7 +1063,7 @@ impl Ui {
                     d.push(format!("{} warning(s), see System info", p.warnings.len()));
                 }
                 d.extend([
-                    format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
+                    format!("Source: {}   {:.0} fps", self.src.name(), self.counts.fps),
                     self.start_up_summary().unwrap_or_default(),
                     "Tap to close".into(),
                 ]);

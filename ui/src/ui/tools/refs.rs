@@ -6,6 +6,15 @@
 
 use super::*;
 
+/// The Reference page as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(in crate::ui) struct RefPage {
+    /// the channel Save copies into the slot while the slot is empty (Item::RefSrc, `:REFerence:SOURce`)
+    pub src: usize,
+    /// the files the Import slot picker is showing
+    pub files: Vec<std::path::PathBuf>,
+}
+
 impl Ui {
     /// File of a reference slot, beside the setups.
     fn ref_path(&self) -> std::path::PathBuf {
@@ -62,11 +71,11 @@ impl Ui {
                 }
             }
         }
-        self.ref_files = self.ref_wave_candidates();
-        match self.ref_files.len() {
+        self.ref_page.files = self.ref_wave_candidates();
+        match self.ref_page.files.len() {
             0 => self.toast("No CSV, BIN, WFM, TRC, ISF, TR0 or WFMX in storage"),
             1 => {
-                let p = self.ref_files[0].clone();
+                let p = self.ref_page.files[0].clone();
                 self.ref_load_path(&p);
             }
             _ => self.open_picker(Item::RefImport),
@@ -126,7 +135,7 @@ impl Ui {
     /// Channel a `:REFerence:SAVE` of this slot copies. A saved slot remembers its own source.
     pub(crate) fn ref_source_of(&self, slot: usize) -> usize {
         self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel {
-            self.ref_src
+            self.ref_page.src
         } else {
             0
         })
@@ -137,7 +146,7 @@ impl Ui {
             return false;
         }
         self.ref_sel = slot;
-        self.ref_src = ch;
+        self.ref_page.src = ch;
         if let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) {
             r.src = ch;
         }
@@ -208,11 +217,11 @@ impl Ui {
         let is_ref = |w: &WaveId| matches!(w, WaveId::Ref(_));
         self.m.meas.retain(|(_, w)| !is_ref(w));
         self.m.meas2.retain(|(_, a, b)| !is_ref(a) && !is_ref(b));
-        if is_ref(&self.meas_src) {
-            self.meas_src = WaveId::Ch(0);
+        if is_ref(&self.sources.a) {
+            self.sources.a = WaveId::Ch(0);
         }
-        if is_ref(&self.meas_src_b) {
-            self.meas_src_b = WaveId::Ch(0);
+        if is_ref(&self.sources.b) {
+            self.sources.b = WaveId::Ch(0);
         }
         self.ensure_meas_own();
         self.measure_refs();
@@ -221,7 +230,7 @@ impl Ui {
 
     /// Writes the Source channel into the selected slot.
     pub(crate) fn ref_save_slot(&mut self) -> Result<(), String> {
-        let c = self.ref_src;
+        let c = self.ref_page.src;
         let rec = self.last[0].clone();
         let Some(r) = rec.as_ref().filter(|r| c < r.ch.len() && !r.ch[c].is_empty()) else {
             return Err("source channel has no data".into());

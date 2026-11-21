@@ -285,7 +285,7 @@ impl Ui {
         if self.eye_open() {
             let pane = self.eye_pane_rect();
             if overlaps(pane, r) {
-                let wave = self.grid;
+                let wave = self.plot.grid;
                 let room = pane.x - wave.x - 12;
                 if room >= tw {
                     r.x = wave.x + (room - tw) / 2;

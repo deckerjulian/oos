@@ -174,7 +174,7 @@ impl Ui {
         } else {
             kv("Network", self.net.addr.clone())
         });
-        a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.fps)));
+        a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.counts.fps)));
         a
     }
 
@@ -225,8 +225,8 @@ impl Ui {
         let (sr, depth) = self.src.rate_depth(&self.m);
         d.push(kv("Sample rate", si_short(sr, "Sa/s")));
         d.push(kv("Record", si_short(depth as f64, "pts")));
-        d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
-        d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
+        d.push(kv("Waveforms/s", format!("{:.0}", self.counts.wfm_rate)));
+        d.push(kv("Waveforms", fmt_count(self.counts.wfm_total as f64)));
         let (acq, used, dropped) = crate::board::pipe::counters().read();
         if acq > 0 {
             d.push(kv(
@@ -245,7 +245,7 @@ impl Ui {
                 format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64)),
             ));
         }
-        d.push(kv("Screen", format!("{:.0} fps", self.fps)));
+        d.push(kv("Screen", format!("{:.0} fps", self.counts.fps)));
         if p.experimental() {
             d.push(Row::Head("Experimental limits".into()));
             d.extend(p.overrides.iter().map(|o| Row::Note(o.clone(), AMBER)));

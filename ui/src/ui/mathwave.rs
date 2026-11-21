@@ -34,6 +34,20 @@ struct Answer {
 /// A math channel's last result and the key it was computed for.
 type Cached = Option<(u64, Result<Arc<Signal>, &'static str>)>;
 
+/// The math channels as the screen keeps them (ADR 0062).
+pub(super) struct Math {
+    /// the Math menu's category, kept when the operation is Off
+    pub family: MathFamily,
+    /// the results, their worker and the scales to refit; drawing reads it through `&self`
+    pub state: std::cell::RefCell<State>,
+}
+
+impl Default for Math {
+    fn default() -> Math {
+        Math { family: MathFamily::Arith, state: Default::default() }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     cache: [Cached; NMATH],
@@ -141,7 +155,7 @@ impl Ui {
             let c = self.m.math_ch(k);
             let sig = (format!("{:?}", c.op), c.a, c.b, c.scale);
             {
-                let mut st = self.math_state.borrow_mut();
+                let mut st = self.math.state.borrow_mut();
                 match st.sig[k].replace(sig.clone()) {
                     Some(old) if old.3 != sig.3 => st.fit_pending[k] = false,
                     Some(old) if old.0 != sig.0 || old.1 != sig.1 || old.2 != sig.2 => st.fit_pending[k] = true,
@@ -157,7 +171,7 @@ impl Ui {
             }
             if matches!(self.math_record(k), Ok(Some(_))) {
                 self.math_fit(k);
-                let (scale, mut st) = (self.m.math_ch(k).scale, self.math_state.borrow_mut());
+                let (scale, mut st) = (self.m.math_ch(k).scale, self.math.state.borrow_mut());
                 st.fit_pending[k] = false;
                 if let Some(s) = st.sig[k].as_mut() {
                     s.3 = scale;
@@ -256,7 +270,7 @@ impl Ui {
                     if r.ch[id].is_empty() {
                         return Err("Source has no data");
                     }
-                    (self.wfm_total, r.ch[id].as_ptr() as usize, r.ch[id].len(), r.t0.to_bits(), r.dt.to_bits())
+                    (self.counts.wfm_total, r.ch[id].as_ptr() as usize, r.ch[id].len(), r.t0.to_bits(), r.dt.to_bits())
                         .hash(&mut h);
                 }
             } else if id < MATH_REF_BASE {
@@ -317,7 +331,7 @@ impl Ui {
     pub(super) fn math_record(&self, k: usize) -> Result<Option<Arc<Signal>>, &'static str> {
         let key = self.math_key(k)?;
         {
-            let mut state = self.math_state.borrow_mut();
+            let mut state = self.math.state.borrow_mut();
             if let Some(worker) = &mut state.worker {
                 if let Ok(answer) = worker.poll() {
                     state.cache[answer.slot] = Some((answer.key, answer.signal));
@@ -345,12 +359,12 @@ impl Ui {
         let large = inputs.iter().any(|(_, w)| w.v.len() > BACKGROUND);
         let job = Job { slot: k, key, config: self.m.math_ch(k), expr: self.m.math_expr[k].clone(), inputs };
         if large {
-            let mut state = self.math_state.borrow_mut();
+            let mut state = self.math.state.borrow_mut();
             let _ = state.worker.get_or_insert_with(open_worker).submit(job);
             return Ok(None);
         }
         let signal = compute_job(&job).map(Arc::new);
-        self.math_state.borrow_mut().cache[k] = Some((key, signal.clone()));
+        self.math.state.borrow_mut().cache[k] = Some((key, signal.clone()));
         signal.map(Some)
     }
 }

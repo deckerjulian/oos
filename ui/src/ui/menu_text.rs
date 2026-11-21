@@ -48,7 +48,7 @@ impl Ui {
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
             Item::DecThr if self.m.dec_proto == Proto::CPHY => "Min level gap",
             Item::TrigT1 if matches!(self.m.trig_when, WhenKind::In | WhenKind::Out) => "Lower limit",
-            Item::NavHist if self.hist_pos.is_some() => "Live",
+            Item::NavHist if self.history.pos.is_some() => "Live",
             _ => Self::label(it),
         }
     }
@@ -509,9 +509,9 @@ impl Ui {
         let m = &self.m;
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::MeasSrc => self.wave_name(self.meas_src),
+            Item::MeasSrc => self.wave_name(self.sources.a),
             Item::MeasCopyTo => "Pick".into(),
-            Item::MeasSrcB => self.wave_name(self.meas_src_b),
+            Item::MeasSrcB => self.wave_name(self.sources.b),
             Item::CurSrcB => self.wave_name(self.cursor_b_source()),
             Item::MathExprI => {
                 if m.math_expr[m.math_sel].is_empty() {
@@ -556,9 +556,9 @@ impl Ui {
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
-            Item::MathFam => self.math_fam.name().into(),
-            Item::StoreDest => self.store_dest.name().into(),
-            Item::MeasStats => onoff(self.stats_on),
+            Item::MathFam => self.math.family.name().into(),
+            Item::StoreDest => self.files.dest.name().into(),
+            Item::MeasStats => onoff(self.results.on),
             Item::MeasLabels => onoff(self.m.meas_labels),
             Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => onoff(m.zoom),
@@ -646,7 +646,7 @@ impl Ui {
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.overclock.hz),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),
-            Item::RefSrc => format!("CH{}", self.ref_src + 1),
+            Item::RefSrc => format!("CH{}", self.ref_page.src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
                 Some(r) => {
@@ -659,7 +659,7 @@ impl Ui {
             Item::MathSel => format!("M{}", m.math_sel + 1),
             Item::MathScale => self.math_scale_text(),
             Item::MathOffset => format!("{:.2} div", m.math_offset),
-            Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
+            Item::StoreSlot => format!("{}  (setup{}.txt)", self.files.slot, self.files.slot),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
             Item::MaskX => format!("{:.2} div", m.mask_x),
             Item::MaskY => format!("{:.2} div", m.mask_y),

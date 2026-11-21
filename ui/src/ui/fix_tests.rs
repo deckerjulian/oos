@@ -107,7 +107,7 @@ fn context_menu_stays_inside_the_plot_and_marks_the_trace_mode_in_force() {
     for (x, y) in [(5, 45), (1020, 595), (500, 250), (1000, 100)] {
         u.context_menu(x, y);
         let p = u.workspace.popup.as_ref().unwrap().rect;
-        let g = u.grid;
+        let g = u.plot.grid;
         assert!(
             p.x >= g.x && p.right() <= g.right() && p.y >= g.y && p.bottom() <= g.bottom(),
             "({x},{y}) {p:?} in {g:?}"
@@ -158,7 +158,7 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
         assert_eq!(u.m.strip_dock, dock, "one dock state");
         let (head, body) = u.results_rects().unwrap();
         let card = Rect::new(head.x, head.y, head.w, head.h + body.h);
-        let g = u.grid;
+        let g = u.plot.grid;
         let apart = card.x >= g.right() || g.x >= card.right() || card.y >= g.bottom() || g.y >= card.bottom();
         assert!(apart, "{dock:?}: card {card:?} overlaps the plot {g:?}");
         let hits = |r: Rect| card.x < r.right() && r.x < card.right() && card.y < r.bottom() && r.y < card.bottom();
@@ -170,13 +170,13 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
     }
     // Statistics respects the Dock choice of the Measure menu
     let mut u = fresh();
-    u.stats_on = true;
+    u.results.on = true;
     u.m.strip_dock = StripDock::Under;
-    let before = u.grid;
+    let before = u.plot.grid;
     u.adjust(Item::StripDock, 1);
     u.relayout();
     assert!(u.results_docked().is_some());
-    assert_ne!(u.grid, before);
+    assert_ne!(u.plot.grid, before);
     // Default layout keeps the stock overlay
     let mut u = fresh();
     u.m.bar_compact = false;
@@ -206,7 +206,7 @@ fn reference_badges_are_fanned_out_and_the_legend_is_cut_with_a_count() {
     assert_eq!(u.fit_ref_note(&note, 5000), note);
     // the note and the Fit button sit above the axis labels, not on them
     let fit = u.live_ref_fit_rect().unwrap();
-    assert!(fit.bottom() <= u.grid.bottom() - 20, "{fit:?} over the axis labels of {:?}", u.grid);
+    assert!(fit.bottom() <= u.plot.grid.bottom() - 20, "{fit:?} over the axis labels of {:?}", u.plot.grid);
 }
 
 #[test]
@@ -230,8 +230,8 @@ fn eye_tab_in_a_side_pane_clears_the_charts_and_cursor_tags_clear_the_corner_but
         }
     }
     let u = fresh();
-    for y in (u.area.y..u.area.bottom()).step_by(3) {
-        let x = u.right_tag_x(u.area, y, 24);
+    for y in (u.plot.area.y..u.plot.area.bottom()).step_by(3) {
+        let x = u.right_tag_x(u.plot.area, y, 24);
         let tag = Rect::new(x, y, 24, 14);
         assert!(!u.corner_btns().into_iter().any(|r| hit(tag, r)), "tag at y {y} covers a button");
     }

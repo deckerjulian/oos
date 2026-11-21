@@ -56,6 +56,8 @@ pub struct PaneState {
     pub views: Vec<(String, crate::protocols::View)>,
     /// per decoder: what its module keeps between records, and the view of the record last looked at
     pub view_slots: [super::busview::ViewSlot; DECODERS],
+    /// past values of each measurement row, for the trend charts
+    pub trend: Vec<Trend>,
 }
 
 /// Where the spectrum's parts go.
@@ -780,10 +782,10 @@ impl Ui {
     /// New measurement values for the trends; `fresh` means the list changed or was reset.
     pub(super) fn trend_update(&mut self, fresh: bool, rows: &[tools::MeasRow]) {
         if fresh {
-            self.trend.clear();
+            self.pn.trend.clear();
         }
-        self.trend.resize(rows.len(), Trend::default());
-        for (t, r) in self.trend.iter_mut().zip(rows) {
+        self.pn.trend.resize(rows.len(), Trend::default());
+        for (t, r) in self.pn.trend.iter_mut().zip(rows) {
             t.push(self.now, r.v);
         }
     }
@@ -835,7 +837,7 @@ impl Ui {
             return;
         }
         for (c, &(_, row)) in Self::chart_rects(r, charts.len()).into_iter().zip(&charts) {
-            self.draw_chart(cv, c, &rows[row], self.trend.get(row));
+            self.draw_chart(cv, c, &rows[row], self.pn.trend.get(row));
         }
     }
 
@@ -955,7 +957,7 @@ impl Ui {
     /// A tap on the pane, or on the sort button of the full view; true when it was used.
     pub(super) fn pane_tap(&mut self, x: i32, y: i32) -> bool {
         if self.m.view == AView::Spectrum && !self.xy && self.azr.spec.is_some() {
-            let b = self.spec_box(self.area, false);
+            let b = self.spec_box(self.plot.area, false);
             if b.sort.contains(x, y) {
                 self.sort_toggle();
                 return true;

@@ -8,6 +8,12 @@
 #   tools/check.sh test:ui         a part of a layer: test:hal test:dsp test:ui test:fpgad test:tools. CI runs the
 #                                  parts a change can reach next to each other (tools/ci-parts.sh).
 #   tools/check.sh list            the layers, and which are enforced
+#   tools/check.sh families        the board families the layers build for
+#
+# The layers clippy, test and target build hal, ui and fpgad for every board family (ADR 0067): those of
+# OOS_FAMILIES (CI: the ones a change reaches, tools/ci-parts.sh), else every family of rootfs/board/, dho first.
+# dho is built as without OOS_BOARD, in the crate's own target folder; another family with OOS_BOARD=<name> in
+# target/board-<name>, so the builds of two families do not replace each other.
 #
 # Not layers here, because they need a baseline from before the change, a quiet computer or a scope (ADR 0020):
 # ui/tools/layout-check.sh and tools/plan-matrix.sh (tools/compare-base.sh runs both against a commit before the
@@ -27,6 +33,7 @@ enforced="fmt clippy text syntax test target ratchet"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+. tools/lib/board.sh
 
 say() {
     printf '\n== %s\n' "$*"
@@ -35,6 +42,45 @@ say() {
 fail() {
     echo "check.sh: $*" >&2
     exit 1
+}
+
+# the board families the layers build for: OOS_FAMILIES, each a family of the tree, else all of them; read once into
+# $fams before the layers run, so a wrong name stops the run
+families() {
+    if [ -z "${OOS_FAMILIES:-}" ]; then
+        oos_families .
+        return
+    fi
+    for f in $OOS_FAMILIES; do
+        OOS_BOARD=$f oos_board . || fail "OOS_FAMILIES: $f"
+    done
+}
+
+# in_family FAMILY CRATE COMMAND...: COMMAND in the folder of CRATE, built for FAMILY (see the top)
+in_family() {
+    (
+        f=$1
+        cd "$2" || exit 1
+        shift 2
+        if [ "$f" = dho ]; then
+            unset OOS_BOARD
+        else
+            OOS_BOARD=$f
+            CARGO_TARGET_DIR=target/board-$f
+            export OOS_BOARD CARGO_TARGET_DIR
+        fi
+        "$@"
+    )
+}
+
+# the families a crate is built for: dsp knows no board
+families_of() {
+    case $1 in dsp) echo dho ;; *) echo "$fams" ;; esac
+}
+
+# " for the board family F", for a message, when it is not dho
+of_family() {
+    [ "$1" = dho ] || echo " for the board family $1"
 }
 
 # cargo, failing on a compiler or Clippy warning too. Cargo repeats the warnings of cached builds, so a second run
@@ -59,14 +105,20 @@ layer_fmt() {
 
 layer_clippy() {
     for c in $crates; do
-        (cd "$c" && strict cargo clippy --locked --workspace --all-targets -- -D warnings) || fail "clippy: $c"
+        for f in $(families_of "$c"); do
+            in_family "$f" "$c" strict cargo clippy --locked --workspace --all-targets -- -D warnings ||
+                fail "clippy: $c$(of_family "$f")"
+        done
     done
     # the code only Linux compiles (the scope's board, its buses) is not seen on another host: there, Clippy also
     # reads the crates as built for the scope, as CI on Linux does
     if [ "$(uname -s)" != Linux ]; then
         for c in hal ui fpgad; do
-            (cd "$c" && strict cargo clippy --locked --workspace --all-targets \
-                --target aarch64-unknown-linux-musl -- -D warnings) || fail "clippy: $c for the scope"
+            for f in $(families_of "$c"); do
+                in_family "$f" "$c" strict cargo clippy --locked --workspace --all-targets \
+                    --target aarch64-unknown-linux-musl -- -D warnings ||
+                    fail "clippy: $c for the scope$(of_family "$f")"
+            done
         done
     fi
 }
@@ -184,8 +236,10 @@ layer_syntax() {
 layer_test() {
     for c in $crates; do
         [ -z "$1" ] || [ "$1" = "$c" ] || continue
-        say "test $c"
-        (cd "$c" && strict cargo test --locked --workspace) || fail "test: $c"
+        for f in $(families_of "$c"); do
+            say "test $c$(of_family "$f")"
+            in_family "$f" "$c" strict cargo test --locked --workspace || fail "test: $c$(of_family "$f")"
+        done
     done
     # the host tools' own tests: offline, no scope, no listener
     if [ -z "$1" ] || [ "$1" = tools ]; then
@@ -194,11 +248,11 @@ layer_test() {
     fi
 }
 
-# the programs for the scope build for every board family of rootfs/board/ (OOS_BOARD, ADR 0067), dho first
+# the programs for the scope build for every board family (families, ADR 0067), dho first
 layer_target() {
-    for b in dho $(for d in rootfs/board/*/; do basename "$d"; done | grep -vx dho); do
+    for b in $fams; do
         for c in ui fpgad; do
-            (cd "$c" && OOS_BOARD=$b strict cargo check --locked --target aarch64-unknown-linux-musl) ||
+            in_family "$b" "$c" strict cargo check --locked --target aarch64-unknown-linux-musl ||
                 fail "target: $c for the board family $b"
         done
     done
@@ -236,6 +290,11 @@ layer_sim() {
     done
 }
 
+fams=$(families)
+if [ "${1:-}" = families ]; then
+    echo "$fams"
+    exit 0
+fi
 if [ "$1" = list ]; then
     for l in $layers; do
         case " $enforced " in *" $l "*) echo "$l" ;; *) echo "$l (not yet enforced)" ;; esac

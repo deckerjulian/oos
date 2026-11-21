@@ -31,7 +31,7 @@ impl Ui {
     }
 
     pub(crate) fn meas_pair_sources(&self) -> (WaveId, WaveId) {
-        (self.meas_src, self.meas_src_b)
+        (self.sources.a, self.sources.b)
     }
 
     pub(crate) fn fact_meas(&self, k: Meas, id: WaveId) -> f64 {

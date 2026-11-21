@@ -246,7 +246,7 @@ impl Ui {
             deep: false,
             best: [None; NCH],
             stage: Stage::Wide,
-            records: self.records,
+            records: self.counts.records,
             since: self.now,
             fits: false,
             lv: [(0.0, 0.0); NCH],
@@ -293,14 +293,14 @@ impl Ui {
         // records of the time base before can still be under way, many of them at a high trigger rate: count from the
         // first one of this one
         if !a.fits && self.auto_record_fits() {
-            (a.fits, a.records) = (true, self.records);
+            (a.fits, a.records) = (true, self.counts.records);
         }
         // hardware records carry the settings stamp they were taken under: the first one of this stage's settings is
         // enough. Records without one (demo, replay) settle on a count and a time
         let fresh = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.stamp >= a.stamp);
         let ready = match fresh {
             Some(f) => f && self.auto_record_fits(),
-            None => a.fits && self.records >= a.records + SETTLE_RECORDS && self.now >= a.since + SETTLE_S,
+            None => a.fits && self.counts.records >= a.records + SETTLE_RECORDS && self.now >= a.since + SETTLE_S,
         };
         if !ready && self.now < a.since + GIVE_UP_S {
             self.auto.run = Some(a);
@@ -397,7 +397,7 @@ impl Ui {
 
     /// A new stage: records taken from here on carry a new stamp.
     fn auto_next(&mut self, mut a: AutoRun) {
-        (a.records, a.since, a.fits) = (self.records, self.now, false);
+        (a.records, a.since, a.fits) = (self.counts.records, self.now, false);
         self.m.hw_stamp += 1;
         a.stamp = self.m.hw_stamp;
         self.auto.run = Some(a);
@@ -464,7 +464,7 @@ impl Ui {
     fn auto_unit_off(&mut self, a: &mut AutoRun) -> UnitStep {
         a.unit = None;
         let _ = self.src.hw_levels(None);
-        (a.records, a.since, a.fits) = (self.records, self.now, false);
+        (a.records, a.since, a.fits) = (self.counts.records, self.now, false);
         UnitStep::Records
     }
 
@@ -694,7 +694,7 @@ mod tests {
         }
         let identity: Vec<_> = ui.refs.iter().flatten().map(|r| (r.v.as_ptr(), r.v.len(), r.dt, r.t0)).collect();
         let acquisition =
-            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures);
+            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.counts.records, ui.replay.captures);
         let start = std::time::Instant::now();
         for slot in 0..2 {
             let other = ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset));
@@ -713,7 +713,7 @@ mod tests {
         );
         assert_eq!(
             acquisition,
-            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures)
+            (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.counts.records, ui.replay.captures)
         );
         assert!(ui.refs.iter().flatten().all(|r| r.vpd > 0.0 && r.offset.is_finite()));
         assert!(elapsed < std::time::Duration::from_secs(3), "bounded setup took {elapsed:?}");
@@ -762,10 +762,10 @@ mod tests {
         assert!(!u.auto_bar_on());
         // so does a tap elsewhere
         u.auto.bar = Some(u.now);
-        u.tap(u.grid.x + 20, u.grid.y + u.grid.h - 30);
+        u.tap(u.plot.grid.x + 20, u.plot.grid.y + u.plot.grid.h - 30);
         assert!(!u.auto_bar_on());
         // inside the plot, above the band an auto set-up leaves free at the top (0.8 div), clear of the trigger mark
-        let g = u.grid;
+        let g = u.plot.grid;
         let b = u.auto_bar_rects();
         assert!(b.iter().all(|(r, _)| r.y > g.y
             && r.y + r.h < g.y + (0.8 * g.h as f32 / 8.0) as i32

@@ -62,7 +62,7 @@ fn a_reference_has_its_colour_and_name() {
 fn a_reference_travels_through_a_file() {
     let dir = crate::ui::testkit::Scratch::new("ref");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.activate(Item::RefSave);
     let a = u.refs[0].as_ref().unwrap().v.clone();
     u.activate(Item::RefExport);
@@ -94,7 +94,7 @@ fn a_bin_or_wfm_in_storage_opens_on_the_slot() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     let rec = u.last[0].as_ref().unwrap().clone();
     let want = rec.ch[0].clone();
     let dt = rec.dt;
@@ -142,7 +142,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = crate::ui::testkit::demo_ui();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     assert!(matches!(u.src, Source::Demo { .. }));
 
     let dt = 5e-9;
@@ -420,9 +420,9 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     let filtered_pp = oos_dsp::measure::analyze_min(&filtered, dt, 0.4).get(Meas::Vpp);
     assert!((filtered_pp - row.v).abs() > 0.2, "filtered {} ref {}", filtered_pp, row.v);
     assert!(u.options(Item::MeasSrc).iter().any(|s| s == "R1"));
-    u.meas_src = WaveId::Ch(n_ch() - 1);
+    u.sources.a = WaveId::Ch(n_ch() - 1);
     u.adjust(Item::MeasSrc, 1);
-    assert_eq!(u.meas_src, WaveId::Ref(0));
+    assert_eq!(u.sources.a, WaveId::Ref(0));
 
     // a later copy of the same sine: delay is the difference of the two t0 values
     put_ref(&mut u, 1, 25e-9, dt, sine.clone());
@@ -563,7 +563,7 @@ fn dq_and_dqs_refs_make_a_strobe_eye() {
     ]
     .into();
     u.m.meas_labels = true;
-    u.meas_src = WaveId::Ref(0);
+    u.sources.a = WaveId::Ref(0);
     u.measure_refs();
     if let Some(r) = u.refs[1].as_mut() {
         r.color = 1;
@@ -635,7 +635,7 @@ fn cphy_eye_full_screen_shot() {
     let dt = f64::from_le_bytes(b[478..486].try_into().unwrap());
     let t0 = f64::from_le_bytes(b[486..494].try_into().unwrap());
     u.refs[3] = Some(RefWave { color: 3, label: "CLK".into(), vpd: 0.5, ..RefWave::test(v, dt, t0) });
-    u.full = true;
+    u.full.on = true;
     u.relayout();
     u.m.view = AView::Eye;
     u.m.eye_src = WaveId::Ref(0);

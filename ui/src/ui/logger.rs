@@ -133,6 +133,6 @@ mod catalog_tests {
         let rows = ui.meas_rows();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.v.is_nan()));
-        assert_eq!(ui.wfm_total, 0);
+        assert_eq!(ui.counts.wfm_total, 0);
     }
 }

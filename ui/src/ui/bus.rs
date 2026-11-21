@@ -179,7 +179,7 @@ impl Ui {
 
     /// Vertical centre of the bus, in pixels. Positive position is up.
     pub(super) fn bus_y(&self) -> i32 {
-        let a = self.area;
+        let a = self.plot.area;
         let ppy = a.h as f32 / super::VDIV;
         (a.y as f32 + a.h as f32 / 2.0 - self.m.bus.pos * ppy).round() as i32
     }
@@ -189,7 +189,7 @@ impl Ui {
             return;
         }
         let f = &self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         if a.w < 40 || a.h < 40 {
             return;
         }
@@ -353,7 +353,7 @@ impl Ui {
             return Vec::new();
         };
         let acquisition = if matches!(self.m.bus.clk, WaveId::Ch(_)) || matches!(self.m.bus.data, WaveId::Ch(_)) {
-            self.wfm_total
+            self.counts.wfm_total
         } else {
             0
         };

@@ -30,7 +30,7 @@ impl Ui {
         }
         l.under.no_clip();
         l.under.clear(BG);
-        let g = self.grid;
+        let g = self.plot.grid;
         if self.m.zoom && !self.xy {
             let (o, _) = Self::split_zoom(g);
             self.draw_grid(l.under, o);
@@ -54,11 +54,11 @@ impl Ui {
                 cv.round(Rect::new(edge - 3, o.y + o.h / 2 - 12, 7, 24), 3, ACCENT, 255);
             }
             cv.no_clip();
-            for &lane in &self.wins {
+            for &lane in &self.plot.wins {
                 self.draw_grid(l.under, lane);
             }
         } else {
-            for &w in &self.wins {
+            for &w in &self.plot.wins {
                 self.draw_grid(l.under, w);
             }
         }
@@ -73,21 +73,21 @@ impl Ui {
         } else {
             // Every detail lane draws its own sources. The shared zoom overview
             // was drawn above; detail maps use the same lane dimensions.
-            for i in 0..self.wins.len() {
-                self.cur_win = i;
-                self.area = self.wins[i];
+            for i in 0..self.plot.wins.len() {
+                self.plot.cur_win = i;
+                self.plot.area = self.plot.wins[i];
                 if !self.m.zoom {
                     self.draw_mask(l.under);
-                    self.traces(l, self.area, false, false);
+                    self.traces(l, self.plot.area, false, false);
                 } else {
-                    self.traces(l, self.area, true, false);
+                    self.traces(l, self.plot.area, true, false);
                 }
                 let cv = l.over();
                 self.draw_hist(cv);
                 self.draw_zones(cv);
-                if self.wins.len() > 1 || i == 0 || self.stacked() {
+                if self.plot.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
-                        self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
+                        self.draw_refs_at(cv, self.waves_plot(self.plot.area), self.view(), false);
                     } else {
                         self.draw_refs(cv);
                     }
@@ -111,8 +111,8 @@ impl Ui {
                     self.draw_waves_board(cv);
                 }
             }
-            self.cur_win = 0;
-            self.area = self.wave_area();
+            self.plot.cur_win = 0;
+            self.plot.area = self.wave_area();
         }
         let cv = l.over();
         if self.m.zoom && !self.xy && !self.view_on() {
@@ -160,7 +160,7 @@ impl Ui {
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.draw_pointer(cv);
-        self.frames += 1;
+        self.counts.frames += 1;
     }
 
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
@@ -219,18 +219,26 @@ impl Ui {
     fn render_view_layers_as_is(&mut self, l: &mut Layers) {
         let keep = (
             self.scr,
-            self.grid,
-            std::mem::take(&mut self.wins),
-            self.area,
-            self.cur_win,
-            self.frames,
+            self.plot.grid,
+            std::mem::take(&mut self.plot.wins),
+            self.plot.area,
+            self.plot.cur_win,
+            self.counts.frames,
             self.hdmi.snap_want,
         );
         self.scr = Screen { w: l.under.w, h: l.under.h };
-        (self.view_pass, self.hdmi.snap_want) = (true, false);
+        (self.plot.view_pass, self.hdmi.snap_want) = (true, false);
         self.render_layers(l);
-        self.view_pass = false;
-        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi.snap_want) = keep;
+        self.plot.view_pass = false;
+        (
+            self.scr,
+            self.plot.grid,
+            self.plot.wins,
+            self.plot.area,
+            self.plot.cur_win,
+            self.counts.frames,
+            self.hdmi.snap_want,
+        ) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid
@@ -319,7 +327,7 @@ impl Ui {
     /// keeps clear of the channel markers at the left edge.
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) {
             Some(self.m.active)
         } else {
@@ -343,7 +351,7 @@ impl Ui {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
             let bands = (0..DECODERS)
-                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win))
+                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.plot.cur_win))
                 .count() as i32;
             if bands > 0 {
                 taken.push(Rect::new(a.x, a.y + a.h - 50 - (bands - 1) * DEC_BAND, a.w, bands * DEC_BAND));
@@ -370,7 +378,7 @@ impl Ui {
                 backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
-        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+        if self.stacked() && self.plot.cur_win + 1 < self.plot.wins.len() {
             return;
         }
         let (tdiv, delay) = self.view();
