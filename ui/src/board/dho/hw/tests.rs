@@ -1104,7 +1104,8 @@ fn hardware_segments_only_where_they_record() {
     (m.segments, m.seg_hw, m.seg_ivl) = (500, true, 0.0);
     let s = settings(&m, false);
     assert_eq!(s.segments, Some(Segments { n: 500, interval: 0.0 }));
-    assert_eq!(seg_max(&m), Some(61_440));
+    // twice the 61,440 frames below 256 MiB: no probe has said that the unit lacks the memory above it
+    assert_eq!(seg_max(&m), Some(2 * 61_440));
     m.seg_hw = false;
     assert_eq!(settings(&m, false).segments, None);
     m.seg_hw = true;

@@ -111,14 +111,34 @@ fn pow2(n: i128) -> i128 {
 /// bursts 125 M fits.
 pub const MEM_BURSTS: i128 = 0x500_0000;
 
-/// Frame memory in bursts of the segmented record (stock series parameter): the whole
-/// frame memory less the reserved top 1 M bursts. Kept at the stock size until the real size is measured.
+/// Frame memory in bursts of the segmented record below 256 MiB (stock series parameter): 16,777,216 bursts less the
+/// top 1 M, which a record must not write (horizontal-config.md 1.8).
 pub const RECORD_BURSTS: u32 = 16_777_216 - 0x10_0000;
 
-/// Most frames a segmented record of segments of `seg` bursts holds: the whole frame memory, unlike the
-/// live batch ring (`Params::max_frames`, half of it).
+/// First burst of the upper frame memory, 256 MiB: the acquisition DDR3 holds 512 MiB (horizontal-config.md 1.8). The
+/// stock layout uses only the lower half.
+pub const UPPER_BURSTS: u32 = 16_777_216;
+
+/// Most frames a segmented record of segments of `seg` bursts holds below 256 MiB: the whole lower frame memory,
+/// unlike the live batch ring (`Params::max_frames`, half of it). The upper frame memory holds as many again
+/// (`upper_first_frame`), where the unit has it (`seg::probe_upper`).
 pub fn max_record_frames(seg: u32) -> u32 {
     RECORD_BURSTS / seg.max(1)
+}
+
+/// Ring index of the first frame of segments of `seg` bursts in the upper frame memory.
+pub fn upper_first_frame(seg: u32) -> u32 {
+    UPPER_BURSTS.div_ceil(seg.max(1))
+}
+
+/// Ring index of segment `i` of a record whose lower part holds `low` frames: the lower part from index 0, the rest from
+/// `upper_first_frame`.
+pub fn record_frame(seg: u32, low: u32, i: u32) -> u32 {
+    if i < low {
+        i
+    } else {
+        upper_first_frame(seg) + (i - low)
+    }
 }
 
 /// Segment size in 10-point bursts for `pts` raw points (normal mode).
@@ -258,6 +278,21 @@ mod tests {
     use super::*;
 
     // Break it catches: a segment limit from the half ring of the live batches, or from the deep-record memory size.
+    // Break it catches: an upper part that starts below 256 MiB or overlaps the lower part, a gap in the indices.
+    #[test]
+    fn the_upper_frames_start_at_256_mib() {
+        for seg in [256u32, 131_072, 4_194_304, 2_500_096] {
+            let (low, k) = (max_record_frames(seg), upper_first_frame(seg));
+            assert!(
+                k as u64 * seg as u64 >= UPPER_BURSTS as u64 && (k as u64 - 1) * (seg as u64) < UPPER_BURSTS as u64
+            );
+            assert_eq!((record_frame(seg, low, 0), record_frame(seg, low, low - 1)), (0, low - 1), "seg {}", seg);
+            assert_eq!((record_frame(seg, low, low), record_frame(seg, low, low + 2)), (k, k + 2), "seg {}", seg);
+            // the upper part holds as many frames below 512 MiB less 1 M bursts
+            assert!((k + low) as u64 * seg as u64 <= 2 * UPPER_BURSTS as u64 - 0x10_0000, "seg {}", seg);
+        }
+    }
+
     #[test]
     fn record_frames_use_the_whole_stock_memory() {
         // 1,000 points -> 256 bursts -> 61,440 frames; 12,500 -> 2,048 -> 7,680

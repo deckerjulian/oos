@@ -31,7 +31,7 @@ use crate::dho::boot::Clock;
 use crate::dho::bus::{Bus, FPGA_VERSION};
 use crate::dho::roll::{CHUNK_BYTES, CHUNK_WORDS};
 use crate::dho::seg::{HEADER_TICK_FS, LATCH_TICK_FS};
-use crate::dho::{acq, encode, pairs, readout, scu};
+use crate::dho::{acq, encode, hz, pairs, readout, scu};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
@@ -430,6 +430,9 @@ pub struct Unit {
     /// the value of each ADC core's offset register at which that core reads the scene as it is (its own offset, which
     /// the stored calibration and the core trim aim at); None: every core alike, whatever is written
     pub cores: Option<[i32; 8]>,
+    /// the frame memory above 256 MiB (horizontal-config.md 1.8); without it a frame there lands on the one 256 MiB
+    /// below, as on a memory of 256 MiB
+    pub upper_mem: bool,
     pub trace: Vec<Event>,
     /// microseconds slept through `Time` (the waits of the code under test, not the cost of its accesses)
     pub slept_us: u64,
@@ -459,6 +462,7 @@ impl Unit {
             mask: MaskUnit::default(),
             measure: Measure::default(),
             cores: None,
+            upper_mem: true,
             trace: Vec::new(),
             slept_us: 0,
         }
@@ -669,6 +673,15 @@ impl Unit {
         self.regs.get(&r).copied().unwrap_or(0)
     }
 
+    /// Where frame `k` of segments of 0x10e0 bursts is stored: itself, or without `upper_mem` the frame 256 MiB below.
+    fn slot(&self, k: u32) -> u32 {
+        let seg = self.reg(0x10e0).max(1);
+        if self.upper_mem || (k as u64 * seg as u64) < hz::UPPER_BURSTS as u64 {
+            return k;
+        }
+        k - hz::UPPER_BURSTS / seg
+    }
+
     /// Records the frames whose trigger has come by now. The first takes the first trigger once its pre-trigger points
     /// are filled after the arm (record-play.md: a record takes the pre-trigger fill, then the wait for the next edge);
     /// a trigger inside the fill is not taken. Each later frame takes the first trigger after the pre- and post-trigger
@@ -684,7 +697,7 @@ impl Unit {
             let from = match (r.rearm_fs, r.n) {
                 (Some(t), _) => t,
                 (None, 0) => r.armed_fs + self.view.pre as i128 * self.view.dot_fs,
-                _ => self.ring[&(r.first + r.n - 1)] + span + wait,
+                _ => self.ring[&self.slot(r.first + r.n - 1)] + span + wait,
             };
             let Some(at) = self.scene.next_trigger(from).filter(|&at| at <= self.t_fs) else { break };
             // a trigger the zone trigger does not take: the FSM arms again and fills a whole record (assumed)
@@ -693,7 +706,7 @@ impl Unit {
                 continue;
             }
             let k = r.first + r.n;
-            self.ring.insert(k, at);
+            self.ring.insert(self.slot(k), at);
             self.first_trigger_fs.get_or_insert(at);
             r.n += 1;
             self.trace.push(Event::Recorded { us: self.t_fs / US, frame: k, trigger_us: at / US });
@@ -803,9 +816,9 @@ impl Unit {
         let at = self.stream.len();
         for f in first..=last {
             // a frame that was not recorded plays the trigger time 0 (not known what the unit sends)
-            let trig = self.ring.get(&f).copied().unwrap_or(0);
+            let trig = self.ring.get(&self.slot(f)).copied().unwrap_or(0);
             if self.reg(0x1010) & 1 << 31 == 0 {
-                let before = f.checked_sub(1).and_then(|b| self.ring.get(&b)).copied().unwrap_or(0);
+                let before = f.checked_sub(1).and_then(|b| self.ring.get(&self.slot(b))).copied().unwrap_or(0);
                 let stamp = (before / HEADER_TICK_FS) as u64 & ((1 << 48) - 1);
                 self.stream.extend(encode::header(f as u16, stamp));
             }
@@ -947,7 +960,9 @@ impl Unit {
             // the record stored there is gone even when a stop comes before the trigger (assumed, as the loop's batch
             // path has it); the later frames are overwritten as they are recorded
             self.view = self.scene.view;
-            self.ring.remove(&first);
+            self.ring.remove(&self.slot(first));
+            // the arm starts the first-trigger stamp again (horizontal-config.md 1.8)
+            self.first_trigger_fs = None;
             self.rec = Some(Rec { first, last, armed_fs: self.t_fs, n: 0, rearm_fs: None });
             self.recorded = 0;
         } else if rise & 4 != 0 {

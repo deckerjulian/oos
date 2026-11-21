@@ -38,6 +38,7 @@ use self::config::{ConfigRun, Request};
 pub use self::decode::{codes_into, decode, decode_into};
 #[cfg(any(target_os = "linux", test))]
 use self::plan::{batch_plan, disarm};
+pub use self::seg::upper_mem;
 #[cfg(any(target_os = "linux", test))]
 use self::seg::{seg_abort, seg_step, SegRun};
 pub use self::serial::serial_debug;

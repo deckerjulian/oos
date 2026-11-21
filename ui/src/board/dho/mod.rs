@@ -117,6 +117,10 @@ impl Board for Dho {
         hw::seg_max(m)
     }
 
+    fn upper_mem(&self) -> crate::board::UpperMem {
+        hw::upper_mem()
+    }
+
     fn dvm_hw(&self) -> bool {
         hw::dvm_hw_on()
     }

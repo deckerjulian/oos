@@ -262,6 +262,11 @@ pub fn record_arm(fsm: u32, sh: &mut Shadows, n: u32, interval_ticks: u32) -> Ve
     record_run(fsm, sh, 0, n, interval_ticks)
 }
 
+/// `record_arm` of `n` frames from ring index `first` (the upper frame memory, horizontal-config.md 1.8).
+pub fn record_arm_at(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u32) -> Vec<Write> {
+    record_run(fsm, sh, first, n, interval_ticks)
+}
+
 fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u32) -> Vec<Write> {
     let mut w = Vec::new();
     stop_sequence(&mut w, sh);

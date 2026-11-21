@@ -181,6 +181,52 @@ neither the samples nor their spread. A signal above half the rate folds down at
 every sample of the full rate) shows what lies between the kept samples. OOS notes it in Acquire while the rate
 is below the ADC's.
 
+### 1.8 Frame memory above 256 MiB
+
+The acquisition memory holds 512 MiB, 33,554,432 bursts. The stock layout and the memory size of 1.4/1.5 use only the
+lower half, so nothing the stock system does shows the upper half. **It was found by observation and measurement on
+the unit**, with test builds that recorded hardware segments past the stock limit:
+- a record that went on above 256 MiB showed the effect of 240..256 MiB below;
+- a record placed above 256 MiB left the frames below intact.
+OOS uses the upper half because of these measurements, and checks it on every unit before it relies on it (below).
+System info shows whether it is in use ("Optional memory").
+
+- **Verified on the unit** (DHO924S, 2026-11-21, hardware segments over SCPI with a test build, segments of 1 M points
+  = 131,072 bursts = 2 MiB):
+  1. frames 0..111 recorded (0..224 MiB), their stamps read;
+  2. a record arm from frame 128 (0x4010/0x4014 = 128, 0x4018 = 239; 256..480 MiB) recorded 112 more;
+  3. frames 0..111 read again: their latch and header stamps were unchanged, and frames 128..239 read back their own.
+  A memory of 256 MiB would have put the second record on the first.
+- **Verified on the unit**: a record that writes into 240..256 MiB, the top 1 M bursts of the lower half that 1.4 keeps
+  free, spoils the read-back of every frame recorded before it in that record. Their stamps come back as noise
+  (4 segments of 64 MiB: frames 0..2; 240 segments of 2 MiB: frames 0..119). The frames recorded after it are
+  fine. **Assumed**: the FPGA keeps something of its own there. A record must not reach it.
+- So a segmented record has two parts of the same size:
+  - below 256 MiB: frames 0 .. `hz::max_record_frames(seg)` - 1;
+  - from burst 16,777,216: ring index `hz::upper_first_frame(seg)` on, the same number of frames, with the top 1 M
+    bursts of 512 MiB kept free as well. That they need it is **assumed**; 480..512 MiB was not tried.
+  - A segment of 16,777,216 bursts (100 M and 125 M points) fits in neither part: OOS records no hardware segments of
+    that size (the menu offers none).
+- The upper part is a second record arm (`scu::record_arm_at`, `State::record_steps_at`) once the lower part is
+  complete. **Verified on the unit**: the arm starts the first-trigger stamp (0x40c0) again even without its clear, so
+  OOS reads it when the lower part is complete and the segment times count from there. The few ms of the poll and the
+  arm between the two parts are a gap in the segment times.
+- **Verified on the unit**: in a series of stamp plays (`seg::stamps`) the first one returns the header of an earlier
+  play; its latch (0x40b0) is its own. The times use the latch only.
+- OOS uses the upper part only for a segment size the unit has shown to hold there (`seg::probe_upper`, once per
+  segment size and run of oos-ui):
+  - three frames from index 0, then three from `upper_first_frame`, back to back (without the recording's interval) and
+    each forced when no trigger comes;
+  - then the headers of frames 1 and 2 again: they must differ from each other (the play reads the frame asked for)
+    and be unchanged by the upper frames.
+  This also covers a frame index the FPGA might not hold.
+- **Verified on the unit** with OOS itself (DHO924S, 2026-11-21, Auto trigger without a signal):
+  - the probe said yes for segments of 256, 131,072, 1,048,576 and 4,194,304 bursts; for 256 bursts the upper part
+    starts at ring index 65,536;
+  - 6 segments of 25 M points (3 below, 3 above), 20 of 10 M points (15 and 5) and 200 of 1 M points (120 and 80)
+    were recorded and read back;
+  - every segment time was valid and rising, from 0 s.
+
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
 
 ### 2.1 Mask, ratio, lanes
