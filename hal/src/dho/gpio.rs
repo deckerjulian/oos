@@ -67,7 +67,8 @@ fn err(what: &str) -> std::io::Error {
 /// Finds line `name` on /dev/gpiochip0..9: (chip fd, offset).
 fn find(name: &str) -> std::io::Result<(OwnedFd, u32)> {
     for c in 0..10 {
-        let path = std::ffi::CString::new(format!("/dev/gpiochip{}", c)).unwrap();
+        // a formatted number holds no NUL; `?` turns the impossible error into the io::Error of the function
+        let path = std::ffi::CString::new(format!("/dev/gpiochip{}", c))?;
         let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
         if fd < 0 {
             continue;

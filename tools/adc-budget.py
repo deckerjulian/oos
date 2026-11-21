@@ -12,7 +12,7 @@ harmonics, the generator's image at 156.25 MHz - f, the noise, and SINAD with an
 It changes the scope's settings (generator, channel, time base, depth, cores, Run/Stop) and leaves the generator off
 and the cores matched at the end; run it only on a scope whose owner asked for it. Python's standard library only.
 
-  tools/adc-budget.py --host IP [--channel 1] [--channels 1] [--freq 1e6,10e6,50e6] [--vdiv 0.2,0.5] [--vpp 2]
+  tools/adc-budget.py --host IP [--channel 1] [--channels 1] [--freq 1e6,10e6,50e6] [--vdiv 0.25,0.5,1] [--vpp 1.6]
 """
 import argparse
 import os
@@ -24,24 +24,21 @@ import oosclient  # noqa: E402
 
 # the generator's sample rate: its image of a sine at f lies at GEN_FS - f (docs/bandwidth-test.md, test D)
 GEN_FS = 156.25e6
-# cores of one channel by the number of channels on (adc-mode.md 6): 1 -> 8, 2 -> 4, 3 or 4 -> 2
-CORES = {1: 8, 2: 4, 3: 2, 4: 2}
+# cores that take turns on one channel's samples, by its rate (adc-mode.md 6, core-offset.md); other rates: 1
+CORES = {1_250_000_000: 8, 625_000_000: 4, 312_500_000: 2, 156_250_000: 1}
 POINTS = 100_000
+# records thrown away after a change, before the one measured
+SETTLE = {"RAW": 1, "MATC": 3}
 
 
 def floats(text):
     return [float(x) for x in text.split(",") if x.strip()]
 
 
-def record(link, single_timeout=5.0):
-    """One new record: Single, then wait until it has stopped."""
-    link.send(":SING")
-    end = time.time() + single_timeout
-    while time.time() < end:
-        if link.query(":TRIGger:STATus?").strip().upper().startswith("STOP"):
-            return True
-        time.sleep(0.05)
-    return False
+def record(link, timeout=10.0):
+    """One new record: Single, and `*OPC?` returns when it is in place (docs/scpi.md, operation completion). A timeout
+    raises: the late `1` would stay in the stream and shift every reply after it, so the run cannot go on."""
+    return link.query(":SINGle;*OPC?", timeout=timeout).strip() == "1"
 
 
 def main():
@@ -51,25 +48,29 @@ def main():
     ap.add_argument("--channel", type=int, default=1, choices=[1, 2, 3, 4], help="the channel the generator is cabled to")
     ap.add_argument("--channels", type=int, default=1, choices=[1, 2, 3, 4], help="channels on (1 = the full rate)")
     ap.add_argument("--freq", type=floats, default=[1e6, 10e6, 50e6], help="sine frequencies, Hz")
-    ap.add_argument("--vdiv", type=floats, default=[0.2, 0.5], help="volts per division")
-    ap.add_argument("--vpp", type=float, default=2.0, help="generator amplitude, Vpp")
+    ap.add_argument("--vdiv", type=floats, default=[0.25, 0.5, 1.0], help="volts per division")
+    ap.add_argument("--vpp", type=float, default=1.6, help="generator amplitude, Vpp (1.6: 6.4 div at 0.25 V/div)")
     a = ap.parse_args()
     link = oosclient.Link(a.host, a.port, timeout=20.0)
-    m = CORES[a.channels]
     on = [a.channel] + [c for c in range(1, 5) if c != a.channel][: a.channels - 1]
     for c in range(1, 5):
         link.send(f":CHANnel{c}:DISPlay {'ON' if c in on else 'OFF'}")
-    rate = 1.25e9 / {8: 1, 4: 2, 2: 4}[m]
     # one plain record per Single: Normal acquisition, no segments, an edge trigger on the generator's channel
     link.send(":ACQuire:TYPE NORMal")
     link.send(":ACQuire:SEGMents OFF")
     link.send(":TRIGger:MODE EDGE")
     link.send(f":ACQuire:MDEPth {POINTS}")
-    link.send(f":TIMebase:SCALe {POINTS / rate / 10:.6g}")
+    # a short time base with a fixed depth: the highest rate the channel set allows (the depth is longer than the
+    # screen); the rate and the cores of a channel are read back, not assumed
+    link.send(":TIMebase:SCALe 1e-6")
     link.send(f":TRIGger:EDGE:SOURce CHANnel{a.channel}")
     link.send(":SOURce1:FUNCtion SIN")
     link.send(f":SOURce1:VOLTage {a.vpp}")
     link.send(":SOURce1:OUTPut ON")
+    record(link)
+    rate = round(float(link.query(":ACQuire:SRATe?")))
+    m = CORES.get(rate, 1)
+    print(f"# {a.channels} channel(s) on, CH{a.channel} at {rate / 1e6:g} MSa/s, {m} core(s) per sample turn")
     print("# V/div f/Hz cores sinad matched offset gain timing harmonics image noise  (dB, dBc)")
     try:
         for vdiv in a.vdiv:
@@ -80,6 +81,10 @@ def main():
                 time.sleep(0.5)
                 for cores in ("RAW", "MATC"):
                     link.send(f":ACQuire:CORes {cores}")
+                    # records before the one measured: the new settings in place, and the matching has learnt the
+                    # pattern of this channel and rate (it follows over frames, ui/src/board/dho/cores.rs)
+                    for _ in range(SETTLE[cores]):
+                        record(link)
                     if not record(link):
                         print(f"{vdiv} {f:.6g} {cores}: no trigger")
                         continue
