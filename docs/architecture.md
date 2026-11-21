@@ -343,14 +343,14 @@ The steps, in order. A later step waits for the earlier ones it names.
 | 4 | `oos-model` (done), then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
 | 5 | The simulated unit in hal and the acquisition loop on a host; then `spawn` (1234 lines) is split, and the files the host run reaches leave the `live` list | | ADR 0053 | goal T1 of #120 |
 | 6 | The remaining long functions: `Scpi::exec_cmd` (1005 lines) as a table of subsystems, `Ui::adjust` and `Ui::activate` through the parts (after 2), the cold boot's `Ctx::run` (needs a unit). `Model::default` and `Ui::new` may stay as tables, with their reason | 2, 5 | | long-fns in `tools/code-metrics.txt` |
-| 7 | Preparing for more board families: a build switch for `target::ACTIVE` and `board::Active`, `oos-fpgad` split into a neutral part and a module `dho`, a family argument for the host tools, CI per family, the same partition marks in scripts and update (#288) | | ADR 0067 | `hal/tests/board_families.rs` |
+| 7 | Preparing for more board families: a build switch for `target::ACTIVE` and `board::Active`, `oos-fpgad` split into a neutral part and a module `dho`, a family argument for the host tools, CI per family, the same partition marks in scripts and update (#288). Done: `OOS_BOARD` picks the family for the build (`hal/board_cfg.rs`, #302), oos-fpgad follows it through `oos_hal::if_board!` (#466), the host tools and the image scripts take the family (#445, #450), `tools/check.sh` in CI builds and tests every family a change reaches (#448), the marks are the same (#324). Left (ADR 0067, 3): CI's comparison with the base and its check of the scope programs per family (the jobs `compare` and `scope` run `dho` only), a device-test profile per family | | ADR 0067 | `hal/tests/board_families.rs` |
 | 8 | A stable, versioned remote interface: SCPI and HTTP marked stable, experimental or internal, and versioned | 3 | ADR 0055 | #205, `tools/http-coverage.py` |
 | 9 | Add-ons as their own processes with a manifest, using the interface of step 8 | 8 | ADR 0056 | #206 |
 
 The steps 1, 2, 5 and 7 do not depend on each other and can run side by side, in different files. A port to a new
 board family (ADR 0067) can start any time as a module in development; it becomes ready, with a release image,
-after step 7. A file that has grown back over 1500 lines (`ui/src/drawpipe.rs`, 1906)
-is split along the way (goal S1 of #120).
+after step 7 and once the maintainer marks it so (ADR 0067, 2). A file that grows back over 1500 lines is split
+along the way (goal S1 of #120).
 
 ## Where a change goes
 
