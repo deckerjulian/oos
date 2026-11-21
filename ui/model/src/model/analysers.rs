@@ -113,3 +113,15 @@ pub enum DptZoom {
     TurnOn,
     TurnOff,
 }
+
+impl super::Model {
+    /// The line frequency of the power analysis, when one is set (0 lets the analysis find it in the signal).
+    pub fn line_hz(&self) -> Option<f64> {
+        (self.pw_fline > 0.0).then_some(self.pw_fline)
+    }
+
+    /// The switching frequency of the power analysis, when one is set (0 lets the analysis find it in the signal).
+    pub fn switch_hz(&self) -> Option<f64> {
+        (self.pw_fsw > 0.0).then_some(self.pw_fsw)
+    }
+}

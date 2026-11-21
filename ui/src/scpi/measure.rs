@@ -549,17 +549,7 @@ impl Scpi {
         if query {
             return t(if ui.m.meas_labels { "1" } else { "0" });
         }
-        match parse_bool(arg) {
-            Some(on) => {
-                ui.m.meas_labels = on;
-                ui.mark_changed();
-                None
-            }
-            None => {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                None
-            }
-        }
+        self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.m.meas_labels = on)
     }
 
     /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]

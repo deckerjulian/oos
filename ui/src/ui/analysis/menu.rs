@@ -6,6 +6,7 @@
 //! its case in each `ana_*` function here.
 
 use super::*;
+use crate::ui::menu_text::on_off;
 
 const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
@@ -80,12 +81,11 @@ impl Ui {
 
     pub(in crate::ui) fn ana_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::SpecOn => onoff(m.view == AView::Spectrum),
-            Item::ProtoWatch => onoff(self.azr.watch),
-            Item::EyeOn => onoff(m.view == AView::Eye),
-            Item::PowOn => onoff(m.view == AView::Power),
+            Item::SpecOn => on_off(m.view == AView::Spectrum),
+            Item::ProtoWatch => on_off(self.azr.watch),
+            Item::EyeOn => on_off(m.view == AView::Eye),
+            Item::PowOn => on_off(m.view == AView::Power),
             Item::SpecSrc => self.wave_name(m.spec_src),
             Item::EyeSrc => self.wave_name(m.eye_src),
             Item::PowV => self.wave_name(m.pw_v),
@@ -200,7 +200,7 @@ impl Ui {
             self.analyzer_update();
             return true;
         }
-        let view = |m: &mut Model, v: AView| m.view = if m.view == v { AView::Scope } else { v };
+        let view = crate::ui::analysers::toggle_view;
         let m = &mut self.m;
         match it {
             Item::SpecOn => view(m, AView::Spectrum),

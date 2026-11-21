@@ -17,21 +17,13 @@ impl Scpi {
             if query {
                 return t(if ui.m.hist == Hist::Off { "0" } else { "1" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    if on && ui.m.hist == Hist::Off {
-                        ui.m.hist = Hist::Vertical;
-                    } else if !on {
-                        ui.m.hist = Hist::Off;
-                    }
-                    ui.mark_changed();
-                    None
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| {
+                if on && ui.m.hist == Hist::Off {
+                    ui.m.hist = Hist::Vertical;
+                } else if !on {
+                    ui.m.hist = Hist::Off;
                 }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            });
         }
         if let Some(row) = crate::settings::command(&crate::settings::histogram::SLICES, n) {
             return self.setting_cmd(ui, row, query, arg);
@@ -41,18 +33,10 @@ impl Scpi {
                 let c = ui.hist_source().unwrap_or(0);
                 return t(&format!("CHAN{}", c + 1));
             }
-            return match parse_ch(arg) {
-                Some(c) => {
-                    ui.m.ch[c].on = true;
-                    ui.set_meas_source(WaveId::Ch(c));
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_ch(arg), |ui, c| {
+                ui.m.ch[c].on = true;
+                ui.set_meas_source(WaveId::Ch(c));
+            });
         }
         if n.len() == 2 && kw(n0, "STATistics") && kw(n[1], "RESult") && query {
             let blank = "Sum:0,Peaks:0,Max:9.9E37,Min:9.9E37,Pk_Pk:9.9E37,Mean:9.9E37,Median:9.9E37,Mode:9.9E37,Bin width:9.9E37,Sigma:9.9E37";

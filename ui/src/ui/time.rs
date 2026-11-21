@@ -8,6 +8,7 @@
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
 
+use super::menu_text::on_off;
 use super::service::Service;
 use super::*;
 use crate::clock::{self, Local, Tz, ZONES};
@@ -417,7 +418,6 @@ impl Ui {
     }
 
     pub(super) fn time_value(&self, it: Item) -> Option<String> {
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::TimeNow => {
                 let t = clock::unix_now() as i64;
@@ -429,11 +429,11 @@ impl Ui {
                     format!("{} (not set)", s)
                 }
             }
-            Item::NtpOn => onoff(self.sys.ntp),
+            Item::NtpOn => on_off(self.sys.ntp),
             Item::NtpServer => server_label(&self.sys.ntp_server),
             Item::NtpStatus => self.ntp_status(),
             Item::TimeZone => self.zone_label(),
-            Item::NetRetry10 => onoff(self.sys.eth_retry_10m),
+            Item::NetRetry10 => on_off(self.sys.eth_retry_10m),
             _ => return None,
         })
     }

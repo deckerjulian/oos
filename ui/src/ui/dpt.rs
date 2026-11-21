@@ -4,6 +4,7 @@
 //! Wide-bandgap double pulse page. E on and E off are the existing switching-loss pair, not recomputed here.
 
 use super::magnetic::{add_note, clash_wave, missing_wave, needs_more_channels, num, wave_clash};
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::dpt::{self, Fourth};
 use oos_dsp::power;
@@ -46,13 +47,7 @@ impl Ui {
     pub(super) fn dpt_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::DptOn => {
-                if m.view == AView::Dpt {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::DptOn => on_off(m.view == AView::Dpt),
             Item::DptV => self.wave_name(m.dpt_v),
             Item::DptI => self.wave_name(m.dpt_i),
             Item::DptG => self.wave_name(m.dpt_g),
@@ -106,7 +101,7 @@ impl Ui {
         }
         let m = &mut self.m;
         match it {
-            Item::DptOn => m.view = if m.view == AView::Dpt { AView::Scope } else { AView::Dpt },
+            Item::DptOn => super::analysers::toggle_view(m, AView::Dpt),
             Item::DptFourth => {
                 let order = [DptFourth::Off, DptFourth::Gate, DptFourth::DiodeV, DptFourth::DiodeI];
                 let i = order.iter().position(|x| *x == m.dpt_4th).unwrap_or(0);

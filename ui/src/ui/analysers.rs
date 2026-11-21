@@ -72,6 +72,11 @@ pub(super) fn of(v: AView) -> Option<&'static dyn Analyser> {
     ANALYSERS.iter().copied().find(|a| a.view() == v)
 }
 
+/// The View row of a page: shows view `v`, or the waveform again when `v` is shown.
+pub(super) fn toggle_view(m: &mut Model, v: AView) {
+    m.view = if m.view == v { AView::Scope } else { v };
+}
+
 /// The views SCPI `:VIEW` sets, with their keywords: the waveform and every page that has one.
 pub(crate) fn scpi_views() -> Vec<(&'static str, AView)> {
     std::iter::once(("SCOPe", AView::Scope))

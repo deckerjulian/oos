@@ -309,6 +309,19 @@ impl Scpi {
         None
     }
 
+    /// A command that sets one value: `v` is its argument parsed, which `set` takes into `ui` and marks the model
+    /// changed; an argument that did not parse (`None`) is refused with -224 and changes nothing.
+    fn set_arg<T>(&mut self, ui: &mut Ui, arg: &str, v: Option<T>, set: impl FnOnce(&mut Ui, T)) -> Option<Vec<u8>> {
+        match v {
+            Some(v) => {
+                set(ui, v);
+                ui.mark_changed();
+            }
+            None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+        }
+        None
+    }
+
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
     /// so a client blocked on a line never waits forever.
     fn push_err(&mut self, mut message: String) {

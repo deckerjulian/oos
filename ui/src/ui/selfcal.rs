@@ -5,6 +5,7 @@
 //! first), cancel, progress and result. The work runs in the acquisition thread of the board (`board/dho/hw.rs`); the
 //! results go to OOS's own files in /oos/cal, never to /rigol/data.
 
+use super::menu_text::on_off;
 use super::*;
 
 /// Minutes the scope should run before a calibration.
@@ -92,20 +93,8 @@ impl Ui {
                     format!("CH{}", self.cal.ch)
                 }
             }
-            Item::CalZero => {
-                if self.cal.zero {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::CalAdc => {
-                if self.cal.adc {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::CalZero => on_off(self.cal.zero),
+            Item::CalAdc => on_off(self.cal.adc),
             Item::CalStart | Item::CalCancel => String::new(),
             Item::CalStatus => self.cal_status(),
             _ => return None,

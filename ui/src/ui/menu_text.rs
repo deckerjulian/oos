@@ -444,7 +444,6 @@ impl Ui {
     /// Values of the channel, horizontal, trigger and acquire rows.
     fn value_inputs(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
             Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
@@ -452,7 +451,7 @@ impl Ui {
             Item::ChOffset(c) => si(m.ch[c].offset as f64, m.unit(c)),
             Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
-            Item::HFine => onoff(m.fine_t),
+            Item::HFine => on_off(m.fine_t),
             Item::HExpandI => format!("{:?}", m.h_expand),
             Item::RefColor => self.refs[self.ref_page.sel]
                 .as_ref()
@@ -463,13 +462,7 @@ impl Ui {
             Item::TrigSrc => self.trigger_source_label(),
             Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
             Item::TrigType => m.trig_type.name().into(),
-            Item::SearchOn => {
-                if self.search_on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::SearchOn => on_off(self.search_on),
             Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
             Item::TrigSrc2 => Self::trigger_wave_label(m.trigger_wave2()),
             Item::TrigWhen => match m.trig_when {
@@ -508,7 +501,6 @@ impl Ui {
     /// Values of the measure, cursor, logger, slot, display, zone, math operator and view rows.
     fn value_measure(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::MeasSrc => self.wave_name(self.sources.a),
             Item::MeasCopyTo => "Pick".into(),
@@ -521,7 +513,7 @@ impl Ui {
                     m.math_expr[m.math_sel].clone()
                 }
             }
-            Item::LogOn => onoff(self.log.file.is_some()),
+            Item::LogOn => on_off(self.log.file.is_some()),
             Item::LogIvl => si_short(logger::LOG_STEPS[m.log_ivl.min(logger::LOG_STEPS.len() - 1)], "s"),
             Item::LogInfo => self.log_info(),
             Item::CurC => self.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
@@ -547,7 +539,7 @@ impl Ui {
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_trig.sel + 1),
-            Item::ZoneOn => onoff(m.zones[self.zone_trig.sel].on),
+            Item::ZoneOn => on_off(m.zones[self.zone_trig.sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_trig.sel].src + 1),
             Item::ZoneMode => {
                 if m.zones[self.zone_trig.sel].inside {
@@ -561,11 +553,11 @@ impl Ui {
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math.family.name().into(),
             Item::StoreDest => self.files.dest.name().into(),
-            Item::MeasStats => onoff(self.results.on),
-            Item::MeasLabels => onoff(self.m.meas_labels),
+            Item::MeasStats => on_off(self.results.on),
+            Item::MeasLabels => on_off(self.m.meas_labels),
             Item::StripDock => self.m.strip_dock.label().into(),
-            Item::Zoom => onoff(m.zoom),
-            Item::AutoRoll => onoff(m.auto_roll),
+            Item::Zoom => on_off(m.zoom),
+            Item::AutoRoll => on_off(m.auto_roll),
             _ => return None,
         })
     }
@@ -573,9 +565,8 @@ impl Ui {
     /// Values of the decoder, pane, trend, bus trigger, zoom and XY rows.
     fn value_decode(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::DecOn => onoff(m.dec_on),
+            Item::DecOn => on_off(m.dec_on),
             Item::DecSel => format!("D{}", m.dec_sel + 1),
             Item::PaneSel => tables::PANES[m.pane.min(tables::PANES.len() - 1)].into(),
             Item::TrendSel(k) => self.trend_options().get(m.trend_sel[k]).cloned().unwrap_or_else(|| "Auto".into()),
@@ -670,4 +661,9 @@ impl Ui {
             _ => String::new(),
         }
     }
+}
+
+/// The value of a switch, as a menu row shows it.
+pub(super) fn on_off(on: bool) -> String {
+    if on { "On" } else { "Off" }.into()
 }

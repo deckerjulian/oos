@@ -346,7 +346,7 @@ impl Ui {
     pub(super) fn power_update(&mut self, rec: &Record) {
         let mode = self.m.pw_mode;
         let (v_id, i_id) = (self.m.pw_v, self.m.pw_i);
-        let (fline, fsw, reference) = (self.m.pw_fline, self.m.pw_fsw, self.m.pw_ref);
+        let (fline, fsw, reference) = (self.m.line_hz(), self.m.switch_hz(), self.m.pw_ref);
         let taken = match mode {
             PowerMode::Ripple => self.take_waves(rec, &[v_id], &[Some(i_id), self.m.pw_vin]),
             PowerMode::Rail => self.take_waves(rec, &[v_id], &[self.m.pw_vin, self.m.pw_clk]),
@@ -371,7 +371,7 @@ impl Ui {
         };
         self.azr.power = match mode {
             PowerMode::Quality => {
-                let q = power::quality(&v, &i, dt, if fline > 0.0 { Some(fline) } else { None });
+                let q = power::quality(&v, &i, dt, fline);
                 match self.power_quality_reason(&v, &i, &q) {
                     Some(why) => why,
                     None => vec![
@@ -415,8 +415,8 @@ impl Ui {
             PowerMode::Ripple => {
                 let (pp, ac) = power::ripple(&v);
                 let (pk, tpk, i2t) = if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
-                let fl = if fline > 0.0 { fline } else { power::line_hz(&v, dt) };
-                let fs = if fsw > 0.0 { fsw } else { power::switch_hz(&v, dt) };
+                let fl = fline.unwrap_or_else(|| power::line_hz(&v, dt));
+                let fs = fsw.unwrap_or_else(|| power::switch_hz(&v, dt));
                 let line = power::tone_ripple(&v, dt, fl);
                 let sw = power::switching_ripple(&v, dt, fs);
                 let mut rows = vec![

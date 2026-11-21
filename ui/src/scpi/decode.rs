@@ -171,17 +171,7 @@ impl Scpi {
             if query {
                 return t(if ui.decode_table_on() { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.set_decode_table(on);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.set_decode_table(on));
         }
         if n.len() == 1 && kw(n0, "THReshold") {
             if query {
@@ -212,18 +202,7 @@ impl Scpi {
             return self.bus_spi_source(ui, k, n, query, arg);
         }
         if n.len() == 2 && kw(n0, "SPI") && kw(n[1], "DBITs") {
-            if query {
-                return t(&format!("{}", cfg.bits));
-            }
-            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (4..=32).contains(v)) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            with_bus(ui, k, |m| {
-                m.dec_proto = Proto::SPI;
-                m.dec_bits = v;
-            });
-            return None;
+            return self.bus_bits(ui, k, Proto::SPI, 4..=32, query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" :BUS{}:{}", k + 1, n.join(":")));
         None
@@ -359,20 +338,34 @@ impl Scpi {
             return None;
         }
         if kw(which, "DBITs") {
-            if query {
-                return t(&format!("{}", cfg.bits));
-            }
-            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (5..=9).contains(v)) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            with_bus(ui, k, |m| {
-                m.dec_proto = Proto::UART;
-                m.dec_bits = v;
-            });
-            return None;
+            return self.bus_bits(ui, k, Proto::UART, 5..=9, query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" :BUS{}:RS232:{}", k + 1, which));
+        None
+    }
+
+    /// `:BUS<n>:SPI:DBITs` and `:BUS<n>:RS232:DBITs`: the word length of bus `k`, which a command sets to one of
+    /// `bits` with the protocol `proto`.
+    fn bus_bits(
+        &mut self,
+        ui: &mut Ui,
+        k: usize,
+        proto: Proto,
+        bits: std::ops::RangeInclusive<u32>,
+        query: bool,
+        arg: &str,
+    ) -> Option<Vec<u8>> {
+        if query {
+            return t(&format!("{}", ui.m.dec_slot(k).bits));
+        }
+        let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| bits.contains(v)) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        with_bus(ui, k, |m| {
+            m.dec_proto = proto;
+            m.dec_bits = v;
+        });
         None
     }
 

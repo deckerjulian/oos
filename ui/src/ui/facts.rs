@@ -118,7 +118,7 @@ impl Ui {
                     "RIPPLE" => power::ripple(&v).0,
                     "ACRMS" => power::ripple(&v).1,
                     "LINE" | "LINER" => {
-                        let fl = if self.m.pw_fline > 0.0 { self.m.pw_fline } else { power::line_hz(&v, dt) };
+                        let fl = self.m.line_hz().unwrap_or_else(|| power::line_hz(&v, dt));
                         let t = power::tone_ripple(&v, dt, fl);
                         if item == "LINE" {
                             t.pp
@@ -127,7 +127,7 @@ impl Ui {
                         }
                     }
                     _ => {
-                        let fs = if self.m.pw_fsw > 0.0 { self.m.pw_fsw } else { power::switch_hz(&v, dt) };
+                        let fs = self.m.switch_hz().unwrap_or_else(|| power::switch_hz(&v, dt));
                         let t = power::switching_ripple(&v, dt, fs);
                         if item == "SWITCH" {
                             t.pp

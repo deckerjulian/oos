@@ -195,32 +195,15 @@ impl Scpi {
 
     /// Horizontal (`x`) or vertical cursor. `a` is cursor A.
     fn cursor_axis(&mut self, ui: &mut Ui, query: bool, arg: &str, x: bool, a: bool) -> Option<Vec<u8>> {
+        // the cursors A and B, but C and D for the voltage in XY (cursor A is A or C)
         let place = |ui: &Ui, x: bool, a: bool| -> Option<f32> {
-            Some(match (x, ui.m.cursor) {
-                (true, CursorMode::Volt | CursorMode::Off) => return None,
-                (false, CursorMode::Time | CursorMode::Track | CursorMode::Off) => return None,
-                (false, CursorMode::Xy) => {
-                    if a {
-                        ui.m.cur_c
-                    } else {
-                        ui.m.cur_d
-                    }
-                }
-                (false, CursorMode::Volt) => {
-                    if a {
-                        ui.m.cur_a
-                    } else {
-                        ui.m.cur_b
-                    }
-                }
-                (true, _) => {
-                    if a {
-                        ui.m.cur_a
-                    } else {
-                        ui.m.cur_b
-                    }
-                }
-            })
+            let m = &ui.m;
+            match (x, m.cursor) {
+                (true, CursorMode::Volt | CursorMode::Off)
+                | (false, CursorMode::Time | CursorMode::Track | CursorMode::Off) => None,
+                (false, CursorMode::Xy) => Some(if a { m.cur_c } else { m.cur_d }),
+                _ => Some(if a { m.cur_a } else { m.cur_b }),
+            }
         };
         if query {
             let Some(frac) = place(ui, x, a) else { return Some(b"9.9E37".to_vec()) };
@@ -232,63 +215,27 @@ impl Scpi {
             return None;
         };
         let frac = if x { ui.cursor_frac_time(v) } else { ui.cursor_frac_volt(v) };
-        match (x, ui.m.cursor) {
+        // a cursor of the other axis than the mode's turns it into XY (the voltage cursors there are C and D); one of
+        // either axis turns Off into that axis
+        let m = &mut ui.m;
+        let (cd, mode) = match (x, m.cursor) {
             (true, CursorMode::Volt) => {
-                ui.m.cur_c = ui.m.cur_a;
-                ui.m.cur_d = ui.m.cur_b;
-                if a {
-                    ui.m.cur_a = frac;
-                } else {
-                    ui.m.cur_b = frac;
-                }
-                ui.m.cursor = CursorMode::Xy;
+                (m.cur_c, m.cur_d) = (m.cur_a, m.cur_b);
+                (false, CursorMode::Xy)
             }
-            (false, CursorMode::Time | CursorMode::Track) => {
-                if a {
-                    ui.m.cur_c = frac;
-                } else {
-                    ui.m.cur_d = frac;
-                }
-                ui.m.cursor = CursorMode::Xy;
-            }
-            (false, CursorMode::Xy) => {
-                if a {
-                    ui.m.cur_c = frac;
-                } else {
-                    ui.m.cur_d = frac;
-                }
-            }
-            (true, CursorMode::Off) => {
-                if a {
-                    ui.m.cur_a = frac;
-                } else {
-                    ui.m.cur_b = frac;
-                }
-                ui.m.cursor = CursorMode::Time;
-            }
-            (false, CursorMode::Off) => {
-                if a {
-                    ui.m.cur_a = frac;
-                } else {
-                    ui.m.cur_b = frac;
-                }
-                ui.m.cursor = CursorMode::Volt;
-            }
-            (true, _) => {
-                if a {
-                    ui.m.cur_a = frac;
-                } else {
-                    ui.m.cur_b = frac;
-                }
-            }
-            (false, _) => {
-                if a {
-                    ui.m.cur_a = frac;
-                } else {
-                    ui.m.cur_b = frac;
-                }
-            }
-        }
+            (false, CursorMode::Time | CursorMode::Track | CursorMode::Xy) => (true, CursorMode::Xy),
+            (true, CursorMode::Off) => (false, CursorMode::Time),
+            (false, CursorMode::Off) => (false, CursorMode::Volt),
+            (_, mode) => (false, mode),
+        };
+        let cur = match (cd, a) {
+            (false, true) => &mut m.cur_a,
+            (false, false) => &mut m.cur_b,
+            (true, true) => &mut m.cur_c,
+            (true, false) => &mut m.cur_d,
+        };
+        *cur = frac;
+        m.cursor = mode;
         None
     }
 }

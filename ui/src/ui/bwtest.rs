@@ -6,6 +6,7 @@
 //! above Nyquist with a frequency hint), then `oos_dsp::bandwidth::step_response` gives the 10-90 % rise time, the
 //! overshoot and |H(f)| with its -3 dB point. Left: the edge, right: the magnitude response. Updated twice a second.
 
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::bandwidth;
 
@@ -49,13 +50,7 @@ impl Ui {
     pub(super) fn bw_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::BwOn => {
-                if m.view == AView::Step {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::BwOn => on_off(m.view == AView::Step),
             Item::BwSrc => format!("CH{}", m.bw_src + 1),
             Item::BwHint => Self::hint_name(m.bw_hint),
             Item::BwBins => m.bw_bins.to_string(),
@@ -76,7 +71,7 @@ impl Ui {
     pub(super) fn bw_adjust(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
         match it {
-            Item::BwOn => m.view = if m.view == AView::Step { AView::Scope } else { AView::Step },
+            Item::BwOn => super::analysers::toggle_view(m, AView::Step),
             Item::BwSrc => m.bw_src = src_step(m.bw_src, NCH, d),
             Item::BwHint => {
                 let i = HINTS.iter().position(|&h| h >= m.bw_hint * 0.999).unwrap_or(0);
