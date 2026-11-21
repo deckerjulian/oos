@@ -114,7 +114,11 @@ pub fn recover_clock(v: &[f32], dt: f64, thr: f32, hyst: f32, nominal_rate: Opti
     let found = edges(v, thr, hyst);
     let first_rising = found.first().is_some_and(|x| x.rising);
     let e: Vec<f64> = found.iter().map(|x| x.t * dt).collect();
-    clock_from_edges(e, nominal_rate).map(|c| Clock { first_rising, ..c })
+    // a unit interval shorter than half a sample is no clock of this record (a signal that changes at every sample
+    // has one of a sample): a nominal rate from a fast time base, kept at a slow one, gave a clock with hundreds of
+    // millions of unit intervals between two edges, and what holds a value per unit interval (`recover_clock_pll`,
+    // `tie_trend`, the eye itself) took all the memory there is (seen on a unit: 3.7 GB, and the program was killed)
+    clock_from_edges(e, nominal_rate).filter(|c| c.period >= 0.5 * dt).map(|c| Clock { first_rising, ..c })
 }
 
 /// Constant-rate clock from edge times (s), see `recover_clock`.

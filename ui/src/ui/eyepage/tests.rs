@@ -719,3 +719,37 @@ fn eye_page_shots() {
     open.analyzer_update();
     save(&mut open, "eye-plot-expanded");
 }
+
+/// A bit rate kept from a faster time base is under two samples a bit of this record: a rate that was set stays and
+/// the page says that it needs a faster time base, without an eye; a rate found from a record is found again from
+/// this one. Recovered with it, the clock had a bit far below a sample and the page took the memory of the scope.
+#[test]
+fn a_rate_the_record_cannot_hold_is_found_again_or_said() {
+    for from_record in [false, true] {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.step(0.05);
+        ui.m.run = RunState::Stop;
+        ui.m.view = AView::Eye;
+        ui.relayout();
+        ui.azr.eye = None;
+        ui.azr.page = Page::default();
+        // 10 Mbit/s at 125 samples a bit (0.8 ns a sample): 2 Gbit/s has 0.6 samples a bit
+        (ui.m.eye_from_record, ui.m.eye_rate) = (from_record, 2e9);
+        let mut n = Noise(0x2545_f491_4f6c_dd1d);
+        for _ in 0..3 {
+            ui.last[0] = Some(record(CLEAN, &mut n));
+            ui.measure_last();
+            ui.analyzer_update();
+            ui.now += REFRESH;
+        }
+        if from_record {
+            // (0: found from each record)
+            assert!(ui.m.eye_rate < 2e9, "found again from this record: {}", ui.m.eye_rate);
+            assert!(ui.azr.eye_res.is_some(), "an eye of the record's own clock: {:?}", ui.azr.page.status);
+        } else {
+            assert_eq!(ui.m.eye_rate, 2e9, "a rate that was set is kept");
+            assert!(ui.azr.eye_res.is_none(), "no eye of a clock the record cannot hold");
+            assert!(ui.azr.page.status[0].contains("faster time base"), "{:?}", ui.azr.page.status);
+        }
+    }
+}

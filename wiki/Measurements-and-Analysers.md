@@ -208,7 +208,9 @@ Harmonics in the Spectrum menu sets how far the view follows the signal, All sho
 
 ![Eye](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/eye.png)
 
-White figures are measured, amber ones come from a model. Where data is missing the page says what it needs.
+White figures are measured, amber ones come from a model. Where data is missing the page says what it needs. A bit
+rate that the record holds under two samples a bit for (one kept from a faster time base) is found again from the
+record when it came from one; a rate that was set stays, and the page asks for a faster time base.
 
 ## High resolution
 
