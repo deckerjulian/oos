@@ -48,8 +48,7 @@ impl MeasModule for Quality {
 
     fn compute(&self, x: &Ctx, ids: &[u16]) -> Values {
         let (a, b) = (x.row[0], x.row[1]);
-        let fline = (x.model.pw_fline > 0.0).then_some(x.model.pw_fline);
-        let q = x.align(&[a, b]).map(|v| oos_dsp::power::quality(v[0], v[1], x.dt, fline));
+        let q = x.align(&[a, b]).map(|v| oos_dsp::power::quality(v[0], v[1], x.dt, x.model.line_hz()));
         derived(ids, |id| match id {
             POWER_QUALITY => q.map_or(f64::NAN, |q| q.p_real),
             POWER_FACTOR => q.map_or(f64::NAN, |q| q.pf),
@@ -89,7 +88,7 @@ impl MeasModule for Harmonics {
         let b = x.row[1];
         derived(ids, |id| match id {
             HARMONICS => x.wave(b).map_or(f64::NAN, |i| {
-                let h = oos_dsp::power::harmonics(i, x.dt, (x.model.pw_fline > 0.0).then_some(x.model.pw_fline), 40);
+                let h = oos_dsp::power::harmonics(i, x.dt, x.model.line_hz(), 40);
                 let fund = h.iter().find(|x| x.0 == 1).map(|x| x.1).unwrap_or(0.0);
                 let rest = h.iter().filter(|x| x.0 > 1).map(|x| x.1 * x.1).sum::<f64>().sqrt();
                 if fund > 0.0 {
@@ -357,7 +356,7 @@ impl MeasModule for LineRipple {
         let a = x.row[0];
         derived(ids, |id| match id {
             LINE_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
-                let f = if x.model.pw_fline > 0.0 { x.model.pw_fline } else { oos_dsp::power::line_hz(v, x.dt) };
+                let f = x.model.line_hz().unwrap_or_else(|| oos_dsp::power::line_hz(v, x.dt));
                 oos_dsp::power::tone_ripple(v, x.dt, f).pp
             }),
             _ => f64::NAN,
@@ -396,7 +395,7 @@ impl MeasModule for SwRipple {
         let a = x.row[0];
         derived(ids, |id| match id {
             SW_RIPPLE => x.wave(a).map_or(f64::NAN, |v| {
-                let f = if x.model.pw_fsw > 0.0 { x.model.pw_fsw } else { oos_dsp::power::switch_hz(v, x.dt) };
+                let f = x.model.switch_hz().unwrap_or_else(|| oos_dsp::power::switch_hz(v, x.dt));
                 oos_dsp::power::switching_ripple(v, x.dt, f).pp
             }),
             _ => f64::NAN,
@@ -456,6 +455,6 @@ impl MeasModule for Ratio {
 /// The ratio of source B to source A at the line frequency (or the frequency found in A).
 fn ratio(x: &Ctx, a: WaveId, b: WaveId, mode: oos_dsp::bode::Mode) -> f64 {
     let Some(v) = x.align(&[a, b]) else { return f64::NAN };
-    let f = if x.model.pw_fline > 0.0 { x.model.pw_fline } else { oos_dsp::power::line_hz(v[0], x.dt) };
+    let f = x.model.line_hz().unwrap_or_else(|| oos_dsp::power::line_hz(v[0], x.dt));
     oos_dsp::bode::response(mode, v[0], v[1], x.dt, f).map(|p| p.0).unwrap_or(f64::NAN)
 }
