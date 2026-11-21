@@ -10,6 +10,7 @@
 mod dho;
 #[cfg(oos_board = "mho")]
 mod mho;
+mod pcie;
 
 /// The board family of this build, chosen by `cfg(oos_board)` like `oos_hal::target::ACTIVE` (fpgad/build.rs).
 #[cfg(oos_board = "dho")]

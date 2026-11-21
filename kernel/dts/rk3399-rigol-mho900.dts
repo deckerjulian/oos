@@ -12,15 +12,18 @@
  * card layout. Not yet verified on hardware: none of this has started on an MHO900.
  *
  * What differs, and what this tree does about it:
- * - The FPGA (a Kintex-7) is loaded by the SoC at every start over GPIOs, and its PCIe endpoint has its PERST# on
- *   GPIO1_A3, not GPIO2_C2: PCIe stays off, and so does spi1 (the DHO's FPGA boot monitor).
+ * - The FPGA (a Kintex-7) is loaded by the SoC over spi5 (clock and data only, slave serial) with PROGRAM_B, INIT_B and
+ *   DONE on GPIOs, and its PCIe endpoint has its PERST# on GPIO1_A3, not GPIO2_C2. spi5 has a spidev and PCIe is
+ *   described, but nothing uses them unless an owner starts `oos-fpgad bringup` by hand (the PCIe host driver is a
+ *   module, loaded only then). spi1 (the DHO's FPGA boot monitor) stays off.
  * - GPIO4_A3 is an AFE select line ("c"), not the beeper: no pwm-gpio beeper.
  * - GPIO1_C2 is the chip select of the sample clock PLL, not the backlight enable (the stock backlight has none).
  * - GPIO4_A5 is not the fan: the fan runs on PWM1 (GPIO4_C6, 25 kHz), stock `pwm-fan`. Here it runs at full speed
  *   from the probe of its driver on, as the DHO's fan does from the probe of gpio4.
- * - The front panel's UART is left as on the DHO (only RX and TX pins); oos-ui does not open it on this board.
- * The pins the MHO900's acquisition board uses (PLL bus GPIO1_C1..C3 and GPIO1_C6, FPGA programb/initb/done, the AFE
- * select and RMS lines) are not named and not driven.
+ * - The front panel's UART is left as on the DHO (only RX and TX pins); oos-ui only listens on it on this board.
+ * The lines of the bring-up are named as the stock system names them (platform probe, /sys/kernel/debug/gpio), so
+ * oos-fpgad finds them by name: the supplies, the clock chip's 3-wire bus, the FPGA's configuration lines and the
+ * front ends' bus. Naming drives nothing; the AFE select and RMS lines stay unnamed.
  */
 
 #include "rk3399-rigol-dho900.dts"
@@ -47,14 +50,27 @@
 
 &gpio0 {
 	gpio-line-names =
-		"", "", "", "", "hd_code0", "", "", "",
+		"", "adc_power", "afe_power", "", "hd_code0", "", "", "",
 		"hd_code1", "", "", "hd_code2", "hd_code3", "", "", "",
 		"", "", "", "", "", "", "", "",
 		"", "", "", "", "", "", "", "";
 };
 
+&gpio1 {
+	gpio-line-names =
+		"fpga_power", "", "", "", "", "", "", "",
+		"", "", "", "", "", "fpga_programb", "", "",
+		"", "pll_sclk", "pll_cs", "pll_sdio", "pll_reset", "", "sysref_reset", "",
+		"", "", "", "", "", "", "", "";
+};
+
+/* the front ends' bus as on the DHO (verified on MHO900 units with mho-check.py --afe), and the FPGA's INIT_B, DONE */
 &gpio2 {
-	/delete-property/ gpio-line-names;
+	gpio-line-names =
+		"", "", "spi_afe_cs_1", "", "spi_afe_cs_3", "spi_afe_cs_2", "", "",
+		"", "spi_afe_miso", "spi_afe_mosi", "spi_afe_sclk", "spi_afe_cs_0", "", "", "",
+		"", "", "", "", "fpga_done", "", "", "fpga_initb",
+		"", "", "", "", "", "", "", "";
 };
 
 &gpio3 {
@@ -66,12 +82,9 @@
 	/delete-node/ fan-power-hog;
 };
 
-&pcie_phy {
-	status = "disabled";
-};
-
+/* The DHO's PCIe host with the MHO900's PERST# (stock: ep-gpios GPIO1_A3); the host driver is a module */
 &pcie0 {
-	status = "disabled";
+	ep-gpios = <&gpio1 RK_PA3 GPIO_ACTIVE_HIGH>;
 };
 
 &pinctrl {
@@ -85,4 +98,20 @@
 
 &spi1 {
 	status = "disabled";
+};
+
+/*
+ * The FPGA's configuration stream (stock: spi5 with a spidev at up to 50 MHz). Only clock and data: the stock pins of
+ * chip select (GPIO2_C7) and receive (GPIO2_C4) are the FPGA's INIT_B and DONE, read as GPIOs. 25 MHz, half of stock.
+ */
+&spi5 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi5_clk &spi5_tx>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rockchip,spidev";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+	};
 };

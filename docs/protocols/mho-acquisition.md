@@ -29,8 +29,11 @@ depend on it. Code 1 is an early board; codes 2 and up are later ones.
 | 12 | application | per channel the front-end init, the SCU init, then the JESD204 link (section 4) |
 
 The clock tables are TI register words: 136 lines `R<n> 0x<aaaadd>`, 24 bits = register address (bits 23:8) and data
-(bits 7:0), the first line a reset of R0. OOS ships none of them; their content is to be measured or derived at the
-bench.
+(bits 7:0), the first line a reset of R0. They are the unit's own files `/rigol/resource/conf/init_all_clock_V00_01.txt`
+(code 1), `_V00_02.txt` (code 2) and `_V00_03.txt` (codes 3 and up) (platform probe). OOS ships none of them; the
+bring-up of docs/mho.md reads the unit's own at run time, as it reads the FPGA image. The bus: chip select gpio 50
+(active low, idle high), clock gpio 49 (idle low), one data line gpio 51; `reset` gpio 52 and `sysref_reset` gpio 54
+are left at 1 and 0 by the stock system (platform probe); the frame is assumed to be the LMK04821 data sheet's.
 
 The FPGA image is chosen by the hardware code; the file is the unit's own under `/rigol/FPGA` (OOS may read it at run
 time, it cannot ship it, ADR 0013):
@@ -323,9 +326,10 @@ nothing of it driven by OOS:
   So the front end has three ranges at 1 MOhm, switched at 10 mV/div and 0.1 V/div, and a fourth at 50 ohm; the
   select lines switch at 0.1 and 0.5 V/div (`c`) and at 5 V/div (`a`).
 
-  Assumed from the MHO934: the full-bandwidth bits 9 and 1 of 0x2e follow the licensed bandwidth. Its owner changed
-  licences between the two runs, and since then the MHO934 sends the MHO954's and MHO98's value; which licence it was
-  is not known yet.
+  Assumed from the MHO934: the full-bandwidth bits 9 and 1 of 0x2e follow the licensed bandwidth. Between the two runs
+  its owner installed every licence of the model, the bandwidth upgrade among them (reported in issue #248), and since
+  then the MHO934 sends the MHO954's and MHO98's value. Which of the upgraded bandwidths 0x1fcb stands for (500 MHz or
+  more) is open: the MHO954's licences are not known.
 - 0x4008 changes between two values while nothing is changed (0x08805181 and 0xc880b1a1 at 1 us/div): it holds state
   bits besides the channel mask, so `--map` lists it at steps that do not touch it.
 
@@ -335,6 +339,6 @@ nothing of it driven by OOS:
 - the JESD204 link values and how to see that it is up;
 - the front ends: what the registers of section 8 mean bit by bit; how the unit's own values follow from its
   calibration files (or, failing that, a table of them per unit taken under the stock system with `--afe`); what the
-  50 ohm trim of 0x2c and 0x2d does and what the read of register 0 reports; which licence changes 0x2e;
+  50 ohm trim of 0x2c and 0x2d does and what the read of register 0 reports; which bandwidth 0x2e's full-bandwidth value stands for;
 - whether the run and read-out sequences of acquisition-start.md work unchanged with the new words of section 3 left
   at their power-on values.

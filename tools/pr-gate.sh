@@ -44,7 +44,7 @@ hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|root
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
 live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/build\.rs$|'
-live="${live}fpgad/src/(bin/oos-update|main|mho/mod|dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|"
+live="${live}fpgad/src/(bin/oos-update|main|pcie|mho/(mod|bringup)|dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|"
 live="${live}hal/src/dho/(bus|gpio|lines|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"
 # what the comparison's live run proves of the board code (ADR 0053, ADR 0073): the files whose every path of the loop
 # (docs/board-on-a-host.md 7) the live run reaches, so a change of what they do to the unit or deliver shows in its

@@ -8,4 +8,5 @@
 
 pub mod acq;
 pub mod board;
+pub mod bringup;
 pub mod target;
