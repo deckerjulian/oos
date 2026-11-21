@@ -46,20 +46,12 @@ impl Scpi {
             if query {
                 return t(if ui.m.fine_t { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.fine_t = on;
-                    if !on {
-                        ui.m.tfine = 1.0;
-                    }
-                    ui.mark_changed();
-                    None
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| {
+                ui.m.fine_t = on;
+                if !on {
+                    ui.m.tfine = 1.0;
                 }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            });
         }
         if n.len() == 2 && kw(n0, "HREFerence") && kw(n[1], "MODE") {
             return self.timebase_href(ui, query, arg);
@@ -72,17 +64,7 @@ impl Scpi {
             if query {
                 return t(if ui.m.auto_roll { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.m.auto_roll = on;
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.m.auto_roll = on);
         }
         if n.len() == 1 && kw(n0, "MODE") {
             return self.timebase_mode(ui, query, arg);
@@ -127,17 +109,7 @@ impl Scpi {
             if query {
                 return t(if ui.m.zoom { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.zoom_set_remote(on);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.zoom_set_remote(on));
         }
         if kw(n[1], "SCALe") {
             if query {
@@ -199,17 +171,7 @@ impl Scpi {
             if query {
                 return t(if ui.xy_on() { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.xy_set(on);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.xy_set(on));
         }
         if kw(n[1], "X") || kw(n[1], "Y") {
             // The plot is CH1 against CH2. Those sources are not selectable.

@@ -63,17 +63,9 @@ impl Scpi {
             if query {
                 return t(&format!("R{}", ui.ref_slot() + 1));
             }
-            return match parse_slot(arg) {
-                Some(i) => {
-                    ui.ref_slot_set(i);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_slot(arg), |ui, i| {
+                ui.ref_slot_set(i);
+            });
         }
         if kw(n0, "SHOW") || kw(n0, "DISPlay") {
             let (slot, rest) = self.ref_pair(ui, arg, !query);
@@ -119,12 +111,8 @@ impl Scpi {
         if kw(n0, "RESet") && !query {
             let (slot, _) = self.ref_pair(ui, arg, false);
             let slot = slot?;
-            if ui.ref_reset_scale(slot) {
-                ui.mark_changed();
-            } else {
-                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-            }
-            return None;
+            let ok = ui.ref_reset_scale(slot);
+            return self.ref_changed(ui, ok);
         }
         if kw(n0, "COLor") {
             return self.ref_color_cmd(ui, query, arg);
@@ -179,25 +167,14 @@ impl Scpi {
         let slot = slot?;
         if query {
             let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
-            return match v {
-                Some(v) => t(&e(v as f64)),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(v.map(|v| e(v as f64)));
         }
         let Some(v) = num(&rest) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };
         let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
-        if ok {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-        }
-        None
+        self.ref_changed(ui, ok)
     }
 
     /// `:REFerence:LABel:CONTent` of a slot.
@@ -205,20 +182,10 @@ impl Scpi {
         let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
-            return match ui.ref_label(slot) {
-                Some(s) => t(&s),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(ui.ref_label(slot));
         }
-        if ui.ref_label_set(slot, rest) {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-        }
-        None
+        let ok = ui.ref_label_set(slot, rest);
+        self.ref_changed(ui, ok)
     }
 
     /// `:REFerence:COLor` of a slot.
@@ -226,23 +193,37 @@ impl Scpi {
         let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
-            return match ui.ref_color(slot) {
-                Some(i) => t(Self::ref_color_name(i)),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(ui.ref_color(slot).map(|i| Self::ref_color_name(i).to_string()));
         }
         let Some(i) = ref_color_index(&rest) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };
-        if ui.ref_color_set(slot, i) {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+        let ok = ui.ref_color_set(slot, i);
+        self.ref_changed(ui, ok)
+    }
+
+    /// The answer of a query of a slot: `None` when the slot holds no reference, refused with -230.
+    fn ref_answer(&mut self, text: Option<String>) -> Option<Vec<u8>> {
+        match text {
+            Some(s) => t(&s),
+            None => self.ref_empty(),
         }
+    }
+
+    /// The end of a change of a slot: `ok` when the slot holds a reference, which marks the model changed; else the
+    /// change is refused with -230.
+    fn ref_changed(&mut self, ui: &mut Ui, ok: bool) -> Option<Vec<u8>> {
+        if ok {
+            ui.mark_changed();
+            return None;
+        }
+        self.ref_empty()
+    }
+
+    /// -230: the slot holds no reference.
+    fn ref_empty(&mut self) -> Option<Vec<u8>> {
+        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
         None
     }
 

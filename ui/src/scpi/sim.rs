@@ -105,17 +105,9 @@ impl Scpi {
             if query {
                 return t(&format!("R{}", ui.sim_slot() + 1));
             }
-            return match parse_slot(arg) {
-                Some(i) => {
-                    ui.sim_slot_set(i);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_slot(arg), |ui, i| {
+                ui.sim_slot_set(i);
+            });
         }
         if kw(n0, "PLAY") {
             if query {

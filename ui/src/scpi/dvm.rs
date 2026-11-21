@@ -19,17 +19,7 @@ impl Scpi {
             if query {
                 return t(&format!("CHAN{}", ui.m.dvm_src.min(n_ch() - 1) + 1));
             }
-            return match parse_ch(arg) {
-                Some(c) => {
-                    ui.m.dvm_src = c;
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_ch(arg), |ui, c| ui.m.dvm_src = c);
         }
         if n.len() == 1 && kw(n0, "CURRent") && query {
             return t(&e(ui.dvm_value()));
