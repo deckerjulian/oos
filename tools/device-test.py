@@ -13,6 +13,8 @@
   tools/device-test.py --host <ip> --changed origin/main --list    which tests this tree's change needs, and why
   tools/device-test.py --host <ip> --changed origin/main           only those (and the smoke tests)
   tools/device-test.py --host <ip> --save-known    a run of main: its failures are known from here on
+  tools/device-test.py --host <ip> --board dho     the board family's profile; default: the family whose models
+                                                   match the scope's *IDN?, else dho
 
 Focused, and judged without repeating by hand (tools/device_select.py, docs/device-testing.md):
   --changed BASE  runs the tests of the areas the changed files reach; documents and CI only the smoke tests
@@ -42,8 +44,42 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oosclient import Link, LinkError, NoBlock  # noqa: E402
 import device_select  # noqa: E402
 
-CH = (1, 2, 3, 4)
-VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
+# The facts of a board family the tests take (ADR 0067, 4): the models its *IDN? names, its channels, the vertical
+# scales, the highest sample rate and whether it has a generator. `--board` picks one, by default the family whose
+# models match the scope's *IDN?, else dho. A port adds its entry (docs/porting.md).
+PROFILES = {
+    "dho": {
+        "models": r"DHO[89]\d\d",
+        "channels": (1, 2, 3, 4),
+        "vscales": [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0],
+        "max_rate": 1.25e9,
+        "generator": True,
+    },
+}
+
+
+def profile(name):
+    """The profile of the board family NAME; an unknown name stops the run, naming the known ones."""
+    if name not in PROFILES:
+        sys.exit(f"device-test.py: no profile for the board family '{name}' (known: {', '.join(sorted(PROFILES))})")
+    return PROFILES[name]
+
+
+def family_of(idn):
+    """The board family whose models match the model field of an *IDN? answer, else dho."""
+    p = idn.split(",")
+    model = p[1].strip() if len(p) > 1 else ""
+    return next((n for n, f in PROFILES.items() if re.match(f["models"], model)), "dho")
+
+
+def use_profile(name):
+    """The facts the tests read: the profile of NAME as module values."""
+    global PROFILE, CH, VSCALES
+    PROFILE = profile(name)
+    CH, VSCALES = PROFILE["channels"], PROFILE["vscales"]
+
+
+use_profile("dho")
 # a shell command with one of these never leaves this program
 FORBIDDEN = re.compile(r"spi2|mtd|flash_|>\s*/rigol|\b(rm|mv|cp|chmod|touch|tee)\b.*/rigol|((?<![0-9])>|of=)\s*/dev/|mmcblk|by-name|\bdd\b|mkfs|uboot|\btrust\b|parameter|oos-hw\s+wr|oos-fpgad\s+wr|cold-boot|\breboot\b|poweroff", re.I)
 
@@ -281,7 +317,7 @@ def clean(s):
 def identity(s, o):
     p = s.q("*IDN?").split(",")
     assert p[0] == "OOS" and len(p) == 4, p
-    assert re.match(r"DHO[89]\d\d", p[1]), p
+    assert re.match(PROFILE["models"], p[1]), p
     if not s.sim:
         assert p[2] not in ("", "0"), f"no serial: {p}"
     clean(s)
@@ -329,7 +365,7 @@ def plan_matches_this_build(s, o):
 def depth_and_rate_matrix(s, o):
     bad = []
     n = 0
-    for mask in ((1,), (1, 2), (1, 2, 3), (1, 2, 3, 4)):
+    for mask in (CH[:n] for n in range(1, len(CH) + 1)):
         for c in CH:
             s.w(f":CHAN{c}:DISP {1 if c in mask else 0}")
         for tdiv in (5e-9, 1e-6, 2e-4, 1e-3):
@@ -340,7 +376,7 @@ def depth_and_rate_matrix(s, o):
                 a = s.stat()["frames"]
                 r, d = s.num(":ACQ:SRAT?"), s.num(":ACQ:MDEP?")
                 n += 1
-                if not (0 < r <= 1.25e9 and d > 0):
+                if not (0 < r <= PROFILE["max_rate"] and d > 0):
                     bad.append((mask, tdiv, depth, r, d))
                 time.sleep(0.5 + min(2.0, d / 1e7))
                 if s.stat()["frames"] == a and depth != "10000000":
@@ -402,9 +438,10 @@ def zero_of_every_scale(s, o):
 
 @test("a0")
 def gnd_is_flat(s, o):
-    s.w(":CHAN1:COUP GND")
+    c = CH[0]
+    s.w(f":CHAN{c}:COUP GND")
     s.settle()
-    t0, dt, v = s.wave(1)
+    t0, dt, v = s.wave(c)
     assert v, "no samples"
     near("mean", statistics.fmean(v), 0, ab=0.05)
     assert statistics.pstdev(v) < 0.02, statistics.pstdev(v)
@@ -559,17 +596,17 @@ def random_settings_do_not_kill_it(s, o):
     """Random but valid settings, the kind of mix nobody tries by hand."""
     rnd = random.Random(1)
     a = s.stat()["frames"]
+    # the channels of the profile: the first one's coupling, invert and scale, the others switched, the second's probe
+    first, others = CH[0], CH[1:]
     keys = [
         ("trig_type", ["Edge", "Pulse", "Slope", "Pattern", "Duration", "Timeout", "Runt", "Window", "NthEdge"]),
         ("trig_mode", ["Auto", "Normal"]),
         ("slope", ["Rise", "Fall", "Either"]),
         ("mdepth", [0, 1, 2, 3, 4]),
-        ("ch1.coupling", ["Dc", "Ac", "Gnd"]),
-        ("ch2.on", ["true", "false"]),
-        ("ch3.on", ["true", "false"]),
-        ("ch4.on", ["true", "false"]),
-        ("ch1.invert", ["true", "false"]),
-        ("ch2.probe", [1, 10, 100]),
+        (f"ch{first}.coupling", ["Dc", "Ac", "Gnd"]),
+        *[(f"ch{n}.on", ["true", "false"]) for n in others],
+        (f"ch{first}.invert", ["true", "false"]),
+        (f"ch{(others or CH)[0]}.probe", [1, 10, 100]),
         ("dec_on", ["true", "false"]),
         ("dec_proto", ["Uart", "I2c", "Spi", "Can"]),
         ("persist", [0, 1, 2]),
@@ -580,7 +617,7 @@ def random_settings_do_not_kill_it(s, o):
         k, vals = rnd.choice(keys)
         s.w(f":SYST:SET {k} = {rnd.choice(vals)}")
         s.w(f":TIM:SCAL {rnd.choice([1e-8, 1e-6, 1e-4, 1e-3, 1e-2])}")
-        s.w(f":CHAN1:SCAL {rnd.choice(VSCALES)}")
+        s.w(f":CHAN{first}:SCAL {rnd.choice(VSCALES)}")
         s.w(f":TIM:OFFS {rnd.uniform(-1, 1) * 1e-4}")
         time.sleep(0.12)
         if i % 25 == 0:
@@ -718,6 +755,8 @@ def frame_rate_by_graphics_and_monitor(s, o):
 @test("a1")
 def generator_reaches(s, o):
     """Which channels see the generator: everything after this depends on it."""
+    if not PROFILE["generator"]:
+        raise Skip("the board family has no generator")
     for c in CH:
         s.w(f":CHAN{c}:DISP 1")
         s.w(f":CHAN{c}:SCAL 1")
@@ -2381,7 +2420,10 @@ def main():
     ap.add_argument("--retries", type=int, default=1, help="runs of a failed test again (default 1)")
     ap.add_argument("--known", default=os.path.join("device-test", "known.json"), help="results.json of a run of main")
     ap.add_argument("--save-known", action="store_true", help="this run becomes the known run (run it on main)")
+    ap.add_argument("--board", help=f"board family: {', '.join(sorted(PROFILES))} (default: from *IDN?, else dho)")
     o = ap.parse_args()
+    if o.board:
+        use_profile(o.board)
     selected = None
     if o.changed:
         paths = device_select.changed_files(o.changed)
@@ -2421,7 +2463,11 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     try:
         s = Scope(o.host, o.scpi_port, o.web_port, sim=o.sim)
-        log(f"scope: {s.q('*IDN?')}")
+        idn = s.q("*IDN?")
+        if not o.board:
+            o.board = family_of(idn)
+            use_profile(o.board)
+        log(f"scope: {idn}, board family {o.board}")
         for tier, name, f, need in TESTS:
             always = name in ("generator_reaches", "protected_areas_before", "protected_areas_after")
             if o.tier and tier != o.tier and not always:

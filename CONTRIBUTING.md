@@ -227,6 +227,7 @@ change goes. Whatever you add brings its texts along (AGENTS.md, "Keeping the te
   `in development`; its commands of oos-fpgad in `fpgad/src/<name>/mod.rs` (`pub(crate) fn run`, as `dho` has them)
   and the choice of that module in `fpgad/src/main.rs`; its matrix of register sequences
   `tools/board/<name>/plan-matrix.sh`, which `tools/plan-matrix.sh` and the comparison run with `OOS_BOARD=<name>`;
+  its entry in `PROFILES` of `tools/device-test.py` (the facts its tests on a unit take);
   its device tree under `kernel/`; the pages of `docs/protocols/` its hardware code is written from; and
   `hal/src/<name>/` in each list of the paths only a unit proves (`$hardware` of `tools/pr-gate.sh` and
   `tools/pr-labels.sh`, the `unitpath` line of `tools/ci-parts.sh`, `UNIT` of `tools/agent-target.py`). Build its
