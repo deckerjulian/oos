@@ -227,6 +227,19 @@ System info shows whether it is in use ("Optional memory").
     were recorded and read back;
   - every segment time was valid and rising, from 0 s.
 
+- **A single record stays at most 2^27 = 134,217,728 points deep**, also with the upper half. **Verified on the unit**
+  (DHO924S, 2026-11-21, `oos-fpgad run --depth D --n 50000000 --at ...` windows of single records):
+  - Setup: the generator at 2 Hz on CH1, so that a record is shorter than half a period and any jump in time shows
+    as a step in the codes.
+  - 125 M points: no step over the whole record.
+  - 170 M and 200 M points (segment 0x2000000): one step, 134,217,728 points before the end of the record (at points
+    35.78 M and 65.78 M).
+  - 250 M points: steps 67.1 M, 134.2 M and 201.3 M points before the end (points 48.67 M, 115.78 M, 182.89 M), at the
+    same points in every run and at 20 and 50 ms/div.
+  - The parts between the steps are clean, but they do not join up in time.
+  - The compressed read-out of the whole 250 M-point record (k = 400) timed out on the C2H stream; windows read fine.
+  - So the upper half gives more hardware segments (above), not deeper single records. OOS keeps the depths of 1.1.
+
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
 
 ### 2.1 Mask, ratio, lanes
