@@ -108,9 +108,36 @@ fn item_keys(b: &[u8], segs: &[Seg]) -> Vec<[u32; 4]> {
     found
 }
 
+/// What a search for the keys went through, for the warning when it found nothing.
+#[derive(Debug, Default)]
+struct Report {
+    /// stock files read
+    files: usize,
+    /// programs (ELF images) looked at, of them unpacked from a package
+    images: usize,
+    packed: usize,
+    /// programs with the code pattern of the inner key, and with an outer key that opens the file
+    pattern: usize,
+    outer: usize,
+}
+
+impl Report {
+    fn text(&self) -> String {
+        format!(
+            "{} stock files read, {} programs ({} unpacked), inner-key pattern in {}, outer key in {}",
+            self.files, self.images, self.packed, self.pattern, self.outer
+        )
+    }
+}
+
 /// Searches the bytes of a stock file for the keys of `vendor`.
 pub fn find(b: &[u8], vendor: &[u8]) -> Option<Keys> {
+    search(b, vendor, &mut Report::default())
+}
+
+fn search(b: &[u8], vendor: &[u8], r: &mut Report) -> Option<Keys> {
     let mut all = images(b);
+    r.images += all.len();
     all.sort_by_key(|&o| std::cmp::Reverse(segments(b, o).map_or(0, |s| s.iter().map(|x| x.size).sum::<usize>())));
     all.iter().find_map(|&at| {
         let segs = segments(b, at)?;
@@ -119,8 +146,46 @@ pub fn find(b: &[u8], vendor: &[u8]) -> Option<Keys> {
         if items.is_empty() {
             return None;
         }
+        r.pattern += 1;
         let (file, payload) = file_key(b, &segs, vendor)?;
+        r.outer += 1;
         items.into_iter().find(|item| model::item_key_fits(&payload, item)).map(|item| Keys { file, item })
+    })
+}
+
+/// At most this much of one packed library is unpacked.
+const PACKED_MAX: usize = 256 << 20;
+
+/// The shared libraries a package (zip) keeps compressed with deflate: a package that its system unpacks at install
+/// time stores its native code that way, where `images` cannot see it. Zip local headers: signature `PK 3 4`, method
+/// at 8, name length at 26, extra length at 28, name at 30, then the data.
+fn packed_libs(b: &[u8]) -> Vec<Vec<u8>> {
+    let mut libs = Vec::new();
+    let mut o = 0;
+    while let Some(p) = b.get(o..).and_then(|t| t.windows(4).position(|w| w == b"PK\x03\x04")) {
+        let at = o + p;
+        o = at + 4;
+        let (Some(method), Some(n), Some(x)) = (half(b, at + 8), half(b, at + 26), half(b, at + 28)) else { break };
+        let data = at + 30 + n as usize + x as usize;
+        let Some(name) = b.get(at + 30..at + 30 + n as usize) else { break };
+        if method == 8 && name.ends_with(b".so") {
+            if let Some(Ok((lib, used))) = b.get(data..).map(|d| crate::update::inflate::inflate(d, PACKED_MAX)) {
+                libs.push(lib);
+                o = data + used;
+            }
+        }
+    }
+    libs
+}
+
+/// Searches a stock file: the programs stored in it as they are, then those packed in it.
+fn search_file(b: &[u8], vendor: &[u8], r: &mut Report) -> Option<Keys> {
+    r.files += 1;
+    search(b, vendor, r).or_else(|| {
+        packed_libs(b).iter().find_map(|lib| {
+            r.packed += 1;
+            search(lib, vendor, r)
+        })
     })
 }
 
@@ -137,10 +202,13 @@ fn stock_files() -> Vec<String> {
     std::env::var("OOS_STOCK_FILE").ok().into_iter().chain(STOCK_FILES.iter().map(|s| s.to_string())).collect()
 }
 
-/// What a search depends on: the vendor file and the size and time of each stock file. A search that found nothing is
-/// kept with it, so that it runs again only when one of them changed.
+/// The way of searching: a new one searches again where an older one found nothing (2: also the packed libraries).
+const SEARCH: u32 = 2;
+
+/// What a search depends on: the way of searching, the vendor file and the size and time of each stock file. A search
+/// that found nothing is kept with it, so that it runs again only when one of them changed.
 fn inputs(vendor: &[u8]) -> String {
-    let mut s = format!("{:08x}", crate::crc32(vendor));
+    let mut s = format!("s{} {:08x}", SEARCH, crate::crc32(vendor));
     for p in stock_files() {
         if let Ok(m) = std::fs::metadata(&p) {
             let t =
@@ -151,20 +219,31 @@ fn inputs(vendor: &[u8]) -> String {
     s
 }
 
-/// The keys for `vendor`: those kept on this unit, else from its stock software; `None` if neither opens the file.
-pub fn for_file(vendor: &[u8]) -> Option<Keys> {
+/// The keys for `vendor`: those kept on this unit, else from its stock software; what was searched if neither opens
+/// the file.
+pub fn for_file(vendor: &[u8]) -> Result<Keys, String> {
     let fits = |k: &Keys| model::vendor_payload(vendor, &k.file).is_some_and(|p| model::item_key_fits(&p, &k.item));
     let kept = std::fs::read_to_string(KEEP).unwrap_or_default();
-    if let Some(k) = parse(&kept).filter(fits) {
-        return Some(k);
+    let (first, why) = kept.split_once('\n').unwrap_or((kept.as_str(), ""));
+    if let Some(k) = parse(first).filter(fits) {
+        return Ok(k);
     }
     let sig = inputs(vendor);
-    if kept.trim() == format!("none {}", sig) {
-        return None;
+    if first.trim() == format!("none {}", sig) {
+        return Err(why.trim().trim_start_matches("# ").to_string());
     }
-    let found = stock_files().iter().find_map(|p| std::fs::read(p).ok().and_then(|b| find(&b, vendor)));
-    keep(&found.as_ref().map_or_else(|| format!("none {}\n", sig), text));
-    found
+    let mut r = Report::default();
+    let found = stock_files().iter().find_map(|p| std::fs::read(p).ok().and_then(|b| search_file(&b, vendor, &mut r)));
+    match found {
+        Some(k) => {
+            keep(&text(&k));
+            Ok(k)
+        }
+        None => {
+            keep(&format!("none {}\n# {}\n", sig, r.text()));
+            Err(r.text())
+        }
+    }
 }
 
 /// Best effort: without it the next start searches again.
@@ -235,6 +314,33 @@ mod tests {
         b.extend(image());
         b.extend(vec![0u8; 100]);
         assert_eq!(find(&b, &v), Some(TEST_KEYS));
+    }
+
+    #[test]
+    fn finds_an_image_packed_in_a_package() {
+        let v = encode_vendor_with(&[(5, "DHO924S")], &TEST_KEYS);
+        let img = image();
+        // deflate in two stored blocks, the first cut inside the ELF signature: the image is not there as it is
+        let mut d = Vec::new();
+        for (last, c) in [(0u8, &img[..2]), (1, &img[2..])] {
+            d.push(last);
+            d.extend((c.len() as u16).to_le_bytes());
+            d.extend((!(c.len() as u16)).to_le_bytes());
+            d.extend(c);
+        }
+        let name = b"lib/arm64-v8a/libstock.so";
+        let mut zip = vec![0x50u8; 64];
+        zip.extend(b"PK\x03\x04");
+        zip.extend([20, 0, 0, 0, 8, 0]);
+        zip.extend([0u8; 16]);
+        zip.extend((name.len() as u16).to_le_bytes());
+        zip.extend([0, 0]);
+        zip.extend(name);
+        zip.extend(d);
+        assert_eq!(find(&zip, &v), None);
+        let mut r = Report::default();
+        assert_eq!(search_file(&zip, &v, &mut r), Some(TEST_KEYS));
+        assert_eq!((r.files, r.packed, r.pattern, r.outer), (1, 1, 1, 1));
     }
 
     #[test]

@@ -534,10 +534,11 @@ pub(crate) fn item_key_fits(payload: &[u8], k: &[u32; 4]) -> bool {
 /// Decodes vendor.bin with the keys of this unit (`vendorkeys`).
 pub fn decode_vendor(file: &[u8]) -> Result<Vendor, String> {
     #[cfg(test)]
-    let keys = Some(TEST_KEYS);
+    let keys: Result<Keys, String> = Ok(TEST_KEYS);
     #[cfg(not(test))]
-    let keys = crate::vendorkeys::for_file(file);
-    decode_vendor_with(file, &keys.ok_or("no key for it in the stock software of this unit")?)
+    let keys = crate::vendorkeys::for_file(file)
+        .map_err(|why| format!("no key for it in the stock software of this unit ({})", why));
+    decode_vendor_with(file, &keys?)
 }
 
 /// Decodes vendor.bin: XXTEA with the file key over the file; [crc32][len][payload] with crc32 over the payload; payload =
