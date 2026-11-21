@@ -329,3 +329,8 @@ mean of its 8 phases and takes the pattern off the words before they become volt
 frame, a signal on a core frequency) are left as they are. On the unit the spurs went from -52 to -77..-80 dBc with
 one channel, from -47.5 to -74 dBc with two and from -41 to -71 dBc with four, at about 3 % of the frames the
 acquisition thread delivers at 1 us/div. Min/max data (Peak, FPGA compression) is not touched.
+
+What is left after the offsets, and how much each part costs, is measured from a sine record: `:SYSTem:DEBug:CORes?`
+(`oos_dsp::interleave::budget`, docs/scpi.md) fits the sine on every core's own samples and gives each core's offset,
+gain and time error, the level of each pattern, harmonics, the generator's image and noise, and SINAD with and without
+the patterns; `tools/adc-budget.py` runs it over frequencies and V/div (issue #335). Not yet run on a unit.

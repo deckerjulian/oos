@@ -71,6 +71,7 @@ from `OOS_CAL_DIR` (default `local/cal`) and touch no scope.
 
 | Tool | Touches a scope? | Purpose |
 |---|---|---|
+| `adc-budget.py --host IP` | yes, over SCPI: generator, channel, time base, depth, ADC cores, Run/Stop; generator off and cores matched at the end | the error budget of the interleaved ADC cores (issue #335 step 0): the generator's sine on one channel, records at several frequencies and V/div with the cores raw and matched, each core's offset, gain and time error, the patterns, harmonics, the generator's image, noise and SINAD from `:SYSTem:DEBug:CORes?` |
 | `device-test.py --host IP` | over the network, read-only on the card | acceptance test of a running OOS with nobody at the scope, its read-only shell commands over SSH as `device-deploy.sh`; `--changed BASE` runs only what a change reaches, a failure runs again (`--retries`), one that main has too is known (`--known`); `--sim` runs it against `oos-ui --serve` on this computer ([device-testing.md](../docs/device-testing.md)) |
 | `device_select.py` | no (a library) | which device tests a change needs, and how `device-test.py` judges retries, known failures and the register sequences |
 | `device-deploy.sh IP [--restore]` | writes `/tmp` only, gone at the next power cycle | runs the oos-ui of this tree on a running OOS over SSH with a trusted key, with the matrix of the family `OOS_BOARD` (`OOS_SSH_IDENTITY`, `OOS_SSH_PORT`; [SSH on a bench unit](../docs/device-testing.md#ssh-on-a-bench-unit)); each file checked with SHA-256 |

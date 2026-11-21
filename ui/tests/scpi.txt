@@ -155,6 +155,7 @@ scpi $S/scpi-answers.txt :SYSTem:DEBug:MASK:MAP?
 scpi $S/scpi-answers.txt :SYSTem:DEBug:MASK:COLumns?
 scpi $S/scpi-answers.txt :SYSTem:DEBug:DVM?
 scpi $S/scpi-answers.txt :SYSTem:DEBug:DVM:LANE?
+scpi $S/scpi-answers.txt :SYSTem:DEBug:CORes?
 # settings, and what they answer afterwards
 scpi $S/scpi-answers.txt :CHANnel1:SCALe 0.5;:CHANnel1:SCALe?;:CHANnel1:OFFSet 0.25;:CHANnel1:OFFSet?
 scpi $S/scpi-answers.txt :CHANnel2:DISPlay ON;:CHANnel2:DISPlay?;:CHANnel2:COUPling AC;:CHANnel2:COUPling?
