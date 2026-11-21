@@ -44,7 +44,7 @@ pub struct Budget {
     pub skew_dbc: f64,
     /// harmonics 2..=`HARMONICS` together, after the core patterns are taken off
     pub harmonics_dbc: f64,
-    /// each extra tone asked for, (frequency, level)
+    /// each extra tone asked for, (frequency, level); NaN for one that aliases onto the fundamental
     pub extra: Vec<(f64, f64)>,
     /// what is left: noise and everything not named above
     pub noise_dbc: f64,
@@ -106,6 +106,12 @@ pub fn budget(v: &[f32], dt: f64, m: usize, extra: &[f64]) -> Option<Budget> {
         let mut fa = fx.rem_euclid(fs);
         if fa > fs / 2.0 {
             fa = fs - fa;
+        }
+        // a tone that aliases onto the fundamental (the generator's image when the scope samples at its 156.25 MSa/s)
+        // cannot be told from it: not taken off, its level not known
+        if (fa - f).abs() < 8.0 / (v.len() as f64 * dt) {
+            levels.push((fx, f64::NAN));
+            continue;
         }
         let (a, p, _) = sine_fit(&own, dt, fa)?;
         let wa = 2.0 * PI * fa;
@@ -218,6 +224,9 @@ mod tests {
         assert!((b.sinad_matched_db - b.sinad_db).abs() < 0.1);
         // the fundamental at fs / 16 = 78.125 MHz: every one of 8 cores sees it at its own Nyquist frequency
         assert!(budget(&record(78.125e6, &same, 1.0e6, 1e-3), 0.8e-9, 8, &[]).is_none());
+        // a tone at fs - f aliases onto the fundamental: its level is not known, and the fundamental stays
+        let b = budget(&record(10.17e6, &same, 1.0e6, 1e-3), 0.8e-9, 4, &[1.25e9 - 10.17e6]).unwrap();
+        assert!(b.extra[0].1.is_nan() && b.sinad_db > 40.0, "{:?}", b);
         assert!(budget(&[0.0; 100], 0.8e-9, 8, &[]).is_none());
         // noise alone, and a sine under noise twice its power
         let none = vec![Core { offset: 0.0, gain: 0.0, skew: 0.0 }; 8];
