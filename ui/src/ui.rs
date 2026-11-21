@@ -768,8 +768,8 @@ pub struct Ui {
     bus_auto: Option<([bool; NCH], bool)>,
     /// STOP: the request for the hardware's final frame, and the records shown at the stop (docs/fork/stop-exact.md)
     stop: acquire::Stop,
-    toast: Option<(String, f64)>,
-    dialog: Option<Vec<String>>,
+    /// the toast and the info dialog (bars.rs)
+    notices: bars::Notices,
     /// System info page (sysinfo.rs)
     sysinfo: sysinfo::Page,
     touch: TouchState,
@@ -922,7 +922,7 @@ impl Ui {
     }
 
     pub fn toast(&mut self, s: &str) {
-        self.toast = Some((s.to_string(), self.now + 2.5));
+        self.notices.toast = Some((s.to_string(), self.now + 2.5));
     }
 
     /// Clear (CLEAR key, Display > Clear, Quick key, SCPI :CLEar): empties the screen like a scope does. The

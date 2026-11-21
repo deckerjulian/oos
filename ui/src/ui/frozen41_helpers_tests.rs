@@ -20,11 +20,11 @@ fn force_queues_exactly_one_live_mock_request_even_with_a_modal_open() {
     let mut ui = Ui::new(Source::Hw { shared: Arc::clone(&shared), seen: 0 });
     for modal in 0..3 {
         ui.m.run = RunState::Stop;
-        ui.dialog = None;
+        ui.notices.info = None;
         ui.power.open = false;
         ui.close_menu();
         match modal {
-            0 => ui.dialog = Some(vec!["modal".into()]),
+            0 => ui.notices.info = Some(vec!["modal".into()]),
             1 => ui.open_menu(MenuId::Trigger),
             _ => ui.power.open = true,
         }
@@ -53,7 +53,7 @@ fn force_in_stored_and_sim_sessions_never_touches_the_mock_hardware() {
         ui.ref_sel = 0;
         ui.m.trig_mode = TrigMode::Single;
         ui.m.run = RunState::Stop;
-        ui.dialog = Some(vec!["modal must not swallow Force".into()]);
+        ui.notices.info = Some(vec!["modal must not swallow Force".into()]);
         ui.key(key::FORCE);
         assert!(ui.replay.force_requested());
         assert_eq!(ui.m.run, RunState::Run);

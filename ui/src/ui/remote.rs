@@ -534,7 +534,7 @@ mod tests {
         u.select_option(Item::RemWeb, "Off");
         assert!(!u.sys.remote_web);
         assert_eq!(u.value(Item::NetWeb), "off");
-        assert!(u.toast.as_ref().unwrap().0.contains("USB stick"));
+        assert!(u.notices.toast.as_ref().unwrap().0.contains("USB stick"));
         u.select_option(Item::RemScpi, "Off");
         assert_eq!(u.value(Item::RemScpiInfo), "off");
         u.select_option(Item::RemScpi, "On");
@@ -615,7 +615,7 @@ mod tests {
         u.wlan.osk.as_mut().unwrap().text = "192.0.2.0/24 192.168.1.0/33".into();
         u.osk_ok();
         assert!(u.wlan.osk.is_some(), "a bad entry keeps the keyboard");
-        assert_eq!(u.toast.as_ref().unwrap().0, "Not an address prefix: 192.168.1.0/33");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "Not an address prefix: 192.168.1.0/33");
         assert_eq!(u.sys.net_allow(), "");
         assert!(!p.exists(), "nothing written");
         assert!(servers.permits(ip("198.51.100.1")), "the servers' list unchanged");
@@ -624,7 +624,7 @@ mod tests {
         u.wlan.osk.as_mut().unwrap().text = "192.0.2.77/24, fd00::/8".into();
         u.osk_ok();
         assert!(u.wlan.osk.is_none());
-        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24 fd00::/8, in force");
         let text = std::fs::read_to_string(&p).unwrap();
         assert_eq!(crate::sysconf::value(&text, "net.allow"), Some("192.0.2.0/24 fd00::/8"));
         let (acl, bad) = netacl::Acl::from_texts(None, Some(&text));
@@ -658,7 +658,7 @@ mod tests {
         u.wlan.osk.as_mut().unwrap().text.clear();
         u.osk_ok();
         assert!(u.wlan.osk.is_none());
-        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "No address list: everyone, in force");
         assert_eq!(u.value(Item::RemFirewall), "off: everyone");
         assert_eq!(crate::sysconf::value(&std::fs::read_to_string(&p).unwrap(), "net.allow"), None);
         assert!(servers.permits(ip("203.0.113.5")));
@@ -667,7 +667,7 @@ mod tests {
         std::fs::write(&blocked, "").unwrap();
         u.sys_path = Some(blocked.join("system.conf"));
         u.allow_osk_done("192.0.2.0/24");
-        assert!(u.toast.as_ref().unwrap().0.starts_with("Not saved"), "{:?}", u.toast);
+        assert!(u.notices.toast.as_ref().unwrap().0.starts_with("Not saved"), "{:?}", u.notices.toast);
         assert_eq!(u.sys.net_allow(), "");
         assert!(servers.permits(ip("203.0.113.5")));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -705,7 +705,7 @@ mod tests {
         assert!(!u.acl().permits("198.51.100.1".parse().unwrap()), "the servers' list does not wait for it");
         u.allow_wait();
         assert_eq!(*ran.lock().unwrap(), vec![fw.to_string()]);
-        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "Allowed: 192.0.2.0/24, in force");
         assert_eq!(u.value(Item::RemFirewall), "on");
         // SSH on: it listens with a list (the sessions stay) ...
         u.sys.remote_ssh = true;
@@ -718,7 +718,7 @@ mod tests {
         assert!(u.allow_osk_done(""));
         u.allow_wait();
         assert_eq!(*ran.lock().unwrap(), vec![fw.to_string(), ssh("stop"), ssh("start")]);
-        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "No address list: everyone, in force");
         assert_eq!(u.value(Item::RemFirewall), "off: everyone");
         // the answer also comes through the frame loop's poll
         assert!(u.allow_osk_done("192.0.2.0/24"));
@@ -737,7 +737,7 @@ mod tests {
         u.allow_wait();
         assert_eq!(*ran.lock().unwrap(), vec![fw.to_string(), ssh("restart")]);
         let toast = "Allowed: 203.0.113.0/24: /bin/oos-firewall reload failed (exit status: 1), see /tmp/oos-net.log";
-        assert_eq!(u.toast.as_ref().unwrap().0, toast);
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, toast);
         assert_eq!(u.value(Item::RemFirewall), "failed: see the log");
         assert!(u.acl().permits("203.0.113.9".parse().unwrap()) && !u.acl().permits("192.0.2.9".parse().unwrap()));
     }
@@ -783,7 +783,7 @@ mod tests {
         let fw = "/bin/oos-firewall reload".to_string();
         let ssh = |a: &str| format!("/bin/oos-ssh {}", a);
         assert_eq!(*ran.lock().unwrap(), vec![fw.clone(), fw, ssh("stop"), ssh("start")]);
-        assert_eq!(u.toast.as_ref().unwrap().0, "No address list: everyone, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "No address list: everyone, in force");
         assert!(!u.allow_applying());
     }
 
@@ -800,7 +800,7 @@ mod tests {
         release.send(()).unwrap();
         u.allow_wait();
         assert_eq!(*ran.lock().unwrap(), vec!["/bin/oos-firewall reload".to_string()]);
-        assert_eq!(u.toast.as_ref().unwrap().0, "Allowed: 198.51.100.0/24, in force");
+        assert_eq!(u.notices.toast.as_ref().unwrap().0, "Allowed: 198.51.100.0/24, in force");
         assert_eq!(u.value(Item::RemFirewall), "on");
     }
 }

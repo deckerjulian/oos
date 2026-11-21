@@ -995,8 +995,8 @@ mod tests {
             ui.items(MenuId::Bode).contains(&Item::BodeSyncLvl) && !ui.items(MenuId::Bode).contains(&Item::BodeAmp)
         );
         ui.activate(Item::BodeRun);
-        assert!(ui.bode.running && ui.bode.free, "{:?}", ui.toast);
-        assert!(ui.toast.as_ref().unwrap().0.contains("sync edge on CH4"));
+        assert!(ui.bode.running && ui.bode.free, "{:?}", ui.notices.toast);
+        assert!(ui.notices.toast.as_ref().unwrap().0.contains("sync edge on CH4"));
         assert_eq!(
             (ui.m.trig_src, ui.m.trig_mode, ui.m.trig_type, ui.m.run),
             (3, TrigMode::Single, TrigType::Edge, RunState::Run)
@@ -1039,7 +1039,7 @@ mod tests {
         ui.bode_update();
         assert!(!ui.bode.running && !ui.bode.free);
         // 0.5 s over three decades passes the lowest frequencies in less than a period each
-        let t = ui.toast.as_ref().unwrap().0.clone();
+        let t = ui.notices.toast.as_ref().unwrap().0.clone();
         assert!(t.starts_with("Sweep captured") && t.contains("too fast for the low end"), "{}", t);
         assert!(
             ui.bode.points.len() >= 30 && ui.bode.points[0].0 > 50.0 && ui.bode.points[0].0 < 100.0,
@@ -1079,11 +1079,15 @@ mod tests {
         let mut ui = crate::ui::testkit::demo_ui();
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_sw_time) = (FREE, 1e3, 200e6, 0.5);
         ui.activate(Item::BodeRun);
-        assert!(!ui.bode.running && ui.toast.as_ref().unwrap().0.contains("does not fit the memory"), "{:?}", ui.toast);
+        assert!(
+            !ui.bode.running && ui.notices.toast.as_ref().unwrap().0.contains("does not fit the memory"),
+            "{:?}",
+            ui.notices.toast
+        );
         // sync on the output
         (ui.m.bode_stop, ui.m.bode_sync) = (20e3, ui.m.bode_out.ch().unwrap());
         ui.activate(Item::BodeRun);
-        assert!(!ui.bode.running && ui.toast.as_ref().unwrap().0.contains("sync channel"));
+        assert!(!ui.bode.running && ui.notices.toast.as_ref().unwrap().0.contains("sync channel"));
         // 500 s: a scan at 200 s/div, the trigger at the centre
         (ui.m.bode_sync, ui.m.bode_sw_time) = (3, 500.0);
         let m = ui.m.clone();
@@ -1114,7 +1118,7 @@ mod tests {
             ui.step(0.05);
             ui.render(&mut cv);
         }
-        assert!(ui.bode.running || (ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto), "{:?}", ui.toast);
+        assert!(ui.bode.running || (ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto), "{:?}", ui.notices.toast);
     }
 
     #[test]
@@ -1187,7 +1191,7 @@ mod tests {
             }
         }
         assert!(!ui.bode.running && ui.m.tscale == ts0);
-        let t = ui.toast.as_ref().unwrap().0.clone();
+        let t = ui.notices.toast.as_ref().unwrap().0.clone();
         assert!(t.starts_with("generator USB: no USB device found"), "{}", t);
         ui.adjust(Item::BodeLink, -1);
         assert!(!ui.m.bode_usb);

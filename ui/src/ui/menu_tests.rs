@@ -206,7 +206,7 @@ fn clear_empties_the_display_in_stop() {
     assert_eq!(lit(&ui), 0);
     assert!(ui.last[0].is_none() && ui.mstat.is_empty() && (ui.mask_sw.pass, ui.mask_sw.fail) == (0, 0));
     assert!(ui.meas(0, Meas::Freq).is_nan());
-    assert_eq!(ui.toast.as_ref().unwrap().0, "Display cleared");
+    assert_eq!(ui.notices.toast.as_ref().unwrap().0, "Display cleared");
     assert_eq!(ui.m.run, RunState::Stop);
     // no trace pixel in the plot (below the mask pill)
     let a = ui.plot.area;
@@ -329,7 +329,7 @@ fn quick_key_dispatch() {
     assert_eq!((ui.m.trig_mode, ui.m.run), (TrigMode::Single, RunState::Run));
     ui.m.quick = Quick::Autoset;
     ui.key(key::QUICK);
-    assert_eq!(ui.toast.as_ref().unwrap().0, "Auto set-up");
+    assert_eq!(ui.notices.toast.as_ref().unwrap().0, "Auto set-up");
     // the start menu entry does the same and closes the menu
     ui.m.quick = Quick::RunStop;
     let (x, y) = mid(ui.menu_btn());

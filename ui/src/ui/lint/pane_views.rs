@@ -76,7 +76,7 @@ fn the_logger_writes_rows_at_its_interval() {
     u.m.meas.pop();
     u.step(1.1);
     assert!(u.log.file.is_none());
-    assert!(u.toast.as_ref().is_some_and(|t| t.0.contains("changed")));
+    assert!(u.notices.toast.as_ref().is_some_and(|t| t.0.contains("changed")));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

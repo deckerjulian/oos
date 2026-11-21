@@ -148,7 +148,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
         ("s-step", |u| u.m.view = AView::Step),
         ("s-sysinfo", |u| {
             u.sysinfo_open();
-            u.dialog = Some(vec![]);
+            u.notices.info = Some(vec![]);
         }),
         ("s-power-dlg", |u| u.power.open = true),
         ("s-touchlock", |u| u.m.touch_lock = true),

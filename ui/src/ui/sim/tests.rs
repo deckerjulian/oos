@@ -118,7 +118,7 @@ fn generation_error_preserves_the_working_waveform_and_session() {
     assert_eq!(u.workflow_state(), state);
     assert!(!u.session_is_sim && !u.sim_generating());
     u.activate(Item::SimPlay);
-    assert!(u.toast.as_ref().unwrap().0.contains(&error));
+    assert!(u.notices.toast.as_ref().unwrap().0.contains(&error));
     assert_eq!(u.refs[0].as_ref().unwrap().v, original);
 }
 
@@ -139,7 +139,7 @@ fn asynchronous_generation_error_preserves_sources_and_is_reported_once() {
     let error = u.take_sim_error().expect("the asynchronous error reaches SCPI");
     assert!(error.contains("jitter"), "{error}");
     assert!(u.take_sim_error().is_none());
-    assert!(u.toast.as_ref().unwrap().0.contains(&error));
+    assert!(u.notices.toast.as_ref().unwrap().0.contains(&error));
 }
 
 #[test]

@@ -855,7 +855,7 @@ impl Ui {
             Item::PowerAct => {
                 // the dialog of the POWER key, without the MCU answer that belongs to a key press
                 self.close_menu();
-                self.dialog = None;
+                self.notices.info = None;
                 self.power.open = true;
             }
             Item::HZero => {
@@ -1068,7 +1068,7 @@ impl Ui {
                     "Tap to close".into(),
                 ]);
                 d.retain(|l| !l.is_empty());
-                self.dialog = Some(d)
+                self.notices.info = Some(d)
             }
             Item::Shot => {
                 // without the dialog on it
@@ -1130,7 +1130,7 @@ impl Ui {
             Item::StoreFfLoad => self.ff_load(),
             Item::Stock => self.stock_tap(),
             Item::BootAgain => self.boot_again_tap(),
-            Item::Update => self.dialog = Some(self.update_lines()),
+            Item::Update => self.notices.info = Some(self.update_lines()),
             Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
             Item::SrcOn => {
                 let v = self.off_sources(self.menu);
@@ -1142,7 +1142,7 @@ impl Ui {
                 let names: Vec<String> = v.iter().map(|c| format!("CH{}", c + 1)).collect();
                 self.toast(&format!("{} on", names.join(", ")));
             }
-            Item::WlanInfo => self.dialog = Some(self.wlan_lines()),
+            Item::WlanInfo => self.notices.info = Some(self.wlan_lines()),
             Item::WlanScan => self.wlan_scan(),
             Item::WlanForget => self.wlan_forget_tap(),
             Item::UpdateRollback => self.update_rollback_tap(),
