@@ -67,6 +67,8 @@ enum Act {
     Levels(u32),
     /// one raw run of the measure unit for `:DEBug:SLOTs?` (`Shared::slots_want`): request 1
     Slots,
+    /// System > Probe optional memory (`Shared::upper_want`): request 1, the plan of the case's model
+    ProbeUpper,
     /// STOP
     Hold,
     /// the next SINGLE press, once the scan sweep of the last has halted (at this pass or the first after it)
@@ -101,6 +103,9 @@ enum Switch {
     /// the frame memory below 256 MiB held to `SEG_LOW` segments (`seg::low_frames`): a recording of small segments
     /// goes on above it
     SegLow,
+    /// the optional memory switched on, `mem.upper = on` (`seg::upper_allowed`); without it the switch is off and a
+    /// probe has found the memory (`mem.upper.found = yes`)
+    Upper,
 }
 
 /// Segments below 256 MiB with `Switch::SegLow`.
@@ -413,7 +418,7 @@ const CASES: &[Case] = &[
     Case {
         name: "segments-8-into-the-upper-memory",
         model: |m| segments(m, 8),
-        switches: &[Switch::SegLow],
+        switches: &[Switch::SegLow, Switch::Upper],
         passes: 60,
         script: &[(1, Act::SegRun)],
         ..BASE
@@ -431,6 +436,21 @@ const CASES: &[Case] = &[
         period_us: Some(1_000),
         passes: 12,
         script: &[(1, Act::SegRun), (5, Act::Set(|m| tdiv(m, 2e-6)))],
+        ..BASE
+    },
+    Case {
+        name: "optional-memory-probed-then-live",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        passes: 12,
+        script: &[(4, Act::ProbeUpper)],
+        ..BASE
+    },
+    Case {
+        name: "segments-8-optional-memory-off",
+        model: |m| segments(m, 8),
+        switches: &[Switch::SegLow],
+        passes: 60,
+        script: &[(1, Act::SegRun)],
         ..BASE
     },
     Case { name: "auto-ch1-1us-calibrated", model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0, cal: true, ..BASE },
@@ -925,6 +945,40 @@ fn measure_checks(case: &Case, g: &Shared) {
     }
 }
 
+/// The checks of System > Probe optional memory (`Act::ProbeUpper`): one answer to the request, a yes for every
+/// segment size of the plan of the case's model (the simulated unit has the memory), each size recorded at its first
+/// frame above 256 MiB, and the acquisition going on with the case's own settings after it. Break it catches: a request
+/// not taken or not answered, a size of the plan left out or probed twice, a probe that does not reach the upper
+/// frames, the acquisition left in the probe's configuration.
+fn probe_checks(case: &Case, trace: &str, g: &Shared) {
+    if !case.script.iter().any(|(_, a)| matches!(a, Act::ProbeUpper)) {
+        return;
+    }
+    let mut m = Model::default();
+    (case.model)(&mut m);
+    let plan = super::upper_plan(&m);
+    let Some((1, Ok(sizes))) = &g.upper_probed else { panic!("{}: no answer: {:?}", case.name, g.upper_probed) };
+    assert!(g.upper_want.is_none(), "{}: the request was not taken", case.name);
+    assert!(sizes.len() >= 3 && sizes.len() == plan.len(), "{}: {:?} for {} set-ups", case.name, sizes, plan.len());
+    assert!(sizes.iter().all(|e| e.1), "{}: a no on a unit with the memory: {:?}", case.name, sizes);
+    let lines: Vec<&str> = trace.lines().collect();
+    let plays = |l: &&str| l.starts_with("Played");
+    let mut last = 0;
+    for (k, &(seg, _)) in sizes.iter().enumerate() {
+        assert!(!sizes[..k].iter().any(|e| e.0 == seg), "{}: segments of {} bursts probed twice", case.name, seg);
+        // the stamp play of the first upper frame alone (a live batch plays from frame 0 to its last)
+        let f = oos_hal::dho::hz::upper_first_frame(seg);
+        let at = format!(" first: {}, last: {},", f, f);
+        let i = lines.iter().rposition(|l| plays(l) && l.contains(&at));
+        last = last.max(i.unwrap_or_else(|| panic!("{}: no frame above 256 MiB for {} bursts", case.name, seg)));
+    }
+    // live again after the probe: batches of the size of those before it (the case's own memory depth)
+    let batch =
+        lines.iter().find(|l| plays(l)).and_then(|l| l.split(" bytes: ").nth(1)).expect("a batch before the probe");
+    let again = lines[last..].iter().filter(|l| plays(l) && l.ends_with(&format!(" bytes: {}", batch))).count();
+    assert!(again >= 3, "{}: {} batches after the probe", case.name, again);
+}
+
 /// The checks of the DVM block's requests in a case's script against the readings after each pass until the next
 /// request (as `counter_checks`): readings of the channel asked for on its lane (`dvm::lane`), the first `DVM_EARLY`
 /// (before the first whole window) none valid and all after them valid, at least two of them, each the scene's sine:
@@ -1107,13 +1161,15 @@ fn average_checks(case: &Case, m: &Model, trace: &str, frames: &[Frame]) {
 /// What each segment case must end with: the recordings armed (frame 0 recorded) and the segments of the last one.
 /// The stopped one ends after 30 (STOP at pass 5, a poll of 10 ms each and 1 ms a segment); the aborted one starts
 /// again with the new settings (`hw::seg_abort`, then a new recording); the one into the upper frame memory arms frame 0
-/// for the probe too (`seg::probe_upper`).
+/// for the probe too (`seg::probe_upper`); with the optional memory off the same recording keeps to the lower part,
+/// without a probe.
 const SEG_EXPECT: &[(&str, usize, u32)] = &[
     ("segments-20-then-show-one", 1, 20),
     ("segments-10-1ms-apart", 1, 10),
     ("segments-8-into-the-upper-memory", 2, 8),
     ("segments-stopped-early", 1, 30),
     ("segments-aborted-by-new-settings", 2, SEG_ABORTED),
+    ("segments-8-optional-memory-off", 1, SEG_LOW),
 ];
 
 /// Segments of the second recording of the aborted case when the run ends (it still records).
@@ -1184,6 +1240,7 @@ impl Drop for Switches {
         super::plan::force_prearm(None);
         super::trim::force_core_offset(None);
         super::seg::force_low_frames(None);
+        super::seg::set_upper_key(false, None);
     }
 }
 
@@ -1337,6 +1394,7 @@ fn run_case(case: &Case) -> Ran {
     super::plan::force_prearm(Some(case.switches.contains(&Switch::Prearm)));
     super::trim::force_core_offset(Some(case.switches.contains(&Switch::CoreTrim)));
     super::seg::force_low_frames(case.switches.contains(&Switch::SegLow).then_some(SEG_LOW));
+    super::seg::set_upper_key(case.switches.contains(&Switch::Upper), Some(true));
     let want = super::settings(&m, false);
     let volts = signal(case.freq_hz, case.square);
     // in Average mode an offset that differs from trigger to trigger, which the average takes out
@@ -1443,6 +1501,7 @@ fn run_case(case: &Case) -> Ran {
                 Act::Dvm(w) => g.dvm_want = *w,
                 Act::Levels(runs) => g.levels_want = Some((1, 0, *runs)),
                 Act::Slots => g.slots_want = Some(1),
+                Act::ProbeUpper => g.upper_want = Some((1, super::upper_plan(&m))),
                 Act::Mask(w) => g.mask_want = w.map(|w| mask_want(case, &m, w)),
                 Act::Zone(w) => {
                     g.zone_want =
@@ -1545,6 +1604,7 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         counter_checks(case, &trace, &seen);
         dvm_checks(case, &trace, &seen);
         measure_checks(case, &g);
+        probe_checks(case, &trace, &g);
         mask_checks(case, &trace, &seen);
         zone_checks(case, &trace, &seen);
         prearm_checks(case, &trace, &seen);
@@ -1664,10 +1724,13 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                         .lines()
                         .filter(move |l| at(l, key).is_some_and(|f| f >= oos_hal::dho::hz::UPPER_BURSTS / 4096))
                 };
-                if case.switches.contains(&Switch::SegLow) {
+                if case.switches.contains(&Switch::SegLow) && case.switches.contains(&Switch::Upper) {
                     // 3 of the probe, 3 of the recording; each played for its stamp and read back
                     assert_eq!(high(" frame: ").filter(|l| l.starts_with("Recorded")).count(), 6, "{}", case.name);
                     assert!(high(" first: ").filter(|l| l.starts_with("Played")).count() >= 3, "{}", case.name);
+                } else if case.switches.contains(&Switch::SegLow) {
+                    // switched off: nothing above 256 MiB, neither recorded nor probed (one arm, above)
+                    assert_eq!(high(" frame: ").count() + high(" first: ").count(), 0, "{}", case.name);
                 }
             }
             if g.seg.total > 0 && !recording {

@@ -188,8 +188,8 @@ lower half, so nothing the stock system does shows the upper half. **It was foun
 the unit**, with test builds that recorded hardware segments past the stock limit:
 - a record that went on above 256 MiB showed the effect of 240..256 MiB below;
 - a record placed above 256 MiB left the frames below intact.
-OOS uses the upper half because of these measurements, and checks it on every unit before it relies on it (below).
-System info shows whether it is in use ("Optional memory").
+OOS uses the upper half because of these measurements, only on a unit where its probe found it and while it is
+switched on (below), and checks each segment size before it relies on it. System info shows whether it is in use ("Optional memory").
 
 - **Verified on the unit** (DHO924S, 2026-11-21, hardware segments over SCPI with a test build, segments of 1 M points
   = 131,072 bursts = 2 MiB):
@@ -213,8 +213,32 @@ System info shows whether it is in use ("Optional memory").
   arm between the two parts are a gap in the segment times.
 - **Verified on the unit**: in a series of stamp plays (`seg::stamps`) the first one returns the header of an earlier
   play; its latch (0x40b0) is its own. The times use the latch only.
-- OOS uses the upper part only for a segment size the unit has shown to hold there (`seg::probe_upper`, once per
-  segment size and run of oos-ui):
+- OOS uses the upper part only while it is switched on, and only for a segment size the unit has shown to hold there
+  (`seg::probe_upper`):
+  - **System > Opt. memory** (Off/On, `mem.upper` in `/oos/system.conf`) switches it; off by default (ADR 0010). Off,
+    recordings use the lower 256 MiB only, with no probe, as before the upper half was found.
+  - **System > Probe optional memory** probes it. The acquisition thread takes the request (`Shared::upper_want`) like
+    a self-calibration: nothing armed, no segments recorded, no stream. Then for each segment size the Acquire menu's
+    memory depths give the model's channels (`Board::upper_plan`; a size whose part below 256 MiB holds fewer than the
+    probe's three frames is left out, so 100 M and 125 M points are), it configures that set-up with three hardware
+    segments and probes. It then configures the UI's settings again. The probe writes frames: a record kept in STOP
+    is not read again.
+  - The answer goes into `/oos/system.conf` as `mem.upper.found = yes|no` and switches the memory on (every size held)
+    or off (one did not). An error of the probe (a configuration the unit refused) changes nothing.
+  - The user may switch it off at any time and on again. On where the last probe on this unit found it
+    (`mem.upper.found = yes`) takes effect at once; on without that runs the probe first, and only its yes switches
+    it on.
+    `mem.upper = on` without `mem.upper.found = yes` (an image's default, a line by hand) counts as off. Off chosen
+    while a probe runs wins: its yes is kept as `found = yes` and the memory stays off.
+  - A probe is refused while hardware segments are set up and kept; switched off (also in STOP) it goes ahead, the
+    kept segments are dropped anyway at the next configuration.
+  - Switched on, a recording uses the upper part for a size the probe of this run said yes for, and probes a size it
+    has not seen in this run before its first recording that needs it (once per segment size and run of oos-ui).
+  - System info, "Optional memory": 256 MiB, in use / present, off / not present / off, not probed.
+  - The switch and the button are **not yet verified on hardware**; the host run of the acquisition loop presses the
+    button against the simulated unit and records with the memory switched off (`liverun.rs`, cases
+    `optional-memory-probed-then-live` and `segments-8-optional-memory-off`).
+  The probe of one size:
   - three frames from index 0, then three from `upper_first_frame`, back to back (without the recording's interval) and
     each forced when no trigger comes;
   - then the headers of frames 1 and 2 again: they must differ from each other (the play reads the frame asked for)

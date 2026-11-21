@@ -547,8 +547,10 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     ui.m.segments = 10;
     assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
     ui.adjust(Item::AcqSegHw, 1);
-    // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments below 256 MiB and as many above it; the
-    // menu stops at SEG_HW_MAX
+    // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments below 256 MiB, and as many above it with
+    // the optional memory on (`mem.upper`, this thread's); the menu stops at SEG_HW_MAX
+    assert_eq!(board().seg_max(&ui.m), Some(61_440));
+    board().set_upper_mem(true, Some(true));
     let lim = board().seg_max(&ui.m).unwrap();
     assert_eq!(lim, 2 * 61_440);
     let o = ui.seg_options();
@@ -572,6 +574,7 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     ui.m.seg_hw = true;
     ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
     assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    board().set_upper_mem(false, None);
 }
 
 #[test]

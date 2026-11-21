@@ -151,11 +151,13 @@ impl Ui {
         a.push(kv("Generator", yes_no(c.has_gen())));
         a.push(kv("EXT trigger", yes_no(c.ext_trig)));
         if self.src.is_hw() {
-            // the acquisition memory above 256 MiB, found by measuring on a unit (horizontal-config.md 1.8)
+            // the acquisition memory above 256 MiB, found by measuring on a unit (horizontal-config.md 1.8); System >
+            // Optional memory and Probe optional memory (upper.rs)
             a.push(match board().upper_mem() {
                 crate::board::UpperMem::InUse => kv("Optional memory", "256 MiB, in use"),
+                crate::board::UpperMem::Off => kvc("Optional memory", "present, off", DIM),
                 crate::board::UpperMem::Missing => kvc("Optional memory", "not present", DIM),
-                crate::board::UpperMem::NotProbed => kvc("Optional memory", "not probed yet", DIM),
+                crate::board::UpperMem::NotProbed => kvc("Optional memory", "off, not probed", DIM),
             });
         }
         a.push(match p.source {

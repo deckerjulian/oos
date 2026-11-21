@@ -294,8 +294,8 @@ fn hw_segments_ok(m: &Model) -> bool {
 }
 
 /// Most hardware segments for the model's set-up (`Board::seg_max`): the frames of its segment size below 256 MiB,
-/// twice that unless the probe found no frame memory above it (horizontal-config.md 1.8; probed at the first
-/// recording that needs it).
+/// twice that with the optional memory on (`mem.upper`) unless a probe of this run said no for the size
+/// (horizontal-config.md 1.8; a size not probed yet is probed at the first recording that needs it).
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
@@ -303,7 +303,35 @@ pub fn seg_max(m: &Model) -> Option<usize> {
     let s = settings(m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
     let low = super::seg::low_frames(p.seg);
-    Some(if low >= 2 && super::seg::upper_known(p.seg) != Some(false) { 2 * low } else { low } as usize)
+    Some(if low >= 2 && super::seg::upper_allowed(p.seg) { 2 * low } else { low } as usize)
+}
+
+/// Frames the probe of the optional memory records in each part (`seg::probe_upper`): a segment size whose part below
+/// 256 MiB holds fewer has no use for the memory above it.
+const PROBE_FRAMES: u32 = 3;
+
+/// The set-ups System > Probe optional memory probes (`Board::upper_plan`): the model with each memory depth of the
+/// Acquire menu, hardware segments on, one per segment size whose part below 256 MiB holds `PROBE_FRAMES`. The rest
+/// of the model stays (the channels, their front ends, the trigger); acquired normally (no average, no LA), at the
+/// fastest time base of roll or scan where the model is there, so that the depths record frames.
+pub fn upper_plan(m: &Model) -> Vec<Settings> {
+    let mut m = m.clone();
+    (m.seg_hw, m.segments, m.seg_ivl, m.acq, m.la.on) = (true, PROBE_FRAMES as usize, 0.0, AcqMode::Normal, false);
+    while slow_mode(&m) != Slow::Off && m.tscale > 0 {
+        m.tscale -= 1;
+    }
+    let mut sizes = Vec::new();
+    let mut plan = Vec::new();
+    for d in 0..mdepths().len() {
+        m.mdepth = d;
+        let s = settings(&m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+        if s.segments.is_some() && hz::max_record_frames(p.seg) >= PROBE_FRAMES && !sizes.contains(&p.seg) {
+            sizes.push(p.seg);
+            plan.push(s);
+        }
+    }
+    plan
 }
 
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header
