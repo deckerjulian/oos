@@ -282,7 +282,7 @@ pub struct Analysis {
     pub hi_falls: Vec<f64>,
     pub lo_rises: Vec<f64>,
     pub lo_falls: Vec<f64>,
-    /// Mean, over rising-mid cycles, of that cycle's histogram top, base, amplitude, peak-to-peak, maximum, minimum.
+    /// Mean, over rising-mid cycles (falling-mid ones with fewer than two rises), of that cycle's histogram top, base, amplitude, peak-to-peak, maximum, minimum.
     pub cyc_top: f64,
     pub cyc_base: f64,
     pub cyc_amp: f64,
@@ -594,20 +594,24 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
     a.high_time = mean(&hi);
     a.low_time = mean(&low);
     (a.hi_rises, a.hi_falls, a.lo_rises, a.lo_falls) = (hr, hf, lr, lf);
-    if a.rises.len() >= 2 {
-        let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, &a.rises);
+    // whole cycles run from a rising mid crossing to the next; a record with one cycle between two falling ones (a
+    // fall, a rise, a fall) has its cycle there, as the period takes it
+    let (rises, falls) = (std::mem::take(&mut a.rises), std::mem::take(&mut a.falls));
+    let cycle = if rises.len() >= 2 { &rises } else { &falls };
+    if cycle.len() >= 2 {
+        let (top, base, amp, pp, mx, mn) = cycle_levels(v, dt, cycle);
         (a.cyc_top, a.cyc_base, a.cyc_amp, a.cyc_pp, a.cyc_max, a.cyc_min) = (top, base, amp, pp, mx, mn);
-    }
-    // cycle values between the first and last rising edge
-    if a.rises.len() >= 2 {
-        let (s, t) = ((a.rises[0] / dt).ceil() as usize, (a.rises[a.rises.len() - 1] / dt).floor() as usize);
+        // cycle values between the first and last edge
+        let (first, last) = (cycle[0], cycle[cycle.len() - 1]);
+        let (s, t) = ((first / dt).ceil() as usize, (last / dt).floor() as usize);
         let c: Vec<f64> = v[s..=t.min(v.len() - 1)].iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
         if !c.is_empty() {
             a.cyc_avg = mean(&c);
             a.cyc_rms = (c.iter().map(|x| x * x).sum::<f64>() / c.len() as f64).sqrt();
-            a.cyc_area = a.cyc_avg * (a.rises[a.rises.len() - 1] - a.rises[0]) / (a.rises.len() - 1) as f64;
+            a.cyc_area = a.cyc_avg * (last - first) / (cycle.len() - 1) as f64;
         }
     }
+    (a.rises, a.falls) = (rises, falls);
     a
 }
 
@@ -809,11 +813,11 @@ fn pair_widths(open: &[f64], close: &[f64]) -> Vec<f64> {
 }
 
 /// Mean of the per-cycle histogram top and base, their difference, and the sample max, min and peak-to-peak.
-/// Cycles run from one rising mid crossing to the next. A record with fewer than two rising edges has no result.
-fn cycle_levels(v: &[f32], dt: f64, rises: &[f64]) -> (f64, f64, f64, f64, f64, f64) {
+/// Cycles run from one mid crossing of `edges` (all of one direction) to the next. Fewer than two edges give no result.
+fn cycle_levels(v: &[f32], dt: f64, edges: &[f64]) -> (f64, f64, f64, f64, f64, f64) {
     let (mut top, mut base, mut amp, mut pp, mut mx, mut mn) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for w in rises.windows(2) {
+    for w in edges.windows(2) {
         let s = (w[0] / dt).ceil() as usize;
         let e = ((w[1] / dt).floor() as usize).min(v.len().saturating_sub(1));
         if e <= s {
