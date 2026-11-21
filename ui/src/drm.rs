@@ -33,7 +33,7 @@ struct CardRes {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ModeInfo {
     clock: u32,
     hdisplay: u16,
@@ -84,7 +84,7 @@ struct GetEncoder {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Crtc {
     set_connectors_ptr: u64,
     count_connectors: u32,
@@ -275,7 +275,7 @@ impl Display {
             if gc.connection != 1 || gc.count_modes == 0 || want.is_some_and(|t| t != gc.connector_type) {
                 continue;
             }
-            let mut modes = vec![unsafe { std::mem::zeroed::<ModeInfo>() }; gc.count_modes as usize];
+            let mut modes = vec![ModeInfo::default(); gc.count_modes as usize];
             let mut encoders = vec![0u32; gc.count_encoders as usize];
             let mut props = vec![0u32; gc.count_props as usize];
             let mut pvals = vec![0u64; gc.count_props as usize];
@@ -334,8 +334,7 @@ impl Display {
                 io::Error::new(io::ErrorKind::NotFound, "no connected display")
             }
         })?;
-        let mut saved: Crtc = unsafe { std::mem::zeroed() };
-        saved.crtc_id = crtc_id;
+        let mut saved = Crtc { crtc_id, ..Default::default() };
         let saved = if ioc(fd, GETCRTC, &mut saved).is_ok() { Some(saved) } else { None };
 
         let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
@@ -564,7 +563,7 @@ impl Display {
     pub fn connected(&self) -> bool {
         let mut gc = GetConnector { connector_id: self.conn_id, ..Default::default() };
         // count_modes 0 asks the kernel to probe; GETCONNECTOR with modes_ptr set and count_modes 1 does not
-        let mut mode = unsafe { std::mem::zeroed::<ModeInfo>() };
+        let mut mode = ModeInfo::default();
         gc.modes_ptr = &mut mode as *mut ModeInfo as u64;
         gc.count_modes = 1;
         ioc(self.fd, GETCONNECTOR, &mut gc).is_ok() && gc.connection == 1

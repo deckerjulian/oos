@@ -325,10 +325,8 @@ mod imp {
                 return Err(format!("memfd: {}", std::io::Error::last_os_error()));
             }
             // SAFETY: a fresh descriptor we own
-            let mem = unsafe { OwnedFd::from_raw_fd(fd) };
-            if unsafe { libc::ftruncate(fd, ARENA as libc::off_t) } != 0 {
-                return Err(format!("arena: {}", std::io::Error::last_os_error()));
-            }
+            let mem = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+            mem.set_len(ARENA as u64).map_err(|e| format!("arena: {}", e))?;
             let arena = unsafe {
                 libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
             };
@@ -371,12 +369,20 @@ mod imp {
 
         fn wait(&mut self, t: Duration) -> Result<DoneMsg, String> {
             let _ = self.sock.set_read_timeout(Some(t));
-            let mut d = DoneMsg::default();
-            // SAFETY: DoneMsg is plain integers and floats
-            let buf = unsafe {
-                std::slice::from_raw_parts_mut(&mut d as *mut DoneMsg as *mut u8, std::mem::size_of::<DoneMsg>())
+            let mut b = [0u8; std::mem::size_of::<DoneMsg>()];
+            self.sock.read_exact(&mut b).map_err(|e| format!("no answer: {}", e))?;
+            let w = |i: usize| u32::from_ne_bytes(b.as_chunks::<4>().0[i]);
+            let f = |i: usize| f32::from_bits(w(i));
+            let d = DoneMsg {
+                magic: w(0),
+                kind: w(1),
+                status: w(2),
+                pad: w(3),
+                ms_upload: f(4),
+                ms_draw: f(5),
+                ms_read: f(6),
+                pad2: f(7),
             };
-            self.sock.read_exact(buf).map_err(|e| format!("no answer: {}", e))?;
             if d.magic != MAGIC || d.kind != K_DONE {
                 return Err("bad answer".into());
             }
