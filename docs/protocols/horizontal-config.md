@@ -239,6 +239,8 @@ System info shows whether it is in use ("Optional memory").
   - The parts between the steps are clean, but they do not join up in time.
   - The compressed read-out of the whole 250 M-point record (k = 400) timed out on the C2H stream; windows read fine.
   - So the upper half gives more hardware segments (above), not deeper single records. OOS keeps the depths of 1.1.
+  - **Assumed** for every DHO800/DHO900 unit, since they all load the same FPGA image (fpga-image.md); measured on
+    one DHO924S only.
 
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
 
