@@ -285,3 +285,33 @@ scpi $S/scpi-answers.txt :CURSor:MANual:BYValue?
 scpi $S/scpi-answers.txt :CURSor:MANual:XDELta?
 scpi $S/scpi-answers.txt :CURSor:MANual:YDELta?
 scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# the command words the lines above leave out, each with a query that shows what it did; at the end, so the answers
+# above stay as they are. A reference slot as a measurement source (REF1 or R1), the reference spelt short
+scpi $S/scpi-answers.txt :REF:SLOT?;:MEASure:ITEM? VPP,REF1;:MEASure:ITEM? VPP,R1
+# a reference's scale back to its channel's
+scpi $S/scpi-answers.txt :REFerence:VSCale R1,2;:REFerence:VSCale? R1
+scpi $S/scpi-answers.txt :REFerence:RESet R1;:REFerence:VSCale? R1;:SYSTem:ERRor?
+# a file that is not there, by name and as the slot's refN beside the set-ups (the storage folder of the run is empty)
+scpi $S/scpi-answers.txt :REFerence:LOAD "missing.csv";:SYSTem:ERRor?
+scpi $S/scpi-answers.txt :REFerence:IMPort;:SYSTem:ERRor?
+scpi $S/scpi-answers.txt :REFerence:CLEar;:REFerence:SHOW?
+# a mask from the record on screen, its counters reset
+scpi $S/scpi-answers.txt :MASK:CREate;:SYSTem:ERRor?;:MASK:RESet;:MASK:TOTal?
+# the statistics: their reset, and the Clear key
+scpi $S/scpi-answers.txt :MEASure:STATistic:RESet;:MEASure:STATistic:ITEM? COUNt,VPP,CHANnel1
+scpi $S/scpi-answers.txt :CLEar;:MEASure:STATistic:ITEM? COUNt,VPP,CHANnel1;:SYSTem:ERRor?
+# the counter's total cleared, the counter set back
+scpi $S/scpi-answers.txt :COUNter:ENABle ON;:COUNter:MODE TOTalize;:COUNter:TOTalize:CLEar;:COUNter:CURRent?
+scpi $S/scpi-answers.txt :COUNter:MODE FREQuency;:COUNter:ENABle OFF;:COUNter:MODE?;:COUNter:ENABle?
+# a key of a setup file on the live settings, and back
+scpi $S/scpi-answers.txt :SYSTem:SET ch1.vdiv = 0.2;:SYSTem:GET? ch1.vdiv;:CHANnel1:SCALe?
+scpi $S/scpi-answers.txt :SYSTem:SET ch1.vdiv = 0.5;:CHANnel1:SCALe?;:SYSTem:ERRor?
+# the logger and the self-calibration off where they do not run (on the host there is no self-calibration)
+scpi $S/scpi-answers.txt :SYSTem:LOG OFF;:SYSTem:ERRor?
+scpi $S/scpi-answers.txt :CALibrate:CANCel;:CALibrate:STATus?;:SYSTem:ERRor?
+# a forced trigger in both spellings, each ending the single acquisition it arms
+scpi $S/scpi-answers.txt :TFORce;*OPC?;:TRIGger:STATus?
+scpi $S/scpi-answers.txt :TRIGger:FORCe;*OPC?;:TRIGger:STATus?
+# the measurement strip emptied
+scpi $S/scpi-answers.txt :MEASure:CLEar;:MEASure:STRip?
+scpi $S/scpi-answers.txt :SYSTem:ERRor?
