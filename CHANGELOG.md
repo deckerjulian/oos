@@ -1,11 +1,136 @@
 # Changes
 
-## Unreleased
+## 0.1.15
+
+Released on 2026-11-21. Fixes from the forum's reports on 0.1.14 (the picture while the trigger level turns, level
+50 % with AC coupling, the USB stick going back, SSH on IPv6) and from W4R's pull requests (Run after Single, the I2C,
+UART, CAN and LIN decoders, the spectrum's fundamental, CSV references), a stricter web server, and the memory above
+256 MiB for hardware segments, off until a probe on the unit finds it. Under the hood the acquisition loop runs on a
+simulated unit on the host, the model and the store are crates of their own, and the board family is a parameter of
+the build, the tools and CI; none of this changes what the scope does. All of it is tested on the host; marked
+"(unit)" where it also ran on a DHO924S. A build of main from the same day ran on a DHO924S from its kexec start and
+its first power-on, which confirmed it.
+
+Added:
+
+- **System > Probe optional memory** probes the memory above 256 MiB for every segment size of the Acquire menu's
+  depths and switches it on when every size held; **System > Opt. memory** switches its use off and on again (on
+  without a probe's yes probes first). Off by default; kept in system.conf (`mem.upper`, `mem.upper.found`)
+  ([First Steps](wiki/First-Steps.md#optional-memory)).
+- Hardware segments can use the acquisition memory above 256 MiB where the unit has it: twice as many segments of a
+  size. The stock software uses only 256 MiB; the other half was found by observation and measurement on a unit. It
+  is off until **System > Probe optional memory** found it on the unit (next entry), and a short probe at the first
+  recording of a segment size the button did not probe checks it again. System info shows whether it is in use
+  ("Optional memory") ([horizontal-config.md](docs/protocols/horizontal-config.md#18-frame-memory-above-256-mib))
+  (unit).
+- A Windows button under the zoom magnifier opens the Windows menu ([First Steps](wiki/First-Steps.md)).
+
+Interface:
+
+- `GET /cmd` (experimental): a request with one command a remote may not give is refused as a whole, and none of its
+  commands runs. Before, the allowed ones ran anyway ([docs/http.md](docs/http.md)).
+- Every answer of the web server has `Cache-Control: no-store`, also a 503 busy, and the 202 of an MCP notification
+  has no `Content-Type` instead of an empty one ([docs/http.md](docs/http.md)).
+- The web server tells the methods of HTTP apart: each route takes the method of its reference (and `HEAD` where it
+  takes `GET`, but `/cmd` and the live pictures), another method gets 405 with an `Allow` header, and a `HEAD` gets
+  no body. Before, every
+  method but `POST` was taken as `GET`, so `POST /wave.csv` gave the CSV and `GET /mcp` an MCP parse error
+  ([docs/http.md](docs/http.md)).
+- `POST /update` (stable) answers a refused package with 409 instead of 200 (the body still says `REFUSED: <reason>`),
+  and `POST /waveform` (stable) answers a request without a slot from 1 to 10 with 400 instead of 409. A client can
+  tell from the status that nothing was installed or loaded ([docs/http.md](docs/http.md)).
+- `GET /lxi/identification` (stable) names the unit's model, as `*IDN?` does. It named every unit a DHO924S, so a
+  DHO804 or DHO914 was found as one in an LXI discovery ([docs/http.md](docs/http.md)).
+
+Removed:
+
+- Builds without some decoders: `OOS_DECODERS`, `OOS_DECODERS_OFF` and the Cargo features `dec-*` are gone, and every
+  decoder is always in oos-ui, as it was in every release image. System > Features leaves decoders out at run time
+  ([protocol-modules.md](docs/protocol-modules.md#leaving-decoders-out), ADR 0071).
 
 Changed:
 
 - A picker longer than the screen scrolls by its bar, a finger and the knob, as the other lists do (ADR 0006): a WLAN
   scan lists every network it found, not the 17 strongest, and the Bluetooth pickers every device, not the first 18.
+- The full-screen button at the top right of the plot stays in place: a drag that starts on it no longer moves it
+  ([First Steps](wiki/First-Steps.md)).
+
+Fixed:
+
+- Level 50 % (a press on the trigger level knob, Trigger > Level 50 %) with AC or LF reject trigger coupling sets the
+  level halfway through the signal as the trigger sees it, around the signal's mean. It set the middle in volts, which
+  lay above the whole swing of a signal that does not cross 0 V, and the trigger did not fire
+  ([First Steps](wiki/First-Steps.md)).
+- The CAN and CAN-FD decoders keep their bit timing on a line that is slow on its way back to recessive: they
+  resynchronise on the edges to dominant alone, as a node does. Resynchronised on every edge, they sampled the bit
+  behind a slow edge in its neighbour: on CAN_H at 500 kbit/s, back at the threshold 1.1 us late, a frame of every
+  cycle had a wrong CRC or a wrong identifier, and frames were missed ([Features](wiki/Features.md)) (unit).
+- The start from the stock system (the one-shot) and `card-install.py` take a card only when its partition table also
+  has the stock `backup` partition, as the update already did: OOS keeps its previous image right after it.
+- A CSV file loaded into a reference takes the time between its samples over its whole time column, not from its first
+  two lines: a file that writes its times with a few digits read every frequency up to a percent off, and one whose
+  first two lines have the same rounded time was refused. In a file of several sweeps the longest one gives the step
+  ([First Steps](wiki/First-Steps.md#saving)).
+- At short time bases, no stray trace now and then from a record joined with older memory before the trigger (a step
+  about 38 us left of the trigger at 10 us/div, 1 kpts). The first record after each arm of a long batch is left out,
+  which costs one record of 26 to 32 (unit)
+  ([docs/protocols/acquisition-start.md](docs/protocols/acquisition-start.md)).
+- The I2C decoder no longer calls the last byte of a read an error: a controller ends every read by not acknowledging
+  its last byte, so on a working bus every read was red on the band and an Error (NACK) event of a search. That byte
+  is still marked `N`; a byte not acknowledged anywhere else stays an error ([Features](wiki/Features.md)).
+- An update that brings another device tree starts by kexec again when the loader seeded the kernel's address
+  randomisation: the seed is carried into the new tree as 0, which kexec-tools requires (issue #193; host test; the
+  developer's unit writes no seed, so it has not run on a unit).
+- The LIN decoder reads a bus at a rate that Decode > Baud does not list: it measures the bit time of each frame on
+  its sync field, as a node does, and Baud is only for a record without a readable sync. A frame whose sync is not
+  0x55 is listed with its sync as the error, not left as a break alone, and a byte that comes later than a frame may
+  last is no longer taken for its checksum. Found on a capture of a real bus at 18350 bit/s, which read nothing but
+  breaks at every Baud but 19200 ([Features](wiki/Features.md)).
+- A time measurement drawn with Labels on trace whose span runs off the right of a narrow view has
+  its label at the right edge of the plot, not at the left; with its edges far off the screen a build with overflow
+  checks no longer stops ([Measurements and Analysers](wiki/Measurements-and-Analysers.md)).
+- The channel traces no longer drop out of single pictures while the scope runs with measurements that are computed in
+  the background: the answer of such a measurement cleared the picture until the next record came, so on a DHO924S a
+  third of the pictures had no traces, and with persistence the collected picture started over (unit)
+  ([Measurements and Analysers](wiki/Measurements-and-Analysers.md#measurements)).
+- A setting changed while running, such as a step of the trigger level or the position, keeps the picture on the
+  screen until the next record replaces it. Before, the screen went empty at once. With a Normal sweep and a level
+  outside the signal it stayed empty, so the trigger looked broken (unit) ([First Steps](wiki/First-Steps.md)).
+- `:REFerence:VSCale 2`, `:VOFFset 0.1`, `:COLor RED`, `:LABel:CONTent` and `:SHOW 1|0` without a slot set the
+  selected reference slot, as [docs/scpi.md](docs/scpi.md) says. A value that read like a slot (a number, or a word
+  starting with R) was taken for one and refused with -224.
+- On the live acquisition, Run after a Single (`:RUN` after `:SINGle`, or Run/Stop after the Single key) goes back to
+  the sweep before the Single, Auto or Normal; it went to Auto, so a Normal sweep was lost after every Single. A stored
+  replay and SIM still go to Normal ([SCPI and VXI-11](wiki/SCPI-and-VXI-11.md)).
+- A screenshot through MCP or `/screen.bmp` no longer stops the screen while the picture is encoded: the screen is
+  copied, and the picture made beside the frame loop.
+- A SINGLE after Default (`*RST`), after recalling a set-up or after leaving a reference or SIM session ends with its
+  record again: the set-up that came in set the hardware session's counters back, and the second such SINGLE in one
+  run of the scope waited forever ([First Steps](wiki/First-Steps.md)) (unit).
+- The spectrum page and `:SPECtrum:ITEM? F1` find the fundamental of a square or a ramp with few periods on the
+  screen: a 10 kHz square at 50 us/div read 16.2 kHz, a ramp 12.3 kHz, and THD, SNR, SINAD, SFDR and ENOB were
+  figures of the wrong lines. The window of the distortion figures follows the periods in the record (unit)
+  ([Measurements and Analysers](wiki/Measurements-and-Analysers.md#spectrum)).
+- SSH listens on IPv4 only while `net.ipv6` is off (the default), as the web remote, SCPI and VXI-11 do. It listened on
+  IPv6 too, where only the firewall kept connections out ([docs/network.md](docs/network.md#8-ipv6)).
+- The guide no longer says that the USB stick writes any version: the stick keeps a build on the card that is as new
+  as its own or newer and only selects it, so going back to an older build needs an empty `oos-reinstall.txt` next
+  to the `.GEL`, and makes no rollback image ([Updates and Going Back](wiki/Updates-and-Going-Back.md)).
+- After STOP the record on screen is the newest one the hardware took, and it stays the record measured and read
+  out: a record of the whole memory is no longer replaced by a view read again about 90 ms later, and `*OPC?` after
+  `:STOP` answers once the record of the STOP is in place, so `:WAV:PREamble?` and `:WAV:DATA?` describe the same
+  record ([SCPI and VXI-11](wiki/SCPI-and-VXI-11.md)).
+- The UART decoder lists no false first characters when a record begins inside a character: the first falling edge
+  of the record was taken for a start bit, and with characters back to back the wrong framing ran on (FF, ED in front
+  of a 9600 Bd text line). Up to four real characters at the very start of such a record are left out rather than
+  guessed; a record that begins on the idle line a few bit times before a character of a regular stream keeps it
+  (unit) ([Features](wiki/Features.md)).
+- Opening the web page `/update` no longer stops the screen for as long as `oos-update status` runs: the page is made
+  beside the frame loop.
+- The web page `/update` shows "no answer within 10 s, stopped" when `oos-update status` hangs, instead of waiting for
+  it and keeping the web server's threads for large answers busy.
+- A web client that does not read its answer (a page, a refusal, the result of a waveform upload) no longer holds
+  the screen for up to 2 s per answer: the answer goes out as the client takes it ([ADR 0066](docs/adr/README.md)).
 
 ## 0.1.14
 
