@@ -1,6 +1,6 @@
 # SCPI and VXI-11
 
-How to control OOS from a computer: the ways in (raw socket, VXI-11/VISA, MCP), the rules of the command syntax, every command family with examples, waveform and screenshot transfer, errors, and what differs from the stock Rigol firmware. This page describes OOS 0.1.14.
+How to control OOS from a computer: the ways in (raw socket, VXI-11/VISA, MCP), the rules of the command syntax, every command family with examples, waveform and screenshot transfer, errors, and what differs from the stock Rigol firmware. This page describes OOS 0.1.15.
 
 > **No authentication.** Anyone who can reach the scope can control it. Keep it on a trusted bench network, never on the internet. `net.allow` (below) limits who may connect.
 
@@ -55,7 +55,7 @@ All of them end in the same SCPI interpreter, so a command behaves the same whic
 
 ```sh
 printf '*IDN?\n' | nc dho924s-123456.local 5555
-# OOS,DHO924S,<serial>,oos-ui 0.1.14
+# OOS,DHO924S,<serial>,oos-ui 0.1.15
 ```
 
 **Python with pyvisa, raw socket:**

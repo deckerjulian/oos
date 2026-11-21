@@ -145,10 +145,10 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
    Put the second card into the scope, close the instrument and start it once. The stock system must work as before,
    with its calibration and licences. Then unplug the scope and take the card out again.
 3. **Install OOS on the second card.** Put it in the reader. Unmount it, then do a dry run, which only checks the card
-   and prints the plan. `img` is the file you downloaded, here 0.1.14, or `boot/out/oos-dev.img` of your own build:
+   and prints the plan. `img` is the file you downloaded, here 0.1.15, or `boot/out/oos-dev.img` of your own build:
 
    ```sh
-   img=oos-0.1.14.img
+   img=oos-0.1.15.img
    diskutil unmountDisk /dev/diskM
    sudo python3 boot/card-install.py install /dev/rdiskM --image "$img" --fallback-stock
    ```
