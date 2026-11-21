@@ -136,6 +136,70 @@ pub fn start<B: Bus, R: std::io::Read, C: Clock>(
     Ok(seq::record_frames(s, p))
 }
 
+/// Arms `n` frames from ring index `first` (`State::record_steps_at`): the upper part of a record, or the probe.
+pub fn start_at<B: Bus, R: std::io::Read, C: Clock>(
+    st: &mut seq::State,
+    s: &seq::Settings,
+    bar: &mut B,
+    c2h: &mut R,
+    clock: &mut C,
+    first: u32,
+    n: u32,
+) -> Result<(), String> {
+    run(&st.record_steps_at(s, first, n), bar, c2h, &mut DmaBuf::new(), clock)
+}
+
+/// Whether the unit keeps segments of `p.seg` bursts in the upper frame memory apart from those below it
+/// (horizontal-config.md 1.8). Three frames from index 0 and their stamps: the headers of frames 1 and 2 hold the
+/// trigger of the frame before each, so they differ when the play reads the frame it is asked for. Then three frames
+/// from `hz::upper_first_frame`, and the stamps of the lower three again: frame 1's header stays when the upper frames
+/// went elsewhere and changes when they landed on it (a memory of 256 MiB, or a frame index the FPGA does not hold).
+/// The first frame of each series of stamp plays is not compared: its header is an earlier play's (verified on the
+/// unit). Each frame is forced (`tpu::force`) when no trigger comes; frames that do not come in 2 s mean no. `s` as
+/// the segments are read back (`read_settings`). Overwrites the frames it records: run it before a recording.
+pub fn probe_upper<B: Bus, R: std::io::Read, C: Clock>(
+    st: &mut seq::State,
+    s: &seq::Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    clock: &mut C,
+) -> Result<bool, String> {
+    const N: u32 = 3;
+    if hz::max_record_frames(p.seg) < N {
+        return Ok(false);
+    }
+    let k = hz::upper_first_frame(p.seg);
+    let record = |st: &mut seq::State, bar: &mut B, c2h: &mut R, clock: &mut C, first: u32| -> Result<bool, String> {
+        start_at(st, s, bar, c2h, clock, first, N)?;
+        let mut done = false;
+        for _ in 0..1000 {
+            if status(bar, N).complete(N) {
+                done = true;
+                break;
+            }
+            bar.apply(&crate::dho::tpu::force(&st.ts));
+            clock.sleep_us(2000);
+        }
+        stop(st, bar, c2h, clock)?;
+        Ok(done)
+    };
+    // the headers of frames first + 1 and first + 2 (the series starts at `first`)
+    let headers = |st: &mut seq::State, bar: &mut B, c2h: &mut R, clock: &mut C, first: u32| {
+        stamps(st, s, p, bar, c2h, clock, first, N).map(|v| (v[1].header, v[2].header))
+    };
+    if !record(st, bar, c2h, clock, 0)? {
+        return Ok(false);
+    }
+    let (h1, h2) = headers(st, bar, c2h, clock, 0)?;
+    if h1.is_none() || h1 == h2 || !record(st, bar, c2h, clock, k)? {
+        return Ok(false);
+    }
+    let (up, _) = headers(st, bar, c2h, clock, k)?;
+    let (again, _) = headers(st, bar, c2h, clock, 0)?;
+    Ok(again == h1 && up.is_some() && up != h1)
+}
+
 /// Ends a recording early or after the last frame: the stock StopScope (`State::disarm_steps`). Read `status` and
 /// `first_trigger` before it.
 pub fn stop<B: Bus, R: std::io::Read, C: Clock>(
@@ -518,6 +582,36 @@ mod tests {
                 n
             );
         }
+    }
+
+    // Break it catches: a probe that says yes on a memory of 256 MiB (the upper frames land on the lower ones), one
+    // that waits forever or says yes when no frame comes, an upper arm that clears the first-trigger stamp.
+    #[test]
+    fn probe_upper_tells_512_mib_from_256() {
+        use crate::dho::sim::{unit, Scene, View};
+        let s = settings(10);
+        for (upper, period, want) in [(true, Some(MS), true), (false, Some(MS), false), (true, None, false)] {
+            let mut st = State::handover(1, None);
+            let p = st.configure(&s, None, None).unwrap().1;
+            let view = View { cal: [(1.0, 0.0); 4], dot_fs: p.dot_fs as i128, pre: p.pre, post: p.post };
+            let scene =
+                Scene { volts: Box::new(|_, _| 0.0), la: None, first_fs: MS, period_fs: period, auto_fs: None, view };
+            let (u, mut bar, mut c2h, mut clock) = unit(scene);
+            u.borrow_mut().upper_mem = upper;
+            // the segment size of the configuration (its other steps do not matter here)
+            bar.wr(0x10e0, p.seg);
+            let got = probe_upper(&mut st, &s, &p, &mut bar, &mut c2h, &mut clock).unwrap();
+            assert_eq!(got, want, "upper memory {}, triggers {:?}", upper, period);
+        }
+        // the upper part of a record keeps the first-trigger stamp of the lower part
+        let mut st = State::handover(1, None);
+        let w: Vec<(u32, u32)> = st
+            .record_steps_at(&s, 4096, 6)
+            .iter()
+            .filter_map(|x| if let seq::Step::Wr(w) = x { Some(*w) } else { None })
+            .collect();
+        assert!(w.iter().all(|&(o, _)| o != scu::stamp::CTRL), "{:x?}", w);
+        assert!(w.contains(&(0x4010, 4096)) && w.contains(&(0x4018, 4101)), "{:x?}", w);
     }
 
     fn settings(n: u32) -> Settings {

@@ -17,6 +17,68 @@ use oos_hal::dho::hz;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 
+thread_local! {
+    #[cfg(test)]
+    static LOW_FORCE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets the frames `low_frames` allows for the calling thread (tests: the live run's recording into the upper frame
+/// memory with small segments, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_low_frames(n: Option<u32>) {
+    LOW_FORCE.with(|f| f.set(n));
+}
+
+/// Frames a recording of segments of `seg` bursts keeps below 256 MiB: `hz::max_record_frames`.
+pub(super) fn low_frames(seg: u32) -> u32 {
+    #[cfg(test)]
+    if let Some(n) = LOW_FORCE.with(|f| f.get()) {
+        return n.min(oos_hal::dho::hz::max_record_frames(seg));
+    }
+    oos_hal::dho::hz::max_record_frames(seg)
+}
+
+/// The frame memory above 256 MiB per segment size, as `seg::probe_upper` found it: kept for the run of the program
+/// (horizontal-config.md 1.8).
+static UPPER: std::sync::Mutex<Vec<(u32, bool)>> = std::sync::Mutex::new(Vec::new());
+
+/// The optional memory for System info: in use once a probe found it for a segment size, missing when every probe
+/// said no.
+pub fn upper_mem() -> crate::board::UpperMem {
+    use crate::board::UpperMem;
+    let v = crate::board::lock(&UPPER);
+    if v.iter().any(|e| e.1) {
+        UpperMem::InUse
+    } else if v.is_empty() {
+        UpperMem::NotProbed
+    } else {
+        UpperMem::Missing
+    }
+}
+
+/// Whether segments of `seg` bursts fit above 256 MiB, once probed.
+pub(super) fn upper_known(seg: u32) -> Option<bool> {
+    crate::board::lock(&UPPER).iter().find(|e| e.0 == seg).map(|e| e.1)
+}
+
+/// The probe of the upper frame memory for the segments of `p`, once per segment size.
+#[cfg(any(target_os = "linux", test))]
+fn upper_probed<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
+    (s, p): (&Settings, &hz::Params),
+    state: &mut oos_hal::dho::seq::State,
+    bar: &mut B,
+    c2h: &mut R,
+    clock: &mut C,
+) -> Result<bool, String> {
+    if let Some(v) = upper_known(p.seg) {
+        return Ok(v);
+    }
+    let v = oos_hal::dho::seg::probe_upper(state, &seg_read_plan(s, p), p, bar, c2h, clock)?;
+    eprintln!("oos-ui hw: segments of {} bursts above 256 MiB: {}", p.seg, if v { "yes" } else { "no" });
+    crate::board::lock(&UPPER).push((p.seg, v));
+    Ok(v)
+}
+
 /// A hardware segmented recording.
 #[cfg(any(target_os = "linux", test))]
 pub(super) struct SegRun {
@@ -30,6 +92,20 @@ pub(super) struct SegRun {
     /// read the frames into the queue too (the recording ended by itself, not by STOP)
     deliver: bool,
     tl: oos_hal::dho::seg::Timeline,
+    /// segment size and the segments of the lower part; the rest goes above 256 MiB once the lower part is full
+    seg: u32,
+    low: u32,
+    upper: bool,
+    /// the first-trigger stamp of the lower part: an arm starts the stamp again (horizontal-config.md 1.8)
+    tag: Option<u64>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl SegRun {
+    /// Ring index of segment `i` (`hz::record_frame`).
+    fn frame(&self, i: u32) -> u32 {
+        hz::record_frame(self.seg, self.low, i)
+    }
 }
 
 /// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
@@ -76,7 +152,12 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
         if run.as_ref().is_some_and(|r| r.recording) {
             seg::stop(state, bar, c2h, clock)?;
         }
-        let total = seg::start(state, s, p, bar, c2h, clock)?;
+        // below 256 MiB first; more segments than fit there go above it where the unit has that memory
+        let want = s.segments.map_or(0, |g| g.n).max(1);
+        let low = low_frames(p.seg).max(1);
+        let up = want > low && low >= 2 && upper_probed((s, p), state, bar, c2h, clock)?;
+        let total = want.min(if up { 2 * low } else { low });
+        seg::start_at(state, s, bar, c2h, clock, 0, total.min(low))?;
         *run = Some(SegRun {
             run: cmd,
             n: total,
@@ -85,6 +166,10 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
             next: 0,
             deliver: true,
             tl: seg::Timeline::new(None),
+            seg: p.seg,
+            low: total.min(low),
+            upper: false,
+            tag: None,
         });
         let mut g = lock(out);
         g.seg = crate::board::HwSeg {
@@ -102,18 +187,27 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
         return Ok(());
     };
     if r.recording {
-        let x = seg::status(bar, r.n);
-        lock(out).seg.recorded = x.recorded;
-        if !x.complete(r.n) && running {
+        let part = if r.upper { r.n - r.low } else { r.low };
+        let x = seg::status(bar, part);
+        let recorded = x.recorded + if r.upper { r.low } else { 0 };
+        lock(out).seg.recorded = recorded;
+        if !x.complete(part) && running {
             clock.sleep_us(10000);
             return Ok(());
         }
-        let tag = seg::first_trigger(bar);
+        if !r.upper && r.n > r.low && running {
+            // the lower part is full: the rest above 256 MiB; the times count from the lower part's first trigger
+            r.tag = seg::first_trigger(bar);
+            seg::start_at(state, s, bar, c2h, clock, hz::upper_first_frame(r.seg), r.n - r.low)?;
+            r.upper = true;
+            return Ok(());
+        }
+        let tag = if r.upper { r.tag } else { seg::first_trigger(bar) };
         seg::stop(state, bar, c2h, clock)?;
-        (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
+        (r.recording, r.count, r.next, r.deliver, r.tl) = (false, recorded, 0, running, seg::Timeline::new(tag));
         eprintln!(
-            "oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}",
-            x.recorded, r.n, x.fsm, tag
+            "oos-ui hw: segments: {} of {} recorded ({} below 256 MiB), 0x4034 {:#x}, first-trigger stamp {:?}",
+            recorded, r.n, r.low, x.fsm, tag
         );
         lock(out).seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
         return Ok(());
@@ -122,13 +216,16 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
     let fb = oos_hal::dho::seq::frame_bytes(&rs, p);
     if r.next < r.count {
         r.deliver &= running;
+        // a batch stays on one side of 256 MiB: its frames are consecutive in the ring
         let cnt = rs.frames.min(r.count - r.next);
+        let cnt = if r.next < r.low { cnt.min(r.low - r.next) } else { cnt };
+        let k0 = r.frame(r.next);
         if r.deliver && lock(out).queue.len() + cnt as usize > crate::board::QUEUE_MAX {
             // the screen has not taken the last batch yet
             clock.sleep_us(5000);
             return Ok(());
         }
-        let st = seg::stamps(state, &rs, p, bar, c2h, clock, r.next, cnt)?;
+        let st = seg::stamps(state, &rs, p, bar, c2h, clock, k0, cnt)?;
         if r.next == 0 {
             // hardware check 5.3: header words 5..7 against the latch, frame by frame
             for (k, x) in st.iter().take(8).enumerate() {
@@ -138,7 +235,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
         let times: Vec<Option<f64>> = st.iter().map(|x| r.tl.push(*x)).collect();
         let mut frames = Vec::new();
         if r.deliver {
-            seg::read(state, &rs, p, bar, c2h, dma, clock, r.next, cnt)?;
+            seg::read(state, &rs, p, bar, c2h, dma, clock, k0, cnt)?;
             frames = dma
                 .data()
                 .chunks_exact(fb)
@@ -167,7 +264,7 @@ pub(super) fn seg_step<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::
         Some(k) if k < r.count => {
             lock(out).seg.want = None;
             let one = oos_hal::dho::seg::read_settings(&rs, 1);
-            seg::read(state, &one, p, bar, c2h, dma, clock, k, 1)?;
+            seg::read(state, &one, p, bar, c2h, dma, clock, r.frame(k), 1)?;
             *n += 1;
             let f = Frame { stamp, ..decode(&dma.data()[..fb.min(dma.data().len())], &one, p, *n) };
             lock(out).seg.shown = Some((k, f));

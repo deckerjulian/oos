@@ -103,6 +103,8 @@ pub trait Board: Sync + 'static {
     /// hardware segmented recording for the model's set-up: the most segments it holds, None where the board records
     /// no hardware segments (roll, scan, logic analyser); the UI then records the segments in software
     fn seg_max(&self, m: &Model) -> Option<usize>;
+    /// the optional frame memory above 256 MiB for hardware segments (System info)
+    fn upper_mem(&self) -> UpperMem;
 
     /// Average mode with `Model::avg_hw`: the board averages in hardware for the model's set-up. False where it cannot
     /// (roll, scan, logic analyser, hardware segments, a count or depth it does not take); the UI then averages
@@ -483,6 +485,18 @@ pub enum SegPhase {
     Reading,
     /// all recorded segments are read; single segments can be shown (`HwSeg::want`)
     Done,
+}
+
+/// The optional frame memory above 256 MiB of hardware segments (docs/protocols/horizontal-config.md 1.8). It was
+/// found by measuring on a unit: the stock software uses 256 MiB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpperMem {
+    /// not probed yet: the probe runs at the first recording of more segments than fit below 256 MiB
+    NotProbed,
+    /// the unit has it, and recordings use it
+    InUse,
+    /// the probe found it missing
+    Missing,
 }
 
 /// A hardware segmented recording, shared by the UI and the acquisition thread.

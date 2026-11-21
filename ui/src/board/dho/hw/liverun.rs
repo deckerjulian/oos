@@ -98,7 +98,13 @@ enum Switch {
     Prearm,
     /// the core trim, `cal.core_offset = tight` (`trim::core_offset_tight`)
     CoreTrim,
+    /// the frame memory below 256 MiB held to `SEG_LOW` segments (`seg::low_frames`): a recording of small segments
+    /// goes on above it
+    SegLow,
 }
+
+/// Segments below 256 MiB with `Switch::SegLow`.
+const SEG_LOW: u32 = 5;
 
 /// One case of the matrix: the model as the screen sets it, the frequency of the scene's sine, the trigger period of
 /// the scene (None: it never triggers; roll and scan do not wait for it), the passes of the loop, and what the screen
@@ -400,6 +406,14 @@ const CASES: &[Case] = &[
     Case {
         name: "segments-10-1ms-apart",
         model: |m| (segments(m, 10), m.seg_ivl = 1e-3).0,
+        passes: 60,
+        script: &[(1, Act::SegRun)],
+        ..BASE
+    },
+    Case {
+        name: "segments-8-into-the-upper-memory",
+        model: |m| segments(m, 8),
+        switches: &[Switch::SegLow],
         passes: 60,
         script: &[(1, Act::SegRun)],
         ..BASE
@@ -1092,10 +1106,12 @@ fn average_checks(case: &Case, m: &Model, trace: &str, frames: &[Frame]) {
 
 /// What each segment case must end with: the recordings armed (frame 0 recorded) and the segments of the last one.
 /// The stopped one ends after 30 (STOP at pass 5, a poll of 10 ms each and 1 ms a segment); the aborted one starts
-/// again with the new settings (`hw::seg_abort`, then a new recording).
+/// again with the new settings (`hw::seg_abort`, then a new recording); the one into the upper frame memory arms frame 0
+/// for the probe too (`seg::probe_upper`).
 const SEG_EXPECT: &[(&str, usize, u32)] = &[
     ("segments-20-then-show-one", 1, 20),
     ("segments-10-1ms-apart", 1, 10),
+    ("segments-8-into-the-upper-memory", 2, 8),
     ("segments-stopped-early", 1, 30),
     ("segments-aborted-by-new-settings", 2, SEG_ABORTED),
 ];
@@ -1167,6 +1183,7 @@ impl Drop for Switches {
         crate::deepmeas::force(None);
         super::plan::force_prearm(None);
         super::trim::force_core_offset(None);
+        super::seg::force_low_frames(None);
     }
 }
 
@@ -1319,6 +1336,7 @@ fn run_case(case: &Case) -> Ran {
     crate::board::policy::compress::force(Some(case.compress));
     super::plan::force_prearm(Some(case.switches.contains(&Switch::Prearm)));
     super::trim::force_core_offset(Some(case.switches.contains(&Switch::CoreTrim)));
+    super::seg::force_low_frames(case.switches.contains(&Switch::SegLow).then_some(SEG_LOW));
     let want = super::settings(&m, false);
     let volts = signal(case.freq_hz, case.square);
     // in Average mode an offset that differs from trigger to trigger, which the average takes out
@@ -1639,6 +1657,18 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
             if let Some(&(_, armed, recorded)) = SEG_EXPECT.iter().find(|e| e.0 == case.name) {
                 let zero = trace.lines().filter(|l| l.starts_with("Recorded") && l.contains(" frame: 0,")).count();
                 assert_eq!((zero, g.seg.recorded), (armed, recorded), "{}: recordings, segments", case.name);
+                // the part above 256 MiB: recorded at its own ring indices and played from there
+                let at = |l: &str, key: &str| l.split(key).nth(1)?.split(',').next()?.trim().parse::<u32>().ok();
+                let high = |key: &'static str| {
+                    trace
+                        .lines()
+                        .filter(move |l| at(l, key).is_some_and(|f| f >= oos_hal::dho::hz::UPPER_BURSTS / 4096))
+                };
+                if case.switches.contains(&Switch::SegLow) {
+                    // 3 of the probe, 3 of the recording; each played for its stamp and read back
+                    assert_eq!(high(" frame: ").filter(|l| l.starts_with("Recorded")).count(), 6, "{}", case.name);
+                    assert!(high(" first: ").filter(|l| l.starts_with("Played")).count() >= 3, "{}", case.name);
+                }
             }
             if g.seg.total > 0 && !recording {
                 assert!(g.seg.recorded > 0 && g.seg.read == g.seg.recorded, "{}: {}", case.name, seg_line(&g));
@@ -1656,10 +1686,14 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                     .enumerate()
                     .map(|(k, t)| t.unwrap_or_else(|| panic!("{}: segment {} without a stamp", case.name, k)))
                     .collect();
+                // the times count from the first segment's trigger, in both parts of a recording
+                assert!(times[0].abs() < 1e-12, "{}: the first segment at {} s", case.name, times[0]);
                 for (k, w) in times.windows(2).enumerate() {
                     let periods = (w[1] - w[0]) / period;
                     assert!((periods - periods.round()).abs() < 1e-6, "{}: segment {} at {} s", case.name, k + 1, w[1]);
-                    let want = if ivl == 0.0 { periods.round() == 1.0 } else { w[1] - w[0] >= ivl };
+                    // the first segment above 256 MiB waits for the arm of the upper part: one period or more
+                    let upper = case.switches.contains(&Switch::SegLow) && k + 1 == SEG_LOW as usize;
+                    let want = if ivl == 0.0 { periods.round() == 1.0 || upper } else { w[1] - w[0] >= ivl };
                     assert!(want, "{}: segment {} {} s after the one before", case.name, k + 1, w[1] - w[0]);
                 }
                 let delivered = if stopped { 0 } else { g.seg.recorded as usize };

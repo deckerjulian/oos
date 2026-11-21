@@ -150,6 +150,14 @@ impl Ui {
         a.push(kv("Logic analyser", yes_no(c.la)));
         a.push(kv("Generator", yes_no(c.has_gen())));
         a.push(kv("EXT trigger", yes_no(c.ext_trig)));
+        if self.src.is_hw() {
+            // the acquisition memory above 256 MiB, found by measuring on a unit (horizontal-config.md 1.8)
+            a.push(match board().upper_mem() {
+                crate::board::UpperMem::InUse => kv("Optional memory", "256 MiB, in use"),
+                crate::board::UpperMem::Missing => kvc("Optional memory", "not present", DIM),
+                crate::board::UpperMem::NotProbed => kvc("Optional memory", "not probed yet", DIM),
+            });
+        }
         a.push(match p.source {
             oos_hal::model::Source::Vendor => kvc("Identified", "vendor.bin", GREEN),
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),

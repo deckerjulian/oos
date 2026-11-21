@@ -293,14 +293,17 @@ fn hw_segments_ok(m: &Model) -> bool {
     slow_mode(m) == Slow::Off && !m.la_on()
 }
 
-/// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+/// Most hardware segments for the model's set-up (`Board::seg_max`): the frames of its segment size below 256 MiB,
+/// twice that unless the probe found no frame memory above it (horizontal-config.md 1.8; probed at the first
+/// recording that needs it).
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
     let s = settings(m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    Some(hz::max_record_frames(p.seg) as usize)
+    let low = super::seg::low_frames(p.seg);
+    Some(if low >= 2 && super::seg::upper_known(p.seg) != Some(false) { 2 * low } else { low } as usize)
 }
 
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header

@@ -655,11 +655,23 @@ impl State {
     /// Start of a hardware segmented recording: clear the first-trigger stamp, then the record arm of
     /// `record_frames(s, p)` frames with the interval of `s.segments`. Poll the progress with `seg::status`.
     pub fn record_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        let n = record_frames(s, p);
+        self.record_steps_at(s, 0, record_frames(s, p))
+    }
+
+    /// `record_steps` of `n` frames from ring index `first`. A record from index 0 clears the first-trigger stamp; one
+    /// in the upper frame memory continues a record and does not. The arm starts the stamp again anyway (verified on the
+    /// unit), so the caller reads it after the lower part (horizontal-config.md 1.8).
+    pub fn record_steps_at(&mut self, s: &Settings, first: u32, n: u32) -> Vec<Step> {
         let iv = s.segments.map_or(0, |g| scu::interval_ticks(time_fs(g.interval)));
-        let mut st = vec![Step::Note(format!("segmented record: {} frames, interval {} x 6.4 ns", n, iv))];
-        st.extend(scu::ts_first_clear(&mut self.sh).into_iter().map(Step::Wr));
-        st.extend(scu::record_arm(s.mask, &mut self.sh, n, iv).into_iter().map(Step::Wr));
+        let mut st = vec![Step::Note(if first == 0 {
+            format!("segmented record: {} frames, interval {} x 6.4 ns", n, iv)
+        } else {
+            format!("segmented record: {} frames from frame {}, interval {} x 6.4 ns", n, first, iv)
+        })];
+        if first == 0 {
+            st.extend(scu::ts_first_clear(&mut self.sh).into_iter().map(Step::Wr));
+        }
+        st.extend(scu::record_arm_at(s.mask, &mut self.sh, first, n, iv).into_iter().map(Step::Wr));
         st
     }
 

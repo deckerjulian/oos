@@ -547,16 +547,17 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     ui.m.segments = 10;
     assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
     ui.adjust(Item::AcqSegHw, 1);
-    // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments
+    // 100 ns/div, 1 channel: 1408 points -> 256 bursts -> 61,440 segments below 256 MiB and as many above it; the
+    // menu stops at SEG_HW_MAX
     let lim = board().seg_max(&ui.m).unwrap();
-    assert_eq!(lim, 61_440);
+    assert_eq!(lim, 2 * 61_440);
     let o = ui.seg_options();
-    assert_eq!(&o[o.len() - 2..], &[50_000, 61_440]);
-    for want in ["61440", "Off", "20000", "10"] {
+    assert_eq!(&o[o.len() - 2..], &[50_000, SEG_HW_MAX]);
+    for want in ["100000", "Off", "20000", "10"] {
         ui.select_option(Item::AcqSeg, want);
         assert_eq!(ui.value(Item::AcqSeg), want);
     }
-    ui.select_option(Item::AcqSeg, "61440");
+    ui.select_option(Item::AcqSeg, "100000");
     // back to software: the history limit
     ui.adjust(Item::AcqSegHw, 1);
     assert_eq!((ui.m.segments, ui.value(Item::AcqSeg)), (SEG_MAX, "1000".to_string()));
