@@ -174,11 +174,9 @@ fn time_trigger_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     crate::settings::write(&crate::settings::trigger::SECOND, m, 0, kv);
     kv("trig_when", name(m.trig_when));
     crate::settings::write(&crate::settings::trigger::TIMES, m, 0, kv);
-    kv("video_line", m.video_line.to_string());
     kv("pat", m.pat.iter().map(|&b| name(b)).collect::<Vec<_>>().join(" "));
     kv("pat_levels", list(&m.pat_levels));
     crate::settings::write(&crate::settings::trigger::WINDOW, m, 0, kv);
-    kv("nth_n", m.nth_n.to_string());
     crate::settings::write(&crate::settings::trigger::SETUP_HOLD, m, 0, kv);
 }
 

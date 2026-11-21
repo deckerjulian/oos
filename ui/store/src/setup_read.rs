@@ -224,7 +224,6 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         "trig_src2" => m.trig_src2 = p_idx(v, NCH)?,
         "trig_ref2" => m.trig_ref2 = if v == "none" { None } else { Some(p_idx(v, NREF)?) },
         "trig_when" => m.trig_when = p_enum(v, &WHENS)?,
-        "video_line" => m.video_line = p_u32(v)?,
         "pat" => {
             let b = p_list(v, NCH, |x| p_enum(x, &BITS))?;
             m.pat.copy_from_slice(&b);
@@ -233,7 +232,6 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             let l = p_list(v, NCH, p_f32)?;
             m.pat_levels.copy_from_slice(&l);
         }
-        "nth_n" => m.nth_n = p_u32(v)?,
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::model::SEG_HW_MAX),
         "seg_interval" => m.seg_ivl = p_f32(v)?.clamp(0.0, crate::model::SEG_IVL_MAX),
         "mdepth" => m.mdepth = p_idx(v, mdepths().len())?,

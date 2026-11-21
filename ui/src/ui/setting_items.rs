@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 74] = [
+const ITEMS: [(Item, &str); 76] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -29,8 +29,10 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::TrigT2, "trig_t2"),
     (Item::VidStd, "video_std"),
     (Item::VidSync, "video_sync"),
+    (Item::VidLine, "video_line"),
     (Item::WinModeI, "win_mode"),
     (Item::NthIdle, "nth_idle"),
+    (Item::NthN, "nth_n"),
     (Item::Setup, "setup"),
     (Item::Hold, "hold"),
     (Item::AcqMode, "acq"),
@@ -222,7 +224,7 @@ mod tests {
     /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
     /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
     /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
-    /// show).
+    /// show, and the video trigger on line n, so its line shows).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
@@ -257,7 +259,7 @@ mod tests {
         }) {
             return true;
         }
-        u.m.trig_when = WhenKind::In;
+        (u.m.trig_when, u.m.video_sync) = (WhenKind::In, crate::model::VSync::Line);
         TRIG_TYPES.iter().any(|&t| {
             u.m.trig_type = t;
             u.items(MenuId::Trigger).contains(&it)

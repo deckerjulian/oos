@@ -472,9 +472,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cycle(i, all.len(), d)];
             }
-            Item::VidLine => {
-                m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
-            }
             Item::Pat(c) => {
                 let all = if m.trig_type == TrigType::Duration {
                     &[Bit::H, Bit::L, Bit::X][..]
@@ -488,7 +485,6 @@ impl Ui {
                 let c = m.trig_src;
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
-            Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
             _ => return false,
         }
         true

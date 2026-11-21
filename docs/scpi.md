@@ -138,8 +138,10 @@ command does not take is refused with `-113`.
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t2` | Upper limit | The upper time limit of Inside and Outside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_std` | Standard | The video standard of the video trigger. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_sync` | Sync | What the video trigger fires on: every line, line n, odd or even fields, every field. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_line` | Line | The line Line n fires on; the menu keeps it from 1 to 10 below half the lines of the standard. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `win_mode` | Trigger on | When the window trigger fires: the signal enters the window, leaves it, or stays inside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_idle` | Idle time | The quiet time before the edges the Nth edge trigger counts. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_n` | Edge no. | The edge after the idle time that fires the Nth edge trigger; the menu keeps it from 1 to 65535. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `setup` | Setup | The setup time the setup/hold trigger checks the data against the clock edge. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `hold` | Hold | The hold time the setup/hold trigger checks the data against after the clock edge. |
 <!-- settings:trigger:end -->

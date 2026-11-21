@@ -98,7 +98,7 @@ impl Ui {
             | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2 | Item::VidLine | Item::PatLevel | Item::NthN => Kind::Value,
+            Item::TrigLevel2 | Item::PatLevel => Kind::Value,
             Item::ChScale(_)
             | Item::ChOffset(_)
             | Item::HScale
@@ -310,13 +310,11 @@ impl Ui {
             Item::TrigLevel2 => "Level 2",
             Item::TrigSrc2 => "Source B",
             Item::TrigWhen => "When",
-            Item::VidLine => "Line",
             Item::Pat(0) => "CH1",
             Item::Pat(1) => "CH2",
             Item::Pat(2) => "CH3",
             Item::Pat(_) => "CH4",
             Item::PatLevel => "Level",
-            Item::NthN => "Edge no.",
             Item::AcqSeg => "Segments",
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
@@ -472,7 +470,6 @@ impl Ui {
                 WhenKind::In => "Inside".into(),
                 WhenKind::Out => "Outside".into(),
             },
-            Item::VidLine => format!("{}", m.video_line),
             Item::Pat(c) => match m.pat[c] {
                 Bit::H => "H".into(),
                 Bit::L => "L".into(),
@@ -481,7 +478,6 @@ impl Ui {
                 Bit::F => "Fall".into(),
             },
             Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
-            Item::NthN => format!("{}", m.nth_n),
             Item::AcqSeg => {
                 if m.segments == 0 {
                     "Off".into()
