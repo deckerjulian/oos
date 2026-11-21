@@ -29,7 +29,8 @@ depend on it. Code 1 is an early board; codes 2 and up are later ones.
 | 12 | application | per channel the front-end init, the SCU init, then the JESD204 link (section 4) |
 
 The clock tables are TI register words: 136 lines `R<n> 0x<aaaadd>`, 24 bits = register address (bits 23:8) and data
-(bits 7:0), the first line a reset of R0. They are the unit's own files `/rigol/resource/conf/init_all_clock_V00_01.txt`
+(bits 7:0), the fields apart by a tab; the first line, a reset of R0, carries a label: `R0 (INIT)` then `0x000090`
+(verified on a unit: the bring-up's error on an MHO98, GitHub issue #4). They are the unit's own files `/rigol/resource/conf/init_all_clock_V00_01.txt`
 (code 1), `_V00_02.txt` (code 2) and `_V00_03.txt` (codes 3 and up) (platform probe). OOS ships none of them; the
 bring-up of docs/mho.md reads the unit's own at run time, as it reads the FPGA image. The bus: chip select gpio 50
 (active low, idle high), clock gpio 49 (idle low), one data line gpio 51; `reset` gpio 52 and `sysref_reset` gpio 54

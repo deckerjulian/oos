@@ -65,8 +65,11 @@ pub fn clock_table(hw_code: u32) -> Option<&'static str> {
     }
 }
 
-/// The 24-bit words of a clock table: one line `R<n> 0x<aaaadd>` per register (address in bits 23:8, data in 7:0).
-/// Empty lines are passed over; anything else, or a word with the read bit (23) or more than 24 bits, is an error.
+/// The 24-bit words of a clock table: one line `R<n> 0x<aaaadd>` per register (address in bits 23:8, data in 7:0), the
+/// fields apart by a tab or spaces. A line may carry a label in brackets after `R<n>`: the first line of the units'
+/// tables is `R0 (INIT)` with the reset word 0x000090 (verified on a unit: hp197's MHO98 in GitHub issue #4). Empty
+/// lines are passed over; anything else, a word with the read bit (23), more than 24 bits or an address that is not
+/// `<n>` is an error.
 pub fn parse_clock_table(text: &str) -> Result<Vec<u32>, String> {
     let mut words = Vec::new();
     for (n, l) in text.lines().enumerate() {
@@ -74,15 +77,18 @@ pub fn parse_clock_table(text: &str) -> Result<Vec<u32>, String> {
         if l.is_empty() {
             continue;
         }
-        let mut f = l.split_whitespace();
-        let (Some(r), Some(v), None) = (f.next(), f.next(), f.next()) else {
-            return Err(format!("line {}: {:?} is not `R<n> 0x<word>`", n + 1, l));
+        let bad = |what: &str| format!("line {}: {:?} is not `R<n> 0x<word>`{}", n + 1, l, what);
+        let f: Vec<&str> = l.split_whitespace().collect();
+        let (r, v) = match f[..] {
+            [r, v] => (r, v),
+            [r, label, v] if label.starts_with('(') && label.ends_with(')') => (r, v),
+            _ => return Err(bad("")),
         };
-        let ok_r = r.strip_prefix('R').is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()));
+        let reg = r.strip_prefix('R').filter(|d| !d.is_empty()).and_then(|d| d.parse::<u32>().ok());
         let w = v.strip_prefix("0x").or(v.strip_prefix("0X")).and_then(|h| u32::from_str_radix(h, 16).ok());
-        match (ok_r, w) {
-            (true, Some(w)) if w < 1 << 23 => words.push(w),
-            _ => return Err(format!("line {}: {:?} is not `R<n> 0x<word>` with a 23-bit write word", n + 1, l)),
+        match (reg, w) {
+            (Some(reg), Some(w)) if w < 1 << 23 && w >> 8 == reg => words.push(w),
+            _ => return Err(bad(" with a 23-bit write word to register <n>")),
         }
     }
     if words.is_empty() {
@@ -167,6 +173,10 @@ mod tests {
     #[test]
     fn the_clock_table_is_read_word_by_word() {
         assert_eq!(parse_clock_table("R0 0x000090\n\nR2 0x000200\r\nR352 0x016003\n"), Ok(vec![0x90, 0x200, 0x16003]));
+        // the units' first line: a label, then a tab (hp197's MHO98, GitHub issue #4)
+        assert_eq!(parse_clock_table("R0 (INIT)\t0x000090\nR0\t0x000010\n"), Ok(vec![0x90, 0x10]));
+        assert!(parse_clock_table("R0 INIT 0x000090").is_err(), "a label is in brackets");
+        assert!(parse_clock_table("R3 0x000200").is_err(), "the word's address is the register's");
         assert!(parse_clock_table("").is_err());
         assert!(parse_clock_table("R0 0x800000").is_err(), "a read word is no table entry");
         assert!(parse_clock_table("R0 0x1000000").is_err());
