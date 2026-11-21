@@ -92,7 +92,7 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
 flowchart TB
     subgraph uiP["oos-ui (ui/)"]
         remote["Remote control<br/>SCPI interpreter, its socket, web remote"]
-        mainloop["Main loop<br/>events, model, analysis, render"]
+        mainloop["Main loop<br/>events, analysis, render"]
         mods["Modules<br/>protocols, measurements, analysers"]
         draw["Renderer<br/>gfx, font, drm, GPU helper"]
         board["board::Board<br/>the one door to the hardware"]
@@ -100,6 +100,9 @@ flowchart TB
     end
     subgraph remP["oos-remote (ui/remote/), a crate of the workspace ui/"]
         transports["Transports<br/>VXI-11, HiSLIP, the web server, LXI and DNS-SD announcement"]
+    end
+    subgraph modP["oos-model (ui/model/), a crate of the workspace ui/"]
+        modelc["Model and settings table<br/>what the user has set, its ladders and number formats, one row per setting"]
     end
     subgraph sysP["oos-system (ui/system/), a crate of the workspace ui/"]
         sys["System services<br/>mDNS, SNTP, SSH, USBTMC, net.allow, clock, system.conf, thread placement"]
@@ -115,6 +118,9 @@ flowchart TB
     transports -- "program messages, ADR 0022" --> remote
     transports -- "sockets, mDNS, net.allow" --> sys
     mainloop -- "switches, settings" --> sys
+    mainloop -- "reads and changes" --> modelc
+    modelc -- "what a decoder is, trigger types" --> dsp
+    modelc -- "the unit's limits" --> hal
     mods -- "menu rows, tiles, pages, through traits" --> mainloop
     mainloop -- "picture" --> draw
     mainloop -- "settings" --> board
@@ -127,7 +133,7 @@ flowchart TB
     hal -- "Bus trait, GPIO lines, sysfs" --> dev
 ```
 
-Drawn from: `ui/src/main.rs`, `ui/system/src/lib.rs`, `ui/remote/src/lib.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
+Drawn from: `ui/src/main.rs`, `ui/system/src/lib.rs`, `ui/remote/src/lib.rs`, `ui/model/src/lib.rs`, `ui/src/board/mod.rs`, `ui/src/board/dho/hw.rs`, `ui/src/protocols/mod.rs`,
 `ui/src/measures/mod.rs`, `fpgad/src/main.rs`, `hal/src/dho/`. `oos-ui` also offers the control FIFO
 `/tmp/oos-ui.ctl`, and takes its signal from one of four sources: Demo, Replay, Live or Hw (below).
 
@@ -138,9 +144,11 @@ as a crate of its own below `ui/`, with one lock file and one target folder for 
 `oos-system` (`ui/system/`): the system services, on `libc` and `oos-hal`; the second `oos-remote`
 (`ui/remote/`): VXI-11, HiSLIP, the web server and their announcement, generic over the program they hand to the
 interpreter (`oos_remote::Program`, which `scpi::Program` implements) and, for the web server, over what the screen
-answers (`oos_remote::http::Site`, which `site::Ctx` implements; the live picture stays in `oos-ui`, `shots.rs`). `oos-ui` brings its modules into its crate
-root (`main.rs`), so they are named `crate::sysconf` there as before, and the compiler refuses a path from
-`oos-system` back into `oos-ui`.
+answers (`oos_remote::http::Site`, which `site::Ctx` implements; the live picture stays in `oos-ui`, `shots.rs`); the
+third `oos-model` (`ui/model/`): the model and the settings table, on `oos-hal` and `oos-dsp`. What the layers above
+add to the model's types are traits of theirs (`platform::Platform`, `protocols::Decoder`, `protocols::Module`).
+`oos-ui` brings their modules into its crate root (`main.rs`), so they are named `crate::sysconf` and `crate::model`
+there as before, and the compiler refuses a path from these crates back into `oos-ui`.
 
 ### oos-hal: hardware layer
 
@@ -230,9 +238,9 @@ flowchart TB
         screen["screen<br/>ui<br/>view and control: menus, pages, drawing, input"]
         store["store<br/>store<br/>setup and waveform files"]
         signal["signal<br/>wave, trig, protocols, measures, platform, drawpipe, fastdraw and five more<br/>acquisition and analysis"]
-        settings["settings<br/>settings<br/>one row per setting"]
+        settings["settings<br/>in the crate oos-model (ui/model/): settings<br/>one row per setting"]
         board["board<br/>board<br/>the one door to the hardware"]
-        model["model<br/>model, math, zone, decode, words, logic<br/>what the user has set"]
+        model["model<br/>in the crate oos-model (ui/model/): model, math, zone, decode, words, logic<br/>what the user has set"]
         base["base<br/>gfx, font, layout, drm, vpu, hid; in the crate oos-system (ui/system/): clock, sysconf, system, net, netacl, mdns, ssh and nine more<br/>no state of the scope"]
     end
     hal["oos_hal::dho (hal/src/dho/)<br/>the registers of the DHO800/DHO900 board"]
@@ -254,7 +262,8 @@ Drawn from: `tools/layers.py` (`UI_LAYERS`, which places every module and is wha
 the paths against), `ui/src/main.rs` (the modules and the frame loop), `ui/src/board/mod.rs`. The code does not hold
 the arrows everywhere yet: the paths against them are counted in `tools/layers.txt` and may only become fewer
 (ADR 0037, ADR 0049). A new module gets its row in `UI_LAYERS` before the checks pass. The part of base in
-`oos-system` is held by the compiler instead: it is a crate of its own and cannot name `oos-ui` (ADR 0064).
+`oos-system`, the model and the settings table in `oos-model` are held by the compiler instead: they are crates of
+their own and cannot name `oos-ui` (ADR 0064).
 
 ### oos-fpgad: bring-up and service tool
 
@@ -281,7 +290,7 @@ flowchart TB
         ui["oos-ui (ui/src/)<br/>frame loop, screen, interpreters (SCPI, cmd, web site),<br/>signal and analysis, the board door and its acquisition"]
         remote["oos-remote (ui/remote/)<br/>transports: VXI-11, HiSLIP, HTTP, announce"]
         store["oos-store (later)<br/>setup and waveform files"]
-        model["oos-model (later)<br/>model and settings table"]
+        model["oos-model (ui/model/)<br/>model and settings table"]
         system["oos-system (ui/system/)<br/>system services"]
     end
     subgraph fpgadW["fpgad/"]
@@ -302,7 +311,8 @@ flowchart TB
     ui -- "board/dho/ only" --> halboard
     remote --> system
     store --> model
-    model --> system
+    model --> dsp
+    model --> halcore
     system --> halcore
     cli --> cliboard
     cliboard --> halboard
@@ -317,7 +327,7 @@ Drawn from: ADR 0001, 0049, 0053, 0055, 0056, 0064 and 0067. The boxes marked "l
 | `oos-dsp` (`dsp/`) | signal processing on `f32` slices, decoders, measurements | as targeted |
 | `oos-system` (`ui/system/`) | mDNS, SNTP, SSH, `net.allow`, clock, `system.conf` | done (ADR 0064) |
 | `oos-remote` (`ui/remote/`) | the transports, which only frame messages for the interpreters (ADR 0022) | done |
-| `oos-model` | what the user has set: the model and the settings table | in `oos-ui` |
+| `oos-model` (`ui/model/`) | what the user has set: the model and the settings table | done |
 | `oos-store` | setup and waveform files | in `oos-ui` |
 | `oos-ui` (`ui/src/`) | frame loop, screen, interpreters, signal, the board door and its acquisition | the rest stays here |
 | `oos-fpgad` (`fpgad/`) | a neutral command line, the board's commands in `fpgad/src/<family>/` | split; `dho` only |
@@ -330,7 +340,7 @@ The steps, in order. A later step waits for the earlier ones it names.
 | 1 | The layers of `oos-ui` without crossings: transport-skip, screen-up and model-up to 0, then board-up (the paths where the board code, the acquisition thread, names signal modules such as `drawpipe`, `compress` and `deepmeas`, above the base and the model it may name: 39 at the start of this step, 0 now. The record of a frame and its software trigger went to the signal layer as `wave::to_record`, the rules the thread decides by to `board::policy`, the thread reaches the draw pipeline through `board::pipe::Workers`, which `drawpipe` registers, the edge search near the trigger point is `oos_dsp::edges::edge_near`, and the start role of a protocol is asked of the model's `Proto`, as its roles are). Done | | ADR 0049, ADR 0074 | `tools/layers.txt` |
 | 2 | The state of the screen in its parts: the loose fields of `Ui` | | ADR 0060–0063 | ui-fields in `tools/code-metrics.txt` |
 | 3 | HTTP moves to `oos-remote`; the screenshot encoder stays in `oos-ui` | 1 (transport-skip 0) | ADR 0064 | |
-| 4 | `oos-model`, then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
+| 4 | `oos-model` (done), then `oos-store`, each as a crate | 1 (their layers at 0) | ADR 0064 | |
 | 5 | The simulated unit in hal and the acquisition loop on a host; then `spawn` (1234 lines) is split, and the files the host run reaches leave the `live` list | | ADR 0053 | goal T1 of #120 |
 | 6 | The remaining long functions: `Scpi::exec_cmd` (1005 lines) as a table of subsystems, `Ui::adjust` and `Ui::activate` through the parts (after 2), the cold boot's `Ctx::run` (needs a unit). `Model::default` and `Ui::new` may stay as tables, with their reason | 2, 5 | | long-fns in `tools/code-metrics.txt` |
 | 7 | Preparing for more board families: a build switch for `target::ACTIVE` and `board::Active`, `oos-fpgad` split into a neutral part and a module `dho`, a family argument for the host tools, CI per family, the same partition marks in scripts and update (#288) | | ADR 0067 | `hal/tests/board_families.rs` |
@@ -350,15 +360,15 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 
 | A change of | Goes into | Kept complete by |
 |---|---|---|
-| a setting | a row of its group's table in `ui/src/settings/`; the setup file, SCPI, the menu row and the docs table follow | `ui/src/settings/tests.rs::every_row_is_complete` |
+| a setting | a row of its group's table in `ui/model/src/settings/`; the setup file, SCPI, the menu row and the docs table follow | `ui/model/src/settings/tests.rs::every_row_is_complete` |
 | a measurement | a measurement module in `ui/src/measures/`, its numbers in `dsp/src/` | `ui/src/measures/mod.rs::every_measurement_is_complete` |
 | a protocol decoder | the decoder and its `ModuleInfo` in its family file of `dsp/src/decode/` (C-PHY in `dsp/src/cphy.rs`, the line codes in `dsp/src/linecode.rs`), a protocol module in `ui/src/protocols/` | `ui/src/protocols/mod.rs::every_decoder_is_complete` |
-| a trigger type | `ui/src/model/trigger.rs`, the software trigger in `dsp/src/trigger.rs`, the hardware trigger in `hal/src/dho/tpu.rs` | `ui/src/model/trigger.rs::every_trigger_type_is_complete` |
+| a trigger type | `ui/model/src/model/trigger.rs`, the software trigger in `dsp/src/trigger.rs`, the hardware trigger in `hal/src/dho/tpu.rs` | `ui/src/scpi/tests/trigger_types.rs::every_trigger_type_is_complete` |
 | an analyser page | its file in `ui/src/ui/`, registered in `ui/src/ui/analysers.rs` | `ui/src/ui/analysers.rs::every_page_is_complete` |
 | a remote command | the interpreter, `ui/src/scpi.rs` and its subsystem's file in `ui/src/scpi/`; never a transport | `tools/scpi-coverage.py` |
 | a register sequence, a hardware fact | first `docs/protocols/`, then the block's module in `hal/src/dho/` | `hal/tests/register_modules.rs::every_module_names_its_page_and_has_a_test`, `tools/compare-base.sh` |
 | a menu, a row, a dialog | `ui/src/ui/`: `item.rs` (the items and their parts), `menu_items.rs`, `menu_text.rs`, `menu_actions.rs`, `menu_dialog.rs` | `ui/src/ui/lint/menu_layout.rs::every_menu_fits`, `ui/src/ui/item.rs::no_menu_item_has_two_parts` |
-| the state of the scope, a default | `ui/src/model.rs` and `ui/src/model/` | the tests of `ui/src/model.rs` |
+| the state of the scope, a default | `ui/model/src/model.rs` and `ui/model/src/model/` | the tests of `ui/model/src/model.rs` |
 | what a setup or a file stores | `ui/src/store.rs` and `ui/src/store/` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
 | signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |

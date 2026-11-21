@@ -468,3 +468,6 @@ pub fn docs_table(rows: &[&[Setting]], subsystem: &str, menu: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;

@@ -48,6 +48,11 @@ impl Proto {
         self.info().start.0
     }
 
+    /// The edge a frame starts with, for the hardware trigger in front of the protocol trigger.
+    pub fn start_edge(self) -> Slope {
+        Slope::of(self.info().start.1)
+    }
+
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles(self) -> [Option<&'static str>; 4] {
         self.info().roles

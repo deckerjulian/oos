@@ -10,9 +10,9 @@ loose fields of the screen's state, in the four crates (issue 120, ADR 0060, ADR
     tools/code-metrics.py --lower [ROOT]    write the counts that went down into tools/code-metrics.txt
 
 ROOT is the top of a tree (default: this tree). Read from it as it is: the Rust files below hal/src, dsp/src, ui/src,
-ui/system/src and fpgad/src, without tests, as tools/duplicates.py reads them (its functions are used here): not a test
-module inside a file, not a file or folder that is only built for tests, not a file `tests.rs` or `*_tests.rs`, not a
-folder `tests/`.
+ui/system/src, ui/remote/src, ui/model/src and fpgad/src, without tests, as tools/duplicates.py reads them (its
+functions are used here): not a test module inside a file, not a file or folder that is only built for tests, not a file
+`tests.rs` or `*_tests.rs`, not a folder `tests/`.
   long-fns  functions of more than 150 lines (goal S2): an `fn` item with a body, from the line of `fn` to the line
             of its closing brace. Braces in strings, characters, raw strings and comments do not count. A function
             inside another counts on its own, and its lines count for the other too. --list: `lines path:line name`,

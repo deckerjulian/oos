@@ -9,7 +9,7 @@ use crate::gfx::*;
 use crate::math::*;
 use crate::model::*;
 use crate::platform::Platform;
-use crate::protocols::Decoder;
+use crate::protocols::{Decoder, Module};
 use crate::wave::*;
 
 mod acquire;

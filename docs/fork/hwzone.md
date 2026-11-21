@@ -23,7 +23,7 @@ DHO924S" below).
 
 ## What OOS does
 
-- The software zones (`ui/src/zone.rs`) stay the reference. A box becomes its four corners; for each table column the
+- The software zones (`ui/model/src/zone.rs`) stay the reference. A box becomes its four corners; for each table column the
   vertical extent of the zone within the column's time strip (`zonegeom::extent`) gives the limits.
 - Codes: the same assumed scale as the mask (`mask::code`: read-out word >> 8 at the channel's V/div and offset),
   rounded outwards and clipped to 0..255. A column the zone does not reach has bit 16 clear.

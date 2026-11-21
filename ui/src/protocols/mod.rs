@@ -296,23 +296,21 @@ impl dyn Protocol {
     pub fn name(&self) -> &'static str {
         self.info().name
     }
-
-    /// The edge a frame starts with, for the hardware trigger in front of the protocol trigger
-    /// ([`ModuleInfo::start`]).
-    pub fn start_edge(&self) -> Slope {
-        Slope::of(self.info().start.1)
-    }
 }
 
 /// Every protocol of the Decode menu, in the order of `MODULES`.
 pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
     std::sync::LazyLock::new(|| (0..MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
 
-// What a protocol of the model is, and what the model's decoder settings mean, is asked of this registry: the model
-// holds the index and the option settings, the registry knows the modules (ADR 0049).
-impl Proto {
+/// The module of a protocol of the model: the model holds the index, the registry knows the modules (ADR 0049). A
+/// trait of the registry, since the model's types can have methods only in oos-model (ADR 0064).
+pub trait Module {
     /// The module behind the protocol.
-    pub fn module(self) -> Option<&'static dyn Protocol> {
+    fn module(self) -> Option<&'static dyn Protocol>;
+}
+
+impl Module for Proto {
+    fn module(self) -> Option<&'static dyn Protocol> {
         let Proto::Module(i) = self;
         Some(get(i))
     }
