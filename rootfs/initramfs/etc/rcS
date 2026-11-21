@@ -112,4 +112,8 @@ if /bin/oos-board has-hardware; then
 			st abort "" "see /tmp/oos-cold.log; power-cycle the scope (no retry in the same boot)"
 			echo "oos: cold boot FAILED, see /tmp/oos-cold.log" > /dev/kmsg
 		fi' < /dev/null > /dev/null 2>&1 &)
+else
+	# no acquisition hardware (the MHO900's platform port): the start-up ends here, so what waits for `end` (WLAN,
+	# Bluetooth, the start-up watcher) need not wait for its time-out
+	st end "" ""
 fi
