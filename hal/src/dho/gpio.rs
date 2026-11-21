@@ -7,6 +7,7 @@ use std::ffi::CStr;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 
 #[repr(C)]
+#[derive(Default)]
 struct ChipInfo {
     name: [u8; 32],
     label: [u8; 32],
@@ -14,6 +15,7 @@ struct ChipInfo {
 }
 
 #[repr(C)]
+#[derive(Default)]
 struct LineInfo {
     line_offset: u32,
     flags: u32,
@@ -67,20 +69,17 @@ fn err(what: &str) -> std::io::Error {
 /// Finds line `name` on /dev/gpiochip0..9: (chip fd, offset).
 fn find(name: &str) -> std::io::Result<(OwnedFd, u32)> {
     for c in 0..10 {
-        // a formatted number holds no NUL; `?` turns the impossible error into the io::Error of the function
-        let path = std::ffi::CString::new(format!("/dev/gpiochip{}", c))?;
-        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
-        if fd < 0 {
+        // O_RDWR, and O_CLOEXEC as std opens every file: the chip is open only for this search
+        let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(format!("/dev/gpiochip{}", c)) else {
             continue;
-        }
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        let mut ci: ChipInfo = unsafe { std::mem::zeroed() };
+        };
+        let fd = OwnedFd::from(f);
+        let mut ci = ChipInfo::default();
         if unsafe { libc::ioctl(fd.as_raw_fd(), GET_CHIPINFO as _, &mut ci) } != 0 {
             continue;
         }
         for l in 0..ci.lines {
-            let mut li: LineInfo = unsafe { std::mem::zeroed() };
-            li.line_offset = l;
+            let mut li = LineInfo { line_offset: l, ..Default::default() };
             if unsafe { libc::ioctl(fd.as_raw_fd(), GET_LINEINFO as _, &mut li) } == 0 && cstr(&li.name) == name {
                 return Ok((fd, l));
             }
@@ -92,11 +91,16 @@ fn find(name: &str) -> std::io::Result<(OwnedFd, u32)> {
 impl Line {
     fn request(name: &str, flags: u32, value: u8) -> std::io::Result<Line> {
         let (chip, off) = find(name)?;
-        let mut rq: HandleRequest = unsafe { std::mem::zeroed() };
+        let mut rq = HandleRequest {
+            lineoffsets: [0; 64],
+            flags,
+            default_values: [0; 64],
+            consumer_label: [0; 32],
+            lines: 1,
+            fd: 0,
+        };
         rq.lineoffsets[0] = off;
-        rq.flags = flags;
         rq.default_values[0] = value;
-        rq.lines = 1;
         rq.consumer_label[..6].copy_from_slice(b"oos-hw");
         if unsafe { libc::ioctl(chip.as_raw_fd(), GET_LINEHANDLE as _, &mut rq) } < 0 {
             return Err(err(name));

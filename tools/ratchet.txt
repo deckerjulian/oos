@@ -4,5 +4,5 @@
 5 allow ui
 0 unsafe dsp
 4 unsafe fpgad
-33 unsafe hal
+26 unsafe hal
 86 unsafe ui
