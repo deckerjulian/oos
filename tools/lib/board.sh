@@ -11,8 +11,10 @@
 
 oos_board() {
 	oos_b=${OOS_BOARD:-dho}
+	# the letters spelt out: in a UTF-8 locale a range such as a-z can take capitals too, and a file system that
+	# ignores case (macOS) would then find rootfs/board/DHO/ for dho
 	case $oos_b in
-	*[!a-z0-9_-]* | -*)
+	*[!abcdefghijklmnopqrstuvwxyz0123456789_-]* | -*)
 		echo "OOS_BOARD='$oos_b' is no name of a board family" >&2
 		return 1
 		;;
