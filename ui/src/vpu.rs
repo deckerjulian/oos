@@ -21,9 +21,9 @@ pub const QUALITY: i32 = 75;
 pub fn xrgb(px: &[u32], w: usize, h: usize, out: &mut [u8], stride: usize, rows: usize) {
     for y in 0..rows {
         let src = &px[y.min(h - 1) * w..][..w];
-        // SAFETY: a u32 slice seen as its bytes
-        let src = unsafe { std::slice::from_raw_parts(src.as_ptr() as *const u8, w * 4) };
-        out[y * stride..][..w * 4].copy_from_slice(src);
+        for (d, p) in out[y * stride..][..w * 4].as_chunks_mut::<4>().0.iter_mut().zip(src) {
+            *d = p.to_ne_bytes();
+        }
     }
 }
 
@@ -97,6 +97,7 @@ mod imp {
     const XRGB: u32 = fourcc(b"XR24");
 
     #[repr(C)]
+    #[derive(Default)]
     pub(super) struct Cap {
         pub driver: [u8; 16],
         card: [u8; 32],
@@ -108,7 +109,7 @@ mod imp {
     }
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub(super) struct PlaneFmt {
         pub sizeimage: u32,
         pub bytesperline: u32,
@@ -116,6 +117,7 @@ mod imp {
     }
 
     #[repr(C)]
+    #[derive(Default)]
     pub(super) struct Format {
         pub typ: u32,
         pad: u32,
@@ -145,7 +147,7 @@ mod imp {
     }
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub(super) struct Plane {
         bytesused: u32,
         length: u32,
@@ -155,6 +157,7 @@ mod imp {
     }
 
     #[repr(C)]
+    #[derive(Default)]
     pub(super) struct Buffer {
         index: u32,
         typ: u32,
@@ -177,11 +180,6 @@ mod imp {
     struct Control {
         id: u32,
         value: i32,
-    }
-
-    fn zeroed<T>() -> T {
-        // SAFETY: plain C structs of integers, all zero is valid
-        unsafe { std::mem::zeroed() }
     }
 
     fn ioc<T>(fd: i32, req: u64, arg: &mut T) -> std::io::Result<()> {
@@ -232,15 +230,12 @@ mod imp {
         pub fn open(w: usize, h: usize) -> Result<JpegEnc, String> {
             let mut last = String::from("no hantro-vpu video device");
             for n in 0..16 {
-                let path = format!("/dev/video{}\0", n);
-                // SAFETY: a NUL-terminated path
-                let fd = unsafe { libc::open(path.as_ptr() as *const libc::c_char, libc::O_RDWR | libc::O_CLOEXEC) };
-                if fd < 0 {
+                // O_RDWR | O_CLOEXEC, as std opens every file
+                let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(format!("/dev/video{}", n)) else {
                     continue;
-                }
-                // SAFETY: a fresh descriptor we own
-                let fd = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
-                let mut cap: Cap = zeroed();
+                };
+                let fd = OwnedFd::from(f);
+                let mut cap = Cap::default();
                 if ioc(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap).is_err()
                     || !cap.driver.starts_with(b"hantro-vpu")
                     || cap.device_caps & CAP_M2M_MPLANE == 0
@@ -258,7 +253,7 @@ mod imp {
         fn setup(fd: OwnedFd, w: usize, h: usize) -> Result<JpegEnc, String> {
             let f = fd.as_raw_fd();
             // the coded format first (it chooses the encoder), then the raw one
-            let mut cf: Format = zeroed();
+            let mut cf = Format::default();
             (cf.typ, cf.width, cf.height, cf.pixfmt, cf.num_planes) = (CAPTURE, w as u32, h as u32, JPEG, 1);
             ioc(f, VIDIOC_S_FMT, &mut cf).map_err(|e| format!("JPEG format: {}", e))?;
             if cf.pixfmt != JPEG {
@@ -266,7 +261,7 @@ mod imp {
             }
             // xrgb when the driver takes it (it answers with another format when not), else YUYV
             let raw_fmt = |pixfmt: u32, bytes: usize| {
-                let mut rf: Format = zeroed();
+                let mut rf = Format::default();
                 (rf.typ, rf.width, rf.height, rf.pixfmt, rf.num_planes) = (OUTPUT, w as u32, h as u32, pixfmt, 1);
                 let ok = ioc(f, VIDIOC_S_FMT, &mut rf).is_ok()
                     && rf.pixfmt == pixfmt
@@ -316,8 +311,8 @@ mod imp {
             if r.count < 1 {
                 return Err("no buffer".into());
             }
-            let mut planes = [zeroed::<Plane>(); 1];
-            let mut b: Buffer = zeroed();
+            let mut planes = [Plane::default(); 1];
+            let mut b = Buffer::default();
             (b.typ, b.memory, b.m, b.length) = (typ, MMAP, planes.as_mut_ptr() as u64, 1);
             ioc(f, VIDIOC_QUERYBUF, &mut b).map_err(|e| format!("buffer: {}", e))?;
             let (len, off) = (planes[0].length as usize, planes[0].m as u32 as libc::off_t);
@@ -332,16 +327,16 @@ mod imp {
         }
 
         fn queue(&self, typ: u32, used: u32) -> Result<(), String> {
-            let mut planes = [zeroed::<Plane>(); 1];
+            let mut planes = [Plane::default(); 1];
             planes[0].bytesused = used;
-            let mut b: Buffer = zeroed();
+            let mut b = Buffer::default();
             (b.typ, b.memory, b.m, b.length) = (typ, MMAP, planes.as_mut_ptr() as u64, 1);
             ioc(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut b).map_err(|e| format!("queue: {}", e))
         }
 
         fn dequeue(&self, typ: u32) -> Result<(u32, u32), String> {
-            let mut planes = [zeroed::<Plane>(); 1];
-            let mut b: Buffer = zeroed();
+            let mut planes = [Plane::default(); 1];
+            let mut b = Buffer::default();
             (b.typ, b.memory, b.m, b.length) = (typ, MMAP, planes.as_mut_ptr() as u64, 1);
             ioc(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut b).map_err(|e| format!("dequeue: {}", e))?;
             Ok((planes[0].bytesused, b.flags))

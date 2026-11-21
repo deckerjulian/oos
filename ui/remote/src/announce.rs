@@ -377,19 +377,8 @@ fn mcast_socket() -> Option<UdpSocket> {
 }
 
 fn join(sock: &UdpSocket, addr: [u8; 4]) {
-    let mreq = libc::ip_mreq {
-        imr_multiaddr: libc::in_addr { s_addr: u32::from(GROUP).to_be() },
-        imr_interface: libc::in_addr { s_addr: u32::from(Ipv4Addr::from(addr)).to_be() },
-    };
-    unsafe {
-        libc::setsockopt(
-            sock.as_raw_fd(),
-            libc::IPPROTO_IP,
-            libc::IP_ADD_MEMBERSHIP,
-            &mreq as *const _ as *const _,
-            std::mem::size_of_val(&mreq) as libc::socklen_t,
-        );
-    }
+    // IP_ADD_MEMBERSHIP with an ip_mreq of the group and the interface's address
+    let _ = sock.join_multicast_v4(&GROUP, &Ipv4Addr::from(addr));
 }
 
 fn send_mcast(sock: &UdpSocket, pkt: &[u8], iface: Option<[u8; 4]>) {
