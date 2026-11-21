@@ -213,10 +213,10 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     }
     assert_eq!(ui.replay.captures, 1);
     assert!(ui.measurement_busy());
-    assert_eq!(ui.mstat[0].n, 0);
+    assert_eq!(ui.results.rows[0].n, 0);
     assert!(ui.meas_clear_remote());
     assert!(!ui.meas_clear_remote(), "clearing an empty selection is idempotent");
-    assert!(ui.mstat.is_empty());
+    assert!(ui.results.rows.is_empty());
     assert_eq!(ui.meas_add(Meas::Period, WaveId::Ref(0)), Ok(true));
     let deadline = Instant::now() + Duration::from_secs(10);
     while ui.measurement_busy() {
@@ -227,7 +227,7 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     ui.finish_deferred_capture_statistics();
     assert!((ui.meas_number(WaveId::Ref(0), Meas::Period) - 20e-9).abs() < 1e-14);
     assert!(
-        ui.mstat.iter().all(|s| s.n == 0),
+        ui.results.rows.iter().all(|s| s.n == 0),
         "old completion must not count as a new acquisition for the readded row"
     );
     assert_eq!(ui.replay.captures, 1);

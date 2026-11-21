@@ -1155,7 +1155,7 @@ fn level_50_with_ac_trigger_coupling_counts_from_the_mean() {
         pairs: false,
     };
     ui.last[0] = Some(rec);
-    ui.stats[0] = crate::wave::stats(&v, dt);
+    ui.measured.stats[0] = crate::wave::stats(&v, dt);
     ui.m.trig_coup = TrigCoup::Dc;
     ui.activate(Item::Trig50);
     assert!((ui.m.trig_level - 1.65).abs() < 0.02, "DC: the middle, {}", ui.m.trig_level);

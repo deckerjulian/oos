@@ -784,7 +784,7 @@ impl Ui {
     }
 
     pub(super) fn clear_measurement_statistics(&mut self) {
-        self.mstat.clear();
+        self.results.rows.clear();
         self.replay.clear_deferred_statistics();
         self.reset_catalog_statistics();
     }

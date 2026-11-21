@@ -593,23 +593,23 @@ fn large_full_record_sim_backpressure_finishes_values_and_counts_statistics_once
     u.m.meas_full_record = true;
     u.sim_play_set(true).unwrap();
     drive_until(&mut u, |u| u.replay.captures >= 1);
-    drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 1));
+    drive_until(&mut u, |u| u.results.rows.first().is_some_and(|stat| stat.n >= 1));
     assert!(u.meas_at(WaveId::Ref(0), Meas::Vpp).is_finite());
     assert_eq!(u.m.run, RunState::Run, "Full record must become ready without stopping");
     let first = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
     let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
-    drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 2));
-    assert_eq!(u.mstat[0].n, u.replay.captures);
+    drive_until(&mut u, |u| u.results.rows.first().is_some_and(|stat| stat.n >= 2));
+    assert_eq!(u.results.rows[0].n, u.replay.captures);
     assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], first);
     assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value);
     u.key(key::RUNSTOP);
-    let n = u.mstat[0].n;
+    let n = u.results.rows[0].n;
     for _ in 0..10 {
         u.poll_reference_measurements();
         u.finish_deferred_capture_statistics();
         let _ = u.meas_rows();
     }
-    assert_eq!(u.mstat[0].n, n, "worker polling and reads cannot count an accepted revision twice");
+    assert_eq!(u.results.rows[0].n, n, "worker polling and reads cannot count an accepted revision twice");
     u.wait_sim_worker();
 }
 

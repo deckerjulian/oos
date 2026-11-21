@@ -754,7 +754,6 @@ pub struct Ui {
     /// the sources the measurements are added for: A, and B of delay and phase (analysis/measure.rs)
     sources: analysis::Sources,
     last: [Option<Record>; 1],
-    stats: [Stats; NCH],
     /// history playback: the last acquired records and the one viewed (records.rs)
     history: records::History,
     /// mark all trigger events in the record (search)
@@ -807,7 +806,6 @@ pub struct Ui {
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
-    mstat: Vec<MStat>,
     /// what the second pane keeps between frames
     pn: panes::PaneState,
     log: logger::Logger,
@@ -930,7 +928,7 @@ impl Ui {
         self.last[0] = None;
         self.history.pos = None;
         self.cleared = true;
-        self.stats = [Stats::default(); NCH];
+        self.measured.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
         (self.meas_bg.n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_bg.n + 1, false, None);
         self.measured.ch = Default::default();
@@ -974,7 +972,7 @@ impl Ui {
             self.settings_changed();
             return;
         }
-        let s = self.stats[self.m.trig_src];
+        let s = self.measured.stats[self.m.trig_src];
         if s.valid {
             // with AC or LF-reject coupling the trigger compares the source without its mean, and its level counts from
             // there: halfway through the signal is the middle less the mean. The middle itself sat above the whole

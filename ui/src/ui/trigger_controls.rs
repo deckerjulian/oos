@@ -294,7 +294,7 @@ mod acquisition_source_tests {
         assert_eq!(ui.replay.captures, 1);
         assert_eq!(ui.m.status, TrigStatus::Triggered);
         assert!(Arc::ptr_eq(&samples, &ui.refs[0].as_ref().unwrap().v));
-        assert_eq!(ui.mstat[0].n, 1);
+        assert_eq!(ui.results.rows[0].n, 1);
     }
     #[test]
     fn choosing_primary_ref_while_stopped_holds_until_single_accepts_exactly_once() {

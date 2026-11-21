@@ -243,11 +243,14 @@ fn large_full_measurements_are_nonblocking_and_use_one_worker_without_fake_captu
     assert_eq!(ui.meas_rows()[0].text(), "Computing");
     assert!(ui.workflow_state().contains("\"measurementBusy\":true"));
     let captures = ui.replay.captures;
-    ui.mstat = vec![MStat { n: 7, ..Default::default() }];
+    ui.results.rows = vec![MStat { n: 7, ..Default::default() }];
     pump(&mut ui);
     assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
     assert_eq!(ui.replay.captures, captures);
-    assert_eq!(ui.mstat[0].n, 7, "analysis completion must preserve acquisition statistics without adding a sample");
+    assert_eq!(
+        ui.results.rows[0].n, 7,
+        "analysis completion must preserve acquisition statistics without adding a sample"
+    );
     assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1);
 }
 

@@ -140,7 +140,7 @@ impl Ui {
         if !values.valid {
             return;
         }
-        self.mstat.resize(self.measurement_count(), MStat::default());
+        self.results.rows.resize(self.measurement_count(), MStat::default());
         for (row, &(kind, source)) in self.m.meas.iter().enumerate() {
             if source != WaveId::Ch(channel) {
                 continue;
@@ -148,7 +148,7 @@ impl Ui {
             let Some(value) = values.reading(kind) else {
                 continue;
             };
-            self.mstat[row].add(value);
+            self.results.rows[row].add(value);
         }
     }
 
@@ -348,7 +348,7 @@ mod tests {
             ui.accumulate_fast_basic(&frame, 1.0);
         }
         let expected = [1.0, -1.0, 2.0, 0.0, 1.0, 1.0];
-        for (stat, value) in ui.mstat.iter().zip(expected) {
+        for (stat, value) in ui.results.rows.iter().zip(expected) {
             assert_eq!(stat.n, 193, "no 96-frame refresh cap or duplicate final frame");
             assert!((stat.sum / stat.n as f64 - value).abs() < 1e-12);
         }
@@ -509,8 +509,8 @@ mod tests {
         record.raw = Some(crate::wave::Raw { frame, i0: 0, i1: 8, t0: 0.0, conditioned: true });
         ui.accumulate_record_basic(&record);
         ui.last[0] = Some(record);
-        assert_eq!(ui.mstat[0].n, 1);
-        assert_eq!(ui.mstat[0].sum, 0.25, "statistics must follow HiRes display samples");
+        assert_eq!(ui.results.rows[0].n, 1);
+        assert_eq!(ui.results.rows[0].sum, 0.25, "statistics must follow HiRes display samples");
         assert_eq!(ui.meas_at(WaveId::Ch(0), Meas::Vavg), 0.25);
     }
 }
