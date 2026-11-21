@@ -1,9 +1,10 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The setup reader: `set` takes one `key = value` line into the Model, `parse_setup` and `parse_setup_lenient` a
-//! whole setup file, with the value parsers they share (`p_bool`, `p_f32`, `p_idx`, ...). A new key is read here,
-//! in `set`, and written in `setup_text` of store.rs; a key of the settings table (settings.rs) needs neither.
+//! The setup reader: `set` takes one `key = value` line into the Model, `parse_setup_lenient` a whole setup file,
+//! with the value parsers they share (`p_bool`, `p_f32`, `p_idx`, ...). A new key is read here, in `set`, and written
+//! in `setup_text` of store.rs; a key of the settings table (settings.rs) needs neither. What a setup asks of the
+//! registries of the measurements and the decoders it asks through `Registries`.
 
 use super::*;
 pub(crate) use crate::words::{p_bool, p_f32, p_f64, p_idx, p_u32};
@@ -15,6 +16,16 @@ const CURSORS: [CursorMode; 5] =
     [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
 const PARITIES: [Parity; 3] = [Parity::None, Parity::Even, Parity::Odd];
+
+/// What reading a setup asks of the registries above the store (ADR 0064): the measurement modules and the decoder
+/// modules of oos-ui, which pass themselves in (`ui/src/store/modules.rs`).
+pub trait Registries {
+    /// Whether catalogue measurement `id` is one a setup keeps as a `cat` row (a module's own measurement).
+    fn catalog_id_valid(&self, id: u16) -> bool;
+    /// The option settings of decoder module `i`, in range, for a setup written before its protocol was a module:
+    /// taken from the decoder rows of `m` that protocols shared then; None when the module takes none of them.
+    fn legacy_opts(&self, i: u8, m: &Model) -> Option<[u8; OPTS]>;
+}
 
 /// Old setup files stored an index into the 5 ns .. 1000 s ladder.
 fn legacy_tscale(v: &str, ntime: usize) -> Result<usize, String> {
@@ -65,21 +76,21 @@ fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result
 }
 
 /// A group of keys of the setup reader: `Ok(true)` when it knows the key and has read the value.
-type SetGroup = fn(&mut Model, &str, &str) -> Result<bool, String>;
+type SetGroup<'a> = &'a dyn Fn(&mut Model, &str, &str) -> Result<bool, String>;
 
 /// Takes one `key = value` line of a setup into the model: each group of keys below is asked in turn, the first
 /// that knows the key reads the value. A key no group knows (one of a newer version) is ignored.
-pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
+pub fn set(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<(), String> {
     let groups: [SetGroup; 9] = [
-        set_numbered,
-        set_table,
-        set_time_trigger,
-        set_meas_math,
-        set_decoder,
-        set_zoom_views,
-        set_bode_spec_power,
-        set_inverter_zones,
-        set_more,
+        &|m, k, v| set_numbered(m, k, v, r),
+        &set_table,
+        &set_time_trigger,
+        &|m, k, v| set_meas_math(m, k, v, r),
+        &set_decoder,
+        &set_zoom_views,
+        &set_bode_spec_power,
+        &set_inverter_zones,
+        &set_more,
     ];
     for group in groups {
         if group(m, k, v)? {
@@ -90,7 +101,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
 }
 
 /// The numbered keys: the deskew of a channel or a ref slot, the other decoders, the math channels, the channels.
-fn set_numbered(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+fn set_numbered(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<bool, String> {
     if let Some((reference, suffix)) =
         k.strip_prefix("deskew_ch").map(|s| (false, s)).or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s)))
     {
@@ -111,7 +122,7 @@ fn set_numbered(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         if let Ok(n) = n.parse::<usize>() {
             let n = n.checked_sub(1).filter(|&n| n < DECODERS).ok_or("unknown decoder")?;
             let mut t = m.dec_view(n);
-            set(&mut t, field, v)?;
+            set(&mut t, field, v, r)?;
             m.dec_store(n, t.dec_cfg());
             return Ok(true);
         }
@@ -250,7 +261,7 @@ fn set_time_trigger(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
 }
 
 /// The measurements, the meters, the panes, the cursors, the fine steps and the math channel.
-fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+fn set_meas_math(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<bool, String> {
     match k {
         "meas" => {
             let mut out = Vec::new();
@@ -281,7 +292,7 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
                 let f: Vec<&str> = e.split(':').collect();
                 let [k, a, b, c, d] = f[..] else { return Err(format!("not item:a:b:c:d: {}", e)) };
                 let id = k.parse::<u16>().map_err(|_| format!("not a catalog id: {}", k))?;
-                if !crate::measures::catalog_id_valid(id) {
+                if !r.catalog_id_valid(id) {
                     return Err(format!("unknown or non-Wave catalog id: {id}"));
                 }
                 if m.meas.len() + m.meas2.len() + out.len() >= MEAS_SELECTION_MAX {
@@ -395,9 +406,8 @@ fn set_decoder(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
         }
         // a module's option indices; brought into range where they are used (`protocols::opt_fit`)
         "dec_opt" => {
-            let opts = p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?;
-            m.dec_opt =
-                opts.try_into().map_err(|o: Vec<u8>| format!("{} values, want {}", o.len(), crate::protocols::OPTS))?
+            let opts = p_list(v, OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?;
+            m.dec_opt = opts.try_into().map_err(|o: Vec<u8>| format!("{} values, want {}", o.len(), OPTS))?
         }
         "dec_src2" => m.dec_src2 = p_decode_source(v)?,
         "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_decode_source(v)?) },
@@ -734,27 +744,17 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
-/// line and the key; unknown keys are ignored.
-#[cfg(test)] // the strict form, for the tests
-pub fn parse_setup(text: &str) -> Result<Model, String> {
-    let (m, bad) = parse_setup_lenient(text);
-    match bad.into_iter().next() {
-        Some(e) => Err(e),
-        None => Ok(m),
-    }
-}
-
-/// `parse_setup` that loads what it can: a line it cannot take (a key of a newer or another build, a protocol not in
+/// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults) and loads what it
+/// can: a line it cannot take (a key of a newer or another build, a protocol not in
 /// this one, a value out of range) is left out and named in the list, the rest of the setup stands. A decoder whose
 /// protocol is not in this build is switched off, its other settings kept. For recalling a setup and the restart.
-pub fn parse_setup_lenient(text: &str) -> (Model, Vec<String>) {
+pub fn parse_setup_lenient(text: &str, r: &dyn Registries) -> (Model, Vec<String>) {
     let mut bad = Vec::new();
-    let m = parse_lines(text, &mut bad);
+    let m = parse_lines(text, &mut bad, r);
     (m, bad)
 }
 
-fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
+fn parse_lines(text: &str, bad: &mut Vec<String>, r: &dyn Registries) -> Model {
     let mut m = Model::default();
     let mut proto_missing = false;
     for (ln, line) in text.lines().enumerate() {
@@ -767,7 +767,7 @@ fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
             continue;
         };
         let k = k.trim();
-        if let Err(e) = set(&mut m, k, v.trim()) {
+        if let Err(e) = set(&mut m, k, v.trim(), r) {
             proto_missing |= k == "dec_proto";
             bad.push(format!("line {}: {}: {}", ln + 1, k, e));
         }
@@ -779,20 +779,8 @@ fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
     if let (Proto::Module(i), false) =
         (m.dec_proto, text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "dec_opt")))
     {
-        let old = crate::protocols::Legacy {
-            baud: m.dec_baud,
-            bits: m.dec_bits,
-            parity: m.dec_parity,
-            canrate: m.dec_canrate,
-            canh: m.dec_canh,
-            fdrate: m.dec_fdrate,
-            arate: m.dec_arate,
-            tick: m.dec_tick,
-            nibbles: m.dec_nibbles,
-        };
-        if let Some(o) = crate::protocols::get(i).legacy(&old) {
-            m.dec_opt = o.map(|x| x as u8);
-            m.dec_opt = crate::protocols::opt_fit(i, m.dec_opt).map(|x| x as u8);
+        if let Some(o) = r.legacy_opts(i, &m) {
+            m.dec_opt = o;
         }
     }
     // a setup from before the density row: the windows and the pane already say which of the four it was

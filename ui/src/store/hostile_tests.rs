@@ -10,6 +10,7 @@ use super::tests::{custom, wfm_f32};
 use super::*;
 use crate::gfx::Canvas;
 use crate::hostile::run;
+use crate::wave::Record;
 
 /// A record of two channels, as a capture stores it.
 fn record() -> (Record, Model) {
@@ -126,7 +127,7 @@ fn hostile_frame_files() {
     let (rec, m) = record();
     let mut other = rec.clone();
     (other.t0, other.dt) = (0.0, 2e-9);
-    let files = [wave_bin(&rec, &m), ff_bin(&[rec.clone(), other], &m), ff_bin(&[], &m)];
+    let files = [wave_bin(&rec, &m), ff_bin(&[rec.clone(), other], &m), ff_bin(&[] as &[Record], &m)];
     let seeds: Vec<&[u8]> = files.iter().map(|f| f.as_slice()).collect();
     run("store::parse_ff", &seeds, 1, |b| {
         if let Ok((r, used)) = parse_wave_bin(b) {
