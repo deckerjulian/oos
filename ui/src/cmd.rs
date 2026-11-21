@@ -121,7 +121,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
             let rest = line.trim_start()[4..].trim_start();
             return Out::Scpi(w[1].to_string(), rest[w[1].len()..].trim().to_string());
         }
-        "quit" => ui.quit = true,
+        "quit" => ui.asks.quit = true,
         "close" => ui.script_close(),
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),
         "storedir" if w.len() > 1 => ui.files.dir = w[1].into(),

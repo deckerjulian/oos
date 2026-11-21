@@ -166,7 +166,7 @@ impl Ui {
             hid::KEY_ESC => self.dismiss_context(),
             hid::KEY_F12 => {
                 let p = crate::store::next_name(&self.save_dir(), "shot", "png");
-                self.shot_request = Some(p.to_string_lossy().into_owned());
+                self.asks.shot = Some(p.to_string_lossy().into_owned());
             }
             _ => return hid::command(code),
         }

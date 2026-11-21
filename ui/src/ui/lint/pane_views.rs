@@ -100,7 +100,7 @@ fn the_trend_pane_follows_a_measurement() {
     u.render(&mut cv);
     // a shorter list: the row and the trends follow
     u.m.meas.pop();
-    u.mstat.clear();
+    u.results.rows.clear();
     u.step(0.04);
     u.step(0.04);
     u.render(&mut cv);

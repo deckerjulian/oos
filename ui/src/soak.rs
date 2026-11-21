@@ -220,7 +220,7 @@ impl Rig {
     fn frame(&mut self) {
         self.ui.step(1.0 / 30.0);
         self.ui.render(&mut self.cv);
-        if let Some(path) = self.ui.shot_request.take() {
+        if let Some(path) = self.ui.asks.shot.take() {
             crate::save_shot(&mut self.ui, &self.cv, path, &mut self.shots);
         }
     }

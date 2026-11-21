@@ -210,14 +210,14 @@ fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
     steps(&mut ui, 2);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     for seq in 2..5 {
         shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
         steps(&mut ui, 2);
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // STOP on a pair record: the final raw frame is asked for and shown
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
@@ -298,7 +298,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
     step(&mut ui);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     // pair records keep the raw record's values, the statistics do not count them
     for seq in 3..6 {
         push(seq, true, pairs(1.5));
@@ -306,7 +306,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // off: pair records are measured (mean-type NaN, max of the pairs)
     crate::deepmeas::force(Some(false));
     push(6, true, pairs(1.5));
@@ -461,7 +461,7 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
 fn background_measurements_follow_a_running_record() {
     let mut u = crate::ui::testkit::demo_ui();
     u.measure_in_background();
-    let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
+    let n = |u: &super::Ui| u.results.rows.iter().map(|s| s.n).max().unwrap_or(0);
     for _ in 0..120 {
         u.step(1.0 / 30.0);
         std::thread::sleep(std::time::Duration::from_millis(3));
@@ -829,19 +829,19 @@ fn statistics_take_every_frame_of_the_fast_path() {
     // the first record sets up the rows
     shared.lock().unwrap().queue.push_back(frame(0));
     ui.step(0.05);
-    assert_eq!(ui.mstat.len(), 5);
-    assert_eq!(ui.mstat[0].n, 1);
+    assert_eq!(ui.results.rows.len(), 5);
+    assert_eq!(ui.results.rows[0].n, 1);
     // 20 more: 19 by the fast path, the newest as the record
     shared.lock().unwrap().queue.extend((1..=20).map(frame));
     ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
-    assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
+    assert_eq!(ui.results.rows[0].n, 21, "Pk-pk over every frame");
+    assert_eq!(ui.results.rows[4].n, 2, "Freq only over the records");
     // the largest Pk-pk is that of frame 20 (amplitude 3), the smallest that of frame 0
     assert!(
-        (ui.mstat[0].max - 6.0).abs() < 0.01 && (ui.mstat[0].min - 2.0).abs() < 0.01,
+        (ui.results.rows[0].max - 6.0).abs() < 0.01 && (ui.results.rows[0].min - 2.0).abs() < 0.01,
         "{} {}",
-        ui.mstat[0].min,
-        ui.mstat[0].max
+        ui.results.rows[0].min,
+        ui.results.rows[0].max
     );
     // a frame's fold gives the values of the measurements on the same samples
     let f = frame(7);
@@ -879,7 +879,7 @@ fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
         let ch = [v, Vec::new(), Vec::new(), Vec::new()];
         crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1.0 / dt, depth), ..Default::default() }
     };
-    let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
+    let counts = |ui: &Ui| ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>();
     // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
     shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
     ui.step(0.05);

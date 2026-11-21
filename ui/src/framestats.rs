@@ -38,7 +38,7 @@ pub fn needs_samples(k: Meas) -> bool {
 /// The measurements made per frame.
 pub const CHEAP: [Meas; 7] = [Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vavg, Meas::Vrms, Meas::StdDev, Meas::VrmsAc];
 
-/// Statistics of one measurement over frames, as the Measure page keeps them (`Ui::mstat`).
+/// Statistics of one measurement over frames, as the Measure page keeps them (`strip::Results::rows`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Fold {
     pub n: u64,

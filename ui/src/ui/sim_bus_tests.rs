@@ -94,7 +94,7 @@ fn fixture() -> (Ui, Vec<f32>, Vec<f32>) {
     assert!(!generated.hits.as_ref().unwrap().1.is_empty());
     ui.sim_finish(request, generated);
     assert_eq!(ui.replay.captures, 1);
-    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1]);
+    assert_eq!(ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1]);
     assert_eq!(eye_records(&ui), 1.0);
     assert!(!ui.azr.page.img.is_empty());
     ui.m.trig_bus_val = 0xa5;
@@ -201,7 +201,7 @@ fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_phys
     assert_eq!(ui.m.run, RunState::Stop);
     assert!(!ui.sim_play);
     assert_eq!(ui.m.status, TrigStatus::Triggered);
-    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
+    assert_eq!(ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
     assert_eq!(eye_records(&ui), 2.0);
     let scans = ui.decoder_worker_state_for_test();
     let packets = ui.decode_packets_of(&ui.m).unwrap();
@@ -258,7 +258,7 @@ fn sim_bus_miss_stop_and_force_keep_acceptance_statistics_and_eye_in_sync() {
     assert_eq!(ui.m.status, TrigStatus::Auto);
     assert_eq!(ui.replay.trigger_time, None);
     assert!(!ui.replay.force_requested());
-    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
+    assert_eq!(ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
     assert_eq!(eye_records(&ui), 2.0);
     let accepted = Accepted::of(&ui);
     for _ in 0..3 {

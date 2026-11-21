@@ -179,8 +179,8 @@ impl Ui {
         }
         let Some(index) = self.m.cat.iter().position(|row| *row == entry) else { return };
         let index = self.m.meas.len() + self.m.meas2.len() + index;
-        self.mstat.resize(self.measurement_count(), MStat::default());
-        self.mstat[index].add(value);
+        self.results.rows.resize(self.measurement_count(), MStat::default());
+        self.results.rows[index].add(value);
     }
 
     /// While a large record of channel `c` is measured in the background with the settings of the last one: the value
@@ -884,7 +884,7 @@ impl Ui {
     }
 
     fn stat_at(&self, idx: Option<usize>, current: f64) -> (u64, f64, f64, f64, f64, f64) {
-        let Some(st) = idx.and_then(|i| self.mstat.get(i)).filter(|st| st.n > 0) else {
+        let Some(st) = idx.and_then(|i| self.results.rows.get(i)).filter(|st| st.n > 0) else {
             return (0, current, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
         };
         let mean = st.sum / st.n as f64;

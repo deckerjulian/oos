@@ -377,7 +377,7 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
             ui.phz.map[c].iter().any(|&v| v > 0),
             "CH{} detail blank, range {:?}, dt {:?}",
             c + 1,
-            (ui.stats[c].vmin, ui.stats[c].vmax),
+            (ui.measured.stats[c].vmin, ui.measured.stats[c].vmax),
             ui.last[0].as_ref().map(|r| r.dt)
         );
     }

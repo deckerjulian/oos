@@ -789,11 +789,11 @@ fn power_key_dialog() {
     let mut ui = crate::ui::testkit::demo_ui();
     ui.key(key::POWER);
     assert!(ui.power.open);
-    assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
+    assert_eq!(ui.asks.panel, vec![crate::board::PanelCmd::CancelPowerDown]);
     // second press cancels, again with the cancel frame
     ui.key(key::POWER);
     assert!(!ui.power.open && ui.power.action.is_none());
-    assert_eq!(ui.panel_tx.len(), 2);
+    assert_eq!(ui.asks.panel.len(), 2);
     // tap on "Power off"
     ui.key(key::POWER);
     let b = ui.pwr_layout().1[0];
@@ -1155,7 +1155,7 @@ fn level_50_with_ac_trigger_coupling_counts_from_the_mean() {
         pairs: false,
     };
     ui.last[0] = Some(rec);
-    ui.stats[0] = crate::wave::stats(&v, dt);
+    ui.measured.stats[0] = crate::wave::stats(&v, dt);
     ui.m.trig_coup = TrigCoup::Dc;
     ui.activate(Item::Trig50);
     assert!((ui.m.trig_level - 1.65).abs() < 0.02, "DC: the middle, {}", ui.m.trig_level);

@@ -221,7 +221,7 @@ fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_count
     }
     ui.finish_deferred_capture_statistics();
     assert_eq!(ui.m.meas, selection);
-    assert!(ui.mstat.iter().all(|s| s.n == 0));
+    assert!(ui.results.rows.iter().all(|s| s.n == 0));
     assert_eq!(ui.replay.captures, 1);
     assert_eq!(fence.state(&ui), OperationState::Pending);
 }

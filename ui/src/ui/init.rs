@@ -44,7 +44,6 @@ impl Ui {
             focus: 0,
             sources: analysis::Sources { a: WaveId::Ch(0), b: WaveId::Ch(1) },
             last: [None],
-            stats: [Stats::default(); NCH],
             meas_bg: records::MeasBackground::default(),
             measured: Default::default(),
             bus_auto: None,
@@ -54,7 +53,6 @@ impl Ui {
             toast: None,
             dialog: None,
             sysinfo: sysinfo::Page::default(),
-            panel_tx: Vec::new(),
             power: Default::default(),
             upd: Default::default(),
             wlan: Default::default(),
@@ -92,7 +90,6 @@ impl Ui {
                 start_cur: 0.0,
                 win: 0,
             },
-            mstat: Vec::new(),
             pn: Default::default(),
             log: logger::Logger::default(),
             single_armed: false,
@@ -136,8 +133,7 @@ impl Ui {
             la: Default::default(),
             mask_sw: Default::default(),
             mask_unit: Default::default(),
-            shot_request: None,
-            quit: false,
+            asks: input::Asks::default(),
         };
         ui.ensure_meas_own();
         ui.relayout();

@@ -196,7 +196,7 @@ fn clear_empties_the_display_in_stop() {
     ui.step(0.033);
     ui.key(key::RUNSTOP);
     ui.step(0.033);
-    assert!(lit(&ui) > 500 && ui.mask_sw.pass > 0 && !ui.mstat.is_empty());
+    assert!(lit(&ui) > 500 && ui.mask_sw.pass > 0 && !ui.results.rows.is_empty());
     ui.key(key::CLEAR);
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     for _ in 0..5 {
@@ -204,7 +204,7 @@ fn clear_empties_the_display_in_stop() {
         ui.render(&mut cv);
     }
     assert_eq!(lit(&ui), 0);
-    assert!(ui.last[0].is_none() && ui.mstat.is_empty() && (ui.mask_sw.pass, ui.mask_sw.fail) == (0, 0));
+    assert!(ui.last[0].is_none() && ui.results.rows.is_empty() && (ui.mask_sw.pass, ui.mask_sw.fail) == (0, 0));
     assert!(ui.meas(0, Meas::Freq).is_nan());
     assert_eq!(ui.toast.as_ref().unwrap().0, "Display cleared");
     assert_eq!(ui.m.run, RunState::Stop);
@@ -307,7 +307,7 @@ fn quick_key_dispatch() {
     ui.step(0.033);
     // default: screenshot as before
     ui.key(key::QUICK);
-    assert_eq!(ui.shot_request.take(), Some(String::new()));
+    assert_eq!(ui.asks.shot.take(), Some(String::new()));
     ui.select_option(Item::QuickAct, "Save setup");
     assert_eq!(ui.m.quick, Quick::SaveSetup);
     ui.key(key::QUICK);
@@ -317,7 +317,7 @@ fn quick_key_dispatch() {
     assert!(dir.join("wave-001.csv").exists());
     ui.m.quick = Quick::SavePng;
     ui.key(key::QUICK);
-    assert!(ui.shot_request.take().unwrap().ends_with("shot-001.png"));
+    assert!(ui.asks.shot.take().unwrap().ends_with("shot-001.png"));
     ui.m.quick = Quick::RunStop;
     ui.key(key::QUICK);
     assert_eq!(ui.m.run, RunState::Stop);
@@ -539,7 +539,7 @@ fn start_menu_and_keys_reach_everything() {
     // power: the dialog, without the MCU frame of a key press
     let (x, y) = mid(row_of(&ui, Item::PowerAct).ctrl);
     ui.tap(x, y);
-    assert!(ui.power.open && ui.panel_tx.is_empty() && !ui.menu_open);
+    assert!(ui.power.open && ui.asks.panel.is_empty() && !ui.menu_open);
     ui.tap(5, 300);
     // touch lock from the start menu: touches do nothing, except the Menu button, which unlocks
     ui.open_menu(MenuId::Main);

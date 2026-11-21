@@ -26,6 +26,8 @@ pub(in crate::ui) struct Measured {
     pub refs: [Arc<oos_dsp::measure::Analysis>; NREF],
     /// false when a hidden, unrequested reference skipped the capture-time scan
     pub refs_valid: [bool; NREF],
+    /// the levels of each channel's last record (oos-dsp), made with `ch`
+    pub stats: [Stats; NCH],
 }
 
 /// A reference may keep the same allocation between accepted SIM captures.
@@ -523,7 +525,7 @@ impl Ui {
                 rise: a.rise_time,
                 fall: a.fall_time,
             });
-            self.stats[channel] = stats
+            self.measured.stats[channel] = stats
                 .or_else(|| {
                     basic.map(|b| Stats {
                         valid: b.valid,

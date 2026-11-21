@@ -190,7 +190,7 @@ impl Ui {
         let recov = clk_v.as_deref().unwrap_or(&v);
         let recov_id = clk_id.unwrap_or(id);
         let st = match recov_id {
-            WaveId::Ch(c) if clk_id.is_none() && rec.raw.is_none() => self.stats[c],
+            WaveId::Ch(c) if clk_id.is_none() && rec.raw.is_none() => self.measured.stats[c],
             _ => stats(recov, dt),
         };
         let (clk_vpd, _) = self.eye_scale(recov_id);

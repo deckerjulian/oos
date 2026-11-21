@@ -711,6 +711,8 @@ impl MeasWorker {
 /// of its module and has one field here (`bt: bt::BtUi`, `cat: meascatalog::Catalog`, ...). What stays a field of its
 /// own here, and why:
 /// - the model `m` and the source `src`: every part reads the settings and the records;
+/// - the scope's own settings `sys` and their file `sys_path`: most pages, the main loop, the remote commands and
+///   the command file read them, and every page that changes one writes the file (`sys_save`);
 /// - the screen `scr` and the time `now`: every part draws on the one and counts by the other;
 /// - the open menu (`menu`, `menu_open`, `parent`, `menu_history`, `pick`, `focus`): the shared menu code runs every
 ///   page from it (ADR 0060);
@@ -754,7 +756,6 @@ pub struct Ui {
     /// the sources the measurements are added for: A, and B of delay and phase (analysis/measure.rs)
     sources: analysis::Sources,
     last: [Option<Record>; 1],
-    stats: [Stats; NCH],
     /// history playback: the last acquired records and the one viewed (records.rs)
     history: records::History,
     /// mark all trigger events in the record (search)
@@ -807,7 +808,6 @@ pub struct Ui {
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
-    mstat: Vec<MStat>,
     /// what the second pane keeps between frames
     pn: panes::PaneState,
     log: logger::Logger,
@@ -875,10 +875,8 @@ pub struct Ui {
     /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why
     /// the acquisition thread dropped the unit (hwmask.rs)
     mask_unit: hwmask::Unit,
-    pub shot_request: Option<String>,
-    pub quit: bool,
-    /// commands for the front panel, sent by the main loop (power handshake)
-    pub panel_tx: Vec<crate::board::PanelCmd>,
+    /// what the screen asks of the main loop: a screenshot, the end, commands for the front panel (input.rs)
+    pub asks: input::Asks,
     /// the power key's dialog and what it asked the main loop for (input.rs)
     pub power: input::Power,
     /// hex entry of the keypad picker (protocol trigger value)
@@ -932,7 +930,7 @@ impl Ui {
         self.last[0] = None;
         self.history.pos = None;
         self.cleared = true;
-        self.stats = [Stats::default(); NCH];
+        self.measured.stats = [Stats::default(); NCH];
         // a measurement still out, or a record waiting for the worker, belongs to what was cleared away
         (self.meas_bg.n, self.meas_bg.want, self.meas_bg.pending) = (self.meas_bg.n + 1, false, None);
         self.measured.ch = Default::default();
@@ -953,7 +951,7 @@ impl Ui {
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
     fn quick(&mut self) {
         match self.m.quick {
-            Quick::Screenshot => self.shot_request = Some(String::new()),
+            Quick::Screenshot => self.asks.shot = Some(String::new()),
             Quick::SavePng => self.activate(Item::StorePng),
             Quick::SaveSetup => self.activate(Item::StoreSaveSetup),
             Quick::SaveCsv => self.activate(Item::StoreCsv),
@@ -976,7 +974,7 @@ impl Ui {
             self.settings_changed();
             return;
         }
-        let s = self.stats[self.m.trig_src];
+        let s = self.measured.stats[self.m.trig_src];
         if s.valid {
             // with AC or LF-reject coupling the trigger compares the source without its mean, and its level counts from
             // there: halfway through the signal is the middle less the mean. The middle itself sat above the whole
