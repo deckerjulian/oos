@@ -8,7 +8,7 @@
 use super::{bar_checked, c2h};
 use super::{cal_dir, flag, opt};
 #[cfg(target_os = "linux")]
-use oos_hal::dho::adc;
+use oos_hal::dho::{adc, boot::SysClock, bus::Bar1, lines::UnitLines};
 use oos_hal::dho::afe;
 #[cfg(target_os = "linux")]
 use oos_hal::dho::seq::{self, Settings};
@@ -16,7 +16,7 @@ use oos_hal::dho::seq::{self, Settings};
 /// The unit behind the self-calibration: AFE over the GPIO SPI bus, gear ioctl, FPGA ADC measure unit.
 #[cfg(target_os = "linux")]
 struct UnitHw {
-    bar: oos_hal::dho::bus::Bar1,
+    bar: Bar1,
     afe: afe::GpioAfe,
     steps: usize,
 }
@@ -165,11 +165,40 @@ struct Job<'a> {
     tuples: &'a [[i32; 7]],
 }
 
+/// The self-calibration's unit in hal on the scope (`Bar1`, `GpioAfe`, the C2H file, `UnitLines`, `SysClock`; never
+/// cancelled), handed to `run`; it lives until `run` returns, `bar` and `afe_bus` with it.
+#[cfg(target_os = "linux")]
+fn on_unit<T>(
+    x: &Job,
+    mut bar: Bar1,
+    mut afe_bus: afe::GpioAfe,
+    c2h: &mut std::fs::File,
+    state: &mut seq::State,
+    cal_adc: Option<&adc::CalAdc>,
+    run: impl FnOnce(&mut oos_hal::dho::selfcal::Unit<Bar1, afe::GpioAfe, std::fs::File, UnitLines, SysClock>) -> T,
+) -> T {
+    let cancel = || false;
+    let (mut lines, mut clock) = (UnitLines, SysClock::default());
+    let mut unit = oos_hal::dho::selfcal::Unit {
+        bar: &mut bar,
+        afe: &mut afe_bus,
+        c2h,
+        lines: &mut lines,
+        clock: &mut clock,
+        state,
+        cal: x.cal,
+        cal_adc,
+        cancel: &cancel,
+        adc_new: None,
+    };
+    run(&mut unit)
+}
+
 /// `selfcal adc`: only the ADC core gains/offsets of the channel; --save writes /oos/cal.
 #[cfg(target_os = "linux")]
 fn selfcal_adc(
     x: &Job,
-    bar: oos_hal::dho::bus::Bar1,
+    bar: Bar1,
     afe_bus: afe::GpioAfe,
     c2h: &mut std::fs::File,
     state: &mut seq::State,
@@ -177,52 +206,40 @@ fn selfcal_adc(
 ) -> Result<(), String> {
     use oos_hal::dho::{calfile, selfcal as sc};
     let has = |k: &str| flag(x.args, k);
-    let (ch, cal) = (x.ch, x.cal);
+    let ch = x.ch;
     // only the ADC core gains/offsets of this channel (mode = the channel alone); --save writes /oos/cal
-    let cancel = || false;
-    let (mut bar, mut afe_bus) = (bar, afe_bus);
     let base = cal_adc.ok_or("no cal_adc.hex")?;
-    let (mut lines, mut clock) = (oos_hal::dho::lines::UnitLines, oos_hal::dho::boot::SysClock::default());
-    let mut unit = sc::Unit {
-        bar: &mut bar,
-        afe: &mut afe_bus,
-        c2h,
-        lines: &mut lines,
-        clock: &mut clock,
-        state,
-        cal,
-        cal_adc: Some(base),
-        cancel: &cancel,
-        adc_new: None,
-    };
-    let t0 = std::time::Instant::now();
-    let new = sc::adc_cores(&mut unit, base, &[ch], &mut |d, t, s| {
-        println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s)
-    })?;
-    use oos_hal::dho::adc::CalAdc;
-    let row = |c: &CalAdc, f: &dyn Fn(usize) -> usize| (0..8).map(|n| c.get16(f(n))).collect::<Vec<_>>();
-    println!(
-        "  gains   new {:?}  old {:?}",
-        row(&new, &|n| CalAdc::gain_at(ch, n)),
-        row(base, &|n| CalAdc::gain_at(ch, n))
-    );
-    println!(
-        "  offsets new {:?}  old {:?}",
-        row(&new, &|n| CalAdc::off_at(ch, n)),
-        row(base, &|n| CalAdc::off_at(ch, n))
-    );
-    if has("--save") {
-        calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", new.payload(), calfile::now()).map_err(|e| e.to_string())?;
-        println!("  saved {}/cal_adc.hex", calfile::OOS_CAL_DIR);
-    }
-    Ok(())
+    on_unit(x, bar, afe_bus, c2h, state, Some(base), |unit| {
+        let t0 = std::time::Instant::now();
+        let new = sc::adc_cores(unit, base, &[ch], &mut |d, t, s| {
+            println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s)
+        })?;
+        use oos_hal::dho::adc::CalAdc;
+        let row = |c: &CalAdc, f: &dyn Fn(usize) -> usize| (0..8).map(|n| c.get16(f(n))).collect::<Vec<_>>();
+        println!(
+            "  gains   new {:?}  old {:?}",
+            row(&new, &|n| CalAdc::gain_at(ch, n)),
+            row(base, &|n| CalAdc::gain_at(ch, n))
+        );
+        println!(
+            "  offsets new {:?}  old {:?}",
+            row(&new, &|n| CalAdc::off_at(ch, n)),
+            row(base, &|n| CalAdc::off_at(ch, n))
+        );
+        if has("--save") {
+            calfile::save(calfile::OOS_CAL_DIR, "cal_adc.hex", new.payload(), calfile::now())
+                .map_err(|e| e.to_string())?;
+            println!("  saved {}/cal_adc.hex", calfile::OOS_CAL_DIR);
+        }
+        Ok(())
+    })
 }
 
 /// `selfcal all`: the whole self-cal of the channel through hal (as System > Self-cal); --save writes /oos/cal.
 #[cfg(target_os = "linux")]
 fn selfcal_all(
     x: &Job,
-    bar: oos_hal::dho::bus::Bar1,
+    bar: Bar1,
     afe_bus: afe::GpioAfe,
     c2h: &mut std::fs::File,
     state: &mut seq::State,
@@ -233,43 +250,29 @@ fn selfcal_all(
     let (ch, cal, rigol) = (x.ch, x.cal, x.rigol);
     // the whole self-cal of this channel through hal (as System > Self-cal): [--adc] ADC cores first,
     // [--zero] AFE zero, the four vertical passes; --save writes /oos/cal
-    let cancel = || false;
-    let mut bar = bar;
-    let mut afe_bus = afe_bus;
-    let (mut lines, mut clock) = (oos_hal::dho::lines::UnitLines, oos_hal::dho::boot::SysClock::default());
-    let mut unit = sc::Unit {
-        bar: &mut bar,
-        afe: &mut afe_bus,
-        c2h,
-        lines: &mut lines,
-        clock: &mut clock,
-        state,
-        cal,
-        cal_adc,
-        cancel: &cancel,
-        adc_new: None,
-    };
-    let adc_base = if has("--adc") { cal_adc } else { None };
-    let t0 = std::time::Instant::now();
-    let mut last = String::new();
-    let r = sc::run_all_with(&mut unit, cal, adc_base, &[ch], has("--zero"), &mut |d, t, s| {
-        if s != last {
-            println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s);
-            last = s.to_string();
+    on_unit(x, bar, afe_bus, c2h, state, cal_adc, |unit| {
+        let adc_base = if has("--adc") { cal_adc } else { None };
+        let t0 = std::time::Instant::now();
+        let mut last = String::new();
+        let r = sc::run_all_with(unit, cal, adc_base, &[ch], has("--zero"), &mut |d, t, s| {
+            if s != last {
+                println!("  {:6.1} s  {}/{}  {}", t0.elapsed().as_secs_f64(), d, t, s);
+                last = s.to_string();
+            }
+        })?;
+        println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
+        if has("--save") {
+            for f in sc::save(&r, rigol)? {
+                println!("  saved {}", f);
+            }
         }
-    })?;
-    println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
-    if has("--save") {
-        for f in sc::save(&r, rigol)? {
-            println!("  saved {}", f);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// `selfcal zero|probe|entry|vertical`: the AFE passes of the channel through `UnitHw`.
 #[cfg(target_os = "linux")]
-fn selfcal_afe(x: &Job, bar: oos_hal::dho::bus::Bar1, afe_bus: afe::GpioAfe, state: &seq::State) -> Result<(), String> {
+fn selfcal_afe(x: &Job, bar: Bar1, afe_bus: afe::GpioAfe, state: &seq::State) -> Result<(), String> {
     let (what, ch) = (x.what, x.ch);
     let mut a = state.afe[ch].clone();
     let mut hw = UnitHw { bar, afe: afe_bus, steps: 0 };
