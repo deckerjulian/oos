@@ -875,10 +875,8 @@ pub struct Ui {
     /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why
     /// the acquisition thread dropped the unit (hwmask.rs)
     mask_unit: hwmask::Unit,
-    pub shot_request: Option<String>,
-    pub quit: bool,
-    /// commands for the front panel, sent by the main loop (power handshake)
-    pub panel_tx: Vec<crate::board::PanelCmd>,
+    /// what the screen asks of the main loop: a screenshot, the end, commands for the front panel (input.rs)
+    pub asks: input::Asks,
     /// the power key's dialog and what it asked the main loop for (input.rs)
     pub power: input::Power,
     /// hex entry of the keypad picker (protocol trigger value)
@@ -953,7 +951,7 @@ impl Ui {
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
     fn quick(&mut self) {
         match self.m.quick {
-            Quick::Screenshot => self.shot_request = Some(String::new()),
+            Quick::Screenshot => self.asks.shot = Some(String::new()),
             Quick::SavePng => self.activate(Item::StorePng),
             Quick::SaveSetup => self.activate(Item::StoreSaveSetup),
             Quick::SaveCsv => self.activate(Item::StoreCsv),

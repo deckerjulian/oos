@@ -1073,7 +1073,7 @@ impl Ui {
             Item::Shot => {
                 // without the dialog on it
                 self.close_menu();
-                self.shot_request = Some(String::new());
+                self.asks.shot = Some(String::new());
             }
             Item::MathAuto => self.math_autoscale(),
             Item::ZoneBox | Item::ZoneShape => {
@@ -1115,7 +1115,7 @@ impl Ui {
                 // without the dialog: the screen is saved after the next frame (main loop / script runner)
                 let p = self.new_file(&self.save_dir(), "shot", "png");
                 self.close_menu();
-                self.shot_request = Some(p.to_string_lossy().into_owned());
+                self.asks.shot = Some(p.to_string_lossy().into_owned());
             }
             Item::MaskCreate => self.create_mask(),
             Item::MaskFromRef => self.create_mask_from_ref(),

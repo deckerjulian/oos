@@ -16,6 +16,17 @@ pub struct Power {
     pub action: Option<PowerAction>,
 }
 
+/// What the screen asks of the main loop (main.rs), which takes it (ADR 0062).
+#[derive(Default)]
+pub struct Asks {
+    /// a screenshot: its file, or empty for the default name
+    pub shot: Option<String>,
+    /// the end of the program (the command file's `quit`, the tests)
+    pub quit: bool,
+    /// commands for the front panel (the power handshake)
+    pub panel: Vec<crate::board::PanelCmd>,
+}
+
 /// What the input keeps between two events (ADR 0062).
 pub(super) struct State {
     /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
@@ -307,7 +318,7 @@ impl Ui {
     fn power_key(&mut self) {
         // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
         // likely cuts power by itself otherwise (board.md section 4)
-        self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
+        self.asks.panel.push(crate::board::PanelCmd::CancelPowerDown);
         self.power.open = !self.power.open;
         if self.power.open {
             self.dialog = None;

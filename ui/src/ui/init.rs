@@ -54,7 +54,6 @@ impl Ui {
             toast: None,
             dialog: None,
             sysinfo: sysinfo::Page::default(),
-            panel_tx: Vec::new(),
             power: Default::default(),
             upd: Default::default(),
             wlan: Default::default(),
@@ -136,8 +135,7 @@ impl Ui {
             la: Default::default(),
             mask_sw: Default::default(),
             mask_unit: Default::default(),
-            shot_request: None,
-            quit: false,
+            asks: input::Asks::default(),
         };
         ui.ensure_meas_own();
         ui.relayout();

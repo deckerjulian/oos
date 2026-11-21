@@ -88,7 +88,7 @@ fn scpi_validation_fixture() {
         .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
     let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
     let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
-    while !ui.quit && std::time::Instant::now() < end {
+    while !ui.asks.quit && std::time::Instant::now() < end {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
