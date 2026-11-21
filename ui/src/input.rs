@@ -109,6 +109,18 @@ fn read_fd(fd: i32, buf: &mut [u8]) -> isize {
     unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) }
 }
 
+/// Appends to `to` all a non-blocking descriptor has to read now, `N` bytes a read.
+fn drain_fd<const N: usize>(fd: i32, to: &mut Vec<u8>) {
+    let mut buf = [0u8; N];
+    loop {
+        let n = read_fd(fd, &mut buf);
+        if n <= 0 {
+            break;
+        }
+        to.extend_from_slice(&buf[..n as usize]);
+    }
+}
+
 fn close_fd(fd: i32) {
     unsafe { libc::close(fd) };
 }
@@ -424,14 +436,7 @@ impl Inputs {
         if self.panel < 0 {
             return;
         }
-        let mut buf = [0u8; 256];
-        loop {
-            let n = read_fd(self.panel, &mut buf);
-            if n <= 0 {
-                break;
-            }
-            self.panel_buf.extend_from_slice(&buf[..n as usize]);
-        }
+        drain_fd::<256>(self.panel, &mut self.panel_buf);
         use crate::board::Board;
         for k in crate::board::board().panel_keys(&mut self.panel_buf) {
             out.push(In::Ev(Ev::Key(k)));
@@ -442,14 +447,7 @@ impl Inputs {
         if self.ctl < 0 {
             return;
         }
-        let mut buf = [0u8; 1024];
-        loop {
-            let n = read_fd(self.ctl, &mut buf);
-            if n <= 0 {
-                break;
-            }
-            self.ctl_buf.extend_from_slice(&buf[..n as usize]);
-        }
+        drain_fd::<1024>(self.ctl, &mut self.ctl_buf);
         while let Some(p) = self.ctl_buf.iter().position(|&c| c == b'\n') {
             let line: Vec<u8> = self.ctl_buf.drain(..=p).collect();
             out.push(In::Cmd(String::from_utf8_lossy(&line).trim().to_string()));
