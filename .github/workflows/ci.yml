@@ -162,6 +162,10 @@ jobs:
   # What a pull request does to the pictures and to the register sequences, against the commit it is merged onto
   # (ADR 0014, ADR 0032). It reports; it fails only when the comparison cannot be made, or when the pull request says
   # "Behaviour: unchanged" and something differs. The pull request's code runs here without secrets, like in `test`.
+  # One comparison for each board family the change reaches (ADR 0067, 3: the families of tools/ci-parts.sh), one
+  # after the other in this one job, so the required check `compare` and the artifacts tools/pr-gate.sh counts keep
+  # their names: `compare-base` when any family differs, `compare-calibrated` and `compare-live` only when every family
+  # has them. dho is compared as without OOS_BOARD; the report of another family is in ui/target/compare-base-<name>/.
   compare:
     needs: parts
     if: github.event_name == 'pull_request' && needs.parts.outputs.compare == 'true'
@@ -189,52 +193,65 @@ jobs:
           key: compare-sums-${{ steps.base.outputs.sha }}
       # Both sides are built the same way, so the comparison does not need the release's slow link step: without it a
       # build of oos-ui takes a third of the time (measured on 2026-11-17: 20 s instead of 68 s on a laptop).
-      - name: Pictures and register sequences against the base (tools/compare-base.sh)
+      - name: Pictures and register sequences against the base, for each family (tools/compare-base.sh)
         id: compare
         env:
           CARGO_PROFILE_RELEASE_LTO: 'off'
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+          FAMILIES: ${{ needs.parts.outputs.families }}
         run: |
-          rc=0
-          # without a kept set, or one of another commit, compare-base.sh builds the base as before
-          tools/compare-base.sh --base-sums "$RUNNER_TEMP/compare-sums" HEAD^1 || rc=$?
-          [ ! -f ui/target/compare-base/summary.md ] || cat ui/target/compare-base/summary.md >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$FAMILIES" ] || { echo "::error::tools/ci-parts.sh named no board family"; exit 1; }
+          # the worst exit of the families (0 equal, 1 differs, 2 not compared); the signs only when every family has
+          rc=0 calibrated=1 live=1
+          for family in $FAMILIES; do
+            r=0
+            work=ui/target/compare-base
+            # without a kept set, or one of another commit or family, compare-base.sh builds the base as before
+            if [ "$family" = dho ]; then
+              tools/compare-base.sh --base-sums "$RUNNER_TEMP/compare-sums" HEAD^1 || r=$?
+            else
+              work=$work-$family
+              OOS_BOARD=$family tools/compare-base.sh --base-sums "$RUNNER_TEMP/compare-sums" HEAD^1 || r=$?
+            fi
+            [ "$r" -le "$rc" ] || rc=$r
+            [ ! -f "$work/summary.md" ] || cat "$work/summary.md" >> "$GITHUB_STEP_SUMMARY"
+            # whether the register sequences were compared with calibration values (ADR 0042 counts on it)
+            grep -Eq '^- Register sequences: .*\(with ' "$work/summary.md" 2>/dev/null || calibrated=0
+            # whether the live run was compared on both sides and found equal (ADR 0073 counts on it)
+            grep -Eq '^- Live run of the acquisition loop: all [0-9]+ cases equal' "$work/summary.md" 2>/dev/null ||
+              live=0
+          done
           # how many lines of code the pull request adds or removes: to see, not a gate
           if [ -d ui/target/compare-base/tree ]; then
             { echo; python3 -I tools/code-size.py ui/target/compare-base/tree .; } >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "differs=$rc" >> "$GITHUB_OUTPUT"
-          # whether the register sequences were compared with calibration values (ADR 0042 counts on it)
-          if grep -Eq '^- Register sequences: .*\(with ' ui/target/compare-base/summary.md 2>/dev/null; then
-            echo "calibrated=1" >> "$GITHUB_OUTPUT"
-          fi
-          # whether the live run was compared on both sides and found equal (ADR 0073 counts on it)
-          if grep -Eq '^- Live run of the acquisition loop: all [0-9]+ cases equal' ui/target/compare-base/summary.md 2>/dev/null; then
-            echo "live=1" >> "$GITHUB_OUTPUT"
-          fi
+          [ "$calibrated" = 0 ] || echo "calibrated=1" >> "$GITHUB_OUTPUT"
+          [ "$live" = 0 ] || echo "live=1" >> "$GITHUB_OUTPUT"
           [ "$rc" -le 1 ]
       - name: Keep the sign that the calibrated register sequences were compared
         if: steps.compare.outputs.calibrated == '1'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compare-calibrated
-          path: ui/target/compare-base/summary.md
+          path: ui/target/compare-base*/summary.md
       - name: Keep the sign that the live run was compared and found equal
         if: steps.compare.outputs.live == '1'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compare-live
-          path: ui/target/compare-base/summary.md
+          path: ui/target/compare-base*/summary.md
       - name: Keep what differs
         if: steps.compare.outputs.differs == '1'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compare-base
+          # the report of each family (ui/target/compare-base-<name>/ for another than dho)
           path: |
-            ui/target/compare-base/summary.md
-            ui/target/compare-base/pictures.txt
-            ui/target/compare-base/registers.diff
-            ui/target/compare-base/differing
+            ui/target/compare-base*/summary.md
+            ui/target/compare-base*/pictures.txt
+            ui/target/compare-base*/registers.diff
+            ui/target/compare-base*/differing
       - name: A pull request that says it leaves behaviour unchanged changes nothing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -303,7 +320,9 @@ jobs:
   # from the pull request and from its base in this one folder, compared byte for byte. Equal programs let the status
   # `unit` pass without a run on a unit (tools/pr-gate.sh); a pull request whose programs differ keeps the artifact
   # `scope-binaries-differ`, and needs the run. Only for a pull request that touches a path of a crate that a unit
-  # proves, and nothing of the image. Like `compare`, it reports and does not fail for a difference.
+  # proves, and nothing of the image. Like `compare`, it reports and does not fail for a difference. Like `compare`, it
+  # builds each board family the change reaches in turn (ADR 0067, 3), under the one name tools/pr-gate.sh reads; the
+  # sums kept of the base are of dho, built without OOS_BOARD, so another family builds its base as well.
   scope:
     needs: parts
     if: github.event_name == 'pull_request' && needs.parts.outputs.scope == 'true'
@@ -327,15 +346,28 @@ jobs:
         with:
           path: ${{ runner.temp }}/scope-sums
           key: scope-sums-${{ steps.base.outputs.sha }}-${{ hashFiles('tools/scope-binaries.sh', 'rust-toolchain.toml') }}
-      - name: The programs for the scope against the base (tools/scope-binaries.sh)
+      - name: The programs for the scope against the base, for each family (tools/scope-binaries.sh)
         id: scope
+        env:
+          FAMILIES: ${{ needs.parts.outputs.families }}
         run: |
+          [ -n "$FAMILIES" ] || { echo "::error::tools/ci-parts.sh named no board family"; exit 1; }
+          # the worst exit of the families: 0 equal, 1 differs, 2 not compared
           rc=0
-          kept=
-          [ ! -s "$RUNNER_TEMP/scope-sums/sums.txt" ] || kept="--base-sums $RUNNER_TEMP/scope-sums/sums.txt"
-          # shellcheck disable=SC2086
-          tools/scope-binaries.sh $kept HEAD^1 > /tmp/scope.txt || rc=$?
-          cat /tmp/scope.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          for family in $FAMILIES; do
+            r=0
+            if [ "$family" = dho ]; then
+              kept=
+              [ ! -s "$RUNNER_TEMP/scope-sums/sums.txt" ] || kept="--base-sums $RUNNER_TEMP/scope-sums/sums.txt"
+              # shellcheck disable=SC2086
+              tools/scope-binaries.sh $kept HEAD^1 > /tmp/scope.txt || r=$?
+            else
+              echo "board family $family:" > /tmp/scope.txt
+              OOS_BOARD=$family tools/scope-binaries.sh HEAD^1 >> /tmp/scope.txt || r=$?
+            fi
+            [ "$r" -le "$rc" ] || rc=$r
+            cat /tmp/scope.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          done
           echo "differs=$rc" >> "$GITHUB_OUTPUT"
           [ "$rc" -le 1 ]
       - name: Keep the sign that they differ
