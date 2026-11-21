@@ -5,7 +5,7 @@
 //! type with its range or choices, its menu label, its SCPI command (or why it has none) and its line in
 //! docs/scpi.md. The setup file (`store::setup_text` and `store::set`), the remote commands (scpi/display.rs, the
 //! `:CHANnel`, `:TRIGger`, `:ACQuire` and `:BODE` branches of scpi/dispatch.rs, scpi/math.rs, scpi/dvm.rs, scpi/counter.rs,
-//! scpi/mask.rs, scpi/histogram.rs, scpi/la.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
+//! scpi/mask.rs, scpi/histogram.rs, scpi/la.rs, scpi/timebase.rs), the menu rows (ui/setting_items.rs) and the tables in docs/scpi.md follow from it. Rows only read
 //! and write the model; what a change sets off on the screen (redraw, statistics) stays with the caller.
 //!
 //! The Display group (settings/display.rs), the trigger values (settings/trigger.rs), the acquisition settings
@@ -13,7 +13,8 @@
 //! settings (settings/channel.rs), the switches of the mask test
 //! (settings/mask.rs), the histogram (settings/histogram.rs), the Bode page (settings/bode.rs), the
 //! switch of the logic analyser (settings/la.rs), the spectrum page (settings/spectrum.rs), the eye page
-//! (settings/eye.rs) and the power analysis (settings/power.rs) have tables; the other
+//! (settings/eye.rs), the power analysis (settings/power.rs) and the time base (settings/timebase.rs) have tables; the
+//! other
 //! settings are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real`
 //! rows (f64 fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key
 //! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
@@ -36,6 +37,7 @@ pub mod math;
 pub mod meters;
 pub mod power;
 pub mod spectrum;
+pub mod timebase;
 pub mod trigger;
 
 /// A setting's value between the model and the codecs below; each `Ty` uses one kind.
@@ -197,6 +199,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(spectrum::SLICES)
         .chain(eye::SLICES)
         .chain(power::SLICES)
+        .chain(timebase::SLICES)
         .flat_map(|g| g.iter())
 }
 

@@ -220,7 +220,6 @@ impl Ui {
             Item::MeasLabels => "Labels on trace",
             Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
-            Item::AutoRoll => "Auto Roll",
             _ => return None,
         })
     }
@@ -337,7 +336,6 @@ impl Ui {
             Item::ChBiasZero(_) => "Zero this input",
             Item::ChSkew(_) => "Deskew",
             Item::HFine => "Fine time base",
-            Item::HExpandI => "Expand around",
             Item::RefColor => "Slot color",
             Item::RefLabel => "Slot name",
             Item::RefSel => "Slot",
@@ -450,7 +448,6 @@ impl Ui {
             Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
             Item::HFine => on_off(m.fine_t),
-            Item::HExpandI => format!("{:?}", m.h_expand),
             Item::RefColor => self.refs[self.ref_page.sel]
                 .as_ref()
                 .map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0)
@@ -553,7 +550,6 @@ impl Ui {
             Item::MeasLabels => on_off(self.m.meas_labels),
             Item::StripDock => self.m.strip_dock.label().into(),
             Item::Zoom => on_off(m.zoom),
-            Item::AutoRoll => on_off(m.auto_roll),
             _ => return None,
         })
     }

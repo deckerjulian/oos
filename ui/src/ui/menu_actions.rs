@@ -414,11 +414,6 @@ impl Ui {
             Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::HFine => m.fine_t = !m.fine_t,
-            Item::HExpandI => {
-                let all = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
-                let i = all.iter().position(|&x| x == m.h_expand).unwrap_or(0);
-                m.h_expand = all[cycle(i, all.len(), d)];
-            }
             Item::LogOn => {
                 if self.log.file.is_some() {
                     self.log_stop("Log ended");
@@ -737,7 +732,6 @@ impl Ui {
                 let on = !self.m.zoom;
                 self.set_zoom(on);
             }
-            Item::AutoRoll => self.m.auto_roll = !self.m.auto_roll,
             Item::ZScale => {
                 self.m.zscale = step_index(self.m.zscale, tscales().len(), d);
                 self.clamp_zoom();

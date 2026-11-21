@@ -238,7 +238,7 @@ fn label_cursor_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
         kv("tfine", m.tfine.to_string());
     }
     crate::settings::write(&crate::settings::channel::EXPAND, m, 0, kv);
-    kv("h_expand", format!("{:?}", m.h_expand));
+    crate::settings::write(&crate::settings::timebase::HREF, m, 0, kv);
 }
 
 /// The selected math channel as `math*` keys, the others as `m<N>.*`.
@@ -279,7 +279,7 @@ fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("strip_dock", name(m.strip_dock));
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
-    kv("auto_roll", m.auto_roll.to_string());
+    crate::settings::write(&crate::settings::timebase::ROLL, m, 0, kv);
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     crate::settings::write(&crate::settings::display::DRAW, m, 0, kv);

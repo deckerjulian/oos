@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 76] = [
+const ITEMS: [(Item, &str); 78] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -85,6 +85,8 @@ const ITEMS: [(Item, &str); 76] = [
     (Item::PowMode, "power mode"),
     (Item::PowFline, "power_more fline"),
     (Item::PowFsw, "power_more fsw"),
+    (Item::HExpandI, "h_expand"),
+    (Item::AutoRoll, "auto_roll"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -220,8 +222,8 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an analyser
-    /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
+    /// The item is in the Display menu, in the Horizontal menu, in the DVM menu, in the Mask menu, in the LA menu, in a
+    /// menu of an analyser page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
     /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
     /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
     /// show, and the video trigger on line n, so its line shows).
@@ -230,10 +232,19 @@ mod tests {
         (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::La, MenuId::Spectrum, MenuId::Eye]
-                .into_iter()
-                .chain(channels)
-                .any(|m| u.items(m).contains(&it))
+            || [
+                MenuId::Display,
+                MenuId::Horizontal,
+                MenuId::Dvm,
+                MenuId::Acquire,
+                MenuId::Mask,
+                MenuId::La,
+                MenuId::Spectrum,
+                MenuId::Eye,
+            ]
+            .into_iter()
+            .chain(channels)
+            .any(|m| u.items(m).contains(&it))
         {
             return true;
         }

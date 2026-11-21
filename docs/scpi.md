@@ -116,6 +116,21 @@ coupling, probe, bias, deskew and label (above and below) are written by hand.
 | `:CHANnel<n>:EXPand[?]` | `GND`, `CENTer`; the query answers `GND` or `CENT` | `v_expand_gnd` | Expand around | Vertical expansion reference supported by the model, one switch for every channel: a change of scale keeps the ground line or the screen centre in place. |
 <!-- settings:channel:end -->
 
+### Time base settings
+
+The time base settings of one value each, their `:TIMebase` commands and their keys in a setup file. They are declared
+once, in `ui/model/src/settings/timebase.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`. The scale, the delay, the fine switch and the zoom are written by hand
+(above and below).
+
+<!-- settings:timebase:begin -->
+| Command | Takes | Setup key | Horizontal menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:TIMebase:HREFerence:MODE[?]` | `CENTer`, `LB` or `LEFT`, `RB` or `RIGHt`, `TRIGger`; the query answers `CENT`, `LB`, `RB` or `TRIG` | `h_expand` | Expand around | The point a change of the time scale keeps in place: the centre of the screen, its left or right edge, or the trigger. |
+| `:TIMebase:ROLL[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `auto_roll` | Auto Roll | Rolls the trace at slow time scales while this is on; the acquisition source can still keep it from rolling. |
+<!-- settings:timebase:end -->
+
 ### Trigger settings
 
 The values of the Trigger menu, their `:TRIGger` commands and their keys in a setup file. They are declared once, in
@@ -545,9 +560,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:DISPlay:VIEW:MONitor[?] <n>` | The view an HDMI monitor shows in the Layout, 0 the panel's own; another than 0 needs at least two views. A value past the view count is refused with `-224`. |
 | `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
 | `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |
-| `:TIMebase:HREFerence:MODE[?]` | Horizontal expansion reference. |
 | `:TIMebase:MODE[?]` | Main/zoom/XY mode supported by the model. |
-| `:TIMebase:ROLL[?]` | Model roll setting; acquisition source restrictions still apply. |
 | `:TIMebase:XY:ENABle[?]`, `:X[?]`, `:Y[?]`, `:Z[?]` | XY display and channel roles; `NONE` disables the optional Z input. |
 | `:REFerence:COLor[?]`, `:RESet` | Selected/explicit slot color and reference display-scale reset. Recorded samples and native timing are retained. |
 

@@ -11,7 +11,6 @@ pub(crate) use crate::words::{p_bool, p_f32, p_f64, p_idx, p_u32};
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
-const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
 const CURSORS: [CursorMode; 5] =
     [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
@@ -338,7 +337,6 @@ fn set_meas_math(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<
         "aux_out" => m.aux_out = p_enum(v, &AUX_OUTS)?,
         "fine_t" => m.fine_t = p_bool(v)?,
         "tfine" => m.tfine = p_f32(v)?.clamp(0.1, 1.0),
-        "h_expand" => m.h_expand = p_enum(v, &HEXPANDS)?,
         "math" => m.math = p_enum(v, &MATH_OPS)?,
         "math_a" => m.math_a = p_idx(v, crate::math::MATH_SOURCES)?,
         "math_b" => m.math_b = p_idx(v, crate::math::MATH_SOURCES)?,
@@ -422,7 +420,6 @@ fn set_zoom_views(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     let ntime = tscales().len();
     match k {
         "zoom" => m.zoom = p_bool(v)?,
-        "auto_roll" => m.auto_roll = p_bool(v)?,
         "zoom_tdiv" => m.zscale = tdiv_index(v)?,
         "zscale" => m.zscale = legacy_tscale(v, ntime)?,
         "zdelay" => m.zdelay = p_f32(v)?,
