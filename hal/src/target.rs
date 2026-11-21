@@ -5,8 +5,9 @@
 //! OOS lives on the card, what an update package is for, which models belong to it and what they can do.
 //!
 //! An image is built for one board family, so the choice is made when OOS is built (`ACTIVE`): `OOS_BOARD=<name>`,
-//! `dho` by default, sets `cfg(oos_board = "<name>")` for every crate (build.rs, ADR 0067). The scripts in the image
-//! and the build read the same values from `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
+//! `dho` by default, sets `cfg(oos_board = "<name>")` for oos-hal and oos-ui (build.rs, ADR 0067); oos-fpgad follows
+//! through `if_board!`. The scripts in the image and the build read the same values from
+//! `rootfs/board/<name>/etc/oos-board`; a test keeps the two equal.
 
 use crate::model::{Caps, Limits};
 
@@ -100,6 +101,17 @@ pub struct Target {
 #[cfg(oos_board = "dho")]
 pub const ACTIVE: Target = crate::dho::target::DHO;
 
+/// `if_board! { <name>: items }` keeps the items only in a build for the family `<name>`, chosen with `ACTIVE`. For
+/// a crate that takes the choice from oos-hal instead of a build script of its own: oos-fpgad picks its board module
+/// with it. A build script would also change Cargo's hash of that crate and with it the layout of the program for
+/// the scope, so the comparison of the programs (tools/scope-binaries.sh) could no longer find them equal.
+#[cfg(oos_board = "dho")]
+#[macro_export]
+macro_rules! if_board {
+    (dho: $($item:item)*) => { $($item)* };
+    ($other:ident: $($item:item)*) => {};
+}
+
 /// Every board family in the tree, `ACTIVE` among them (ADR 0067). `hal/tests/board_families.rs` keeps this list equal
 /// to the folders of `rootfs/board/`, and the tests below compare each family's `etc/oos-board` with its `Target`.
 pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
@@ -135,6 +147,21 @@ mod tests {
     fn active_is_the_family_oos_board_names() {
         let named = option_env!("OOS_BOARD").filter(|v| !v.is_empty()).unwrap_or("dho");
         assert_eq!(ACTIVE.name, named);
+    }
+
+    // `if_board!` leaves out the items of another family: this one would not compile.
+    crate::if_board! { nofamily:
+        compile_error!("if_board! kept the items of another family");
+    }
+
+    /// `if_board!` keeps the items of the active family.
+    #[cfg(oos_board = "dho")]
+    #[test]
+    fn if_board_keeps_the_active_family() {
+        crate::if_board! { dho:
+            const KEPT: &str = "dho";
+        }
+        assert_eq!(KEPT, ACTIVE.name);
     }
 
     /// The scripts of the image and the code must agree on where things are on the card, for every family.

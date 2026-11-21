@@ -73,12 +73,16 @@ maintainer answered these questions in the session of 2026-11-19; this record wr
 - The MHO900/MHO98, or any other family, can start as a pull request with an empty `Target`, a `Board` that returns
   the demo, and its row in porting.md marked "in development". The check names what is still missing.
 - The parts that exist today are DHO only. The first port, or a refactoring before it, brings:
-  - a build switch that picks `target::ACTIVE` and `board::Active` (today they are constants);
+  - a build switch that picks `target::ACTIVE` and `board::Active`. It exists: `OOS_BOARD=<name>`, `dho` when it is
+    not set, gives `oos-hal` and `oos-ui` `cfg(oos_board = "<name>")` (`hal/board_cfg.rs`, from their build scripts),
+    and a name without a folder in `rootfs/board/` stops the build, naming the folders there. `target::ACTIVE`,
+    `target::DEPTHS`, `board::Active` and `board()` have one line per family under its `cfg`; `oos-fpgad` takes the
+    choice from `oos-hal` (`oos_hal::if_board!` around its `mod` and `use ... as board` lines), because a build
+    script of its own would change the layout of its program for the scope;
   - the family argument of the host tools;
   - the split of `oos-fpgad` into a neutral part and `fpgad/src/dho/`. That split comes with `Behaviour: unchanged`,
-    proven by `tools/compare-base.sh`. It landed with #304 (no build switch in `oos-fpgad` yet, it comes with the first
-    port); since then the check asks for `fpgad/src/<name>/mod.rs` and its `mod` and `use ... as board` lines in
-    `fpgad/src/main.rs`.
+    proven by `tools/compare-base.sh`. It landed with #304; since then the check asks for `fpgad/src/<name>/mod.rs`
+    and its `mod` and `use ... as board` lines in `fpgad/src/main.rs`.
 - CI time grows with each family. ADR 0040 (CI runs what a change reaches) keeps a change in one family's module
   from building the others.
 - A unit of each family is needed at a bench before the maintainer calls it ready. Register sequences, timing, start
