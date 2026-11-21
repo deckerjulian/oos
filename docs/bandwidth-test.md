@@ -118,5 +118,5 @@ per frequency and limit two records (Run, then `:STOP;*OPC?`), the amplitude by 
 - Up to code 5 the corner lies a little below 5c MHz (0.78 to 0.95 of it), from code 6 about 1.2 times above; the
   step between code 5 and 6 is larger than one code. The noise figures above (code 15 about 93 MHz, 1.24 times)
   continue the second group.
-- Far above the corner the limits fall less steeply than one pole (code 1: -20.4 dB at 15 times its corner, where one pole gives
-  -23.8 dB), as if a small part of the signal went around the filter.
+- Far above the corner the limits fall less steeply than one pole (code 1: -20.4 dB at 15 times its corner, where
+  one pole gives -23.8 dB), as if a small part of the signal went around the filter.
