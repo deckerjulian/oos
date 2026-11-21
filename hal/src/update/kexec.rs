@@ -198,7 +198,7 @@ mod sys {
     fn memfd(name: &str, data: &[u8]) -> Result<std::fs::File, String> {
         use std::io::Write;
         use std::os::fd::FromRawFd;
-        let n = std::ffi::CString::new(name).unwrap();
+        let n = std::ffi::CString::new(name).map_err(|e| format!("memfd name: {}", e))?;
         let fd = unsafe { libc::memfd_create(n.as_ptr(), libc::MFD_CLOEXEC) };
         if fd < 0 {
             return Err(format!("memfd_create: {}", std::io::Error::last_os_error()));

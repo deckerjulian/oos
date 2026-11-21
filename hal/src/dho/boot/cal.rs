@@ -32,9 +32,10 @@ impl DdrCal {
             return None;
         }
         // u32 (+4 pad), four u64 (only the low word matters for the 12-bit fields), u32 (+4 pad)
+        let (rows, _) = p.as_chunks::<8>();
         let mut taps = [0u32; 6];
-        for (k, t) in taps.iter_mut().enumerate() {
-            *t = u32::from_le_bytes(p[8 * k..8 * k + 4].try_into().unwrap());
+        for (t, r) in taps.iter_mut().zip(rows) {
+            *t = u32::from_le_bytes([r[0], r[1], r[2], r[3]]);
         }
         Some(DdrCal { taps })
     }
