@@ -13,7 +13,7 @@ hardware:** an RTL8188EU stick with `rtl8xxxu`, the joining pages of oos-ui with
 
 | | |
 |---|---|
-| Sticks | RTL8851BU with `rtw89` (TP-Link Archer TX10UB Nano, USB id 3625:010b, and the other ids of `rtw89_8851bu`); RTL8188EU with `rtl8xxxu` (USB id 0bda:8179 and the other ids of `rtl8xxxu` that need `rtl8188eufw.bin`) |
+| Sticks | RTL8851BU with `rtw89` (TP-Link Archer TX10UB Nano, USB id 3625:010b, and the other ids of `rtw89_8851bu`); RTL8188EU with `rtl8xxxu` (USB id 0bda:8179 and the other ids of `rtl8xxxu` that need `rtl8188eufw.bin`); on the MHO900 image also the RTL8821CU with `rtw88` (USB id 0bda:c820, the stick shipped with the MHO900, and the other ids of `rtw88_8821cu`; not yet verified on hardware) |
 | Band | what the stick has: 2.4 and 5 GHz for the RTL8851BU, 2.4 GHz for the RTL8188EU |
 | Networks | open, WPA and WPA2 personal, WPA2/WPA3 mixed, hidden names |
 | Not supported | WPA3 only, enterprise (802.1X), WEP. The list says so, a join is refused |
@@ -52,7 +52,8 @@ when the network runs over the stick. With both, Ethernet stays the default rout
 |---|---|---|
 | kernel | `cfg80211`, `mac80211`, `rtl8xxxu`, `libarc4` modules | already in the base kernel, loaded by `oos-wlan` |
 | kernel | `rtw89_core`, `rtw89_usb`, `rtw89_8851b`, `rtw89_8851bu` | `kernel/modules/rtw89/` with `rtw89-linux-6.12.patch`, in `updates/` |
-| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin`, `lib/firmware/rtw89/rtw8851b_fw.bin` | from linux-firmware, unchanged, with its licence beside it |
+| kernel | `rtw88_core`, `rtw88_usb`, `rtw88_8821c`, `rtw88_8821cu` | the base kernel's (`CONFIG_RTW88_8821CU`); in the MHO900 image only (`rootfs/board/mho/etc/oos-board`) |
+| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin`, `lib/firmware/rtw89/rtw8851b_fw.bin`, `lib/firmware/rtw88/rtw8821c_fw.bin` (Bluetooth: `lib/firmware/rtl_bt/rtl8821c_fw.bin`, `rtl8821c_config.bin`) | from linux-firmware, unchanged, with its licence beside it |
 | `/bin/wpa_supplicant`, `/bin/wpa_cli` | `rootfs/build-wlan-tools.sh`, into `rootfs/out/` | version 2.11, static, internal crypto, no EAP, no SAE, no P2P |
 | `/bin/oos-wlan` | started by `rcS` (5c) | driver, wpa_supplicant, DHCP, section 4 |
 | `oos_hal::wlan` | `hal/src/wlan.rs` | control socket, parsers, key derivation |
@@ -64,7 +65,7 @@ Waits for `end` or `abort` in the start-up status (at most 60 s), so nothing of 
 Then every 2 s:
 
 1. A vendor-specific USB interface there and no driver: load the modules. `rtw89` when the interface's id is one of
-   its aliases (`modules.alias`), else `rtl8xxxu`. A scope without a stick never loads them.
+   its aliases (`modules.alias`), then `rtw88` (RTL8821CU) the same way where the image has it, else `rtl8xxxu`. A scope without a stick never loads them.
 2. `wlan0` there: wpa_supplicant runs, started again if it died.
 3. Joined a network: `udhcpc` runs in the background and renews the lease. Moving between access points of one network
    keeps the address; a lost link or another network drops it.
