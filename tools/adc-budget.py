@@ -36,11 +36,9 @@ def floats(text):
 
 
 def record(link, timeout=10.0):
-    """One new record: Single, and `*OPC?` returns when it is in place (docs/scpi.md, operation completion)."""
-    try:
-        return link.query(":SINGle;*OPC?", timeout=timeout).strip() == "1"
-    except oosclient.LinkError:
-        return False
+    """One new record: Single, and `*OPC?` returns when it is in place (docs/scpi.md, operation completion). A timeout
+    raises: the late `1` would stay in the stream and shift every reply after it, so the run cannot go on."""
+    return link.query(":SINGle;*OPC?", timeout=timeout).strip() == "1"
 
 
 def main():

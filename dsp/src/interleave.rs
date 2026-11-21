@@ -225,8 +225,9 @@ mod tests {
         // the fundamental at fs / 16 = 78.125 MHz: every one of 8 cores sees it at its own Nyquist frequency
         assert!(budget(&record(78.125e6, &same, 1.0e6, 1e-3), 0.8e-9, 8, &[]).is_none());
         // a tone at fs - f aliases onto the fundamental: its level is not known, and the fundamental stays
-        let b = budget(&record(10.17e6, &same, 1.0e6, 1e-3), 0.8e-9, 4, &[1.25e9 - 10.17e6]).unwrap();
-        assert!(b.extra[0].1.is_nan() && b.sinad_db > 40.0, "{:?}", b);
+        let image = 1.25e9 - 10.17e6;
+        let b = budget(&record(10.17e6, &same, image, 1e-3), 0.8e-9, 4, &[image]).unwrap();
+        assert!(b.extra[0].1.is_nan() && b.sinad_db > 40.0 && b.amp > 0.99, "{:?}", b);
         assert!(budget(&[0.0; 100], 0.8e-9, 8, &[]).is_none());
         // noise alone, and a sine under noise twice its power
         let none = vec![Core { offset: 0.0, gain: 0.0, skew: 0.0 }; 8];
