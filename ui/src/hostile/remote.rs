@@ -82,7 +82,7 @@ fn hostile_program_messages() {
 fn session() -> (Scpi, Ui, Canvas, Scratch) {
     let (scpi, mut ui, cv) = scpi_session();
     let dir = Scratch::new("hostile-scpi");
-    ui.store_dir = dir.to_path_buf();
+    ui.files.dir = dir.to_path_buf();
     for _ in 0..3 {
         ui.step(0.05);
     }

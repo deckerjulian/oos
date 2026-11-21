@@ -167,10 +167,10 @@ fn main() {
     if let Some(script) = arg(&args, "--script") {
         // host test runs store next to the script (build.sh: target/test-shots)
         if let Some(d) = std::path::Path::new(&script).parent().filter(|d| !d.as_os_str().is_empty()) {
-            ui.store_dir = d.to_path_buf();
+            ui.files.dir = d.to_path_buf();
         }
         if let Some(d) = arg(&args, "--store-dir") {
-            ui.store_dir = d.into();
+            ui.files.dir = d.into();
         }
         // another screen than the panel (host only: the device shows the panel it has)
         if let Some(s) = arg(&args, "--size") {
@@ -198,7 +198,7 @@ fn main() {
         return;
     }
     if let Some(d) = arg(&args, "--store-dir") {
-        ui.store_dir = d.into();
+        ui.files.dir = d.into();
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);

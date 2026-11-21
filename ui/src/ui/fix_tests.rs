@@ -170,7 +170,7 @@ fn a_docked_measurement_card_reflows_the_plot_instead_of_covering_it() {
     }
     // Statistics respects the Dock choice of the Measure menu
     let mut u = fresh();
-    u.stats_on = true;
+    u.results.on = true;
     u.m.strip_dock = StripDock::Under;
     let before = u.grid;
     u.adjust(Item::StripDock, 1);

@@ -856,11 +856,11 @@ impl Ui {
     }
 
     pub(crate) fn stats_shown(&self) -> bool {
-        self.stats_on
+        self.results.on
     }
 
     pub(crate) fn set_stats_shown(&mut self, on: bool) {
-        self.stats_on = on;
+        self.results.on = on;
     }
 
     /// `:MEASure:STATistic:RESet`: the history, not the rows.
@@ -1027,7 +1027,7 @@ impl Ui {
 
     /// File of a mask in the slot of the Storage page, beside the setups.
     fn mask_path(&self) -> std::path::PathBuf {
-        self.setup_path().with_file_name(format!("mask{}.txt", self.store_slot))
+        self.setup_path().with_file_name(format!("mask{}.txt", self.files.slot))
     }
 
     pub(super) fn mask_save(&mut self) {

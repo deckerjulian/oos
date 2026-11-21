@@ -60,7 +60,7 @@ fn shotc(u: &mut Ui, name: &str, crops: &[(i32, i32, i32, i32)]) {
 
 fn sim_eye(l: Layout, place: EyePlace) -> Ui {
     let mut u = fresh(l);
-    u.store_dir = std::env::temp_dir().join("oos-batch5-eye");
+    u.files.dir = std::env::temp_dir().join("oos-batch5-eye");
     assert!(u.sim_preset_set("PCIe 3.0"));
     u.sim_activate(Item::SimPlay);
     u.wait_sim_generation();

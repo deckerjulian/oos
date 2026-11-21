@@ -206,7 +206,7 @@ struct Rig {
 impl Rig {
     fn new(store: &std::path::Path) -> Rig {
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.store_dir = store.to_path_buf();
+        ui.files.dir = store.to_path_buf();
         // What grows to a bound by design, at its bound before the first cycle. The receipts of finished operations:
         // a Single adds one, up to 128 (`Ui::scpi_finish_operation`), one per cycle here.
         ui.scpi_receipts_fill();
@@ -273,7 +273,7 @@ impl Rig {
         let records = self.ui.counts.records;
         CYCLE.lines().filter(|line| !line.is_empty() && !line.starts_with('#')).for_each(|line| self.line(line));
         assert!(self.ui.counts.records > records, "the cycle acquired nothing");
-        let stored: Vec<_> = std::fs::read_dir(&self.ui.store_dir).expect("storage folder").flatten().collect();
+        let stored: Vec<_> = std::fs::read_dir(&self.ui.files.dir).expect("storage folder").flatten().collect();
         assert_eq!(stored.len(), 3, "a set-up, a CSV and a PNG: {:?}", stored);
         for file in stored {
             std::fs::remove_file(file.path()).expect("remove a stored file");

@@ -224,7 +224,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
         ("s-stats", |u| {
             u.m.ch[1].on = true;
             u.m.meas.push((Meas::Freq, WaveId::Ch(1)));
-            u.stats_on = true;
+            u.results.on = true;
         }),
         ("s-osk", |u| u.activate(Item::ChLabel(0))),
         ("s-startup", |u| {

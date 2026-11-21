@@ -83,7 +83,7 @@ fn scpi_validation_fixture() {
     assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
     let mut ui = crate::ui::testkit::demo_ui();
     ui.set_offline(true);
-    ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR")
+    ui.files.dir = std::env::var_os("OOS_VALIDATION_STORE_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
     let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
@@ -108,7 +108,7 @@ fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
     let mut h = Web::open(0);
     let mut ui = crate::ui::testkit::demo_ui();
     let store = crate::ui::testkit::Scratch::new("http-no-write");
-    ui.store_dir = store.clone();
+    ui.files.dir = store.clone();
     let cv = Canvas::new(crate::ui::W, crate::ui::H);
     let mut scpi = crate::scpi::Scpi::open(0);
     let post = |path: &str, body: &[u8]| {

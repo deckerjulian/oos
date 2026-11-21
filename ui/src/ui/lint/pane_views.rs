@@ -42,7 +42,7 @@ fn a_formula_is_a_math_channel() {
 fn the_logger_writes_rows_at_its_interval() {
     let dir = crate::ui::testkit::Scratch::new("log");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.m.meas = vec![];
     u.m.meas2 = vec![];
     u.adjust(Item::LogOn, 1);
@@ -88,8 +88,8 @@ fn the_trend_pane_follows_a_measurement() {
     for _ in 0..40 {
         u.step(0.04);
     }
-    assert_eq!(u.trend.len(), 2);
-    assert!(u.trend[0].pts.len() > 5);
+    assert_eq!(u.pn.trend.len(), 2);
+    assert!(u.pn.trend[0].pts.len() > 5);
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // the first two of the list side by side; a tap moves a chart on
@@ -104,7 +104,7 @@ fn the_trend_pane_follows_a_measurement() {
     u.step(0.04);
     u.step(0.04);
     u.render(&mut cv);
-    assert_eq!(u.trend.len(), 1);
+    assert_eq!(u.pn.trend.len(), 1);
     u.m.meas.clear();
     u.render(&mut cv);
 }

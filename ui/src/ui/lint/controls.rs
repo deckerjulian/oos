@@ -32,7 +32,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     assert!(u.strip_rows() >= 3);
     assert!(u.grid.h >= 160);
     // the card of the statistics stays on the screen
-    u.stats_on = true;
+    u.results.on = true;
     let (_, body) = u.results_rects().unwrap();
     assert!(body.y + body.h <= PANEL_H, "{:?}", body);
 }
@@ -152,7 +152,7 @@ fn ten_references() {
 fn a_mask_comes_back_from_its_file() {
     let dir = crate::ui::testkit::Scratch::new("mask");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.activate(Item::MaskCreate);
     let a = u.mask_sw.reference.clone().unwrap();
     u.activate(Item::MaskSave);
@@ -270,7 +270,7 @@ fn decoder_results_are_cached_per_record() {
 fn event_table_scrolls_and_goes_to_an_event() {
     let dir = crate::ui::testkit::Scratch::new("events");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.m.ch[2].on = true;
     u.m.dec_on = true;
     u.m.dec_src = 2;
@@ -421,7 +421,7 @@ fn random_input_on(scr: Screen) {
         MenuId::Storage,
         MenuId::Bode,
     ];
-    u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
+    u.files.dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
     for i in 0..3_000 {
         if i % 40 == 0 {
             u.open_menu(pages[next() as usize % pages.len()]);
@@ -442,7 +442,7 @@ fn random_input_on(scr: Screen) {
             u.render(&mut cv);
         }
     }
-    let _ = std::fs::remove_dir_all(&u.store_dir);
+    let _ = std::fs::remove_dir_all(&u.files.dir);
 }
 
 #[test]

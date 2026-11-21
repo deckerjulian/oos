@@ -115,7 +115,7 @@ fn load_and_import_csv_bin_and_wfm() {
     let dir = crate::ui::testkit::Scratch::new("ref");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    ui.store_dir = dir.clone();
+    ui.files.dir = dir.clone();
 
     let csv = dir.join("lane.csv");
     std::fs::write(&csv, "Time (s),Volts\n0,0.1\n1e-9,0.4\n2e-9,-0.2\n").unwrap();

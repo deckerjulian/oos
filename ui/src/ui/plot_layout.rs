@@ -59,7 +59,7 @@ impl ZoomBox {
 impl Ui {
     /// Measurement results in a panel on the right instead of the strip under the grid.
     pub(super) fn results_panel(&self) -> bool {
-        self.stats_on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
+        self.results.on && !(self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty())
     }
 
     /// Channels with measurements, in the order of their first measurement (one strip row each).

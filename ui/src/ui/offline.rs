@@ -309,7 +309,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut live = ui();
-        live.store_dir = dir.clone();
+        live.files.dir = dir.clone();
         let scale = live.m.tscale;
         let dt = 5e-9;
         let n = 400;
@@ -334,7 +334,7 @@ mod tests {
         assert!(play.refs[play.m.sim_slot].is_some());
 
         let mut u = ui();
-        u.store_dir = dir.clone();
+        u.files.dir = dir.clone();
         let held = (u.m.tscale, u.m.tfine, u.m.delay);
         u.set_offline(true);
         u.m.sim_slot = 2;

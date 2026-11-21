@@ -204,7 +204,7 @@ impl Ui {
         if let Some((_, body)) = self.results_rects() {
             let total = self.meas_rows().len();
             let fit = self.results_page_size();
-            if total > fit && !self.results_min {
+            if total > fit && !self.results.folded {
                 let (prev, next) = Self::results_page_buttons(body);
                 let pages = total.div_ceil(fit);
                 if prev.contains(x, y) || next.contains(x, y) {
@@ -366,7 +366,7 @@ impl Ui {
     }
 
     pub(super) fn draw_results_page_buttons(&self, cv: &mut Canvas, body: Rect, total: usize) {
-        if total <= self.results_page_size() || self.results_min {
+        if total <= self.results_page_size() || self.results.folded {
             return;
         }
         let (first, end) = self.results_page_range(total);
