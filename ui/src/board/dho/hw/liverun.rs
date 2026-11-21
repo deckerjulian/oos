@@ -116,9 +116,31 @@ struct Case {
     compress: bool,
     /// the switches of system.conf on for this case (all others off, as by default)
     switches: &'static [Switch],
+    /// the loop waits for the start-up first, whose status file has these lines (`StartUp`), as `spawn` does on the
+    /// scope; None: it starts at once
+    start_up: Option<StartUp>,
     passes: u32,
     script: &'static [(u32, Act)],
 }
+
+/// The lines of a start-up's status file (`oos_hal::bootstatus`): the virtual microseconds at which the start-up
+/// writes each, its state, stage and detail.
+type StartUp = &'static [(u64, &'static str, &'static str, &'static str)];
+
+/// A start-up that ends after 1.43 s: two stages, then `end`.
+const START_UP_ENDS: StartUp = &[
+    (0, "run", "FPGA", "loading"),
+    (700_000, "ok", "FPGA", ""),
+    (750_000, "run", "Acquisition", "cold boot"),
+    (1_430_000, "end", "", ""),
+];
+
+/// A start-up that stops after 0.45 s: its first stage fails, then `abort`.
+const START_UP_ABORTS: StartUp = &[
+    (0, "run", "FPGA", "loading"),
+    (400_000, "fail", "FPGA", "not configured"),
+    (450_000, "abort", "", "FPGA: not configured"),
+];
 
 /// What a case has unless it says otherwise.
 const BASE: Case = Case {
@@ -131,6 +153,7 @@ const BASE: Case = Case {
     cal: false,
     compress: false,
     switches: &[],
+    start_up: None,
     passes: 30,
     script: &[],
 };
@@ -163,6 +186,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 30,
         script: &[],
     },
@@ -176,6 +200,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 30,
         script: &[],
     },
@@ -189,6 +214,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 30,
         script: &[],
     },
@@ -202,6 +228,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 20,
         script: &[],
     },
@@ -215,6 +242,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 6,
         script: &[],
     },
@@ -228,6 +256,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 8,
         script: &[(3, Act::Set(|m| tdiv(m, 2e-6)))],
     },
@@ -241,6 +270,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 20,
         script: &[],
     },
@@ -254,6 +284,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 30,
         script: &[(12, Act::Hold)],
     },
@@ -267,6 +298,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 40,
         script: &[],
     },
@@ -280,6 +312,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 40,
         script: &[],
     },
@@ -293,6 +326,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -306,6 +340,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: SCAN_PASSES,
         script: &[(SCAN_PASSES / 2, Act::Rearm)],
     },
@@ -327,6 +362,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 40,
         script: &[],
     },
@@ -340,6 +376,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: SCAN_PASSES,
         script: &[],
     },
@@ -353,6 +390,7 @@ const CASES: &[Case] = &[
         cal: false,
         compress: false,
         switches: &[],
+        start_up: None,
         passes: 60,
         script: &[(1, Act::SegRun), (40, Act::SegShow(7))],
     },
@@ -542,6 +580,19 @@ const CASES: &[Case] = &[
         ],
         ..BASE
     },
+    Case {
+        name: "start-up-waited-for-then-auto-ch1-1us",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        start_up: Some(START_UP_ENDS),
+        passes: 10,
+        ..BASE
+    },
+    Case {
+        name: "start-up-aborted-nothing-touched",
+        model: |m| (ch(m, &[0]), tdiv(m, 1e-6)).0,
+        start_up: Some(START_UP_ABORTS),
+        ..BASE
+    },
 ];
 
 /// Passes of the mask and zone cases: three requests of ten passes each, the last one stalled twice and dropped.
@@ -616,6 +667,30 @@ fn access(line: &str) -> Option<(bool, u32, u32)> {
 /// An arm in the trace: the write of 0x400c that sets record-seq mode (bits 29 and 25) without play (bit 30).
 fn is_arm(line: &str) -> bool {
     access(line).is_some_and(|(w, off, v)| w && off == 0x400c && v & 0x6200_0000 == 0x2200_0000)
+}
+
+/// The checks of the wait for the start-up (`Case::start_up`), whose last line is its `end` or `abort`: the status
+/// file read at the start and every 100 ms of the virtual clock after it, up to the first read that finds that line;
+/// nothing of the unit touched before that read; after an `abort` nothing at all, no frame, and the status line says
+/// why. True when the start-up stopped, so the loop did not run. Break it catches: a wait that does not wait, polls at
+/// another period or goes on after the end, the FPGA touched before the end or after an abort.
+fn start_up_checks(case: &Case, trace: &str, frames: &[Frame], g: &Shared, reads: &[u64]) -> bool {
+    let Some(lines) = case.start_up else {
+        assert!(reads.is_empty(), "{}: the start-up read without one", case.name);
+        return false;
+    };
+    let &(end, state, _, detail) = lines.last().expect("the lines of a start-up");
+    let want: Vec<u64> = (0..=end.div_ceil(100_000)).map(|k| k * 100_000).collect();
+    assert_eq!(reads, want, "{}: the reads of the start-up's status file", case.name);
+    if state == "abort" {
+        assert!(trace.is_empty() && frames.is_empty(), "{}: the unit touched after an abort: {}", case.name, trace);
+        assert_eq!(g.status, format!("acquisition hardware not started: {}", detail), "{}: the status", case.name);
+        return true;
+    }
+    let first =
+        trace.lines().next().and_then(|l| l.split("us: ").nth(1)?.split([',', ' ']).next()?.parse::<u64>().ok());
+    assert!(first.is_some_and(|us| us >= want[want.len() - 1]), "{}: the unit touched at {:?} us", case.name, first);
+    false
 }
 
 /// The checks of arming ahead (`Switch::Prearm`), on the unit's trace pass by pass: every pass that reads a batch
@@ -1096,8 +1171,8 @@ fn view_of(m: &Model) -> View {
 }
 
 /// Runs `case` and returns the unit's trace, the frames delivered, the channels of the settings, what the loop left
-/// in the shared state and what the screen's side saw after each pass.
-fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
+/// in the shared state, what the screen's side saw after each pass and the virtual times of the start-up's reads.
+fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>, Vec<u64>) {
     let mut m = Model::default();
     (case.model)(&mut m);
     // the switches of this thread, put back when the case ends (a failing one too)
@@ -1120,20 +1195,33 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
         auto_fs: None,
         view: view_of(&m),
     };
-    let (u, bar, c2h, clock) = unit(scene);
+    let (u, bar, c2h, mut clock) = unit(scene);
     let sim = u.clone();
     // what the screen's side saw after each pass
     let mut seen = Vec::new();
     // with the calibration the front ends are programmed too, through a stub that answers them
     let afe = case.cal.then_some(oos_hal::dho::boot::sim::AfeStub { writes: 0, reads: 0 });
     let port = SimPort(Some(u.clone()));
-    let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let mask = want.mask;
     {
         let mut g = lock(&out);
         g.want = Some(want);
         g.slow = super::slow_mode(&m);
+    }
+    // the start-up first, as `spawn` waits for it: at each read its status file as far as the start-up has written it
+    let mut reads = Vec::new();
+    let mut file = |lines: StartUp| -> String {
+        let now = sim.borrow().now_us() as u64;
+        reads.push(now);
+        let written = lines.iter().take_while(|l| l.0 <= now);
+        written
+            .map(|&(us, state, stage, detail)| oos_hal::bootstatus::line(us as f64 * 1e-6, state, stage, detail))
+            .collect()
+    };
+    if case.start_up.is_some_and(|lines| !super::wait_start_up(&mut clock, || file(lines), &out)) {
+        // it stopped: the loop does not start
+        return (u.borrow().trace_text(), Vec::new(), mask, out, seen, reads);
     }
     let (mut pass, mut rearm_due) = (0, false);
     // roll and scan replace the picture in the queue: every one published is taken here, as the screen takes it
@@ -1158,6 +1246,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     // the drawing workers are another test's when its screen switched them on: this loop keeps out of them (their
     // hand-over is run on a unit, docs/board-on-a-host.md 7)
     let _out = crate::drawpipe::keep_out();
+    let hw = Hw { bar, c2h, afe, lines: oos_hal::dho::lines::Recorded::default(), clock, port };
     super::run(hw, super::settings(&m, false).mask, case.cal, cal_dir.clone(), out.clone(), || {
         pass += 1;
         let mut g = lock(&shared);
@@ -1229,7 +1318,7 @@ fn run_case(case: &Case) -> (String, Vec<Frame>, u32, HwShared, Vec<Seen>) {
     }
     let frames: Vec<Frame> = slow_frames.into_iter().chain(queued).chain(replays).collect();
     let trace = u.borrow().trace_text();
-    (trace, frames, mask, out, seen)
+    (trace, frames, mask, out, seen, reads)
 }
 
 /// The line of a segmented recording: segments asked for, recorded, read back, the time of each and the one shown.
@@ -1257,10 +1346,13 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
         std::fs::create_dir_all(d).expect("OOS_LIVE_OUT is a folder");
     }
     for case in CASES {
-        let (trace, frames, mask, out, seen) = run_case(case);
+        let (trace, frames, mask, out, seen, reads) = run_case(case);
         let g = lock(&out);
         if let Some(d) = &dir {
             let mut text = format!("# {}\n", case.name);
+            if case.start_up.is_some() {
+                text += &format!("start-up read at us {:?}, status: {}\n", reads, g.status);
+            }
             text += &trace;
             for f in &frames {
                 text += &frame_line(f);
@@ -1270,6 +1362,9 @@ fn the_acquisition_loop_runs_the_matrix_on_the_simulated_unit() {
                 text += &seg_line(&g);
             }
             std::fs::write(d.join(format!("{}.txt", case.name)), text).expect("write the case's file");
+        }
+        if start_up_checks(case, &trace, &frames, &g, &reads) {
+            continue;
         }
         generator_checks(case, &seen);
         counter_checks(case, &trace, &seen);
