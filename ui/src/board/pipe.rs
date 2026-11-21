@@ -108,7 +108,36 @@ pub fn register(get: fn() -> Option<&'static dyn Workers>) {
     let _ = WORKERS.set(get);
 }
 
-/// The workers while the source is the hardware, else None.
+/// The workers while the source is the hardware, else None. In a test, the ones `stand_in` gave the calling thread
+/// first.
 pub fn workers() -> Option<&'static dyn Workers> {
+    #[cfg(test)]
+    if let Some(w) = STAND_IN.with(|s| s.get()) {
+        return Some(w);
+    }
     WORKERS.get().and_then(|get| get())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// tests: the workers of the acquisition loop run on this thread (`stand_in`)
+    static STAND_IN: std::cell::Cell<Option<&'static dyn Workers>> = const { std::cell::Cell::new(None) };
+}
+
+/// Gives the acquisition loop run on the calling thread `w` as its workers (tests: the live run's stand-in, on its one
+/// thread) while the guard lives. The guard puts back what was before when it is dropped, a panic included.
+#[cfg(test)]
+pub fn stand_in(w: &'static dyn Workers) -> StandIn {
+    StandIn(STAND_IN.with(|s| s.replace(Some(w))))
+}
+
+/// The guard of `stand_in`: the thread's workers before it.
+#[cfg(test)]
+pub struct StandIn(Option<&'static dyn Workers>);
+
+#[cfg(test)]
+impl Drop for StandIn {
+    fn drop(&mut self) {
+        STAND_IN.with(|s| s.set(self.0));
+    }
 }
