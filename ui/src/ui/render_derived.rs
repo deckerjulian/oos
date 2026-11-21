@@ -167,7 +167,7 @@ impl Ui {
         if !self.shows(self.m.mask_src) {
             return;
         }
-        let a = self.area;
+        let a = self.plot.area;
         let ch = &self.m.ch[self.m.mask_src];
         let ppd = a.h as f32 / VDIV;
         let cy = a.y as f32 + a.h as f32 / 2.0;
@@ -215,7 +215,7 @@ impl Ui {
             (fmt_count(fail as f64), if fail > 0 { RED } else { TEXT }),
         ];
         let w: i32 = parts.iter().map(|(s, _)| f.sb.width(s)).sum::<i32>() + 24;
-        let a = self.area;
+        let a = self.plot.area;
         let r = Rect::new(a.x + 8, a.y + 24, w, 24);
         let col = if fail > 0 { RED } else { GREEN };
         cv.round(r, 12, mix(BAR, col, 110), 255);
@@ -282,7 +282,7 @@ impl Ui {
     pub(super) fn draw_hist(&self, cv: &mut Canvas) {
         let Some((bins, mean, sd)) = self.hist_bins() else { return };
         let Some(c) = self.hist_src().filter(|&c| self.shows(c)) else { return };
-        let a = self.area;
+        let a = self.plot.area;
         let col = CH_COLORS[c];
         let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f64;
         let depth = (a.w / 5).max(40) as f64;
@@ -405,8 +405,8 @@ impl Ui {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
                 let r = Rect::new(
-                    self.area.x + self.area.w - 12 - f.s.width(label) - 16,
-                    self.area.y + 22 + 26 * row as i32,
+                    self.plot.area.x + self.plot.area.w - 12 - f.s.width(label) - 16,
+                    self.plot.area.y + 22 + 26 * row as i32,
                     f.s.width(label) + 16,
                     20,
                 );
@@ -422,13 +422,13 @@ impl Ui {
         let col = MATH_COLORS[k % MATH_COLORS.len()];
         let f = self.fonts();
         // the last stacked lane keeps its time labels clear: the trace is clipped above them
-        let mut lane = self.area;
+        let mut lane = self.plot.area;
         if self.stacked() && self.plot.cur_win + 1 == self.plot.wins.len() {
             lane.h = (lane.h - (f.s.size + 8)).max(f.s.size);
         }
         cv.set_clip(lane);
-        let ppy = self.area.h as f32 / VDIV;
-        let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
+        let ppy = self.plot.area.h as f32 / VDIV;
+        let cy = self.plot.area.y as f32 + self.plot.area.h as f32 / 2.0;
 
         let label = if c.op == MathOp::Fft {
             let Some(w) = self.math_record(k).ok().flatten() else {
@@ -447,15 +447,15 @@ impl Ui {
             let span = df * (db.len() - 1) as f64;
             let n = db.len();
             let mut prev: Option<(i32, i32)> = None;
-            for px in 0..self.area.w {
+            for px in 0..self.plot.area.w {
                 // peak of the bins that fall into this pixel column
-                let k0 = (px as usize * (n - 1)) / self.area.w as usize;
-                let k1 = (((px + 1) as usize * (n - 1)) / self.area.w as usize).max(k0 + 1).min(n);
+                let k0 = (px as usize * (n - 1)) / self.plot.area.w as usize;
+                let k1 = (((px + 1) as usize * (n - 1)) / self.plot.area.w as usize).max(k0 + 1).min(n);
                 let v = db[k0..k1].iter().copied().fold(f32::MIN, f32::max);
-                let (zoom, center) = self.zoom_vertical_transform(self.area);
+                let (zoom, center) = self.zoom_vertical_transform(self.plot.area);
                 let d = VDIV * 0.5 - (top - v) / dbdiv;
                 let y = (cy - (d - center) * zoom * ppy).round() as i32;
-                let x = self.area.x + px;
+                let x = self.plot.area.x + px;
                 if let Some((x0, y0)) = prev {
                     cv.line(x0, y0, x, y, col);
                 }
@@ -477,21 +477,27 @@ impl Ui {
                     Err(e) => e,
                     _ => "Computing",
                 };
-                cv.text(&f.s, self.area.x + 60, self.area.y + 40 + 18 * row, &format!("M{}: {}", k + 1, status), col);
+                cv.text(
+                    &f.s,
+                    self.plot.area.x + 60,
+                    self.plot.area.y + 40 + 18 * row,
+                    &format!("M{}: {}", k + 1, status),
+                    col,
+                );
                 return None;
             };
             let w = rec.v.as_ref();
             let sc = math_scales();
             let vpd = sc[c.scale.min(sc.len() - 1)] as f32;
             let tdiv = self.view().0 as f64;
-            let ppx = self.area.w as f64 / HDIV as f64;
+            let ppx = self.plot.area.w as f64 / HDIV as f64;
             let mut prev: Option<(i32, i32)> = None;
             let left = self.view().1 as f64 - tdiv * HDIV as f64 * 0.5;
             let right = left + tdiv * HDIV as f64;
             let at = |t: f64| ((t - rec.t0) / rec.dt).floor().clamp(-1.0, w.len() as f64) as isize;
             let begin = (at(left) - 1).clamp(0, w.len() as isize) as usize;
             let end = (at(right) + 2).clamp(0, w.len() as isize) as usize;
-            let step = ((end - begin) / (self.area.w as usize * 2)).max(1);
+            let step = ((end - begin) / (self.plot.area.w as usize * 2)).max(1);
             for i in (begin..end).step_by(step) {
                 let v = w[i];
                 if !v.is_finite() {
@@ -499,8 +505,8 @@ impl Ui {
                     continue;
                 }
                 let t = rec.t0 + i as f64 * rec.dt - self.view().1 as f64;
-                let x = (self.area.x as f64 + self.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
-                let (zoom, center) = self.zoom_vertical_transform(self.area);
+                let x = (self.plot.area.x as f64 + self.plot.area.w as f64 / 2.0 + t / tdiv * ppx).round() as i32;
+                let (zoom, center) = self.zoom_vertical_transform(self.plot.area);
                 let y = (cy - (v / vpd + c.offset - center) * zoom * ppy).clamp(-1e4, 1e4).round() as i32;
                 if let Some((x0, y0)) = prev {
                     cv.line(x0, y0, x, y, col);
@@ -524,7 +530,7 @@ impl Ui {
         match id {
             WaveId::Ch(c) => self.y_of_volts(c, v),
             WaveId::Ref(i) => {
-                let a = self.area;
+                let a = self.plot.area;
                 let Some(r) = self.refs.get(i).and_then(|x| x.as_ref()) else {
                     return a.y;
                 };
@@ -534,7 +540,7 @@ impl Ui {
     }
 
     pub(super) fn x_of_time(&self, t: f32) -> i32 {
-        let a = self.area;
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ppd = a.w as f32 / HDIV;
         (a.x as f32 + a.w as f32 / 2.0 + (t - delay) / tdiv * ppd).round() as i32
@@ -588,7 +594,7 @@ impl Ui {
             return;
         }
         let (mut band, mut lane) = (0, 0);
-        let bottom = self.area.y + self.area.h - 46;
+        let bottom = self.plot.area.y + self.plot.area.h - 46;
         for k in 0..DECODERS {
             if !self.m.dec_is_on(k) {
                 continue;
@@ -618,7 +624,7 @@ impl Ui {
     fn draw_decoder(&self, cv: &mut Canvas, m: &Model, k: usize, y: i32, row: Option<Rect>) {
         use oos_dsp::decode::Kind;
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let col = if m.dec_on_la() {
             la::line_color(m.dec_la[0].unwrap_or(0))
         } else {

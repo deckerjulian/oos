@@ -734,12 +734,9 @@ pub struct Ui {
     pub src: Source,
     pub ph: Phosphor,
     pub phz: Phosphor,
-    area: Rect,
-    /// plot rectangle (10 x 8 div) of the current layout
-    grid: Rect,
     /// the zoom window: its vertical magnification, the time base it opened on, how it was closed (plot_layout.rs)
     zoom_view: plot_layout::ZoomView,
-    /// the waveform windows in the plot, the one being drawn, the pass of the second picture (plot_layout.rs)
+    /// the plot's rectangles, its waveform windows, the one being drawn, the pass of the second picture (plot_layout.rs)
     plot: plot_layout::Plot,
     /// Full density on the panel, and whether the expand button asked for it (windows.rs)
     full: windows::Full,

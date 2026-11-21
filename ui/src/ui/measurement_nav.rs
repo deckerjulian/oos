@@ -400,7 +400,7 @@ mod tests {
         let original = ui.m.meas.clone();
         ui.relayout();
         assert!(ui.paged_strip());
-        assert!(ui.grid.h >= 300);
+        assert!(ui.plot.grid.h >= 300);
         let mut visited = HashSet::new();
         for page in 0..73usize.div_ceil(BAND_PAGE) {
             ui.meas_pages.readouts = page;
@@ -496,7 +496,7 @@ mod tests {
                 ui.m.strip_dock = dock;
                 ui.meas_pages.readouts = 0;
                 ui.relayout();
-                let (wave, eye) = (ui.grid, ui.eye_pane_rect());
+                let (wave, eye) = (ui.plot.grid, ui.eye_pane_rect());
                 let strip = ui.strip_rect().expect("73 readouts have a strip");
                 assert!(!overlaps(wave, eye), "{placement:?}/{dock:?}: wave {wave:?} eye {eye:?}");
                 assert!(!overlaps(strip, wave), "{placement:?}/{dock:?}: strip {strip:?} wave {wave:?}");

@@ -975,7 +975,7 @@ impl Ui {
         if note.is_empty() || self.view_on() || self.eye_open() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         Some(Rect::new(g.x + 8, g.y + g.h - 48, 52, 22))
     }
 

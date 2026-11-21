@@ -20,7 +20,7 @@ impl Ui {
     }
 
     pub(super) fn view_btn(&self) -> Rect {
-        Rect::new(self.area.x + self.area.w - 48, self.area.y + 6, 42, 36)
+        Rect::new(self.plot.area.x + self.plot.area.w - 48, self.plot.area.y + 6, 42, 36)
     }
 
     pub(super) fn draw_view_btn(&self, cv: &mut Canvas) {

@@ -188,7 +188,7 @@ impl Ui {
 
     /// A finger went down at x in the plot: whether it is in an edge strip where a swipe switches views.
     pub(super) fn view_edge(&self, x: i32) -> bool {
-        self.m.views >= 2 && (x < self.grid.x + EDGE || x >= self.grid.x + self.grid.w - EDGE)
+        self.m.views >= 2 && (x < self.plot.grid.x + EDGE || x >= self.plot.grid.x + self.plot.grid.w - EDGE)
     }
 
     /// The finger moved by (dx, dy) from x0 in an edge strip: Some(true) switched, Some(false) still open, None it is
@@ -200,7 +200,7 @@ impl Ui {
         if dx.abs() < SWIPE {
             return Some(false);
         }
-        let from_left = x0 < self.grid.x + EDGE;
+        let from_left = x0 < self.plot.grid.x + EDGE;
         // inwards only: from the left edge to the right shows the view before, from the right edge to the left the next
         match (from_left, dx > 0) {
             (true, true) => self.view_step(-1),
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn edge_swipes_and_buttons_switch_views() {
         let mut u = ui();
-        let g = u.grid;
+        let g = u.plot.grid;
         let y = g.y + g.h / 2;
         // off: a swipe from the right edge moves the waveform as always
         let d0 = u.m.delay;

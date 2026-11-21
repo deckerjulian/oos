@@ -229,7 +229,7 @@ impl Ui {
         let Some(sh) = self.cal_shared() else { return };
         let p = crate::wave::hw(&sh).cal_progress.clone();
         let Some((d, t, s)) = p else { return };
-        let a = self.area;
+        let a = self.plot.area;
         let f = self.fonts();
         let txt = format!(
             "Self-cal {:.0} %  {}  (inputs disconnected; Cancel in System > Self-cal)",

@@ -158,7 +158,7 @@ impl Ui {
     }
 
     pub(super) fn draw_magnetic(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let m = &self.m;
         let bh = m.mag_plot == MagPlot::BH && m.mag_ae > 0.0 && m.mag_le > 0.0;
         let (n, ae, le) = (m.mag_n.max(1.0), m.mag_ae, m.mag_le);

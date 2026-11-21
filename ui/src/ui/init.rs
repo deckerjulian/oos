@@ -31,8 +31,6 @@ impl Ui {
             src,
             ph: Phosphor::new(1, 1),
             phz: Phosphor::new(1, 1),
-            area: Rect::new(0, 0, 0, 0),
-            grid: Rect::new(0, 0, 0, 0),
             zoom_view: plot_layout::ZoomView::default(),
             plot: Default::default(),
             full: Default::default(),

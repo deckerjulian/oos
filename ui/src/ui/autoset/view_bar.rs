@@ -32,7 +32,7 @@ impl Ui {
     /// The buttons of the bar at the very top of the waveform window, the views centred, the close button (None) right of
     /// them.
     pub(in crate::ui) fn auto_bar_rects(&self) -> Vec<(Rect, Option<AutoView>)> {
-        let g = self.grid;
+        let g = self.plot.grid;
         let n = AUTO_VIEWS.len() as i32;
         let w = n * AB_W + (n - 1) * AB_GAP;
         let x0 = g.x + (g.w - w) / 2;

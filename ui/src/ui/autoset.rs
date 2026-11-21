@@ -762,10 +762,10 @@ mod tests {
         assert!(!u.auto_bar_on());
         // so does a tap elsewhere
         u.auto.bar = Some(u.now);
-        u.tap(u.grid.x + 20, u.grid.y + u.grid.h - 30);
+        u.tap(u.plot.grid.x + 20, u.plot.grid.y + u.plot.grid.h - 30);
         assert!(!u.auto_bar_on());
         // inside the plot, above the band an auto set-up leaves free at the top (0.8 div), clear of the trigger mark
-        let g = u.grid;
+        let g = u.plot.grid;
         let b = u.auto_bar_rects();
         assert!(b.iter().all(|(r, _)| r.y > g.y
             && r.y + r.h < g.y + (0.8 * g.h as f32 / 8.0) as i32

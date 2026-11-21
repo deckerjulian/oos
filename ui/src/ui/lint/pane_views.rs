@@ -197,7 +197,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
     u.relayout();
     u.analyzer_update();
     u.render(&mut cv);
-    let b = u.spec_box(u.area, false);
+    let b = u.spec_box(u.plot.area, false);
     assert!(
         !overlaps(b.sort, u.view_btn())
             && !overlaps(b.list, u.view_btn())
@@ -254,7 +254,7 @@ fn panes_leave_no_empty_rows() {
     u.step(0.04);
     u.relayout();
     let few = u.pane_h();
-    let plot = u.grid.h;
+    let plot = u.plot.grid.h;
     let (fit, pitch) = Ui::results_fit(u.pane_rect(), 1);
     assert_eq!(fit, 1);
     assert!(u.pane_rect().h - 40 - pitch < 4);
@@ -262,7 +262,7 @@ fn panes_leave_no_empty_rows() {
         u.m.meas.push((k, WaveId::Ch(0)));
     }
     u.relayout();
-    assert!(u.pane_h() > few && u.grid.h < plot);
+    assert!(u.pane_h() > few && u.plot.grid.h < plot);
     let (fit, pitch) = Ui::results_fit(u.pane_rect(), 13);
     assert!(fit < 13 && u.pane_rect().h - 40 - fit as i32 * pitch < 8, "{} rows of {}", fit, pitch);
     // nothing to show: a line of text, not a black box

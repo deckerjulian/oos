@@ -90,7 +90,7 @@ impl Ui {
                 spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
             (center, span) = (self.azr.spec_stop / 2.0, self.azr.spec_stop);
         }
-        let area = if pane { self.pane_rect() } else { self.area };
+        let area = if pane { self.pane_rect() } else { self.plot.area };
         // Auto RBW: the finest the record allows (window ENBW / record time)
         let finest = spectrum::enbw(self.m.spec_win) / (v.len().max(1) as f64 * dt);
         let s = spectrum::Settings {

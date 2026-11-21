@@ -250,8 +250,13 @@ fn screen_in_order_on(scr: Screen) {
             u.step(0.04);
         }
         u.relayout();
-        assert!(u.grid.h >= 160, "{:?}: {:?}", ts, u.grid);
-        assert!(u.grid.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y, "{:?}: {:?}", ts, u.grid);
+        assert!(u.plot.grid.h >= 160, "{:?}: {:?}", ts, u.plot.grid);
+        assert!(
+            u.plot.grid.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
+            "{:?}: {:?}",
+            ts,
+            u.plot.grid
+        );
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
         // the statistics card stays in the plot (with as many items as the strip shows on one row each)
@@ -261,7 +266,7 @@ fn screen_in_order_on(scr: Screen) {
         let (head, body) = u.results_rects().unwrap();
         assert!(
             head.x >= 0
-                && body.y + body.h <= u.grid.y + u.grid.h
+                && body.y + body.h <= u.plot.grid.y + u.plot.grid.h
                 && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w,
             "{:?}",
             ts
@@ -377,11 +382,11 @@ fn the_measurement_strip_docks_on_four_sides() {
     bare.m.dvm_on = false;
     bare.m.cnt_on = false;
     bare.relayout();
-    let empty = bare.grid;
+    let empty = bare.plot.grid;
     for side in StripDock::ALL {
         bare.m.strip_dock = side;
         bare.relayout();
-        assert_eq!(bare.grid, empty, "an empty strip stays where it is on {:?}", side);
+        assert_eq!(bare.plot.grid, empty, "an empty strip stays where it is on {:?}", side);
     }
 
     let mut u = with_two_channels();
@@ -389,7 +394,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.m.cursor = CursorMode::Time;
     u.m.strip_dock = StripDock::Under;
     u.relayout();
-    let under = u.grid;
+    let under = u.plot.grid;
     assert_eq!((under.x, under.w, under.y), (0, W, PLOT_Y));
     let band = u.strip_rect().unwrap();
     assert!(!overlaps(band, under), "under {:?}", band);
@@ -397,28 +402,28 @@ fn the_measurement_strip_docks_on_four_sides() {
 
     u.m.strip_dock = StripDock::Above;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w, u.grid.h), (0, W, under.h));
-    assert_eq!(u.grid.y, PLOT_Y + u.strip_rows_h());
+    assert_eq!((u.plot.grid.x, u.plot.grid.w, u.plot.grid.h), (0, W, under.h));
+    assert_eq!(u.plot.grid.y, PLOT_Y + u.strip_rows_h());
     let band = u.strip_rect().unwrap();
-    assert!(!overlaps(band, u.grid), "above {:?}", band);
-    assert!(band.y + band.h <= u.grid.y);
+    assert!(!overlaps(band, u.plot.grid), "above {:?}", band);
+    assert!(band.y + band.h <= u.plot.grid.y);
 
     u.m.strip_dock = StripDock::Left;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
-    assert!(u.grid.h > under.h, "the plot gets the rows back");
-    assert_eq!(u.grid.y, PLOT_Y);
+    assert_eq!((u.plot.grid.x, u.plot.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
+    assert!(u.plot.grid.h > under.h, "the plot gets the rows back");
+    assert_eq!(u.plot.grid.y, PLOT_Y);
     let col = u.strip_rect().unwrap();
-    assert!(!overlaps(col, u.grid), "left {:?}", col);
-    assert_eq!(col.x + col.w, u.grid.x);
+    assert!(!overlaps(col, u.plot.grid), "left {:?}", col);
+    assert_eq!(col.x + col.w, u.plot.grid.x);
 
-    let left_h = u.grid.h;
+    let left_h = u.plot.grid.h;
     u.m.strip_dock = StripDock::Right;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w, u.grid.h, u.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
+    assert_eq!((u.plot.grid.x, u.plot.grid.w, u.plot.grid.h, u.plot.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
     let col = u.strip_rect().unwrap();
-    assert!(!overlaps(col, u.grid), "right {:?}", col);
-    assert_eq!(col.x, u.grid.x + u.grid.w);
+    assert!(!overlaps(col, u.plot.grid), "right {:?}", col);
+    assert_eq!(col.x, u.plot.grid.x + u.plot.grid.w);
 
     // a second pane stays in the plot column (Results is the pane that replaces the strip)
     u.m.pane = 4;
@@ -430,8 +435,8 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.full.on = true;
     u.m.strip_dock = StripDock::Above;
     u.relayout();
-    assert_eq!(u.grid.y, u.strip_rows_h());
-    assert!(u.strip_rect().unwrap().y < u.grid.y);
+    assert_eq!(u.plot.grid.y, u.strip_rows_h());
+    assert!(u.strip_rect().unwrap().y < u.plot.grid.y);
     u.full.on = false;
 
     // the control on the Measure page picks the side
@@ -484,7 +489,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     ] {
         u.m.strip_dock = side;
         shot(&mut u, name);
-        let g = u.grid;
+        let g = u.plot.grid;
         let s = u.strip_rect().unwrap();
         assert!(!overlaps(g, s), "{name} plot {g:?} strip {s:?}");
     }
@@ -495,7 +500,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
     shot(&mut u, "strip-left-pair.png");
     let s = u.strip_rect().unwrap();
-    assert!(!overlaps(u.grid, s));
+    assert!(!overlaps(u.plot.grid, s));
 }
 
 /// Display > HDMI = Layout: the monitor's picture leaves the panel's layout and maps as they were (the panel picture
@@ -524,10 +529,15 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
         }
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
-        let before = (u.grid, u.plot.wins.clone(), u.area, u.ph.w, u.ph.h, u.counts.frames, u.scr);
+        let before = (u.plot.grid, u.plot.wins.clone(), u.plot.area, u.ph.w, u.ph.h, u.counts.frames, u.scr);
         let mut hc = Canvas::new(1920, 1080);
         u.render_view(&mut hc);
-        assert_eq!(before, (u.grid, u.plot.wins.clone(), u.area, u.ph.w, u.ph.h, u.counts.frames, u.scr), "{}", name);
+        assert_eq!(
+            before,
+            (u.plot.grid, u.plot.wins.clone(), u.plot.area, u.ph.w, u.ph.h, u.counts.frames, u.scr),
+            "{}",
+            name
+        );
         let mut again = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut again);
         assert!(again.px == cv.px, "{}: the panel picture changed", name);

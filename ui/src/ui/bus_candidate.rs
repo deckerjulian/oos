@@ -255,10 +255,10 @@ impl Ui {
         let Some(time) = self.bus_candidate.last_hit else {
             return;
         };
-        if self.source_area(WaveId::Ch(self.m.dec_src)).is_some_and(|area| area != self.area) {
+        if self.source_area(WaveId::Ch(self.m.dec_src)).is_some_and(|area| area != self.plot.area) {
             return;
         }
-        let area = self.area;
+        let area = self.plot.area;
         let x = self.x_of_time(time as f32);
         if x < area.x || x >= area.x + area.w {
             return;

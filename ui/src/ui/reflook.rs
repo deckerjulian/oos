@@ -147,7 +147,7 @@ impl Ui {
         if !self.waves_on() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         if g.w < 200 || g.h < 80 {
             return None;
         }

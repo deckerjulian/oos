@@ -71,7 +71,7 @@ impl Ui {
             let top = if self.full_on() { 0 } else { self.frame().body.y };
             return top + 2;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
         (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row)
             .max(g.y + g.h + 4 + self.eye_below() + self.la_strip_h() + self.pane_h())
@@ -79,7 +79,7 @@ impl Ui {
 
     /// The column a side dock reserves, from the graticule down to the cards.
     pub(super) fn strip_column(&self) -> Rect {
-        let y = self.grid.y;
+        let y = self.plot.grid.y;
         let h = (self.plot_bottom() - y).max(0);
         let body = self.frame().body;
         let x = if self.m.strip_dock == StripDock::Left { body.x } else { body.right() - STRIP_SIDE };

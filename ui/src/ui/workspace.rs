@@ -84,7 +84,7 @@ mod tests {
         assert!(ui.stacked() && ui.m.zoom);
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
         assert_eq!(ui.plot.wins.len(), ui.trace_sources().len());
-        let (overview, detail) = Ui::split_zoom(ui.grid);
+        let (overview, detail) = Ui::split_zoom(ui.plot.grid);
         for &lane in &ui.plot.wins {
             assert_eq!((lane.x, lane.w), (detail.x, detail.w));
             assert!(lane.y >= detail.y && lane.y + lane.h <= detail.y + detail.h);
@@ -104,7 +104,7 @@ mod tests {
         ui.trace_mode(false);
         assert!(ui.m.zoom && !ui.stacked());
         assert_eq!((ui.m.tscale, ui.m.delay, ui.m.zscale, ui.m.zdelay), before);
-        assert_eq!(ui.plot.wins, vec![Ui::split_zoom(ui.grid).1]);
+        assert_eq!(ui.plot.wins, vec![Ui::split_zoom(ui.plot.grid).1]);
         ui.render(&mut cv);
     }
 
@@ -211,7 +211,7 @@ mod tests {
         ui.touch_ev(Phase::Up, x + 60, y);
         assert!(ui.m.zdelay < before, "detail content follows the rightward finger");
         let before = ui.m.zdelay;
-        let overview = Ui::split_zoom(ui.grid).0;
+        let overview = Ui::split_zoom(ui.plot.grid).0;
         let (x, y) = (overview.x + overview.w / 2 + 100, overview.y + 45);
         ui.touch_ev(Phase::Down, x, y);
         ui.touch_ev(Phase::Move, x + 40, y);
@@ -509,7 +509,7 @@ mod tests {
                 cv.clear(BG);
                 for index in 0..ui.plot.wins.len() {
                     ui.plot.cur_win = index;
-                    ui.area = ui.plot.wins[index];
+                    ui.plot.area = ui.plot.wins[index];
                     ui.draw_cursors(&mut cv);
                 }
                 let selected = ui.source_area(WaveId::Ref(1)).unwrap();
@@ -956,7 +956,7 @@ impl Ui {
         let width = 244;
         let height = rows.len() as i32 * 30 + 8;
         // inside the plot, so the popup never covers the bars or runs off the screen
-        let g = self.grid;
+        let g = self.plot.grid;
         let (x0, y0) = (g.x + 4, g.y.max(TOP.h));
         let rect = Rect::new(
             x.clamp(x0, (g.right() - width - 4).max(x0)),
@@ -1241,7 +1241,7 @@ impl Ui {
                     Panel::Eye
                 } else if self.results_rects().is_some_and(|(header, _)| header.contains(x, y)) {
                     Panel::Measurements
-                } else if self.grid.contains(x, y) && !self.menu_open {
+                } else if self.plot.grid.contains(x, y) && !self.menu_open {
                     Panel::Plot
                 } else {
                     return false;
@@ -1252,7 +1252,7 @@ impl Ui {
                         Some((head, body)) => Rect::new(head.x, head.y, head.w, head.h + body.h),
                         None => return false,
                     },
-                    Panel::Plot => self.grid,
+                    Panel::Plot => self.plot.grid,
                 };
                 self.workspace.gesture = Some(Gesture { panel, origin, x, y, at: self.now, moved: false, held: false });
                 panel != Panel::Plot

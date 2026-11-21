@@ -393,7 +393,7 @@ impl Ui {
             return (Rect::new(w.x, w.y + w.h - AXIS_ROW - h, w.w, h), pitch);
         }
         let (h, pitch) = self.la_fit(n);
-        let g = self.grid;
+        let g = self.plot.grid;
         (Rect::new(g.x, g.y + g.h + 2 + self.eye_below(), g.w, h - 2), pitch)
     }
 

@@ -30,7 +30,7 @@ fn measurements_keep_delay_and_phase_without_dropping_older_items() {
     // rows wrap in the strip, and the plot keeps its place
     u.relayout();
     assert!(u.strip_rows() >= 3);
-    assert!(u.grid.h >= 160);
+    assert!(u.plot.grid.h >= 160);
     // the card of the statistics stays on the screen
     u.results.on = true;
     let (_, body) = u.results_rects().unwrap();
@@ -284,7 +284,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     // running: a tap only says so
-    let (x, y) = (u.area.x + 100, u.area.y + 8 + 40 + 40);
+    let (x, y) = (u.plot.area.x + 100, u.plot.area.y + 8 + 40 + 40);
     let d0 = u.m.delay;
     u.tap(x, y);
     assert_eq!(u.m.delay, d0);
@@ -299,8 +299,8 @@ fn event_table_scrolls_and_goes_to_an_event() {
     assert!(t.starts_with("Time (s),Source,Event,Ok") && t.lines().count() == n + 1, "{}", &t[..80.min(t.len())]);
     let _ = std::fs::remove_dir_all(&dir);
     // the close button
-    let close = u.area.x + 30 + 420 - 46 + 10;
-    u.tap(close, u.area.y + 20);
+    let close = u.plot.area.x + 30 + 420 - 46 + 10;
+    u.tap(close, u.plot.area.y + 20);
     assert!(u.table.kind.is_none());
 }
 
@@ -352,11 +352,12 @@ fn second_pane_fits_with_everything_else() {
                 u.step(0.04);
             }
             u.relayout();
-            assert!(u.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.grid);
+            assert!(u.plot.grid.h >= 160, "pane {} la {}: {:?}", pane, la, u.plot.grid);
             if u.pane_h() > 0 {
                 let r = u.pane_rect();
                 assert!(
-                    r.y > u.grid.y + u.grid.h && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
+                    r.y > u.plot.grid.y + u.plot.grid.h
+                        && r.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
                     "pane {} la {}: {:?}",
                     pane,
                     la,

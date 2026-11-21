@@ -543,7 +543,7 @@ impl Ui {
                     if let Some((area, _, _)) = on_plot.filter(|_| !modal && self.touch.down) {
                         p.active = true;
                         p.area = area;
-                        p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.grid).1.y;
+                        p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.plot.grid).1.y;
                         p.p0 = (self.touch.x, self.touch.y);
                         p.p1 = (x, y);
                         p.ref_dx = (p.p1.0 - p.p0.0).abs();
@@ -631,15 +631,15 @@ impl Ui {
         if self.plot.wins.len() < 2 {
             return self.touch_in(ph, x, y);
         }
-        let keep = (self.area, self.plot.cur_win);
+        let keep = (self.plot.area, self.plot.cur_win);
         let w = if ph == Phase::Down {
             self.plot.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
         } else {
             self.touch.win.min(self.plot.wins.len() - 1)
         };
-        (self.area, self.plot.cur_win) = (self.plot.wins[w], w);
+        (self.plot.area, self.plot.cur_win) = (self.plot.wins[w], w);
         self.touch_in(ph, x, y);
-        (self.area, self.plot.cur_win) = keep;
+        (self.plot.area, self.plot.cur_win) = keep;
     }
 
     /// One finger's press, move or lift in the area of the current window.
@@ -650,7 +650,7 @@ impl Ui {
             && (self.full_btn().1.contains(x, y)
                 || (self.plot_btns_shown() && (self.zoom_btn().1.contains(x, y) || self.win_btn().1.contains(x, y))));
         let in_plot = ph == Phase::Down
-            && self.grid.contains(x, y)
+            && self.plot.grid.contains(x, y)
             && !covered
             && !on_btn
             && !(self.eye_open() && self.eye_pane_rect().contains(x, y));
@@ -760,13 +760,13 @@ impl Ui {
 
     /// What a press at (`tx0`, `ty0`) drags once it moved by (`dx`, `dy`): zoom edges, cursors, levels, offsets or delay.
     fn pick_drag(&self, tx0: i32, ty0: i32, dx: i32, dy: i32) -> Drag {
-        let near_right = tx0 > self.area.x + self.area.w - 50;
-        let near_left = tx0 < self.area.x + 50;
+        let near_right = tx0 > self.plot.area.x + self.plot.area.w - 50;
+        let near_left = tx0 < self.plot.area.x + 50;
         let cur_hit = |frac: f32, vertical: bool| -> bool {
             if vertical {
-                (self.area.x + (frac * self.area.w as f32) as i32 - tx0).abs() < 24
+                (self.plot.area.x + (frac * self.plot.area.w as f32) as i32 - tx0).abs() < 24
             } else {
-                (self.area.y + (frac * self.area.h as f32) as i32 - ty0).abs() < 24
+                (self.plot.area.y + (frac * self.plot.area.h as f32) as i32 - ty0).abs() < 24
             }
         };
         let m = &self.m;
@@ -776,7 +776,7 @@ impl Ui {
                 && cur_hit(frac, vertical)
         };
         let overview_drag = if m.zoom {
-            let overview = Self::split_zoom(self.grid).0;
+            let overview = Self::split_zoom(self.plot.grid).0;
             if overview.contains(tx0, ty0) {
                 let ppd = overview.w as f32 / HDIV;
                 let half = tscales()[m.zscale] * HDIV * 0.5;
@@ -905,8 +905,8 @@ impl Ui {
     fn touch_drag_to(&mut self, x: i32, y: i32) {
         let t = &self.touch;
         let (dx, dy) = (x - t.x0, y - t.y0);
-        let ppx = self.area.w as f32 / HDIV;
-        let ppy = self.area.h as f32 / VDIV;
+        let ppx = self.plot.area.w as f32 / HDIV;
+        let ppy = self.plot.area.h as f32 / VDIV;
         match t.drag {
             Drag::ZoomVertical => {
                 self.zoom_view.vcenter = t.start_offset + dy as f32 / ppy / self.zoom_view.vfactor;
@@ -918,13 +918,13 @@ impl Ui {
                 }
             }
             Drag::Overview => {
-                let overview = Self::split_zoom(self.grid).0;
+                let overview = Self::split_zoom(self.plot.grid).0;
                 self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                 self.clamp_zoom();
                 self.settings_changed();
             }
             Drag::ZoomLeft | Drag::ZoomRight => {
-                let overview = Self::split_zoom(self.grid).0;
+                let overview = Self::split_zoom(self.plot.grid).0;
                 let time = self.m.delay
                     + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                 let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
@@ -993,9 +993,9 @@ impl Ui {
             }
             Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
                 let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD) {
-                    t.start_cur + dy as f32 / self.area.h as f32
+                    t.start_cur + dy as f32 / self.plot.area.h as f32
                 } else {
-                    t.start_cur + dx as f32 / self.area.w as f32
+                    t.start_cur + dx as f32 / self.plot.area.w as f32
                 }
                 .clamp(0.0, 1.0);
                 match t.drag {
@@ -1122,7 +1122,7 @@ impl Ui {
         let shape = self.zone_trig.arm.is_some_and(|a| a.1);
         self.zone_trig.arm = None;
         let path = std::mem::take(&mut self.input.zone_path);
-        let a = self.area;
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ch = &self.m.ch[self.m.zones[k].src];
         let ppx = a.w as f64 / HDIV as f64;
@@ -1150,7 +1150,7 @@ impl Ui {
 
     /// Zones (green = must intersect, red = must not) and the zone being drawn.
     pub(super) fn draw_zones(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ppx = a.w as f64 / HDIV as f64;
         cv.set_clip(a);
@@ -1185,7 +1185,7 @@ impl Ui {
             cv.no_clip();
             return;
         }
-        cv.set_clip(self.grid);
+        cv.set_clip(self.plot.grid);
         if self.zone_trig.arm.is_some_and(|a| a.1) {
             for w in self.input.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
@@ -1296,7 +1296,7 @@ impl Ui {
                     return;
                 }
             }
-            if self.menu_open && self.grid.contains(x, y) {
+            if self.menu_open && self.plot.grid.contains(x, y) {
                 self.close_menu();
             }
             return;
@@ -1436,7 +1436,7 @@ impl Ui {
             }
             return self.toggle_menu(MenuId::Trigger);
         }
-        if self.menu_open && self.grid.contains(x, y) {
+        if self.menu_open && self.plot.grid.contains(x, y) {
             self.close_menu();
         }
     }

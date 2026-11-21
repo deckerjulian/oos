@@ -775,7 +775,7 @@ impl Ui {
         let Some((source, scale, offset, _)) = self.cursor_source_context() else {
             return f64::NAN;
         };
-        let area = self.source_area(source).unwrap_or(self.area);
+        let area = self.source_area(source).unwrap_or(self.plot.area);
         self.zoom_divs_at(area, frac) as f64 * scale as f64 - offset as f64
     }
 
@@ -783,7 +783,7 @@ impl Ui {
         let Some((source, scale, offset, _)) = self.cursor_source_context() else {
             return 0.5;
         };
-        let area = self.source_area(source).unwrap_or(self.area);
+        let area = self.source_area(source).unwrap_or(self.plot.area);
         let (factor, center) = self.zoom_vertical_transform(area);
         if !v.is_finite() || !scale.is_finite() || scale <= 0.0 {
             return 0.5;

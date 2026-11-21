@@ -310,7 +310,7 @@ fn zone_drawn_by_touch_filters_records() {
     ui.activate(Item::ZoneBox);
     assert_eq!(ui.zone_trig.arm, Some((0, false)));
     // a box in the top left corner of the plot (far above the demo signal)
-    let a = ui.area;
+    let a = ui.plot.area;
     let (x0, y0, x1, y1) = (a.x + 60, a.y + 20, a.x + 160, a.y + 60);
     ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x: x0, y: y0 });
     ui.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x1, y: y1 });
@@ -861,7 +861,7 @@ fn colour_grade_renders() {
         }
         ui.render(&mut cv);
         let pal = heat_palette();
-        let a = ui.area;
+        let a = ui.plot.area;
         let ph = if zoom { &ui.phz } else { &ui.ph };
         let mut direct = Canvas::new(W, H);
         ui.draw_graded(&mut direct, a, ph, if zoom { ui.grade.vmaxz_cg } else { ui.grade.vmax_cg }, false);
@@ -907,7 +907,7 @@ fn zoom_close_preserves_explicit_main_timebase_changes() {
         c,
         row
     );
-    let (o, z) = Ui::split_zoom(ui.grid);
+    let (o, z) = Ui::split_zoom(ui.plot.grid);
     assert!(c.y >= o.y + o.h && c.y + c.h <= z.y, "close {:?} between {:?} and {:?}", c, o, z);
     assert_ne!(cv.px[((c.y + c.h / 2) * W + c.x + c.w / 2) as usize], BG);
     ui.tap(c.x + c.w / 2, c.y + c.h / 2);
@@ -1059,9 +1059,9 @@ fn level_line_after_a_change_and_no_mark_with_ac_coupling() {
     assert!(!ui.level_line_on(), "gone after {} s", LEVEL_LINE_S);
     // the mark: drawn in the accent colour at the right edge of the plot, at the level's height
     let mark = |ui: &mut Ui| {
-        let mut cv = Canvas::new(ui.area.w, ui.area.h + 200);
+        let mut cv = Canvas::new(ui.plot.area.w, ui.plot.area.h + 200);
         ui.render(&mut cv);
-        let g = ui.grid;
+        let g = ui.plot.grid;
         let x = g.x + g.w - MARK_W + 16;
         (g.y..g.y + g.h).filter(|&y| cv.px[(y * cv.w + x) as usize] == ACCENT).count()
     };
