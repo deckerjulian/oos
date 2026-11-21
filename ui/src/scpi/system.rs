@@ -180,19 +180,20 @@ impl Scpi {
     }
 }
 
-/// Samples of a record `:SYSTem:DEBug:CORes?` looks at (the first ones): enough for the fit, quick on the scope.
-const BUDGET_POINTS: u64 = 1 << 17;
+/// Samples of a record `:SYSTem:DEBug:CORes?` looks at (the first ones): 4096 a core at 8 cores, enough for the fit,
+/// and the analysis stays short where it runs, in the frame loop (about 10 ms on the host).
+const BUDGET_POINTS: u64 = 1 << 15;
 
 /// `:SYSTem:DEBug:CORes? [<ch>[,<cores>[,<Hz>...]]]` (fork, unit debug): `oos_dsp::interleave::budget` of channel `ch`'s
-/// deep record (default 1) for `cores` interleaved cores (default 8), with the levels of the tones at the frequencies
+/// native record (default 1; never the screen record) for `cores` interleaved cores (default 8), with the levels of the tones at the frequencies
 /// that follow. `none` when the channel has no record or the record carries no budget.
 fn cores_budget_text(ui: &Ui, arg: &str) -> String {
     let mut it = arg.split(',').map(str::trim).filter(|x| !x.is_empty());
     let ch = it.next().and_then(|x| x.parse::<usize>().ok()).filter(|c| (1..=4).contains(c)).unwrap_or(1);
     let m = it.next().and_then(|x| x.parse::<usize>().ok()).filter(|m| (1..=8).contains(m)).unwrap_or(8);
     let extra: Vec<f64> = it.filter_map(|x| x.parse::<f64>().ok()).filter(|f| *f > 0.0).collect();
-    let Some((v, dt, _)) = ui.channel_page(ch - 1, true, 1, BUDGET_POINTS) else {
-        return "none,no record".into();
+    let Some((v, dt)) = ui.channel_raw(ch - 1, BUDGET_POINTS as usize) else {
+        return "none".into();
     };
     budget_text(&v, dt, m, &extra)
 }

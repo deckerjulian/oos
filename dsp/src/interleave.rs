@@ -89,13 +89,15 @@ pub fn budget(v: &[f32], dt: f64, m: usize, extra: &[f64]) -> Option<Budget> {
     let (ga, gs, go) = fits.iter().fold((0.0, 0.0, 0.0), |s, x| (s.0 + x.0 / n, s.1 + x.1 / n, s.2 + x.2 / n));
     let cores: Vec<Core> =
         fits.iter().map(|&(a, s, c)| Core { offset: c - go, gain: a / ga - 1.0, skew: s - gs }).collect();
-    // powers of the patterns against the fundamental's a^2 / 2
+    // powers of the patterns against the fundamental's A^2 / 2
     let p1 = amp * amp / 2.0;
     let db = |x: f64| 10.0 * x.max(1e-30).log10();
     let mean_sq = |g: &dyn Fn(&Core) -> f64| cores.iter().map(|c| g(c).powi(2)).sum::<f64>() / n;
     let offset_dbc = db(mean_sq(&|c| c.offset) / p1);
-    let gain_dbc = db(mean_sq(&|c| c.gain) / 2.0);
-    let skew_dbc = db(mean_sq(&|c| w * c.skew) / 2.0);
+    // a gain error g is an error A g sin(..) of power A^2 g^2 / 2, a time error t one of A w t cos(..): against the
+    // fundamental's A^2 / 2 that is g^2 and (w t)^2
+    let gain_dbc = db(mean_sq(&|c| c.gain));
+    let skew_dbc = db(mean_sq(&|c| w * c.skew));
     // the extra tones off the record first, so that neither SINAD counts them
     let fs = 1.0 / dt;
     let mut own: Vec<f32> = v.to_vec();
@@ -196,8 +198,8 @@ mod tests {
         let (o, g, s) = (rms(&|c| c.offset), rms(&|c| c.gain), rms(&|c| c.skew));
         let dbc = |x: f64| 20.0 * x.log10();
         assert!((b.offset_dbc - dbc(o / (1.0 / 2f64.sqrt()))).abs() < 0.3, "{}", b.offset_dbc);
-        assert!((b.gain_dbc - dbc(g / 2f64.sqrt())).abs() < 0.3, "{}", b.gain_dbc);
-        assert!((b.skew_dbc - dbc(2.0 * PI * f * s / 2f64.sqrt())).abs() < 0.5, "{}", b.skew_dbc);
+        assert!((b.gain_dbc - dbc(g)).abs() < 0.3, "{}", b.gain_dbc);
+        assert!((b.skew_dbc - dbc(2.0 * PI * f * s)).abs() < 0.5, "{}", b.skew_dbc);
         assert!((b.harmonics_dbc + 60.0).abs() < 1.0, "harmonics {}", b.harmonics_dbc);
         assert!((b.extra[0].1 + 50.0).abs() < 0.5, "extra {:?}", b.extra);
         // white noise of 1e-3 peak to peak: 2.9e-4 rms, -67.7 dBc

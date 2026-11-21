@@ -48,7 +48,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", required=True)
     ap.add_argument("--port", type=int, default=5555)
-    ap.add_argument("--channel", type=int, default=1, help="the channel the generator is cabled to")
+    ap.add_argument("--channel", type=int, default=1, choices=[1, 2, 3, 4], help="the channel the generator is cabled to")
     ap.add_argument("--channels", type=int, default=1, choices=[1, 2, 3, 4], help="channels on (1 = the full rate)")
     ap.add_argument("--freq", type=floats, default=[1e6, 10e6, 50e6], help="sine frequencies, Hz")
     ap.add_argument("--vdiv", type=floats, default=[0.2, 0.5], help="volts per division")
@@ -60,6 +60,10 @@ def main():
     for c in range(1, 5):
         link.send(f":CHANnel{c}:DISPlay {'ON' if c in on else 'OFF'}")
     rate = 1.25e9 / {8: 1, 4: 2, 2: 4}[m]
+    # one plain record per Single: Normal acquisition, no segments, an edge trigger on the generator's channel
+    link.send(":ACQuire:TYPE NORMal")
+    link.send(":ACQuire:SEGMents OFF")
+    link.send(":TRIGger:MODE EDGE")
     link.send(f":ACQuire:MDEPth {POINTS}")
     link.send(f":TIMebase:SCALe {POINTS / rate / 10:.6g}")
     link.send(f":TRIGger:EDGE:SOURce CHANnel{a.channel}")
@@ -80,7 +84,7 @@ def main():
                         print(f"{vdiv} {f:.6g} {cores}: no trigger")
                         continue
                     ans = link.query(f":SYSTem:DEBug:CORes? {a.channel},{m},{GEN_FS - f:.6g}").strip()
-                    if ans.startswith("none") or ans.startswith("off"):
+                    if ans == "none":
                         print(f"{vdiv} {f:.6g} {cores}: {ans}")
                         continue
                     head, *per_core = ans.split(";")
