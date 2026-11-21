@@ -247,8 +247,9 @@ kernel (4.4 has it when tracing is built in; the stock kernel mounts tracefs) an
 ## 8. Seen on units (stock system 00.01.00, hardware code 3)
 
 From `mho-check.py` on an MHO954 (twice) and an MHO98 and `--map` on an MHO98 and the MHO954 (issue #4),
-`mho-check.py`, `--map` (twice) and `--afe` with `--fifty` on an MHO934 (issue #248), and `--afe` on the MHO954 and on
-two MHO98 of different owners (issue #4); **verified on the unit** means read on these units under the stock system,
+`mho-check.py`, `--map` (twice) and `--afe` with `--fifty` on an MHO934 (issue #248), `--afe` on the MHO954 and on
+two MHO98 of different owners (issue #4), and `--map` and `--afe` with 50 ohm on a third MHO98 (issue #491);
+**verified on the unit** means read on these units under the stock system,
 nothing of it driven by OOS:
 
 - The MHO934 is the same board: its platform probe is the MHO954's but for the licence files, all 25 checks as
@@ -287,29 +288,31 @@ nothing of it driven by OOS:
   - A read frame is 32 clocks: the driver sends 0x80 (assumed: bit 7 read, register 0) and 24 bits come back on the
     data-in line. The stock system reads twice, 2 ms apart, every few hundred ms while a channel is at 50 ohm, and once
     more when it goes back to 1 MOhm; nowhere else. It read 0x0c40ff at 50 ohm and 0x0440ff after (MHO934, every
-    channel). Assumed: bit 19 is a state of the 50 ohm path, and the reads watch it for an overload.
+    channel; the same on every channel of the third MHO98). Assumed: bit 19 is a state of the 50 ohm path, and the
+    reads watch it for an overload.
   - Chip select per channel: CH1 cs3 (gpio 68), CH2 cs2 (gpio 69), CH3 cs1 (gpio 66), CH4 cs0 (gpio 76).
   - A scale change sends 28 frames in a fixed order (some registers two or three times), the offset one frame
     (0x28), AC or DC coupling one (0x07), the bandwidth limit the scale's 28 frames with 0x2e and 0x28 changed. A
     channel switched on for the first time gets its whole set (53 frames). GND coupling, the time base, the trigger
     level and switching a channel off or on again send nothing, and nothing is sent while the scope runs untouched.
     No frame went over the clock chip's bus in any step.
-  - 50 ohm (MHO934, every channel): about 70 frames, among them a run of writes to 0x2c and 0x2d with the values
-    stepping (assumed: a trim of the 50 ohm path), then 0x07 with bit 13 set (0xe440 at 10 mV/div, 0xa440 at 1 V/div),
-    0x29 range 3, 0x2a bits 15:14 set, bit 12 of 0x23 cleared and an own offset zero in 0x28. Back at 1 MOhm the
-    scale's words return, but 0x2c and 0x2d keep a changed value (0xcd5d and 0xc100 on CH1, 0xcc0c and 0xc000
-    before).
+  - 50 ohm (MHO934 and the third MHO98, every channel): about 70 frames, among them a run of writes to 0x2c and 0x2d
+    with the values stepping (assumed: a trim of the 50 ohm path), then 0x07 with bit 13 set (0xe440 at 10 mV/div,
+    0xa440 at 1 V/div), 0x29 range 3, 0x2a bits 15:14 set, bit 12 of 0x23 cleared and an own offset zero in 0x28. Back
+    at 1 MOhm the scale's words return, but 0x2c and 0x2d keep a changed value, the unit's own per channel (0xcd5d and
+    0xc100 on CH1 of the MHO934, 0xcd5d and 0xc200 on the MHO98's; 0xcc0c and 0xc000 before on every unit), and the
+    full-bandwidth word of 0x2e comes back as 0x1fcc instead of 0x1fcb (every channel of both units).
 
-  **Which values are the unit's own.** The MHO934 sent the same words in two runs two days apart, with two
-  exceptions: the offset zero in 0x28 moved by up to 12 codes, and 0x2e (below). The four units send the same
-  registers at the same steps, but most values differ from unit to unit, also between the two MHO98. So they are not
-  the model's but the unit's: its calibration (assumed). The same on every unit: 0x07, 0x2a, 0x22, 0x2b, 0x2c and 0x2d
-  (at 1 MOhm, before 50 ohm), the range field of 0x29 and which bits switch at which scale. The unit's own: 0x06,
-  0x21, the low byte of 0x23, 0x24 to 0x27, the zero of 0x28, bits 15:10 of 0x29, 0x2f and 0x35, and at some scales
-  bits of 0x20, bits 7:6 of 0x29 and bits 15:14 of 0x2e. Candidates for where the stock system takes them from are the
-  unit's files `cal_afe_zero.hex`, `cal_afe_bandwidth.hex` and `cal_vertical.hex` under `/rigol/data`;
-  `cal_afe_bandwidth.hex` and a `cal_tmp_hex.log` are written again at every start (their time is the start's on a
-  second MHO98). OOS cannot ship such values (ADR 0013); a port reads them from the unit or measures them.
+  **Which values are the unit's own.** The MHO934 sent the same words in two runs two days apart, with two exceptions:
+  the offset zero in 0x28 moved by up to 12 codes, and 0x2e (below). The five units send the same registers at the same
+  steps, but most values differ from unit to unit, also between the three MHO98. So they are not the model's but the
+  unit's: its calibration (assumed). The same on every unit: 0x07, 0x2a (but at 5 V/div), 0x22, 0x2b, 0x2c and 0x2d (at
+  1 MOhm, before 50 ohm), the range field of 0x29 and which bits switch at which scale. The unit's own: 0x06, 0x21, the
+  low byte of 0x23, 0x24 to 0x27, the zero of 0x28, bits 15:10 of 0x29, 0x2f and 0x35, and at some scales bits of 0x20,
+  bits 7:6 of 0x29 and bits 15:14 of 0x2e. Candidates for where the stock system takes them from are the unit's files
+  `cal_afe_zero.hex`, `cal_afe_bandwidth.hex` and `cal_vertical.hex` under `/rigol/data`; `cal_afe_bandwidth.hex` and a
+  `cal_tmp_hex.log` are written again at every start (their time is the start's on a second MHO98). OOS cannot ship such
+  values (ADR 0013); a port reads them from the unit or measures them.
 
   The registers and what changed them (CH1's values of the MHO934; the other channels and units change the same
   registers at the same steps):
@@ -319,9 +322,9 @@ nothing of it driven by OOS:
   | 0x07 | coupling, scale, 50 ohm | bit 15 DC (cleared for AC); bit 14 set from 1 mV/div to 50 mV/div: 0xc440 there, 0x8440 from 0.1 V/div; bit 13 50 ohm. The same on every unit |
   | 0x28 | offset, scale, bandwidth limit, 50 ohm | the offset DAC, about 0x8000 at 0 V with the unit's own zero per scale and channel; +0.3 V at 0.1 V/div is +471 codes on all four channels, +2 V at 1 V/div +2062, +0.05 V at 10 mV/div -981 |
   | 0x29 | scale, 50 ohm | bits 9:8 the range: 0 from 1 to 5 mV/div, 1 from 10 to 50 mV/div, 2 from 0.1 V/div, 3 at 50 ohm; bits 7:6 are 10 or 01 by scale (mostly the same on every unit); bits 15:10 the unit's own per channel |
-  | 0x2a | scale, 50 ohm | bits 15:12: 0 at 1 to 2 mV/div and 10 to 20 mV/div, 1 at 5 and 50 mV/div, 3 from 0.1 to 1 V/div and at 10 V/div, 0xb at 2 V/div, 2 at 5 V/div; bits 15:14 set at 50 ohm. The same on every unit |
-  | 0x2e | scale, bandwidth limit, 50 ohm | full bandwidth: bits 13:0 0x1fcb (MHO954, both MHO98, the MHO934 since a change of its licences), 0x1dc9 on the MHO934 before; bit 11 cleared at 5 V/div; bits 15:14 01 or 10 at some scales, per unit. 20 MHz limit 0x1905 on every channel of every unit |
-  | 0x20, 0x21 | scale, with the select lines | 0xa038/0x03f3 at 0.1 and 0.2 V/div (`c` high), 0xa04c/0x0073 from 0.5 to 2 V/div, 0xa07e/0x06f3 at 5 and 10 V/div (`a` high); 0x21 and some bits of 0x20 the unit's own |
+  | 0x2a | scale, 50 ohm | bits 15:12: 0 at 1 to 2 mV/div and 10 to 20 mV/div, 1 at 5 and 50 mV/div, 3 from 0.1 to 1 V/div and at 10 V/div, 0xb at 2 V/div; bits 15:14 set at 50 ohm. The same on every unit, but at 5 V/div: 2 or 3 per channel and unit (3 on CH2 and CH4 of the MHO934 and MHO954, on CH3 and CH4 of the third MHO98, 2 elsewhere) |
+  | 0x2e | scale, bandwidth limit, 50 ohm | full bandwidth: bits 13:0 0x1fcb (MHO954, the three MHO98, the MHO934 since a change of its licences), 0x1dc9 on the MHO934 before; bit 11 cleared at 5 V/div; bits 15:14 01 or 10 at some scales, per unit; 0x1fcc after a channel was at 50 ohm (MHO934, third MHO98). 20 MHz limit 0x1905 on every channel of every unit |
+  | 0x20, 0x21 | scale, with the select lines | 0xa038/0x03f3 at 0.1 and 0.2 V/div (`c` high), 0xa04c/0x0073 from 0.5 to 2 V/div, 0xa07e/0x06f3 at 5 and 10 V/div (`a` high; 0xa06e or 0xa05e on the other channels); 0x21 and some bits of 0x20 the unit's own |
   | 0x23 | scale, 50 ohm | bits 15:8 0x2c up to 50 mV/div, 0x14 from 0.1 V/div (bit 10 differs per unit), bit 12 cleared at 50 ohm; the low byte the unit's own |
   | 0x06, 0x27 | scale | one value per range and channel, the unit's own (0x06 of CH1: 0x1e, 0x2e, 0x0c) |
   | 0x2c, 0x2d, 0x36 | 50 ohm | 0x2c 0xcc0c and 0x2d 0xc000 on every unit until a channel was at 50 ohm; 0x36 written only then |
