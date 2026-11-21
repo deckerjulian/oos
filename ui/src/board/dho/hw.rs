@@ -103,7 +103,6 @@ fn since(now: u64, t: u64) -> std::time::Duration {
 /// AFEs from the UI channel settings, else they keep the stock set-up and the UI V/div must match it).
 #[cfg(target_os = "linux")]
 pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option<String>) -> HwShared {
-    use oos_hal::dho::boot::Clock;
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
@@ -112,17 +111,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // every wait and every time of the loop on one clock (ADR 0053): the system's here, a host run's in a test
         let mut clock = oos_hal::dho::boot::SysClock::default();
         let status = |s: String| report(&out, s);
-        // started with the start-up (rcS): nothing of the hardware is touched before its `end` line, written after
-        // oos-fpgad cold-boot exited (its GPIO lines are free then)
+        // started with the start-up (rcS): nothing of the hardware is touched before its `end` line
         if let Some(path) = &start_up {
-            status("waiting for the start-up".into());
-            loop {
-                let v = oos_hal::bootstatus::parse(&std::fs::read_to_string(path).unwrap_or_default());
-                match v.finished {
-                    Some(Ok(())) => break,
-                    Some(Err(e)) => return status(format!("acquisition hardware not started: {}", e)),
-                    None => clock.sleep_us(100000),
-                }
+            if !wait_start_up(&mut clock, || std::fs::read_to_string(path).unwrap_or_default(), &out) {
+                return;
             }
         }
         let mut bar = match Bar1::open() {
@@ -151,6 +143,24 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         run(hw, app_mask, program_afe, cal_dir, out, || true);
     });
     shared
+}
+
+/// The wait for the start-up (rcS, `oos_hal::bootstatus`): its status file, given by `read`, read again every 100 ms of
+/// `clock` until its `end` line, written after oos-fpgad cold-boot exited (its GPIO lines are free then). False when
+/// the start-up stopped (`abort`): the status line says why, and the hardware is not touched.
+#[cfg(any(target_os = "linux", test))]
+fn wait_start_up(clock: &mut impl oos_hal::dho::boot::Clock, mut read: impl FnMut() -> String, out: &HwShared) -> bool {
+    report(out, "waiting for the start-up".into());
+    loop {
+        match oos_hal::bootstatus::parse(&read()).finished {
+            Some(Ok(())) => return true,
+            Some(Err(e)) => {
+                report(out, format!("acquisition hardware not started: {}", e));
+                return false;
+            }
+            None => clock.sleep_us(100000),
+        }
+    }
 }
 
 /// The acquisition loop on the unit `hw` (ADR 0053): the screen's settings to the FPGA, its records to the screen,
