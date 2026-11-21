@@ -28,6 +28,33 @@ impl MaskTest {
     }
 }
 
+/// The decoded lines of the records shown (ADR 0062): the packets with times in s, by a key of the record and the
+/// settings, analog and LA alike; the screen redraws ~30 times a second and decodes a record once.
+#[derive(Default)]
+pub(super) struct Decoded(std::cell::RefCell<Vec<(u64, Vec<oos_dsp::decode::Packet>)>>);
+
+impl Decoded {
+    /// The packets kept under `key`.
+    pub fn get(&self, key: u64) -> Option<Vec<oos_dsp::decode::Packet>> {
+        self.0.borrow().iter().find(|e| e.0 == key).map(|e| e.1.clone())
+    }
+
+    /// Keeps what the decoders of one record need.
+    pub fn put(&self, key: u64, p: &[oos_dsp::decode::Packet]) {
+        let mut c = self.0.borrow_mut();
+        if c.len() >= DECODERS * 2 {
+            c.remove(0);
+        }
+        c.push((key, p.to_vec()));
+    }
+
+    /// How many results are kept.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+}
+
 impl Ui {
     /// Mask test of one acquisition (live records only): counts passed / failed, stops on a failure if set.
     pub(super) fn mask_test(&mut self, rec: &Record) {
@@ -543,25 +570,16 @@ impl Ui {
         }
         format!("{:?}", m.dec_cfg()).hash(&mut h);
         let key = h.finish();
-        if let Some(e) = self.dec_cache.borrow().iter().find(|e| e.0 == key) {
-            return Ok(std::sync::Arc::new(e.1.clone()));
+        if let Some(p) = self.decoded.get(key) {
+            return Ok(std::sync::Arc::new(p));
         }
         let mut p = crate::trig::decode(m, std::array::from_fn(|c| &rec.ch[c][..]), rec.dt)?;
         for x in p.iter_mut() {
             x.t0 = rec.t0 + x.t0 * rec.dt;
             x.t1 = rec.t0 + x.t1 * rec.dt;
         }
-        self.dec_cache_put(key, &p);
+        self.decoded.put(key, &p);
         Ok(std::sync::Arc::new(p))
-    }
-
-    /// Keeps what the decoders of one record need.
-    pub(super) fn dec_cache_put(&self, key: u64, p: &[oos_dsp::decode::Packet]) {
-        let mut c = self.dec_cache.borrow_mut();
-        if c.len() >= DECODERS * 2 {
-            c.remove(0);
-        }
-        c.push((key, p.to_vec()));
     }
 
     /// All decoders that are on: bands at the bottom of the plot, or rows under the lanes for those on LA lines.

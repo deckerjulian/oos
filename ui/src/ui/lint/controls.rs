@@ -255,15 +255,15 @@ fn decoder_results_are_cached_per_record() {
     for _ in 0..4 {
         u.step(0.04);
     }
-    u.dec_cache.borrow_mut().clear();
+    u.decoded = Default::default();
     let a = u.decode_packets().unwrap();
-    assert_eq!(u.dec_cache.borrow().len(), 1);
+    assert_eq!(u.decoded.len(), 1);
     assert_eq!(u.decode_packets().unwrap(), a);
-    assert_eq!(u.dec_cache.borrow().len(), 1);
+    assert_eq!(u.decoded.len(), 1);
     // other settings, other result
     u.m.dec_bits = 7;
     let _ = u.decode_packets();
-    assert_eq!(u.dec_cache.borrow().len(), 2);
+    assert_eq!(u.decoded.len(), 2);
 }
 
 #[test]

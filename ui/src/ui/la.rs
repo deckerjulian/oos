@@ -99,7 +99,16 @@ type ColKey = (usize, usize, u64, u64, usize);
 
 /// Columns of the last drawn LA record (the screen redraws ~30 times a second; deep records are walked once).
 #[derive(Default)]
-pub struct Cache(Option<(ColKey, Arc<Vec<Col>>)>);
+struct Cache(Option<(ColKey, Arc<Vec<Col>>)>);
+
+/// The logic analyser between frames (ADR 0062).
+#[derive(Default)]
+pub(super) struct Lanes {
+    /// the probe detect: None = not known (no hardware, not read yet)
+    probe: Option<bool>,
+    /// pixel columns of the last LA record drawn
+    cols: std::cell::RefCell<Cache>,
+}
 
 impl Ui {
     pub(super) fn la_items(&self) -> Vec<Item> {
@@ -305,22 +314,22 @@ impl Ui {
     /// without a probe. SCPI can still switch it on afterwards (no change of the state here), which is the way out if the
     /// detection ever reads wrong.
     pub(super) fn la_probe_set(&mut self, p: Option<bool>) {
-        if self.la_probe != Some(false) && p == Some(false) && self.m.la.on {
+        if self.la.probe != Some(false) && p == Some(false) && self.m.la.on {
             self.m.la.on = false;
             self.settings_changed();
             self.toast("No LA probe: LA off");
         }
-        self.la_probe = p;
+        self.la.probe = p;
     }
 
     /// The LA can be switched on: the probe is there, or nobody knows otherwise (demo signals, not read yet).
     pub(super) fn la_probe_ok(&self) -> bool {
-        self.la_probe != Some(false)
+        self.la.probe != Some(false)
     }
 
     /// Page title with the probe state (GPIO 120 on the unit).
     pub(super) fn la_title(&self) -> String {
-        let probe = match (&self.src, self.la_probe) {
+        let probe = match (&self.src, self.la.probe) {
             (Source::Hw { .. }, Some(true)) => "probe connected",
             (Source::Hw { .. }, Some(false)) => "no probe",
             (Source::Hw { .. }, None) => "probe not read",
@@ -422,22 +431,22 @@ impl Ui {
         )
         .hash(&mut h);
         let key = h.finish();
-        if let Some(e) = self.dec_cache.borrow().iter().find(|e| e.0 == key) {
-            return Ok(e.1.clone());
+        if let Some(p) = self.decoded.get(key) {
+            return Ok(p);
         }
         let mut p = crate::trig::decode_la(m, &la.words, la.dt)?;
         for x in p.iter_mut() {
             x.t0 = la.t0 + x.t0 * la.dt;
             x.t1 = la.t0 + x.t1 * la.dt;
         }
-        self.dec_cache_put(key, &p);
+        self.decoded.put(key, &p);
         Ok(p)
     }
 
     /// The columns of the LA record for the trace width `w` with sample k at x0 + k xps, cached.
     fn la_columns(&self, la: &LaRec, x0: f64, xps: f64, w: usize) -> Arc<Vec<Col>> {
         let key = (Arc::as_ptr(&la.words) as usize, la.words.len(), x0.to_bits(), xps.to_bits(), w);
-        let mut c = self.la_cols.borrow_mut();
+        let mut c = self.la.cols.borrow_mut();
         if let Some((k, v)) = &c.0 {
             if *k == key {
                 return v.clone();
