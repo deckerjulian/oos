@@ -315,3 +315,6 @@ scpi $S/scpi-answers.txt :TRIGger:FORCe;*OPC?;:TRIGger:STATus?
 # the measurement strip emptied
 scpi $S/scpi-answers.txt :MEASure:CLEar;:MEASure:STRip?
 scpi $S/scpi-answers.txt :SYSTem:ERRor?
+# a reference's scale and offset without a slot go to the selected slot (docs/scpi.md: [<slot>,]<V/div>)
+scpi $S/scpi-answers.txt :REFerence:SLOT R1;:REFerence:SAVE;:REFerence:VSCale 2;:REFerence:VSCale?
+scpi $S/scpi-answers.txt :REFerence:VOFFset 0.1;:REFerence:VOFFset?;:SYSTem:ERRor?

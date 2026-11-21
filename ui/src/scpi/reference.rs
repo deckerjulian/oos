@@ -27,18 +27,20 @@ fn ref_color_index(s: &str) -> Option<usize> {
 }
 
 impl Scpi {
-    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. A bare `ON` stays on the current slot. A bad slot number is an error.
     /// Rigol's five reference colors. The screen's fifth color is violet; `ORANge` selects it because that is Rigol's fifth name.
     fn ref_color_name(i: usize) -> &'static str {
         ["GRAY", "RED", "GRE", "BLUE", "ORAN"][i.min(4)]
     }
 
-    fn ref_pair(&mut self, ui: &Ui, arg: &str) -> (Option<usize>, String) {
+    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. Without a comma, `arg` is the value for the selected slot when the
+    /// command sets one (`value`: `:VSCale 2`, `:SHOW ON`), and otherwise the slot (a query, `:RESet`); a word that is
+    /// no slot there stays on the selected slot. A bad slot number is an error.
+    fn ref_pair(&mut self, ui: &Ui, arg: &str, value: bool) -> (Option<usize>, String) {
         let arg = arg.trim();
         let (slot, rest) = if let Some((a, b)) = arg.split_once(',') {
             (parse_slot(a), b.trim().trim_matches('"').to_string())
-        } else if arg.is_empty() {
-            (Some(ui.ref_slot()), String::new())
+        } else if value || arg.is_empty() {
+            (Some(ui.ref_slot()), arg.trim_matches('"').to_string())
         } else if let Some(i) = parse_slot(arg) {
             (Some(i), String::new())
         } else if arg.starts_with(|c: char| c.is_ascii_digit()) || arg.to_ascii_uppercase().starts_with('R') {
@@ -74,7 +76,7 @@ impl Scpi {
             };
         }
         if kw(n0, "SHOW") || kw(n0, "DISPlay") {
-            let (slot, rest) = self.ref_pair(ui, arg);
+            let (slot, rest) = self.ref_pair(ui, arg, !query);
             let slot = slot?;
             if query {
                 return t(if ui.ref_shown_slot(slot) == Some(true) { "1" } else { "0" });
@@ -115,7 +117,7 @@ impl Scpi {
             return self.ref_label(ui, query, arg);
         }
         if kw(n0, "RESet") && !query {
-            let (slot, _) = self.ref_pair(ui, arg);
+            let (slot, _) = self.ref_pair(ui, arg, false);
             let slot = slot?;
             if ui.ref_reset_scale(slot) {
                 ui.mark_changed();
@@ -153,7 +155,7 @@ impl Scpi {
 
     /// `:REFerence:SOURce`: the channel a save of a slot copies.
     fn ref_source(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
@@ -173,7 +175,7 @@ impl Scpi {
     /// `:REFerence:VSCale|VOFFset` (`n0`) of a slot.
     fn ref_scale(&mut self, ui: &mut Ui, n0: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
         let scale = kw(n0, "VSCale");
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
@@ -200,7 +202,7 @@ impl Scpi {
 
     /// `:REFerence:LABel:CONTent` of a slot.
     fn ref_label(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             return match ui.ref_label(slot) {
@@ -221,7 +223,7 @@ impl Scpi {
 
     /// `:REFerence:COLor` of a slot.
     fn ref_color_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             return match ui.ref_color(slot) {
