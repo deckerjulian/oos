@@ -417,7 +417,7 @@ A reference can be a trigger, measurement, cursor, Math or decoder source like a
 |---|---|
 | `:SYSTem:ERRor?` | the next error, see [Errors](#errors) |
 | `:SYSTem:STATe?` | diagnostic state of the application (also whether the GPU draws) |
-| `:SYSTem:GET? <key>`, `:SYSTem:SET <key> = <value>` | any setting by its setup key, also those without a command of their own (keys in [store.rs](https://github.com/dekajoule/oos/blob/main/ui/src/store.rs)) |
+| `:SYSTem:GET? <key>`, `:SYSTem:SET <key> = <value>` | any setting by its setup key, also those without a command of their own (keys in [lib.rs of oos-store](https://github.com/dekajoule/oos/blob/main/ui/store/src/lib.rs)) |
 | `:SYSTem:GRAPhics[?] CPU\|GPU` | System > Graphics |
 | `:SYSTem:AOUTput[?] TOUT\|PFAil\|OFF` | the rear AUX OUT: trigger out, pass/fail (where the mask or zone unit is there), or low |
 | `:SYSTem:LOG ON\|OFF` | measurement logger |

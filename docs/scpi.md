@@ -472,7 +472,7 @@ The switch of the logic analyser, its command and its place in a setup file. It 
 
 `:IDENtify?` returns the app's signal identification. Calibration commands `:CALibrate:STARt 0..4[,ZERO]`, `:CALibrate:STATus?`, `:CALibrate:CANCel` operate the self-calibration workflow; start requires the appropriate disconnected-input setup. They are not passive diagnostic reads.
 
-`:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
+`:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/store/src/lib.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
 | Command | Meaning |
 | --- | --- |

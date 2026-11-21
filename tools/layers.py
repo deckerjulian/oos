@@ -26,7 +26,7 @@ path twice on one line counts once. A dependency is one of `[dependencies]` and 
 `[target.*]`; `[dev-dependencies]` serve the tests and do not count.
 
 Inside oos-ui every module has a layer and every layer a list of the layers it may name: the table UI_LAYERS below
-(ADR 0049). A file's module is its place below ui/src (`ui/src/store/import.rs` is `store::import`), or what a `#[path =
+(ADR 0049). A file's module is its place below ui/src (`ui/src/store/modules.rs` is `store::modules`), or what a `#[path =
 "file.rs"] mod name;` says of it, below the modules written out around that declaration; its layer is the one of the
 longest row that begins its name, so the row `ui` places every file below ui/src/ui/. A path counts where it is
 written from `crate`, `super` or `self`, also as a leaf of a `use`, and names a layer the file's layer may not name;
@@ -72,14 +72,16 @@ DEPENDS = {  # Cargo.toml: (its count, the dependencies it may have)
 UI = "ui/src/"  # the sources of oos-ui
 # the crates of the workspace ui/ that a layer became (ADR 0064): main.rs brings their modules into the crate root of
 # oos-ui, so oos-ui names them from there (`crate::sysconf`) and they keep their rows in UI_LAYERS
-UI_CRATES = ("ui/system/src/", "ui/remote/src/", "ui/model/src/")
+UI_CRATES = ("ui/system/src/", "ui/remote/src/", "ui/model/src/", "ui/store/src/")
 OWN_FOLDER = ("main", "lib", "mod")  # files that are the module of their folder: main.rs, lib.rs, mod.rs
 # The layers inside oos-ui, lowest first (ADR 0049): (layer, the key of its count, the other layers it may name, its
 # modules). A module is named from the crate root (`board`, or `ui::la` for one file of a folder); the longest row
 # that begins a file's module places it. The last row is the wiring: the crate root (main.rs) belongs to it without
 # being named, and it may name everything. The system services of base are the crate oos-system (ui/system/,
 # ADR 0064), the model and the settings table the crate oos-model (ui/model/): main.rs brings them into the crate
-# root, so oos-ui names them `crate::sysconf`, `crate::model` and the like, and their rows stay here.
+# root, so oos-ui names them `crate::sysconf`, `crate::model` and the like, and their rows stay here. The setup and
+# waveform files are the crate oos-store (ui/store/), which oos-ui's module `store` (ui/src/store.rs) brings in with
+# what it passes to the readers; its row is that module's.
 UI_LAYERS = (
     ("base", "ui-base-up", "",
      "base64 clock drm ethlink font gfx hid hostname json layout mdns net net6 netacl placement remote shots sntp ssh sysconf"

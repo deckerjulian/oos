@@ -15,6 +15,7 @@ oos-dsp = { path = "../dsp" }
 oos-system = { path = "system" }
 oos-remote = { path = "remote" }
 oos-model = { path = "model" }
+oos-store = { path = "store" }
 
 # the tests use the helpers of oos-system's tests too (a scratch directory, the test switches); the program does not
 [dev-dependencies]
@@ -25,10 +26,11 @@ oos-dsp = { path = "../dsp", features = ["example"] }
 oos-system = { path = "system", features = ["testkit"] }
 oos-remote = { path = "remote", features = ["testkit"] }
 oos-model = { path = "model", features = ["testkit"] }
+oos-store = { path = "store", features = ["testkit"] }
 
 # oos-ui and the crates its layers became (ADR 0064): one lock file, one target directory, one `cargo test --workspace`
 [workspace]
-members = ["model", "remote", "system"]
+members = ["model", "remote", "store", "system"]
 # tools/compare-base.sh checks the base out below target/: its ui/ is a tree of its own, not a member
 exclude = ["target"]
 
