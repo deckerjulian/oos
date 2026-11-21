@@ -9,6 +9,8 @@ use super::*;
 /// The Reference page as the screen keeps it (ADR 0062).
 #[derive(Default)]
 pub(in crate::ui) struct RefPage {
+    /// the reference the Slot rows work on
+    pub sel: usize,
     /// the channel Save copies into the slot while the slot is empty (Item::RefSrc, `:REFerence:SOURce`)
     pub src: usize,
     /// the files the Import slot picker is showing
@@ -18,12 +20,12 @@ pub(in crate::ui) struct RefPage {
 impl Ui {
     /// File of a reference slot, beside the setups.
     fn ref_path(&self) -> std::path::PathBuf {
-        self.setup_path().with_file_name(format!("ref{}.csv", self.ref_sel + 1))
+        self.setup_path().with_file_name(format!("ref{}.csv", self.ref_page.sel + 1))
     }
 
     /// Waveforms Import slot can open: the slot's own files, then Storage. Same extensions as `load`.
     fn ref_wave_candidates(&self) -> Vec<std::path::PathBuf> {
-        let slot = self.ref_sel + 1;
+        let slot = self.ref_page.sel + 1;
         let mut v = Vec::new();
         let mut add = |p: std::path::PathBuf| {
             if p.is_file() && !v.iter().any(|q| q == &p) {
@@ -50,7 +52,7 @@ impl Ui {
 
     /// The reference of the Slot row as CSV: Time (s),Volts.
     pub(in crate::ui) fn ref_export(&mut self) {
-        let Some(r) = &self.refs[self.ref_sel] else { return self.toast("That slot is empty") };
+        let Some(r) = &self.refs[self.ref_page.sel] else { return self.toast("That slot is empty") };
         let mut t = String::from("Time (s),Volts\n");
         for (k, v) in r.v.iter().enumerate() {
             t.push_str(&format!("{:.12e},{}\n", r.t0 + k as f64 * r.dt, v));
@@ -62,7 +64,7 @@ impl Ui {
 
     /// Opens a captured waveform into the selected R slot.
     pub(in crate::ui) fn ref_import(&mut self) {
-        let slot = self.ref_sel + 1;
+        let slot = self.ref_page.sel + 1;
         if let Some(dir) = self.setup_path().parent() {
             for ext in crate::store::WAVE_EXTS {
                 let p = dir.join(format!("ref{}.{ext}", slot));
@@ -89,32 +91,32 @@ impl Ui {
 
     pub(in crate::ui) fn ref_load_path(&mut self, path: &std::path::Path) {
         match self.ref_load_file(path) {
-            Ok(()) => self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(path))),
+            Ok(()) => self.toast(&format!("R{} loaded from {}", self.ref_page.sel + 1, crate::store::file_name(path))),
             Err(error) => self.toast(&error),
         }
     }
 
     /// The Slot row: R1 is 0.
     pub(crate) fn ref_slot(&self) -> usize {
-        self.ref_sel
+        self.ref_page.sel
     }
 
     pub(crate) fn ref_slot_set(&mut self, slot: usize) -> bool {
         if slot >= NREF {
             return false;
         }
-        self.ref_sel = slot;
+        self.ref_page.sel = slot;
         true
     }
 
     /// Whether the selected slot is drawn. None when it is empty.
     #[cfg(test)]
     pub(crate) fn ref_shown(&self) -> Option<bool> {
-        self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).map(|r| r.on)
+        self.refs.get(self.ref_page.sel).and_then(|r| r.as_ref()).map(|r| r.on)
     }
 
     pub(crate) fn ref_show_set(&mut self, on: bool) -> bool {
-        let Some(r) = self.refs.get_mut(self.ref_sel).and_then(|r| r.as_mut()) else { return false };
+        let Some(r) = self.refs.get_mut(self.ref_page.sel).and_then(|r| r.as_mut()) else { return false };
         r.on = on;
         true
     }
@@ -128,13 +130,13 @@ impl Ui {
         if self.refs.get(slot).is_none_or(Option::is_none) {
             return false;
         }
-        self.ref_sel = slot;
+        self.ref_page.sel = slot;
         self.ref_show_set(on)
     }
 
     /// Channel a `:REFerence:SAVE` of this slot copies. A saved slot remembers its own source.
     pub(crate) fn ref_source_of(&self, slot: usize) -> usize {
-        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_sel {
+        self.refs.get(slot).and_then(|r| r.as_ref()).map(|r| r.src).unwrap_or(if slot == self.ref_page.sel {
             self.ref_page.src
         } else {
             0
@@ -145,7 +147,7 @@ impl Ui {
         if slot >= NREF || ch >= n_ch() {
             return false;
         }
-        self.ref_sel = slot;
+        self.ref_page.sel = slot;
         self.ref_page.src = ch;
         if let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) {
             r.src = ch;
@@ -204,7 +206,7 @@ impl Ui {
             return false;
         }
         let Some(r) = self.refs.get_mut(slot).and_then(|r| r.as_mut()) else { return false };
-        self.ref_sel = slot;
+        self.ref_page.sel = slot;
         set(r);
         true
     }
@@ -240,7 +242,7 @@ impl Ui {
             return Err("source channel has no data".into());
         }
         let w = self.ref_of_channel(r, c, v, dt);
-        self.ref_put(self.ref_sel, w);
+        self.ref_put(self.ref_page.sel, w);
         Ok(())
     }
 
@@ -271,7 +273,7 @@ impl Ui {
 
     /// `refN` beside the setups, in `WAVE_EXTS` order. The first file that is there is the one loaded.
     pub(crate) fn ref_import_slot(&mut self) -> Result<(), String> {
-        let slot = self.ref_sel + 1;
+        let slot = self.ref_page.sel + 1;
         let Some(dir) = self.setup_path().parent().map(|d| d.to_path_buf()) else {
             return Err(format!("missing ref{slot}"));
         };

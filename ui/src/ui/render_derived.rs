@@ -105,8 +105,8 @@ impl Ui {
 
     /// Creates the mask from the selected reference slot.
     pub(super) fn create_mask_from_ref(&mut self) {
-        let Some(r) = self.refs[self.ref_sel].as_ref().filter(|r| r.v.len() >= 2) else {
-            return self.toast(&format!("R{} is empty", self.ref_sel + 1));
+        let Some(r) = self.refs[self.ref_page.sel].as_ref().filter(|r| r.v.len() >= 2) else {
+            return self.toast(&format!("R{} is empty", self.ref_page.sel + 1));
         };
         self.mask_sw.reference = Some(r.v.as_ref().clone());
         self.m.mask_src = r.src.min(NCH - 1);
@@ -114,7 +114,7 @@ impl Ui {
         self.m.mask_on = true;
         self.mask_sw.pass = 0;
         self.mask_sw.fail = 0;
-        self.toast(&format!("Mask created from R{}", self.ref_sel + 1));
+        self.toast(&format!("Mask created from R{}", self.ref_page.sel + 1));
     }
 
     /// Off plus the operations of the selected Math category.

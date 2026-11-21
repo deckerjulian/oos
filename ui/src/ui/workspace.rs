@@ -262,7 +262,7 @@ mod tests {
         ui.m.trig_type = TrigType::Runt;
         let (_, pill) = ui.source_pills().into_iter().find(|(id, _)| *id == WaveId::Ref(1)).unwrap();
         ui.workspace_footer_tap(pill.x + 12, pill.y + 12);
-        assert_eq!(ui.ref_sel, 1);
+        assert_eq!(ui.ref_page.sel, 1);
         let channel = (ui.m.ch[0].vscale, ui.m.ch[0].offset);
         let other = (ui.refs[0].as_ref().unwrap().vpd, ui.refs[0].as_ref().unwrap().offset);
         let scale = ui.refs[1].as_ref().unwrap().vpd;
@@ -387,7 +387,7 @@ mod tests {
                     ui.handle(Ev::Touch { id: 0, phase, x, y });
                 }
                 assert_eq!(ui.selected_workspace_source(), Some(WaveId::Ref(1)));
-                assert_eq!(ui.ref_sel, 1);
+                assert_eq!(ui.ref_page.sel, 1);
                 if zoom {
                     assert_eq!(ui.refs[1].as_ref().unwrap().offset, before);
                     assert!(ui.zoom_view.vcenter > 0.0);
@@ -647,6 +647,8 @@ pub(super) struct Workspace {
     pub measure_docked: bool,
     gesture: Option<Gesture>,
     pub(super) popup: Option<Popup>,
+    /// the desktop's Panel button: none, or whether the panel is open
+    desktop_panel: Option<bool>,
 }
 
 impl Ui {
@@ -659,14 +661,14 @@ impl Ui {
         if let Some(id) = self.workspace.selected_source {
             return available(id).then_some(id);
         }
-        let id = if self.record_mode() { WaveId::Ref(self.ref_sel) } else { WaveId::Ch(self.m.active) };
+        let id = if self.record_mode() { WaveId::Ref(self.ref_page.sel) } else { WaveId::Ch(self.m.active) };
         available(id).then_some(id)
     }
     pub(super) fn select_workspace_source(&mut self, id: WaveId) {
         self.workspace.selected_source = Some(id);
         match id {
             WaveId::Ch(c) => self.m.active = c,
-            WaveId::Ref(i) => self.ref_sel = i,
+            WaveId::Ref(i) => self.ref_page.sel = i,
         }
         self.sources.a = id;
     }
@@ -788,7 +790,7 @@ impl Ui {
     pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
         let mut right = W - 4;
-        let panel = self.desktop_panel.map(|_| {
+        let panel = self.workspace.desktop_panel.map(|_| {
             right -= 48;
             let r = Rect::new(right, y, 46, 30);
             right -= 4;
@@ -815,7 +817,7 @@ impl Ui {
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch).collect();
         sources.extend(
             (0..NREF)
-                .filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_sel == i))
+                .filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_page.sel == i))
                 .map(WaveId::Ref),
         );
         sources
@@ -900,7 +902,7 @@ impl Ui {
             draw(cv, r, "Live", false);
         }
         if let Some(r) = panel {
-            draw(cv, r, "Panel", self.desktop_panel == Some(true));
+            draw(cv, r, "Panel", self.workspace.desktop_panel == Some(true));
         }
     }
     pub(super) fn workspace_footer_tap(&mut self, x: i32, y: i32) -> bool {
@@ -946,7 +948,7 @@ impl Ui {
         } else if live.is_some_and(|r| r.contains(x, y)) {
             self.return_to_live();
         } else if panel.is_some_and(|r| r.contains(x, y)) {
-            self.desktop_panel = self.desktop_panel.map(|open| !open);
+            self.workspace.desktop_panel = self.workspace.desktop_panel.map(|open| !open);
         } else {
             self.compact_trigger_tap(x, y, trigger);
         }

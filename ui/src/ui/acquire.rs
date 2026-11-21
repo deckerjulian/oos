@@ -92,12 +92,24 @@ pub(super) struct Seen {
     pub rec_t: f64,
     /// smoothed time between two records (deep hardware records arrive about once per second)
     pub rec_iv: f64,
+    /// the acquisition ran in the last frame
+    pub running: bool,
+    /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets
+    /// no new one)
+    pub view: AView,
 }
 
 impl Default for Seen {
     fn default() -> Self {
         // NaN: the first look at the level (start-up) is no change
-        Seen { level: (f32::NAN, f32::NAN), level_changed: 0.0, rec_t: 0.0, rec_iv: 0.0 }
+        Seen {
+            level: (f32::NAN, f32::NAN),
+            level_changed: 0.0,
+            rec_t: 0.0,
+            rec_iv: 0.0,
+            running: false,
+            view: AView::Scope,
+        }
     }
 }
 
@@ -194,8 +206,8 @@ impl Ui {
             // redraw the stored record with the current scale/offset
             self.step_stopped_redraw();
         }
-        if self.analyzed_view != self.m.view {
-            self.analyzed_view = self.m.view;
+        if self.seen.view != self.m.view {
+            self.seen.view = self.m.view;
             if self.m.view != AView::Scope {
                 self.analyzer_update();
             }
@@ -288,13 +300,13 @@ impl Ui {
         let running = self.m.run == RunState::Run;
         let hw_seg = self.seg_hw_on();
         // RUN after STOP: the hardware average starts over (stock clears it on every state change)
-        if running && !self.was_running {
+        if running && !self.seen.running {
             self.hw_avg_restart();
             // the final-frame request of the next STOP, counted here so that a `*OPC?` taken with the STOP, before
             // this step sees it, waits for it (`OperationToken::Stop`)
             self.stop.final_req += 1;
         }
-        if running && !self.was_running && self.m.segments > 0 {
+        if running && !self.seen.running && self.m.segments > 0 {
             self.seg.n = 0;
             self.history.recs.clear();
             self.history.pos = None;
@@ -306,7 +318,7 @@ impl Ui {
         }
         // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
         // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
-        if !running && self.was_running {
+        if !running && self.seen.running {
             if self.stop_wants_final() {
                 self.stop.final_until = Some(self.now + STOP_FINAL_WAIT);
             } else {
@@ -318,7 +330,7 @@ impl Ui {
         let final_done = self.src.hw_hold(!running && (self.last[0].is_some() || self.cleared), self.stop.final_req);
         // the protocol watch and XY read every record: no live compression for them (compress.rs)
         self.src.hw_needs_raw(self.needs_raw());
-        self.was_running = running;
+        self.seen.running = running;
         if hw_seg {
             self.seg_poll(running);
         }

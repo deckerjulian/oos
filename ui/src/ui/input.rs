@@ -396,7 +396,7 @@ impl Ui {
         let dir = if sub == 0xa { 1 } else { -1 };
         let acc = if push { 1 } else { self.knob_accel(k) };
         if let Some(WaveId::Ref(slot)) = self.selected_workspace_source() {
-            self.ref_sel = slot;
+            self.ref_page.sel = slot;
             match base {
                 0xd0 => {
                     if push {
@@ -408,7 +408,7 @@ impl Ui {
                 }
                 0x90 => {
                     if push {
-                        if let Some(r) = self.refs[self.ref_sel].as_mut() {
+                        if let Some(r) = self.refs[self.ref_page.sel].as_mut() {
                             r.offset = 0.0;
                         }
                         self.settings_changed();
@@ -614,7 +614,7 @@ impl Ui {
             } else if !self.m.zoom {
                 match self.selected_workspace_source() {
                     Some(WaveId::Ref(i)) => {
-                        self.ref_sel = i;
+                        self.ref_page.sel = i;
                         self.adjust(Item::RefVpd, dv);
                     }
                     _ => self.adjust(Item::ChScale(self.m.active), dv),
@@ -1405,7 +1405,7 @@ impl Ui {
         if self.record_mode() {
             for (slot, rect) in self.record_cards() {
                 if rect.contains(x, y) {
-                    self.ref_sel = slot;
+                    self.ref_page.sel = slot;
                     self.offline.slot = slot;
                     self.sources.a = WaveId::Ref(slot);
                     if x >= rect.x + rect.w - 42 && y < rect.y + 28 {

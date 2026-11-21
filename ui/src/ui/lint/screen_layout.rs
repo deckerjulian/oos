@@ -54,7 +54,7 @@ fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     assert!(u.refs.iter().all(Option::is_none), "nothing in storage, nothing loaded");
     let rec = u.last[0].as_ref().unwrap().clone();
     std::fs::write(dir.join("capture.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
-    u.ref_sel = 2;
+    u.ref_page.sel = 2;
     u.activate(Item::RefLoad);
     let r = u.refs[2].as_ref().expect("R3");
     assert_eq!(*r.v, rec.ch[0]);

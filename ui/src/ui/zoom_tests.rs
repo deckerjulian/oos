@@ -325,7 +325,7 @@ fn desktop_modifier_events_pan_and_control_zoom_time_without_vertical_changes() 
     ui.handle(Ev::Wheel { x, y, steps: 1, ctrl: true, shift: false, alt: false });
     assert!(ui.m.tscale < scale);
     assert_eq!(ui.refs[0].as_ref().unwrap().vpd, original.0);
-    assert_eq!(ui.ref_sel, 0);
+    assert_eq!(ui.ref_page.sel, 0);
     assert_eq!(ui.refs[0].as_ref().unwrap().offset, original.1);
     assert_eq!(ui.m.ch, ch);
     assert_eq!(ui.m.trigger(), trigger);

@@ -24,7 +24,7 @@ mod slot_loading_tests {
     fn destination_choice_is_modal_and_cancel_changes_no_source_or_model() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
-        ui.ref_sel = 3;
+        ui.ref_page.sel = 3;
         let before = ui.m.clone();
         ui.request_waveform();
         assert!(ui.load_slot_ask && !ui.open_wave_request);
@@ -33,7 +33,7 @@ mod slot_loading_tests {
         tap(&mut ui, Ui::load_slot_cancel());
         assert!(!ui.load_slot_ask && !ui.open_wave_request && ui.waveform_destination().is_none());
         assert_eq!(ui.m, before);
-        assert_eq!(ui.ref_sel, 3);
+        assert_eq!(ui.ref_page.sel, 3);
         assert!(ui.refs.iter().all(Option::is_none));
         ui.request_waveform();
         ui.dismiss_context();
@@ -46,22 +46,22 @@ mod slot_loading_tests {
         ui.m.ch[1].on = true;
         ui.m.trig_mode = TrigMode::Normal;
         ui.m.delay = 6e-6;
-        ui.ref_sel = 3;
+        ui.ref_page.sel = 3;
         let before = ui.m.clone();
         ui.request_waveform();
         tap(&mut ui, Ui::load_slot_button(9));
         assert_eq!(ui.waveform_destination(), Some(9));
         assert!(ui.open_wave_request && !ui.load_slot_ask);
-        assert_eq!(ui.ref_sel, 3, "choosing a destination does not change focus before commit");
+        assert_eq!(ui.ref_page.sel, 3, "choosing a destination does not change focus before commit");
         assert!(ui.commit_waveform_traces_at(vec![trace("A"), trace("B")], "two", 9).is_err());
         assert_eq!(ui.m, before);
-        assert_eq!(ui.ref_sel, 3);
+        assert_eq!(ui.ref_page.sel, 3);
         assert!(ui.refs.iter().all(Option::is_none), "overflow validates before replacing any slot");
-        ui.ref_sel = 7; // A different source may be selected while the worker is reading.
+        ui.ref_page.sel = 7; // A different source may be selected while the worker is reading.
         ui.commit_waveform_traces_at(vec![trace("R10")], "chosen", 9).unwrap();
         assert_eq!(ui.m, before, "live ADC/run/timebase/trigger/catalog are preserved");
         assert!(!ui.record_mode() && ui.m.ch[0].on && ui.m.ch[1].on);
-        assert_eq!(ui.ref_sel, 9);
+        assert_eq!(ui.ref_page.sel, 9);
         assert!(ui.refs[7].is_none() && ui.refs[9].as_ref().unwrap().on);
         assert_eq!(ui.replay.captures, 0);
         assert!(ui.set_trigger_source(WaveId::Ref(9), false));
@@ -640,8 +640,8 @@ impl Ui {
             self.m.sim_slot
         } else if self.offline.on {
             self.offline.slot
-        } else if self.refs.get(self.ref_sel).is_some_and(Option::is_some) {
-            self.ref_sel
+        } else if self.refs.get(self.ref_page.sel).is_some_and(Option::is_some) {
+            self.ref_page.sel
         } else {
             self.refs.iter().position(Option::is_some).unwrap_or(0)
         }
@@ -806,7 +806,7 @@ impl Ui {
         name: &str,
         auto: bool,
     ) -> Result<(), String> {
-        let destination = if auto { None } else { Some(self.ref_sel.min(NREF - 1)) };
+        let destination = if auto { None } else { Some(self.ref_page.sel.min(NREF - 1)) };
         self.commit_waveform_traces_to(traces, name, destination)
     }
 
@@ -886,7 +886,7 @@ impl Ui {
                 on: true,
             });
         }
-        self.ref_sel = first;
+        self.ref_page.sel = first;
         if reference_session {
             self.m.set_trigger_wave(WaveId::Ref(first), false);
             self.m.trig_ref2 = None;
@@ -958,8 +958,9 @@ impl Ui {
         if self.record_mode() {
             return;
         }
-        let slot = if self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2) {
-            self.ref_sel
+        let slot = if self.refs.get(self.ref_page.sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2)
+        {
+            self.ref_page.sel
         } else {
             match (0..NREF).find(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2 && r.dt > 0.0)) {
                 Some(i) => i,
