@@ -753,10 +753,10 @@ impl Ui {
             Item::XyMode => self.xy = !self.xy,
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
-            Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
+            Item::StoreSlot => self.files.slot = (self.files.slot as i32 + d).clamp(1, 9) as u32,
             Item::StoreDest => {
-                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
-                self.store_dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
+                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.files.dest).unwrap_or(0);
+                self.files.dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
             }
             Item::MaskSrc => {
                 // a mask belongs to its channel: the new source needs a new one

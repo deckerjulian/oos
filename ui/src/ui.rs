@@ -869,10 +869,8 @@ pub struct Ui {
     pub dirty_map: bool,
     /// the counts the traces are graded against (render.rs)
     grade: render::Grade,
-    /// storage directory (setups, CSV, PNG), created when missing
-    pub store_dir: std::path::PathBuf,
-    /// Auto / USB stick / desktop for waveform, mask and screenshot files
-    store_dest: crate::store::StoreDest,
+    /// where files are stored: the folder, the destination, the setup slot (save_recall.rs)
+    pub files: save_recall::Files,
     /// the math channels: the menu's category, the results and their worker, the scales to refit (mathwave.rs)
     math: mathwave::Math,
     capture_views: std::cell::RefCell<capture_memory::State>,
@@ -882,8 +880,6 @@ pub struct Ui {
     stick: save_recall::Stick,
     /// the logic analyser: the probe as last read, the pixel columns of the last LA record drawn (la.rs)
     la: la::Lanes,
-    /// setup slot n = file setup<n>.txt
-    store_slot: u32,
     /// the mask test in software: the reference waveform, the mask built from it, its counts (render_derived.rs)
     mask_sw: render_derived::MaskTest,
     /// the mask unit in the FPGA: the mask in its columns, its latest counters, the number that clears them, and why

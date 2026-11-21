@@ -793,7 +793,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
-        u.store_dir = dir.clone();
+        u.files.dir = dir.clone();
         put(&mut u, 1, square(1.0), true);
         assert!(u.m.ch[0].on && u.look == RefLook::Live);
         let held = (u.m.tscale, u.m.tfine, u.m.delay, u.m.ch[0].on);

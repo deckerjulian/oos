@@ -303,7 +303,7 @@ fn quick_key_dispatch() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("ui-quick");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.clone();
+    ui.files.dir = dir.clone();
     ui.step(0.033);
     // default: screenshot as before
     ui.key(key::QUICK);

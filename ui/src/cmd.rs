@@ -124,7 +124,7 @@ pub fn run(ui: &mut Ui, line: &str) -> Out {
         "quit" => ui.quit = true,
         "close" => ui.script_close(),
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),
-        "storedir" if w.len() > 1 => ui.store_dir = w[1].into(),
+        "storedir" if w.len() > 1 => ui.files.dir = w[1].into(),
         "textsize" if w.len() > 1 => match TEXT_SIZES.iter().find(|t| t.name().eq_ignore_ascii_case(w[1])) {
             Some(&t) => ui.m.text_size = t,
             None => eprintln!("oos-ui: unknown text size: {}", w[1]),

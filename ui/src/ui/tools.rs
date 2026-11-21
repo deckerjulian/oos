@@ -1027,7 +1027,7 @@ impl Ui {
 
     /// File of a mask in the slot of the Storage page, beside the setups.
     fn mask_path(&self) -> std::path::PathBuf {
-        self.setup_path().with_file_name(format!("mask{}.txt", self.store_slot))
+        self.setup_path().with_file_name(format!("mask{}.txt", self.files.slot))
     }
 
     pub(super) fn mask_save(&mut self) {

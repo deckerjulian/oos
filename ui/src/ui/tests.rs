@@ -966,8 +966,8 @@ fn mask_from_ref_invert_save_and_load() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("mask");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.clone();
-    ui.store_dest = crate::store::StoreDest::Local;
+    ui.files.dir = dir.clone();
+    ui.files.dest = crate::store::StoreDest::Local;
     ui.step(0.033);
     let rec = ui.last[0].as_ref().unwrap();
     ui.refs[0] = Some(RefWave { label: "R1".into(), ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
@@ -993,8 +993,8 @@ fn fast_frame_save_and_load_and_local_dest() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("ff");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.clone();
-    ui.store_dest = crate::store::StoreDest::Local;
+    ui.files.dir = dir.clone();
+    ui.files.dest = crate::store::StoreDest::Local;
     for _ in 0..4 {
         ui.step(0.033);
     }
@@ -1018,7 +1018,7 @@ fn storage_save_and_recall() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("ui-store");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.join("sub");
+    ui.files.dir = dir.join("sub");
     ui.m.ch[2].on = true;
     ui.m.tscale -= 2;
     ui.m.color_grade = true;
@@ -1036,7 +1036,7 @@ fn storage_save_and_recall() {
     let mut want = saved;
     (want.run, want.status) = (ui.m.run, ui.m.status);
     assert_eq!(ui.m, want);
-    ui.store_slot = 2;
+    ui.files.slot = 2;
     ui.activate(Item::StoreRecall);
     assert!(ui.toast.as_ref().unwrap().0.starts_with("Recall failed"));
     let _ = std::fs::remove_dir_all(&dir);

@@ -49,7 +49,7 @@ fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.activate(Item::RefLoad);
     assert!(u.refs.iter().all(Option::is_none), "nothing in storage, nothing loaded");
     let rec = u.last[0].as_ref().unwrap().clone();
@@ -94,12 +94,12 @@ fn files_go_to_the_stick_while_it_is_there() {
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::USB_DIR));
     assert_eq!(u.menu_title(MenuId::Storage), "Storage \u{b7} USB stick");
     // a directory given by hand stays
-    u.store_dir = "/oos/shots".into();
+    u.files.dir = "/oos/shots".into();
     assert_eq!(u.save_dir(), std::path::Path::new("/oos/shots"));
     assert_eq!(u.saved_where(), "");
     // Local keeps the files in the storage directory while the stick is there, and the title says so
-    u.store_dir = crate::store::DEFAULT_DIR.into();
-    u.store_dest = crate::store::StoreDest::Local;
+    u.files.dir = crate::store::DEFAULT_DIR.into();
+    u.files.dest = crate::store::StoreDest::Local;
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert_eq!(u.saved_where(), " locally, not on the stick");
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));

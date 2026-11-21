@@ -42,7 +42,7 @@ fn a_formula_is_a_math_channel() {
 fn the_logger_writes_rows_at_its_interval() {
     let dir = crate::ui::testkit::Scratch::new("log");
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.m.meas = vec![];
     u.m.meas2 = vec![];
     u.adjust(Item::LogOn, 1);
