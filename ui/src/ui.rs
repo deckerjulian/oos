@@ -790,7 +790,6 @@ pub struct Ui {
     /// Bode sweep (bode.rs)
     bode: bode::State,
     workspace: workspace::Workspace,
-    pub desktop_panel: Option<bool>,
     /// SIM: Play is moving the timebase window through the selected record
     sim_play: bool,
     /// SIM: the generator thread and the error it left for SCPI (sim.rs)

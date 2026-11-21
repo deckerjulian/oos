@@ -647,6 +647,8 @@ pub(super) struct Workspace {
     pub measure_docked: bool,
     gesture: Option<Gesture>,
     pub(super) popup: Option<Popup>,
+    /// the desktop's Panel button: none, or whether the panel is open
+    desktop_panel: Option<bool>,
 }
 
 impl Ui {
@@ -788,7 +790,7 @@ impl Ui {
     pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
         let mut right = W - 4;
-        let panel = self.desktop_panel.map(|_| {
+        let panel = self.workspace.desktop_panel.map(|_| {
             right -= 48;
             let r = Rect::new(right, y, 46, 30);
             right -= 4;
@@ -900,7 +902,7 @@ impl Ui {
             draw(cv, r, "Live", false);
         }
         if let Some(r) = panel {
-            draw(cv, r, "Panel", self.desktop_panel == Some(true));
+            draw(cv, r, "Panel", self.workspace.desktop_panel == Some(true));
         }
     }
     pub(super) fn workspace_footer_tap(&mut self, x: i32, y: i32) -> bool {
@@ -946,7 +948,7 @@ impl Ui {
         } else if live.is_some_and(|r| r.contains(x, y)) {
             self.return_to_live();
         } else if panel.is_some_and(|r| r.contains(x, y)) {
-            self.desktop_panel = self.desktop_panel.map(|open| !open);
+            self.workspace.desktop_panel = self.workspace.desktop_panel.map(|open| !open);
         } else {
             self.compact_trigger_tap(x, y, trigger);
         }

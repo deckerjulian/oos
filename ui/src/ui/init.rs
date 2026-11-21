@@ -71,7 +71,6 @@ impl Ui {
             start_up: Default::default(),
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
-            desktop_panel: None,
             sim_play: false,
             sim_gen: Default::default(),
             offline: Default::default(),
