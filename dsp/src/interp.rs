@@ -200,6 +200,34 @@ mod tests {
         assert!(es < 0.08, "sinc error {}", es);
     }
 
+    // Issue #335 step 1. Break it catches: a kernel (fewer lobes, a coarser phase table) that rings on the signals Auto
+    // bandwidth lets through. Auto puts the nominal filter corner near a quarter of the channel's rate
+    // (`hal::dho::afe::auto_c`), so a sine up to 0.25 of the rate must come back almost exactly, and one up to 0.4 (the
+    // filter's slope) still close; the error is the largest over many phases between the samples.
+    #[test]
+    fn the_screen_kernel_stays_clean_up_to_the_auto_corner() {
+        let worst = |f: f64| {
+            let v: Vec<f32> =
+                (0..400).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 + 0.3).sin() as f32).collect();
+            let mut out = Vec::new();
+            lanczos8_grid(&v, 100.0, 0.0371, 5000, &mut out);
+            out.iter()
+                .enumerate()
+                .map(|(k, &y)| {
+                    (y as f64 - (2.0 * std::f64::consts::PI * f * (100.0 + k as f64 * 0.0371) + 0.3).sin()).abs()
+                })
+                .fold(0.0, f64::max)
+        };
+        // host, 2026-11-21: at most 0.0023 up to 0.25, 0.0076 at 0.35, 0.023 at 0.4. The bound up to the corner
+        // (-48 dB of the amplitude) stays under the scope's own noise (SINAD 43.4 dB, docs/models.md 4.1).
+        for (f, bound) in [(0.01, 0.004), (0.05, 0.004), (0.1, 0.004), (0.15, 0.004), (0.2, 0.004), (0.25, 0.004)] {
+            assert!(worst(f) < bound, "{} of the rate: error {}", f, worst(f));
+        }
+        for (f, bound) in [(0.3, 0.01), (0.35, 0.015), (0.4, 0.04)] {
+            assert!(worst(f) < bound, "{} of the rate: error {}", f, worst(f));
+        }
+    }
+
     #[test]
     fn table_kernel_matches_the_exact_one() {
         let v: Vec<f32> = (0..300).map(|k| ((k as f64 * 0.37).sin() + 0.3 * (k as f64 * 1.9).cos()) as f32).collect();

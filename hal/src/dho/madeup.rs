@@ -231,6 +231,27 @@ pub fn write(dir: &str) -> std::io::Result<Vec<String>> {
     Ok(out)
 }
 
+/// The container of file `name` of the set with the channels as in `of`.
+#[cfg(test)]
+pub(crate) fn file(of: [usize; 4], name: &str) -> Vec<u8> {
+    let p = payloads(of).into_iter().find(|(n, _)| *n == name).expect("a file of the made-up set").1;
+    calfile::build(&p, STAMP)
+}
+
+/// The front-end calibration of the set with the channels as in `of`, for tests that plan AFE writes without the
+/// files of a unit.
+#[cfg(test)]
+pub(crate) fn afe_cal(of: [usize; 4]) -> afe::Cal {
+    let f = |n: &str| file(of, n);
+    afe::Cal::from_bytes(&f("cal_lsb.hex"), &f("cal_afe_zero.hex"), &f("cal_afe_bandwidth.hex"), f("cal_vertical.hex"))
+}
+
+/// The ADC calibration of the set with the channels as in `of`.
+#[cfg(test)]
+pub(crate) fn adc_cal(of: [usize; 4]) -> CalAdc {
+    CalAdc::from_file_bytes(&file(of, "cal_adc.hex")).expect("the made-up cal_adc.hex reads back")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,26 +266,6 @@ mod tests {
         let d = std::env::temp_dir().join(format!("oos-madeup-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
-    }
-
-    /// The container of file `name` of the set with the channels as in `of`.
-    fn file(of: [usize; 4], name: &str) -> Vec<u8> {
-        let p = payloads(of).into_iter().find(|(n, _)| *n == name).unwrap().1;
-        calfile::build(&p, STAMP)
-    }
-
-    fn afe_cal(of: [usize; 4]) -> afe::Cal {
-        let f = |n: &str| file(of, n);
-        afe::Cal::from_bytes(
-            &f("cal_lsb.hex"),
-            &f("cal_afe_zero.hex"),
-            &f("cal_afe_bandwidth.hex"),
-            f("cal_vertical.hex"),
-        )
-    }
-
-    fn adc_cal(of: [usize; 4]) -> CalAdc {
-        CalAdc::from_file_bytes(&file(of, "cal_adc.hex")).unwrap()
     }
 
     #[test]
