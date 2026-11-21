@@ -1113,3 +1113,91 @@ fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
         assert!(next != picture, "persistence {persist}: the new record is the picture");
     }
 }
+
+// Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
+// had come or not. With records slower than the persistence time (slow time bases, deep memory) the newest record
+// faded out before the next one, and the trace pulsed. It ages when the next record comes, by the time since the last
+// one; with a record every step that is what it did before. The zoom picture the same way.
+#[test]
+fn timed_persistence_fades_a_record_from_the_next_one_on() {
+    for zoom in [false, true] {
+        timed_persistence_with(zoom);
+    }
+}
+
+fn timed_persistence_with(zoom: bool) {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.run = RunState::Run;
+    ui.m.zoom = zoom;
+    ui.m.persist = PERSIST.iter().position(|p| p.1 == 0.1).unwrap();
+    let persist = PERSIST[ui.m.persist].1 as f64;
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    ui.m.meas.clear();
+    ui.m.meas2.clear();
+    let push = |ui: &Ui, seq: u64| {
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 100_000usize;
+        let v: Vec<f32> = (0..n).map(|k| if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+        shared.lock().unwrap().queue.push_back(crate::board::Frame {
+            seq,
+            stamp: ui.m.hw_stamp,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        });
+    };
+    // the main and the zoom picture of CH1
+    let maps = |ui: &Ui| [ui.ph.map[0].clone(), ui.phz.map[0].clone()];
+    // the pictures `before` aged for `t` seconds, and one record (`one`) drawn into them
+    let aged = |before: &[Vec<u16>; 2], one: &[Vec<u16>; 2], t: f64| -> [Vec<u16>; 2] {
+        std::array::from_fn(|i| {
+            let mut p = Phosphor::new(1, 1);
+            p.map[0] = before[i].clone();
+            p.decay((-t / persist).exp() as f32);
+            p.map[0].iter().zip(&one[i]).map(|(a, b)| a.saturating_add(*b)).collect()
+        })
+    };
+    let dt = 0.033;
+    ui.step(dt);
+    push(&ui, 1);
+    ui.step(dt);
+    let one = maps(&ui);
+    assert!(one[0].iter().any(|&c| c != 0), "zoom {zoom}: the record is in the picture");
+    assert_eq!(one[1].iter().any(|&c| c != 0), zoom, "the record is in the zoom picture with zoom only");
+    // slow records, one every half second: the newest stays as it was drawn until the next comes
+    let mut seq = 1;
+    let mut picture = one.clone();
+    for _ in 0..3 {
+        let mut waited = 0.0;
+        for _ in 0..15 {
+            ui.step(dt);
+            waited += dt;
+            assert!(maps(&ui) == picture, "zoom {zoom}: the newest record faded before the next one came");
+        }
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        waited += dt;
+        // the one before has aged by the half second since it came
+        let want = aged(&picture, &one, waited);
+        assert!(
+            maps(&ui) == want,
+            "zoom {zoom}, slow records: the picture is not the last one aged by the time between"
+        );
+        picture = want;
+    }
+    // fast records, one every step: aged by one step each, as before
+    for _ in 0..10 {
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        let want = aged(&picture, &one, dt);
+        assert!(maps(&ui) == want, "zoom {zoom}, fast records: the picture is not the last one aged by one step");
+        picture = want;
+    }
+}

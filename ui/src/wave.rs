@@ -981,6 +981,18 @@ pub fn condition(m: &Model, c: usize, v: &mut [f32], dt: f64) {
     }
 }
 
+/// What the picture needs before the first record of a screen step goes into it (`Phosphor::renew`). A step without
+/// a record leaves the picture as it is, so the newest record is never faded before the next one comes (#441).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Renew {
+    /// nothing: infinite persistence, or done for this step
+    Keep,
+    /// replaced: minimum persistence, or a setting changed
+    Clear,
+    /// timed persistence: multiplied by this factor, for the time since the last record
+    Decay(f32),
+}
+
 /// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
 pub struct Phosphor {
     pub w: usize,
@@ -1003,6 +1015,15 @@ impl Phosphor {
             m.iter_mut().for_each(|x| *x = 0);
         }
     }
+    /// Does what the picture needs before the first record of a screen step goes into it.
+    pub fn renew(&mut self, r: Renew) {
+        match r {
+            Renew::Keep => {}
+            Renew::Clear => self.clear(),
+            Renew::Decay(f) => self.decay(f),
+        }
+    }
+
     /// Multiplies every count by f (0..1).
     pub fn decay(&mut self, f: f32) {
         let k = (f.clamp(0.0, 1.0) * 65536.0) as u32;
