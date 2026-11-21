@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The MHO900 behind `Board`, a port of the platform alone (docs/mho.md): OOS has no code for its acquisition board,
-//! so this board never starts an acquisition thread, drives no generator and talks to no front panel. The screen shows
+//! so this board never starts an acquisition thread and drives no generator; the front panel is only listened to. The screen shows
 //! the demo signal (the image starts oos-ui without `--hw`, and `Platform::drives_hardware` is false for this build).
 //! What remains are the UI's terms of the board: channels, scales, couplings, depths, and the SoC's temperatures.
 
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{AcqMode, Coupling, GenCh, Model, TrigMode};
+use oos_hal::panelframe as panel;
 use std::sync::Mutex;
 
 /// The Rigol MHO900.
@@ -176,9 +177,11 @@ impl Board for Mho {
         oos_hal::target::ACTIVE.clock_steps
     }
 
-    // The front panel is not driven: its protocol on the MHO900 is not known. Touch, and a mouse or keyboard, operate it.
+    // The front panel is read, not driven: UART0 as on the DHO (the stock system opens ttyS0 and sends on it, platform
+    // probe: assumed to be the same MCU protocol, frontpanel.md). Its frames go to the panel log, keys of the DHO's
+    // codes act as keys. Nothing is written to the MCU: no LEDs, no power commands (tools: oos-panel, docs/mho.md).
     fn panel_port(&self) -> (&'static str, u32) {
-        ("", 0)
+        ("/dev/ttyS0", 1_500_000)
     }
 
     fn panel_cmd(&self, _: PanelCmd) -> Vec<u8> {
@@ -190,7 +193,45 @@ impl Board for Mho {
     }
 
     fn panel_keys(&self, b: &mut Vec<u8>) -> Vec<u8> {
-        b.clear();
-        Vec::new()
+        let pieces = panel::take(b);
+        #[cfg(all(target_os = "linux", not(test)))]
+        log_panel(&pieces);
+        panel::keys(&pieces)
+    }
+}
+
+/// Where the frames of the panel MCU are written, for owners who try the panel (docs/mho.md); it stops at `LOG_MAX`.
+#[cfg(all(target_os = "linux", not(test)))]
+const PANEL_LOG: &str = "/tmp/oos-panel.log";
+#[cfg(all(target_os = "linux", not(test)))]
+const LOG_MAX: u64 = 1 << 20;
+
+/// One line per frame (`frame cmd data`) and per run of skipped bytes (`skipped` and the bytes), with the time.
+#[cfg(all(target_os = "linux", not(test)))]
+fn log_panel(pieces: &[panel::Piece]) {
+    use std::io::Write;
+    if pieces.is_empty() || std::fs::metadata(PANEL_LOG).is_ok_and(|m| m.len() > LOG_MAX) {
+        return;
+    }
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let mut text = String::new();
+    let mut skipped = Vec::new();
+    for p in pieces {
+        match p {
+            panel::Piece::Skipped(x) => skipped.push(format!("{:02x}", x)),
+            panel::Piece::Frame(c, d) => {
+                if !skipped.is_empty() {
+                    text += &format!("{}.{:03} skipped {}\n", t.as_secs(), t.subsec_millis(), skipped.join(" "));
+                    skipped.clear();
+                }
+                text += &format!("{}.{:03} frame {:02x} {:02x}\n", t.as_secs(), t.subsec_millis(), c, d);
+            }
+        }
+    }
+    if !skipped.is_empty() {
+        text += &format!("{}.{:03} skipped {}\n", t.as_secs(), t.subsec_millis(), skipped.join(" "));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(PANEL_LOG) {
+        let _ = f.write_all(text.as_bytes());
     }
 }

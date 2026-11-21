@@ -1,0 +1,34 @@
+#!/bin/sh
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Tries the MHO900's front panel by hand, for an owner who tests it (docs/mho.md). oos-ui listens on UART0 as on the
+# DHO and writes every frame it receives to /tmp/oos-panel.log; it sends nothing to the panel MCU. This tool shows the
+# log and, only when asked, sends one of the few frames of the DHO's protocol worth a try (docs/protocols/frontpanel.md,
+# board.md section 4). Whether the MHO900's MCU speaks that protocol is not yet verified on hardware.
+#
+#   oos-panel log          the frames received so far
+#   oos-panel watch        the log as it grows (Ctrl-C ends)
+#   oos-panel version      asks the MCU for its firmware version (FA 06 BB 03 AF); an answer lands in the log
+#   oos-panel ui-loaded    tells the MCU that the UI is up (FA 05 00 27 AF), as the stock DHO system does once
+#   oos-panel leds on|off  all LEDs on or off (cmd 1, 2, 3 with data ff or 00)
+LOG=/tmp/oos-panel.log
+PORT=/dev/ttyS0
+
+send() {
+	# oos-ui keeps the port open at 1.5 Mbaud raw; without it the port is set here
+	pidof oos-ui >/dev/null || stty -F $PORT 1500000 raw -echo 2>/dev/null
+	printf "$1" > $PORT && echo "oos-panel: sent $(printf "$1" | od -An -tx1 | tr -s ' ')"
+	sleep 1
+	echo "oos-panel: the log now ends with:"
+	tail -n 5 $LOG 2>/dev/null
+}
+
+case "$1 $2" in
+"log ") cat $LOG 2>/dev/null || echo "oos-panel: nothing received yet ($LOG)";;
+"watch ") touch $LOG; tail -f $LOG;;
+"version ") send '\372\006\273\003\257';;
+"ui-loaded ") send '\372\005\000\047\257';;
+"leds on") send '\372\001\377\162\257\372\002\377\157\257\372\003\377\144\257';;
+"leds off") send '\372\001\000\013\257\372\002\000\026\257\372\003\000\035\257';;
+*) echo "usage: oos-panel log | watch | version | ui-loaded | leds on|off" >&2; exit 2;;
+esac

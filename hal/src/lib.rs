@@ -19,6 +19,7 @@ pub mod fsutil;
 #[cfg(test)]
 mod hostile;
 pub mod model;
+pub mod panelframe;
 pub mod procs;
 pub mod target;
 pub mod update;

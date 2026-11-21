@@ -4,22 +4,7 @@
 //! Front-panel MCU protocol (UART0, frames `FA cmd data crc7 AF`, see docs/protocols/frontpanel.md), platform independent
 //! so the host tests cover it.
 
-/// CRC-7/MMC over [cmd, data] (poly 0x09, init 0), 7-bit result.
-pub fn crc7(cmd: u8, data: u8) -> u8 {
-    let mut c: u8 = 0;
-    for b in [cmd, data] {
-        c ^= b;
-        for _ in 0..8 {
-            c = if c & 0x80 != 0 { (c << 1) ^ 0x12 } else { c << 1 };
-        }
-    }
-    c >> 1
-}
-
-/// One MCU frame `FA cmd data crc7 AF`.
-pub fn frame(cmd: u8, data: u8) -> [u8; 5] {
-    [0xfa, cmd, data, crc7(cmd, data), 0xaf]
-}
+pub use crate::panelframe::{crc7, frame, keys, take, Piece};
 
 /// Key code of the power key, see docs/protocols/board.md section 4.
 pub const KEY_POWER: u8 = 0x1b;
@@ -91,14 +76,6 @@ pub fn led_frames(mask: u32) -> [[u8; 5]; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn crc7_matches_frontpanel_py() {
-        // tools/frontpanel.py selftest
-        assert_eq!(crc7(0x01, 0x00), 0x0b);
-        assert_eq!(crc7(0x02, 0xff), 0x6f);
-        assert_eq!(crc7(0x06, 0x15), 0x0e);
-    }
 
     #[test]
     fn power_frames_match_board_md() {

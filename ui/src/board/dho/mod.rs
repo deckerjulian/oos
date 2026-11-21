@@ -226,15 +226,6 @@ impl Board for Dho {
 
     fn panel_keys(&self, b: &mut Vec<u8>) -> Vec<u8> {
         // frames FA cmd data crc7 AF; anything else is skipped byte by byte
-        let mut keys = Vec::new();
-        while b.len() >= 5 {
-            if b[0] != 0xfa || b[4] != 0xaf || b[3] != panel::crc7(b[1], b[2]) {
-                b.remove(0);
-                continue;
-            }
-            keys.push(b[2]);
-            b.drain(..5);
-        }
-        keys
+        panel::keys(&panel::take(b))
     }
 }
